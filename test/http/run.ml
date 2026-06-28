@@ -523,6 +523,12 @@ let () =
             test_h2_connection_completed_error_response_does_not_hold_switch;
           Alcotest.test_case "continues after informational headers" `Quick
             test_h2_connection_continues_after_informational_headers;
+          Alcotest.test_case "processes CONTINUATION request headers" `Quick
+            test_h2_connection_processes_continuation_request_headers;
+          Alcotest.test_case "rejects wrong-stream CONTINUATION" `Quick
+            test_h2_connection_rejects_wrong_stream_continuation;
+          Alcotest.test_case "caps CONTINUATION accumulator" `Quick
+            test_h2_connection_caps_continuation_accumulator;
           Alcotest.test_case "GOAWAY mid-body completes existing stream" `Quick
             test_h2_connection_goaway_mid_body_completes_existing_stream;
           Alcotest.test_case "timeout one request preserves connection" `Quick

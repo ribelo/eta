@@ -514,11 +514,122 @@ let raw_headers encoder ?(end_stream = false) ~stream_id headers =
     ~flags ~stream_id
   ^ block
 
+let raw_split_headers encoder ?(end_stream = false) ?continuation_stream_id
+    ~stream_id headers =
+  let block = hpack_block encoder headers in
+  let split = 1 in
+  let first = String.sub block 0 split in
+  let rest = String.sub block split (String.length block - split) in
+  let continuation_stream_id =
+    Option.value continuation_stream_id ~default:stream_id
+  in
+  Eta_http_h2.Frame.header ~length:(String.length first) ~frame_type:Headers
+    ~flags:(if end_stream then 0x1 else 0)
+    ~stream_id
+  ^ first
+  ^ Eta_http_h2.Frame.header ~length:(String.length rest)
+      ~frame_type:Continuation ~flags:0x4 ~stream_id:continuation_stream_id
+  ^ rest
+
+let raw_frame frame_type ~flags ~stream_id payload =
+  Eta_http_h2.Frame.header ~length:(String.length payload) ~frame_type ~flags
+    ~stream_id
+  ^ payload
+
 let raw_data ?(end_stream = false) ~stream_id data =
   let flags = if end_stream then 0x1 else 0 in
   Eta_http_h2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
     ~stream_id
   ^ data
+
+let raw_client_preface bytes =
+  "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" ^ Eta_http_h2.Frame.settings ^ bytes
+
+let test_h2_connection_processes_continuation_request_headers () =
+  let seen_path = ref None in
+  let server =
+    Eta_http_h2.Connection.Server.create
+      ~request_handler:(fun reqd ->
+        let request = Eta_http_h2.Connection.Server.Reqd.request reqd in
+        seen_path := Some request.path)
+      ~error_handler:(fun error ->
+        Alcotest.failf "unexpected h2 server error: %a %s"
+          Eta_http_h2.Error_code.pp_hum error.error_code error.message)
+      ()
+  in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let request =
+    raw_split_headers encoder ~end_stream:true ~stream_id:1
+      [
+        hpack_header ":method" "GET";
+        hpack_header ":scheme" "https";
+        hpack_header ":path" "/split";
+        hpack_header ":authority" "api.example.test";
+      ]
+  in
+  h2_feed_server server (raw_client_preface request);
+  Alcotest.(check (option string))
+    "request path" (Some "/split") !seen_path
+
+let test_h2_connection_rejects_wrong_stream_continuation () =
+  let errors = ref [] in
+  let server =
+    Eta_http_h2.Connection.Server.create
+      ~request_handler:(fun _ -> Alcotest.fail "unexpected request")
+      ~error_handler:(fun error -> errors := error :: !errors)
+      ()
+  in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let request =
+    raw_split_headers encoder ~end_stream:true ~stream_id:1
+      ~continuation_stream_id:3
+      [
+        hpack_header ":method" "GET";
+        hpack_header ":scheme" "https";
+        hpack_header ":path" "/split";
+        hpack_header ":authority" "api.example.test";
+      ]
+  in
+  h2_feed_server server (raw_client_preface request);
+  match !errors with
+  | [ { Eta_http_h2.Connection.error_code = Eta_http_h2.Error_code.Protocol_error;
+        message = _;
+      } ] ->
+      ()
+  | [ error ] ->
+      Alcotest.failf "unexpected CONTINUATION error: %a %s"
+        Eta_http_h2.Error_code.pp_hum error.error_code error.message
+  | [] -> Alcotest.fail "wrong-stream CONTINUATION was accepted"
+  | _ :: _ :: _ -> Alcotest.fail "wrong-stream CONTINUATION reported multiple errors"
+
+let test_h2_connection_caps_continuation_accumulator () =
+  let errors = ref [] in
+  let server =
+    Eta_http_h2.Connection.Server.create
+      ~request_handler:(fun _ -> Alcotest.fail "unexpected request")
+      ~error_handler:(fun error -> errors := error :: !errors)
+      ()
+  in
+  let max_frame = Eta_http_h2.Settings.host_default.max_frame_size in
+  let chunk = String.make max_frame 'x' in
+  let frames =
+    raw_frame Headers ~flags:0 ~stream_id:1 chunk
+    ^ raw_frame Continuation ~flags:0 ~stream_id:1 chunk
+    ^ raw_frame Continuation ~flags:0 ~stream_id:1 chunk
+    ^ raw_frame Continuation ~flags:0 ~stream_id:1 chunk
+    ^ raw_frame Continuation ~flags:0 ~stream_id:1 "x"
+  in
+  h2_feed_server server (raw_client_preface frames);
+  match !errors with
+  | [ { Eta_http_h2.Connection.error_code = Eta_http_h2.Error_code.Enhance_your_calm;
+        message = _;
+      } ] ->
+      ()
+  | [ error ] ->
+      Alcotest.failf "unexpected accumulator error: %a %s"
+        Eta_http_h2.Error_code.pp_hum error.error_code error.message
+  | [] -> Alcotest.fail "oversized CONTINUATION accumulator was accepted"
+  | _ :: _ :: _ -> Alcotest.fail "oversized CONTINUATION reported multiple errors"
 
 let raw_informational_response_server flow =
   let encoder = Eta_http_h2.Hpack.encoder_create 4096 in

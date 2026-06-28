@@ -2,9 +2,9 @@
 
 (* Initial server connection implementation. Supports the basic request/response
    path used by the existing eta_http_eio adapter: preface handshake, SETTINGS,
-   HEADERS (single frame), DATA, WINDOW_UPDATE, RST_STREAM, GOAWAY, and both
-   fixed and streaming responses. Continuation frames, PUSH_PROMISE, and
-   priority reparenting are accepted as no-ops or handled minimally. *)
+   HEADERS/CONTINUATION, DATA, WINDOW_UPDATE, RST_STREAM, GOAWAY, and both fixed
+   and streaming responses. PUSH_PROMISE and priority reparenting are accepted
+   as no-ops or handled minimally. *)
 
 type error = {
   error_code : Error_code.t;
@@ -128,6 +128,7 @@ and read_state =
   | Expect_frame
   | Expect_continuation of {
       stream_id : int;
+      flags : int;
       acc : Buffer.t;
     }
 
@@ -730,6 +731,53 @@ let handle_headers t ~flags ~stream_id payload =
   | Server _ -> handle_server_headers t ~flags ~stream_id payload
   | Client c -> handle_client_headers t c ~flags ~stream_id payload
 
+let max_continuation_accumulator_bytes = 64 * 1024
+
+let has_end_headers flags = flags land Frame.Flags.end_headers <> 0
+
+let append_header_fragment t acc payload =
+  let payload_len = String.length payload in
+  if payload_len > max_continuation_accumulator_bytes - Buffer.length acc then (
+    report_error t
+      { error_code = Error_code.Enhance_your_calm;
+        message = "CONTINUATION header block exceeded accumulator limit"
+      };
+    false)
+  else (
+    Buffer.add_string acc payload;
+    true)
+
+let start_header_block t ~flags ~stream_id payload =
+  if has_end_headers flags then handle_headers t ~flags ~stream_id payload
+  else if stream_id = 0 then
+    report_error t
+      { error_code = Error_code.Protocol_error;
+        message = "HEADERS frame with stream_id=0" }
+  else
+    let acc = Buffer.create (String.length payload) in
+    if append_header_fragment t acc payload then
+      t.read_state <- Expect_continuation { stream_id; flags; acc }
+
+let handle_continuation t ~flags ~stream_id payload =
+  match t.read_state with
+  | Expect_continuation { stream_id = expected_stream_id; flags = header_flags; acc } ->
+      if stream_id <> expected_stream_id then
+        report_error t
+          { error_code = Error_code.Protocol_error;
+            message =
+              Printf.sprintf
+                "CONTINUATION frame with stream_id=%d while expecting stream_id=%d"
+                stream_id expected_stream_id
+          }
+      else if append_header_fragment t acc payload && has_end_headers flags then (
+        let header_block = Buffer.contents acc in
+        t.read_state <- Expect_frame;
+        handle_headers t ~flags:header_flags ~stream_id header_block)
+  | Expect_preface | Expect_frame ->
+      report_error t
+        { error_code = Error_code.Protocol_error;
+          message = "CONTINUATION frame without open header block" }
+
 let handle_data t ~flags ~stream_id payload =
   if stream_id = 0 then
     report_error t
@@ -921,13 +969,26 @@ let process_frame t =
         let payload =
           Bigstringaf.substring t.read_buf.data ~off:payload_off ~len:env.length
         in
-        (match Frame.frame_type_of_code env.frame_type with
-        | Frame.Settings -> handle_settings t ~flags:env.flags payload
-        | Frame.Headers ->
-            handle_headers t ~flags:env.flags ~stream_id:env.stream_id payload
-        | Frame.Data ->
+        let frame_type = Frame.frame_type_of_code env.frame_type in
+        (match (t.read_state, frame_type) with
+        | Expect_continuation _, Frame.Continuation ->
+            handle_continuation t ~flags:env.flags ~stream_id:env.stream_id
+              payload
+        | Expect_continuation _, _ ->
+            report_error t
+              { error_code = Error_code.Protocol_error;
+                message = "expected CONTINUATION frame while reading header block"
+              }
+        | _, Frame.Settings -> handle_settings t ~flags:env.flags payload
+        | _, Frame.Headers ->
+            start_header_block t ~flags:env.flags ~stream_id:env.stream_id
+              payload
+        | _, Frame.Continuation ->
+            handle_continuation t ~flags:env.flags ~stream_id:env.stream_id
+              payload
+        | _, Frame.Data ->
             handle_data t ~flags:env.flags ~stream_id:env.stream_id payload
-        | Frame.Window_update ->
+        | _, Frame.Window_update ->
             (match
                Frame.Window_update.decode t.read_buf.data ~off:payload_off
                  ~envelope:env
@@ -941,7 +1002,7 @@ let process_frame t =
             | Ok { window_size_increment } ->
                 handle_window_update t ~stream_id:env.stream_id
                   window_size_increment)
-        | Frame.Rst_stream ->
+        | _, Frame.Rst_stream ->
             (match
                Frame.Rst_stream.decode t.read_buf.data ~off:payload_off
                  ~envelope:env
@@ -954,7 +1015,7 @@ let process_frame t =
                 else reset_stream t env.stream_id code
             | Ok { error_code } ->
                 handle_rst_stream t ~stream_id:env.stream_id error_code)
-        | Frame.Goaway ->
+        | _, Frame.Goaway ->
             (match
                Frame.Goaway.decode t.read_buf.data ~off:payload_off
                  ~envelope:env
@@ -967,7 +1028,7 @@ let process_frame t =
                   Bigstringaf.substring debug_data ~off ~len
                 in
                 handle_goaway t ~last_stream_id error_code debug)
-        | Frame.Ping ->
+        | _, Frame.Ping ->
             (match
                Frame.Ping.decode t.read_buf.data ~off:payload_off
                  ~envelope:env
@@ -975,7 +1036,7 @@ let process_frame t =
             | Error _ -> ()
             | Ok { payload } ->
                 handle_ping t ~flags:env.flags (Bytes.to_string payload))
-        | _ -> (* Ignore unknown/extension frames. *) ());
+        | _, _ -> (* Ignore unknown/extension frames. *) ());
         Frame.header_size + env.length
 
 let rec process_input t =
