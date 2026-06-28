@@ -1,8 +1,0 @@
-File "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", line 15, characters 11-18:
-15 |       incr counter;
-                ^^^^^^^
-Error: This value is "contended"
-         because it is used inside the function at file "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", lines 14-16, characters 18-25
-         which is expected to be "portable"
-         because it is contained (via constructor "Bind") (with some modality) in the value at file "scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml", lines 14-16, characters 4-26.
-       However, the highlighted expression is expected to be "uncontended".

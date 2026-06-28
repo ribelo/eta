@@ -1,5 +1,8 @@
 # S2 dispatch + live h2 smoke probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Question: can the public eta-http client use one caller path, negotiate ALPN,
 route h2 to the real `ocaml-h2` owner loop, and keep h1 fallback working?
 

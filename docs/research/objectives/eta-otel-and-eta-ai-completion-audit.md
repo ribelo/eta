@@ -64,7 +64,7 @@ Recent verification:
     exit 0
     eta-schema, ppx_eta, eta-redacted, eta-ai, eta-ai providers, eta-stream, eta, eta-otel passed
 
-Live checks:
+Historical live checks:
 
     nix develop -c dune runtest packages/eta-otel --force
     exit 0
@@ -87,7 +87,7 @@ Key presence:
     TOGETHER_API_KEY=missing
     FIREWORKS_API_KEY=missing
 
-Expanded AP3 live reach:
+Historical expanded AP3 live reach:
 
     nix develop -c bash scratch/eta_ai_v1/probes/live_reach/run.sh deepseek groq kimi-code novita zai moonshot perplexity
     exit 1
@@ -101,12 +101,12 @@ Expanded AP3 live reach:
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
 | Eta-1yb prerequisites available before Track O/A | eta-oxcaml-test-shipped passed Eta tests covering Redacted, LogLevel, MutableRef, and Semaphore. | Proven in current tree |
-| Track O research R-T0..R-T3 recorded | scratch/eta_otel_v2/r_t0_transparent_cost, r_t1_peer_analysis, r_t2_otlp_capability_inventory, and r_t3_exporter_on_eta_http each have verdict artifacts; journal entries V-Otel-R-T0..V-Otel-R-T3 exist. | Proven |
-| Track O OS0..OS6 implemented and recorded | packages/eta-otel, package ADRs/audits, scratch/eta_otel_v2/os6_cutover, and journal entries V-Otel-OS3..V-Otel-OS6; current objective says OS0..OS6 landed. | Proven to current artifact level |
+| Track O research R-T0..R-T3 recorded | docs/research/evidence/eta_otel_v2/r_t0_transparent_cost, r_t1_peer_analysis, r_t2_otlp_capability_inventory, and r_t3_exporter_on_eta_http each have verdict artifacts; journal entries V-Otel-R-T0..V-Otel-R-T3 exist. | Proven |
+| Track O OS0..OS6 implemented and recorded | packages/eta-otel, package ADRs/audits, docs/research/evidence/eta_otel_v2/os6_cutover, and journal entries V-Otel-OS3..V-Otel-OS6; current objective says OS0..OS6 landed. | Proven to current artifact level |
 | OTLP/HTTP via eta-http and recursion suppression | eta-otel ADR 0001, eta-otel adversarial tests, V-Otel-OS3, V-Otel-MOTEL-RECHECK; eta-otel tests include self-recursion and Motel live export. | Proven |
 | W3C trace context and LogLevel preservation | Eta shipped tests cover trace context and LogLevel; eta-otel tracer tests include withSpanContext and live OTLP export. | Proven by shipped tests |
 | Track O existing functional regression surface | dune runtest packages/eta-otel --force passed 29 tests including Tracer, Logger, Metrics, adversarial, and Motel suites. | Proven |
-| Phase A-R before production eta-ai | docs/research/objectives/eta-ai-shape-decision.md exists and records A1..A5 verdicts before AC/AP journal entries; scratch probes exist under scratch/eta_ai_v1/probes. | Proven by artifact chronology in journal |
+| Phase A-R before production eta-ai | docs/research/objectives/eta-ai-shape-decision.md exists and records A1..A5 verdicts before AC/AP journal entries; durable probe verdicts exist under docs/research/evidence/eta_ai_v1/probes. | Proven by artifact chronology in journal |
 | A1 provider diff | provider_matrix.md, verdict.md, and V-AI-A1. | Proven |
 | A2 SSE streaming | streaming_sse probe, eta-ai ADR 0002, and V-AI-A2; eta-ai streaming tests pass. | Proven, with public Eta_stream.Stream intentionally deferred |
 | A3 schema integration | schema probe, eta-schema ADR 0001, and eta-ai ADR 0003. | Proven as deferred from v1 |

@@ -1,9 +1,0 @@
-File "scratch/oxcaml_research/effect_full_gadt_probe/candidate_a_one_gadt.ml", line 30, characters 48-69:
-30 |       Duration.t * ('env, 'err, 'a) t -> ('env, [> `Timeout ] as 'err, 'a) t
-                                                     ^^^^^^^^^^^^^^^^^^^^^
-Error: This type "[> `Timeout ]" should be an instance of type
-         "('a : immutable_data)"
-       The kind of [> `Timeout ] is value mod non_float
-         because it's a polymorphic variant type.
-       But the kind of [> `Timeout ] must be a subkind of immutable_data
-         because of the annotation on 'err in the declaration of the type t.

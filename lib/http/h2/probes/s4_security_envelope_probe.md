@@ -1,5 +1,8 @@
 # S4 Security Envelope Frame-Scanner Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Can eta-http enforce the first S4 byte-level HTTP/2 envelope checks at the real

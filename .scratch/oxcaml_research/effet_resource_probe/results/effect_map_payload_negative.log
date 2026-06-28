@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml", line 19, characters 36-41:
-19 |         value = P_atomic.make (Some value);
-                                         ^^^^^
-Error: This value is "nonportable"
-       but is expected to be "portable"
-         because it is contained (via constructor "Some") in the value at file "scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml", line 19, characters 30-42
-         which is expected to be "portable".

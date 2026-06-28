@@ -1,7 +1,0 @@
-ok provider=groq model=llama-3.3-70b-versatile output_len=2 finish_reasons=1
-ok provider=deepseek model=deepseek-chat output_len=3 finish_reasons=1
-fail provider=kimi-code model=kimi-for-coding provider=kimi-code status=403 code=none message=Kimi For Coding is currently only available for Coding Agents such as Kimi CLI, Claude Code, Roo Code, Kilo Code, etc.
-ok provider=novita model=deepseek/deepseek-v4-flash output_len=3 finish_reasons=1
-fail provider=zai model=glm-4.5-air provider=zai status=429 code=1113 message=余额不足或无可用资源包,请充值。
-fail provider=moonshot model=kimi-k2.6 provider=moonshot status=429 code=none message=Your account <redacted:account> <redacted:api_key> is suspended due to insufficient balance, please recharge your account or check your plan and billing details
-ok provider=perplexity model=sonar output_len=2 finish_reasons=1

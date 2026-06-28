@@ -1,5 +1,8 @@
 # R8 Server Push And PRIORITY Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Does the pinned `ocaml-h2` package expose enough behavior for eta-http to

@@ -1,5 +1,8 @@
 # S6 Observability Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Question: can eta-http emit OTel HTTP client semantic-convention attributes
 through Eta tracer/meter capabilities without recursively tracing exporter
 traffic?
@@ -12,7 +15,7 @@ Artifacts:
 - `lib/http/observability/tracer.ml`
 - `lib/http/observability/meter.ml`
 - `test/http/test_eta_http.ml`
-- `scratch/eta_http_research/adrs/0006-http-observability-recursion.md`
+- `docs/research/evidence/eta_http_research/adrs/0006-http-observability-recursion.md`
 
 Evidence:
 

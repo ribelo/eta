@@ -1,4 +1,0 @@
-(executable
- (name child_escape_negative)
- (libraries eta))
-

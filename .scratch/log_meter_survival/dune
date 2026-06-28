@@ -1,5 +1,0 @@
-(executable
- (name runtime_smoke)
- (modules common branch_a_ast branch_b_adapter runtime_smoke)
- (libraries eio eio_main logs))
-

@@ -1,4 +1,0 @@
-File "scratch/oxcaml_research/phase2_once_finalizer_probe/field_many_once_release_candidate.ml", line 28, characters 14-21:
-28 |   let a = run program in
-                   ^^^^^^^
-Error: This value is "once" but is expected to be "many".

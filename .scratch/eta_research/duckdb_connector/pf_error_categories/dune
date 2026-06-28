@@ -1,4 +1,0 @@
-(executable
- (name pf_error_probe)
- (modules pf_error_probe)
- (libraries unix))

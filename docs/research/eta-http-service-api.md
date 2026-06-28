@@ -2,9 +2,8 @@
 
 Research outcome of the `eta_http_service` evidence-based-coding lab
 (worktree `Eta-http-service-api`, branch `research/eta-http-service-api`).
-Date: 2026-06-18. Evidence artifacts under
-`.scratch/eta_http_service_api/`, including the buildable lab under
-`.scratch/eta_http_service_api/evidence_http_service/`.
+Date: 2026-06-18. This document is the promoted durable summary; the original
+buildable scratch lab was local research evidence and is no longer tracked.
 
 ## Recommendation (direct)
 
@@ -35,7 +34,7 @@ doc defines the **HTTP layer's first package**.
 
 ## Evidence that falsified the alternatives
 
-Full detail in `.scratch/eta_http_service_api/`. Headline numbers:
+Headline numbers from the original lab:
 
 - **`inn`** (real `eta_http` consumer, ~60 routes): hand-wrote a 60-arm
   path/method `match`, **21 `require_method`** (405) call sites, ~80 LOC of
@@ -153,7 +152,7 @@ socket test per `Serve.*` entry point. The P2/P4 lab already proves both shapes.
 
 ## Examples to promote into docs
 
-From the lab (`.scratch/eta_http_service_api/evidence_http_service/`), promote
+From the lab, promote
 into `docs/`:
 - **First 15 minutes**: `p2_candidates/extractors_example.ml` — health + param
   route + JSON POST, the canonical small service.

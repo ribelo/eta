@@ -1,4 +1,0 @@
-File "scratch/oxcaml_research/phase2_once_finalizer_probe/minimal_once_acquire_reuse_negative.ml", line 25, characters 14-21:
-25 |   let a = run program in
-                   ^^^^^^^
-Error: This value is "once" but is expected to be "many".

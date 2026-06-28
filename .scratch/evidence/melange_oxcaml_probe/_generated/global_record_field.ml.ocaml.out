@@ -1,4 +1,0 @@
-File "/home/ribelo/projects/ribelo/ocaml/Eta/scratch/evidence/melange_oxcaml_probe/_generated/global_record_field.ml", line 1, characters 19-27:
-1 | type t = { global_ trace_id : string }
-                       ^^^^^^^^
-Error: Syntax error

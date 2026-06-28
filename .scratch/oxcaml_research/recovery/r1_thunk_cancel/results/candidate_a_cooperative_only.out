@@ -1,1 +1,0 @@
-candidate=A cooperative_only arbitrary_thunk_preemptible=false samples=3 max_deadline_to_exit_us=99056 slo_applies_to_arbitrary_thunk=false

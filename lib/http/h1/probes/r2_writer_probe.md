@@ -1,5 +1,8 @@
 # R2 h1 Request Writer Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Hypothesis: eta-http can serialize HTTP/1.1 requests from the public request
 shape without adding a writer dependency.
 

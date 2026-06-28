@@ -1,2 +1,0 @@
-findlib: [WARNING] Interface opttopdirs.cmi occurs in several directories: /home/ribelo/projects/ribelo/ocaml/Effet-OxCaml/.opam-oxcaml/5.2.0+ox/lib/ocaml, /home/ribelo/projects/ribelo/ocaml/Effet-OxCaml/.opam-oxcaml/5.2.0+ox/lib/ocaml/compiler-libs
-findlib: [WARNING] Interface topdirs.cmi occurs in several directories: /home/ribelo/projects/ribelo/ocaml/Effet-OxCaml/.opam-oxcaml/5.2.0+ox/lib/ocaml, /home/ribelo/projects/ribelo/ocaml/Effet-OxCaml/.opam-oxcaml/5.2.0+ox/lib/ocaml/compiler-libs

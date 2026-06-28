@@ -1,4 +1,0 @@
-File "scratch/oxcaml_research/bind_once_probe/many_ast_once_continuation.ml", line 23, characters 15-22:
-23 |   let a = eval program in
-                    ^^^^^^^
-Error: This value is "once" but is expected to be "many".

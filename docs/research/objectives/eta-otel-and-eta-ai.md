@@ -8,8 +8,9 @@ provider-account reopeners are tracked in
 docs/research/objectives/eta-otel-and-eta-ai-completion-audit.md.
 
 This is the master objective. Lives in `docs/research/objectives/eta-otel-and-eta-ai.md`
-per repo-hygiene convention; per-track research lands in `scratch/`; per-track
-code lands in `packages/`.
+per repo-hygiene convention; per-track throwaway probes may use local
+`scratch/`, while durable decisions land under `docs/research/evidence/` or
+package ADRs.
 
 ---
 
@@ -110,12 +111,13 @@ The audit catalogs are **not gates**; they are the truth-of-record. They tell
 a future maintainer exactly where the library reaches into substrate vs Eta
 primitives and what we considered structural vs replaceable.
 
-### 1.5 Research lives in `scratch/`
+### 1.5 Research Evidence
 
 Per user direction. Master objectives live under `docs/research/objectives/<name>.md`;
-per-objective research probes live under `scratch/<topic>/`; production code
-lives under `packages/<pkg>/`. ADRs co-locate with the package they govern at
-`packages/<pkg>/docs/adrs/`.
+per-objective throwaway probes may live under local `scratch/<topic>/`;
+durable verdicts and ADRs land under `docs/research/evidence/` or package-local
+docs; production code lives under `packages/<pkg>/`. ADRs co-locate with the
+package they govern at `packages/<pkg>/docs/adrs/`.
 
 ### 1.6 Reference posture
 
@@ -163,13 +165,13 @@ Eta-xgg (R-T1 peer analysis), Eta-jxz (R-T2 OTLP capability inventory).
   (eta-http already exposes the seam).
 - LogLevel from the merge (Eta-mw8) — replaces ad-hoc severity strings.
 
-### 2.2 Research probes (`scratch/eta_otel_v2/`)
+### 2.2 Research probes (`docs/research/evidence/eta_otel_v2/`)
 
 - **R-T0 transparent cost** (Eta-331). The hard one. If user doesn't wire
   otel into Runtime, otel must be ~free at runtime: zero alloc, zero branch
-  cost, zero binary bloat from unreachable otel code. Candidates documented
-  in `scratch/eta_otel_rebuild/transparent_cost_research_plan.md` (per
-  Eta-331). Verdict drives the dispatch mechanism. **Disproof signature**:
+  cost, zero binary bloat from unreachable otel code. Preserved verdicts live
+  under `docs/research/evidence/eta_otel_v2/r_t0_transparent_cost/`. Verdict
+  drives the dispatch mechanism. **Disproof signature**:
   no candidate achieves all three (alloc / branch / bloat) without breaking
   the Tracer API.
 - **R-T1 peer analysis** (Eta-xgg). zio-telemetry, opentelemetry-effect (TS),
@@ -224,43 +226,43 @@ on the rebuild.
 ### 2.6 Current status
 
 Track O OS0..OS6 has landed in `packages/eta-otel/`. Evidence is recorded in
-`scratch/eta_otel_v2/`, package ADRs under `packages/eta-otel/docs/adrs/`,
+`docs/research/evidence/eta_otel_v2/`, package ADRs under `packages/eta-otel/docs/adrs/`,
 and journal entries `V-Otel-OS3` through `V-Otel-OS6`. The latest live
-Motel recheck is recorded in `V-Otel-MOTEL-RECHECK` and
-`scratch/eta_otel_v2/os6_cutover/results/2026-05-24-motel-recheck.md`. Track
-A Phase A-R, AC0..AC7, and AP1..AP4 have also landed and are accepted under
+Motel recheck is recorded in `V-Otel-MOTEL-RECHECK`; the durable OS6 verdict is
+under `docs/research/evidence/eta_otel_v2/os6_cutover/verdict.md`. Track A
+Phase A-R, AC0..AC7, and AP1..AP4 have also landed and are accepted under
 the available-account live-provider scope. Successful OpenAI paid, Together,
 Fireworks, Kimi Code, Z.ai, and Moonshot canaries remain reopeners because the
 current environment lacks the required accounts, product scope, or billing
 state.
 
-Track A A1 has landed as scratch evidence in
-`scratch/eta_ai_v1/probes/provider_diff/`. Its verdict selects provider values
+Track A A1 has landed as durable evidence in
+`docs/research/evidence/eta_ai_v1/probes/provider_diff/`. Its verdict selects provider values
 with small encode/decode functions over per-provider modules for the initial
 eta-ai shape. A2..A5 are recorded below, and Phase A-R is closed by
 `docs/research/objectives/eta-ai-shape-decision.md`.
 
-Track A A2 has landed as scratch evidence in
-`scratch/eta_ai_v1/probes/streaming_sse/`. Its verdict finds eta-http
+Track A A2 has landed as durable evidence in
+`docs/research/evidence/eta_ai_v1/probes/streaming_sse/`. Its verdict finds eta-http
 `Body.Stream` sufficient for SSE parsing and release/discard, but files a
 required eta-stream extension in
 `packages/eta-stream/docs/adrs/0001-effect-reader-stream.md` before public
 eta-ai streaming should expose `Eta_stream.Stream`.
 
-Track A A3 has landed as scratch evidence in
-`scratch/eta_ai_v1/probes/schema/`. Its verdict falsifies eta-schema
+Track A A3 has landed as durable evidence in
+`docs/research/evidence/eta_ai_v1/probes/schema/`. Its verdict falsifies eta-schema
 integration for v1 provider schemas because eta-schema has runtime codecs but
 no JSON Schema exporter or provider-required vocabulary. The eta-schema gap is
 filed in `packages/eta-schema/docs/adrs/0001-json-schema-export.md`; eta-ai
 v1 should keep raw JSON tool schemas unless that extension lands first.
 
-Track A A4 has landed as scratch evidence in
-`scratch/eta_ai_v1/probes/tokenizer/`. Its verdict defers tokenizer support
+Track A A4 has landed as durable evidence in
+`docs/research/evidence/eta_ai_v1/probes/tokenizer/`. Its verdict defers tokenizer support
 from eta-ai v1, rejects byte-count token estimates for preflight budgeting,
 and selects provider-side usage fields only.
 
-Track A A5 has landed as scratch evidence in
-`scratch/eta_ai_v1/probes/telemetry/`. Its verdict accepts OTel GenAI
+Track A A5 has landed as durable evidence in
+`docs/research/evidence/eta_ai_v1/probes/telemetry/`. Its verdict accepts OTel GenAI
 semantic-convention attribute names for eta-ai spans, with stringified values
 matching current Eta.Tracer/eta-http precedent.
 
@@ -350,11 +352,9 @@ Live provider dogfooding exposed an eta-http TLS setup gap before provider
 payloads reached the wire: ocaml-tls needs Mirage_crypto_rng initialized.
 `packages/eta-http/transport/connect.ml` now seeds the process-wide Mirage
 crypto RNG before TLS handshakes so Eta_http.Client callers do not need
-provider-specific RNG setup. The reusable release canary lives under
-`scratch/eta_ai_v1/probes/live_reach/` with README, run script, verdict, and
-sanitized result summary. The latest audit and shipped-gate recheck is recorded
-in `V-AI-GATE-RECHECK` and
-`scratch/eta_ai_v1/probes/live_reach/results/2026-05-24-audit-shipped-recheck.md`.
+provider-specific RNG setup. The reusable release canary verdict is preserved at
+`docs/research/evidence/eta_ai_v1/probes/live_reach/verdict.md`. The latest
+audit and shipped-gate recheck is recorded in `V-AI-GATE-RECHECK`.
 
 ---
 
@@ -368,12 +368,12 @@ by evidence.
 The research question is which Effect AI patterns are domain essence and
 which are TypeScript-specific ceremony. Probes test substance, not size.
 
-Five probes, run in parallel where possible. All scratch labs under
-`scratch/eta_ai_v1/`.
+Five probes, run in parallel where possible. Durable probe verdicts live under
+`docs/research/evidence/eta_ai_v1/`.
 
 #### A1 — Provider diff probe
 
-`scratch/eta_ai_v1/probes/provider_diff/`
+`docs/research/evidence/eta_ai_v1/probes/provider_diff/`
 
 Compute the actual diff between OpenAI, Anthropic, OpenAI-compat, OpenRouter
 for chat completions + streaming + tool calling:
@@ -403,7 +403,7 @@ The verdict shapes Phase A-C: do providers compose by data, or by code?
 
 #### A2 — Streaming SSE probe
 
-`scratch/eta_ai_v1/probes/streaming_sse/`
+`docs/research/evidence/eta_ai_v1/probes/streaming_sse/`
 
 Provider responses arrive as SSE / `text/event-stream` over HTTP. eta-http v1
 gives us `Response.body : Stream<bytes>`. Probe whether SSE → `Stream<event>`
@@ -423,7 +423,7 @@ maintain back-pressure on consumer-cancellation.
 
 #### A3 — Schema integration probe
 
-`scratch/eta_ai_v1/probes/schema/`
+`docs/research/evidence/eta_ai_v1/probes/schema/`
 
 Tool argument schemas + structured output schemas are JSON-Schema shapes.
 Probe whether eta-schema expresses provider-required keywords (`oneOf`,
@@ -444,7 +444,7 @@ eta-schema integration to v1.x.
 
 #### A4 — Tokenizer triage
 
-`scratch/eta_ai_v1/probes/tokenizer/`
+`docs/research/evidence/eta_ai_v1/probes/tokenizer/`
 
 Do we ship a tokenizer? Options:
 1. FFI to tiktoken-rs (Rust binding via ctypes). High value (accurate),
@@ -464,7 +464,7 @@ trade-off.
 
 #### A5 — Telemetry seam probe
 
-`scratch/eta_ai_v1/probes/telemetry/`
+`docs/research/evidence/eta_ai_v1/probes/telemetry/`
 
 eta-ai must emit spans for chat / completion / embedding using `Eta.Tracer`;
 if eta-otel is loaded, the spans flow through. ADR 0006's `~enabled:false`
@@ -625,7 +625,7 @@ For every slice in either track:
 Track-specific:
 - **Track O**: every slice runs effet-otel's existing functional tests.
 - **Track A Phase A-R**: every probe records its disproof-signature outcome
-  in `scratch/eta_ai_v1/probes/<probe>/verdict.md`.
+  in `docs/research/evidence/eta_ai_v1/probes/<probe>/verdict.md`.
 - **Track A Phase A-P**: every provider passes a recorded-fixture smoke +
   one live reach probe per release.
 
@@ -709,7 +709,7 @@ For Track A:
 - Live reach probe budget: how often does eta-ai-{provider} run live API
   calls? **Recommendation**: per release, single canary call per provider,
   fixture recording for offline CI.
-- `eta-ai-shape-decision.md` location: `docs/research/objectives/` or `scratch/eta_ai_v1/`?
+- `eta-ai-shape-decision.md` location: `docs/research/objectives/` or `docs/research/evidence/eta_ai_v1/`?
   **Recommendation**: `docs/research/objectives/` since it's a sub-objective that
   constrains Phase A-C, not a research lab artifact.
 - Provider package versioning: lockstep with eta-ai core, or independent?

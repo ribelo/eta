@@ -1,5 +1,0 @@
-h2_work_stealing wall_ms=23.282 count=80 work=36000000 checksum=229220960 p50_us=558 p95_us=575 steals_attempted=4 steals_hit=1
-h3_explicit_push wall_ms=22.939 count=80 work=36000000 checksum=229220960 p50_us=557 p95_us=585 steals_attempted=0 steals_hit=0
-h2_over_h3_time_ratio=1.015
-h2_primitives=ws_deque+atomic_seed_queue+peer_steal
-h3_primitives=portable_atomic_inbox+coordinator_assignment

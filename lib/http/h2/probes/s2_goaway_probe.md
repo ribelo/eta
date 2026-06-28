@@ -1,5 +1,8 @@
 # S2 GOAWAY admission probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Question: after a peer GOAWAY, does eta-http stop admitting new h2 streams
 without turning the condition into stream-admission pressure?
 

@@ -1,7 +1,0 @@
-(executable
- (name probe_no_view)
- (libraries unix))
-
-(executable
- (name probe_runsync_fastpath)
- (libraries effet eio_main unix))

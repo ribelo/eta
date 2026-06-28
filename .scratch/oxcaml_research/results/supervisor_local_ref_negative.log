@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/fixtures/supervisor_local_ref_negative.ml", line 9, characters 48-53:
-9 | let bad () = scoped (fun child -> stash := Some child)
-                                                    ^^^^^
-Error: This value is "local" to the parent region
-       but is expected to be "global"
-         because it is contained (via constructor "Some") in the value at file "scratch/oxcaml_research/fixtures/supervisor_local_ref_negative.ml", line 9, characters 43-53
-         which is expected to be "global".

@@ -1,8 +1,0 @@
-(executable
- (name eta_probe)
- (libraries
-  eta
-  http
-  eio_main
-  ca-certs
-  x509))

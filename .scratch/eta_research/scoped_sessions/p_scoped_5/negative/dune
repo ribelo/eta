@@ -1,4 +1,0 @@
-(executables
- (names fiber_scope_escape_negative)
- (libraries eta))
-

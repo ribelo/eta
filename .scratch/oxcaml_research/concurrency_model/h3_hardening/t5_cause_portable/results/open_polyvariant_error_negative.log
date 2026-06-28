@@ -1,9 +1,0 @@
-File "scratch/oxcaml_research/concurrency_model/h3_hardening/t5_cause_portable/open_polyvariant_error_negative.ml", line 3, characters 38-62:
-3 | let cause = Effet.Cause.Portable.Fail (`Worker_failed "typed")
-                                          ^^^^^^^^^^^^^^^^^^^^^^^^
-Error: This expression has type "[> `Worker_failed of string ]"
-       but an expression was expected of type "('a : value mod portable)"
-       The kind of [> `Worker_failed of string ] is value mod non_float
-         because it's a polymorphic variant type.
-       But the kind of [> `Worker_failed of string ] must be a subkind of 
-           value mod portable.

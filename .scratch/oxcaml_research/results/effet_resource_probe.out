@@ -1,5 +1,0 @@
-warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Effet-OxCaml' is dirty
-Effet OxCaml research shell
-Run 'effet-oxcaml-init' once to create the 5.2.0+ox opam switch.
-Run 'effet-oxcaml-test-shipped' after setup to test shipped packages only.
-PASS effet_resource_portable_probe

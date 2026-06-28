@@ -1,5 +1,0 @@
-(dirs eta_research oxcaml_research deferred_pubsub_research utop_research evidence)
-
-(executable
- (name bench_body_stream)
- (libraries eta_http eio_main))

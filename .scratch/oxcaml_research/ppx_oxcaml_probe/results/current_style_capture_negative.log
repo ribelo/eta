@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/ppx_oxcaml_probe/current_style_capture_negative.ml", line 18, characters 49-55:
-18 |   Effect.thunk "auth.current_user" (fun _env -> !leaked)
-                                                      ^^^^^^
-Error: This value is "contended"
-         because it is used inside the function at file "scratch/oxcaml_research/ppx_oxcaml_probe/current_style_capture_negative.ml", line 18, characters 35-56
-         which is expected to be "portable".
-       However, the highlighted expression is expected to be "uncontended".

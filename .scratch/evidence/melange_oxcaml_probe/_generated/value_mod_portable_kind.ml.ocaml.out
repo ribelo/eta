@@ -1,4 +1,0 @@
-File "/home/ribelo/projects/ribelo/ocaml/Eta/scratch/evidence/melange_oxcaml_probe/_generated/value_mod_portable_kind.ml", line 1, characters 9-10:
-1 | type ('a : value mod portable) t = Wrap of 'a
-             ^
-Error: Syntax error

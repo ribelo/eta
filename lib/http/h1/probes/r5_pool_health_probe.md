@@ -1,5 +1,8 @@
 # R5 Pool Health Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Can eta-http safely reuse idle HTTP/1.1 connections without sending

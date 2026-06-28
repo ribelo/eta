@@ -119,7 +119,7 @@ Current counts from the latest edge-readiness pass:
 | `http-testsuite` CVE/adversarial | PASS 27, FAIL 0, SKIP 0 |
 | `http-testsuite` HTTP bench | 30 iterations across 6 scenario/client groups |
 
-Rerunnable research evidence lives under `.scratch/eta_http_research/`:
+Durable HTTP research evidence lives under `docs/research/evidence/eta_http_research/`:
 
 - `h_q4a_interop_matrix/`: scripted curl/nghttp2/nghttpd/nginx/Caddy interop
   matrix.

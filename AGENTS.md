@@ -14,9 +14,11 @@ publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
 `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout. Research
-experiments live under `.scratch/`; keep `.scratch/` out of the main Dune
-workspace and out of the published library unless an experiment is deliberately
-promoted into real project code under `lib/`, `test/`, or `tools/`.
+experiments may live under local `.scratch/`, which is ignored by git. Keep
+`.scratch/` out of the main Dune workspace and out of the published library
+unless an experiment is deliberately promoted into real project code under
+`lib/`, `test/`, or `tools/`. Durable research conclusions belong under
+`docs/research/` or package-local ADRs, not in tracked scratch files.
 
 If scratch code needs Dune, make `.scratch/` a separate Dune project and build
 specific experiments explicitly, for example `dune build --root .scratch

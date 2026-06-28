@@ -1,5 +1,8 @@
 # R6 h1 Body Release Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Does the eta-http h1 pool release checked-out connections exactly when the

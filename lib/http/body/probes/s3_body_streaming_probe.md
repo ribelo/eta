@@ -1,5 +1,8 @@
 # S3 Body Streaming Foundation Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Question: can eta-http add S3 body primitives without introducing `digestif`,
 while keeping chunked bodies, gzip transduction, and release semantics visible
 through the public body stream surface?

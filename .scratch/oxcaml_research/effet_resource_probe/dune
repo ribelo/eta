@@ -1,4 +1,0 @@
-(executable
- (name effet_resource_portable_probe)
- (enabled_if (= %{env:EFFET_OXCAML_RESEARCH=false} true))
- (libraries base effet eio_main portable parallel parallel.scheduler))

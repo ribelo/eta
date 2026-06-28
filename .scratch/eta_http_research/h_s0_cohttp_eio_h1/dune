@@ -1,4 +1,0 @@
-(executable
- (name h1_matrix)
- (libraries cohttp-eio eio eio.unix eio_main uri))
-

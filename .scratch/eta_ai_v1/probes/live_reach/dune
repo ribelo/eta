@@ -1,3 +1,0 @@
-(executable
- (name live_reach)
- (libraries eta ai ai_openai ai_anthropic ai_openai_compat ai_openrouter http eio_main))

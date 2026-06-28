@@ -1,4 +1,0 @@
-span.100 wall_ns 101805 minor_words 0 major_words 0
-span.1000 wall_ns 902891 minor_words 0 major_words 0
-log.100 wall_ns 42915 minor_words 0 major_words 0
-metric.100 wall_ns 11921 minor_words 0 major_words 0

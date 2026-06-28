@@ -142,11 +142,11 @@ inside AI spans. Low-level HTTP tracing can be an explicit caller option later.
 
 ## Evidence
 
-- scratch/eta_ai_v1/probes/provider_diff/
-- scratch/eta_ai_v1/probes/streaming_sse/
-- scratch/eta_ai_v1/probes/schema/
-- scratch/eta_ai_v1/probes/tokenizer/
-- scratch/eta_ai_v1/probes/telemetry/
+- docs/research/evidence/eta_ai_v1/probes/provider_diff/
+- docs/research/evidence/eta_ai_v1/probes/streaming_sse/
+- docs/research/evidence/eta_ai_v1/probes/schema/
+- docs/research/evidence/eta_ai_v1/probes/tokenizer/
+- docs/research/evidence/eta_ai_v1/probes/telemetry/
 - docs/research/journal.md entries V-AI-A1 through V-AI-A5
 
 ## Open Risks

@@ -1,4 +1,0 @@
-neg_error_row.err lines=20 bytes=1038
-neg_missing_env.err lines=35 bytes=1979
-neg_supervisor_escape.err lines=11 bytes=519
-neg_value_restriction.err lines=0 bytes=0

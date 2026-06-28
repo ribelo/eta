@@ -67,7 +67,7 @@ Unsupported instead of silently dropping the operation.
 
 ## Evidence
 
-- scratch/eta_ai_v1/probes/provider_diff/verdict.md
+- docs/research/evidence/eta_ai_v1/probes/provider_diff/verdict.md
 - docs/research/objectives/eta-ai-shape-decision.md
 - test/ai/core/test_eta_ai.ml
 

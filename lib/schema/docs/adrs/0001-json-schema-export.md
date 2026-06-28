@@ -72,6 +72,6 @@ Negative:
 
 ## References
 
-- scratch/eta_ai_v1/probes/schema/
+- docs/research/evidence/eta_ai_v1/probes/schema/
 - lib/schema/README.md
 - lib/schema/eta_schema.mli

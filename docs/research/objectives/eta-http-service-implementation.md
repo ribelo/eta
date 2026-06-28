@@ -6,9 +6,8 @@ Status: ready for implementation.
 
 Implement Eta's HTTP service layer for building small HTTP microservices, based
 on the accepted research conclusion in `docs/research/eta-http-service-api.md`.
-The research artifacts are available under
-`.scratch/eta_http_service_api/evidence_http_service/`; read them before coding.
-Do not rediscover the API from scratch.
+Read that promoted summary before coding. Do not rediscover the API from
+scratch.
 
 The deliverable is two optional Eta packages:
 
@@ -170,6 +169,6 @@ The objective is complete only when:
   helpers are implemented;
 - Eta tests prove the new behavior;
 - `inn` is migrated to the new API and its tests pass;
-- the evidence remains under `.scratch/eta_http_service_api/`;
+- the accepted evidence is summarized in `docs/research/eta-http-service-api.md`;
 - no root `eta` dependency grew;
 - no framework-owned application concepts were introduced.

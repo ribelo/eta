@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml", line 13, characters 14-15:
-13 |   | Pure v -> v
-                   ^
-Error: This value is "once"
-         because it is contained (via constructor "Pure") in the value at file "scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml", line 13, characters 4-10
-         which is "once".
-       However, the highlighted expression is expected to be "many".

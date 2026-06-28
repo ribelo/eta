@@ -1,4 +1,0 @@
-(library
- (name r_research)
- (wrapped true)
- (modules services r_a_explicit r_a_composite r_b_env_row r_c_functor r_d_native_handlers r_e_fcm))

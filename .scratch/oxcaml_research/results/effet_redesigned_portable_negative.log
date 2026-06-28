@@ -1,8 +1,0 @@
-File "scratch/oxcaml_research/fixtures/effet_redesigned_portable_negative.ml", line 19, characters 36-43:
-19 |     Thunk ("leak", fun _env -> incr counter; !counter)
-                                         ^^^^^^^
-Error: This value is "contended"
-         because it is used inside the function at file "scratch/oxcaml_research/fixtures/effet_redesigned_portable_negative.ml", line 19, characters 19-53
-         which is expected to be "portable"
-         because it is contained (via constructor "Thunk") (with some modality) in the value at file "scratch/oxcaml_research/fixtures/effet_redesigned_portable_negative.ml", line 19, characters 4-54.
-       However, the highlighted expression is expected to be "uncontended".

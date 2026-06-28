@@ -8,7 +8,7 @@ Accepted.
 
 Eta_stream is pull-shaped: streams are interpreted by `fold_stream`, and each
 consumer step asks the upstream for the next value. The original stream research
-contract in `.scratch/stream_research/STUB_stream.mli` recorded the same core
+contract in `docs/research/evidence/stream_research/STUB_stream.mli` recorded the same core
 shape: streams are pull-based, chunked, scoped by the surrounding Eta runtime,
 and use Eta's typed effect channels.
 
@@ -98,7 +98,7 @@ Negative:
 
 ## References
 
-- `.scratch/stream_research/STUB_stream.mli`
+- `docs/research/evidence/stream_research/STUB_stream.mli`
 - `lib/stream/eta_stream.ml`
 - `lib/stream/eta_stream.mli`
 - `.reference/effect-smol/packages/effect/src/Stream.ts`

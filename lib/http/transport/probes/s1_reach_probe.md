@@ -1,5 +1,8 @@
 # S1 Reach Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Can the public eta-http h1 client reach the same 13 endpoint classes that the

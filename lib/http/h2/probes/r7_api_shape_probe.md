@@ -1,5 +1,8 @@
 # R7 ocaml-h2 API Shape Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Can the pinned `ocaml-h2` API expose the Sans-IO pieces eta-http needs for

@@ -1,9 +1,0 @@
-File "scratch/oxcaml_research/recovery/r2_env_error/env_c_closed_object_negative.ml", line 27, characters 15-18:
-27 | let program : (env, error, int) Effect.t =
-                    ^^^
-Error: This type "env" should be an instance of type
-         "('a : value mod portable contended)"
-       The kind of env is value mod global many non_float
-         because it's the type of an object.
-       But the kind of env must be a subkind of value mod portable contended
-         because of the definition of t at file "scratch/oxcaml_research/recovery/r2_env_error/env_c_closed_object_negative.ml", lines 11-12, characters 2-69.

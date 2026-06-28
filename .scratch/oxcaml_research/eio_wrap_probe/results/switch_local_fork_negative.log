@@ -1,5 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/eio_wrap_probe/switch_local_fork_negative.ml", line 10, characters 20-22:
-10 |     Eio.Fiber.fork ~sw body
-                         ^^
-Error: This value is "local" to the parent region but is expected to be "global".

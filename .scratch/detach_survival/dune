@@ -1,8 +1,0 @@
-(library
- (name r_detach_survival)
- (modules branch_a_delete_public branch_b_hook))
-
-(executable
- (name runtime_smoke)
- (modules runtime_smoke)
- (libraries r_detach_survival))

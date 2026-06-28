@@ -1,4 +1,0 @@
-(executable
- (name timeout_choice)
- (modules timeout_choice)
- (libraries eta eio eio_main unix))

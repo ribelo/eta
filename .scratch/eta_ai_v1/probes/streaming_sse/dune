@@ -1,3 +1,0 @@
-(executable
- (name sse_probe)
- (libraries eta http stream yojson eio_main unix))

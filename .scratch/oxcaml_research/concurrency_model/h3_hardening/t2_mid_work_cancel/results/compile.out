@@ -1,7 +1,0 @@
-== polling_positive ==
-polling_positive samples=7 poll_every_ast_nodes=4096 max_polls=60 p95_cancel_latency_us=5
-PASS polling_positive
-== no_poll_negative ==
-detected_no_poll_ignores_cancel iterations=900000 checksum=774327479
-PASS no_poll_negative
-summary: pass=2 fail=0

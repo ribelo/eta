@@ -1,1 +1,0 @@
-candidate=B polling_aware_thunk explicit_poll=true samples=5 max_deadline_to_exit_us_4096=5 max_deadline_to_exit_us_1024=1 uncancelled_runtime_us_4096=15504 uncancelled_runtime_us_1024=15430 checksum_delta=876264066

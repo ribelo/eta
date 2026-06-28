@@ -1,8 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/cancel_capture_negative.ml", line 16, characters 21-37:
-16 |            (fun _ -> Eio.Cancel.check cancel)
-                          ^^^^^^^^^^^^^^^^
-Error: The value "Eio.Cancel.check" is "nonportable"
-       but is expected to be "shareable"
-         because it is used inside the function at file "scratch/oxcaml_research/concurrency_model/h3_hardening/t8_no_eio_leakage/cancel_capture_negative.ml", lines 14-17, characters 48-66
-         which is expected to be "shareable".

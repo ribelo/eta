@@ -1,4 +1,0 @@
-(executables
- (names same_domain_thunk blocking_pool island_pool)
- (libraries blocking_research_common blocking_research_pool effet eio eio.unix eio_main unix threads))
-

@@ -5,7 +5,7 @@
 Proposed. Supersedes the research verdict in `docs/research/journal.md`
 `effet-stream design — Stream / Sink / Channel` (V-S1, V-S6) based on the
 executable evidence in
-`.scratch/evidence/stream-core-reopen/verdict.md`.
+`docs/research/evidence/stream-core-reopen/verdict.md`.
 
 This ADR records the decision. Implementation is a separate follow-up
 objective; this pass ships research only.
@@ -35,7 +35,7 @@ Two facts have changed since:
    InErr, InDone, Env`). In Eta-shaped OCaml the count is **5**: Eta has one
    typed-error row so `OutErr`/`InErr` collapse to one `'err`, and `Env` is
    absorbed into the embedded `('a,'err) Effect.t`. Call sites infer with zero
-   annotations (`.scratch/evidence/stream-core-reopen/d_type_burden.ml`).
+   annotations (`docs/research/evidence/stream-core-reopen/d_type_burden.ml`).
 
 The current shape provably **cannot** express a streaming transducer: a
 `split_lines` via `flat_map`+mutable-ref drops the trailing partial line (no
@@ -132,10 +132,10 @@ Research verdict only in this pass. A follow-up objective should:
 
 ## References
 
-- `.scratch/evidence/stream-core-reopen/README.md`
-- `.scratch/evidence/stream-core-reopen/verdict.md`
-- `.scratch/evidence/stream-core-reopen/candidates.md`
-- `.scratch/evidence/stream-core-reopen/{a_current_shape,b_channel_transducer,c_pull_core,d_type_burden,neg_error_row}.ml`
+- `docs/research/evidence/stream-core-reopen/README.md`
+- `docs/research/evidence/stream-core-reopen/verdict.md`
+- `docs/research/evidence/stream-core-reopen/candidates.md`
+- `docs/research/evidence/stream-core-reopen/{a_current_shape,b_channel_transducer,c_pull_core,d_type_burden,neg_error_row}.ml`
 - `lib/http/body/stream.mli`, `lib/http/body/transducer.{ml,mli}`
 - `lib/stream/docs/adrs/0001-effect-reader-stream.md`
 - `docs/research/journal.md`, section `effet-stream design — Stream / Sink / Channel` (V-S1..V-S10)

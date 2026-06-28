@@ -93,8 +93,8 @@ policy for provider eta-http request subtrees.
 
 ## Evidence
 
-- scratch/eta_ai_v1/probes/telemetry/attribute_set.md
-- scratch/eta_ai_v1/probes/telemetry/verdict.md
+- docs/research/evidence/eta_ai_v1/probes/telemetry/attribute_set.md
+- docs/research/evidence/eta_ai_v1/probes/telemetry/verdict.md
 - test/ai/core/test_eta_ai.ml
 - lib/ai/audit/dep_usage.md
 - lib/ai/audit/eta_escapes.md

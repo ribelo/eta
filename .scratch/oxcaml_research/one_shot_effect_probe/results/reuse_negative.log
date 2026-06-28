@@ -1,9 +1,0 @@
-File "scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml", line 22, characters 14-21:
-22 |   ignore (run program ())
-                   ^^^^^^^
-Error: This value is used here,
-       but it is defined as once and has already been used at:
-File "scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml", line 21, characters 14-21:
-21 |   ignore (run program ());
-                   ^^^^^^^
-  

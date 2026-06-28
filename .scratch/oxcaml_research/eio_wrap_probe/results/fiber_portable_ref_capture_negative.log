@@ -1,8 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/eio_wrap_probe/fiber_portable_ref_capture_negative.ml", line 20, characters 23-30:
-20 |         (fun _ -> incr counter)
-                            ^^^^^^^
-Error: This value is "contended"
-         because it is used inside the function at file "scratch/oxcaml_research/eio_wrap_probe/fiber_portable_ref_capture_negative.ml", line 20, characters 8-31
-         which is expected to be "portable".
-       However, the highlighted expression is expected to be "uncontended".

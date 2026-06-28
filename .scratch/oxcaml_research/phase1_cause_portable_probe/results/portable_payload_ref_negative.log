@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/phase1_cause_portable_probe/portable_payload_ref_negative.ml", line 4, characters 36-56:
-4 | let bad = Effet.Cause.Portable.Fail (fun () -> !counter)
-                                        ^^^^^^^^^^^^^^^^^^^^
-Error: 
-       The kind of 'a -> 'b is value mod aliased immutable non_float
-         because it's a function type.
-       But the kind of 'a -> 'b must be a subkind of value mod portable.

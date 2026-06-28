@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/phase2_once_finalizer_probe/consuming_run_once_acquire_negative.ml", line 12, characters 18-23:
-12 |   | Pure value -> value
-                       ^^^^^
-Error: This value is "once"
-         because it is contained (via constructor "Pure") in the value at file "scratch/oxcaml_research/phase2_once_finalizer_probe/consuming_run_once_acquire_negative.ml", line 12, characters 4-14
-         which is "once".
-       However, the highlighted expression is expected to be "many".

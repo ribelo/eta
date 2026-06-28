@@ -1,9 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 61-73:
-22 |     Effect.Thunk ("bad-eio-capture", fun () -> int_of_float (Eio.Time.now clock))
-                                                                  ^^^^^^^^^^^^
-Error: The value "Eio.Time.now" is "nonportable"
-       but is expected to be "portable"
-         because it is used inside the function at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 37-80
-         which is expected to be "portable"
-         because it is contained (via constructor "Thunk") (with some modality) in the value at file "scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml", line 22, characters 4-81.

@@ -1,2 +1,0 @@
-(executable (name operator) (modules operator serve) (modules_without_implementation serve) (libraries eta eta_http eta_http_eio eta_eio eio_main))
-(executable (name operator_socket) (modules operator_socket) (libraries eta eta_http eta_http_eio eta_eio eio_main))

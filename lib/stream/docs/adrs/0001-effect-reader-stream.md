@@ -90,7 +90,7 @@ Negative:
 
 ## References
 
-- scratch/eta_ai_v1/probes/streaming_sse/
-- scratch/eta_ai_v1/probes/streaming_sse/verdict.md
+- docs/research/evidence/eta_ai_v1/probes/streaming_sse/
+- docs/research/evidence/eta_ai_v1/probes/streaming_sse/verdict.md
 - lib/http/body/stream.mli
 - lib/stream/eta_stream.mli

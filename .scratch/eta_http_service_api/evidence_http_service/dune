@@ -1,4 +1,0 @@
-; Buildable evidence lab for the eta_http_service API research (P1/P2/P3).
-; NOT part of any eta*.install package and NOT a (test ...), so it stays out
-; of @install and dune runtest. It compiles against the in-repo lib/ so
-; evidence reflects the current checkout, not the stale opam-switch pin.

@@ -9,9 +9,7 @@ _opam/
 backlog/
 .objectives/
 .review/
-.scratch/h2-0.13.0/
-.scratch/opam-pins/
-.scratch/**/journal.md
+.scratch/
 /journal.md
 /OBJECTIVE.md
 /objective.md
@@ -36,8 +34,6 @@ autoresearch.sh
 autoresearch.checks.sh
 autoresearch.ideas.md
 autoresearch.jsonl
-.scratch/hpack_ox/
-.scratch/h2_ox/
 
 # Local automation state
 .auto/

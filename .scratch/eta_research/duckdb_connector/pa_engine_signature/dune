@@ -1,5 +1,0 @@
-(library
- (name pa_engine_signature)
- (modules engine sqlite_engine)
- (modules_without_implementation engine)
- (libraries eta eta-sql))

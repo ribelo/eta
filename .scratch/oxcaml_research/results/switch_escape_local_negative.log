@@ -1,8 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/fixtures/switch_escape_local_negative.ml", line 16, characters 39-41:
-16 |   with_scope (fun sw -> leaked := Some sw);
-                                            ^^
-Error: This value is "local" to the parent region
-       but is expected to be "global"
-         because it is contained (via constructor "Some") in the value at file "scratch/oxcaml_research/fixtures/switch_escape_local_negative.ml", line 16, characters 34-41
-         which is expected to be "global".

@@ -1,4 +1,0 @@
-(executables
- (names direct_blocking_eio_freeze eio_run_in_systhread_smoke eio_run_in_systhread_stress)
- (libraries blocking_research_common blocking_research_c_stubs eio eio.unix eio_main unix))
-

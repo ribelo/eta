@@ -1,7 +1,0 @@
-attack,samples,first_live_words,last_live_words,first_rss_kb,last_rss_kb,first_fd,last_fd,first_fibers,last_fibers,error_class
-headers_rst_every_stream,30,0,0,6440,6796,4,4,0,0,stream_admission_rejected
-goaway_mid_flight,30,0,0,6444,6796,4,4,16,0,connection_closed
-ping_flood,30,0,0,6448,6796,4,4,0,0,connection_closed
-header_churn,30,0,0,6448,6800,4,4,0,0,response_header_timeout
-stream_id_jumps,30,0,0,6452,6800,4,4,0,0,stream_admission_rejected
-rst_rate_exceeded,30,0,0,6452,6800,4,4,0,0,rst_rate_exceeded

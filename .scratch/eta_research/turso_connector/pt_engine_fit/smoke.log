@@ -1,7 +1,0 @@
-=== P-Turso-1 ENGINE fit smoke ===
-database=/tmp/nix-shell.eNjtSG/eta_turso_pt_engine_fit_266650.db
-engine_signature=compiled module constraint Engine.S
-column_int_strategy=sqlite3_column_int64 plus OCaml-side cast if needed
-insert_step_has_row=false
-select_has_row=true id=1 name=turso n=42
-verdict=Confirmed

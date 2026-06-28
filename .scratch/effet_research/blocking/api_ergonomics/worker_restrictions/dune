@@ -1,4 +1,0 @@
-(executables
- (names worker_calls_eio_stream_add worker_calls_runtime_run worker_calls_nested_blocking worker_resolves_parent_promise)
- (libraries blocking_research_common blocking_research_pool effet eio eio.unix eio_main unix threads))
-

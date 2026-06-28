@@ -1,7 +1,0 @@
-ok openai-openapi
-ok anthropic-messages
-eta_schema_constructors=ok
-eta_schema_tests=ok
-eta_schema_json_schema_export=missing
-eta_schema_json_schema_vocab=missing
-provider_schema_docs=ok

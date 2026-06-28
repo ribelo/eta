@@ -1,8 +1,0 @@
-ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
-File "scratch/oxcaml_research/portable_islands/oxcaml_callback_island/raw_cause_capture_negative.ml", line 18, characters 43-46:
-18 | let () = ignore (Island.map_pair (fun _ -> raw) 1 2)
-                                                ^^^
-Error: The value "raw" is "nonportable"
-       but is expected to be "portable"
-         because it is used inside the function at file "scratch/oxcaml_research/portable_islands/oxcaml_callback_island/raw_cause_capture_negative.ml", line 18, characters 33-47
-         which is expected to be "portable".

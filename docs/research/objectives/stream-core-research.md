@@ -41,9 +41,9 @@ Read and explicitly supersede or reaffirm:
 
 - `docs/research/journal.md`, section `effet-stream design - Stream / Sink / Channel`
   around V-S1..V-S10.
-- `.scratch/stream_research/README.md`
-- `.scratch/stream_research/STUB_stream.mli`
-- `.scratch/stream_research/BACKLOG.md`
+- `docs/research/evidence/stream_research/README.md`
+- `docs/research/evidence/stream_research/STUB_stream.mli`
+- `docs/research/evidence/stream_research/BACKLOG.md`
 - current `lib/stream/eta_stream.mli`
 - current `lib/stream/eta_stream.ml`
 - `lib/stream/README.md`
@@ -66,7 +66,7 @@ unfamiliar, more ZIO-like, or broader than the current design.
 Create a bounded lab under:
 
 ```text
-.scratch/evidence/stream-core-reopen/
+docs/research/evidence/stream-core-reopen/
 ```
 
 At minimum include:
@@ -131,7 +131,7 @@ Answer these with code, not prose:
 
 End with:
 
-- `.scratch/evidence/stream-core-reopen/verdict.md`
+- `docs/research/evidence/stream-core-reopen/verdict.md`
 - a concise docs candidate, preferably
   `lib/stream/docs/adrs/0003-stream-core-shape.md`, if the verdict is clear
   enough to promote;

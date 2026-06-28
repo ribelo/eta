@@ -1,7 +1,0 @@
-File "scratch/oxcaml_research/effet_portable_probe/effet_real_t_portable_negative.ml", line 25, characters 24-31:
-25 |               (fun _ -> program)
-                             ^^^^^^^
-Error: The value "program" is "nonportable"
-       but is expected to be "shareable"
-         because it is used inside the function at file "scratch/oxcaml_research/effet_portable_probe/effet_real_t_portable_negative.ml", lines 21-28, characters 47-24
-         which is expected to be "shareable".

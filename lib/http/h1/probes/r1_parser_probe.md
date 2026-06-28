@@ -1,5 +1,8 @@
 # R1 h1 Response Parser Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 Hypothesis: a clean-room client-side HTTP/1.x response parser can keep parsed
 fields as spans into a caller-owned buffer and avoid string copies on the parse
 path.

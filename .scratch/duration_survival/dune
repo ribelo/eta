@@ -1,9 +1,0 @@
-(library
- (name duration_survival)
- (wrapped true)
- (modules duration_keep int_ms_branch))
-
-(executable
- (name runtime_smoke)
- (libraries duration_survival)
- (modules runtime_smoke))

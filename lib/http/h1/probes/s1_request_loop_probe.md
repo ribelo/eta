@@ -1,5 +1,8 @@
 # S1 h1 Request Loop Probe
 
+> Historical probe note: commands below record original local probe runs; maintained verification now lives in `test/`, `http-testsuite/`, and package Dune gates.
+
+
 ## Question
 
 Can eta-http perform a real HTTP/1.1 request over the pinned ADR 0002 TLS stack

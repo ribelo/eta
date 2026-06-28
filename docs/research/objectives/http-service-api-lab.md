@@ -31,9 +31,9 @@ Eta's design best, and what feels convenient and obvious to an Eta user.
 - Do not add Layer, Context, Tag, service locator, controller classes, ORM,
   template engine, session framework, asset pipeline, or admin framework.
 - No compatibility shims. If an API shape is wrong, reject it and document why.
-- Keep experiments in `.scratch/eta_http_service_api/` or another clearly
-  marked lab area unless a small production change is required to prove a
-  point.
+- Keep experiments in local `.scratch/eta_http_service_api/` or another clearly
+  marked local lab area unless a small production change is required to prove a
+  point. Promote durable conclusions to `docs/research/`.
 - If a public package is recommended, use the naming policy:
   `eta_http_service` opam package, `eta_http_service` public library,
   `Eta_http_service` top-level module.
@@ -235,7 +235,7 @@ Refresh the audit against this checkout.
 
 Deliverables:
 
-- `.scratch/eta_http_service_api/p0_inventory.md`
+- local `.scratch/eta_http_service_api/p0_inventory.md`
 - List what is already present.
 - List stale claims in `docs/porting-http-test-candidates.md`.
 - Record exact commands run and results.
@@ -256,7 +256,7 @@ Write 3 small services using only existing public APIs:
 3. middleware stack with request id, auth hook, access log, and per-route
    timeout or concurrency limit.
 
-They may live under `.scratch/eta_http_service_api/p1_baseline/`.
+They may live under local `.scratch/eta_http_service_api/p1_baseline/`.
 
 Measure:
 
@@ -285,10 +285,10 @@ Each candidate must include:
 
 Capture:
 
-- `.scratch/eta_http_service_api/p2_candidates/branch_a/`
-- `.scratch/eta_http_service_api/p2_candidates/branch_b/`
-- `.scratch/eta_http_service_api/p2_candidates/branch_c/`
-- `.scratch/eta_http_service_api/p2_candidates/matrix.md`
+- local `.scratch/eta_http_service_api/p2_candidates/branch_a/`
+- local `.scratch/eta_http_service_api/p2_candidates/branch_b/`
+- local `.scratch/eta_http_service_api/p2_candidates/branch_c/`
+- local `.scratch/eta_http_service_api/p2_candidates/matrix.md`
 
 ### P3: Edge Semantics
 

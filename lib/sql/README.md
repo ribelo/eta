@@ -30,7 +30,7 @@ so database work runs through `Eta_blocking` instead of pinning the Eio
 calling domain.
 
 The substrate decision is recorded in
-`.scratch/eta_research/sqlite_eta_effect/`:
+`docs/research/evidence/eta_research/sqlite_eta_effect/results.md`:
 
 - same-domain SQLite can starve Eio co-fibers under lock contention;
 - per-call `Eta_blocking.run` is within the preliminary floor budget versus a

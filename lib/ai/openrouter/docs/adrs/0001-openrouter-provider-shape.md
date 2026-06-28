@@ -54,12 +54,14 @@ Focused command:
     bash lib/ai/openrouter/audit/run.sh
     nix develop -c dune runtest lib/ai/openrouter --force
 
-Live canary:
+Historical live canary:
 
     nix develop -c dune exec ./scratch/eta_ai_v1/probes/live_reach/live_reach.exe -- openrouter
 
 The previous canary reached OpenRouter with openai/gpt-4o-mini through
-eta-http. Rerun it after the Responses fixture refresh before release.
+eta-http. The preserved verdict is
+`docs/research/evidence/eta_ai_v1/probes/live_reach/verdict.md`. Recreate the
+local probe before release if live canary coverage is needed.
 
 ## Consequences
 
