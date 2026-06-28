@@ -1,8 +1,7 @@
 # HTTP Test Backend Split
 
 `test/http_common` owns HTTP behavior that is independent of the concrete
-runtime backend and is instantiated by both `test/http_eio` and
-`test/http_lwt`.
+runtime backend and is instantiated by `test/http_eio`.
 
 Current shared coverage:
 

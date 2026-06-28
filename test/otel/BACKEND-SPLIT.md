@@ -1,9 +1,9 @@
 # Backend Split
 
 In-memory OTEL behavior now lives in `test/otel_common` and is instantiated by
-`test/otel_eio` and `test/otel_lwt`. That shared suite covers tracer span
-context, logger records/span IDs, metric aggregation, and OTLP JSON encoding
-that does not require a live Eio exporter.
+`test/otel_eio`. That shared suite covers tracer span context, logger
+records/span IDs, metric aggregation, and OTLP JSON encoding that does not
+require a live Eio exporter.
 
 `test/otel` remains Eio-specific for exporter integration. Its remaining tests
 construct `Eta_otel.create ~sw ~net ~clock`, start local TCP response servers,

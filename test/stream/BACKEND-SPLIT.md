@@ -1,8 +1,7 @@
 # Stream Test Backend Split
 
 `test/stream_common` owns Eta stream behavior that is independent of a
-concrete runtime backend and is instantiated by both `test/stream_eio` and
-`test/stream_lwt`.
+concrete runtime backend and is instantiated by `test/stream_eio`.
 
 Current shared coverage:
 

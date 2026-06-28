@@ -1,7 +1,7 @@
 # Eta Test Backend Split
 
 `test/test_common` owns runtime-neutral `eta_test` helper coverage and runs it
-through both shared runners:
+through the shared Eio runner:
 
 - `Eta_test.Expect` assertions for success, typed failures, defects, and
   interrupts.
@@ -15,7 +15,7 @@ through both shared runners:
 helpers expose `Eio.Switch.t`, `Eio.Promise.t`, `Eio.Fiber.yield`, and
 `Eta_eio.Runtime.create ~sleep` directly. Those tests now cover the Eio-shaped
 public helper surface, while the portable semantics above run through both
-runtime backends:
+the shared runner:
 
 - `Test_clock.adjust` wake ordering and cascading sleeps
 - `with_logger`, `with_tracer`, and `with_logger_and_tracer`
