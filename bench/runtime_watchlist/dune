@@ -2,6 +2,10 @@
  (name runtime_watchlist)
  (libraries eta_eio bench_lib eta eio_main))
 
+(alias
+ (name bench)
+ (deps runtime_watchlist.exe))
+
 (rule
  (alias watchlist-bench)
  (action

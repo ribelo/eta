@@ -20,6 +20,7 @@ Package-level optimization status is tracked separately in
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
 | HTTP server loop | `METRIC h1_*`, `METRIC h2_*` | In-process H1/H2 server loop throughput and allocation without socket/client noise. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
+| Runtime watchlist | `overhead.eta.*`, `realuse.retry.*` | Focused regression rows for direct-runtime bind, fail/catch, warm pure, and retry cost. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for native package directories tracked by `bench/compile/run_compile.sh`. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
 
@@ -53,6 +54,12 @@ Runtime-only Dune alias:
 
 ```sh
 nix develop -c dune build @bench
+```
+
+Focused runtime watchlist:
+
+```sh
+nix develop -c dune build @watchlist-bench
 ```
 
 Focused in-process HTTP server loop benchmark:

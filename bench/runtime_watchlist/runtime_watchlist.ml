@@ -12,9 +12,8 @@
      - pure.reused_rt minor_words MUST stay 0
 
    Composite score is normalized against the v2 ship baselines so each
-   contribution starts at 1.0. Lower is better. The autoresearch loop drives
-   this score downward while [autoresearch.checks.sh] enforces the hard
-   constraints. *)
+   contribution starts at 1.0. Lower is better. Use the @watchlist-bench alias
+   for a small focused run while optimizing these rows. *)
 
 open Eta
 

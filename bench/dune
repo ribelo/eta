@@ -25,7 +25,12 @@
   (alias ../lib/redacted/bench/bench)
   (alias ../lib/test/bench/bench)
   (alias ../lib/schema_test/bench/bench)
+  (alias ../bench/runtime_watchlist/bench)
   (alias ../lib/ppx/bench/bench)))
+
+(alias
+ (name watchlist-bench)
+ (deps (alias ../bench/runtime_watchlist/watchlist-bench)))
 
 (executable
  (name compare)
