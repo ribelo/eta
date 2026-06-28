@@ -60,6 +60,7 @@ depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
+| `eta_cache` | `Eta_cache` | effect-integrated keyed cache | — |
 | `eta_stream` | `Eta_stream` | pull streams, mailboxes, bounded queues | `eio`, `cstruct` |
 | `eta_redacted` | `Eta_redacted` | secret-wrapping types | — |
 | `eta_schema` | `Eta_schema` | lightweight schemas and JSON codecs | — |
@@ -69,9 +70,15 @@ depends only on `eta` (or on nothing, for the pure DSL/PPX packages).
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
-| `eta_http_h2` | `Eta_http_h2` | HTTP/2 protocol state machine | `bigstringaf`, `cstruct`, `angstrom`, `faraday` |
-| `eta_http` | `Eta_http` | backend-neutral HTTP client contract, URL/TLS policy, body streams, retry helpers | `eta_stream`, `eta_http_h2`, `cstruct`, `faraday`, `angstrom`, `yojson`, `decompress`, `bigstringaf`, `domain-name`, `ipaddr`, `base64`, `conf-pkg-config`, `conf-openssl` |
-| `eta_http_eio` | `Eta_http_eio` | Eio transport adapter: DNS, TCP, TLS, HTTP/1.1, HTTP/2, WebSocket | `eta_blocking`, `eta_eio`, `eta_http`, `eta_stream`, `eio`, `bigstringaf`, `cstruct`, `domain-name`, `ipaddr`, `faraday`, `angstrom`, `yojson` |
+| `eta_http` | `Eta_http` | backend-neutral HTTP model, client contract, URL/TLS policy, body streams, retry helpers | `yojson`, `domain-name`, `ipaddr`, `bigstringaf`, `decompress` |
+| `eta_http_h1` | `Eta_http_h1` | HTTP/1 parser/writer helpers | `eta_http` |
+| `eta_http_h2` | `Eta_http_h2` | HTTP/2 protocol state machine | `eta_http`, `bigstringaf`, `cstruct`, `angstrom`, `faraday` |
+| `eta_http_tls_openssl` | `Eta_http_tls_openssl` | OpenSSL TLS state-machine bindings | `cstruct`, `conf-pkg-config`, `conf-openssl` |
+| `eta_http_ws` | `Eta_http_ws` | WebSocket codec and handshake helpers | `base64` |
+| `eta_http_eio` | `Eta_http_eio` | Eio transport adapter: DNS, TCP, TLS, HTTP/1.1, HTTP/2, WebSocket | `eta_blocking`, `eta_eio`, `eta_http`, `eta_http_h1`, `eta_http_h2`, `eta_http_tls_openssl`, `eta_http_ws`, `eta_stream`, `eio`, `eio_main`, `bigstringaf`, `cstruct`, `domain-name`, `ipaddr`, `faraday`, `angstrom`, `yojson` |
+| `eta_http_service` | `Eta_http_service` | routing, extractors, JSON responses, middleware helpers | `eta_http`, `eta_router`, `yojson` |
+| `eta_http_service_eio` | `Eta_http_service_eio` | Eio serving helpers for eta-http-service | `eta_http`, `eta_http_eio`, `eta_http_service`, `eio` |
+| `eta_router` | `Eta_router` | zero-copy URL path router | — |
 
 `eta_http` is deliberately backend-neutral: it defines the shared HTTP model,
 client contract, protocol helpers, and TLS policy surface, but it cannot open a
@@ -100,6 +107,7 @@ where supported.
 | `eta_ai` | `Eta_ai` | provider-agnostic chat/streaming vocabulary, SSE parser, telemetry wrappers | `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openai_codec` | `Eta_ai_openai_codec` | shared OpenAI wire codecs | `eta_ai`, `base64` |
 | `eta_ai_openai` | `Eta_ai_openai` | OpenAI Responses/Chat Completions provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
+| `eta_ai_openai_realtime_eio` | `Eta_ai_openai_realtime_eio` | Eio WebSocket adapter for OpenAI Realtime | `eta_ai`, `eta_ai_openai`, `eta_http`, `eta_http_eio`, `eta_redacted`, `eta_stream`, `eio` |
 | `eta_ai_anthropic` | `Eta_ai_anthropic` | Anthropic Messages provider | `eta_ai`, `eta_redacted`, `eta_http`, `yojson` |
 | `eta_ai_openrouter` | `Eta_ai_openrouter` | OpenRouter provider | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `base64`, `yojson` |
 | `eta_ai_openai_compat` | `Eta_ai_openai_compat` | OpenAI-compatible adapter (Together, Groq, Fireworks, ...) | `eta_ai`, `eta_ai_openai_codec`, `eta_redacted`, `eta_http`, `yojson` |
@@ -121,6 +129,7 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 
 | opam package | OCaml module | what it adds | extra deps |
 | --- | --- | --- | --- |
+| `eta_linux_input` | `Eta_linux_input` | Linux evdev and uinput helpers | `eta_blocking` |
 | `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_eio`, `eio`, `eio_main`, `alcotest` |
 | `ppx_eta` | `Ppx_eta` | syntax helpers and SQL table declaration sugar | `ppxlib` |
 
@@ -132,6 +141,7 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | `eta_js` | `Eta_js` | js_of_ocaml facade | `eta_jsoo`, `js_of_ocaml` |
 | `eta_js_stream` | `Eta_js_stream` | pull streams for js_of_ocaml targets | `eta_js` |
 | `eta_js_test` | `Eta_js_test` | test helpers for `eta_js` | `eta_js`, `js_of_ocaml` |
+| `eta_http_js` | `Eta_http_js` | Fetch client adapter for eta-http | `eta_http`, `eta_jsoo`, `js_of_ocaml` |
 
 > Footgun: the JS packages are disabled in the `5.2.0+ox` switch used by the
 > default Nix/OxCaml shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build

@@ -550,13 +550,14 @@ dune runtest --force
 
 Footguns:
 
-- `dune build` without an alias also builds tests, benchmarks, and research
-  suites. Use `dune build @install` when you only need installable packages.
+- `dune build` without an alias also builds tests, examples, and benchmark
+  executables. Use `dune build @install` when you only need installable
+  packages.
 - `nix develop .#mainline` is an upstream-OCaml comparison shell, not the
   primary development shell.
 - `test/http` is the low-level protocol test target. `test/http_eio` is the
   green Eio transport gate.
 
-The research journal is intentionally ignored by Git. It records the full
-project history and local design reasoning, but it is not part of the
-published package.
+The historical research journal lives at `docs/research/journal.md`. It records
+project history and local design reasoning, but it is not part of the published
+package.
