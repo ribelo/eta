@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/anthropic/audit/run.sh
-Last updated: 2026-06-20T16:49:09Z
+Last updated: 2026-06-28T09:12:26Z
 Current sites: 53
 
 Allowed production dependencies for eta-ai-anthropic:

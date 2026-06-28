@@ -1,7 +1,7 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/redacted/audit/run.sh
-Last updated: 2026-05-24T08:13:47Z
+Last updated: 2026-06-28T09:12:16Z
 Current sites: 0
 
 Sites where eta-redacted reaches into raw Eio fiber/switch/promise/mutex/condition

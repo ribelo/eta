@@ -1,7 +1,7 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/otel/audit/run.sh
-Last updated: 2026-06-15T22:49:12Z
+Last updated: 2026-06-28T09:12:16Z
 Current sites: 0
 
 ## What Is NOT An Escape

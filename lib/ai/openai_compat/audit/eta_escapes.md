@@ -1,7 +1,7 @@
 # Eta-Primitive-Escape Audit
 
 Run: bash lib/ai/openai_compat/audit/run.sh
-Last updated: 2026-06-20T16:49:09Z
+Last updated: 2026-06-28T09:12:26Z
 Current sites: 0
 
 Sites where eta-ai-openai-compat reaches into raw Eio fiber/switch/promise/

@@ -1,7 +1,7 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/openai_compat/audit/run.sh
-Last updated: 2026-06-20T16:49:09Z
+Last updated: 2026-06-28T09:12:26Z
 Current sites: 51
 
 Allowed production dependencies for eta-ai-openai-compat:
