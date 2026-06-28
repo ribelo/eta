@@ -11,7 +11,7 @@ movement across commits.
 
 Decision: use a small custom helper in `bench/lib/bench_lib.ml`.
 
-Evidence: `scratch/bench_research/a_custom_baseline.ml` builds the same kind
+Evidence: `.scratch/research/evidence/bench_research/a_custom_baseline.ml` builds the same kind
 of bind-chain workload as the runtime benches with `Unix.gettimeofday` and
 `Gc.quick_stat`. This matches the earlier stream research measurement style
 without adding Bechamel/Core_Bench to the package dependency story.
@@ -26,7 +26,7 @@ than a benchmark framework.
 Decision: compile-time measurements use `date +%s%3N` around Dune commands in
 `bench/compile/run_compile.sh`.
 
-Evidence: `scratch/bench_research/compile_time_candidates.sh` records the
+Evidence: `.scratch/research/evidence/bench_research/compile_time_candidates.sh` records the
 shell timer and treats `/usr/bin/time` as optional. The environment used for
 Effet-na0 did not reliably provide `/usr/bin/time`; wall-clock milliseconds are
 always available and are enough for trend tracking.
@@ -35,7 +35,7 @@ always available and are enough for trend tracking.
 
 Decision: commit JSON files under `bench/results/`.
 
-Evidence: `scratch/bench_research/history_storage_lab.md` compares committed
+Evidence: `.scratch/research/evidence/bench_research/history_storage_lab.md` compares committed
 JSON, Git notes, and external storage. Committed JSON wins for v0 because a
 fresh clone has the record and review sees the exact measurement shape.
 
@@ -159,8 +159,8 @@ Second quick baseline clean-build wall times: `effet` 418ms,
 
 `bench/fixtures/typecheck/` contains:
 
-- `deep_bind`, lifted from `scratch/typecheck_perf`.
-- `env_row`, lifted from `scratch/r_dx_research` and updated from the removed
+- `deep_bind`, lifted from `.scratch/research/evidence/typecheck_perf`.
+- `env_row`, lifted from `.scratch/research/evidence/r_dx_research` and updated from the removed
   `Effect.sync` spelling to `Effect.thunk`.
 - `schema_heavy`, a schema-heavy user fixture with record6, refinements,
   optional fields, and tagged-union rollup.
@@ -181,7 +181,7 @@ say whether Effet got faster or slower, but it cannot honestly answer "how much
 does Effet cost versus base OCaml?" because it lacks paired denominators.
 
 Decision: add a small paired-overhead layer, not a large new benchmark taxonomy.
-`scratch/bench_research/overhead_suite_research.md` narrows the follow-up to
+`.scratch/research/evidence/bench_research/overhead_suite_research.md` narrows the follow-up to
 one new runtime executable plus one ratio reporter:
 
 - pure interpreter floor: reused-runtime `Effect.pure` loop vs direct OCaml loop
@@ -197,7 +197,7 @@ the missing ingredient yet.
 
 ### V-Bench-Overhead-Numbers
 
-`scratch/bench_research/apples_to_apples.ml` applies the V-R10 lab rule to
+`.scratch/research/evidence/bench_research/apples_to_apples.ml` applies the V-R10 lab rule to
 the overhead question. It compares Effet against a minimal same-shape
 interpreter with `Pure`, `Fail`, `Bind`, and `Catch`, plus direct OCaml
 lower-bound controls.
@@ -205,11 +205,11 @@ lower-bound controls.
 Command:
 
 ```sh
-nix develop -c dune exec scratch/bench_research/apples_to_apples.exe
+nix develop -c dune exec .scratch/research/evidence/bench_research/apples_to_apples.exe
 ```
 
 Results are recorded in
-`scratch/bench_research/apples_to_apples_results.md`.
+`.scratch/research/evidence/bench_research/apples_to_apples_results.md`.
 
 Finding: the fair denominator is the mini interpreter, not the raw direct loop.
 Against that denominator, Effet costs about 14.7x for prebuilt 100k bind
@@ -1613,7 +1613,7 @@ Anything that fails it reduces to "Result with retries".
 | R-D handlers  | OCaml 5 native effects; `perform Get_db`    | `('err, 'a) t` |
 | R-E FCM       | First-class modules threaded as values      | `('err, 'a) t` |
 
-All six are implemented in `scratch/r_research/`, each ~50 LOC. The
+All six are implemented in `.scratch/research/evidence/r_research/`, each ~50 LOC. The
 A/B/C scenario is identical across files; only the dependency-wiring
 shape varies. Each variant's `module _ : A_SIG` ascription is a
 compiler-checked assertion of the inferred signature; if `dune build`
@@ -1623,7 +1623,7 @@ succeeds, the documented signature *is* the actual inferred type.
 
 Each candidate also has a sibling negative file that the compiler
 should reject (or, for R-D, accept-but-crash-at-runtime). Run by
-adding the negative module to `scratch/r_research/dune`, building,
+adding the negative module to `.scratch/research/evidence/r_research/dune`, building,
 capturing the error, then removing.
 
 | File | Predicted | Observed |
@@ -1709,22 +1709,22 @@ For future research entries that turn on what the compiler will or
 will not accept, **lab-first is the rule**: write the smallest
 self-contained module per candidate, ascribe the expected signature
 via `module _ : SIG`, run negative tests, then write prose. The lab
-files in `scratch/r_research/` should be retained as artifacts; they
+files in `.scratch/research/evidence/r_research/` should be retained as artifacts; they
 are the durable evidence behind V-R10.
 
 ### Artifacts
 
-- `scratch/r_research/services.ml` — shared Db/Log/clock/log/db types.
-- `scratch/r_research/r_a_explicit.ml` — labeled-arg shape.
-- `scratch/r_research/r_a_composite.ml` — composite-bag shape.
-- `scratch/r_research/r_b_env_row.ml` — env-channel shape (matches lib/).
-- `scratch/r_research/r_c_functor.ml` — functor shape.
-- `scratch/r_research/r_d_native_handlers.ml` — native-effects shape.
-- `scratch/r_research/r_e_fcm.ml` — FCM shape.
-- `scratch/r_research/neg_*.ml` — negative tests.
+- `.scratch/research/evidence/r_research/services.ml` — shared Db/Log/clock/log/db types.
+- `.scratch/research/evidence/r_research/r_a_explicit.ml` — labeled-arg shape.
+- `.scratch/research/evidence/r_research/r_a_composite.ml` — composite-bag shape.
+- `.scratch/research/evidence/r_research/r_b_env_row.ml` — env-channel shape (matches lib/).
+- `.scratch/research/evidence/r_research/r_c_functor.ml` — functor shape.
+- `.scratch/research/evidence/r_research/r_d_native_handlers.ml` — native-effects shape.
+- `.scratch/research/evidence/r_research/r_e_fcm.ml` — FCM shape.
+- `.scratch/research/evidence/r_research/neg_*.ml` — negative tests.
 
 Build all: `dune build scratch/`. The negative tests live outside
-`scratch/r_research/dune`'s module list by default; add the target
+`.scratch/research/evidence/r_research/dune`'s module list by default; add the target
 file's stem to the `(modules ...)` list to run a specific negative
 case and observe the documented error.
 
@@ -1766,7 +1766,7 @@ shape.
 
 ### Lab
 
-Self-contained, in `scratch/fiber_research/`:
+Self-contained, in `.scratch/research/evidence/fiber_research/`:
 
 - `f_a_collection.ml` — minimal Effect with `Par`/`All`/`For_each_par`.
 - `f_b_public_fiber.ml` — Fork/Await/Interrupt with public `fiber`.
@@ -1919,11 +1919,11 @@ Estimated implementation: ~80 LOC public + ~30 LOC internal helper +
 
 ### Artifacts
 
-- `scratch/fiber_research/f_a_collection.ml` — winner shape, surface tested.
-- `scratch/fiber_research/f_b_public_fiber.ml` — rejected; escape hazard demonstrated.
-- `scratch/fiber_research/f_c_hybrid.ml` — deferred; rank-2 escape prevention demonstrated.
-- `scratch/fiber_research/neg_b_escape_compiles.ml` — F-B negative (compiles, proving hazard).
-- `scratch/fiber_research/neg_c_escape.ml` — F-C negative (rejected, proving escape blocked).
+- `.scratch/research/evidence/fiber_research/f_a_collection.ml` — winner shape, surface tested.
+- `.scratch/research/evidence/fiber_research/f_b_public_fiber.ml` — rejected; escape hazard demonstrated.
+- `.scratch/research/evidence/fiber_research/f_c_hybrid.ml` — deferred; rank-2 escape prevention demonstrated.
+- `.scratch/research/evidence/fiber_research/neg_b_escape_compiles.ml` — F-B negative (compiles, proving hazard).
+- `.scratch/research/evidence/fiber_research/neg_c_escape.ml` — F-C negative (rejected, proving escape blocked).
 
 Time used: ~1h45m of the 2h budget.
 
@@ -2010,7 +2010,7 @@ spans for the choice to matter.
 
 ### Compile-time magic identifiers — what OCaml actually offers
 
-Verified in `scratch/observability_research/verify_magic.ml`:
+Verified in `.scratch/research/evidence/observability_research/verify_magic.ml`:
 
 - **`__POS__`** — quadruple `(file, line, col_start, col_end)`.
   Resolved at the *use site*. Available in upstream since OCaml 4.x.
@@ -2036,7 +2036,7 @@ substantially less verbose than passing strings.
 
 ### Lab construction
 
-`scratch/observability_research/`:
+`.scratch/research/evidence/observability_research/`:
 
 - `obs_lib.ml` — minimal `Effect.t` (Pure, Sync, Bind, Fail, Named,
   Annotate) + an in-memory `Tracer` modelling OTel spans (id, parent,
@@ -2054,7 +2054,7 @@ substantially less verbose than passing strings.
   vs `right_order` vs `mixed`. Tests interpreter robustness to
   decorator order.
 
-Run with `dune exec scratch/observability_research/lab_runner.exe`.
+Run with `dune exec .scratch/research/evidence/observability_research/lab_runner.exe`.
 
 ### Findings
 
@@ -2264,23 +2264,23 @@ Estimate: ~250 LOC across lib, ~80 LOC of tests. One focused session.
 
 ### Artifacts
 
-- `scratch/observability_research/verify_magic.ml` — empirical proof
+- `.scratch/research/evidence/observability_research/verify_magic.ml` — empirical proof
   that `__FUNCTION__` works and `[%call_pos]` does not.
-- `scratch/observability_research/obs_lib.ml` — minimal effect type +
+- `.scratch/research/evidence/observability_research/obs_lib.ml` — minimal effect type +
   in-memory tracer + span-emitting interpreter (~140 LOC).
-- `scratch/observability_research/surface_pipe.ml` — pipe-style
+- `.scratch/research/evidence/observability_research/surface_pipe.ml` — pipe-style
   surface tests.
-- `scratch/observability_research/surface_fn.ml` — fn-style surface
+- `.scratch/research/evidence/observability_research/surface_fn.ml` — fn-style surface
   tests.
-- `scratch/observability_research/surface_nested.ml` — parent/child
+- `.scratch/research/evidence/observability_research/surface_nested.ml` — parent/child
   span test.
-- `scratch/observability_research/surface_ordering.ml` — pipe-order
+- `.scratch/research/evidence/observability_research/surface_ordering.ml` — pipe-order
   robustness test (drives V-O3's pending-attr buffer).
-- `scratch/observability_research/lab_runner.ml` — runs all surfaces
+- `.scratch/research/evidence/observability_research/lab_runner.ml` — runs all surfaces
   and prints traces.
 
-Build all: `dune build scratch/observability_research/` and
-`dune exec scratch/observability_research/lab_runner.exe`.
+Build all: `dune build .scratch/research/evidence/observability_research/` and
+`dune exec .scratch/research/evidence/observability_research/lab_runner.exe`.
 
 Time used: ~1h45m of the 2h budget.
 
@@ -3361,7 +3361,7 @@ code.
 
 ### Curated fixture from Effect-TS Schema
 
-The fixture is `scratch/schema_research/fixture.ml`. It compresses the
+The fixture is `.scratch/research/evidence/schema_research/fixture.ml`. It compresses the
 8.3k-line `Schema.test.ts` and adjacent schema tests into 14 behaviours:
 
 | Behaviour | Effect-TS source |
@@ -3397,7 +3397,7 @@ against every surviving hypothesis.
 
 ### Hypotheses and lab candidates
 
-Artifacts live in `scratch/schema_research/`:
+Artifacts live in `.scratch/research/evidence/schema_research/`:
 
 | Hypothesis | File | Shape |
 | --- | --- | --- |
@@ -3411,8 +3411,8 @@ Artifacts live in `scratch/schema_research/`:
 Positive validation:
 
 ```text
-nix develop -c dune build scratch/schema_research/
-nix develop -c dune exec scratch/schema_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/schema_research/
+nix develop -c dune exec .scratch/research/evidence/schema_research/runtime_smoke.exe
 support counts: h0=0 h1=6 h2=8 h3=14 h4=10 h5=14
 ```
 
@@ -3430,12 +3430,12 @@ LOC / support count:
 ### Negative tests
 
 Each negative was run by temporarily adding its module stem to
-`scratch/schema_research/dune` and building `scratch/schema_research/`.
+`.scratch/research/evidence/schema_research/dune` and building `.scratch/research/evidence/schema_research/`.
 
 `neg_hs1_error_erasure.ml`:
 
 ```text
-File "scratch/schema_research/neg_hs1_error_erasure.ml", line 6, characters 2-54:
+File ".scratch/research/evidence/schema_research/neg_hs1_error_erasure.ml", line 6, characters 2-54:
 6 |   H_s1_decode.decode_person Fixture.person_bad_missing
       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: This expression has type
@@ -3451,7 +3451,7 @@ Finding: H-S1 preserves the typed error row. Decode failures are not erased.
 `neg_hs2_plain_brand.ml`:
 
 ```text
-File "scratch/schema_research/neg_hs2_plain_brand.ml", line 4, characters 43-50:
+File ".scratch/research/evidence/schema_research/neg_hs2_plain_brand.ml", line 4, characters 43-50:
 4 | let bad : H_s2_decode_validate.User_id.t = "u_123"
                                                ^^^^^^^
 Error: This constant has type string but an expression was expected of type
@@ -3467,7 +3467,7 @@ constructor behind a module signature.
 `neg_hs3_encode_direction.ml`:
 
 ```text
-File "scratch/schema_research/neg_hs3_encode_direction.ml", line 7, characters 4-9:
+File ".scratch/research/evidence/schema_research/neg_hs3_encode_direction.ml", line 7, characters 4-9:
 7 |     "1.5"
         ^^^^^
 Error: This constant has type string but an expression was expected of type
@@ -3481,7 +3481,7 @@ encoder accepts `float`, not the encoded string.
 `neg_hs5_missing_env.ml`:
 
 ```text
-File "scratch/schema_research/neg_hs5_missing_env.ml", lines 7-9, characters 2-26:
+File ".scratch/research/evidence/schema_research/neg_hs5_missing_env.ml", lines 7-9, characters 2-26:
 7 | ..H_s5_codec_record.Codec.decode
 8 |     (H_s5_codec_record.person_with_policy ())
 9 |     Fixture.person_ok_json
@@ -3630,20 +3630,20 @@ That adapter is not enough to justify a package by itself.
 
 ### Artifacts
 
-- `scratch/schema_research/dune`
-- `scratch/schema_research/README.md`
-- `scratch/schema_research/fixture.ml`
-- `scratch/schema_research/h_s0_skip.ml`
-- `scratch/schema_research/h_s1_decode.ml`
-- `scratch/schema_research/h_s2_decode_validate.ml`
-- `scratch/schema_research/h_s3_schema_gadt.ml`
-- `scratch/schema_research/h_s4_ppx_schema.ml`
-- `scratch/schema_research/h_s5_codec_record.ml`
-- `scratch/schema_research/runtime_smoke.ml`
-- `scratch/schema_research/neg_hs1_error_erasure.ml`
-- `scratch/schema_research/neg_hs2_plain_brand.ml`
-- `scratch/schema_research/neg_hs3_encode_direction.ml`
-- `scratch/schema_research/neg_hs5_missing_env.ml`
+- `.scratch/research/evidence/schema_research/dune`
+- `.scratch/research/evidence/schema_research/README.md`
+- `.scratch/research/evidence/schema_research/fixture.ml`
+- `.scratch/research/evidence/schema_research/h_s0_skip.ml`
+- `.scratch/research/evidence/schema_research/h_s1_decode.ml`
+- `.scratch/research/evidence/schema_research/h_s2_decode_validate.ml`
+- `.scratch/research/evidence/schema_research/h_s3_schema_gadt.ml`
+- `.scratch/research/evidence/schema_research/h_s4_ppx_schema.ml`
+- `.scratch/research/evidence/schema_research/h_s5_codec_record.ml`
+- `.scratch/research/evidence/schema_research/runtime_smoke.ml`
+- `.scratch/research/evidence/schema_research/neg_hs1_error_erasure.ml`
+- `.scratch/research/evidence/schema_research/neg_hs2_plain_brand.ml`
+- `.scratch/research/evidence/schema_research/neg_hs3_encode_direction.ml`
+- `.scratch/research/evidence/schema_research/neg_hs5_missing_env.ml`
 
 No `STUB_*.mli` or backlog epic was created because the recommendation is
 H-S0: no Effet package work now.
@@ -3678,7 +3678,7 @@ schema-heavy Effect applications?
 
 ### Wider fixture
 
-The new fixture is `scratch/schema_research/migration_fixture.ml`. It expands
+The new fixture is `.scratch/research/evidence/schema_research/migration_fixture.ml`. It expands
 the first-pass `person` fixture into a small schema-heavy app:
 
 - branded `user_id`, `email`, and `flag_key`;
@@ -3722,8 +3722,8 @@ The original H-S0..H-S5 split was too coarse. The useful axes are:
 Validation:
 
 ```text
-nix develop -c dune build scratch/schema_research/
-nix develop -c dune exec scratch/schema_research/migration_smoke.exe
+nix develop -c dune build .scratch/research/evidence/schema_research/
+nix develop -c dune exec .scratch/research/evidence/schema_research/migration_smoke.exe
 migration support counts: m_a=11 m_b=10 m_c=11
 ```
 
@@ -3743,7 +3743,7 @@ LOC:
 `neg_m_a_policy_env.ml`:
 
 ```text
-File "scratch/schema_research/neg_m_a_policy_env.ml", lines 7-8, characters 2-40:
+File ".scratch/research/evidence/schema_research/neg_m_a_policy_env.ml", lines 7-8, characters 2-40:
 7 | ..M_a_pure_schema_effect_policy.decode_config_with_policy
 8 |     Migration_fixture.sample_config_json
 Error: This expression has type
@@ -3763,7 +3763,7 @@ used.
 `neg_m_a_brand_forge.ml`:
 
 ```text
-File "scratch/schema_research/neg_m_a_brand_forge.ml", line 3, characters 38-47:
+File ".scratch/research/evidence/schema_research/neg_m_a_brand_forge.ml", line 3, characters 38-47:
 3 | let bad : Migration_fixture.user_id = "usr_123"
                                           ^^^^^^^^^
 Error: This constant has type string but an expression was expected of type
@@ -3778,7 +3778,7 @@ brands if the constructor is hidden behind a module boundary.
 `neg_m_b_value_required.ml`:
 
 ```text
-File "scratch/schema_research/neg_m_b_value_required.ml", line 5, characters 36-63:
+File ".scratch/research/evidence/schema_research/neg_m_b_value_required.ml", line 5, characters 36-63:
 5 |   M_b_env_codec_record.Codec.decode M_b_env_codec_record.config
                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: The value M_b_env_codec_record.config has type
@@ -3877,8 +3877,8 @@ than build Effet core around one external library.
 
 ### Contract and backlog
 
-The proposed public contract is `scratch/schema_research/STUB_schema.mli`.
-The implementation handoff is `scratch/schema_research/BACKLOG_SCHEMA.md`.
+The proposed public contract is `.scratch/research/evidence/schema_research/STUB_schema.mli`.
+The implementation handoff is `.scratch/research/evidence/schema_research/BACKLOG_SCHEMA.md`.
 
 The first implementation slice should build `effet-schema` around:
 
@@ -3894,16 +3894,16 @@ val decode_with_policy :
 
 ### Artifacts added
 
-- `scratch/schema_research/migration_fixture.ml`
-- `scratch/schema_research/m_a_pure_schema_effect_policy.ml`
-- `scratch/schema_research/m_b_env_codec_record.ml`
-- `scratch/schema_research/m_c_module_first.ml`
-- `scratch/schema_research/migration_smoke.ml`
-- `scratch/schema_research/neg_m_a_policy_env.ml`
-- `scratch/schema_research/neg_m_a_brand_forge.ml`
-- `scratch/schema_research/neg_m_b_value_required.ml`
-- `scratch/schema_research/STUB_schema.mli`
-- `scratch/schema_research/BACKLOG_SCHEMA.md`
+- `.scratch/research/evidence/schema_research/migration_fixture.ml`
+- `.scratch/research/evidence/schema_research/m_a_pure_schema_effect_policy.ml`
+- `.scratch/research/evidence/schema_research/m_b_env_codec_record.ml`
+- `.scratch/research/evidence/schema_research/m_c_module_first.ml`
+- `.scratch/research/evidence/schema_research/migration_smoke.ml`
+- `.scratch/research/evidence/schema_research/neg_m_a_policy_env.ml`
+- `.scratch/research/evidence/schema_research/neg_m_a_brand_forge.ml`
+- `.scratch/research/evidence/schema_research/neg_m_b_value_required.ml`
+- `.scratch/research/evidence/schema_research/STUB_schema.mli`
+- `.scratch/research/evidence/schema_research/BACKLOG_SCHEMA.md`
 
 ### Current recommendation
 
@@ -4059,7 +4059,7 @@ The required capability is:
 
 ### Lab artifacts
 
-The focused lab is `scratch/nominality_research/`.
+The focused lab is `.scratch/research/evidence/nominality_research/`.
 
 Positive candidates:
 
@@ -4073,8 +4073,8 @@ Positive candidates:
 Positive validation:
 
 ```text
-dune build scratch/nominality_research
-dune exec scratch/nominality_research/runtime_smoke.exe
+dune build .scratch/research/evidence/nominality_research
+dune exec .scratch/research/evidence/nominality_research/runtime_smoke.exe
 nominality scenarios passed
 ```
 
@@ -4086,7 +4086,7 @@ sites in the happy path.
 `neg_abstract_newtype_plain_string.ml`:
 
 ```text
-File "scratch/nominality_research/neg_abstract_newtype_plain_string.ml", line 4, characters 43-50:
+File ".scratch/research/evidence/nominality_research/neg_abstract_newtype_plain_string.ml", line 4, characters 43-50:
 4 | let bad : B_b_abstract_newtype.User_id.t = "usr_1"
                                                ^^^^^^^
 Error: This constant has type string but an expression was expected of type
@@ -4098,7 +4098,7 @@ Finding: an ordinary abstract module/newtype prevents raw string forgery.
 `neg_abstract_newtype_mix.ml`:
 
 ```text
-File "scratch/nominality_research/neg_abstract_newtype_mix.ml", line 6, characters 49-54:
+File ".scratch/research/evidence/nominality_research/neg_abstract_newtype_mix.ml", line 6, characters 49-54:
 6 |   | Ok email -> B_b_abstract_newtype.use_user_id email
                                                      ^^^^^
 Error: The value email has type B_b_abstract_newtype.Email.t
@@ -4111,7 +4111,7 @@ are backed by strings.
 `neg_witness_make_hidden.ml`:
 
 ```text
-File "scratch/nominality_research/neg_witness_make_hidden.ml", line 4, characters 10-42:
+File ".scratch/research/evidence/nominality_research/neg_witness_make_hidden.ml", line 4, characters 10-42:
 4 | let bad = B_c_witness_newtype.User_id.make "usr_1"
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: Unbound value B_c_witness_newtype.User_id.make
@@ -4124,7 +4124,7 @@ constructor. Users get `decode`, `schema`, `encode`, `value`, and
 `neg_private_abbrev_plain_string.ml`:
 
 ```text
-File "scratch/nominality_research/neg_private_abbrev_plain_string.ml", line 4, characters 41-48:
+File ".scratch/research/evidence/nominality_research/neg_private_abbrev_plain_string.ml", line 4, characters 41-48:
 4 | let bad : B_d_private_abbrev.User_id.t = "usr_1"
                                              ^^^^^^^
 Error: This constant has type string but an expression was expected of type
@@ -4137,7 +4137,7 @@ module while preserving cheap coercion from `t` to `string`.
 `neg_private_abbrev_mix.ml`:
 
 ```text
-File "scratch/nominality_research/neg_private_abbrev_mix.ml", line 6, characters 47-52:
+File ".scratch/research/evidence/nominality_research/neg_private_abbrev_mix.ml", line 6, characters 47-52:
 6 |   | Ok email -> B_d_private_abbrev.use_user_id email
                                                    ^^^^^
 Error: The value email has type B_d_private_abbrev.Email.t
@@ -4325,7 +4325,7 @@ failures and no place to encode restart/failure policy.
 
 ### Lab
 
-Artifacts live in `scratch/supervision_research/`.
+Artifacts live in `.scratch/research/evidence/supervision_research/`.
 
 | File | Purpose | Result |
 |---|---|---|
@@ -4340,8 +4340,8 @@ Artifacts live in `scratch/supervision_research/`.
 Positive validation:
 
 ~~~text
-nix develop -c dune build scratch/supervision_research
-nix develop -c dune exec scratch/supervision_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/supervision_research
+nix develop -c dune exec .scratch/research/evidence/supervision_research/runtime_smoke.exe
 ~~~
 
 Observed output:
@@ -4367,7 +4367,7 @@ supervision research smoke tests passed
 list. The compiler rejected the escape:
 
 ~~~text
-File "scratch/supervision_research/neg_d_handle_escape.ml", lines 14-16, characters 6-21:
+File ".scratch/research/evidence/supervision_research/neg_d_handle_escape.ml", lines 14-16, characters 6-21:
 14 | ......fun (type s) sup ->
 15 |         let** (child : (s, [> `Boom ], int) child) = start sup (s_pure 1) in
 16 |         s_pure child;
@@ -4382,7 +4382,7 @@ Error: This field value has type
 escape too:
 
 ~~~text
-File "scratch/supervision_research/neg_f_ambient_escape.ml", lines 13-15, characters 6-19:
+File ".scratch/research/evidence/supervision_research/neg_f_ambient_escape.ml", lines 13-15, characters 6-19:
 13 | ......fun (type s) () ->
 14 |         let* (child : (s, [> `Boom ], int) child) = start (pure 1) in
 15 |         pure child;
@@ -4592,7 +4592,7 @@ observable instead of silently swallowed.
 
 ### Lab
 
-Artifacts live in `scratch/detach_survival/`.
+Artifacts live in `.scratch/research/evidence/detach_survival/`.
 
 | File | Purpose | Result |
 |---|---|---|
@@ -4604,8 +4604,8 @@ Artifacts live in `scratch/detach_survival/`.
 Positive validation:
 
 ~~~text
-nix develop -c dune build scratch/detach_survival
-nix develop -c dune exec scratch/detach_survival/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/detach_survival
+nix develop -c dune exec .scratch/research/evidence/detach_survival/runtime_smoke.exe
 ~~~
 
 Observed output:
@@ -4622,7 +4622,7 @@ module list. The compiler rejected the attempted hidden constructor:
 
 ~~~text
 warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Effet' is dirty
-File "scratch/detach_survival/neg_a_hidden_constructor.ml", lines 16-22, characters 6-3:
+File ".scratch/research/evidence/detach_survival/neg_a_hidden_constructor.ml", lines 16-22, characters 6-3:
 16 | ......struct
 17 |   type ('env, 'err, 'a) t =
 18 |     | Pure : 'a -> (_, _, 'a) t
@@ -4639,9 +4639,9 @@ Error: Signature mismatch:
        is not included in
          type ('env, 'err, 'a) t = Pure : 'a -> ('b, 'c, 'a) t
        An extra constructor, Daemon, is provided in the first declaration.
-       File "scratch/detach_survival/neg_a_hidden_constructor.ml", line 14, characters 2-53:
+       File ".scratch/research/evidence/detach_survival/neg_a_hidden_constructor.ml", line 14, characters 2-53:
          Expected declaration
-       File "scratch/detach_survival/neg_a_hidden_constructor.ml", lines 17-19, characters 2-59:
+       File ".scratch/research/evidence/detach_survival/neg_a_hidden_constructor.ml", lines 17-19, characters 2-59:
          Actual declaration
 ~~~
 
@@ -4787,7 +4787,7 @@ finalizer failures.
 ### Goal
 
 Research Effet-6s5 for a 2h time budget. Build a lab under
-`scratch/cause_research/` comparing today's `Both` shape with a structured
+`.scratch/research/evidence/cause_research/` comparing today's `Both` shape with a structured
 algebra, run the same fixtures through both, verify the typed-failure boundary,
 and decide whether to keep `Both`, adopt the structured algebra, or reopen for
 more research.
@@ -4816,7 +4816,7 @@ that directly with variants.
 
 ### Lab
 
-Artifacts live in `scratch/cause_research/`.
+Artifacts live in `.scratch/research/evidence/cause_research/`.
 
 | File | Purpose | Result |
 |---|---|---|
@@ -4830,9 +4830,9 @@ Artifacts live in `scratch/cause_research/`.
 Validation commands:
 
 ~~~text
-nix develop -c dune build scratch/cause_research
-nix develop -c dune exec scratch/cause_research/current_runtime_probe.exe
-nix develop -c dune exec scratch/cause_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/cause_research
+nix develop -c dune exec .scratch/research/evidence/cause_research/current_runtime_probe.exe
+nix develop -c dune exec .scratch/research/evidence/cause_research/runtime_smoke.exe
 ~~~
 
 Observed live-runtime output:
@@ -5027,9 +5027,9 @@ Runtime behavior now covered by tests:
 Validation after implementation:
 
 ~~~text
-nix develop -c dune build scratch/cause_research
-nix develop -c dune exec scratch/cause_research/current_runtime_probe.exe
-nix develop -c dune exec scratch/cause_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/cause_research
+nix develop -c dune exec .scratch/research/evidence/cause_research/current_runtime_probe.exe
+nix develop -c dune exec .scratch/research/evidence/cause_research/runtime_smoke.exe
 nix develop -c dune runtest --force
 ~~~
 
@@ -5056,7 +5056,7 @@ Run a survival lab for Effect.provide with no time budget. Build three with-prov
 
 ### Lab
 
-Artifacts live in scratch/provide_survival/.
+Artifacts live in .scratch/research/evidence/provide_survival/.
 
 | Fixture | With provide | Without provide | Result |
 |---|---|---|---|
@@ -5069,8 +5069,8 @@ Artifacts live in scratch/provide_survival/.
 Validation:
 
 ~~~text
-nix develop -c dune build scratch/provide_survival
-nix develop -c dune exec scratch/provide_survival/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/provide_survival
+nix develop -c dune exec .scratch/research/evidence/provide_survival/runtime_smoke.exe
 ~~~
 
 Observed output:
@@ -5082,12 +5082,12 @@ provide survival smoke tests passed
 ### LOC comparison
 
 ~~~text
-  48 scratch/provide_survival/with_provide_mock_injection.ml
-  35 scratch/provide_survival/with_provide_sandbox.ml
-  28 scratch/provide_survival/with_provide_scoped_factory.ml
-  37 scratch/provide_survival/without_provide_mock_injection.ml
-  28 scratch/provide_survival/without_provide_sandbox.ml
-  27 scratch/provide_survival/without_provide_scoped_factory.ml
+  48 .scratch/research/evidence/provide_survival/with_provide_mock_injection.ml
+  35 .scratch/research/evidence/provide_survival/with_provide_sandbox.ml
+  28 .scratch/research/evidence/provide_survival/with_provide_scoped_factory.ml
+  37 .scratch/research/evidence/provide_survival/without_provide_mock_injection.ml
+  28 .scratch/research/evidence/provide_survival/without_provide_sandbox.ml
+  27 .scratch/research/evidence/provide_survival/without_provide_scoped_factory.ml
 ~~~
 
 Summary:
@@ -5126,7 +5126,7 @@ The without-provide shape makes service substitution ordinary function applicati
 neg_with_provide_missing_db.ml was temporarily added as an executable. The compiler rejected running a db-requiring child under an empty env:
 
 ~~~text
-File "scratch/provide_survival/neg_with_provide_missing_db.ml", line 10, characters 42-54:
+File ".scratch/research/evidence/provide_survival/neg_with_provide_missing_db.ml", line 10, characters 42-54:
 10 |   Services.run With_provide_sandbox.child (object end)
                                                ^^^^^^^^^^^^
 Error: This expression has type <  > but an expression was expected of type
@@ -5137,7 +5137,7 @@ Error: This expression has type <  > but an expression was expected of type
 neg_without_provide_missing_arg.ml was temporarily added instead. The compiler rejected treating a service-parameterized child function as an already-built effect:
 
 ~~~text
-File "scratch/provide_survival/neg_without_provide_missing_arg.ml", line 10, characters 2-31:
+File ".scratch/research/evidence/provide_survival/neg_without_provide_missing_arg.ml", line 10, characters 2-31:
 10 |   Without_provide_sandbox.child
        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: The value Without_provide_sandbox.child has type
@@ -5202,7 +5202,7 @@ The schema test helper previously interpreted Effect.Private.Provide in its tiny
 evaluator. That case is gone as well; schema effect tests continue to use the remaining
 pure/sync/map/bind/catch/tap_error subset.
 
-scratch/provide_survival was converted from a comparison lab into a post-deletion
+.scratch/research/evidence/provide_survival was converted from a comparison lab into a post-deletion
 survival proof. The with-provide candidate modules and the stale with-provide negative
 probe were removed with the API. The remaining modules compile the three recommended
 ordinary-OCaml replacements:
@@ -5214,8 +5214,8 @@ ordinary-OCaml replacements:
 Verification:
 
 ~~~text
-nix develop -c dune build scratch/provide_survival
-nix develop -c dune exec scratch/provide_survival/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/provide_survival
+nix develop -c dune exec .scratch/research/evidence/provide_survival/runtime_smoke.exe
 post-provide survival smoke tests passed
 
 nix develop -c dune runtest --force
@@ -5521,7 +5521,7 @@ The fixture deliberately uses common verb pressure in method names (query/get/ru
 
 ### Lab artifacts
 
-Artifacts live in scratch/r_dx_research/.
+Artifacts live in .scratch/research/evidence/r_dx_research/.
 
 - generate_fixture.ml
 - dx_common.ml
@@ -5539,9 +5539,9 @@ Artifacts live in scratch/r_dx_research/.
 Positive validation:
 
 ~~~text
-nix develop -c ocaml scratch/r_dx_research/generate_fixture.ml
-nix develop -c dune build scratch/r_dx_research
-nix develop -c dune exec scratch/r_dx_research/runtime_smoke.exe
+nix develop -c ocaml .scratch/research/evidence/r_dx_research/generate_fixture.ml
+nix develop -c dune build .scratch/research/evidence/r_dx_research
+nix develop -c dune exec .scratch/research/evidence/r_dx_research/runtime_smoke.exe
 r-dx smoke tests passed
 ~~~
 
@@ -5572,7 +5572,7 @@ LOC:
 
 ### Build-time measurements
 
-Single local run. The script removes only _build/default/scratch/r_dx_research, not the whole repo build cache.
+Single local run. The script removes only _build/default/.scratch/research/evidence/r_dx_research, not the whole repo build cache.
 
 | Measurement | ms |
 |---|---:|
@@ -5664,7 +5664,7 @@ Decision impact: module-level reusable env-row effects may need eta-expansion/th
 neg_env_missing_cap.ml omits billing_fetch from the boot env.
 
 ~~~text
-File "scratch/r_dx_research/neg_env_missing_cap.ml", line 36, characters 66-86:
+File ".scratch/research/evidence/r_dx_research/neg_env_missing_cap.ml", line 36, characters 66-86:
 36 | let _ : (int, string Cause.t) result = Dx_common.run_with_env env (Env_top.program ())
                                                                        ^^^^^^^^^^^^^^^^^^^^
 Error: This expression has type
@@ -5715,7 +5715,7 @@ Quality: correct missing method, poor pinpoint. The useful fact is at the bottom
 neg_args_missing_cap.ml omits the billing_fetch named argument.
 
 ~~~text
-File "scratch/r_dx_research/neg_args_missing_cap.ml", lines 6-35, characters 2-37:
+File ".scratch/research/evidence/r_dx_research/neg_args_missing_cap.ml", lines 6-35, characters 2-37:
  6 | ..Args_top.program
  7 |     ~user_query:services#user_query
  8 |     ~user_get:services#user_get
@@ -5741,7 +5741,7 @@ Quality: better. It names billing_fetch directly and reads like ordinary OCaml.
 neg_bag_shape_refactor.ml changes billing_fetch to string -> int.
 
 ~~~text
-File "scratch/r_dx_research/neg_bag_shape_refactor.ml", line 35, characters 24-32:
+File ".scratch/research/evidence/r_dx_research/neg_bag_shape_refactor.ml", line 35, characters 24-32:
 35 | let _ = Bag_top.program services
                              ^^^^^^^^
 Error: The value services has type
@@ -5770,7 +5770,7 @@ Quality: long, but precise. The final sentence is directly actionable.
 neg_env_collision.ml composes effects that all use common method names query/get with incompatible shapes.
 
 ~~~text
-File "scratch/r_dx_research/neg_env_collision.ml", line 8, characters 2-3:
+File ".scratch/research/evidence/r_dx_research/neg_env_collision.ml", line 8, characters 2-3:
 8 |   a |> Effect.bind (fun _ -> b)
       ^
 Error: The value a has type (< query : int -> 'a; .. >, 'b, 'a) Effect.t
@@ -5786,7 +5786,7 @@ Quality: good. Generic method-name collisions fail near the composition point wi
 
 ### Shape-refactor rebuild
 
-A temporary generated change modified billing_fetch from int -> int to string -> int in dx_common.ml and then built scratch/r_dx_research.
+A temporary generated change modified billing_fetch from int -> int to string -> int in dx_common.ml and then built .scratch/research/evidence/r_dx_research.
 
 ~~~text
 exit=1
@@ -5876,7 +5876,7 @@ Verify whether the current split still holds:
 
 ### Artifacts
 
-Lab: scratch/r_followup_research/
+Lab: .scratch/research/evidence/r_followup_research/
 
 - black_box.ml: black-box env-effect substitution fixture.
 - public_mli_styles.mli/ml: exported API shape comparisons.
@@ -5892,10 +5892,10 @@ Lab: scratch/r_followup_research/
 Positive build and smoke:
 
 ~~~text
-nix develop -c dune build scratch/r_followup_research
+nix develop -c dune build .scratch/research/evidence/r_followup_research
 exit=0
 
-nix develop -c dune exec scratch/r_followup_research/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/r_followup_research/runtime_smoke.exe
 exit=0
 ~~~
 
@@ -5957,8 +5957,8 @@ open-row effect value is not exportable without weak variables. The black-box pu
 shape must be a thunk.
 
 ~~~text
-R_FOLLOWUP_NEG=black_box_value nix develop -c dune build scratch/r_followup_research/neg_black_box_value.exe
-File "scratch/r_followup_research/neg_black_box_value.ml", lines 11-14, characters 6-3:
+R_FOLLOWUP_NEG=black_box_value nix develop -c dune build .scratch/research/evidence/r_followup_research/neg_black_box_value.exe
+File ".scratch/research/evidence/r_followup_research/neg_black_box_value.ml", lines 11-14, characters 6-3:
 11 | ......struct
 12 |   let black_box =
 13 |     Effect.sync "third.black_box" (fun env -> query env#db "child")
@@ -6032,8 +6032,8 @@ variables, while thunks and ordinary-arg constructors remain polymorphic.
 Closed rows are compact but too strict:
 
 ~~~text
-R_FOLLOWUP_NEG=closed_row_extra_env nix develop -c dune build scratch/r_followup_research/neg_closed_row_extra_env.exe
-File "scratch/r_followup_research/neg_closed_row_extra_env.ml", line 17, characters 28-62:
+R_FOLLOWUP_NEG=closed_row_extra_env nix develop -c dune build .scratch/research/evidence/r_followup_research/neg_closed_row_extra_env.exe
+File ".scratch/research/evidence/r_followup_research/neg_closed_row_extra_env.ml", line 17, characters 28-62:
 17 |   Services.run_with_env env Public_mli_styles.closed_row_value
                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: The value Public_mli_styles.closed_row_value has type
@@ -6068,7 +6068,7 @@ let order_by_generic_query =
 This compiles:
 
 ~~~text
-R_FOLLOWUP_NEG=hazard_same_shape_collision nix develop -c dune build scratch/r_followup_research/hazard_same_shape_collision.exe
+R_FOLLOWUP_NEG=hazard_same_shape_collision nix develop -c dune build .scratch/research/evidence/r_followup_research/hazard_same_shape_collision.exe
 exit=0
 ~~~
 
@@ -6108,8 +6108,8 @@ All V2 positives pass and record the metric exactly once.
 Env-row missing metric fails at boot/run boundary:
 
 ~~~text
-R_FOLLOWUP_NEG=evolution_env_missing_metric nix develop -c dune build scratch/r_followup_research/neg_evolution_env_missing_metric.exe
-File "scratch/r_followup_research/neg_evolution_env_missing_metric.ml", line 14, characters 28-65:
+R_FOLLOWUP_NEG=evolution_env_missing_metric nix develop -c dune build .scratch/research/evidence/r_followup_research/neg_evolution_env_missing_metric.exe
+File ".scratch/research/evidence/r_followup_research/neg_evolution_env_missing_metric.ml", line 14, characters 28-65:
 14 |   Services.run_with_env env (Library_evolution.Env_row.V2.top ())
                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: This expression has type
@@ -6124,8 +6124,8 @@ Error: This expression has type
 Explicit args fail at the pass-through call site:
 
 ~~~text
-R_FOLLOWUP_NEG=evolution_args_missing_metric nix develop -c dune build scratch/r_followup_research/neg_evolution_args_missing_metric.exe
-File "scratch/r_followup_research/neg_evolution_args_missing_metric.ml", line 8, characters 2-58:
+R_FOLLOWUP_NEG=evolution_args_missing_metric nix develop -c dune build .scratch/research/evidence/r_followup_research/neg_evolution_args_missing_metric.exe
+File ".scratch/research/evidence/r_followup_research/neg_evolution_args_missing_metric.ml", line 8, characters 2-58:
 8 |   Library_evolution.Args.V2.top ~clock:(Services.clock 42)
       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error (warning 5 [ignored-partial-application]): this function application is partial,
@@ -6229,7 +6229,7 @@ If a candidate is clearly good and semantics-preserving, implement it in ppx_eff
 
 ### Artifacts
 
-Lab: scratch/ppx_env_research/
+Lab: .scratch/research/evidence/ppx_env_research/
 
 - p_a_baseline_raw.ml: raw env#cap leaves.
 - p_b_leaf_ppx.ml: [%effet.sync] / [%effet.async] leaf capability binding.
@@ -6288,10 +6288,10 @@ let env =
 Positive build and smoke:
 
 ~~~text
-nix develop -c dune build scratch/ppx_env_research
+nix develop -c dune build .scratch/research/evidence/ppx_env_research
 exit=0
 
-nix develop -c dune exec scratch/ppx_env_research/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/ppx_env_research/runtime_smoke.exe
 exit=0
 ~~~
 
@@ -6326,8 +6326,8 @@ let env ~auth ~log =
 Direct env read inside a declared leaf fails during PPX expansion:
 
 ~~~text
-PPX_ENV_NEG=env_creep nix develop -c dune build scratch/ppx_env_research/neg_b_env_creep.exe
-File "scratch/ppx_env_research/neg_b_env_creep.ml", line 8, characters 4-50:
+PPX_ENV_NEG=env_creep nix develop -c dune build .scratch/research/evidence/ppx_env_research/neg_b_env_creep.exe
+File ".scratch/research/evidence/ppx_env_research/neg_b_env_creep.ml", line 8, characters 4-50:
 8 |     (Auth.current_user auth ^ Db.query env#db "x")]
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: effet leaf body must use listed capabilities, not env directly
@@ -6336,8 +6336,8 @@ Error: effet leaf body must use listed capabilities, not env directly
 Duplicate leaf capabilities fail before type checking:
 
 ~~~text
-PPX_ENV_NEG=duplicate_cap nix develop -c dune build scratch/ppx_env_research/neg_b_duplicate_cap.exe
-File "scratch/ppx_env_research/neg_b_duplicate_cap.ml", lines 7-8, characters 2-29:
+PPX_ENV_NEG=duplicate_cap nix develop -c dune build .scratch/research/evidence/ppx_env_research/neg_b_duplicate_cap.exe
+File ".scratch/research/evidence/ppx_env_research/neg_b_duplicate_cap.ml", lines 7-8, characters 2-29:
 7 | ..[%effet.sync "bad.duplicate" ((auth : Auth.t), (auth : Auth.t))
 8 |     (Auth.current_user auth)]
 Error: duplicate capability binding: auth
@@ -6346,8 +6346,8 @@ Error: duplicate capability binding: auth
 Duplicate env builder fields fail before type checking:
 
 ~~~text
-PPX_ENV_NEG=duplicate_env nix develop -c dune build scratch/ppx_env_research/neg_d_duplicate_env.exe
-File "scratch/ppx_env_research/neg_d_duplicate_env.ml", line 7, characters 2-65:
+PPX_ENV_NEG=duplicate_env nix develop -c dune build .scratch/research/evidence/ppx_env_research/neg_d_duplicate_env.exe
+File ".scratch/research/evidence/ppx_env_research/neg_d_duplicate_env.ml", line 7, characters 2-65:
 7 |   [%effet.env { auth = (auth : Auth.t); auth = (auth : Auth.t) }]
       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: duplicate capability binding: auth
@@ -6356,8 +6356,8 @@ Error: duplicate capability binding: auth
 The raw module-level open-row value still hits weak variables:
 
 ~~~text
-PPX_ENV_NEG=value_restriction_raw nix develop -c dune build scratch/ppx_env_research/neg_value_restriction_raw.exe
-File "scratch/ppx_env_research/neg_value_restriction_raw.ml", lines 10-13, characters 6-3:
+PPX_ENV_NEG=value_restriction_raw nix develop -c dune build .scratch/research/evidence/ppx_env_research/neg_value_restriction_raw.exe
+File ".scratch/research/evidence/ppx_env_research/neg_value_restriction_raw.ml", lines 10-13, characters 6-3:
 10 | ......struct
 11 |   let current_user =
 12 |     Effect.sync "auth.current_user" (fun env -> Auth.current_user env#auth)
@@ -6499,7 +6499,7 @@ the confirmed minimum surface.
 
 ### Lab
 
-`scratch/otel_propagation/` contains three self-contained candidates and a
+`.scratch/research/evidence/otel_propagation/` contains three self-contained candidates and a
 runtime smoke executable.
 
 - `p_a_pair_only.ml` demonstrates that the current pair-only shape correlates a
@@ -6512,7 +6512,7 @@ runtime smoke executable.
 Command:
 
 ```sh
-nix develop -c dune exec scratch/otel_propagation/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/otel_propagation/runtime_smoke.exe
 ```
 
 Result:
@@ -6524,7 +6524,7 @@ otel propagation lab passed
 Negative fixture:
 
 ```sh
-nix develop -c dune exec scratch/otel_propagation/neg_malformed_traceparent.exe
+nix develop -c dune exec .scratch/research/evidence/otel_propagation/neg_malformed_traceparent.exe
 ```
 
 Result: exited successfully because malformed all-zero trace IDs are rejected.
@@ -6676,7 +6676,7 @@ Upstream package metadata and source survey:
 
 ### Lab
 
-Created scratch/otlp_compare/.
+Created .scratch/research/evidence/otlp_compare/.
 
 The lab intentionally models the comparison instead of linking the upstream SDK.
 That keeps the repo dependency graph unchanged and isolates the behavioral
@@ -6697,7 +6697,7 @@ Files:
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/otlp_compare/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/otlp_compare/runtime_smoke.exe
 ~~~
 
 Result:
@@ -6854,12 +6854,12 @@ Do not use V-O7's old wording again. The revised position is:
 
 ### Artifacts
 
-- scratch/otlp_compare/README.md
-- scratch/otlp_compare/common.ml
-- scratch/otlp_compare/current_hand_roll_model.ml
-- scratch/otlp_compare/upstream_adapter_model.ml
-- scratch/otlp_compare/runtime_smoke.ml
-- scratch/otlp_compare/results.md
+- .scratch/research/evidence/otlp_compare/README.md
+- .scratch/research/evidence/otlp_compare/common.ml
+- .scratch/research/evidence/otlp_compare/current_hand_roll_model.ml
+- .scratch/research/evidence/otlp_compare/upstream_adapter_model.ml
+- .scratch/research/evidence/otlp_compare/runtime_smoke.ml
+- .scratch/research/evidence/otlp_compare/results.md
 
 ## V-LM - Logger/Meter AST survival lab
 
@@ -6888,16 +6888,16 @@ Compare two branches:
 
 Artifacts:
 
-- scratch/log_meter_survival/common.ml
-- scratch/log_meter_survival/branch_a_ast.ml
-- scratch/log_meter_survival/branch_b_adapter.ml
-- scratch/log_meter_survival/runtime_smoke.ml
-- scratch/log_meter_survival/results.md
+- .scratch/research/evidence/log_meter_survival/common.ml
+- .scratch/research/evidence/log_meter_survival/branch_a_ast.ml
+- .scratch/research/evidence/log_meter_survival/branch_b_adapter.ml
+- .scratch/research/evidence/log_meter_survival/runtime_smoke.ml
+- .scratch/research/evidence/log_meter_survival/results.md
 
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/log_meter_survival/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/log_meter_survival/runtime_smoke.exe
 ~~~
 
 Result:
@@ -6923,8 +6923,8 @@ the signal rather than fabricating correlation.
 Scratch model LOC:
 
 ~~~text
- 72 scratch/log_meter_survival/branch_a_ast.ml
-126 scratch/log_meter_survival/branch_b_adapter.ml
+ 72 .scratch/research/evidence/log_meter_survival/branch_a_ast.ml
+126 .scratch/research/evidence/log_meter_survival/branch_b_adapter.ml
 ~~~
 
 Relevant live-code LOC:
@@ -7227,16 +7227,16 @@ Behavioral requirements:
 
 Artifacts:
 
-- scratch/resource_survival/common.ml
-- scratch/resource_survival/branch_a_resource.ml
-- scratch/resource_survival/branch_b_atomic.ml
-- scratch/resource_survival/runtime_smoke.ml
-- scratch/resource_survival/results.md
+- .scratch/research/evidence/resource_survival/common.ml
+- .scratch/research/evidence/resource_survival/branch_a_resource.ml
+- .scratch/research/evidence/resource_survival/branch_b_atomic.ml
+- .scratch/research/evidence/resource_survival/runtime_smoke.ml
+- .scratch/research/evidence/resource_survival/results.md
 
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/resource_survival/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/resource_survival/runtime_smoke.exe
 ~~~
 
 Result:
@@ -7250,9 +7250,9 @@ resource_survival runtime smoke passed
 ~~~text
  47 lib/effet/resource.ml
  27 lib/effet/resource.mli
-  9 scratch/resource_survival/branch_a_resource.ml
- 61 scratch/resource_survival/branch_b_atomic.ml
-127 scratch/resource_survival/runtime_smoke.ml
+  9 .scratch/research/evidence/resource_survival/branch_a_resource.ml
+ 61 .scratch/research/evidence/resource_survival/branch_b_atomic.ml
+127 .scratch/research/evidence/resource_survival/runtime_smoke.ml
 ~~~
 
 Branch B is not shorter than the current implementation. It is nearly the same
@@ -7504,7 +7504,7 @@ Find the final public `Stream.from_file` error API and implement it.
 
 ### Lab
 
-Created `scratch/from_file_research/`.
+Created `.scratch/research/evidence/from_file_research/`.
 
 Candidates:
 
@@ -7517,7 +7517,7 @@ Candidates:
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/from_file_research/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/from_file_research/runtime_smoke.exe
 ~~~
 
 Result:
@@ -7641,7 +7641,7 @@ The success bar is V-R10's bar:
 
 ### Lab
 
-Created `scratch/native_effects_research/`.
+Created `.scratch/research/evidence/native_effects_research/`.
 
 Candidates:
 
@@ -7652,7 +7652,7 @@ Candidates:
 Positive command:
 
 ~~~sh
-nix develop -c dune exec scratch/native_effects_research/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/native_effects_research/runtime_smoke.exe
 ~~~
 
 Result:
@@ -7664,10 +7664,10 @@ native_effects_research runtime smoke passed
 LOC comparison:
 
 ~~~text
-   69 scratch/r_research/r_b_env_row.ml
-   78 scratch/r_research/r_d_native_handlers.ml
-   62 scratch/native_effects_research/r_d_raw.ml
-  224 scratch/native_effects_research/r_d_typed.ml
+   69 .scratch/research/evidence/r_research/r_b_env_row.ml
+   78 .scratch/research/evidence/r_research/r_d_native_handlers.ml
+   62 .scratch/research/evidence/native_effects_research/r_d_raw.ml
+  224 .scratch/research/evidence/native_effects_research/r_d_typed.ml
 ~~~
 
 ### Negative tests
@@ -7676,13 +7676,13 @@ Presence-set missing handler:
 
 ~~~sh
 nix develop -c env NATIVE_EFFECTS_NEG=presence_missing_handler \
-  dune build scratch/native_effects_research/neg_presence_missing_handler.exe
+  dune build .scratch/research/evidence/native_effects_research/neg_presence_missing_handler.exe
 ~~~
 
 Observed:
 
 ~~~text
-File "scratch/native_effects_research/neg_presence_missing_handler.ml", line 11, characters 23-54:
+File ".scratch/research/evidence/native_effects_research/neg_presence_missing_handler.ml", line 11, characters 23-54:
 11 |   run (HDb (db, HNil)) (a db_witness log_witness "42")
                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: This expression has type (both, [> `Db_err ], string) t
@@ -7697,13 +7697,13 @@ Scoped-token ask outside handler:
 
 ~~~sh
 nix develop -c env NATIVE_EFFECTS_NEG=token_ask_without_scope \
-  dune build scratch/native_effects_research/neg_token_ask_without_scope.exe
+  dune build .scratch/research/evidence/native_effects_research/neg_token_ask_without_scope.exe
 ~~~
 
 Observed:
 
 ~~~text
-File "scratch/native_effects_research/neg_token_ask_without_scope.ml", line 9, characters 12-14:
+File ".scratch/research/evidence/native_effects_research/neg_token_ask_without_scope.ml", line 9, characters 12-14:
 9 | let _ = ask Db
                 ^^
 Error: This variant expression is expected to have type 'a token
@@ -7778,11 +7778,11 @@ No live library code change is recommended.
 
 ### Artifacts
 
-- `scratch/native_effects_research/r_d_raw.ml`
-- `scratch/native_effects_research/r_d_typed.ml`
-- `scratch/native_effects_research/neg_presence_missing_handler.ml`
-- `scratch/native_effects_research/neg_token_ask_without_scope.ml`
-- `scratch/native_effects_research/runtime_smoke.ml`
+- `.scratch/research/evidence/native_effects_research/r_d_raw.ml`
+- `.scratch/research/evidence/native_effects_research/r_d_typed.ml`
+- `.scratch/research/evidence/native_effects_research/neg_presence_missing_handler.ml`
+- `.scratch/research/evidence/native_effects_research/neg_token_ask_without_scope.ml`
+- `.scratch/research/evidence/native_effects_research/runtime_smoke.ml`
 
 ## Effet-hpt / Effet-yp5 / Effet-vp8 survival pass
 
@@ -7796,7 +7796,7 @@ These three small review findings were API-width checks. Each asks whether a sur
 
 ### Effet-hpt - single leaf and final name
 
-Lab artifact: `scratch/sync_async_survival/`.
+Lab artifact: `.scratch/research/evidence/sync_async_survival/`.
 
 Before the change, runtime interpretation of `EP.Sync` and `EP.Async` was identical: both called the callback in the current interpreter fiber, both auto-instrumented the same way, and neither introduced scheduling, yielding, cancellation, or blocking semantics.
 
@@ -7816,10 +7816,10 @@ Implemented:
 - `[%effet.thunk ...]` replaces `[%effet.sync ...]`;
 - `[%effet.async ...]` is removed.
 
-Negative PPX check from `scratch/ppx_survival/neg_async_removed.ml`:
+Negative PPX check from `.scratch/research/evidence/ppx_survival/neg_async_removed.ml`:
 
 ~~~text
-File "scratch/ppx_survival/neg_async_removed.ml", line 6, characters 10-21:
+File ".scratch/research/evidence/ppx_survival/neg_async_removed.ml", line 6, characters 10-21:
 6 | let _ = [%effet.async "removed" ()]
               ^^^^^^^^^^^
 Error: Uninterpreted extension 'effet.async'.
@@ -7845,14 +7845,14 @@ Rationale: this project is still in design phase. Backward compatibility would p
 
 ### Effet-yp5 - Duration survival
 
-Lab artifact: `scratch/duration_survival/`.
+Lab artifact: `.scratch/research/evidence/duration_survival/`.
 
 The lab implements the same small Schedule subset twice: once with a `Duration.t` newtype and once with plain `int` milliseconds.
 
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/duration_survival/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/duration_survival/runtime_smoke.exe
 ~~~
 
 Result:
@@ -7864,8 +7864,8 @@ duration_survival runtime smoke passed
 LOC comparison:
 
 ~~~text
-48 scratch/duration_survival/duration_keep.ml
-51 scratch/duration_survival/int_ms_branch.ml
+48 .scratch/research/evidence/duration_survival/duration_keep.ml
+51 .scratch/research/evidence/duration_survival/int_ms_branch.ml
 ~~~
 
 The int branch does not reduce complexity in Schedule. It does lose the public unit boundary: `delay 3 value` compiles in the int branch, while the current API requires `Duration.ms 3` or `Duration.seconds 3`.
@@ -7890,7 +7890,7 @@ Rationale: this lab does not justify adding Effect-TS Duration features. It only
 
 ### Effet-vp8 - PPX survival
 
-Lab artifact: `scratch/ppx_survival/`.
+Lab artifact: `.scratch/research/evidence/ppx_survival/`.
 
 `explicit_idiom_fixture.ml` contains 27 representative definitions, including 20+ instrumented functions using explicit `Effect.fn __POS__ __FUNCTION__ body`. The explicit form is tolerable for occasional use but noisy when every leaf or public function is instrumented.
 
@@ -7907,7 +7907,7 @@ Lab artifact: `scratch/ppx_survival/`.
 Command:
 
 ~~~sh
-nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/ppx_survival/runtime_smoke.exe
 ~~~
 
 Result:
@@ -7947,11 +7947,11 @@ Rationale: Dune's stored `.pp.ml` artifact is not a stable text golden in this s
 Focused commands run during this pass:
 
 ~~~sh
-nix develop -c dune build lib/effet lib/effet-stream lib/effet-schema lib/effet-otel lib/ppx_effet scratch/ppx_survival scratch/duration_survival
-nix develop -c dune exec scratch/duration_survival/runtime_smoke.exe
-nix develop -c dune exec scratch/ppx_survival/runtime_smoke.exe
+nix develop -c dune build lib/effet lib/effet-stream lib/effet-schema lib/effet-otel lib/ppx_effet .scratch/research/evidence/ppx_survival .scratch/research/evidence/duration_survival
+nix develop -c dune exec .scratch/research/evidence/duration_survival/runtime_smoke.exe
+nix develop -c dune exec .scratch/research/evidence/ppx_survival/runtime_smoke.exe
 nix develop -c dune runtest lib/ppx_effet --force
-nix develop -c env PPX_SURVIVAL_NEG=async_removed dune build scratch/ppx_survival/neg_async_removed.exe
+nix develop -c env PPX_SURVIVAL_NEG=async_removed dune build .scratch/research/evidence/ppx_survival/neg_async_removed.exe
 ~~~
 
 ## Effet-rmy / Effet-3z2 edge-case test pass
@@ -8230,7 +8230,7 @@ Relevant inherited constraints:
 
 ### Lab
 
-Artifacts live in scratch/concurrent_data_research/.
+Artifacts live in .scratch/research/evidence/concurrent_data_research/.
 
 Files:
 
@@ -8242,8 +8242,8 @@ Files:
 Validation:
 
 ~~~sh
-nix develop -c dune build scratch/concurrent_data_research
-nix develop -c dune exec scratch/concurrent_data_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/concurrent_data_research
+nix develop -c dune exec .scratch/research/evidence/concurrent_data_research/runtime_smoke.exe
 ~~~
 
 Observed output:
@@ -8404,11 +8404,11 @@ promote focused protocols when they earn ownership, and keep local coordination 
 
 ### Artifacts
 
-- scratch/concurrent_data_research/dune
-- scratch/concurrent_data_research/wrappers.ml
-- scratch/concurrent_data_research/fixtures.ml
-- scratch/concurrent_data_research/runtime_smoke.ml
-- scratch/concurrent_data_research/README.md
+- .scratch/research/evidence/concurrent_data_research/dune
+- .scratch/research/evidence/concurrent_data_research/wrappers.ml
+- .scratch/research/evidence/concurrent_data_research/fixtures.ml
+- .scratch/research/evidence/concurrent_data_research/runtime_smoke.ml
+- .scratch/research/evidence/concurrent_data_research/README.md
 - README.md
 
 ### What we deliberately did not build
@@ -8441,7 +8441,7 @@ Build a representative synthetic workload and measure:
 
 ### Lab
 
-Artifacts live in scratch/typecheck_perf/.
+Artifacts live in .scratch/research/evidence/typecheck_perf/.
 
 The fixture is a generated 50-module app. Each module composes the previous module with a
 12-step effect chain using:
@@ -8459,9 +8459,9 @@ The fixture is a generated 50-module app. Each module composes the previous modu
 Validation command:
 
 ~~~sh
-nix develop -c dune build scratch/typecheck_perf
-nix develop -c dune exec scratch/typecheck_perf/runtime_smoke.exe
-./scratch/typecheck_perf/measure.sh
+nix develop -c dune build .scratch/research/evidence/typecheck_perf
+nix develop -c dune exec .scratch/research/evidence/typecheck_perf/runtime_smoke.exe
+.scratch/research/evidence/typecheck_perf/measure.sh
 ~~~
 
 Runtime smoke:
@@ -8577,19 +8577,19 @@ lines, or diagnostics that fail to identify the missing method/tag/scope.
 
 ### Artifacts
 
-- scratch/typecheck_perf/README.md
-- scratch/typecheck_perf/dune
-- scratch/typecheck_perf/tp_common.ml
-- scratch/typecheck_perf/tp_m01.ml ... tp_m50.ml
-- scratch/typecheck_perf/tp_top.ml
-- scratch/typecheck_perf/runtime_smoke.ml
-- scratch/typecheck_perf/neg_missing_env.ml
-- scratch/typecheck_perf/neg_error_row.ml
-- scratch/typecheck_perf/neg_supervisor_escape.ml
-- scratch/typecheck_perf/neg_value_restriction.ml
-- scratch/typecheck_perf/measure.sh
-- scratch/typecheck_perf/results/
-- scratch/typecheck_perf/report.md
+- .scratch/research/evidence/typecheck_perf/README.md
+- .scratch/research/evidence/typecheck_perf/dune
+- .scratch/research/evidence/typecheck_perf/tp_common.ml
+- .scratch/research/evidence/typecheck_perf/tp_m01.ml ... tp_m50.ml
+- .scratch/research/evidence/typecheck_perf/tp_top.ml
+- .scratch/research/evidence/typecheck_perf/runtime_smoke.ml
+- .scratch/research/evidence/typecheck_perf/neg_missing_env.ml
+- .scratch/research/evidence/typecheck_perf/neg_error_row.ml
+- .scratch/research/evidence/typecheck_perf/neg_supervisor_escape.ml
+- .scratch/research/evidence/typecheck_perf/neg_value_restriction.ml
+- .scratch/research/evidence/typecheck_perf/measure.sh
+- .scratch/research/evidence/typecheck_perf/results/
+- .scratch/research/evidence/typecheck_perf/report.md
 
 ## Effet-dmo - property and law regression suite
 
@@ -8849,7 +8849,7 @@ extension point.
 | `lib/effet/runtime.ml:330-343` | `Obj.t`, `Obj.repr`, `Obj.obj` in `par` | Internal heterogeneous success transport | The homogeneous task list packs each child result and immediately unpacks the two fixed slots into the typed pair. |
 | `lib/effet/runtime.ml:749-756` | `Obj.repr`, `Obj.obj` in `race` | Internal local-success transport | The local `Race_won` exception cannot carry existential `'a`; `winner` is local to the frame and unpacked before returning. |
 | `lib/effet/runtime.ml:858` | `Obj.obj cause` in `retry` | Internal existential failure transport | Attempt frame uses a fresh key; only matching attempt failures are inspected for retry policy. |
-| `scratch/fiber_research/*.ml` | `Obj.t`, `Obj.magic`, `Obj.repr`, `Obj.obj` | Scratch research only | Files are outside published packages and are not part of the library API. |
+| `.scratch/research/evidence/fiber_research/*.ml` | `Obj.t`, `Obj.magic`, `Obj.repr`, `Obj.obj` | Scratch research only | Files are outside published packages and are not part of the library API. |
 | Historical `journal.md` notes | `Obj.t`, `Obj.repr`, `Obj.magic` | Historical record | These lines describe prior rejected or superseded designs. |
 
 ### Public API check
@@ -8966,10 +8966,10 @@ JSON Schema validity.
 
 ### Research artifacts
 
-- `scratch/json_number_research/README.md`
-- `scratch/schema_samples_survival/README.md`
-- `scratch/schema_jsonschema_survival/README.md`
-- `scratch/record_builder_research/README.md`
+- `.scratch/research/evidence/json_number_research/README.md`
+- `.scratch/research/evidence/schema_samples_survival/README.md`
+- `.scratch/research/evidence/schema_jsonschema_survival/README.md`
+- `.scratch/research/evidence/record_builder_research/README.md`
 
 ### Follow-up recommendation
 

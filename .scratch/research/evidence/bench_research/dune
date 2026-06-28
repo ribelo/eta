@@ -1,0 +1,7 @@
+(executable
+ (name a_custom_baseline)
+ (libraries bench_lib effet eio_main))
+
+(executable
+ (name apples_to_apples)
+ (libraries effet eio_main unix))

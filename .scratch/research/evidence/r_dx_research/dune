@@ -1,0 +1,94 @@
+(library
+ (name r_dx_common)
+ (wrapped false)
+ (libraries effet eio_main)
+ (modules dx_common))
+
+(library
+ (name r_dx_env_row)
+ (wrapped false)
+ (libraries effet r_dx_common)
+ (modules
+  env_m01
+  env_m02
+  env_m03
+  env_m04
+  env_m05
+  env_m06
+  env_m07
+  env_m08
+  env_m09
+  env_m10
+  env_m11
+  env_m12
+  env_m13
+  env_m14
+  env_m15
+  env_m16
+  env_m17
+  env_m18
+  env_m19
+  env_m20
+  env_top
+ ))
+
+(library
+ (name r_dx_args)
+ (wrapped false)
+ (libraries effet r_dx_common)
+ (modules
+  args_m01
+  args_m02
+  args_m03
+  args_m04
+  args_m05
+  args_m06
+  args_m07
+  args_m08
+  args_m09
+  args_m10
+  args_m11
+  args_m12
+  args_m13
+  args_m14
+  args_m15
+  args_m16
+  args_m17
+  args_m18
+  args_m19
+  args_m20
+  args_top
+ ))
+
+(library
+ (name r_dx_bag)
+ (wrapped false)
+ (libraries effet r_dx_common)
+ (modules
+  bag_m01
+  bag_m02
+  bag_m03
+  bag_m04
+  bag_m05
+  bag_m06
+  bag_m07
+  bag_m08
+  bag_m09
+  bag_m10
+  bag_m11
+  bag_m12
+  bag_m13
+  bag_m14
+  bag_m15
+  bag_m16
+  bag_m17
+  bag_m18
+  bag_m19
+  bag_m20
+  bag_top
+ ))
+
+(executable
+ (name runtime_smoke)
+ (libraries r_dx_common r_dx_env_row r_dx_args r_dx_bag)
+ (modules runtime_smoke))

@@ -1,0 +1,10 @@
+(library
+ (name supervision_research)
+ (wrapped true)
+ (libraries eio eio.core eio_main)
+ (modules f_d_supervisor_scope f_e_supervisor_strategies f_f_ambient_nursery f_g_detach_only))
+
+(executable
+ (name runtime_smoke)
+ (libraries supervision_research eio eio_main)
+ (modules runtime_smoke))

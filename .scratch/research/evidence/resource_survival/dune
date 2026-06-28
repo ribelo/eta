@@ -1,0 +1,4 @@
+(executable
+ (name runtime_smoke)
+ (modules common branch_a_resource branch_b_atomic runtime_smoke)
+ (libraries effet eio eio_main alcotest))

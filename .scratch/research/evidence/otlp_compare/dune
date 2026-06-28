@@ -1,0 +1,9 @@
+(library
+ (name otlp_compare)
+ (modules common current_hand_roll_model upstream_adapter_model)
+ (libraries effet))
+
+(executable
+ (name runtime_smoke)
+ (modules runtime_smoke)
+ (libraries otlp_compare))

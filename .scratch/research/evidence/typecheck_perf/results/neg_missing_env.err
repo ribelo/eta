@@ -1,0 +1,35 @@
+File "scratch/typecheck_perf/neg_missing_env.ml", line 31, characters 35-54:
+31 | let _ = Tp_common.run_with_env env (Tp_top.program ())
+                                        ^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (< audit_log : int -> int; auth_check : int -> int;
+            billing_charge : int -> int; billing_refund : int -> int;
+            cache_get : int -> int; cache_set : int -> int;
+            clock_now : int -> int; config_get : int -> int;
+            email_send : int -> int; feature_flag : int -> int;
+            inventory_get : int -> int; metrics_count : int -> int;
+            notify_send : int -> int; order_read : int -> int;
+            order_write : int -> int; policy_eval : int -> int;
+            rate_limit : int -> int; report_build : int -> int;
+            search_query : int -> int; session_get : int -> int;
+            shipment_quote : int -> int; sms_send : int -> int;
+            tenant_lookup : int -> int; user_read : int -> int;
+            user_write : int -> int; .. >,
+          [> `External of 'a | `Validation of string ], int)
+         Effect.t
+       but an expression was expected of type
+         (< audit_log : 'b -> 'b; auth_check : 'c -> 'c;
+            billing_refund : 'd -> 'd; cache_get : 'e -> 'e;
+            cache_set : 'f -> 'f; clock_now : 'g -> 'g;
+            config_get : 'h -> 'h; email_send : 'i -> 'i;
+            feature_flag : 'j -> 'j; inventory_get : 'k -> 'k;
+            metrics_count : 'l -> 'l; notify_send : 'm -> 'm;
+            order_read : 'n -> 'n; order_write : 'o -> 'o;
+            policy_eval : 'p -> 'p; rate_limit : 'q -> 'q;
+            report_build : 'r -> 'r; search_query : 's -> 's;
+            session_get : 't -> 't; shipment_quote : 'u -> 'u;
+            sms_send : 'v -> 'v; tenant_lookup : 'w -> 'w;
+            user_read : 'x -> 'x; user_write : 'y -> 'y >,
+          'z, 'a1)
+         Effect.t
+       The second object type has no method billing_charge

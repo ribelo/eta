@@ -1,0 +1,10 @@
+(library
+ (name concurrent_data_research)
+ (wrapped true)
+ (libraries effet eio eio.core)
+ (modules wrappers fixtures))
+
+(executable
+ (name runtime_smoke)
+ (libraries concurrent_data_research effet eio eio_main alcotest)
+ (modules runtime_smoke))

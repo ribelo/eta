@@ -1,0 +1,45 @@
+(library
+ (name r_followup_research)
+ (wrapped true)
+ (libraries effet eio_main)
+ (modules
+  services
+  black_box
+  public_mli_styles
+  naming_collision
+  library_evolution))
+
+(executable
+ (name runtime_smoke)
+ (libraries r_followup_research effet eio_main)
+ (modules runtime_smoke))
+
+(executable
+ (name neg_black_box_value)
+ (libraries r_followup_research effet eio_main)
+ (modules neg_black_box_value)
+ (enabled_if (= %{env:R_FOLLOWUP_NEG=} black_box_value)))
+
+(executable
+ (name neg_closed_row_extra_env)
+ (libraries r_followup_research effet eio_main)
+ (modules neg_closed_row_extra_env)
+ (enabled_if (= %{env:R_FOLLOWUP_NEG=} closed_row_extra_env)))
+
+(executable
+ (name neg_evolution_env_missing_metric)
+ (libraries r_followup_research effet eio_main)
+ (modules neg_evolution_env_missing_metric)
+ (enabled_if (= %{env:R_FOLLOWUP_NEG=} evolution_env_missing_metric)))
+
+(executable
+ (name neg_evolution_args_missing_metric)
+ (libraries r_followup_research effet eio_main)
+ (modules neg_evolution_args_missing_metric)
+ (enabled_if (= %{env:R_FOLLOWUP_NEG=} evolution_args_missing_metric)))
+
+(executable
+ (name hazard_same_shape_collision)
+ (libraries r_followup_research effet eio_main)
+ (modules hazard_same_shape_collision)
+ (enabled_if (= %{env:R_FOLLOWUP_NEG=} hazard_same_shape_collision)))

@@ -1,0 +1,20 @@
+(library
+ (name ppx_survival)
+ (wrapped true)
+ (libraries effet)
+ (preprocess
+  (pps ppx_effet))
+ (modules explicit_idiom_fixture golden_cases))
+
+(executable
+ (name runtime_smoke)
+ (libraries ppx_survival effet eio_main)
+ (modules runtime_smoke))
+
+(executable
+ (name neg_async_removed)
+ (libraries effet)
+ (preprocess
+  (pps ppx_effet))
+ (modules neg_async_removed)
+ (enabled_if (= %{env:PPX_SURVIVAL_NEG=} async_removed)))
