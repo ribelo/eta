@@ -266,14 +266,14 @@ separate from the evidence-backed Eta SQLite execution decision above.
 Focused gate:
 
 ```sh
-nix develop -c dune runtest lib/sql test/sql test/ppx --force
+nix develop -c dune runtest lib/sql test/sql test/ppx_eio --force
 ```
 
 The same command works without Nix once dependencies are installed:
 
 ```sh
 opam install . --deps-only --with-test
-dune runtest lib/sql test/sql test/ppx --force
+dune runtest lib/sql test/sql test/ppx_eio --force
 ```
 
 Release/install gates:

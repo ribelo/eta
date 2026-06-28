@@ -20,7 +20,7 @@ upstream OCaml does not require giving up the OxCaml performance path.
 The current revision was checked with upstream OCaml:
 
 ```sh
-nix develop .#mainline -c dune runtest test/eta test/stream test/schema --force
+nix develop .#mainline -c dune runtest test/eta test/stream test/schema_eio --force
 ```
 
 The checked surface passed under OCaml 5.4.1.
