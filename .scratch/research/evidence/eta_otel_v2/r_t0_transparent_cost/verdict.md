@@ -41,34 +41,33 @@ linkage when eta-otel is not linked.
 
 Fixtures:
 
-- bench/r_t0_linkage/no_otel_eta_only.ml
-- bench/r_t0_linkage/with_otel_linked.ml
-- bench/r_t0_branch_elision/r_t0_branch_elision.ml
+- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/r_t0_linkage/no_otel_eta_only.ml
+- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/r_t0_linkage/with_otel_linked.ml
+- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/r_t0_branch_elision/r_t0_branch_elision.ml
 - .scratch/research/evidence/bench-results/eta-r-t0-paygo-current.json
-- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
 - .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/verdict.md
 
 Build and smoke:
 
 ~~~text
-nix develop -c dune build bench/r_t0_linkage/no_otel_eta_only.exe bench/r_t0_linkage/with_otel_linked.exe
+nix develop -c dune build --root .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost ./r_t0_linkage/no_otel_eta_only.exe ./r_t0_linkage/with_otel_linked.exe
 exit 0
 
-EIO_BACKEND=posix nix develop -c dune exec bench/r_t0_linkage/no_otel_eta_only.exe
+EIO_BACKEND=posix nix develop -c dune exec --root .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost ./r_t0_linkage/no_otel_eta_only.exe
 no_otel_eta_only=ok
 
-nix develop -c dune exec bench/r_t0_linkage/with_otel_linked.exe
+nix develop -c dune exec --root .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost ./r_t0_linkage/with_otel_linked.exe
 with_otel_linked=102
 ~~~
 
 Linkage:
 
 ~~~text
-nm _build/default/bench/r_t0_linkage/no_otel_eta_only.exe | rg -i 'camlEta_otel|camlYojson|camlEta_http'
+nm .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/_build/default/r_t0_linkage/no_otel_eta_only.exe | rg -i 'camlEta_otel|camlYojson|camlEta_http'
 exit 1
 output: empty
 
-nm _build/default/bench/r_t0_linkage/with_otel_linked.exe | rg -i 'camlEta_otel|camlYojson|camlEta_http'
+nm .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/_build/default/r_t0_linkage/with_otel_linked.exe | rg -i 'camlEta_otel|camlYojson|camlEta_http'
 output includes:
 000000000196fc08 D camlEta_otel
 ~~~
@@ -76,8 +75,8 @@ output includes:
 The absolute executable sizes were:
 
 ~~~text
-_build/default/bench/r_t0_linkage/no_otel_eta_only.exe 43860816
-_build/default/bench/r_t0_linkage/with_otel_linked.exe 43417800
+.scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/_build/default/r_t0_linkage/no_otel_eta_only.exe 43860816
+.scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/_build/default/r_t0_linkage/with_otel_linked.exe 43417800
 ~~~
 
 Those sizes are not direct bloat evidence because the programs are not
@@ -101,9 +100,8 @@ effect.observability.noop_meter.metric major_words 0.0
 
 bench/runtime_observability is useful for allocation evidence, but it is not a
 clean binary-bloat fixture because the benchmark target itself links observation
-support. The clean bloat probe lives under bench/r_t0_linkage/. Runnable
-fixtures were placed under bench/ because the root Dune file treats .scratch/ as
-a data-only directory.
+support. The clean bloat probe lives with this research evidence bundle under
+`r_t0_linkage/`.
 
 ## Verdict
 
@@ -127,7 +125,7 @@ separation for binary bloat.
 Command:
 
 ~~~text
-.scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+nix develop -c dune exec --root .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost ./r_t0_branch_elision/r_t0_branch_elision.exe
 exit 0
 dynamic_observer_branch_markers=2
 noop_observer_branch_markers=0

@@ -57,4 +57,4 @@ The current valid claim remains narrower:
 
 - .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/verdict.md
 - .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/verdict.md
-- bench/r_t0_branch_elision/r_t0_branch_elision.ml
+- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/r_t0_branch_elision/r_t0_branch_elision.ml

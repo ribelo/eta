@@ -22,17 +22,17 @@ The tested distinction is narrow:
 
 ## Fixture
 
-- bench/r_t0_branch_elision/r_t0_branch_elision.ml
-- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+- .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/r_t0_branch_elision/r_t0_branch_elision.ml
 
 Run:
 
 ~~~sh
-.scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+nix develop -c dune exec --root .scratch/research/evidence/eta_otel_v2/r_t0_transparent_cost ./r_t0_branch_elision/r_t0_branch_elision.exe
 ~~~
 
-The runner builds the fixture, executes it, disassembles the relevant symbols,
-and checks for the observer-enabled branch marker.
+The preserved source builds as part of the R-T0 research Dune project. The
+assembly excerpt and branch-marker counts below are the preserved evidence from
+the original run.
 
 ## Evidence
 

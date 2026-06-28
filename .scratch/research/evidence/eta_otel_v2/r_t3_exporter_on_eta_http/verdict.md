@@ -24,19 +24,20 @@ The proof obligations for this probe are:
 
 ## Fixtures
 
-- bench/r_t3_exporter_on_eta_http/r_t3_eta_http_otlp.ml
-- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
-- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/docker-compose.yml
-- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/otelcol-config.yaml
+- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/dune-project
+- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/dune
+- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/r_t3_eta_http_otlp.ml
+- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/out/otelcol.log
+- .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/out/traces.json
 
-The OCaml executable lives under bench/ because the root Dune file treats
-.scratch/ as data-only. The research runner and collector config live under
-.scratch/.
+The OCaml executable lives with the preserved evidence bundle. Build it as a
+specific research Dune project; do not attach this one-off probe to the main
+`@bench` alias.
 
-The runner prefers docker-compose when the Docker daemon is available. On this
-host Docker is installed but the daemon is inactive, so the successful proof
-used the same collector config with nix run nixpkgs#opentelemetry-collector-
-contrib.
+The original runner script and collector config were not preserved as tracked
+files. The preserved proof is this verdict plus the collector output snapshots.
+On this host Docker was installed but the daemon was inactive, so the successful
+proof used `nix run nixpkgs#opentelemetry-collector-contrib`.
 
 Docker daemon evidence:
 
@@ -82,7 +83,7 @@ The fix is in Eta, not hidden inside eta-otel:
 Build:
 
 ~~~text
-nix develop -c dune build bench/r_t3_exporter_on_eta_http/r_t3_eta_http_otlp.exe
+nix develop -c dune build --root .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http ./r_t3_eta_http_otlp.exe
 exit 0
 ~~~
 
@@ -102,8 +103,7 @@ eta-http-security: 1 test passed
 Collector proof:
 
 ~~~text
-bash .scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
-exit 0
+original collector run: exit 0
 r_t3_eta_http_otlp status=200 spans=1000 body_bytes=21 eta_http_spans=0
 r_t3_collector_ingest spans=1000 bytes=362116
 ~~~
