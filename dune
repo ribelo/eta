@@ -14,57 +14,46 @@
   (link_flags
    (:standard -cclib -fsanitize=address,undefined))))
 
-(rule
- (alias interop)
- (deps (alias http-testsuite/interop))
- (action (progn)))
+(alias
+ (name interop)
+ (deps (alias http-testsuite/interop)))
 
-(rule
- (alias cve-regress)
- (deps (alias http-testsuite/cve-regress))
- (action (progn)))
+(alias
+ (name cve-regress)
+ (deps (alias http-testsuite/cve-regress)))
 
-(rule
- (alias http-bench)
- (deps (alias http-testsuite/http-bench))
- (action (progn)))
+(alias
+ (name http-bench)
+ (deps (alias http-testsuite/http-bench)))
 
-(rule
- (alias eta-lifecycle)
- (deps (alias http-testsuite/eta-lifecycle))
- (action (progn)))
+(alias
+ (name eta-lifecycle)
+ (deps (alias http-testsuite/eta-lifecycle)))
 
-(rule
- (alias h2spec)
- (deps (alias http-testsuite/h2spec))
- (action (progn)))
+(alias
+ (name h2spec)
+ (deps (alias http-testsuite/h2spec)))
 
-(rule
- (alias perf-compare)
- (deps (alias http-testsuite/perf-compare))
- (action (progn)))
+(alias
+ (name perf-compare)
+ (deps (alias http-testsuite/perf-compare)))
 
-(rule
- (alias server-load)
- (deps (alias http-testsuite/server-load))
- (action (progn)))
+(alias
+ (name server-load)
+ (deps (alias http-testsuite/server-load)))
 
-(rule
- (alias red-probes)
- (deps (alias http-testsuite/red-probes))
- (action (progn)))
+(alias
+ (name red-probes)
+ (deps (alias http-testsuite/red-probes)))
 
-(rule
- (alias fuzz-smoke)
- (deps (alias test/http_fuzz/fuzz-smoke))
- (action (progn)))
+(alias
+ (name fuzz-smoke)
+ (deps (alias test/http_fuzz/fuzz-smoke)))
 
-(rule
- (alias fuzz)
- (deps (alias test/http_fuzz/fuzz))
- (action (progn)))
+(alias
+ (name fuzz)
+ (deps (alias test/http_fuzz/fuzz)))
 
-(rule
- (alias eta-js-runtest)
- (deps (alias test/js_jsoo/runtest) (alias test/js_stream/runtest))
- (action (progn)))
+(alias
+ (name eta-js-runtest)
+ (deps (alias test/js_jsoo/runtest) (alias test/js_stream/runtest)))

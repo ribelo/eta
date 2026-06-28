@@ -1,40 +1,33 @@
-(rule
- (alias interop)
- (deps (alias test/interop/interop))
- (action (progn)))
+(alias
+ (name interop)
+ (deps (alias test/interop/interop)))
 
-(rule
- (alias cve-regress)
- (deps (alias test/cve_regress/cve-regress))
- (action (progn)))
+(alias
+ (name cve-regress)
+ (deps (alias test/cve_regress/cve-regress)))
 
-(rule
- (alias http-bench)
- (deps (alias test/bench/http-bench))
- (action (progn)))
+(alias
+ (name http-bench)
+ (deps (alias test/bench/http-bench)))
 
-(rule
- (alias eta-lifecycle)
- (deps (alias test/eta_lifecycle/eta-lifecycle))
- (action (progn)))
+(alias
+ (name eta-lifecycle)
+ (deps (alias test/eta_lifecycle/eta-lifecycle)))
 
-(rule
- (alias h2spec)
- (deps (alias test/h2spec/h2spec))
- (action (progn)))
+(alias
+ (name h2spec)
+ (deps (alias test/h2spec/h2spec)))
 
-(rule
- (alias perf-compare)
- (deps (alias test/perf_compare/perf-compare))
- (action (progn)))
+(alias
+ (name perf-compare)
+ (deps (alias test/perf_compare/perf-compare)))
 
-(rule
- (alias server-load)
- (deps (alias test/server_load/server-load))
- (action (progn)))
+(alias
+ (name server-load)
+ (deps (alias test/server_load/server-load)))
 
-(rule
- (alias red-probes)
+(alias
+ (name red-probes)
  (deps
   (alias test/red_probes/h1_smuggle/red-probes)
   (alias test/red_probes/h1_pipeline/red-probes)
@@ -47,5 +40,4 @@
   (alias test/red_probes/handler_fail/red-probes)
   (alias test/red_probes/ws_malicious_server/red-probes)
   (alias test/red_probes/client_retry_idempotency/red-probes)
-  (alias test/red_probes/server_lifecycle/red-probes))
- (action (progn)))
+  (alias test/red_probes/server_lifecycle/red-probes)))
