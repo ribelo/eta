@@ -2,7 +2,7 @@
 
 This file tracks which packages have already had an optimization pass. It does
 not record benchmark numbers; retained benchmark history lives under
-`docs/research/evidence/bench-results/`.
+`.scratch/research/evidence/bench-results/`.
 
 ## Status Key
 

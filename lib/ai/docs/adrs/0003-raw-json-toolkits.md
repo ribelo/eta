@@ -56,7 +56,7 @@ through to their request encoders.
 
 ## Evidence
 
-- docs/research/evidence/eta_ai_v1/probes/schema/verdict.md
+- .scratch/research/evidence/eta_ai_v1/probes/schema/verdict.md
 - lib/schema/docs/adrs/0001-json-schema-export.md
 - test/ai/core/test_eta_ai.ml
 

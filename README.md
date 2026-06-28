@@ -558,6 +558,6 @@ Footguns:
 - `test/http` is the low-level protocol test target. `test/http_eio` is the
   green Eio transport gate.
 
-The historical research journal lives at `docs/research/journal.md`. It records
+The historical research journal lives at `.scratch/research/journal.md`. It records
 project history and local design reasoning, but it is not part of the published
 package.

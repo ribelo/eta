@@ -30,7 +30,7 @@ OCaml gives Eta:
   resource lifetime;
 - normal lexical captures for leaf effects.
 
-The Layer research lab in `docs/research/evidence/layer_research/README.md` found that a restricted
+The Layer research lab in `.scratch/research/evidence/layer_research/README.md` found that a restricted
 merge helper compiles, but it is not better than ordinary OCaml. The
 GADT/presence-set variants recreate a Tag/Context/HList system and still have
 ordering and duplicate-service hazards.

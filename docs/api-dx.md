@@ -540,7 +540,7 @@ The low-level group is not a deletion list. It is a doc-demotion list: these
 names should not be the first way users learn Eta, but they remain justified as
 primitive, bridge, or implementation support until stronger evidence says
 otherwise. The detailed audit lives in
-`docs/research/evidence/eta_research/api_dx/effect_surface.md`.
+`.scratch/research/evidence/eta_research/api_dx/effect_surface.md`.
 
 The no-explicit-bind surface scanner intentionally excludes archived research
 notes, audit logs, probe writeups, and `docs/api-dx.md` itself, where low-level

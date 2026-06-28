@@ -15,7 +15,7 @@ evidence and verdict justify it.
 
 ## Why
 
-The existing rationale in `docs/research/journal.md` under
+The existing rationale in `.scratch/research/journal.md` under
 `effet-stream design - Stream / Sink / Channel (4h research)` chose:
 
 - public `Stream.t` as the core;
@@ -39,10 +39,10 @@ but the justification must be evidence, not taste.
 
 Read and explicitly supersede or reaffirm:
 
-- `docs/research/journal.md`, section `effet-stream design - Stream / Sink / Channel`
+- `.scratch/research/journal.md`, section `effet-stream design - Stream / Sink / Channel`
   around V-S1..V-S10.
-- `docs/research/evidence/stream_research/README.md`
-- `docs/research/evidence/stream_research/BACKLOG.md`
+- `.scratch/research/evidence/stream_research/README.md`
+- `.scratch/research/evidence/stream_research/BACKLOG.md`
 - current `lib/stream/eta_stream.mli`
 - current `lib/stream/eta_stream.ml`
 - `lib/stream/README.md`
@@ -65,11 +65,11 @@ unfamiliar, more ZIO-like, or broader than the current design.
 Create a bounded lab under local scratch:
 
 ```text
-.scratch/evidence/stream-core-reopen/
+.scratch/research/evidence/stream-core-reopen/
 ```
 
 Keep only durable markdown conclusions under
-`docs/research/evidence/stream-core-reopen/`. At minimum include:
+`.scratch/research/evidence/stream-core-reopen/`. At minimum include:
 
 - `README.md` describing the question and proof obligations.
 - `candidates.md` with a hypothesis ledger.
@@ -131,7 +131,7 @@ Answer these with code, not prose:
 
 End with:
 
-- `docs/research/evidence/stream-core-reopen/verdict.md`
+- `.scratch/research/evidence/stream-core-reopen/verdict.md`
 - a concise docs candidate, preferably
   `lib/stream/docs/adrs/0003-stream-core-shape.md`, if the verdict is clear
   enough to promote;

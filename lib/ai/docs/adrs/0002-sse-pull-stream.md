@@ -57,7 +57,7 @@ reached, which covers early-stop callers.
 
 ## Evidence
 
-- docs/research/evidence/eta_ai_v1/probes/streaming_sse/verdict.md
+- .scratch/research/evidence/eta_ai_v1/probes/streaming_sse/verdict.md
 - test/ai/core/test_eta_ai.ml
 - lib/ai/audit/dep_usage.md
 - lib/ai/audit/eta_escapes.md

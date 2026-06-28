@@ -110,7 +110,7 @@ With no file argument, it reads the newest file in `bench/results/`.
 ## Committing Results
 
 `bench/results/*.json` is ignored by Git. Move a result into
-`docs/research/evidence/bench-results/` or a more specific evidence directory
+`.scratch/research/evidence/bench-results/` or a more specific evidence directory
 when it is useful evidence:
 
 - before a release or tag

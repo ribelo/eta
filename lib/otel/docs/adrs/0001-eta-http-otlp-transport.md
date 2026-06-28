@@ -56,7 +56,7 @@ HTTPS/custom TLS configuration is intentionally not part of this slice.
 
 - test/otel/run.ml has regression tests for 408 not retrying and
   429 retrying.
-- `docs/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/verdict.md`
+- `.scratch/research/evidence/eta_otel_v2/r_t3_exporter_on_eta_http/verdict.md`
   records the real-collector 1000-span verification without exporting eta-http
   internal spans.
 - Motel can be used as the local live OTLP/HTTP receiver on 127.0.0.1:27686.

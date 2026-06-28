@@ -56,7 +56,7 @@ Focused command:
 
 The previous canary reached OpenRouter with openai/gpt-4o-mini through
 eta-http. The preserved verdict is
-`docs/research/evidence/eta_ai_v1/probes/live_reach/verdict.md`. Recreate the
+`.scratch/research/evidence/eta_ai_v1/probes/live_reach/verdict.md`. Recreate the
 local probe before release if live canary coverage is needed.
 
 ## Consequences

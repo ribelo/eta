@@ -1,0 +1,45 @@
+(env
+ (_
+  (flags
+   (:standard -w -32-33))))
+
+(library
+ (name stream_core_reopen_common)
+ (wrapped true)
+ (modules common))
+
+(library
+ (name bridge_lib)
+ (wrapped true)
+ (modules bridge_lib)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name b_channel_transducer)
+ (modules b_channel_transducer)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name a_current_shape)
+ (modules a_current_shape)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name c_pull_core)
+ (modules c_pull_core)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name d_type_burden)
+ (modules d_type_burden)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name e_one_core_views)
+ (modules e_one_core_views)
+ (libraries stream_core_reopen_common))
+
+(executable
+ (name f_bridge_round_trip)
+ (modules f_bridge_round_trip)
+ (libraries stream_core_reopen_common bridge_lib))

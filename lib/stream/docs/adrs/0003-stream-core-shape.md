@@ -3,8 +3,8 @@
 ## Status
 
 Proposed. Supersedes the pre-rename stream design verdict recorded in
-`docs/research/journal.md` (V-S1, V-S6) based on the executable evidence in
-`docs/research/evidence/stream-core-reopen/verdict.md`.
+`.scratch/research/journal.md` (V-S1, V-S6) based on the executable evidence in
+`.scratch/research/evidence/stream-core-reopen/verdict.md`.
 
 This ADR records the decision. Implementation is a separate follow-up
 objective; this pass ships research only.
@@ -35,7 +35,7 @@ Two facts have changed since:
    typed-error row so `OutErr`/`InErr` collapse to one `'err`, and `Env` is
    absorbed into the embedded `('a,'err) Effect.t`. Call sites infer with zero
    annotations; the result is recorded in
-   `docs/research/evidence/stream-core-reopen/verdict.md`.
+   `.scratch/research/evidence/stream-core-reopen/verdict.md`.
 
 The current shape provably **cannot** express a streaming transducer: a
 `split_lines` via `flat_map`+mutable-ref drops the trailing partial line (no
@@ -44,7 +44,7 @@ accumulator each step and recovers the leftover only by accident
 (`a_current_shape.ml`). A 5-parameter Channel expresses the same transducer
 cleanly with leftover carry and a typed `done` value. The executable fixture
 names and observed output are recorded in
-`docs/research/evidence/stream-core-reopen/verdict.md`.
+`.scratch/research/evidence/stream-core-reopen/verdict.md`.
 
 ## Decision
 
@@ -133,9 +133,9 @@ Research verdict only in this pass. A follow-up objective should:
 
 ## References
 
-- `docs/research/evidence/stream-core-reopen/README.md`
-- `docs/research/evidence/stream-core-reopen/verdict.md`
-- `docs/research/evidence/stream-core-reopen/candidates.md`
+- `.scratch/research/evidence/stream-core-reopen/README.md`
+- `.scratch/research/evidence/stream-core-reopen/verdict.md`
+- `.scratch/research/evidence/stream-core-reopen/candidates.md`
 - `lib/http/body/stream.mli`, `lib/http/body/transducer.{ml,mli}`
 - `lib/stream/docs/adrs/0001-effect-reader-stream.md`
-- `docs/research/journal.md`, pre-rename stream design section (V-S1..V-S10)
+- `.scratch/research/journal.md`, pre-rename stream design section (V-S1..V-S10)

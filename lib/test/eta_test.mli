@@ -1,7 +1,7 @@
 (** Testing helpers for Eta programs.
 
     The v1 surface follows Eta's runtime seams rather than cloning
-    eff-smol's test services. See docs/research/journal.md, TestClock port near line 529,
+    eff-smol's test services. See .scratch/research/journal.md, TestClock port near line 529,
     and V-CM-H2-C1 for the portable random token rationale. *)
 
 module Test_clock : sig

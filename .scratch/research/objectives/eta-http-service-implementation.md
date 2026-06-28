@@ -5,7 +5,7 @@ Status: ready for implementation.
 ## Objective
 
 Implement Eta's HTTP service layer for building small HTTP microservices, based
-on the accepted research conclusion in `docs/research/eta-http-service-api.md`.
+on the accepted research conclusion in `.scratch/research/eta-http-service-api.md`.
 Read that promoted summary before coding. Do not rediscover the API from
 scratch.
 
@@ -169,6 +169,6 @@ The objective is complete only when:
   helpers are implemented;
 - Eta tests prove the new behavior;
 - `inn` is migrated to the new API and its tests pass;
-- the accepted evidence is summarized in `docs/research/eta-http-service-api.md`;
+- the accepted evidence is summarized in `.scratch/research/eta-http-service-api.md`;
 - no root `eta` dependency grew;
 - no framework-owned application concepts were introduced.
