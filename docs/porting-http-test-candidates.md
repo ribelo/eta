@@ -1,7 +1,8 @@
 # HTTP Test Porting Candidates — zio-http & Effect-TS → Eta
 
-This document collects HTTP server/client tests from
-`.reference/zio-http` and `.reference/effect` that are worth porting to Eta.
+This document collects HTTP server/client tests from optional local
+`.reference/zio-http` and `.reference/effect` checkouts that are worth porting
+to Eta.
 The focus is on **behavior Eta already owns or is likely to own soon**:
 protocol interpretation, request/response lifecycle, streaming, error mapping,
 and server runtime. High-level routing DSL, OpenAPI, cookie jars, and
@@ -20,7 +21,8 @@ How to read the tables:
 
 ## zio-http candidates
 
-Repository: `.reference/zio-http` (https://github.com/zio/zio-http, shallow clone).
+Repository: `.reference/zio-http` when present locally
+(https://github.com/zio/zio-http).
 
 ### High priority
 
@@ -70,7 +72,8 @@ Repository: `.reference/zio-http` (https://github.com/zio/zio-http, shallow clon
 
 ## Effect-TS candidates
 
-Repository: `.reference/effect` (https://github.com/Effect-TS/effect, shallow clone).
+Repository: `.reference/effect` when present locally
+(https://github.com/Effect-TS/effect).
 
 ### High priority
 
@@ -149,9 +152,10 @@ because both require new modules that many HTTP applications expect.
 
 ---
 
-## Notes on cloning
+## Notes on optional references
 
-Both references were cloned shallowly and symlinked:
+To refresh this catalogue, clone the references shallowly and symlink them into
+the ignored `.reference/` directory:
 
 ```sh
 mkdir -p ~/projects/github
