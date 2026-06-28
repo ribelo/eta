@@ -235,6 +235,8 @@ module Headers = struct
   let decode buf ~off ~envelope =
     if envelope.stream_id = 0 then
       Error Error_code.Protocol_error
+    else if Flags.has envelope.flags Flags.padded && envelope.length = 0 then
+      Error Error_code.Protocol_error
     else
       let pos = ref off in
       let pad_len =
@@ -247,7 +249,8 @@ module Headers = struct
       let priority_len =
         if Flags.has envelope.flags Flags.priority then 5 else 0
       in
-      let header_len = envelope.length - (!pos - off) - pad_len in
+      let metadata_len = (!pos - off) + priority_len in
+      let header_len = envelope.length - metadata_len - pad_len in
       if header_len < 0 then Error Error_code.Protocol_error
       else
         let priority =

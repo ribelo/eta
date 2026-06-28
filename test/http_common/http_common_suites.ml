@@ -1158,6 +1158,45 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Invalid_argument "Eta_http_h2.Frame.uint32: value outside uint32")
       (fun () -> ignore (Eta_http_h2.Frame.uint32 (Int.shift_left 1 32)))
 
+  let test_h2_frame_headers_decode_strips_padding_and_priority () =
+    let header_block = "abc" in
+    let padding = "\255\254" in
+    let priority = "\000\000\000\000\015" in
+    let payload =
+      String.make 1 (Char.chr (String.length padding))
+      ^ priority ^ header_block ^ padding
+    in
+    let buf =
+      Bigstringaf.of_string ~off:0 ~len:(String.length payload) payload
+    in
+    let envelope : Eta_http_h2.Frame.envelope =
+      {
+        length = String.length payload;
+        frame_type = Eta_http_h2.Frame.frame_type_code Eta_http_h2.Frame.Headers;
+        flags = Eta_http_h2.Frame.Flags.padded lor Eta_http_h2.Frame.Flags.priority;
+        stream_id = 1;
+      }
+    in
+    match Eta_http_h2.Frame.Headers.decode buf ~off:0 ~envelope with
+    | Error error_code ->
+        Alcotest.failf "unexpected HEADERS decode error: %a"
+          Eta_http_h2.Error_code.pp_hum error_code
+    | Ok headers ->
+        Alcotest.(check int) "fragment offset" 6 headers.off;
+        Alcotest.(check int) "fragment length" (String.length header_block)
+          headers.len;
+        Alcotest.(check string)
+          "fragment" header_block
+          (Bigstringaf.substring headers.header_block_fragment ~off:headers.off
+             ~len:headers.len);
+        Alcotest.(check int) "padding" (String.length padding) headers.padded;
+        (match headers.priority with
+        | None -> Alcotest.fail "missing priority metadata"
+        | Some priority ->
+            Alcotest.(check bool) "exclusive" false priority.exclusive;
+            Alcotest.(check int) "dependency" 0 priority.stream_dependency;
+            Alcotest.(check int) "weight" 16 priority.weight)
+
   let test_h2_writer_preserves_iovec_slices () =
     let buffer = Bigstringaf.of_string ~off:0 ~len:10 "0123456789" in
     let iovecs = [ { Eta_http_h2.Iovec.buffer; off = 2; len = 4 } ] in
@@ -2973,6 +3012,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "parse header" `Quick test_h2_frame_parse_header;
           Alcotest.test_case "uint32 rejects overflow" `Quick
             test_h2_frame_uint32_rejects_overflow;
+          Alcotest.test_case "HEADERS strips padding and priority" `Quick
+            test_h2_frame_headers_decode_strips_padding_and_priority;
         ] );
       ( "h2-writer",
         [

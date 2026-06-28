@@ -514,6 +514,20 @@ let raw_headers encoder ?(end_stream = false) ~stream_id headers =
     ~flags ~stream_id
   ^ block
 
+let raw_padded_priority_headers encoder ?(end_stream = false) ~stream_id
+    headers =
+  let block = hpack_block encoder headers in
+  let padding = "\255\254" in
+  let priority = "\000\000\000\000\015" in
+  let payload =
+    String.make 1 (Char.chr (String.length padding))
+    ^ priority ^ block ^ padding
+  in
+  let flags = 0x4 lor 0x8 lor 0x20 lor (if end_stream then 0x1 else 0) in
+  Eta_http_h2.Frame.header ~length:(String.length payload) ~frame_type:Headers
+    ~flags ~stream_id
+  ^ payload
+
 let raw_split_headers encoder ?(end_stream = false) ?continuation_stream_id
     ~stream_id headers =
   let block = hpack_block encoder headers in
@@ -529,6 +543,27 @@ let raw_split_headers encoder ?(end_stream = false) ?continuation_stream_id
   ^ first
   ^ Eta_http_h2.Frame.header ~length:(String.length rest)
       ~frame_type:Continuation ~flags:0x4 ~stream_id:continuation_stream_id
+  ^ rest
+
+let raw_split_padded_priority_headers encoder ?(end_stream = false) ~stream_id
+    headers =
+  let block = hpack_block encoder headers in
+  let split = 1 in
+  let first = String.sub block 0 split in
+  let rest = String.sub block split (String.length block - split) in
+  let padding = "\255\254" in
+  let priority = "\000\000\000\000\015" in
+  let first_payload =
+    String.make 1 (Char.chr (String.length padding))
+    ^ priority ^ first ^ padding
+  in
+  Eta_http_h2.Frame.header ~length:(String.length first_payload)
+    ~frame_type:Headers
+    ~flags:(0x8 lor 0x20 lor (if end_stream then 0x1 else 0))
+    ~stream_id
+  ^ first_payload
+  ^ Eta_http_h2.Frame.header ~length:(String.length rest)
+      ~frame_type:Continuation ~flags:0x4 ~stream_id
   ^ rest
 
 let raw_frame frame_type ~flags ~stream_id payload =
@@ -592,6 +627,39 @@ let test_h2_connection_peer_reset_keeps_stream_admitted_until_handler_finishes (
   h2_feed_server server (request 5 "/third");
   Alcotest.(check (list string))
     "admitted after handler finishes" [ "/first"; "/third" ] (List.rev !seen)
+
+let test_h2_connection_strips_padded_priority_request_headers () =
+  let seen_paths = ref [] in
+  let server =
+    Eta_http_h2.Connection.Server.create
+      ~request_handler:(fun reqd ->
+        let request = Eta_http_h2.Connection.Server.Reqd.request reqd in
+        seen_paths := request.path :: !seen_paths)
+      ~error_handler:(fun error ->
+        Alcotest.failf "unexpected h2 server error: %a %s"
+          Eta_http_h2.Error_code.pp_hum error.error_code error.message)
+      ()
+  in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let headers path =
+    [
+      hpack_header ":method" "GET";
+      hpack_header ":scheme" "https";
+      hpack_header ":path" path;
+      hpack_header ":authority" "api.example.test";
+    ]
+  in
+  let requests =
+    raw_padded_priority_headers encoder ~end_stream:true ~stream_id:1
+      (headers "/padded-priority")
+    ^ raw_split_padded_priority_headers encoder ~end_stream:true ~stream_id:3
+        (headers "/split-padded-priority")
+  in
+  h2_feed_server server (raw_client_preface requests);
+  Alcotest.(check (list string))
+    "request paths"
+    [ "/padded-priority"; "/split-padded-priority" ]
+    (List.rev !seen_paths)
 
 let test_h2_connection_processes_continuation_request_headers () =
   let seen_path = ref None in

@@ -763,6 +763,25 @@ let max_continuation_accumulator_bytes = 64 * 1024
 
 let has_end_headers flags = flags land Frame.Flags.end_headers <> 0
 
+let decode_headers_fragment t ~flags ~stream_id payload =
+  let payload_len = String.length payload in
+  let envelope =
+    { Frame.length = payload_len;
+      frame_type = Frame.frame_type_code Frame.Headers;
+      flags;
+      stream_id
+    }
+  in
+  let payload = Bigstringaf.of_string ~off:0 ~len:payload_len payload in
+  match Frame.Headers.decode payload ~off:0 ~envelope with
+  | Error error_code ->
+      report_error t { error_code; message = "HEADERS frame decode error" };
+      None
+  | Ok headers ->
+      Some
+        (Bigstringaf.substring headers.header_block_fragment ~off:headers.off
+           ~len:headers.len)
+
 let append_header_fragment t acc payload =
   let payload_len = String.length payload in
   if payload_len > max_continuation_accumulator_bytes - Buffer.length acc then (
@@ -776,15 +795,19 @@ let append_header_fragment t acc payload =
     true)
 
 let start_header_block t ~flags ~stream_id payload =
-  if has_end_headers flags then handle_headers t ~flags ~stream_id payload
-  else if stream_id = 0 then
+  if stream_id = 0 then
     report_error t
       { error_code = Error_code.Protocol_error;
         message = "HEADERS frame with stream_id=0" }
   else
-    let acc = Buffer.create (String.length payload) in
-    if append_header_fragment t acc payload then
-      t.read_state <- Expect_continuation { stream_id; flags; acc }
+    match decode_headers_fragment t ~flags ~stream_id payload with
+    | None -> ()
+    | Some fragment ->
+        if has_end_headers flags then handle_headers t ~flags ~stream_id fragment
+        else
+          let acc = Buffer.create (String.length fragment) in
+          if append_header_fragment t acc fragment then
+            t.read_state <- Expect_continuation { stream_id; flags; acc }
 
 let handle_continuation t ~flags ~stream_id payload =
   match t.read_state with

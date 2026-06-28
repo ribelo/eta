@@ -530,6 +530,8 @@ let () =
           Alcotest.test_case
             "peer reset keeps stream admitted until handler finishes" `Quick
             test_h2_connection_peer_reset_keeps_stream_admitted_until_handler_finishes;
+          Alcotest.test_case "strips padded priority request headers" `Quick
+            test_h2_connection_strips_padded_priority_request_headers;
           Alcotest.test_case "rejects wrong-stream CONTINUATION" `Quick
             test_h2_connection_rejects_wrong_stream_continuation;
           Alcotest.test_case "caps CONTINUATION accumulator" `Quick
