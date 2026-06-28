@@ -18,6 +18,7 @@ Package-level optimization status is tracked separately in
 | Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
 | Streams | `eta_stream.*` | Representative `eta_stream` pipelines and file reads. |
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
+| HTTP server loop | `METRIC h1_*`, `METRIC h2_*` | In-process H1/H2 server loop throughput and allocation without socket/client noise. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
 | Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
@@ -52,6 +53,12 @@ Runtime-only Dune alias:
 
 ```sh
 nix develop -c dune build @bench
+```
+
+Focused in-process HTTP server loop benchmark:
+
+```sh
+nix develop -c dune exec bench/http_server_loop/bench_server_loop.exe -- --quick
 ```
 
 `dune runtest` does not run benchmarks.

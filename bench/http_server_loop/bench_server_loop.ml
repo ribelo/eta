@@ -404,6 +404,14 @@ let arg_int name default =
   in
   loop (Array.to_list Sys.argv)
 
+let arg_present name =
+  let rec loop = function
+    | a :: _ when a = name -> true
+    | _ :: rest -> loop rest
+    | [] -> false
+  in
+  loop (Array.to_list Sys.argv)
+
 let run_proto ~proto ~make_run ~samples ~requests =
   List.map
     (fun ep ->
@@ -425,8 +433,9 @@ let run_proto ~proto ~make_run ~samples ~requests =
     endpoints
 
 let () =
-  let samples = arg_int "--samples" 9 in
-  let requests = arg_int "--requests" 40_000 in
+  let quick = arg_present "--quick" in
+  let samples = arg_int "--samples" (if quick then 1 else 9) in
+  let requests = arg_int "--requests" (if quick then 1_000 else 40_000) in
   Eio_main.run @@ fun env ->
   let clock = Eio.Stdenv.clock env in
   Printf.eprintf "== H1 ==\n%!";

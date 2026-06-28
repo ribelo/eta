@@ -1,3 +1,9 @@
 (executable
  (name bench_server_loop)
  (libraries eta eta_eio eta_http eta_http_eio eio eio_main cstruct unix))
+
+(rule
+ (alias bench)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./bench_server_loop.exe --quick))))
