@@ -36,9 +36,10 @@ Required constraints for H-D:
 ## Verification Notes
 
 Focused lab commands and outputs are recorded in each hypothesis results.md and
-in journal.md. The shipped Eta package gate passes:
+in journal.md. The shipped Eta package gate passed for the original lab:
 
     nix develop .#oxcaml -c eta-oxcaml-test-shipped
 
-Root dune build remains impractical while unrelated stale scratch directories
-still reference old effet/ppx_effet APIs.
+Current repository gates exclude local `.scratch/` from the main Dune workspace.
+Use the top-level package gates, not historical scratch directories, for current
+repository freshness.
