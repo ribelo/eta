@@ -18,6 +18,7 @@ backlog/
 /gpt-review*.md
 /gpt-pro-review*.md
 .motel-data/
+.nema/
 bench/fixtures/cache/*.bin
 bench/runtime_overhead_ts/node_modules/
 bench/runtime_overhead_zio/.scala-build/
@@ -41,8 +42,3 @@ autoresearch.jsonl
 # Local automation state
 .auto/
 .hill-climbing/
-
-# Local Nema database state; keep .nema/config.toml trackable.
-.nema/db
-.nema/db.wal
-.nema/lock
