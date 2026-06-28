@@ -560,7 +560,7 @@ Repository: `/home/ribelo/projects/ribelo/camelpie`
 Camelpie was migrated from visible raw `Eta.Effect.bind` usage to the preferred
 surface across production code and tests. The final scan found no explicit
 `Eta.Effect.bind`, pipeline-to-`bind`, or `catch (fun _ -> Effect.unit)` shapes
-under `packages/camelpie`.
+in the Camelpie repository.
 
 What the migration proved:
 
@@ -613,9 +613,10 @@ Not yet strengthened by Camelpie:
 Verification:
 
 ```sh
+cd /home/ribelo/projects/ribelo/camelpie
 nix develop .#oxcaml -c dune build @install
-nix develop .#oxcaml -c dune runtest packages/camelpie --force
-rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.catch \\(fun _ -> Eta\\.Effect\\.unit\\)" packages/camelpie
+nix develop .#oxcaml -c dune runtest --force
+rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.catch \\(fun _ -> Eta\\.Effect\\.unit\\)" .
 git diff --check
 ```
 
