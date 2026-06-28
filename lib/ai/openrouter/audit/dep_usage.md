@@ -1,7 +1,6 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/openrouter/audit/run.sh
-Last updated: 2026-06-28T09:12:26Z
 Current sites: 152
 
 Allowed production dependencies for eta-ai-openrouter:
@@ -42,6 +41,7 @@ The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 - lib/ai/openrouter/bench/bench_ai_openrouter.ml:22:  Eta_ai.make_tool ~name:"weather" ~description:"Get current weather"
 - lib/ai/openrouter/bench/bench_ai_openrouter.ml:26:let request : Eta_ai.chat_request =
 - lib/ai/openrouter/bench/bench_ai_openrouter.ml:74:                 ~api_key:(Eta_ai.api_key "sk-bench") request)));
+- lib/ai/openrouter/common.ml:215:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
 - lib/ai/openrouter/eta_ai_openrouter.mli:40:  (routing, Eta_ai.ai_error) result
 - lib/ai/openrouter/eta_ai_openrouter.mli:50:  (reasoning, Eta_ai.ai_error) result
 - lib/ai/openrouter/eta_ai_openrouter.mli:55:  ?extra_headers:Eta_ai.headers ->
@@ -184,5 +184,4 @@ The search includes Eta_ai_openai to catch forbidden cross-provider usage.
 - lib/ai/openrouter/eta_ai_openrouter.mli:323:  api_key:Eta_ai.api_key ->
 - lib/ai/openrouter/eta_ai_openrouter.mli:324:  Eta_ai.chat_request ->
 - lib/ai/openrouter/eta_ai_openrouter.mli:325:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-- lib/ai/openrouter/common.ml:215:       ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
 <!-- END DEP_MATCHES -->

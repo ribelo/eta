@@ -1,7 +1,6 @@
 # Dependency Usage Audit
 
 Run: bash lib/otel/audit/run.sh
-Last updated: 2026-06-28T09:12:16Z
 Current sites: 27
 
 Every eta-otel call site for package-boundary or external dependencies is
@@ -45,10 +44,10 @@ Search:
 - lib/otel/eta_otel.ml:442:         Eta_stream.from_effect (export_signal t config signal))
 - lib/otel/eta_otel.ml:472:       (Eta_http.Client.shutdown t.http_client |> Eta.Effect.ignore_errors)
 - lib/otel/eta_otel.ml:714:    Option.value http_client ~default:(Eta_http.Client.make_runtime ())
+- lib/otel/eta_otel.mli:17:  ?http_client:Eta_http.Client.t ->
+- lib/otel/eta_otel.mli:41:    [http_client] defaults to {!Eta_http.Client.make_runtime}, so the exporter
 - lib/otel/otlp_json.ml:1:type yj = Yojson.Safe.t
 - lib/otel/otlp_json.ml:146:  Yojson.Safe.to_string payload
 - lib/otel/otlp_json.ml:204:  Yojson.Safe.to_string payload
 - lib/otel/otlp_json.ml:376:  Yojson.Safe.to_string payload
-- lib/otel/eta_otel.mli:17:  ?http_client:Eta_http.Client.t ->
-- lib/otel/eta_otel.mli:41:    [http_client] defaults to {!Eta_http.Client.make_runtime}, so the exporter
 <!-- END DEP_MATCHES -->

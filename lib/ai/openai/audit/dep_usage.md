@@ -1,7 +1,6 @@
 # Dependency Usage Audit
 
 Run: bash lib/ai/openai/audit/run.sh
-Last updated: 2026-06-28T09:12:26Z
 Current sites: 148
 
 Allowed production dependencies for eta-ai-openai:
@@ -40,15 +39,6 @@ Search:
 - lib/ai/openai/bench/bench_ai_openai.ml:64:                 ~api_key:(Eta_ai.api_key "sk-bench") request)));
 - lib/ai/openai/common.ml:49:  Eta_http.Core.Header.unsafe_of_list
 - lib/ai/openai/common.ml:51:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/realtime.ml:3:module E = Eta.Effect
-- lib/ai/openai/realtime.ml:98:  Eta_http.Core.Header.unsafe_of_list
-- lib/ai/openai/realtime.ml:100:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
-- lib/ai/openai/realtime.ml:109:  Eta_http.Request.make ~headers:(auth_headers api_key)
-- lib/ai/openai/realtime.ml:110:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
-- lib/ai/openai/realtime.ml:115:  Eta_http.Body.Stream.read_all body
-- lib/ai/openai/realtime.ml:138:  Eta_http.request client request
-- lib/ai/openai/realtime.ml:141:  |> E.bind (fun (response : Eta_http.Response.t) ->
-- lib/ai/openai/realtime.ml:142:         read_response_body response.Eta_http.Response.body
 - lib/ai/openai/eta_ai_openai.mli:12:  schema : Eta_ai.Json.t;
 - lib/ai/openai/eta_ai_openai.mli:21:  schema_json:Eta_ai.raw_json ->
 - lib/ai/openai/eta_ai_openai.mli:23:  (structured_output, Eta_ai.ai_error) result
@@ -152,6 +142,15 @@ Search:
 - lib/ai/openai/eta_ai_openai.mli:194:  api_key:Eta_ai.api_key ->
 - lib/ai/openai/eta_ai_openai.mli:195:  Eta_ai.chat_request ->
 - lib/ai/openai/eta_ai_openai.mli:196:  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+- lib/ai/openai/realtime.ml:3:module E = Eta.Effect
+- lib/ai/openai/realtime.ml:98:  Eta_http.Core.Header.unsafe_of_list
+- lib/ai/openai/realtime.ml:100:      ("Authorization", "Bearer " ^ Eta_redacted.value api_key);
+- lib/ai/openai/realtime.ml:109:  Eta_http.Request.make ~headers:(auth_headers api_key)
+- lib/ai/openai/realtime.ml:110:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string body ])
+- lib/ai/openai/realtime.ml:115:  Eta_http.Body.Stream.read_all body
+- lib/ai/openai/realtime.ml:138:  Eta_http.request client request
+- lib/ai/openai/realtime.ml:141:  |> E.bind (fun (response : Eta_http.Response.t) ->
+- lib/ai/openai/realtime.ml:142:         read_response_body response.Eta_http.Response.body
 - lib/ai/openai/realtime.mli:9:  input_audio_format : Eta_ai.audio_format option;
 - lib/ai/openai/realtime.mli:10:  output_audio_format : Eta_ai.audio_format option;
 - lib/ai/openai/realtime.mli:12:  turn_detection : Eta_ai.Json.t option;

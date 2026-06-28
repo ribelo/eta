@@ -2,8 +2,6 @@
 set -euo pipefail
 
 root="${1:-lib/ai}"
-timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
 dep_pattern='Eta_redacted\.|Eta\.(Eta_redacted|Effect|Tracer|Logger|Capabilities|Runtime)|Eta_http\.|Eta_http_eio|Eta_http_js|Eta_jsoo|Js_of_ocaml|Eta_stream\.|Eio\.|Tiktoken'
 escape_pattern='Eio\.Fiber\.fork|Eio\.Switch\.run|Eio\.Promise|Eio\.Mutex|Eio\.Condition|Atomic\.[A-Za-z0-9_]+'
 
@@ -11,8 +9,8 @@ dep_sites="$(mktemp)"
 escape_sites="$(mktemp)"
 trap 'rm -f "$dep_sites" "$escape_sites"' EXIT
 
-rg -n -t ocaml "$dep_pattern" "$root" -g '!openai_realtime_eio/**' >"$dep_sites" || true
-rg -n -t ocaml "$escape_pattern" "$root" -g '!openai_realtime_eio/**' >"$escape_sites" || true
+rg --sort path -n -t ocaml "$dep_pattern" "$root" -g '!openai_realtime_eio/**' >"$dep_sites" || true
+rg --sort path -n -t ocaml "$escape_pattern" "$root" -g '!openai_realtime_eio/**' >"$escape_sites" || true
 
 dep_count="$(wc -l <"$dep_sites" | tr -d ' ')"
 escape_count="$(wc -l <"$escape_sites" | tr -d ' ')"
@@ -22,8 +20,7 @@ update_header () {
   local count="$2"
   local tmp
   tmp="$(mktemp)"
-  awk -v timestamp="$timestamp" -v count="$count" '
-    /^Last updated:/ { print "Last updated: " timestamp; next }
+  awk -v count="$count" '
     /^Current sites:/ { print "Current sites: " count; next }
     { print }
   ' "$file" >"$tmp"
