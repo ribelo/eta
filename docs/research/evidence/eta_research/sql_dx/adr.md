@@ -30,7 +30,7 @@ of `Connection`/`Pool`/`Eta_pool` into a single execution path.
 **Disproof signature:** A 4-table query needs >2× the call-site LOC of the same
 query in sqlx-Rust or Caqti, **or** breaks the `'scope` chain and forces raw SQL.
 
-**Evidence:** `scratch/eta_research/sql_dx/p1_joins/fixture.ml`
+**Evidence:** `.scratch/eta_research/sql_dx/p1_joins/fixture.ml`
 
 The fixture attempts:
 ```ocaml
@@ -59,7 +59,7 @@ table types, and there is no way to extend it.
 `WHERE col IN (lit, lit, lit)`, `WHERE col BETWEEN x AND y`,
 `CASE WHEN ... THEN ... END` cannot be expressed without raw-SQL escape.
 
-**Evidence:** `scratch/eta_research/sql_dx/p2_expressions/fixture.ml`
+**Evidence:** `.scratch/eta_research/sql_dx/p2_expressions/fixture.ml`
 
 | Predicate | Attempt | Result |
 |---|---|---|
@@ -244,7 +244,7 @@ piecemeal expansion.
 ## Closure pass — sketch verification (2026-05-28, redo)
 
 The three proposed API shapes were compile-checked with real type constraints
-in `scratch/eta_research/sql_dx/p_sketch/`. Each sketch demonstrates both
+in `.scratch/eta_research/sql_dx/p_sketch/`. Each sketch demonstrates both
 valid use (compiles) and invalid use (rejected by type checker).
 
 ### Source.join — 4-table chainable joins

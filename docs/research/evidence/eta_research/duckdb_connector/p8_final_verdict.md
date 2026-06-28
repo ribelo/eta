@@ -18,12 +18,12 @@
 
 | Probe | Build/Run Log | Source | Command |
 |-------|---------------|--------|---------|
-| P-A | `pa_engine_signature/build.log` | `sqlite_engine.ml` | `dune build --verbose scratch/.../pa_engine_signature` |
-| P-B | `pb_value_union/bench.log` | `pb_bench.ml` | `dune exec scratch/.../pb_bench.exe` |
-| P-C | `pc_pool_lifecycle/pool.log` | `pc_pool_probe.ml` | `dune exec scratch/.../pc_pool_probe.exe` |
-| P-D | `pd_chunk_cancel/cancel.log` | `pd_cancel_probe.ml` | `dune exec scratch/.../pd_cancel_probe.exe` |
-| P-E | `pe_appender_cancel/appender.log` | `pe_appender_probe.ml` | `dune exec scratch/.../pe_appender_probe.exe` |
-| P-F | `pf_error_categories/error.log` | `pf_error_probe.ml` | `dune exec scratch/.../pf_error_probe.exe` |
+| P-A | `pa_engine_signature/build.log` | `sqlite_engine.ml` | `dune build --verbose .scratch/.../pa_engine_signature` |
+| P-B | `pb_value_union/bench.log` | `pb_bench.ml` | `dune exec .scratch/.../pb_bench.exe` |
+| P-C | `pc_pool_lifecycle/pool.log` | `pc_pool_probe.ml` | `dune exec .scratch/.../pc_pool_probe.exe` |
+| P-D | `pd_chunk_cancel/cancel.log` | `pd_cancel_probe.ml` | `dune exec .scratch/.../pd_cancel_probe.exe` |
+| P-E | `pe_appender_cancel/appender.log` | `pe_appender_probe.ml` | `dune exec .scratch/.../pe_appender_probe.exe` |
+| P-F | `pf_error_categories/error.log` | `pf_error_probe.ml` | `dune exec .scratch/.../pf_error_probe.exe` |
 
 ## Honest Assessment of What Was NOT Measured
 

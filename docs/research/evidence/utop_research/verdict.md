@@ -9,8 +9,8 @@ Eta_utop.run_exn, Eta_utop.with_runtime, and Eta_utop.host.
 
 Evidence:
 
-- nix develop -c dune exec scratch/utop_research/runtime_smoke.exe returned OK pure, OK map, and OK blocking.
-- dune utop lib/utop with scratch/utop_research/utop_smoke.ml returned Eta.Exit.Ok 42, 43, and Eta.Exit.Ok 7.
+- nix develop -c dune exec .scratch/utop_research/runtime_smoke.exe returned OK pure, OK map, and OK blocking.
+- dune utop lib/utop with .scratch/utop_research/utop_smoke.ml returned Eta.Exit.Ok 42, 43, and Eta.Exit.Ok 7.
 - eta.opam did not gain eio_main or utop; the generated eta_utop.opam owns eio_main.
 
 Counterevidence considered:

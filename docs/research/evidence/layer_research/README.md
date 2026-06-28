@@ -14,8 +14,8 @@ and Log. The merged app needs Clock and Log at boot.
 
 Run positives:
 
-    nix develop -c dune build scratch/layer_research
-    nix develop -c dune exec scratch/layer_research/runtime_smoke.exe
+    nix develop -c dune build .scratch/layer_research
+    nix develop -c dune exec .scratch/layer_research/runtime_smoke.exe
 
 Negative probes are deliberately excluded from dune. Add one executable stanza
 for a neg_*.ml file at a time to capture the compiler error, then remove it.

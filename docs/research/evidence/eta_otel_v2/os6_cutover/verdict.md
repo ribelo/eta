@@ -18,7 +18,7 @@ for each eta-otel encoder row.
 Run:
 
 ```sh
-nix develop -c bash scratch/eta_otel_v2/os6_cutover/run.sh
+nix develop -c bash .scratch/eta_otel_v2/os6_cutover/run.sh
 ```
 
 Current five-sample encoder means after the same-key metric aggregation fast
@@ -41,7 +41,7 @@ README, opam files, and `dune-project` for:
 effet-otel|Effet_otel|effet_otel|packages/effet-otel
 ```
 
-It excludes historical `journal.md`, `scratch/`, and committed
+It excludes historical `journal.md`, `.scratch/`, and committed
 `bench/results/`. Result: no active legacy imports.
 
 ## Decision

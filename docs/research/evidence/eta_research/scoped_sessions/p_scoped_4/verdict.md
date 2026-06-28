@@ -38,13 +38,13 @@ reopen the private-daemon design boundary.
 
 Commands run from the repository root:
 
-- nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_4/branch_c_supervised_session.exe
+- nix develop .#oxcaml -c dune exec .scratch/eta_research/scoped_sessions/p_scoped_4/branch_c_supervised_session.exe
   - Result: PASS, see results/branch_c_supervised_session.log.
-- nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_4/branch_b_local_wrapper.exe
+- nix develop .#oxcaml -c dune exec .scratch/eta_research/scoped_sessions/p_scoped_4/branch_b_local_wrapper.exe
   - Result: PASS, see results/branch_b_local_wrapper.log.
-- nix develop .#oxcaml -c dune build ./scratch/eta_research/scoped_sessions/p_scoped_4/negative/child_escape_negative.exe
+- nix develop .#oxcaml -c dune build .scratch/eta_research/scoped_sessions/p_scoped_4/negative/child_escape_negative.exe
   - Result: expected compile failure, see results/child_escape_negative.log.
-- git apply --check scratch/eta_research/scoped_sessions/p_scoped_4/ws_client_branch_c.patch
+- git apply --check .scratch/eta_research/scoped_sessions/p_scoped_4/ws_client_branch_c.patch
   - Result: PASS, see results/ws_client_branch_c_apply_check.log.
 
 Plain dune without the OxCaml shell is not a valid gate for this repository. It

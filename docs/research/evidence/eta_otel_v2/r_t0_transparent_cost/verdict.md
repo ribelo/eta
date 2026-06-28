@@ -45,8 +45,8 @@ Fixtures:
 - bench/r_t0_linkage/with_otel_linked.ml
 - bench/r_t0_branch_elision/r_t0_branch_elision.ml
 - bench/results/eta-r-t0-paygo-current.json
-- scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
-- scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/verdict.md
+- .scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+- .scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/verdict.md
 
 Build and smoke:
 
@@ -102,7 +102,7 @@ effect.observability.noop_meter.metric major_words 0.0
 bench/runtime_observability is useful for allocation evidence, but it is not a
 clean binary-bloat fixture because the benchmark target itself links observation
 support. The clean bloat probe lives under bench/r_t0_linkage/. Runnable
-fixtures were placed under bench/ because the root Dune file treats scratch/ as
+fixtures were placed under bench/ because the root Dune file treats .scratch/ as
 a data-only directory.
 
 ## Verdict
@@ -127,7 +127,7 @@ separation for binary bloat.
 Command:
 
 ~~~text
-scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+.scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
 exit 0
 dynamic_observer_branch_markers=2
 noop_observer_branch_markers=0
@@ -152,7 +152,7 @@ claim.
   the observer branch when the runtime value is not statically known.
 - The benchmark proves zero allocation for the covered noop observer cases, not
   every possible future eta-otel call path.
-- The missing scratch/eta_otel_rebuild/transparent_cost_research_plan.md
+- The missing .scratch/eta_otel_rebuild/transparent_cost_research_plan.md
   referenced by the objective was not present in this checkout, so this verdict
   records a new hypothesis ledger rather than amending that stale plan.
 - Next production step for candidate B: implement an Eta.Runtime no-observer

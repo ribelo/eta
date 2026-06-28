@@ -194,4 +194,4 @@ Follow-up production code changed in eta-http:
 
 - `packages/eta-http/client/retry.{ml,mli}`
 - `packages/eta-http/test/test_eta_http.ml`
-- `scratch/eta_http_research/adrs/0005-retry-idempotency-replayability.md`
+- `.scratch/eta_http_research/adrs/0005-retry-idempotency-replayability.md`

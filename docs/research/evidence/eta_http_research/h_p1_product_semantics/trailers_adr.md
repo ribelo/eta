@@ -20,7 +20,7 @@ packages/eta-http/client/client.ml.
 
 The focused tests include HTTP/1.1 chunked trailer coverage and HTTP/2 response
 trailer coverage. H-G1 also proves the gRPC trailers-as-status pattern under
-scratch/eta_http_research/h_g1_grpc_forward_compat.
+.scratch/eta_http_research/h_g1_grpc_forward_compat.
 
 ## Consequences
 

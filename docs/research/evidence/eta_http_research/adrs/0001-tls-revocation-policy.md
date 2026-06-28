@@ -77,6 +77,6 @@ Require hard-fail revocation for every client request:
 
 Evidence is recorded in:
 
-- scratch/eta_http_research/h_s3_tls_grade/security_audit.md
-- scratch/eta_http_research/h_s3_tls_grade/results.md
+- .scratch/eta_http_research/h_s3_tls_grade/security_audit.md
+- .scratch/eta_http_research/h_s3_tls_grade/results.md
 - journal.md entry V-Http-S3-PartC-Audit-Revocation

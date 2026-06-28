@@ -9,7 +9,7 @@ docs/research/objectives/eta-otel-and-eta-ai-completion-audit.md.
 
 This is the master objective. Lives in `docs/research/objectives/eta-otel-and-eta-ai.md`
 per repo-hygiene convention; per-track throwaway probes may use local
-`scratch/`, while durable decisions land under `docs/research/evidence/` or
+`.scratch/`, while durable decisions land under `docs/research/evidence/` or
 package ADRs.
 
 ---
@@ -114,7 +114,7 @@ primitives and what we considered structural vs replaceable.
 ### 1.5 Research Evidence
 
 Per user direction. Master objectives live under `docs/research/objectives/<name>.md`;
-per-objective throwaway probes may live under local `scratch/<topic>/`;
+per-objective throwaway probes may live under local `.scratch/<topic>/`;
 durable verdicts and ADRs land under `docs/research/evidence/` or package-local
 docs; production code lives under `packages/<pkg>/`. ADRs co-locate with the
 package they govern at `packages/<pkg>/docs/adrs/`.

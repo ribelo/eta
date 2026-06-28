@@ -108,7 +108,7 @@ Stage A recovery evidence is absorbed as follows:
 
 Command:
 
-    nix develop -c bash scratch/oxcaml_research/portable_islands/run.sh
+    nix develop -c bash .scratch/oxcaml_research/portable_islands/run.sh
 
 Result:
 
@@ -116,7 +116,7 @@ Result:
 
 Diagnostic command:
 
-    nix develop -c ocamlfind ocamlopt -extension-universe alpha -package portable,parallel,parallel.scheduler,unix -linkpkg scratch/oxcaml_research/portable_islands/diagnose_island_timing.ml -o /tmp/diagnose_island_timing.exe
+    nix develop -c ocamlfind ocamlopt -extension-universe alpha -package portable,parallel,parallel.scheduler,unix -linkpkg .scratch/oxcaml_research/portable_islands/diagnose_island_timing.ml -o /tmp/diagnose_island_timing.exe
     nix develop -c /tmp/diagnose_island_timing.exe
 
 Diagnostic result:

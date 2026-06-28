@@ -2,7 +2,7 @@
 
 Status: lab closed for implementation planning
 Date: 2026-05-27
-Evidence root: scratch/eta_research/ladybugdb_connector/
+Evidence root: .scratch/eta_research/ladybugdb_connector/
 
 ## Decision
 

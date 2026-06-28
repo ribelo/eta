@@ -26,7 +26,7 @@ Evidence:
 
 Verification:
 
-    nix develop -c bash scratch/eta_ai_v1/probes/schema/run.sh
+    nix develop -c bash .scratch/eta_ai_v1/probes/schema/run.sh
 
 Expected output:
 

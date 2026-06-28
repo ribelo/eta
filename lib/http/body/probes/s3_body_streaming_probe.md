@@ -27,7 +27,7 @@ through the public body stream surface?
   `ocaml-h2` body readers.
 - gzip decode rejects truncated streams and CRC mismatch, and decodes
   concatenated gzip members.
-- `scratch/eta_http_v1/probes/s3_gzip_rss.ml` posts a 100 MiB gzip streaming
+- `.scratch/eta_http_v1/probes/s3_gzip_rss.ml` posts a 100 MiB gzip streaming
   request to a local h1 server and receives a 100 MiB gzip streaming response
   with RSS sampled from `/proc/self/status`.
 
@@ -36,7 +36,7 @@ Commands:
 ```sh
 nix develop -c opam install --yes decompress.1.5.3
 nix develop -c dune runtest lib/http --force
-nix develop -c dune exec scratch/eta_http_v1/probes/s3_gzip_rss.exe
+nix develop -c dune exec .scratch/eta_http_v1/probes/s3_gzip_rss.exe
 bash lib/http/audit/run.sh
 ```
 

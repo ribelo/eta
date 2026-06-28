@@ -9,7 +9,7 @@ without turning the condition into stream-admission pressure?
 ## Evidence
 
 ```text
-nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
+nix develop -c dune exec .scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
 h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
 
 nix develop -c dune runtest lib/http --force

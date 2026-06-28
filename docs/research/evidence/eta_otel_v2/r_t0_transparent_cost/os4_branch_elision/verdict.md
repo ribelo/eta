@@ -23,12 +23,12 @@ The tested distinction is narrow:
 ## Fixture
 
 - bench/r_t0_branch_elision/r_t0_branch_elision.ml
-- scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+- .scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
 
 Run:
 
 ~~~sh
-scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
+.scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
 ~~~
 
 The runner builds the fixture, executes it, disassembles the relevant symbols,

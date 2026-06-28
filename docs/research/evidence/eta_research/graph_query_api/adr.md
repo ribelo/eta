@@ -2,7 +2,7 @@
 
 Status: accepted for implementation planning
 Date: 2026-05-27
-Evidence root: scratch/eta_research/graph_query_api/
+Evidence root: .scratch/eta_research/graph_query_api/
 
 ## Decision
 

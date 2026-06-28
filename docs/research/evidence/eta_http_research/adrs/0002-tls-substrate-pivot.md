@@ -34,11 +34,11 @@ unconstrained tls 0.17.5 defaults.
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_pivot/badssl_rerun.ml
-- scratch/eta_http_research/h_s3_pivot/local_cert_rerun.ml
-- scratch/eta_http_research/h_s3_pivot/revocation_fixtures.ml
-- scratch/eta_http_research/h_s3_pivot/advisory_audit_rerun.md
-- scratch/eta_http_research/h_s3_pivot/results.md
+- .scratch/eta_http_research/h_s3_pivot/badssl_rerun.ml
+- .scratch/eta_http_research/h_s3_pivot/local_cert_rerun.ml
+- .scratch/eta_http_research/h_s3_pivot/revocation_fixtures.ml
+- .scratch/eta_http_research/h_s3_pivot/advisory_audit_rerun.md
+- .scratch/eta_http_research/h_s3_pivot/results.md
 
 BadSSL rerun:
 
@@ -62,10 +62,10 @@ Revocation fixtures:
 
 H-S3-Reach:
 
-- scratch/eta_http_research/h_s3_reach/targets.md
-- scratch/eta_http_research/h_s3_reach/probe.ml
-- scratch/eta_http_research/h_s3_reach/results.md
-- scratch/eta_http_research/h_s3_reach/verdict.md
+- .scratch/eta_http_research/h_s3_reach/targets.md
+- .scratch/eta_http_research/h_s3_reach/probe.ml
+- .scratch/eta_http_research/h_s3_reach/results.md
+- .scratch/eta_http_research/h_s3_reach/verdict.md
 
 Verdict: Option 2 stands with caveats. The corrected 13-target reachability
 matrix accepted TLS 1.2 with the narrowed ECDHE-AEAD cipher policy across OTLP,
@@ -81,11 +81,11 @@ Caveats:
 
 H-S3-Enforce:
 
-- scratch/eta_http_research/h_s3_enforce/default_config_builder.ml
-- scratch/eta_http_research/h_s3_enforce/invariants.ml
-- scratch/eta_http_research/h_s3_enforce/negative_tls13_override.ml
-- scratch/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
-- scratch/eta_http_research/h_s3_enforce/results.md
+- .scratch/eta_http_research/h_s3_enforce/default_config_builder.ml
+- .scratch/eta_http_research/h_s3_enforce/invariants.ml
+- .scratch/eta_http_research/h_s3_enforce/negative_tls13_override.ml
+- .scratch/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
+- .scratch/eta_http_research/h_s3_enforce/results.md
 
 Verdict: PASS. The lab now has a single internal construction chokepoint whose
 documented paths directly inspect as TLS 1.2 only with exactly the six

@@ -11,7 +11,7 @@ PRIORITY frames without owning HPACK/frame parsing itself?
 
 ## Implementation
 
-- `scratch/eta_http_v1/probes/h2_r8_push_priority.ml` drives an in-process
+- `.scratch/eta_http_v1/probes/h2_r8_push_priority.ml` drives an in-process
   `H2.Client_connection` and `H2.Server_connection` with the same Sans-IO
   read/write loop used by R7.
 - The positive path creates a client with no push handler, which causes
@@ -26,7 +26,7 @@ PRIORITY frames without owning HPACK/frame parsing itself?
 ## Evidence
 
 ```sh
-nix develop -c dune exec scratch/eta_http_v1/probes/h2_r8_push_priority.exe
+nix develop -c dune exec .scratch/eta_http_v1/probes/h2_r8_push_priority.exe
 ```
 
 Observed:

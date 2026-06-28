@@ -25,13 +25,13 @@ The proof obligations for this probe are:
 ## Fixtures
 
 - bench/r_t3_exporter_on_eta_http/r_t3_eta_http_otlp.ml
-- scratch/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
-- scratch/eta_otel_v2/r_t3_exporter_on_eta_http/docker-compose.yml
-- scratch/eta_otel_v2/r_t3_exporter_on_eta_http/otelcol-config.yaml
+- .scratch/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
+- .scratch/eta_otel_v2/r_t3_exporter_on_eta_http/docker-compose.yml
+- .scratch/eta_otel_v2/r_t3_exporter_on_eta_http/otelcol-config.yaml
 
 The OCaml executable lives under bench/ because the root Dune file treats
-scratch/ as data-only. The research runner and collector config live under
-scratch/.
+.scratch/ as data-only. The research runner and collector config live under
+.scratch/.
 
 The runner prefers docker-compose when the Docker daemon is available. On this
 host Docker is installed but the daemon is inactive, so the successful proof
@@ -102,7 +102,7 @@ eta-http-security: 1 test passed
 Collector proof:
 
 ~~~text
-bash scratch/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
+bash .scratch/eta_otel_v2/r_t3_exporter_on_eta_http/run.sh
 exit 0
 r_t3_eta_http_otlp status=200 spans=1000 body_bytes=21 eta_http_spans=0
 r_t3_collector_ingest spans=1000 bytes=362116

@@ -56,7 +56,7 @@ Focused command:
 
 Historical live canary:
 
-    nix develop -c dune exec ./scratch/eta_ai_v1/probes/live_reach/live_reach.exe -- openrouter
+    nix develop -c dune exec .scratch/eta_ai_v1/probes/live_reach/live_reach.exe -- openrouter
 
 The previous canary reached OpenRouter with openai/gpt-4o-mini through
 eta-http. The preserved verdict is

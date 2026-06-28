@@ -23,7 +23,7 @@ Evidence:
 
 Verification:
 
-    nix develop -c bash scratch/eta_ai_v1/probes/tokenizer/run.sh
+    nix develop -c bash .scratch/eta_ai_v1/probes/tokenizer/run.sh
 
 Expected output:
 

@@ -73,7 +73,7 @@ Current branch tip: `89b3d84 docs: eta-http v1 OBJECTIVE status + ADRs 0004-0006
 ### 2.2 Out of scope
 
 - `../Eta-latch` (branch `research-h-latch`) — research lab in progress
-  (`scratch/eta_research/latch_survival/` untracked, journal modified, no
+  (`.scratch/eta_research/latch_survival/` untracked, journal modified, no
   shipped Latch port commit). Leave the worktree alone.
 - `../Eta-otel-baseline` — reference snapshot for the eta-otel rebuild
   epic (Eta-5zo). Read-only context.

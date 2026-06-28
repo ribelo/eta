@@ -27,8 +27,8 @@ the response arrives?
 
 ```sh
 nix develop -c dune runtest lib/http --force
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/eta_http_v1/probes/reach_13.exe
 ```
 
 Observed:

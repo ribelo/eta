@@ -70,7 +70,7 @@ Historical live checks:
     exit 0
     29 tests run, including live Motel trace/log/metric export tests
 
-    nix develop -c bash scratch/eta_ai_v1/probes/live_reach/run.sh openai
+    nix develop -c bash .scratch/eta_ai_v1/probes/live_reach/run.sh openai
     exit 1
     OpenAI reached provider but returned status 401 invalid_api_key
 
@@ -89,7 +89,7 @@ Key presence:
 
 Historical expanded AP3 live reach:
 
-    nix develop -c bash scratch/eta_ai_v1/probes/live_reach/run.sh deepseek groq kimi-code novita zai moonshot perplexity
+    nix develop -c bash .scratch/eta_ai_v1/probes/live_reach/run.sh deepseek groq kimi-code novita zai moonshot perplexity
     exit 1
     Groq, DeepSeek, Novita, and Perplexity passed
     Kimi Code reached provider and returned product-scope 403

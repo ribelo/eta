@@ -32,7 +32,7 @@ response_consumer.ml proves that:
 
 Run:
 
-    nix develop -c dune exec scratch/eta_http_research/h_g1_grpc_forward_compat/response_consumer.exe
+    nix develop -c dune exec .scratch/eta_http_research/h_g1_grpc_forward_compat/response_consumer.exe
 
 ## Consequences
 
