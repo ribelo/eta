@@ -2,9 +2,8 @@
 
 ## Status
 
-Proposed. Supersedes the research verdict in `docs/research/journal.md`
-`effet-stream design — Stream / Sink / Channel` (V-S1, V-S6) based on the
-executable evidence in
+Proposed. Supersedes the pre-rename stream design verdict recorded in
+`docs/research/journal.md` (V-S1, V-S6) based on the executable evidence in
 `docs/research/evidence/stream-core-reopen/verdict.md`.
 
 This ADR records the decision. Implementation is a separate follow-up
@@ -139,4 +138,4 @@ Research verdict only in this pass. A follow-up objective should:
 - `docs/research/evidence/stream-core-reopen/candidates.md`
 - `lib/http/body/stream.mli`, `lib/http/body/transducer.{ml,mli}`
 - `lib/stream/docs/adrs/0001-effect-reader-stream.md`
-- `docs/research/journal.md`, section `effet-stream design — Stream / Sink / Channel` (V-S1..V-S10)
+- `docs/research/journal.md`, pre-rename stream design section (V-S1..V-S10)
