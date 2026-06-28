@@ -19,6 +19,15 @@ dune build @h2spec       # HTTP/2 conformance via h2spec, h2c + h2/TLS
 dune build @http-bench   # quick latency / allocation / RSS benchmarks
 ```
 
+Additional opt-in probes:
+
+```bash
+dune build @server-load   # smoke server-load harness
+dune build @red-probes    # targeted adversarial probes
+dune build @eta-lifecycle # Eta server lifecycle probe
+dune build @perf-compare  # client performance comparison harness
+```
+
 ## Output
 
 Each run writes to `http-testsuite/results/<utc-timestamp>-<short-git-sha>/`:
@@ -50,6 +59,10 @@ The easiest way is to edit `Interop.default_scenarios` to contain only the scena
 - `test/cve_regress/` — `dune build @cve-regress` entry point
 - `test/h2spec/` — `dune build @h2spec` entry point
 - `test/bench/` — `dune build @http-bench` entry point
+- `test/server_load/` — `dune build @server-load` entry point
+- `test/red_probes/` — `dune build @red-probes` entry point
+- `test/eta_lifecycle/` — `dune build @eta-lifecycle` entry point
+- `test/perf_compare/` — `dune build @perf-compare` entry point
 - `expected_divergences.md` — documented fields subtracted before pass/fail
 
 ## Servers
