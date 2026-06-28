@@ -16,7 +16,7 @@
 
 (rule
  (alias runtest)
-  (deps
+ (deps
   (source_tree negative)
   (:eta_ai_cma ../../../lib/ai/eta_ai.cma))
  (action
