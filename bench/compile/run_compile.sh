@@ -77,17 +77,73 @@ measure_ocamlc_i() {
   emit "$name.lines" "lines" "lines" "$lines"
 }
 
-packages="ai ai/anthropic ai/openai ai/openai_codec ai/openai_compat ai/openrouter eta http otel par ppx redacted schema schema_test sql stream test"
-for pkg in $packages; do
+packages=(
+  ai
+  ai/anthropic
+  ai/openai
+  ai/openai_codec
+  ai/openai_compat
+  ai/openai_realtime_eio
+  ai/openrouter
+  blocking
+  cache
+  duckdb
+  eio
+  eta
+  http
+  http/h1
+  http/h2
+  http/ws
+  http_eio
+  http_service
+  http_service_eio
+  http_tls_openssl
+  ladybug
+  linux_input
+  otel
+  par
+  ppx
+  redacted
+  router
+  schema
+  schema_test
+  sql
+  sql_driver
+  sql_dsl
+  stream
+  test
+  turso
+  utop
+)
+for pkg in "${packages[@]}"; do
   path="lib/$pkg"
   safe="$(printf '%s' "$pkg" | tr '/-' '__')"
   if [ "$pkg" = "ppx" ]; then safe="ppx_eta"; fi
-  main_ml="$(find "$path" -maxdepth 1 -name '*.ml' | sort | head -n 1)"
+  mapfile -t ml_files < <(find "$path" -maxdepth 1 -name '*.ml' | sort)
+  main_ml=""
+  internal_ml=""
+  if [ "${#ml_files[@]}" -gt 0 ]; then
+    if [ "$pkg" = "ppx" ] && [ -f "$path/ppx_eta.ml" ]; then
+      main_ml="$path/ppx_eta.ml"
+    elif [ -f "$path/eta_${safe}.ml" ]; then
+      main_ml="$path/eta_${safe}.ml"
+    else
+      main_ml="${ml_files[0]}"
+    fi
+    for ml in "${ml_files[@]}"; do
+      if [ "$ml" != "$main_ml" ]; then
+        internal_ml="$ml"
+        break
+      fi
+    done
+  fi
   test_ml="$(find "$path/test" -maxdepth 1 -name '*.ml' 2>/dev/null | sort | head -n 1 || true)"
   measure_cmd "compile.$safe.clean" "rm -rf _build/default/$path && dune build $path"
   if [ -n "$main_ml" ]; then
     measure_cmd "compile.$safe.touch_top" "dune build $path && touch $main_ml && dune build $path"
-    measure_cmd "compile.$safe.touch_internal" "dune build $path && touch $main_ml && dune build $path"
+  fi
+  if [ -n "$internal_ml" ]; then
+    measure_cmd "compile.$safe.touch_internal" "dune build $path && touch $internal_ml && dune build $path"
   fi
   if [ -n "$test_ml" ]; then
     measure_cmd "compile.$safe.touch_test" "dune build $path/test && touch $test_ml && dune build $path/test"

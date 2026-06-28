@@ -20,7 +20,7 @@ Package-level optimization status is tracked separately in
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
 | HTTP server loop | `METRIC h1_*`, `METRIC h2_*` | In-process H1/H2 server loop throughput and allocation without socket/client noise. |
 | Schemas | `eta_schema.*` | Decode, encode, transform, policy, failure, and JSON rendering paths. |
-| Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for each package. |
+| Package compile time | `compile.<pkg>.*` | Clean and incremental Dune builds for native package directories tracked by `bench/compile/run_compile.sh`. |
 | User-code compile time | `compile.fixture.*` | Deep-bind, explicit-deps, schema-heavy, and ppx-heavy workloads. |
 
 ## Running
@@ -134,9 +134,9 @@ Avoid committing dirty-tree results unless the commit message explains why.
 
 ## Caveats
 
-- Runtime benchmark sources live beside their owning package under
-  `lib/<pkg>/bench/`. Root `bench/` owns only shared harness code,
-  result files, compile-time fixtures, and comparison tools.
+- Package-owned runtime benchmark sources live under `lib/<pkg>/bench/`. Root
+  `bench/` owns shared harness code, cross-package runtime benches, HTTP server
+  loop benches, compile-time fixtures, result files, and comparison tools.
 - OCaml benchmark executables are built in the active Dune profile. Use the
   same profile for both baseline and candidate runs when comparing results.
 - Compile-time benchmarks mutate file timestamps with `touch`; they do not edit
