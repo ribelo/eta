@@ -18,11 +18,11 @@ Research work happens in local `.scratch/`, which is ignored by git. Keep
 `.scratch/` out of the main Dune workspace and out of the published library.
 Tracked documentation must not cite, depend on, or require `.scratch/` paths or
 ignored local artifacts as evidence. If a research result becomes durable
-documentation, include the relevant evidence directly in the tracked document or
-promote the supporting source, fixture, benchmark, or transcript into tracked
-repo code under `lib/`, `test/`, `bench/`, `tools/`, `http-testsuite/`, or
-package-local docs before referring to it. Otherwise keep both the experiment
-and its notes in `.scratch/`.
+documentation, write the decision or API rationale as documentation and promote
+any repeatable proof into tracked tests, benchmarks, tools, or source fixtures
+under `lib/`, `test/`, `bench/`, `tools/`, or `http-testsuite/` before citing
+it. Otherwise keep the whole research bundle - code, notes, evidence, logs, and
+journal - in `.scratch/`.
 
 If scratch code needs Dune, make `.scratch/` a separate Dune project and build
 specific experiments explicitly, for example `dune build --root .scratch
