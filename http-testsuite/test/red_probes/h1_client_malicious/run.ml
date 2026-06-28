@@ -182,19 +182,7 @@ let run_pool_with_responses ~env ~responses ~consume ~deadline_sec () =
   let r1 = run_one () in
   let r2 = run_one () in
   let stats_result =
-    try
-      match Eta.Runtime.run rt (Eta_http.Client.stats client) with
-      | Eta.Exit.Ok s -> s
-      | Eta.Exit.Error _ ->
-          {
-            Eta_http.Client.protocol = Eta_http.Client.H1;
-            active = 0;
-            idle = 0;
-            capacity = 0;
-            opened = 0;
-            released = 0;
-          }
-    with _ ->
+    let zero_stats =
       {
         Eta_http.Client.protocol = Eta_http.Client.H1;
         active = 0;
@@ -203,6 +191,12 @@ let run_pool_with_responses ~env ~responses ~consume ~deadline_sec () =
         opened = 0;
         released = 0;
       }
+    in
+    try
+      match Eta.Runtime.run rt (Eta_http.Client.stats client) with
+      | Eta.Exit.Ok (Some s) -> s
+      | Eta.Exit.Ok None | Eta.Exit.Error _ -> zero_stats
+    with _ -> zero_stats
   in
   ignore (Eta.Runtime.run rt (Eta_http.Client.shutdown client));
   (r1, r2, stats_result)

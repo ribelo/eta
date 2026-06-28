@@ -57,14 +57,15 @@ let custom_client ~attempts_ref request_fn =
   Eta_http.Client.make_custom ~protocol:H1 ~request
     ~stats:(fun () ->
       Eta.Effect.pure
-        {
-          Eta_http.Client.protocol = H1;
-          active = 0;
-          idle = 0;
-          capacity = 0;
-          opened = !attempts_ref;
-          released = 0;
-        })
+        (Some
+           {
+             Eta_http.Client.protocol = H1;
+             active = 0;
+             idle = 0;
+             capacity = 0;
+             opened = !attempts_ref;
+             released = 0;
+           }))
     ~shutdown:(fun () -> Eta.Effect.unit)
 
 let consume_request_body req =
