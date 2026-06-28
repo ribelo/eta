@@ -12,7 +12,7 @@ Scope:
 - caller headers preserved;
 - direct transport writing without building one complete request string.
 
-Disproof signature from `OBJECTIVE.md`: the zero-allocation shape cannot be
+Disproof signature from the eta-http v1 objective: the zero-allocation shape cannot be
 maintained, unboxed state cannot represent the writer, or the public API forces
 heap allocation at the consumer boundary.
 

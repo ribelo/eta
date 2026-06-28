@@ -15,7 +15,7 @@ evidence and verdict justify it.
 
 ## Why
 
-The existing rationale in `journal.md` under
+The existing rationale in `docs/research/journal.md` under
 `effet-stream design - Stream / Sink / Channel (4h research)` chose:
 
 - public `Stream.t` as the core;
@@ -39,7 +39,7 @@ but the justification must be evidence, not taste.
 
 Read and explicitly supersede or reaffirm:
 
-- `journal.md`, section `effet-stream design - Stream / Sink / Channel`
+- `docs/research/journal.md`, section `effet-stream design - Stream / Sink / Channel`
   around V-S1..V-S10.
 - `.scratch/stream_research/README.md`
 - `.scratch/stream_research/STUB_stream.mli`

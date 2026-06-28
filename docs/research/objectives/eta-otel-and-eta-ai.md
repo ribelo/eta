@@ -5,9 +5,9 @@ eta-http v1 closed. Eta-1yb prerequisite capabilities (Redacted, LogLevel,
 MutableRef, Semaphore) are present in the current tree. Track O and Track A are
 implemented to their current evidence levels; completion evidence and
 provider-account reopeners are tracked in
-.objectives/eta-otel-and-eta-ai-completion-audit.md.
+docs/research/objectives/eta-otel-and-eta-ai-completion-audit.md.
 
-This is the master objective. Lives in `.objectives/eta-otel-and-eta-ai.md`
+This is the master objective. Lives in `docs/research/objectives/eta-otel-and-eta-ai.md`
 per repo-hygiene convention; per-track research lands in `scratch/`; per-track
 code lands in `packages/`.
 
@@ -112,7 +112,7 @@ primitives and what we considered structural vs replaceable.
 
 ### 1.5 Research lives in `scratch/`
 
-Per user direction. Master objectives live under `.objectives/<name>.md`;
+Per user direction. Master objectives live under `docs/research/objectives/<name>.md`;
 per-objective research probes live under `scratch/<topic>/`; production code
 lives under `packages/<pkg>/`. ADRs co-locate with the package they govern at
 `packages/<pkg>/docs/adrs/`.
@@ -238,7 +238,7 @@ Track A A1 has landed as scratch evidence in
 `scratch/eta_ai_v1/probes/provider_diff/`. Its verdict selects provider values
 with small encode/decode functions over per-provider modules for the initial
 eta-ai shape. A2..A5 are recorded below, and Phase A-R is closed by
-`.objectives/eta-ai-shape-decision.md`.
+`docs/research/objectives/eta-ai-shape-decision.md`.
 
 Track A A2 has landed as scratch evidence in
 `scratch/eta_ai_v1/probes/streaming_sse/`. Its verdict finds eta-http
@@ -264,7 +264,7 @@ Track A A5 has landed as scratch evidence in
 semantic-convention attribute names for eta-ai spans, with stringified values
 matching current Eta.Tracer/eta-http precedent.
 
-`.objectives/eta-ai-shape-decision.md` has landed and closes Phase A-R.
+`docs/research/objectives/eta-ai-shape-decision.md` has landed and closes Phase A-R.
 Phase A-C has landed as AC0..AC7, constrained by the documented decisions:
 provider values, raw JSON tool schemas in v1, provider-side usage only, OTel
 GenAI span names, and no public Eta_stream-backed streaming API until the
@@ -480,7 +480,7 @@ explicit version pinning.
 
 ### 3.2 Phase A-R deliverable
 
-`.objectives/eta-ai-shape-decision.md` records the verdicts:
+`docs/research/objectives/eta-ai-shape-decision.md` records the verdicts:
 - A1 → providers-as-data vs per-provider-modules (with the matrix as
   evidence)
 - A2 → SSE shape settled (or eta-stream extension filed)
@@ -620,7 +620,7 @@ For every slice in either track:
 3. `nix develop -c eta-oxcaml-test-shipped` passes.
 4. ADRs amended where policy settles.
 5. Backlog task closed by planner with summary in `close_reason`.
-6. Journal entry `V-{Track}-{Slice}` appended at the bottom of `journal.md`.
+6. Journal entry `V-{Track}-{Slice}` appended at the bottom of `docs/research/journal.md`.
 
 Track-specific:
 - **Track O**: every slice runs effet-otel's existing functional tests.
@@ -709,8 +709,8 @@ For Track A:
 - Live reach probe budget: how often does eta-ai-{provider} run live API
   calls? **Recommendation**: per release, single canary call per provider,
   fixture recording for offline CI.
-- `eta-ai-shape-decision.md` location: `.objectives/` or `scratch/eta_ai_v1/`?
-  **Recommendation**: `.objectives/` since it's a sub-objective that
+- `eta-ai-shape-decision.md` location: `docs/research/objectives/` or `scratch/eta_ai_v1/`?
+  **Recommendation**: `docs/research/objectives/` since it's a sub-objective that
   constrains Phase A-C, not a research lab artifact.
 - Provider package versioning: lockstep with eta-ai core, or independent?
   **Recommendation**: lockstep for v1; revisit at v2 when API stabilizes.

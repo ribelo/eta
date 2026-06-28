@@ -11,7 +11,7 @@ Scope:
 - no userinfo;
 - no decoding or normalization beyond lowercasing host access.
 
-Disproof signature from `OBJECTIVE.md`: parser grows past roughly 3000 LOC,
+Disproof signature from the eta-http v1 objective: parser grows past roughly 3000 LOC,
 which would reopen the `uri` dependency decision.
 
 Verdict: PASS for the size and dependency part of R3.

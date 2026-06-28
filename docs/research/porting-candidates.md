@@ -74,7 +74,7 @@ reflect value × confidence × fit-with-Eta, not effort.
   4.x random conveniences; 5.2 sub-ms precision.
 
 **Already decided / don't reopen without a protocol trigger:** Deferred (6.1),
-Latch (6.2) — rejected in `journal.md` V-CDv2/V-CDv4.
+Latch (6.2) — rejected in `docs/research/journal.md` V-CDv2/V-CDv4.
 
 **Notable big-but-missing (out of "small things" scope, flagged anyway):** STM /
 transactional refs (6.9) — present in both references, absent in Eta; likely a
@@ -451,7 +451,7 @@ public equivalent:
 
 ### 6.1 `Deferred` (one-shot promise) — **LEAVE-TO-HUMAN (already rejected, with reopen triggers)**
 effect-smol: `Deferred.ts`; ZIO: `Promise`. A write-once, await-many cell.
-**Already evaluated and rejected** in `journal.md` V-CDv2: "the candidate is
+**Already evaluated and rejected** in `docs/research/journal.md` V-CDv2: "the candidate is
 viable and small, but the win is not large enough on its own. Direct
 `Eio.Promise` is already idiomatic for one-shot signals." The documented reopen
 trigger is: *"a future module can reopen this only if several package-level
@@ -463,7 +463,7 @@ directly.
 
 ### 6.2 `Latch` (open/close gate) — **OUT-OF-SCOPE (explicitly rejected)**
 effect-smol: `Latch.ts`. A gate that fibers wait on until opened.
-**Explicitly rejected** in `journal.md` V-CDv4: "Latch saves lines, but it mostly
+**Explicitly rejected** in `docs/research/journal.md` V-CDv4: "Latch saves lines, but it mostly
 renames `Eio.Condition` plus `Eio.Mutex`. It does not integrate typed failures or
 resource ownership in a way direct Eio lacks. The abstraction is too small for
 core." Standing guidance is to use `Eio.Condition` + `Eio.Mutex` directly.
@@ -498,9 +498,8 @@ defaults (V-CDv3).
 ### 6.4 `FiberSet` / `FiberMap` / `FiberHandle` — **LEAVE-TO-HUMAN**
 effect-smol: collections that own forked fibers and interrupt them as a group.
 Eta's structured-concurrency identity (`Supervisor.scoped` + `Scope.start`)
-already owns grouped lifecycle, and the scoped-sessions lab (`OBJECTIVE.md`) is
-actively deciding the ergonomics here. Defer to that lab's outcome; do not add a
-parallel API.
+already owns grouped lifecycle, and the scoped-sessions lab is actively deciding
+the ergonomics here. Defer to that lab's outcome; do not add a parallel API.
 
 ### 6.5 `RcRef` / `RcMap` / `ScopedRef` — **LEAVE-TO-HUMAN**
 effect-smol: reference-counted scoped resources / per-key resource maps. These
@@ -777,13 +776,13 @@ called out on their individual entries.
    design-sensitive; STM is a subsystem, not a small port.
 4. **Stream text/rate shaping (7.8/7.9):** `split_lines` / `decode_text` and
    throttle/debounce/grouped-within remain separate stream design calls.
-5. **Deferred/Latch (6.1/6.2):** already decided in `journal.md` (V-CDv2/V-CDv4);
+5. **Deferred/Latch (6.1/6.2):** already decided in `docs/research/journal.md` (V-CDv2/V-CDv4);
    reopen only against the documented protocol-cluster triggers (V-CDv6).
 
 ---
 
 _Status: living catalogue. Grounded in `lib/eta/*.mli`, `lib/otel/eta_otel.mli`,
-`lib/stream/eta_stream.ml`, `journal.md`, `.reference/effect-smol`, and
+`lib/stream/eta_stream.ml`, `docs/research/journal.md`, `.reference/effect-smol`, and
 `.reference/zio`. The adopted/non-gap entries above have been refreshed against
 current source. The current still-open verified gap called out here is no STM
 subsystem (6.9). Deferred/Latch were previously rejected (6.1/6.2)._

@@ -7,7 +7,7 @@ and Track A are implemented to the current evidence level. Successful live
 canaries that require unavailable accounts, product scope, or billing state are
 recorded as reopeners rather than completion blockers.
 
-This audit is a current-state checklist for .objectives/eta-otel-and-eta-ai.md.
+This audit is a current-state checklist for docs/research/objectives/eta-otel-and-eta-ai.md.
 It records what is proven by files and commands in this worktree, what is only
 partially proven, and what remains open.
 
@@ -106,7 +106,7 @@ Expanded AP3 live reach:
 | OTLP/HTTP via eta-http and recursion suppression | eta-otel ADR 0001, eta-otel adversarial tests, V-Otel-OS3, V-Otel-MOTEL-RECHECK; eta-otel tests include self-recursion and Motel live export. | Proven |
 | W3C trace context and LogLevel preservation | Eta shipped tests cover trace context and LogLevel; eta-otel tracer tests include withSpanContext and live OTLP export. | Proven by shipped tests |
 | Track O existing functional regression surface | dune runtest packages/eta-otel --force passed 29 tests including Tracer, Logger, Metrics, adversarial, and Motel suites. | Proven |
-| Phase A-R before production eta-ai | .objectives/eta-ai-shape-decision.md exists and records A1..A5 verdicts before AC/AP journal entries; scratch probes exist under scratch/eta_ai_v1/probes. | Proven by artifact chronology in journal |
+| Phase A-R before production eta-ai | docs/research/objectives/eta-ai-shape-decision.md exists and records A1..A5 verdicts before AC/AP journal entries; scratch probes exist under scratch/eta_ai_v1/probes. | Proven by artifact chronology in journal |
 | A1 provider diff | provider_matrix.md, verdict.md, and V-AI-A1. | Proven |
 | A2 SSE streaming | streaming_sse probe, eta-ai ADR 0002, and V-AI-A2; eta-ai streaming tests pass. | Proven, with public Eta_stream.Stream intentionally deferred |
 | A3 schema integration | schema probe, eta-schema ADR 0001, and eta-ai ADR 0003. | Proven as deferred from v1 |

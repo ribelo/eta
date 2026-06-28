@@ -7,9 +7,16 @@ _opam/
 .reference/
 .backlog/
 backlog/
+.objectives/
+.review/
 .scratch/h2-0.13.0/
 .scratch/opam-pins/
-journal.md
+.scratch/**/journal.md
+/journal.md
+/OBJECTIVE.md
+/objective.md
+/gpt-review*.md
+/gpt-pro-review*.md
 .motel-data/
 bench/fixtures/cache/*.bin
 bench/runtime_overhead_ts/node_modules/

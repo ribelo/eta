@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Supersedes the research verdict in `journal.md`
+Proposed. Supersedes the research verdict in `docs/research/journal.md`
 `effet-stream design — Stream / Sink / Channel` (V-S1, V-S6) based on the
 executable evidence in
 `.scratch/evidence/stream-core-reopen/verdict.md`.
@@ -138,4 +138,4 @@ Research verdict only in this pass. A follow-up objective should:
 - `.scratch/evidence/stream-core-reopen/{a_current_shape,b_channel_transducer,c_pull_core,d_type_burden,neg_error_row}.ml`
 - `lib/http/body/stream.mli`, `lib/http/body/transducer.{ml,mli}`
 - `lib/stream/docs/adrs/0001-effect-reader-stream.md`
-- `journal.md`, section `effet-stream design — Stream / Sink / Channel` (V-S1..V-S10)
+- `docs/research/journal.md`, section `effet-stream design — Stream / Sink / Channel` (V-S1..V-S10)

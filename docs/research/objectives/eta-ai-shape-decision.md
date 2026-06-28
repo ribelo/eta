@@ -3,7 +3,7 @@
 Status: accepted.
 
 This document closes Track A Phase A-R for the master objective in
-.objectives/eta-otel-and-eta-ai.md. It records the decisions that constrain
+docs/research/objectives/eta-otel-and-eta-ai.md. It records the decisions that constrain
 eta-ai Phase A-C and provider packages.
 
 No production eta-ai code existed when this document was written.
@@ -147,7 +147,7 @@ inside AI spans. Low-level HTTP tracing can be an explicit caller option later.
 - scratch/eta_ai_v1/probes/schema/
 - scratch/eta_ai_v1/probes/tokenizer/
 - scratch/eta_ai_v1/probes/telemetry/
-- journal.md entries V-AI-A1 through V-AI-A5
+- docs/research/journal.md entries V-AI-A1 through V-AI-A5
 
 ## Open Risks
 

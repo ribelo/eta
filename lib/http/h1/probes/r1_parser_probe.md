@@ -15,7 +15,7 @@ Scope:
   status codes;
 - h1 client response read loop using a 32 KiB preallocated parser buffer.
 
-Disproof signature from `OBJECTIVE.md`: the parser cannot maintain the
+Disproof signature from the eta-http v1 objective: the parser cannot maintain the
 zero-copy shape, OxCaml parser state cannot represent the shape, or the API
 forces allocation at the consumer boundary.
 
