@@ -255,8 +255,9 @@ Adds: everything in the `eta_http`/`eta_http_eio` chain, `eta_stream`, `eio`,
 ## Drivers
 
 Optional external-engine integrations live under `drivers/`. They are *not*
-opam packages and are invisible to `ocamlfind`. They depend on Eta; Eta core
-libraries under `lib/` must never depend on them.
+part of the root `eta` install. A shipped driver must have its own root
+`eta_<engine>.opam` package and matching public library name. Driver packages
+may depend on Eta; Eta core libraries under `lib/` must never depend on them.
 
 ## Limits and footguns
 
