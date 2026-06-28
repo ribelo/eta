@@ -542,16 +542,11 @@ let acquire_entry t = run_acquisition t Reserve_slot
 let with_lease t body =
   let checkout () =
     let acquired = ref None in
-    let release_permit =
-      Effect.sync (fun () -> Semaphore.release t.sem 1)
-    in
     let release_acquired =
       Effect.sync (fun () -> !acquired)
       |> Effect.bind (function
-           | None -> release_permit
-           | Some lease ->
-               release_lease ~release_permit:false lease
-               |> Effect.finally release_permit)
+           | None -> Effect.unit
+           | Some lease -> release_lease ~release_permit:false lease)
     in
     Effect.finally release_acquired
       (Effect.scoped
@@ -565,12 +560,11 @@ let with_lease t body =
   |> Effect.bind (function
        | true -> Effect.fail `Pool_shutdown
        | false ->
-           Effect.race
-             [ Semaphore.acquire t.sem 1 |> Effect.map (fun () -> `Acquired);
-               wait_for_shutdown t |> Effect.map (fun () -> `Shutdown) ]
+           Semaphore.with_permits_or_abort t.sem 1
+             ~abort:(wait_for_shutdown t) checkout
            |> Effect.bind (function
-                | `Shutdown -> Effect.fail `Pool_shutdown
-                | `Acquired -> checkout ()))
+                | None -> Effect.fail `Pool_shutdown
+                | Some value -> Effect.pure value))
 
 let with_resource t body =
   with_lease t (fun lease -> body (Lease.resource lease))
