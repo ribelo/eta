@@ -44,7 +44,7 @@ Artifacts:
 - `packages/eta-http/client/idempotency.ml`
 - `packages/eta-http/client/retry.ml`
 - `packages/eta-http/test/test_eta_http.ml`
-- `packages/eta-http/client/probes/s5_retry_probe.md`
+- `docs/research/evidence/eta_http_v1/probes/client/s5_retry_probe.md`
 
 Tests:
 

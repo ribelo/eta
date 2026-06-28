@@ -47,7 +47,7 @@ Artifacts:
 - `packages/eta-http/observability/tracer.ml`
 - `packages/eta-http/observability/meter.ml`
 - `packages/eta-http/test/test_eta_http.ml`
-- `packages/eta-http/observability/probes/s6_observability_probe.md`
+- `docs/research/evidence/eta_http_v1/probes/observability/s6_observability_probe.md`
 - `.scratch/eta_http_research/h_o1_observability/semconv_attributes.md`
 - `.scratch/eta_http_research/h_o1_observability/results.md`
 

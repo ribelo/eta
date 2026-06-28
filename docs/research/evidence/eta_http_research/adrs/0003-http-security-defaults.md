@@ -39,7 +39,7 @@ Artifacts:
 - `.scratch/eta_http_research/h_q_envelope/monitoring.csv`
 - `.scratch/eta_http_research/h_q_envelope/results.md`
 - `packages/eta-http/h2/security.ml`
-- `packages/eta-http/h2/probes/s4_security_envelope_probe.md`
+- `docs/research/evidence/eta_http_v1/probes/h2/s4_security_envelope_probe.md`
 - `.scratch/eta_http_v1/probes/s4_envelope_alloc.ml`
 
 The H-Q envelope runner sampled all catalogue rows at 1 Hz from second 0

@@ -20,7 +20,7 @@ Callers that want redirect following own the policy:
 
 packages/eta-http/core/status.ml exposes is_redirection as a classifier only.
 packages/eta-http/client/retry.mli documents retry policy and has no redirect
-following API. packages/eta-http/observability/probes/s6_observability_probe.md
+following API. `docs/research/evidence/eta_http_v1/probes/observability/s6_observability_probe.md`
 explicitly records that v1 redirect support is semantic-convention attribute
 derivation, not automatic redirect following.
 
