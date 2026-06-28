@@ -5,10 +5,9 @@ cmxa="$1"
 fixture_dir="$(dirname "$0")"
 obj_dir="$(dirname "$cmxa")/.eta.objs/native"
 cmi_dir="$(dirname "$cmxa")/.eta.objs/public_cmi"
-par_obj_dir="$(dirname "$cmxa")/../par/.eta_par.objs/native"
-par_cmi_dir="$(dirname "$cmxa")/../par/.eta_par.objs/public_cmi"
 tmp_dir="${TMPDIR:-/tmp}/eta-soundness-negative-$$"
 mkdir -p "$tmp_dir"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 status=0
 
@@ -19,7 +18,7 @@ for src in "$fixture_dir"/*_negative.ml; do
 
   if ocamlfind ocamlopt -extension-universe alpha \
       -package "eio,eio_main,portable,unix,threads" \
-      -I "$cmi_dir" -I "$obj_dir" -I "$par_cmi_dir" -I "$par_obj_dir" \
+      -I "$cmi_dir" -I "$obj_dir" \
       -c "$src" -o "$obj" >"$log" 2>&1; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1

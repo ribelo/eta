@@ -15,3 +15,11 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(rule
+ (alias runtest)
+ (deps
+  (source_tree soundness)
+  (:eta_cmxa ../../lib/eta/eta.cmxa))
+ (action
+  (run bash soundness/run.sh %{eta_cmxa})))
