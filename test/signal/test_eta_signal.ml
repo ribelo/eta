@@ -1668,6 +1668,31 @@ let test_dispose_before_initialization_removes_demand () =
   expect_fail "disposed uninitialized read" (( = ) `Disposed_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
+let test_dispose_unlinks_observer_from_graph () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let finalized = ref false in
+  let create_and_dispose () =
+    let payload = Bytes.make 1 '\000' in
+    Gc.finalise (fun _ -> finalized := true) payload;
+    let observer =
+      run_ok rt
+        (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+             Effect.sync (fun () -> ignore (Bytes.get payload 0))))
+    in
+    run_ok rt (Signal.Observer.dispose observer)
+  in
+  create_and_dispose ();
+  let rec force_collection attempts =
+    Gc.full_major ();
+    Gc.compact ();
+    if !finalized then ()
+    else if attempts = 0 then
+      Alcotest.fail "disposed observer callback was retained by graph"
+    else force_collection (attempts - 1)
+  in
+  force_collection 20
+
 let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -3495,6 +3520,8 @@ let () =
           Alcotest.test_case "dispose before initialization removes demand"
             `Quick
             test_dispose_before_initialization_removes_demand;
+          Alcotest.test_case "dispose unlinks observer from graph" `Quick
+            test_dispose_unlinks_observer_from_graph;
           Alcotest.test_case "pure failure does not publish snapshot" `Quick
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "failed initial stabilize has no current" `Quick

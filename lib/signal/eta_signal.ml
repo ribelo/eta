@@ -950,6 +950,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let observer_active (O observer) = not observer.obs_disposed
 
+  let remove_observer observer =
+    graph.observers <-
+      List.filter
+        (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
+        graph.observers
+
   let timer_stop_unlocked timer =
     timer.timer_active <- false;
     timer.timer_generation <- timer.timer_generation + 1
@@ -1211,6 +1217,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun () ->
           if not observer.obs_disposed then (
             observer.obs_disposed <- true;
+            remove_observer observer;
             List.iter (fun f -> f ()) observer.obs_on_dispose;
             observer.obs_on_dispose <- [];
             update_necessity_counters_unlocked ()))
