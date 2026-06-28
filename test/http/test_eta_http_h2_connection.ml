@@ -542,8 +542,56 @@ let raw_data ?(end_stream = false) ~stream_id data =
     ~stream_id
   ^ data
 
+let raw_rst_stream ~stream_id error_code =
+  let payload =
+    Eta_http_h2.Frame.uint32 (Eta_http_h2.Error_code.to_int error_code)
+  in
+  raw_frame Rst_stream ~flags:0 ~stream_id payload
+
 let raw_client_preface bytes =
   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" ^ Eta_http_h2.Frame.settings ^ bytes
+
+let test_h2_connection_peer_reset_keeps_stream_admitted_until_handler_finishes () =
+  let seen = ref [] in
+  let held = ref None in
+  let server =
+    Eta_http_h2.Connection.Server.create
+      ~config:(Eta_http_h2.Settings.create ~max_concurrent_streams:1 ())
+      ~request_handler:(fun reqd ->
+        let request = Eta_http_h2.Connection.Server.Reqd.request reqd in
+        if String.equal request.path "/first" then held := Some reqd;
+        seen := request.path :: !seen)
+      ~error_handler:(fun error ->
+        Alcotest.failf "unexpected h2 server error: %a %s"
+          Eta_http_h2.Error_code.pp_hum error.error_code error.message)
+      ()
+  in
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let request stream_id path =
+    raw_headers encoder ~end_stream:true ~stream_id
+      [
+        hpack_header ":method" "GET";
+        hpack_header ":scheme" "https";
+        hpack_header ":path" path;
+        hpack_header ":authority" "api.example.test";
+      ]
+  in
+  let frames =
+    request 1 "/first"
+    ^ raw_rst_stream ~stream_id:1 Eta_http_h2.Error_code.Cancel
+    ^ request 3 "/second"
+  in
+  h2_feed_server server (raw_client_preface frames);
+  Alcotest.(check (list string)) "admitted requests" [ "/first" ]
+    (List.rev !seen);
+  (match !held with
+  | Some reqd ->
+      Eta_http_h2.Connection.Server.Reqd.respond_with_string reqd
+        (h2_server_response 200) ""
+  | None -> Alcotest.fail "first request did not reach handler");
+  h2_feed_server server (request 5 "/third");
+  Alcotest.(check (list string))
+    "admitted after handler finishes" [ "/first"; "/third" ] (List.rev !seen)
 
 let test_h2_connection_processes_continuation_request_headers () =
   let seen_path = ref None in

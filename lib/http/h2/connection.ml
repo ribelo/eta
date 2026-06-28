@@ -104,6 +104,8 @@ and t = {
   mutable max_client_stream_id : int;
   mutable max_server_stream_id : int;
   mutable current_client_streams : int;
+  admitted_streams : (int, unit) Hashtbl.t;
+  peer_reset_streams : (int, unit) Hashtbl.t;
   mutable unacked_settings : int;
   mutable did_send_goaway : bool;
   mutable last_stream_id : int;
@@ -234,6 +236,8 @@ let create_connection ?(config = default_settings) role =
     max_client_stream_id = 0;
     max_server_stream_id = 0;
     current_client_streams = 0;
+    admitted_streams = Hashtbl.create 64;
+    peer_reset_streams = Hashtbl.create 64;
     unacked_settings = 0;
     did_send_goaway = false;
     last_stream_id = 0;
@@ -383,12 +387,26 @@ let close_stream t id =
       Hashtbl.remove t.scheduler_refs id
   | None -> ()
 
+let admit_stream t stream_id =
+  if not (Hashtbl.mem t.admitted_streams stream_id) then (
+    Hashtbl.replace t.admitted_streams stream_id ();
+    t.current_client_streams <- t.current_client_streams + 1)
+
+let release_stream_admission t stream_id =
+  if Hashtbl.mem t.admitted_streams stream_id then (
+    Hashtbl.remove t.admitted_streams stream_id;
+    t.current_client_streams <- max 0 (t.current_client_streams - 1))
+
+let was_peer_reset t stream_id = Hashtbl.mem t.peer_reset_streams stream_id
+
 let retire_stream t stream =
-  close_stream t (Stream.id stream);
+  let stream_id = Stream.id stream in
+  close_stream t stream_id;
+  Hashtbl.remove t.peer_reset_streams stream_id;
   (match t.role with
-  | Client c -> Hashtbl.remove c.client_streams (Stream.id stream)
+  | Client c -> Hashtbl.remove c.client_streams stream_id
   | Server _ -> ());
-  t.current_client_streams <- max 0 (t.current_client_streams - 1)
+  release_stream_admission t stream_id
 
 let maybe_retire_stream t stream =
   if Stream.sent_end_stream stream && Stream.recv_end_stream stream then
@@ -481,41 +499,51 @@ let rec respond reqd response body_kind =
   reqd.response_body_kind <- body_kind;
   let stream = reqd.stream in
   let conn = reqd.connection in
-  send_response_headers conn stream response;
+  let stream_id = Stream.id stream in
   (match body_kind with
-  | `String s ->
-      if response_declares_empty_body response then (
-        if String.length s <> 0 then
-          invalid_arg
-            "Eta_http_h2.Connection.Server.Reqd.respond_with_string: empty \
-             response body cannot carry bytes";
+  | `String s when response_declares_empty_body response && String.length s <> 0 ->
+      invalid_arg
+        "Eta_http_h2.Connection.Server.Reqd.respond_with_string: empty response \
+         body cannot carry bytes"
+  | `Streaming _ when response_declares_empty_body response ->
+      invalid_arg
+        "Eta_http_h2.Connection.Server.Reqd.respond_with_streaming: empty \
+         response body cannot stream"
+  | `String _ | `Empty | `Streaming _ -> ());
+  if was_peer_reset conn stream_id then (
+    (match body_kind with
+    | `Streaming writer -> Body.Writer.close writer
+    | `String _ | `Empty -> ());
+    retire_stream conn stream)
+  else (
+    send_response_headers conn stream response;
+    (match body_kind with
+    | `String s ->
+        if response_declares_empty_body response then (
+          Stream.mark_send_end_stream stream;
+          Stream.mark_sent_end_stream stream;
+          maybe_retire_stream conn stream)
+        else (
+          if String.length s > 0 then
+            ignore
+              (Stream.queue_data stream
+                 (Bigstringaf.of_string ~off:0 ~len:(String.length s) s)
+                 ~off:0 ~len:(String.length s));
+          Stream.mark_send_end_stream stream)
+    | `Empty ->
         Stream.mark_send_end_stream stream;
         Stream.mark_sent_end_stream stream;
-        maybe_retire_stream conn stream)
-      else (
-      if String.length s > 0 then
-        ignore
-          (Stream.queue_data stream
-             (Bigstringaf.of_string ~off:0 ~len:(String.length s) s)
-             ~off:0 ~len:(String.length s));
-      Stream.mark_send_end_stream stream)
-  | `Empty ->
-      Stream.mark_send_end_stream stream;
-      Stream.mark_sent_end_stream stream;
-      maybe_retire_stream conn stream
-  | `Streaming writer ->
-      if response_declares_empty_body response then
-        invalid_arg
-          "Eta_http_h2.Connection.Server.Reqd.respond_with_streaming: empty \
-           response body cannot stream";
-      Body.Writer.set_write_fn writer (fun buf ~off ~len ->
-          ignore (Stream.queue_data stream buf ~off ~len);
-          wake_schedulable_stream conn stream);
-      Body.Writer.set_flush_fn writer (fun fn -> Stream.on_drained stream fn);
-      Body.Writer.set_close_callback writer (fun () ->
-          Stream.mark_send_end_stream stream;
-          wake_schedulable_stream conn stream));
-  wake_schedulable_stream conn stream
+        maybe_retire_stream conn stream
+    | `Streaming writer ->
+        Body.Writer.set_write_fn writer (fun buf ~off ~len ->
+            ignore (Stream.queue_data stream buf ~off ~len);
+            wake_schedulable_stream conn stream);
+        Body.Writer.set_flush_fn writer (fun fn -> Stream.on_drained stream fn);
+        Body.Writer.set_close_callback writer (fun () ->
+            Stream.mark_send_end_stream stream;
+            if was_peer_reset conn stream_id then retire_stream conn stream
+            else wake_schedulable_stream conn stream));
+    wake_schedulable_stream conn stream)
 
 (* -------------------------------------------------------------------------- *)
 (* Frame handlers *)
@@ -586,7 +614,7 @@ let handle_server_headers t ~flags ~stream_id payload =
       send_rst_stream t stream_id Error_code.Refused_stream
     else
       let stream = open_stream t ~id:stream_id in
-      t.current_client_streams <- t.current_client_streams + 1;
+      admit_stream t stream_id;
       (match Hpack.decode_headers_string t.hpack_decoder payload with
       | Error _ ->
           reset_stream t stream_id Error_code.Compression_error
@@ -862,10 +890,14 @@ let handle_rst_stream t ~stream_id error_code =
                   error_code;
                   message = "peer reset stream";
                 })
-      | Server _ -> ());
+      | Server _ -> Hashtbl.replace t.peer_reset_streams stream_id ());
       Stream.reset_by_peer stream ~error_code;
+      close_stream t stream_id;
       Body.Reader.close (Stream.request_body stream);
-      retire_stream t stream
+      (match t.role with
+      | Client _ -> retire_stream t stream
+      | Server _ ->
+          if Stream.send_end_stream stream then retire_stream t stream)
 
 let handle_goaway t ~last_stream_id error_code debug_data =
   t.last_stream_id <- last_stream_id;
@@ -1356,7 +1388,7 @@ module Client = struct
         let response_body = Stream.request_body stream in
         let writer = Body.Writer.create () in
         t.max_client_stream_id <- stream_id;
-        t.current_client_streams <- t.current_client_streams + 1;
+        admit_stream t stream_id;
         Hashtbl.replace c.client_streams stream_id
           {
             request;
@@ -1434,7 +1466,9 @@ module Server = struct
 
     let report_exn t exn =
       ignore exn;
-      reset_stream t.connection (Stream.id t.stream) Error_code.Internal_error
+      if was_peer_reset t.connection (Stream.id t.stream) then
+        retire_stream t.connection t.stream
+      else reset_stream t.connection (Stream.id t.stream) Error_code.Internal_error
   end
 end
 
