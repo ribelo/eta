@@ -1,6 +1,6 @@
 # Eta Effect Soundness Fixtures
 
-## Verdict
+## Purpose
 
 The in-tree soundness suite compiles each fixture as a negative test and
 expects OxCaml mode checking to reject it. All active Eta fixtures reject for
@@ -8,7 +8,7 @@ mode-safety reasons.
 
 Command:
 
-```text
+```sh
 nix develop -c dune runtest test/eta --force
 ```
 
