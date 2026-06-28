@@ -30,8 +30,28 @@
  (action (progn)))
 
 (rule
+ (alias eta-lifecycle)
+ (deps (alias http-testsuite/eta-lifecycle))
+ (action (progn)))
+
+(rule
+ (alias h2spec)
+ (deps (alias http-testsuite/h2spec))
+ (action (progn)))
+
+(rule
+ (alias perf-compare)
+ (deps (alias http-testsuite/perf-compare))
+ (action (progn)))
+
+(rule
  (alias server-load)
  (deps (alias http-testsuite/server-load))
+ (action (progn)))
+
+(rule
+ (alias red-probes)
+ (deps (alias http-testsuite/red-probes))
  (action (progn)))
 
 (rule

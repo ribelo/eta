@@ -124,7 +124,10 @@ HTTP-specific suites live under `http-testsuite/`:
 ```sh
 dune build @interop
 dune build @cve-regress
+dune build @h2spec
 dune build @http-bench
+dune build @server-load
+dune build @red-probes
 ```
 
 Benchmarks are opt-in repo infrastructure under `bench/`:
@@ -164,7 +167,10 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
-The HTTP interop, adversarial, and benchmark suite lives under `http-testsuite/` and is reachable via `dune build @interop`, `dune build @cve-regress`, and `dune build @http-bench`.
+The HTTP interop, adversarial, conformance, and benchmark suite lives under
+`http-testsuite/` and is reachable via `dune build @interop`,
+`dune build @cve-regress`, `dune build @h2spec`, `dune build @http-bench`,
+`dune build @server-load`, and `dune build @red-probes`.
 
 Benchmarks are opt-in repo infrastructure under `bench/`. Use
 `nix develop -c bash bench/run.sh --quick` for a fast performance snapshot,
