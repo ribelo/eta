@@ -3,12 +3,16 @@
 Run:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/tls_frag/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/tls_frag/run.exe
 ```
 
 ## Current Status
 
-All probes pass on the default Eio backend.
+Most probes pass on the default Eio backend. The remaining non-PASS case is:
+
+- `default_h1_body_ignored_byte_records`: reports `CRASH` with
+  `Eio.Io Net Connection_reset Unix_error (Connection reset by peer, "writev", "")`
+  when an ignored H1 fixed request body is sent one byte per TLS record.
 
 The original apparent body-fragmentation hangs were caused by probe completion
 conditions:
@@ -25,7 +29,6 @@ conditions:
 
 - H1 request line/headers one byte per TLS record.
 - H1 fixed request body one byte per TLS record.
-- H1 ignored fixed request body one byte per TLS record.
 - H2 preface/SETTINGS/HEADERS one byte per TLS record.
 - H2 DATA payload bytes one byte per TLS record.
 - H2 DATA frame header+payload one byte per TLS record.

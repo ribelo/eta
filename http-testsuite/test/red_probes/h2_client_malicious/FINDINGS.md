@@ -9,7 +9,7 @@ deadline.
 ## Run
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
 ```
 
 ## Reclassified generated probe
@@ -18,7 +18,7 @@ nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probe
 
 - **Command:**
   ```sh
-  nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
+  nix develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
   ```
 - **Expected behavior:**
   A clean GOAWAY frame whose `last_stream_id` is higher than the active stream
@@ -38,6 +38,20 @@ nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probe
 - **Classification:** generated probe expectation was wrong; retained as
   timeout regression coverage.
 
+## Current non-PASS probes
+
+These probes still return typed Eta errors and do not hang, but the current
+error class is less specific than the probe expects:
+
+- `goaway_after_headers` — response HEADERS followed by GOAWAY currently
+  returns `Connection_closed`; the probe expects
+  `Connection_protocol_violation`.
+- `push_promise` — server `PUSH_PROMISE` currently returns
+  `Connection_closed`; the probe expects `Connection_protocol_violation`.
+- `settings_invalid_enable_push` — server SETTINGS `ENABLE_PUSH=1` currently
+  returns `Connection_closed`; the probe expects
+  `Connection_protocol_violation`.
+
 ## Probes that passed (correctly handled) and are worth keeping
 
 These probes cover client-side edge cases that are not tested elsewhere and
@@ -53,10 +67,6 @@ produced safe, typed outcomes:
   client returns `Connection_protocol_violation`.
 - `goaway_immediately` — GOAWAY with `last_stream_id=0` after handshake;
   client returns `Connection_protocol_violation`.
-- `goaway_after_headers` — response HEADERS followed by GOAWAY; client returns
-  `Connection_protocol_violation`.
-- `push_promise` — server sends PUSH_PROMISE; client returns
-  `Connection_protocol_violation`.
 - `window_update_overflow` — WINDOW_UPDATE with `0x7FFFFFFF`; client returns
   `Connection_protocol_violation`.
 - `data_after_end_stream` — DATA after HEADERS with END_STREAM; client ignores
@@ -80,8 +90,6 @@ produced safe, typed outcomes:
   returns `Connection_protocol_violation`.
 - `continuation_wrong_stream` — CONTINUATION on wrong stream; client returns
   `Connection_protocol_violation`.
-- `settings_invalid_enable_push` — SETTINGS ENABLE_PUSH=1 sent to client; client
-  returns `Connection_protocol_violation`.
 - `headers_missing_status` — response HEADERS without `:status`; client returns
   `Connection_protocol_violation`.
 - `valid_response` — sanity check; response body is consumed successfully.

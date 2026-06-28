@@ -3,7 +3,7 @@
 Run:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_pipeline/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h1_pipeline/run.exe
 ```
 
 ## Current Status

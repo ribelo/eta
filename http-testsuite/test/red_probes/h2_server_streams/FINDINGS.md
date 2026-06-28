@@ -3,12 +3,15 @@
 Run:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_server_streams/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_server_streams/run.exe
 ```
 
 ## Current status
 
-All probes in this family pass.
+Most probes in this family pass. The remaining non-PASS case is a policy gap:
+
+- `h2_streams_priority_self_dependency`: a PRIORITY frame that makes stream 1
+  depend on itself is ignored and stream 1 still receives a response.
 
 Resolved findings:
 
@@ -26,7 +29,8 @@ Resolved findings:
 - `h2_streams_data_interleaved` — interleaved DATA across 20 concurrent POST streams.
 - `h2_streams_rst_during_bodies` — RST_STREAM on one partial body while other streams complete.
 - `h2_streams_settings_lower_max_concurrent` — peer SETTINGS lowering `MAX_CONCURRENT_STREAMS` does not disrupt already-open client streams.
-- `h2_streams_priority_self_dependency` — PRIORITY frame that makes a stream depend on itself is rejected.
+- `h2_streams_priority_self_dependency` — PRIORITY frame that makes a stream
+  depend on itself; currently documents the policy gap above.
 - `h2_streams_tiny_data_chunks` — 1-byte DATA chunks on 40 concurrent streams.
 - `h2_streams_headers_flood_no_data` — 80 concurrent HEADERS with `END_STREAM=true`.
 - `h2_streams_empty_data_flood` — excessive empty DATA frames close the

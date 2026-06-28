@@ -3,8 +3,8 @@
 Build and run the family:
 
 ```sh
-nix --option eval-cache false develop -c dune build http-testsuite/test/red_probes/h1_client_malicious
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe
+nix develop -c dune build http-testsuite/test/red_probes/h1_client_malicious
+nix develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe
 ```
 
 The runner always exits 0, even when probes fail or a probe hangs; each
@@ -27,7 +27,7 @@ Resolved finding:
 - **Probe:** `h10_keepalive_stays_open`
 - **Command:**
   ```sh
-  nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe | grep h10_keepalive_stays_open
+  nix develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe | grep h10_keepalive_stays_open
   ```
 - **Expected:** HTTP/1.0 keep-alive requires an explicit body length. A
   response that omits both `Content-Length` and `Transfer-Encoding` but claims
@@ -52,7 +52,7 @@ Resolved finding:
 - **Probe:** `duplicate_transfer_encoding_chunked`
 - **Command:**
   ```sh
-  nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe | grep duplicate_transfer_encoding_chunked
+  nix develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe | grep duplicate_transfer_encoding_chunked
   ```
 - **Expected:** RFC 7230 permits multiple `Transfer-Encoding` headers that are
   semantically combined; two identical `chunked` values should be accepted.

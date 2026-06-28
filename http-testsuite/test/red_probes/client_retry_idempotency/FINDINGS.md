@@ -3,7 +3,7 @@
 Run the family:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/client_retry_idempotency/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/client_retry_idempotency/run.exe
 ```
 
 ## Current status

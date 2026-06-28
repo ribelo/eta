@@ -34,13 +34,13 @@ A probe family may also write a `FINDINGS.md` file with structured findings.
 ## Running
 
 ```sh
-dune build @red-probes
+nix develop -c dune build @red-probes
 ```
 
 or individually:
 
 ```sh
-dune exec http-testsuite/test/red_probes/h1_smuggle/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h1_smuggle/run.exe
 ```
 
 ## Findings classification

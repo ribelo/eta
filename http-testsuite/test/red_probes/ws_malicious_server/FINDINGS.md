@@ -5,7 +5,7 @@ WebSocket adversarial server probes against `eta_http_eio.Ws.Client`.
 Run:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/ws_malicious_server/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/ws_malicious_server/run.exe
 ```
 
 ## Current status

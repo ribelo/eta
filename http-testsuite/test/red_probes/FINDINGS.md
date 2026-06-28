@@ -6,33 +6,35 @@ diagnostics. They are not part of normal `dune runtest`.
 Run all families:
 
 ```sh
-nix --option eval-cache false develop -c dune build @red-probes
+nix develop -c dune build @red-probes
 ```
 
 Run individual families:
 
 ```sh
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_smuggle/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_pipeline/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_frames/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_flow/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/h2_server_streams/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/tls_frag/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/handler_fail/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/ws_malicious_server/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/client_retry_idempotency/run.exe
-nix --option eval-cache false develop -c dune exec http-testsuite/test/red_probes/server_lifecycle/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h1_smuggle/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h1_pipeline/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h1_client_malicious/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_frames/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_flow/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_client_malicious/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/h2_server_streams/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/tls_frag/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/handler_fail/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/ws_malicious_server/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/client_retry_idempotency/run.exe
+nix develop -c dune exec http-testsuite/test/red_probes/server_lifecycle/run.exe
 ```
 
 ## Current non-PASS findings
 
 | Probe | Family | Status | Classification |
 |---|---|---|---|
-| `bare_cr_request_line` | `h1_smuggle` | HANG | policy gap |
-| `headers_without_end_headers` | `h2_frames` | POLICY_GAP | policy gap |
-| `goaway_lower_last_stream` | `h2_frames` | POLICY_GAP | policy gap |
+| `h2_streams_priority_self_dependency` | `h2_server_streams` | POLICY_GAP | policy gap |
+| `default_h1_body_ignored_byte_records` | `tls_frag` | CRASH | probe/backend interaction |
+| `goaway_after_headers` | `h2_client_malicious` | FAIL | error-classification mismatch |
+| `push_promise` | `h2_client_malicious` | FAIL | error-classification mismatch |
+| `settings_invalid_enable_push` | `h2_client_malicious` | FAIL | error-classification mismatch |
 
 Additional safe-but-strict policy notes are documented in
 `h1_client_malicious/FINDINGS.md`:
@@ -48,6 +50,8 @@ Additional safe-but-strict policy notes are documented in
 The swarm-generated second pass produced valid bugs and a few invalid
 expectations. The following bug-classified probes now pass:
 
+- `bare_cr_request_line` in `h1_smuggle`.
+- `headers_without_end_headers` and `goaway_lower_last_stream` in `h2_frames`.
 - `stalled_body_not_blocking`, `empty_data_flood`,
   `settings_flood_mid_stream` in `h2_server_streams`.
 - `pool_dead_keepalive_connection` in `h1_client_malicious`.
@@ -82,13 +86,13 @@ The first red-probe pass remains green:
 
 Verified after cleanup and fixes:
 
-- `nix --option eval-cache false develop -c dune build @red-probes`
-- `nix --option eval-cache false develop -c dune runtest test/http --force`
-- `nix --option eval-cache false develop -c dune runtest test/http_eio --force`
-- `nix --option eval-cache false develop -c dune exec http-testsuite/test/cve_regress/run.exe`
-- `nix --option eval-cache false develop -c dune exec http-testsuite/test/interop/run.exe`
-- `nix --option eval-cache false develop -c dune build eta_http.install eta_http_eio.install`
-- `nix --option eval-cache false develop -c bash bench/run.sh --quick`
+- `nix develop -c dune build @red-probes`
+- `nix develop -c dune runtest test/http --force`
+- `nix develop -c dune runtest test/http_eio --force`
+- `nix develop -c dune exec http-testsuite/test/cve_regress/run.exe`
+- `nix develop -c dune exec http-testsuite/test/interop/run.exe`
+- `nix develop -c dune build eta_http.install eta_http_eio.install`
+- `nix develop -c bash bench/run.sh --quick`
 
 Per-family `FINDINGS.md` files contain the minimized repros, expected behavior,
 observed behavior, and protocol/backend details.
