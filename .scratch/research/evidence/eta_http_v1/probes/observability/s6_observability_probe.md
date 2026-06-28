@@ -36,7 +36,7 @@ observability / pool stats meter: PASS
 Live h2 body recheck:
 
 ~~~text
-timeout 25s nix develop -c dune exec --display=short .scratch/eta_http_v1/probes/honeycomb_h2.exe
+timeout 25s nix develop -c dune exec --display=short .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 ~~~
 

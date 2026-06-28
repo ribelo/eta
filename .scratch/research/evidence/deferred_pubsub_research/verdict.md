@@ -147,7 +147,7 @@ drop-old operation and no current call site requires replay.
 
 Run:
 
-    nix develop -c dune exec .scratch/deferred_pubsub_research/runtime_smoke.exe
+    nix develop -c dune exec .scratch/research/evidence/deferred_pubsub_research/runtime_smoke.exe
 
 Latest result: pass, 18 scratch tests run. Production Eta suite also passes with
 9 Pubsub tests. See run.out.

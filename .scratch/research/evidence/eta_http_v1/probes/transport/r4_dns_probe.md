@@ -26,8 +26,8 @@ with happy eyeballs deferred to v1.x?
 nix develop -c dune build lib/http
 nix develop -c dune runtest lib/http --force
 bash lib/http/audit/run.sh
-nix develop -c dune exec .scratch/eta_http_v1/probes/openai_401.exe
-nix develop -c dune exec .scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 ```
 
 Observed:

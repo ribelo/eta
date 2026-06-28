@@ -93,7 +93,7 @@ Key points:
 
 ## Related
 
-- Lab results: `.scratch/eta_research/scoped_sessions/results.md`
-- Coverage matrix: `.scratch/eta_research/scoped_sessions/p_scoped_1/coverage_matrix.md`
-- Protocol test: `.scratch/eta_research/scoped_sessions/p_scoped_2/protocol.md`
-- Refactor diff: `.scratch/eta_research/scoped_sessions/p_scoped_3/refactor.diff`
+- Lab results: `.scratch/research/evidence/eta_research/scoped_sessions/results.md`
+- Coverage matrix: `.scratch/research/evidence/eta_research/scoped_sessions/p_scoped_1/coverage_matrix.md`
+- Protocol test: `.scratch/research/evidence/eta_research/scoped_sessions/p_scoped_2/protocol.md`
+- Refactor diff: `.scratch/research/evidence/eta_research/scoped_sessions/p_scoped_3/refactor.diff`

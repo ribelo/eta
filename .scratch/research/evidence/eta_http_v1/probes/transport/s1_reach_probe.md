@@ -10,7 +10,7 @@ ADR 0002 TLS reach lab covered?
 
 ## Implementation
 
-- Probe executable: `.scratch/eta_http_v1/probes/reach_13.ml`.
+- Probe executable: `.scratch/research/evidence/eta_http_v1/probes/reach_13.ml`.
 - Path under test: `Eta_http_eio.Client.make_h1` -> `Eta_http.request`.
 - Method: `HEAD`, so the probe exercises DNS, TCP, TLS, h1 request writing,
   h1 response parsing, status/header handling, body release, and pool shutdown
@@ -21,7 +21,7 @@ ADR 0002 TLS reach lab covered?
 ## Evidence
 
 ```sh
-nix develop -c dune exec .scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 ```
 
 Observed:

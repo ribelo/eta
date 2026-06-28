@@ -28,7 +28,7 @@ Evidence:
 
 ```sh
 nix develop -c dune runtest lib/http --force
-nix develop -c dune exec .scratch/eta_http_v1/probes/parser_alloc.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/parser_alloc.exe
 ```
 
 Observed:

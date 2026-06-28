@@ -27,7 +27,7 @@ Evidence:
 
 Verification:
 
-    nix develop -c bash .scratch/eta_ai_v1/probes/telemetry/run.sh
+    nix develop -c bash .scratch/research/evidence/eta_ai_v1/probes/telemetry/run.sh
 
 Expected output:
 

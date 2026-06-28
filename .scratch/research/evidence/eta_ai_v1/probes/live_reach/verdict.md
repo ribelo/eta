@@ -36,7 +36,7 @@ Evidence:
 
 Verification:
 
-    bash .scratch/eta_ai_v1/probes/live_reach/run.sh anthropic
+    bash .scratch/research/evidence/eta_ai_v1/probes/live_reach/run.sh anthropic
 
 Disproof signature outcome:
 

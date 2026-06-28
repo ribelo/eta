@@ -11,8 +11,8 @@ route h2 to the real `ocaml-h2` owner loop, and keep h1 fallback working?
 - `lib/http/client/client.ml`
 - `lib/http/transport/dispatch.ml`
 - `lib/http/transport/connect.ml`
-- `.scratch/eta_http_v1/probes/honeycomb_h2.ml`
-- `.scratch/eta_http_v1/probes/reach_13.ml`
+- `.scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.ml`
+- `.scratch/research/evidence/eta_http_v1/probes/reach_13.ml`
 
 ## Evidence
 
@@ -20,10 +20,10 @@ route h2 to the real `ocaml-h2` owner loop, and keep h1 fallback working?
 nix develop -c dune runtest lib/http --force
 eta-http: 43 tests passed
 
-nix develop -c dune exec .scratch/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 
-nix develop -c dune exec .scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 ```
 

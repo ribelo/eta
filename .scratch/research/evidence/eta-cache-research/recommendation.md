@@ -21,7 +21,7 @@ root `eta`. Justification in three lines:
    (`create_promise`/`resolve_promise`/`await_promise`, implemented by both
    `eta_eio` and `eta_jsoo`) — and a near-template (`Pool`) that solves
    capacity + TTL + waiters + stats. A prior scratch lab
-   (`.scratch/deferred_pubsub_research`) already proved exactly-once completion
+   (`.scratch/research/evidence/deferred_pubsub_research`) already proved exactly-once completion
    and failure replay on the promise primitive. The cache is mostly a
    generalization of Pool (research.md §A1).
 3. The only real seam is that the promise is not on the public `Effect`
@@ -212,7 +212,7 @@ This is the same portability profile as Pool. **Verify with the jsoo benchmark
 no `Deferred`/`Promise`, so single-flight must be a `Semaphore`-latch." That was
 **factually wrong**: `Runtime_contract` exposes a backend-neutral one-shot
 promise (`create_promise`/`resolve_promise`/`await_promise`) implemented on
-both the eio (native) and jsoo backends, and `.scratch/deferred_pubsub_research`
+both the eio (native) and jsoo backends, and `.scratch/research/evidence/deferred_pubsub_research`
 already proved exactly-once completion + failure replay on it (research.md §A3,
 §G5). The latch framing is retained below only as a *rejected* alternative.
 
@@ -378,7 +378,7 @@ and, optionally, `pqwy/lru` as a backing-store-only reference (shows the cost of
 6. **Add a `Deferred`/`Promise` to root `eta` to match Effect/zio-cache.**
    Rejected as *speculative*: the `Runtime_contract` already provides a
    dual-platform one-shot promise (research.md §A3), and
-   `.scratch/deferred_pubsub_research` proved single-flight on it. The cache
+   `.scratch/research/evidence/deferred_pubsub_research` proved single-flight on it. The cache
    rides the contract promise via `Effect.Expert` (Q6). A *public*
    `Effect.make_promise`/`await` is a separate, evidence-triggered decision
    (promote it only when single-effect `cached` or a third caller needs it), not

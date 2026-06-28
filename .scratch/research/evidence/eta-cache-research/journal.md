@@ -78,7 +78,7 @@ Two consequences that rewrite the recommendation:
    rewritten. The user's "two implementations with shared code" is already the
    architecture of the whole runtime; the cache rides it.
 
-Prior art already on disk: `.scratch/deferred_pubsub_research/runtime_smoke.ml`
+Prior art already on disk: `.scratch/research/evidence/deferred_pubsub_research/runtime_smoke.ml`
 builds a `Deferred_probe` over `Eio.Promise` and its alcotest suite passes:
 `[OK] first completion wins` (many awaiters share one completion) and
 `[OK] failure replays to late awaiter` (failure caching). Native-only probe.

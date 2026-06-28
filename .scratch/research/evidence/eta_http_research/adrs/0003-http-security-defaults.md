@@ -40,7 +40,7 @@ Artifacts:
 - `.scratch/research/evidence/eta_http_research/h_q_envelope/results.md`
 - `packages/eta-http/h2/security.ml`
 - `.scratch/research/evidence/eta_http_v1/probes/h2/s4_security_envelope_probe.md`
-- `.scratch/eta_http_v1/probes/s4_envelope_alloc.ml`
+- `.scratch/research/evidence/eta_http_v1/probes/s4_envelope_alloc.ml`
 
 The H-Q envelope runner sampled all catalogue rows at 1 Hz from second 0
 through second 30. 6 of 12 catalogue attacks passed against H-D1.

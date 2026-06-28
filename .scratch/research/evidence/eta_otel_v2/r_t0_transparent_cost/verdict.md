@@ -152,7 +152,7 @@ claim.
   the observer branch when the runtime value is not statically known.
 - The benchmark proves zero allocation for the covered noop observer cases, not
   every possible future eta-otel call path.
-- The missing .scratch/eta_otel_rebuild/transparent_cost_research_plan.md
+- The missing .scratch/research/evidence/eta_otel_rebuild/transparent_cost_research_plan.md
   referenced by the objective was not present in this checkout, so this verdict
   records a new hypothesis ledger rather than amending that stale plan.
 - Next production step for candidate B: implement an Eta.Runtime no-observer

@@ -7,7 +7,7 @@ same-domain stepping with Effect.blocking.
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_blocking_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_blocking_probe.exe
 ~~~
 
 Output:
@@ -75,7 +75,7 @@ enough overhead to force a dedicated connection-pinned worker?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_floor_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_floor_probe.exe
 ~~~
 
 Output:
@@ -144,7 +144,7 @@ return the blocking worker, and leave the connection reusable?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_cancel_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_cancel_probe.exe
 ~~~
 
 Output:
@@ -192,7 +192,7 @@ concurrent per-call blocking steps on one sqlite3 handle?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_affinity_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_affinity_probe.exe
 ~~~
 
 Output:
@@ -256,7 +256,7 @@ blocking handoff erase the low-allocation connector win?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_scan_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_scan_probe.exe
 ~~~
 
 Output:
@@ -301,7 +301,7 @@ max_threads=4 SQL blocking pool?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_fanout_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_fanout_probe.exe
 ~~~
 
 Output:
@@ -346,7 +346,7 @@ timeout, interrupt a started sqlite3_step and release the pool slot?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_cancel_generic_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_cancel_generic_probe.exe
 ~~~
 
 Output after adding the generic blocking cancel hook:
@@ -380,7 +380,7 @@ for the whole BEGIN..COMMIT span?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_tx_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_tx_probe.exe
 ~~~
 
 Output:
@@ -418,7 +418,7 @@ Question: does SQLITE_BUSY compose with Eta retry and Schedule?
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_busy_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_busy_probe.exe
 ~~~
 
 Output:
@@ -509,15 +509,15 @@ Implemented in `packages/sql`:
 Verification commands:
 
 ```sh
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_blocking_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_floor_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_cancel_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_cancel_generic_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_affinity_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_scan_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_fanout_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_tx_probe.exe
-nix develop .#oxcaml -c dune exec .scratch/eta_research/sqlite_eta_effect/sqlite_busy_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_blocking_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_floor_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_cancel_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_cancel_generic_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_affinity_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_scan_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_fanout_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_tx_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/sqlite_eta_effect/sqlite_busy_probe.exe
 nix develop .#oxcaml -c dune runtest packages/sql --force
 nix develop .#oxcaml -c dune runtest packages/eta/test --force
 nix develop .#oxcaml -c dune build --profile release packages/sql packages/eta

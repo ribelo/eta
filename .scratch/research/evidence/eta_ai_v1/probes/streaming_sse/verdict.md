@@ -29,7 +29,7 @@ Evidence:
 
 Verification:
 
-    nix develop -c bash .scratch/eta_ai_v1/probes/streaming_sse/run.sh
+    nix develop -c bash .scratch/research/evidence/eta_ai_v1/probes/streaming_sse/run.sh
     exit 0
 
     ok openai text deltas

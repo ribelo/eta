@@ -2807,10 +2807,10 @@ write negative tests for claimed type guarantees, then record decisions.
 Produce an implementable contract for `effet-stream`:
 
 - a hypothesis-space map for Stream / Sink / Channel;
-- lab candidates in `scratch/stream_research/`;
+- lab candidates in `.scratch/research/evidence/stream_research/`;
 - negative compiler evidence;
-- a final stub interface in `scratch/stream_research/STUB_stream.mli`;
-- a backlog handoff in `scratch/stream_research/BACKLOG.md`.
+- a final stub interface in `.scratch/research/evidence/stream_research/STUB_stream.mli`;
+- a backlog handoff in `.scratch/research/evidence/stream_research/BACKLOG.md`.
 
 User update during the session: creating the real `lib/effet-stream/`
 package is allowed if the research settles with enough time left. This entry
@@ -2911,8 +2911,8 @@ that the close hook ran exactly once.
 Validation:
 
 ```text
-nix develop -c dune build scratch/stream_research/
-nix develop -c dune exec scratch/stream_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/stream_research/
+nix develop -c dune exec .scratch/research/evidence/stream_research/runtime_smoke.exe
 ```
 
 Both pass. The smoke executable is silent on success.
@@ -2920,12 +2920,12 @@ Both pass. The smoke executable is silent on success.
 ### Negative tests
 
 Each negative was run by temporarily adding the module stem to
-`scratch/stream_research/dune`'s `(modules ...)` list.
+`.scratch/research/evidence/stream_research/dune`'s `(modules ...)` list.
 
 `neg_a_resource_leak.ml`:
 
 ```text
-File "scratch/stream_research/neg_a_resource_leak.ml", line 9, characters 39-44:
+File ".scratch/research/evidence/stream_research/neg_a_resource_leak.ml", line 9, characters 39-44:
 9 |   S_a_channel_core.Stream.scoped_file ~scope "bad" [ 1; 2; 3 ]
                                            ^^^^^
 Error: The value scope has type [ `Closed ]
@@ -2941,7 +2941,7 @@ are not evidence of scoping. After annotation, the negative fails as intended.
 `neg_b_escape.ml`:
 
 ```text
-File "scratch/stream_research/neg_b_escape.ml", lines 12-13, characters 2-39:
+File ".scratch/research/evidence/stream_research/neg_b_escape.ml", lines 12-13, characters 2-39:
 12 | ..S_b_stream_core.run bad_stream
 13 |     (S_b_stream_core.Sink.fold ( + ) 0)
 Error: This expression has type
@@ -2957,7 +2957,7 @@ failures are not erased into a separate stream error model.
 `neg_c_stage_unscoped.ml`:
 
 ```text
-File "scratch/stream_research/neg_c_stage_unscoped.ml", lines 7-8, characters 2-39:
+File ".scratch/research/evidence/stream_research/neg_c_stage_unscoped.ml", lines 7-8, characters 2-39:
 7 | ..S_c_eio_pipeline.Stream.spawn
 8 |     (S_c_eio_pipeline.Stream.range 1 3)
 Error (warning 5 [ignored-partial-application]): this function application is partial,
@@ -3079,24 +3079,24 @@ streams do not demand `env#tracer`.
 
 #### V-S10 — Final stub mli
 
-The chosen contract is `scratch/stream_research/STUB_stream.mli`. It records
+The chosen contract is `.scratch/research/evidence/stream_research/STUB_stream.mli`. It records
 Stream-as-core, chunked pull, fold Sink, no public Channel, Eio interop, byte
 source, concurrent operators, and tracing smart constructors.
 
 ### Artifacts
 
-- `scratch/stream_research/dune`
-- `scratch/stream_research/README.md`
-- `scratch/stream_research/services.ml`
-- `scratch/stream_research/s_a_channel_core.ml`
-- `scratch/stream_research/s_b_stream_core.ml`
-- `scratch/stream_research/s_c_eio_pipeline.ml`
-- `scratch/stream_research/neg_a_resource_leak.ml`
-- `scratch/stream_research/neg_b_escape.ml`
-- `scratch/stream_research/neg_c_stage_unscoped.ml`
-- `scratch/stream_research/runtime_smoke.ml`
-- `scratch/stream_research/STUB_stream.mli`
-- `scratch/stream_research/BACKLOG.md`
+- `.scratch/research/evidence/stream_research/dune`
+- `.scratch/research/evidence/stream_research/README.md`
+- `.scratch/research/evidence/stream_research/services.ml`
+- `.scratch/research/evidence/stream_research/s_a_channel_core.ml`
+- `.scratch/research/evidence/stream_research/s_b_stream_core.ml`
+- `.scratch/research/evidence/stream_research/s_c_eio_pipeline.ml`
+- `.scratch/research/evidence/stream_research/neg_a_resource_leak.ml`
+- `.scratch/research/evidence/stream_research/neg_b_escape.ml`
+- `.scratch/research/evidence/stream_research/neg_c_stage_unscoped.ml`
+- `.scratch/research/evidence/stream_research/runtime_smoke.ml`
+- `.scratch/research/evidence/stream_research/STUB_stream.mli`
+- `.scratch/research/evidence/stream_research/BACKLOG.md`
 
 ### What we are deliberately not building
 
@@ -3138,8 +3138,8 @@ Known skeleton gaps:
 Validation:
 
 ```text
-nix develop -c dune build lib/effet-stream/ scratch/stream_research/
-nix develop -c dune exec scratch/stream_research/runtime_smoke.exe
+nix develop -c dune build lib/effet-stream/ .scratch/research/evidence/stream_research/
+nix develop -c dune exec .scratch/research/evidence/stream_research/runtime_smoke.exe
 ```
 
 Both pass. A broad `nix develop -c dune build` was attempted but interrupted
@@ -3193,8 +3193,8 @@ Results:
 Validation:
 
 ```text
-nix develop -c dune build scratch/stream_research/
-nix develop -c dune exec scratch/stream_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/stream_research/
+nix develop -c dune exec .scratch/research/evidence/stream_research/runtime_smoke.exe
 ```
 
 Both pass.
@@ -3218,7 +3218,7 @@ the simple `Seq.t` shape compiles while losing the resource guarantee.
 Command:
 
 ```text
-nix develop -c dune exec scratch/stream_research/benchmark_compare.exe
+nix develop -c dune exec .scratch/research/evidence/stream_research/benchmark_compare.exe
 ```
 
 Observed output:
@@ -5242,7 +5242,7 @@ This entry reopens V-R2 against those candidates.
 
 ### Goal
 
-Within a 3h budget, build scratch/layer_research/ with the shared-Clock fixture:
+Within a 3h budget, build .scratch/research/evidence/layer_research/ with the shared-Clock fixture:
 
 - Db layer needs Clock.
 - Http layer needs Clock and Log.
@@ -5257,30 +5257,30 @@ Compare each candidate against the current no-Layer answer: ordinary OCaml servi
 
 Files:
 
-- scratch/layer_research/services.ml
-- scratch/layer_research/merge_explicit.ml
-- scratch/layer_research/gadt_presence_set.ml
-- scratch/layer_research/no_layer_baseline.ml
-- scratch/layer_research/runtime_smoke.ml
-- scratch/layer_research/neg_merge_missing_clock.ml
-- scratch/layer_research/neg_merge_collision.ml
-- scratch/layer_research/neg_gadt_missing_clock.ml
-- scratch/layer_research/neg_no_layer_missing_log.ml
+- .scratch/research/evidence/layer_research/services.ml
+- .scratch/research/evidence/layer_research/merge_explicit.ml
+- .scratch/research/evidence/layer_research/gadt_presence_set.ml
+- .scratch/research/evidence/layer_research/no_layer_baseline.ml
+- .scratch/research/evidence/layer_research/runtime_smoke.ml
+- .scratch/research/evidence/layer_research/neg_merge_missing_clock.ml
+- .scratch/research/evidence/layer_research/neg_merge_collision.ml
+- .scratch/research/evidence/layer_research/neg_gadt_missing_clock.ml
+- .scratch/research/evidence/layer_research/neg_no_layer_missing_log.ml
 
 Positive validation:
 
 ~~~text
-nix develop -c dune build scratch/layer_research
-nix develop -c dune exec scratch/layer_research/runtime_smoke.exe
+nix develop -c dune build .scratch/research/evidence/layer_research
+nix develop -c dune exec .scratch/research/evidence/layer_research/runtime_smoke.exe
 layer research smoke tests passed
 ~~~
 
 LOC:
 
 ~~~text
-  115 scratch/layer_research/gadt_presence_set.ml
-   74 scratch/layer_research/merge_explicit.ml
-   37 scratch/layer_research/no_layer_baseline.ml
+  115 .scratch/research/evidence/layer_research/gadt_presence_set.ml
+   74 .scratch/research/evidence/layer_research/merge_explicit.ml
+   37 .scratch/research/evidence/layer_research/no_layer_baseline.ml
 ~~~
 
 ### Candidate A - Layer.merge_explicit
@@ -5396,7 +5396,7 @@ This is the post-provide style from V-RPv5: build services with ordinary values,
 neg_merge_missing_clock.ml was temporarily added as an executable. The compiler rejected booting the merged app without Clock:
 
 ~~~text
-File "scratch/layer_research/neg_merge_missing_clock.ml", line 11, characters 4-87:
+File ".scratch/research/evidence/layer_research/neg_merge_missing_clock.ml", line 11, characters 4-87:
 11 |     (Merge_explicit.Layer.use (Merge_explicit.app_layer ()) Merge_explicit.app_program)
          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: This expression has type
@@ -5411,7 +5411,7 @@ Error: This expression has type
 neg_merge_collision.ml was temporarily added as an executable. The compiler rejected duplicate object methods in the explicit combine:
 
 ~~~text
-File "scratch/layer_research/neg_merge_collision.ml", line 14, characters 8-29:
+File ".scratch/research/evidence/layer_research/neg_merge_collision.ml", line 14, characters 8-29:
 14 |         method service = http
              ^^^^^^^^^^^^^^^^^^^^^
 Error: The method service has multiple definitions in this object
@@ -5420,7 +5420,7 @@ Error: The method service has multiple definitions in this object
 neg_gadt_missing_clock.ml was temporarily added as an executable. The compiler rejected a boot env containing Log without Clock:
 
 ~~~text
-File "scratch/layer_research/neg_gadt_missing_clock.ml", line 13, characters 34-61:
+File ".scratch/research/evidence/layer_research/neg_gadt_missing_clock.ml", line 13, characters 34-61:
 13 |   Gadt_presence_set.Layer.use env Gadt_presence_set.app_layer
                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error: The value Gadt_presence_set.app_layer has type
@@ -5440,7 +5440,7 @@ Error: The value Gadt_presence_set.app_layer has type
 neg_no_layer_missing_log.ml was temporarily added as an executable. The compiler rejected forgetting the Log boot argument as an ordinary partial application warning promoted to error by the build:
 
 ~~~text
-File "scratch/layer_research/neg_no_layer_missing_log.ml", line 10, characters 2-30:
+File ".scratch/research/evidence/layer_research/neg_no_layer_missing_log.ml", line 10, characters 2-30:
 10 |   No_layer_baseline.boot clock
        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Error (warning 5 [ignored-partial-application]): this function application is partial,
@@ -5496,7 +5496,7 @@ No follow-up implementation task is needed. The only documentation follow-up wor
 
 The approved recommendation was materialized as documentation, not production API.
 docs/services.md now records the no-Layer service-construction pattern and links to the
-compiling scratch/layer_research fixture. README.md links to the guide from a new
+compiling .scratch/research/evidence/layer_research fixture. README.md links to the guide from a new
 Services section.
 
 No Layer module, Tag, Context, or Effect.provide was added.
@@ -9148,8 +9148,8 @@ domain-safe Resource API or keeping the shipped Resource fiber-local.
 Runnable evidence:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
-EFFET_OXCAML_RESEARCH=true dune exec scratch/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.exe
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/run.sh
+EFFET_OXCAML_RESEARCH=true dune exec .scratch/research/evidence/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.exe
 ```
 
 Current fixture result: `summary: pass=20 fail=0`.
@@ -9202,10 +9202,10 @@ Deferred questions after the branch-only verdict:
 
 Primary artifacts:
 
-- `scratch/oxcaml_research/results.md`
-- `scratch/oxcaml_research/run.sh`
-- `scratch/oxcaml_research/fixtures/`
-- `scratch/oxcaml_research/effet_resource_probe/`
+- `.scratch/research/evidence/oxcaml_research/results.md`
+- `.scratch/research/evidence/oxcaml_research/run.sh`
+- `.scratch/research/evidence/oxcaml_research/fixtures/`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/`
 
 ## V-OxCaml-2 — switch toward OxCaml (supersedes V-OxCaml session 1)
 
@@ -9216,11 +9216,11 @@ becomes: does OxCaml mechanically guarantee Effet's scope/effect/capture
 safety AND enable parallel execution that mainline OCaml cannot? Answer:
 yes/yes, with runnable evidence.
 
-Full writeup: `scratch/oxcaml_research/results.md`. Reproduce with:
+Full writeup: `.scratch/research/evidence/oxcaml_research/results.md`. Reproduce with:
 
 ```sh
 nix develop .#oxcaml -c bash -lc 'effet-oxcaml-test-shipped'
-nix develop .#oxcaml -c bash scratch/oxcaml_research/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/run.sh
 ```
 
 Last recorded: 141 shipped tests pass under `5.2.0+ox`; fixture lab
@@ -9231,7 +9231,7 @@ Last recorded: 141 shipped tests pass under `5.2.0+ox`; fixture lab
 Decision: shipped Effet builds and tests under `5.2.0+ox` without source
 changes (effet-schema, ppx_effet, effet 105, effet-otel 20, effet-stream 13).
 The shipped abstract `Effet.Effect.t` runs end-to-end
-(`scratch/oxcaml_research/effet_portable_probe/effet_real_t_portable_smoke.ml`).
+(`.scratch/research/evidence/oxcaml_research/effet_portable_probe/effet_real_t_portable_smoke.ml`).
 
 ### V-OX-B — Three static guarantees mainline OCaml cannot encode
 
@@ -9314,7 +9314,7 @@ better for Effet's idea.
 - "Portable Resource needs a separate domain-safe API and is therefore not
   worth the constraint": rejected under churn = 0.
 
-Artifacts: `scratch/oxcaml_research/{results.md,run.sh,fixtures/,effet_portable_probe/,effet_resource_probe/,results/}`.
+Artifacts: `.scratch/research/evidence/oxcaml_research/{results.md,run.sh,fixtures/,effet_portable_probe/,effet_resource_probe/,results/}`.
 
 ## V-OxCaml-Perf — OxCaml is faster by default for free
 
@@ -9329,11 +9329,11 @@ worst regression 1.35×).
 Reproduce (two runs per toolchain, aggregated by per-bench min):
 
 ```sh
-nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 1
-nix develop -c          bash scratch/oxcaml_research/perf/run_perf.sh mainline 2
-nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 1
-nix develop .#oxcaml -c bash scratch/oxcaml_research/perf/run_perf.sh oxcaml 2
-python3 scratch/oxcaml_research/perf/compare.py | tee scratch/oxcaml_research/perf/compare.txt
+nix develop -c          bash .scratch/research/evidence/oxcaml_research/perf/run_perf.sh mainline 1
+nix develop -c          bash .scratch/research/evidence/oxcaml_research/perf/run_perf.sh mainline 2
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/perf/run_perf.sh oxcaml 1
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/perf/run_perf.sh oxcaml 2
+python3 .scratch/research/evidence/oxcaml_research/perf/compare.py | tee .scratch/research/evidence/oxcaml_research/perf/compare.txt
 ```
 
 Method: same source, same machine (AMD Ryzen 9 9950X), same
@@ -9361,8 +9361,8 @@ workloads on `eio_linux` may differ.
 
 Combined with V-OxCaml-2 (compatible + better suited on safety and
 parallelism), perf is now a third independent reason to switch toward
-OxCaml. Full writeup: `scratch/oxcaml_research/perf/README.md` and
-`scratch/oxcaml_research/perf/compare.txt`.
+OxCaml. Full writeup: `.scratch/research/evidence/oxcaml_research/perf/README.md` and
+`.scratch/research/evidence/oxcaml_research/perf/compare.txt`.
 
 ## V-P0T1 — Full Effect.t recursive GADT kind probe
 
@@ -9372,18 +9372,18 @@ Question: can Phase 4 annotate the current Effect.t as one portable recursive GA
 
 Artifacts:
 
-- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_a_one_gadt.ml`
-- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split.ml`
-- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml`
-- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml`
-- `scratch/oxcaml_research/effect_full_gadt_probe/candidate_c_mode_template.ml`
-- `scratch/oxcaml_research/effect_full_gadt_probe/results.md`
-- `scratch/oxcaml_research/effect_full_gadt_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/candidate_a_one_gadt.ml`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/candidate_b_split.ml`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/candidate_b_split_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/candidate_b_polyvariant_error_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/candidate_c_mode_template.ml`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/effect_full_gadt_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/effect_full_gadt_probe/run.sh
 ```
 
 Last result: `summary: pass=9 fail=0`.
@@ -9432,21 +9432,21 @@ Question: what representation should Effet use when a `Cause.Die` crosses Parall
 
 Artifacts:
 
-- `scratch/oxcaml_research/cause_boundary_probe/raw_exn_positive.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/raw_exn_fcm_negative.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/materialized_positive.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/materialized_closure_negative.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/typed_defect_positive.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_positive.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml`
-- `scratch/oxcaml_research/cause_boundary_probe/results.md`
-- `scratch/oxcaml_research/cause_boundary_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/raw_exn_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/raw_exn_fcm_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/materialized_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/materialized_closure_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/typed_defect_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/typed_defect_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/explicit_conversion_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/explicit_conversion_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/cause_boundary_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/cause_boundary_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/cause_boundary_probe/run.sh
 ```
 
 Last result: `summary: pass=8 fail=0`.
@@ -9488,18 +9488,18 @@ Question: should Phase 4 make `Effect.t` values once/linear so `Bind` and `Map` 
 
 Artifacts:
 
-- `scratch/oxcaml_research/bind_once_probe/many_ast_once_continuation.ml`
-- `scratch/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml`
-- `scratch/oxcaml_research/bind_once_probe/once_program_second_run_compiles.ml`
-- `scratch/oxcaml_research/bind_once_probe/portable_continuation_reuse_positive.ml`
-- `scratch/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml`
-- `scratch/oxcaml_research/bind_once_probe/results.md`
-- `scratch/oxcaml_research/bind_once_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/many_ast_once_continuation.ml`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/once_ast_reuse_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/once_program_second_run_compiles.ml`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/portable_continuation_reuse_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/portable_continuation_capture_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/bind_once_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/bind_once_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/bind_once_probe/run.sh
 ```
 
 Last result: `summary: pass=5 fail=0`.
@@ -9536,19 +9536,19 @@ Question: which queue primitive should Phase 6 and Phase 8 use for cross-domain 
 
 Artifacts:
 
-- `scratch/oxcaml_research/portable_queue_probe/ws_deque_steal_positive.ml`
-- `scratch/oxcaml_research/portable_queue_probe/ws_deque_push_capture_negative.ml`
-- `scratch/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml`
-- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_parallel_positive.ml`
-- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml`
-- `scratch/oxcaml_research/portable_queue_probe/atomic_queue_payload_closure_negative.ml`
-- `scratch/oxcaml_research/portable_queue_probe/results.md`
-- `scratch/oxcaml_research/portable_queue_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/ws_deque_steal_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/ws_deque_push_capture_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/ws_deque_payload_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/atomic_queue_parallel_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/atomic_queue_payload_ref_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/atomic_queue_payload_closure_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/portable_queue_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/portable_queue_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/portable_queue_probe/run.sh
 ```
 
 Last result: `summary: pass=6 fail=0`.
@@ -9598,20 +9598,20 @@ Question: what wrapper API should Effet use around Eio under OxCaml modes?
 
 Artifacts:
 
-- `scratch/oxcaml_research/eio_wrap_probe/eio_wrap_positive.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/parallel_inside_eio_positive.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/switch_local_fork_negative.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/switch_escape_wrapped_negative.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/fiber_portable_ref_capture_negative.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/stream_payload_negative.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/stream_parallel_wrapped_negative.ml`
-- `scratch/oxcaml_research/eio_wrap_probe/results.md`
-- `scratch/oxcaml_research/eio_wrap_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/eio_wrap_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/parallel_inside_eio_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/switch_local_fork_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/switch_escape_wrapped_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/fiber_portable_ref_capture_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/stream_payload_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/stream_parallel_wrapped_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/eio_wrap_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/eio_wrap_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/eio_wrap_probe/run.sh
 ```
 
 Last result: `summary: pass=7 fail=0`.
@@ -9661,16 +9661,16 @@ Question: should supervisor failure state use Capsule-protected mutable state or
 
 Artifacts:
 
-- `scratch/oxcaml_research/supervisor_state_probe/capsule_state_positive.ml`
-- `scratch/oxcaml_research/supervisor_state_probe/atomic_state_positive.ml`
-- `scratch/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml`
-- `scratch/oxcaml_research/supervisor_state_probe/results.md`
-- `scratch/oxcaml_research/supervisor_state_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/capsule_state_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/atomic_state_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/atomic_payload_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/results/compile.out`
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/supervisor_state_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/supervisor_state_probe/run.sh
 ```
 
 Last result: `summary: pass=3 fail=0`.
@@ -9708,17 +9708,17 @@ Question: can ppx_effet emit or avoid OxCaml mode syntax with the pinned toolcha
 
 Artifacts:
 
-- scratch/oxcaml_research/ppx_oxcaml_probe/ppxlib_parse_modes_positive.ml
-- scratch/oxcaml_research/ppx_oxcaml_probe/current_ast_helper_shape.ml
-- scratch/oxcaml_research/ppx_oxcaml_probe/current_style_expansion_positive.ml
-- scratch/oxcaml_research/ppx_oxcaml_probe/current_style_capture_negative.ml
-- scratch/oxcaml_research/ppx_oxcaml_probe/results.md
-- scratch/oxcaml_research/ppx_oxcaml_probe/results/compile.out
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/ppxlib_parse_modes_positive.ml
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/current_ast_helper_shape.ml
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/current_style_expansion_positive.ml
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/current_style_capture_negative.ml
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/results.md
+- .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/results/compile.out
 
 Verification command:
 
 ```sh
-nix develop .#oxcaml -c bash scratch/oxcaml_research/ppx_oxcaml_probe/run.sh
+nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/ppx_oxcaml_probe/run.sh
 ```
 
 Last result: summary: pass=4 fail=0.
@@ -9756,10 +9756,10 @@ Question: can the project pin a concrete OxCaml 5.2 toolchain and verify the Jan
 Artifacts:
 
 - `flake.nix`
-- `scratch/oxcaml_research/toolchain_probe/mode_syntax.ml`
-- `scratch/oxcaml_research/toolchain_probe/check_merlin_no_errors.py`
-- `scratch/oxcaml_research/toolchain_probe/check_lsp_no_errors.py`
-- `scratch/oxcaml_research/toolchain_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/toolchain_probe/mode_syntax.ml`
+- `.scratch/research/evidence/oxcaml_research/toolchain_probe/check_merlin_no_errors.py`
+- `.scratch/research/evidence/oxcaml_research/toolchain_probe/check_lsp_no_errors.py`
+- `.scratch/research/evidence/oxcaml_research/toolchain_probe/results.md`
 
 Pinned toolchain:
 
@@ -9783,7 +9783,7 @@ Evidence:
 
 - `effet-oxcaml-init` now installs the pinned Jane/OxCaml dev-tool set after package test dependencies.
 - `effet-oxcaml-check-toolchain` asserts `ocamlc -version = 5.2.0+ox` and `dune --version = 3.22.2`.
-- The helper builds `scratch/oxcaml_research/toolchain_probe/mode_syntax.ml`, which contains the mode-annotated binding `let (identity @ portable) x = x`.
+- The helper builds `.scratch/research/evidence/oxcaml_research/toolchain_probe/mode_syntax.ml`, which contains the mode-annotated binding `let (identity @ portable) x = x`.
 - ocamlformat `0.26.2+ox1` accepts the file with `--check`, proving round-trip fidelity for the mode syntax probe.
 - merlin returns no non-config diagnostics for the same source.
 - ocaml-lsp opens the same source over stdio and publishes no diagnostics.
@@ -9818,14 +9818,14 @@ Artifacts:
 - `lib/effet/cause.ml`
 - `lib/effet/cause.mli`
 - `lib/effet/test/test_effet.ml`
-- `scratch/oxcaml_research/phase1_cause_portable_probe/portable_cause_parallel_positive.ml`
-- `scratch/oxcaml_research/phase1_cause_portable_probe/raw_cause_parallel_negative.ml`
-- `scratch/oxcaml_research/phase1_cause_portable_probe/portable_payload_ref_negative.ml`
-- `scratch/oxcaml_research/phase1_cause_portable_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/phase1_cause_portable_probe/portable_cause_parallel_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/phase1_cause_portable_probe/raw_cause_parallel_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/phase1_cause_portable_probe/portable_payload_ref_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/phase1_cause_portable_probe/results/compile.out`
 
 Verification commands:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase1_cause_portable_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/phase1_cause_portable_probe/run.sh`
 
 Last result: `summary: pass=3 fail=0`.
 
@@ -9875,11 +9875,11 @@ Artifacts:
 - `lib/effet/logger.ml{,i}`
 - `lib/effet/meter.ml{,i}`
 - `lib/effet/tracer.ml{,i}`
-- `scratch/oxcaml_research/phase1_pure_data_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/phase1_pure_data_probe/results/compile.out`
 
 Verification commands:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase1_pure_data_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/phase1_pure_data_probe/run.sh`
 
 Last result: `summary: pass=5 fail=0`.
 
@@ -9926,12 +9926,12 @@ Artifacts:
 - `lib/effet/dune`
 - `dune-project`
 - `effet.opam`
-- `scratch/oxcaml_research/phase2_once_finalizer_probe/results.md`
-- `scratch/oxcaml_research/phase2_once_finalizer_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/phase2_once_finalizer_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/phase2_once_finalizer_probe/results/compile.out`
 
 Verification commands:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/phase2_once_finalizer_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/phase2_once_finalizer_probe/run.sh`
 
 Last result: `summary: pass=4 fail=0`.
 
@@ -9982,15 +9982,15 @@ Artifacts:
 - `lib/effet/effect.mli`
 - `lib/effet/runtime.ml`
 - `lib/effet/test/test_effet.ml`
-- `scratch/oxcaml_research/supervisor_state_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/supervisor_state_probe/results/compile.out`
 
 Verification commands:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/supervisor_state_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/supervisor_state_probe/run.sh`
 
 Last result: `summary: pass=3 fail=0`.
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/eio_wrap_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/eio_wrap_probe/run.sh`
 
 Last result: `summary: pass=8 fail=0`.
 
@@ -10042,16 +10042,16 @@ Question: after Phase 2 proved the current reusable data GADT cannot locally acc
 
 Artifacts:
 
-- `scratch/oxcaml_research/one_shot_effect_probe/README.md`
-- `scratch/oxcaml_research/one_shot_effect_probe/core_one_shot_positive.ml`
-- `scratch/oxcaml_research/one_shot_effect_probe/reuse_negative.ml`
-- `scratch/oxcaml_research/one_shot_effect_probe/double_release_negative.ml`
-- `scratch/oxcaml_research/one_shot_effect_probe/results.md`
-- `scratch/oxcaml_research/one_shot_effect_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/README.md`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/core_one_shot_positive.ml`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/reuse_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/double_release_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/one_shot_effect_probe/results/compile.out`
 
 Verification command:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/one_shot_effect_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/one_shot_effect_probe/run.sh`
 
 Last result: `summary: pass=3 fail=0`.
 
@@ -10089,16 +10089,16 @@ Question: can `lib/effet/resource.ml` move from `ref`/mutable fields to `Portabl
 
 Artifacts:
 
-- `scratch/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.ml`
-- `scratch/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml`
-- `scratch/oxcaml_research/effet_resource_probe/open_variant_error_negative.ml`
-- `scratch/oxcaml_research/effet_resource_probe/run.sh`
-- `scratch/oxcaml_research/effet_resource_probe/results.md`
-- `scratch/oxcaml_research/effet_resource_probe/results/compile.out`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/effet_resource_portable_probe.ml`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/effect_map_payload_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/open_variant_error_negative.ml`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/run.sh`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/results.md`
+- `.scratch/research/evidence/oxcaml_research/effet_resource_probe/results/compile.out`
 
 Verification command:
 
-`nix develop .#oxcaml -c bash scratch/oxcaml_research/effet_resource_probe/run.sh`
+`nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/effet_resource_probe/run.sh`
 
 Last result: `summary: pass=3 fail=0`.
 
@@ -10195,29 +10195,29 @@ Eio is per-domain and Portable_ws_deque.push is owner-local?
 
 Artifacts:
 
-- scratch/oxcaml_research/concurrency_model/rejected.md
-- scratch/oxcaml_research/concurrency_model/h7_null_probe/h7_cpu_fanout.ml
-- scratch/oxcaml_research/concurrency_model/h7_null_probe/results.md
-- scratch/oxcaml_research/concurrency_model/h2_ws_probe/h2_vs_h3.ml
-- scratch/oxcaml_research/concurrency_model/h2_ws_probe/results.md
-- scratch/oxcaml_research/concurrency_model/h3_push_probe/h3_protocol_smoke.ml
-- scratch/oxcaml_research/concurrency_model/h3_push_probe/results.md
-- scratch/oxcaml_research/concurrency_model/h4_hybrid_probe/results.md
-- scratch/oxcaml_research/concurrency_model/h5_centralized_probe/results.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/rejected.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h7_null_probe/h7_cpu_fanout.ml
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h7_null_probe/results.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h2_ws_probe/h2_vs_h3.ml
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h2_ws_probe/results.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h3_push_probe/h3_protocol_smoke.ml
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h3_push_probe/results.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h4_hybrid_probe/results.md
+- .scratch/research/evidence/oxcaml_research/concurrency_model/h5_centralized_probe/results.md
 
 Verification commands:
 
-    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h7_null_probe/run.sh
+    nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/concurrency_model/h7_null_probe/run.sh
 
 Last result: single-domain 44.814ms, two-domain 22.718ms, speedup 1.973x.
 
-    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h2_ws_probe/run.sh
+    nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/concurrency_model/h2_ws_probe/run.sh
 
 Last result: H2 work-stealing 23.282ms, H3 explicit-push 22.939ms,
 H2/H3 time ratio 1.015. Both produced the same count, work, and checksum.
 Task latency was comparable: H2 p50 558us / p95 575us; H3 p50 557us / p95 585us.
 
-    nix develop .#oxcaml -c bash scratch/oxcaml_research/concurrency_model/h3_push_probe/run.sh
+    nix develop .#oxcaml -c bash .scratch/research/evidence/oxcaml_research/concurrency_model/h3_push_probe/run.sh
 
 Last result: success dispatch, failure/cancel, timeout, portable failure
 aggregation, portable events, and bounded-inbox backpressure all passed.
@@ -10388,7 +10388,7 @@ superseded.
 
 ### Smoke gaps the hardening epic closes
 
-The H3 smoke at scratch/oxcaml_research/concurrency_model/h3_push_probe/
+The H3 smoke at .scratch/research/evidence/oxcaml_research/concurrency_model/h3_push_probe/
 proved transport happens. Six concrete gaps remain before runtime work
 ships:
 
@@ -10431,9 +10431,9 @@ Date: 2026-05-21
 
 This entry closes the hardening loop opened by V-Concurrency-Model-Hardening
 for Effet-OxCaml-u73. T1-T9 now have executable positive/negative probes under
-scratch/oxcaml_research/concurrency_model/h3_hardening/, and T10 has the H3
+.scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/, and T10 has the H3
 Implementation Acceptance Checklist at
-scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md.
+.scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/checklist.md.
 
 ### Final protocol decisions
 
@@ -10553,13 +10553,13 @@ constraints for Phase 6 and Phase 8.
 
 | Caveat | Artifact |
 | --- | --- |
-| C1 | scratch/oxcaml_research/concurrency_model/h3_caveats/c1_random/results.md |
-| C2 | scratch/oxcaml_research/concurrency_model/h3_caveats/c2_phase8/scope.md |
-| C3 | lib/effet/supervisor.mli and scratch/oxcaml_research/concurrency_model/h3_caveats/c3_supervisor_order/results.md |
-| C4 | scratch/oxcaml_research/concurrency_model/h3_caveats/c4_timeout_slo/slo.md |
+| C1 | .scratch/research/evidence/oxcaml_research/concurrency_model/h3_caveats/c1_random/results.md |
+| C2 | .scratch/research/evidence/oxcaml_research/concurrency_model/h3_caveats/c2_phase8/scope.md |
+| C3 | lib/effet/supervisor.mli and .scratch/research/evidence/oxcaml_research/concurrency_model/h3_caveats/c3_supervisor_order/results.md |
+| C4 | .scratch/research/evidence/oxcaml_research/concurrency_model/h3_caveats/c4_timeout_slo/slo.md |
 | C5 | .github/workflows/h3-hardening.yml and .github/pull_request_template.md |
-| C6 | scratch/oxcaml_research/concurrency_model/h3_caveats/c6_h4_reopen/telemetry.md |
-| C7 | scratch/oxcaml_research/concurrency_model/h3_hardening/t9_skew_bench/results.md and scratch/oxcaml_research/concurrency_model/h3_hardening/checklist.md |
+| C6 | .scratch/research/evidence/oxcaml_research/concurrency_model/h3_caveats/c6_h4_reopen/telemetry.md |
+| C7 | .scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/t9_skew_bench/results.md and .scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/checklist.md |
 
 ### Verification
 
@@ -10568,7 +10568,7 @@ constraints for Phase 6 and Phase 8.
 - Core scheduling grep: no Random.* in lib/effet/schedule.ml,
   lib/effet/runtime.ml, or lib/effet/capabilities.ml.
 - Full H3 hardening gate:
-  nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh,
+  nix develop -c bash .scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/run.sh,
   T1-T9 all pass with fail=0.
 - Full shipped test gate: nix develop -c dune runtest --force. Effet 109,
   ppx_effet 3, effet-otel 20, and effet-stream 13 tests passed; effet-schema
@@ -10658,7 +10658,7 @@ checklist exists in scratch and binds documentation only. For Phase 6 to
 ship, the gate command
 
 ```sh
-nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/concurrency_model/h3_hardening/run.sh
 ```
 
 must run on CI for every PR that touches runtime/scheduler code, and the
@@ -10782,13 +10782,13 @@ Artifacts:
 
 | Fixture | Result |
 | --- | --- |
-| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_a_cooperative_only.ml | Non-polling CPU thunk ignored cancellation until completion; max_deadline_to_exit_us=99056. |
-| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_b_polling_aware.ml | Polling-aware thunk exited within max_deadline_to_exit_us_4096=5 and max_deadline_to_exit_us_1024=1. Local uncancelled runtime was 15504us at 4096 and 15430us at 1024 on the latest run. |
-| scratch/oxcaml_research/recovery/r1_thunk_cancel/candidate_c_interpreter_scoped.ml | Interpreter-controlled loop exited within max_deadline_to_exit_us=5 at poll_every=4096. |
+| .scratch/research/evidence/oxcaml_research/recovery/r1_thunk_cancel/candidate_a_cooperative_only.ml | Non-polling CPU thunk ignored cancellation until completion; max_deadline_to_exit_us=99056. |
+| .scratch/research/evidence/oxcaml_research/recovery/r1_thunk_cancel/candidate_b_polling_aware.ml | Polling-aware thunk exited within max_deadline_to_exit_us_4096=5 and max_deadline_to_exit_us_1024=1. Local uncancelled runtime was 15504us at 4096 and 15430us at 1024 on the latest run. |
+| .scratch/research/evidence/oxcaml_research/recovery/r1_thunk_cancel/candidate_c_interpreter_scoped.ml | Interpreter-controlled loop exited within max_deadline_to_exit_us=5 at poll_every=4096. |
 
 Command:
 
-nix develop -c bash scratch/oxcaml_research/recovery/r1_thunk_cancel/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/recovery/r1_thunk_cancel/run.sh
 
 Result: summary pass=3 fail=0.
 
@@ -10843,19 +10843,19 @@ Artifacts:
 
 | Fixture | Result |
 | --- | --- |
-| scratch/oxcaml_research/recovery/r2_env_error/env_a_closed_records_positive.ml | Closed record env ran across Parallel_scheduler. |
-| scratch/oxcaml_research/recovery/r2_env_error/env_b_phantom_tuple_positive.ml | Phantom tuple env also ran across Parallel_scheduler. |
-| scratch/oxcaml_research/recovery/r2_env_error/env_c_closed_object_negative.ml | Closed object env failed: object kind was value mod global many non_float, not value mod portable contended. |
-| scratch/oxcaml_research/recovery/r2_env_error/error_a_closed_polyvariant_positive.ml | Fully closed polymorphic variant error compiled and ran. |
-| scratch/oxcaml_research/recovery/r2_env_error/error_b_closed_record_positive.ml | Named closed record/ordinary variant error compiled and ran with Catch. |
-| scratch/oxcaml_research/recovery/r2_env_error/error_c_cause_portable_positive.ml | Cause.Portable.t compiled and ran, but it collapses the public typed-error channel. |
-| scratch/oxcaml_research/recovery/r2_env_error/negative_open_polyvariant_error.ml | Open polymorphic variant failed at the portable boundary. |
-| scratch/oxcaml_research/recovery/r2_env_error/negative_raw_cause_error.ml | Raw same-domain Cause.t failed across Parallel. |
-| scratch/oxcaml_research/recovery/r2_env_error/negative_ref_capture.ml | Mutable ref capture failed inside a portable callback. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/env_a_closed_records_positive.ml | Closed record env ran across Parallel_scheduler. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/env_b_phantom_tuple_positive.ml | Phantom tuple env also ran across Parallel_scheduler. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/env_c_closed_object_negative.ml | Closed object env failed: object kind was value mod global many non_float, not value mod portable contended. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/error_a_closed_polyvariant_positive.ml | Fully closed polymorphic variant error compiled and ran. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/error_b_closed_record_positive.ml | Named closed record/ordinary variant error compiled and ran with Catch. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/error_c_cause_portable_positive.ml | Cause.Portable.t compiled and ran, but it collapses the public typed-error channel. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/negative_open_polyvariant_error.ml | Open polymorphic variant failed at the portable boundary. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/negative_raw_cause_error.ml | Raw same-domain Cause.t failed across Parallel. |
+| .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/negative_ref_capture.ml | Mutable ref capture failed inside a portable callback. |
 
 Command:
 
-nix develop -c bash scratch/oxcaml_research/recovery/r2_env_error/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/recovery/r2_env_error/run.sh
 
 Result: summary pass=9 fail=0.
 
@@ -10926,13 +10926,13 @@ Artifacts:
 | Fixture | Result |
 | --- | --- |
 | lib/effet/portable_queue.ml and lib/effet/portable_queue.mli | Shipped Effet-owned bounded MPSC FIFO with try_push, try_take, close, and Full/Closed backpressure. |
-| scratch/oxcaml_research/recovery/r3_online_queue/mpsc_queue_positive.ml | Exercised Effet.Portable_queue across Parallel_scheduler with 3 producers, 1 consumer, capacity 32, total=1500, sum=300374250. |
-| scratch/oxcaml_research/recovery/r3_online_queue/h3_batch_inbox_online_negative.ml | Proved batch inbox online_push_take=false and drain_requires_close=true. |
-| scratch/oxcaml_research/recovery/r3_online_queue/primitive_survey.md | Records the local primitive survey. |
+| .scratch/research/evidence/oxcaml_research/recovery/r3_online_queue/mpsc_queue_positive.ml | Exercised Effet.Portable_queue across Parallel_scheduler with 3 producers, 1 consumer, capacity 32, total=1500, sum=300374250. |
+| .scratch/research/evidence/oxcaml_research/recovery/r3_online_queue/h3_batch_inbox_online_negative.ml | Proved batch inbox online_push_take=false and drain_requires_close=true. |
+| .scratch/research/evidence/oxcaml_research/recovery/r3_online_queue/primitive_survey.md | Records the local primitive survey. |
 
 Command:
 
-nix develop -c bash scratch/oxcaml_research/recovery/r3_online_queue/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/recovery/r3_online_queue/run.sh
 
 Result: summary pass=2 fail=0.
 
@@ -10987,7 +10987,7 @@ instead of mutating Runtime.run into cross-domain execution.
 
 Stage A gate:
 
-nix develop -c bash scratch/oxcaml_research/recovery/run_stage_a.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/recovery/run_stage_a.sh
 
 Result:
 
@@ -11003,7 +11003,7 @@ Result: exit 0. Effet 110 tests passed, including Portable_queue;
 ppx_effet, effet-schema, effet-otel, and effet-stream tests also passed.
 
 The shipped code and journal agree as of this entry: Stage A decisions are
-recorded here, evidence lives under scratch/oxcaml_research/recovery, and the
+recorded here, evidence lives under .scratch/research/evidence/oxcaml_research/recovery, and the
 only package implementation promoted by Stage A is the selected
 Effet.Portable_queue primitive.
 
@@ -11027,15 +11027,15 @@ Artifacts:
 
 | Fixture | Result |
 | --- | --- |
-| scratch/oxcaml_research/recovery/envless_core_prompt/env_parameterized_baseline_positive.ml | Env-parameterized portable core compiled and ran across Parallel_scheduler. It needed three effect type parameters and a runtime env argument. |
-| scratch/oxcaml_research/recovery/envless_core_prompt/envless_argument_passing_positive.ml | Envless portable core compiled and ran across Parallel_scheduler. It needed only typed error/result parameters; dependencies were ordinary OCaml arguments captured by portable thunks. |
-| scratch/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml | Mutable ref capture failed inside a portable thunk. |
-| scratch/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml | Eio.Time.now failed inside a portable thunk because it is nonportable. |
-| scratch/oxcaml_research/recovery/envless_core_prompt/results.md | Full hypothesis ledger and verdict. |
+| .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/env_parameterized_baseline_positive.ml | Env-parameterized portable core compiled and ran across Parallel_scheduler. It needed three effect type parameters and a runtime env argument. |
+| .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/envless_argument_passing_positive.ml | Envless portable core compiled and ran across Parallel_scheduler. It needed only typed error/result parameters; dependencies were ordinary OCaml arguments captured by portable thunks. |
+| .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/envless_ref_capture_negative.ml | Mutable ref capture failed inside a portable thunk. |
+| .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/envless_eio_capture_negative.ml | Eio.Time.now failed inside a portable thunk because it is nonportable. |
+| .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/results.md | Full hypothesis ledger and verdict. |
 
 Command:
 
-nix develop -c bash scratch/oxcaml_research/recovery/envless_core_prompt/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/recovery/envless_core_prompt/run.sh
 
 Result:
 
@@ -11125,30 +11125,30 @@ Artifacts:
 
 | Artifact | Result |
 | --- | --- |
-| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/cpu_pool_smoke.ml | Design A ran parse/validate, schema decode, and hash/checksum/compress with 128 items each, input-order results, bounded=2, typed errors, and no Eio worker contamination. |
-| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/ordered_results_positive.ml | Design A preserved input order under uneven work. |
-| scratch/oxcaml_research/portable_islands/baseline_ocaml_pool/bad_capture_policy_note.md | Documents the captures Design A cannot reject mechanically. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/portable_map_positive.ml | Design B portable callback map compiled and ran. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/ordered_results_positive.ml | Design B preserved input order. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/all_settled_positive.ml | Design B collected typed successes/errors without a portable AST. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/atomic_capture_positive.ml | Design B accepted Portable.Atomic-backed capability capture. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/workloads_positive.ml | Design B ran the same workload class as A. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/worker_die_diagnostic_positive.ml | Design B can materialize callback crashes as a tiny worker_die diagnostic. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/ref_capture_negative.ml | Mutable ref capture rejected. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/eio_stream_capture_negative.ml | Eio.Stream.add rejected as nonportable. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/runtime_capture_negative.ml | Effet.Runtime.run rejected as nonportable. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/logger_capture_negative.ml | Effet.Logger.dump rejected as nonportable. |
-| scratch/oxcaml_research/portable_islands/oxcaml_callback_island/raw_cause_capture_negative.ml | Raw same-domain Cause.t rejected as nonportable. |
-| scratch/oxcaml_research/portable_islands/use_cases/invariants.md | Records the reduced seven-item invariant checklist. |
-| scratch/oxcaml_research/portable_islands/use_cases/ergonomics_examples.ml | Three manual examples compiled without PPX. |
-| scratch/oxcaml_research/portable_islands/use_cases/busy_loop_not_preempted.ml | Busy-loop callback compiles but is not run; arbitrary CPU callbacks are not preemptible. |
-| scratch/oxcaml_research/portable_islands/diagnose_island_timing.ml | Proved the apparent 50ms schema/hash slowdown came from repeated Parallel_scheduler.create, not workload execution. |
-| scratch/oxcaml_research/portable_islands/portable_effect_island_optional/results.md | Design C was not attempted because Design B covered the first useful island use cases. |
-| scratch/oxcaml_research/portable_islands/decision.md | Applies all three decision gates and records the H1-H10 ledger. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/baseline_ocaml_pool/cpu_pool_smoke.ml | Design A ran parse/validate, schema decode, and hash/checksum/compress with 128 items each, input-order results, bounded=2, typed errors, and no Eio worker contamination. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/baseline_ocaml_pool/ordered_results_positive.ml | Design A preserved input order under uneven work. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/baseline_ocaml_pool/bad_capture_policy_note.md | Documents the captures Design A cannot reject mechanically. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/portable_map_positive.ml | Design B portable callback map compiled and ran. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/ordered_results_positive.ml | Design B preserved input order. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/all_settled_positive.ml | Design B collected typed successes/errors without a portable AST. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/atomic_capture_positive.ml | Design B accepted Portable.Atomic-backed capability capture. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/workloads_positive.ml | Design B ran the same workload class as A. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/worker_die_diagnostic_positive.ml | Design B can materialize callback crashes as a tiny worker_die diagnostic. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/ref_capture_negative.ml | Mutable ref capture rejected. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/eio_stream_capture_negative.ml | Eio.Stream.add rejected as nonportable. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/runtime_capture_negative.ml | Effet.Runtime.run rejected as nonportable. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/logger_capture_negative.ml | Effet.Logger.dump rejected as nonportable. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/oxcaml_callback_island/raw_cause_capture_negative.ml | Raw same-domain Cause.t rejected as nonportable. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/use_cases/invariants.md | Records the reduced seven-item invariant checklist. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/use_cases/ergonomics_examples.ml | Three manual examples compiled without PPX. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/use_cases/busy_loop_not_preempted.ml | Busy-loop callback compiles but is not run; arbitrary CPU callbacks are not preemptible. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/diagnose_island_timing.ml | Proved the apparent 50ms schema/hash slowdown came from repeated Parallel_scheduler.create, not workload execution. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/portable_effect_island_optional/results.md | Design C was not attempted because Design B covered the first useful island use cases. |
+| .scratch/research/evidence/oxcaml_research/portable_islands/decision.md | Applies all three decision gates and records the H1-H10 ledger. |
 
 Command:
 
-nix develop -c bash scratch/oxcaml_research/portable_islands/run.sh
+nix develop -c bash .scratch/research/evidence/oxcaml_research/portable_islands/run.sh
 
 Result:
 
@@ -11478,13 +11478,13 @@ Reject CPU work on the blocking pool. CPU work remains an island concern.
 The research lab lives under:
 
 ```text
-scratch/effet_research/blocking/
+.scratch/research/evidence/effet_research/blocking/
 ```
 
 Gate:
 
 ```sh
-nix develop -c bash scratch/effet_research/blocking/run.sh
+nix develop -c bash .scratch/research/evidence/effet_research/blocking/run.sh
 ```
 
 Key measurements:
@@ -11624,7 +11624,7 @@ None of those triggers are met by the v1 gate.
 
 ### Default Config
 
-`scratch/effet_research/blocking/api_ergonomics/default_threads/results.md`
+`.scratch/research/evidence/effet_research/blocking/api_ergonomics/default_threads/results.md`
 records the T1 measurement.
 
 Verdict:
@@ -11852,16 +11852,16 @@ Benchmark evidence:
 bash bench/compile/run_compile.sh --quick --filter 'compile.fixture.explicit_deps'
 bash bench/run.sh --quick
 bash bench/run.sh --filter 'eta_otel.encoder' --out bench/results/eta-otel-encoder-repeat-current.json
-dune exec scratch/eta_otel_rebuild/exporter_e2e_bench.exe -- --samples 5 --count 1000
+dune exec .scratch/research/evidence/eta_otel_rebuild/exporter_e2e_bench.exe -- --samples 5 --count 1000
 ```
 
 Quick gate artifact: `bench/results/eta-5zo-quick-current.json`.
 Five-sample encoder repeat artifact:
 `bench/results/eta-otel-encoder-repeat-current.json`.
 E2E local-collector results:
-`scratch/eta_otel_rebuild/baselines/exporter_e2e_baseline_head.txt` and
-`scratch/eta_otel_rebuild/baselines/exporter_e2e_after_rebuild.txt`.
-Completion audit: `scratch/eta_otel_rebuild/completion_audit.md`.
+`.scratch/research/evidence/eta_otel_rebuild/baselines/exporter_e2e_baseline_head.txt` and
+`.scratch/research/evidence/eta_otel_rebuild/baselines/exporter_e2e_after_rebuild.txt`.
+Completion audit: `.scratch/research/evidence/eta_otel_rebuild/completion_audit.md`.
 
 Encoder repeat versus the pre-rebuild focused baseline:
 
@@ -12011,7 +12011,7 @@ drive `ocaml-h2` directly from Eta-shaped Eio code, without inheriting an
 
 Artifact:
 
-- `scratch/eta_http_research/h_s1_ocaml_h2_eio/`
+- `.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/`
 
 Dependency setup under `nix develop .#oxcaml`:
 
@@ -12023,7 +12023,7 @@ Dependency setup under `nix develop .#oxcaml`:
 
 P1 in-process sans-IO pump:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe && dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe && dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p1_inprocess_matrix.exe'
 
 Output:
 
@@ -12031,7 +12031,7 @@ Output:
 
 P2 Eio TCP flow smoke:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe && timeout 10s dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.exe'
 
 Output:
 
@@ -12082,11 +12082,11 @@ the single GET smoke?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
+- `.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
 
 Output:
 
@@ -12132,7 +12132,7 @@ connection shutdown. Eta-http must own request admission after GOAWAY and
 should not rely on per-request callbacks for late streams.
 
 Ownership split and current probe size are captured in
-`scratch/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md`. Current
+`.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md`. Current
 probe size is 206 LOC for the P2 smoke and 466 LOC for the Stage 2 matrix; the
 reusable production adapter should be smaller because the research fixtures and
 assertions dominate the file.
@@ -12154,11 +12154,11 @@ adapter-owned cleanup instead of only "follow-up request works"?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
+- `.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe && timeout 10s dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.exe'
 
 Output:
 
@@ -12198,12 +12198,12 @@ proves adapter-gated error GOAWAY, not graceful `NO_ERROR` cutoff semantics.
 
 Probe size after this update:
 
-    wc -l scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
+    wc -l .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
 
 Output:
 
-      206 scratch/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml
-      582 scratch/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
+      206 .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/p2_eio_tcp_get.ml
+      582 .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/stage2_matrix.ml
       788 total
 
 ### Deferred
@@ -12224,11 +12224,11 @@ the caller which stream was excluded by the cutoff?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml`
+- `.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe && dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe && dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe'
 
 Output:
 
@@ -12270,7 +12270,7 @@ be driven over a real `tls-eio` flow to the Stage 1 production target?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.ml`
+- `.scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.ml`
 
 TLS dependency branch installed:
 
@@ -12288,7 +12288,7 @@ Installed versions:
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe && timeout 20s dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe && timeout 20s dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/nghttp2_h2_smoke.exe'
 
 Output:
 
@@ -12321,12 +12321,12 @@ across TLS modes, and can it negotiate `h2` with a production peer?
 
 Artifacts:
 
-- `scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml`
-- `scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml`
+- `.scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml`
+- `.scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml`
 
 Local matrix command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe && timeout 20s dune exec .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.exe'
 
 Output:
 
@@ -12339,7 +12339,7 @@ Output:
 
 Production ALPN smoke command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe && timeout 20s dune exec .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.exe'
 
 Output:
 
@@ -12347,7 +12347,7 @@ Output:
 
 Required 2 x 3 ALPN matrix command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe && timeout 20s dune exec scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe && timeout 20s dune exec .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.exe'
 
 Output:
 
@@ -12389,8 +12389,8 @@ adapter for eta-http's required h2 substrate behavior?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s1_ocaml_h2_eio/results.md
-- scratch/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md
+- .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/results.md
+- .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/ownership_split.md
 
 Evidence rows already recorded in V-Http-S1-P0P2,
 V-Http-S1-P3-Partial, V-Http-S1-P3-FlowCancel,
@@ -12416,9 +12416,9 @@ Question: can tls-eio plus ocaml-tls negotiate eta-http's local ALPN modes?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml
-- scratch/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.ml
-- scratch/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml
+- .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_matrix.ml
+- .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/alpn_required_matrix.ml
+- .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn/nghttp2_alpn_smoke.ml
 
 The required 2 x 3 matrix passes:
 
@@ -12446,11 +12446,11 @@ for H-S0?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.ml`
+- `.scratch/research/evidence/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe && timeout 10s dune exec scratch/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe && timeout 10s dune exec .scratch/research/evidence/eta_http_research/h_s0_cohttp_eio_h1/h1_matrix.exe'
 
 Output:
 
@@ -12502,11 +12502,11 @@ H-S3 production-grade client TLS bar?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s3_tls_grade/badssl_grid.ml`
+- `.scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 90s dune exec scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 90s dune exec .scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.exe'
 
 Output:
 
@@ -12551,11 +12551,11 @@ version modes that eta-http needs?
 
 Artifact:
 
-- `scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml`
+- `.scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml`
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 60s dune exec scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 60s dune exec .scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
 
 Output:
 
@@ -12596,8 +12596,8 @@ security bar after exact-version advisory and revocation-policy review?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_tls_grade/security_audit.md
-- scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+- .scratch/research/evidence/eta_http_research/h_s3_tls_grade/security_audit.md
+- .scratch/research/evidence/eta_http_research/adrs/0001-tls-revocation-policy.md
 
 Exact pinned packages:
 
@@ -12671,14 +12671,14 @@ production-grade eta-http client TLS?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_tls_grade/badssl_grid.ml
-- scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml
-- scratch/eta_http_research/h_s3_tls_grade/security_audit.md
-- scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+- .scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.ml
+- .scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.ml
+- .scratch/research/evidence/eta_http_research/h_s3_tls_grade/security_audit.md
+- .scratch/research/evidence/eta_http_research/adrs/0001-tls-revocation-policy.md
 
 Focused verification command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 90s dune exec scratch/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 60s dune exec scratch/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.exe .scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe && timeout 90s dune exec .scratch/research/evidence/eta_http_research/h_s3_tls_grade/badssl_grid.exe && timeout 60s dune exec .scratch/research/evidence/eta_http_research/h_s3_tls_grade/local_cert_matrix.exe'
 
 Focused verification output:
 
@@ -12739,11 +12739,11 @@ cleanup when cancelled?
 
 Artifact:
 
-- scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
+- .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
 
 Command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe && timeout 10s dune exec scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe && timeout 10s dune exec .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.exe'
 
 Output:
 
@@ -12772,13 +12772,13 @@ eta-http, and what timeout taxonomy should eta-http rely on?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
-- scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.ml
-- scratch/eta_http_research/h_s4a_cancellation_safety/results.md
+- .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/timeout_taxonomy.ml
+- .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.ml
+- .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/results.md
 
 Network matrix command:
 
-    nix develop .#oxcaml -c bash -lc 'dune build scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe && timeout 30s dune exec scratch/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe'
+    nix develop .#oxcaml -c bash -lc 'dune build .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe && timeout 30s dune exec .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety/network_timeout_matrix.exe'
 
 Output:
 
@@ -12823,16 +12823,16 @@ from substrate viability research into Phase H-D?
 
 Phase summary:
 
-- scratch/eta_http_research/phase_s_summary.md
+- .scratch/research/evidence/eta_http_research/phase_s_summary.md
 
 Hypothesis artifacts:
 
-- H-S0: scratch/eta_http_research/h_s0_cohttp_eio_h1
-- H-S1: scratch/eta_http_research/h_s1_ocaml_h2_eio
-- H-S2: scratch/eta_http_research/h_s2_tls_eio_alpn
-- H-S3: scratch/eta_http_research/h_s3_tls_grade
-- H-S4a: scratch/eta_http_research/h_s4a_cancellation_safety
-- ADR: scratch/eta_http_research/adrs/0001-tls-revocation-policy.md
+- H-S0: .scratch/research/evidence/eta_http_research/h_s0_cohttp_eio_h1
+- H-S1: .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio
+- H-S2: .scratch/research/evidence/eta_http_research/h_s2_tls_eio_alpn
+- H-S3: .scratch/research/evidence/eta_http_research/h_s3_tls_grade
+- H-S4a: .scratch/research/evidence/eta_http_research/h_s4a_cancellation_safety
+- ADR: .scratch/research/evidence/eta_http_research/adrs/0001-tls-revocation-policy.md
 
 Verdicts:
 
@@ -12896,7 +12896,7 @@ Review payload built with the big-picture skill:
 
     /tmp/big-picture-eta-http-research-20260522-211514-464478601.txt
 
-Repomix payload covering scratch/eta_http_research/ plus an embedded
+Repomix payload covering .scratch/research/evidence/eta_http_research/ plus an embedded
 journal slice for V-Http-S1 through V-Http-Phase-S. 39111 estimated
 tokens, 32 files, 187486 prompt chars.
 
@@ -13110,22 +13110,22 @@ the Eta primitives that did not hold up cleanly.
 
 ### Artifacts
 
-- scratch/eta_research/pool_survival/README.md
-- scratch/eta_research/pool_survival/prior_art.md
-- scratch/eta_research/pool_survival/dogfood_gaps.md
-- scratch/eta_research/pool_survival/results.md
-- scratch/eta_research/pool_survival/adr.md
-- scratch/eta_research/pool_survival/common.ml
-- scratch/eta_research/pool_survival/branch_a_internal_pool.ml
-- scratch/eta_research/pool_survival/branch_b_eta_pool.ml
-- scratch/eta_research/pool_survival/runtime_smoke.ml
-- scratch/eta_research/pool_survival/allocation_probe.ml
-- scratch/eta_research/pool_survival/treiber_stack_probe.ml
-- scratch/eta_research/pool_survival/portable_atomic_positive.ml
-- scratch/eta_research/pool_survival/oxcaml_borrow_positive.ml
-- scratch/eta_research/pool_survival/oxcaml_conn_unique_negative.ml
-- scratch/eta_research/pool_survival/oxcaml_borrow_effect_capture_negative.ml
-- scratch/eta_research/pool_survival/atomic_portable_negative.ml
+- .scratch/research/evidence/eta_research/pool_survival/README.md
+- .scratch/research/evidence/eta_research/pool_survival/prior_art.md
+- .scratch/research/evidence/eta_research/pool_survival/dogfood_gaps.md
+- .scratch/research/evidence/eta_research/pool_survival/results.md
+- .scratch/research/evidence/eta_research/pool_survival/adr.md
+- .scratch/research/evidence/eta_research/pool_survival/common.ml
+- .scratch/research/evidence/eta_research/pool_survival/branch_a_internal_pool.ml
+- .scratch/research/evidence/eta_research/pool_survival/branch_b_eta_pool.ml
+- .scratch/research/evidence/eta_research/pool_survival/runtime_smoke.ml
+- .scratch/research/evidence/eta_research/pool_survival/allocation_probe.ml
+- .scratch/research/evidence/eta_research/pool_survival/treiber_stack_probe.ml
+- .scratch/research/evidence/eta_research/pool_survival/portable_atomic_positive.ml
+- .scratch/research/evidence/eta_research/pool_survival/oxcaml_borrow_positive.ml
+- .scratch/research/evidence/eta_research/pool_survival/oxcaml_conn_unique_negative.ml
+- .scratch/research/evidence/eta_research/pool_survival/oxcaml_borrow_effect_capture_negative.ml
+- .scratch/research/evidence/eta_research/pool_survival/atomic_portable_negative.ml
 
 ### Prior-art mapping
 
@@ -13145,7 +13145,7 @@ The lab mapped five settled pool designs onto Eta:
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/runtime_smoke.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_survival/runtime_smoke.exe
 ~~~
 
 Result summary:
@@ -13170,7 +13170,7 @@ instead of a clean typed timeout/cancellation result.
 Treiber LIFO works with Stdlib.Atomic:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/treiber_stack_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_survival/treiber_stack_probe.exe
 ~~~
 
 ~~~text
@@ -13182,7 +13182,7 @@ Atomic.Portable. The installed portable package exposes Portable.Atomic and
 Atomic.Loc; the positive probe passes:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/portable_atomic_positive.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_survival/portable_atomic_positive.exe
 ~~~
 
 ~~~text
@@ -13209,7 +13209,7 @@ metrics. The conn local-unique API is still not ready for current Eta.
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_survival/allocation_probe.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_survival/allocation_probe.exe
 ~~~
 
 Result:
@@ -13242,7 +13242,7 @@ removing duplication pressure from future Eta IO consumers.
 ### Dogfood gaps
 
 The durable gap list is in
-scratch/eta_research/pool_survival/dogfood_gaps.md. The high-priority items:
+.scratch/research/evidence/eta_research/pool_survival/dogfood_gaps.md. The high-priority items:
 
 - timeout inside all_settled under scoped acquire/release can leak internal
   Raised_cause as Cause.Die;
@@ -13333,19 +13333,19 @@ for Eta.Pool under OxCaml/Eio constraints?
 
 Lab:
 
-- scratch/eta_research/pool_choice/storage_policy_bench.ml
-- scratch/eta_research/pool_choice/pool_protocol_bench.ml
-- scratch/eta_research/pool_choice/domain_safe_treiber_positive.ml
-- scratch/eta_research/pool_choice/domain_safe_mutex_counter_positive.ml
-- scratch/eta_research/pool_choice/domain_safe_mutex_list_negative.ml
-- scratch/eta_research/pool_choice/domain_safe_stream_negative.ml
-- scratch/eta_research/pool_choice/portable_atomic_eio_conn_negative.ml
+- .scratch/research/evidence/eta_research/pool_choice/storage_policy_bench.ml
+- .scratch/research/evidence/eta_research/pool_choice/pool_protocol_bench.ml
+- .scratch/research/evidence/eta_research/pool_choice/domain_safe_treiber_positive.ml
+- .scratch/research/evidence/eta_research/pool_choice/domain_safe_mutex_counter_positive.ml
+- .scratch/research/evidence/eta_research/pool_choice/domain_safe_mutex_list_negative.ml
+- .scratch/research/evidence/eta_research/pool_choice/domain_safe_stream_negative.ml
+- .scratch/research/evidence/eta_research/pool_choice/portable_atomic_eio_conn_negative.ml
 
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_choice/storage_policy_bench.exe
-nix develop .#oxcaml -c dune exec scratch/eta_research/pool_choice/pool_protocol_bench.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_choice/storage_policy_bench.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/pool_choice/pool_protocol_bench.exe
 ~~~
 
 Representative result:
@@ -13432,15 +13432,15 @@ flow-control backpressure?
 
 Lab:
 
-- scratch/eta_research/channel_choice/channel_choice.ml
-- scratch/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
-- scratch/eta_research/channel_choice/results.md
+- .scratch/research/evidence/eta_research/channel_choice/channel_choice.ml
+- .scratch/research/evidence/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
+- .scratch/research/evidence/eta_research/channel_choice/results.md
 
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/channel_choice/channel_choice.exe
-nix develop .#oxcaml -c ocamlfind ocamlc -package eio -thread -c scratch/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/channel_choice/channel_choice.exe
+nix develop .#oxcaml -c ocamlfind ocamlc -package eio -thread -c .scratch/research/evidence/eta_research/channel_choice/domain_safe_eio_mutex_channel_negative.ml
 ~~~
 
 Representative result:
@@ -13489,14 +13489,14 @@ Eta.Effect.timeout, or a new Eta runtime primitive for idle-progress deadlines?
 
 Lab:
 
-- scratch/eta_research/timeout_choice/timeout_choice.ml
-- scratch/eta_research/timeout_choice/results.md
-- scratch/eta_research/timeout_choice/defaults.md
+- .scratch/research/evidence/eta_research/timeout_choice/timeout_choice.ml
+- .scratch/research/evidence/eta_research/timeout_choice/results.md
+- .scratch/research/evidence/eta_research/timeout_choice/defaults.md
 
 Command:
 
 ~~~sh
-nix develop .#oxcaml -c dune exec scratch/eta_research/timeout_choice/timeout_choice.exe
+nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/timeout_choice/timeout_choice.exe
 nix develop .#oxcaml -c dune runtest lib/eta/test --force
 nix develop .#oxcaml -c eta-oxcaml-test-shipped
 ~~~
@@ -13552,7 +13552,7 @@ primitive?
 
 Artifact:
 
-- scratch/eta_research/pool_shape_survey/results.md
+- .scratch/research/evidence/eta_research/pool_shape_survey/results.md
 
 Decision:
 
@@ -13580,7 +13580,7 @@ Eta.Pool?
 
 Artifact:
 
-- scratch/eta_research/wait_slot_survey/results.md
+- .scratch/research/evidence/eta_research/wait_slot_survey/results.md
 
 Decision: inline for Eta-t59.
 
@@ -13604,7 +13604,7 @@ Question: does Eta.Pool need a new observability capability?
 
 Artifact:
 
-- scratch/eta_research/pool_observability/design.md
+- .scratch/research/evidence/eta_research/pool_observability/design.md
 
 Decision: no new capability for Eta-t59.
 
@@ -13626,7 +13626,7 @@ Question: should Eta-t59 reopen the local-unique borrow API?
 
 Artifact:
 
-- scratch/eta_research/borrow_api_freeze/notes.md
+- .scratch/research/evidence/eta_research/borrow_api_freeze/notes.md
 
 Decision: no.
 
@@ -13649,7 +13649,7 @@ Artifacts:
 
 - lib/eta/runtime.ml
 - lib/eta/test/test_eta.ml
-- scratch/eta_research/pool_survival/runtime_smoke.ml
+- .scratch/research/evidence/eta_research/pool_survival/runtime_smoke.ml
 
 Decision: fixed.
 
@@ -13672,7 +13672,7 @@ Artifacts:
 - lib/eta/channel.ml
 - lib/eta/channel.mli
 - lib/eta/test/test_eta.ml
-- scratch/eta_research/channel_choice/channel_impl_probe.ml
+- .scratch/research/evidence/eta_research/channel_choice/channel_impl_probe.ml
 
 Decision: shipped for v1 as same-domain only.
 
@@ -13707,8 +13707,8 @@ Question: does explicit wake-one waiter handling pay for Eta.Channel?
 Artifacts:
 
 - lib/eta/channel.ml
-- scratch/eta_research/channel_choice/channel_v2_probe.ml
-- scratch/eta_research/channel_choice/results.md
+- .scratch/research/evidence/eta_research/channel_choice/channel_v2_probe.ml
+- .scratch/research/evidence/eta_research/channel_choice/results.md
 
 Decision: yes, replace the broadcast implementation.
 
@@ -13765,7 +13765,7 @@ Artifacts:
 - lib/eta/pool.ml
 - lib/eta/pool.mli
 - lib/eta/test/test_eta.ml
-- scratch/eta_research/pool_survival/eta_pool_probe.ml
+- .scratch/research/evidence/eta_research/pool_survival/eta_pool_probe.ml
 
 Decision: shipped Eta.Pool v1 as a same-domain bounded checkout primitive.
 
@@ -13845,8 +13845,8 @@ Artifacts:
 - lib/eta/effect.mli
 - lib/eta/runtime.ml
 - lib/eta/pool.ml
-- scratch/eta_research/pool_survival/pool_compare_probe.ml
-- scratch/eta_research/pool_survival/results.md
+- .scratch/research/evidence/eta_research/pool_survival/pool_compare_probe.ml
+- .scratch/research/evidence/eta_research/pool_survival/results.md
 
 Decision: keep only measured reductions.
 
@@ -13887,14 +13887,14 @@ multiplexer shape without escaping into raw Eio promises or using Eta.Pool?
 
 Artifacts:
 
-- scratch/eta_http_research/h_d1_dogfood_multiplex/frame.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/fake_multiplex_connection.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/stream_state.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/writer_fiber.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/multiplexer.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/stress.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/alloc_sample.ml
-- scratch/eta_http_research/h_d1_dogfood_multiplex/results.md
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/frame.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/fake_multiplex_connection.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/stream_state.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/writer_fiber.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/multiplexer.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/stress.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/alloc_sample.ml
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/results.md
 
 Decision: yes for the H-D1 dogfood proof.
 
@@ -13981,12 +13981,12 @@ leaking the pending state or creating more than one h2 multiplexer per host?
 
 Artifacts:
 
-- scratch/eta_http_research/h_d1_dogfood_multiplex/dune
-- scratch/eta_http_research/h_d5_alpn_bootstrap/pending_connection.ml
-- scratch/eta_http_research/h_d5_alpn_bootstrap/fixture_server.ml
-- scratch/eta_http_research/h_d5_alpn_bootstrap/pool_dispatch.ml
-- scratch/eta_http_research/h_d5_alpn_bootstrap/stress.ml
-- scratch/eta_http_research/h_d5_alpn_bootstrap/results.md
+- .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/dune
+- .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/pending_connection.ml
+- .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/fixture_server.ml
+- .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/pool_dispatch.ml
+- .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/stress.ml
+- .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/results.md
 
 Decision: H-D5 is proved in the scratch lab.
 
@@ -14003,7 +14003,7 @@ Shape:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_d5_alpn_bootstrap/stress.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/stress.exe
 PASS single request opens one h2 connection cleanly
 PASS two concurrent h2 requests share one multiplexer
 PASS pending first-arrivals collapse and free redundant connection
@@ -14025,14 +14025,14 @@ and redacting secrets by default?
 
 Artifacts:
 
-- scratch/eta_http_research/h_d_errors/error.ml
-- scratch/eta_http_research/h_d_errors/error.mli
-- scratch/eta_http_research/h_d_errors/redaction.ml
-- scratch/eta_http_research/h_d_errors/projections.ml
-- scratch/eta_http_research/h_d_errors/fixtures.ml
-- scratch/eta_http_research/h_d_errors/redaction_policy.md
-- scratch/eta_http_research/h_d_errors/cross_tab.md
-- scratch/eta_http_research/h_d_errors/results.md
+- .scratch/research/evidence/eta_http_research/h_d_errors/error.ml
+- .scratch/research/evidence/eta_http_research/h_d_errors/error.mli
+- .scratch/research/evidence/eta_http_research/h_d_errors/redaction.ml
+- .scratch/research/evidence/eta_http_research/h_d_errors/projections.ml
+- .scratch/research/evidence/eta_http_research/h_d_errors/fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_d_errors/redaction_policy.md
+- .scratch/research/evidence/eta_http_research/h_d_errors/cross_tab.md
+- .scratch/research/evidence/eta_http_research/h_d_errors/results.md
 
 Hypothesis ledger:
 
@@ -14060,7 +14060,7 @@ Accepted shape:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_d_errors/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_d_errors/fixtures.exe
 PASS all required variants expose low-cardinality fields
 PASS layers distinguish TCP/TLS/ALPN/HTTP/body-decode failures
 PASS redaction hides headers, query strings, and bodies in projections
@@ -14109,13 +14109,13 @@ pivot can support an eta-http v1 production client TLS claim?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_pivot/badssl_rerun.ml
-- scratch/eta_http_research/h_s3_pivot/local_cert_rerun.ml
-- scratch/eta_http_research/h_s3_pivot/revocation_fixtures.ml
-- scratch/eta_http_research/h_s3_pivot/advisory_audit_rerun.md
-- scratch/eta_http_research/h_s3_pivot/option_chosen.md
-- scratch/eta_http_research/h_s3_pivot/results.md
-- scratch/eta_http_research/adrs/0002-tls-substrate-pivot.md
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/badssl_rerun.ml
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/local_cert_rerun.ml
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/revocation_fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/advisory_audit_rerun.md
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/option_chosen.md
+- .scratch/research/evidence/eta_http_research/h_s3_pivot/results.md
+- .scratch/research/evidence/eta_http_research/adrs/0002-tls-substrate-pivot.md
 
 Hypothesis ledger:
 
@@ -14146,7 +14146,7 @@ modules also fail when the build proceeds. This is deferred, not rejected.
 
 Option 2 focused evidence:
 
-    nix develop .#oxcaml -c bash -lc 'dune exec scratch/eta_http_research/h_d_errors/fixtures.exe && dune exec scratch/eta_http_research/h_s3_pivot/badssl_rerun.exe && dune exec scratch/eta_http_research/h_s3_pivot/local_cert_rerun.exe && dune exec scratch/eta_http_research/h_s3_pivot/revocation_fixtures.exe'
+    nix develop .#oxcaml -c bash -lc 'dune exec .scratch/research/evidence/eta_http_research/h_d_errors/fixtures.exe && dune exec .scratch/research/evidence/eta_http_research/h_s3_pivot/badssl_rerun.exe && dune exec .scratch/research/evidence/eta_http_research/h_s3_pivot/local_cert_rerun.exe && dune exec .scratch/research/evidence/eta_http_research/h_s3_pivot/revocation_fixtures.exe'
 
 Result:
 
@@ -14201,12 +14201,12 @@ Question: can eta-http expose one request API while h1 holds a connection and h2
 
 Artifacts:
 
-- scratch/eta_http_research/h_d2a_request_api/request_api.mli
-- scratch/eta_http_research/h_d2a_request_api/h1_internal.ml
-- scratch/eta_http_research/h_d2a_request_api/h2_internal.ml
-- scratch/eta_http_research/h_d2a_request_api/caller_demo.ml
-- scratch/eta_http_research/h_d2a_request_api/fixtures.ml
-- scratch/eta_http_research/h_d2a_request_api/results.md
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/request_api.mli
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/h1_internal.ml
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/h2_internal.ml
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/caller_demo.ml
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_d2a_request_api/results.md
 
 Hypothesis ledger:
 
@@ -14234,7 +14234,7 @@ Implementation evidence:
 Focused evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_d2a_request_api/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_d2a_request_api/fixtures.exe
 TRACE small status=200 body=small trailer=small-done
 TRACE echo status=200 body=echo:alphabeta trailer=echo-done
 TRACE stream first=part-1 trailer=stream-done
@@ -14253,7 +14253,7 @@ h_d2a_request_api fixtures passed
 Guard evidence after touching H-D1/H-D5:
 
 ~~~text
-nix develop -c bash -lc 'dune exec scratch/eta_http_research/h_d1_dogfood_multiplex/stress.exe && dune exec scratch/eta_http_research/h_d5_alpn_bootstrap/stress.exe'
+nix develop -c bash -lc 'dune exec .scratch/research/evidence/eta_http_research/h_d1_dogfood_multiplex/stress.exe && dune exec .scratch/research/evidence/eta_http_research/h_d5_alpn_bootstrap/stress.exe'
 h_d1_dogfood_multiplex stress passed
 h_d5_alpn_bootstrap stress passed
 ~~~
@@ -14277,12 +14277,12 @@ Question: can eta-http emit OTel-compatible client spans, metrics, logs, and pro
 
 Artifacts:
 
-- scratch/eta_http_research/h_o1_observability/semconv.ml
-- scratch/eta_http_research/h_o1_observability/eta_http_stub.ml
-- scratch/eta_http_research/h_o1_observability/fixtures.ml
-- scratch/eta_http_research/h_o1_observability/recursion_test.ml
-- scratch/eta_http_research/h_o1_observability/semconv_attributes.md
-- scratch/eta_http_research/h_o1_observability/results.md
+- .scratch/research/evidence/eta_http_research/h_o1_observability/semconv.ml
+- .scratch/research/evidence/eta_http_research/h_o1_observability/eta_http_stub.ml
+- .scratch/research/evidence/eta_http_research/h_o1_observability/fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_o1_observability/recursion_test.ml
+- .scratch/research/evidence/eta_http_research/h_o1_observability/semconv_attributes.md
+- .scratch/research/evidence/eta_http_research/h_o1_observability/results.md
 
 Semconv source: OpenTelemetry HTTP client spans documentation, fetched from https://opentelemetry.io/docs/specs/semconv/http/http-spans/ on 2026-05-23. The current published docs reference semantic convention version `v1.56.0` for the HTTP client attributes used by this lab.
 
@@ -14307,7 +14307,7 @@ Emitted fields:
 Evidence:
 
 ~~~text
-nix develop -c bash -lc 'dune exec scratch/eta_http_research/h_o1_observability/fixtures.exe && dune exec scratch/eta_http_research/h_o1_observability/recursion_test.exe'
+nix develop -c bash -lc 'dune exec .scratch/research/evidence/eta_http_research/h_o1_observability/fixtures.exe && dune exec .scratch/research/evidence/eta_http_research/h_o1_observability/recursion_test.exe'
 PASS successful GET returns 200
 PASS successful GET has one client span
 PASS successful GET semconv attrs
@@ -14352,20 +14352,20 @@ Question: can eta-http's own adapter/state-machine invariants be property-tested
 
 Artifacts:
 
-- scratch/eta_http_research/h_q1a_state_machine/generators.ml
-- scratch/eta_http_research/h_q1a_state_machine/model.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_a_permits.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_b_no_body_after_rst.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_c_window_accounting.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_d_trailers.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_e_goaway.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_f_body_exhaustion.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_g_retry_classifier.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_h_pool_arithmetic.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_i_server_push.ml
-- scratch/eta_http_research/h_q1a_state_machine/property_j_priority.ml
-- scratch/eta_http_research/h_q1a_state_machine/coverage.md
-- scratch/eta_http_research/h_q1a_state_machine/results.md
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/generators.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/model.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_a_permits.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_b_no_body_after_rst.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_c_window_accounting.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_d_trailers.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_e_goaway.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_f_body_exhaustion.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_g_retry_classifier.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_h_pool_arithmetic.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_i_server_push.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/property_j_priority.ml
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/coverage.md
+- .scratch/research/evidence/eta_http_research/h_q1a_state_machine/results.md
 
 Hypothesis ledger:
 
@@ -14393,7 +14393,7 @@ Properties covered:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_q1a_state_machine/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_q1a_state_machine/fixtures.exe
 PROPERTY property_a_permits_return_to_baseline seed=47001 trials=300
 COVERAGE sequences_with_cancel_or_rst=300
 SHRINK none
@@ -14434,11 +14434,11 @@ Question: can a malicious HTTP/2 server cause unbounded eta-http client memory, 
 
 Artifacts:
 
-- scratch/eta_http_research/h_q2_malicious_peer_churn/churn.ml
-- scratch/eta_http_research/h_q2_malicious_peer_churn/fixtures.ml
-- scratch/eta_http_research/h_q2_malicious_peer_churn/mitigation_design.md
-- scratch/eta_http_research/h_q2_malicious_peer_churn/monitoring.csv
-- scratch/eta_http_research/h_q2_malicious_peer_churn/results.md
+- .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/churn.ml
+- .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/mitigation_design.md
+- .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/monitoring.csv
+- .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/results.md
 
 Hypothesis ledger:
 
@@ -14458,7 +14458,7 @@ Public config knobs:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_q2_malicious_peer_churn/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_q2_malicious_peer_churn/fixtures.exe
 sampling malicious peer churn every 1s for 30s
 ATTACK headers_rst_every_stream samples=30 ... error=stream_admission_rejected
 PASS headers_rst_every_stream circuit breaker triggered
@@ -14500,10 +14500,10 @@ Question: do eta-http's default HTTP/2 header limits stop HPACK decompression bo
 
 Artifacts:
 
-- scratch/eta_http_research/h_q3_hpack_continuation/limits.ml
-- scratch/eta_http_research/h_q3_hpack_continuation/fixtures.ml
-- scratch/eta_http_research/h_q3_hpack_continuation/defaults_justification.md
-- scratch/eta_http_research/h_q3_hpack_continuation/results.md
+- .scratch/research/evidence/eta_http_research/h_q3_hpack_continuation/limits.ml
+- .scratch/research/evidence/eta_http_research/h_q3_hpack_continuation/fixtures.ml
+- .scratch/research/evidence/eta_http_research/h_q3_hpack_continuation/defaults_justification.md
+- .scratch/research/evidence/eta_http_research/h_q3_hpack_continuation/results.md
 
 Hypothesis ledger:
 
@@ -14521,7 +14521,7 @@ Default justification:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_q3_hpack_continuation/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_q3_hpack_continuation/fixtures.exe
 HPACK encoded=10240 decoded=104857600 limit=262144
 PASS HPACK bomb shape is 10KB to 100MB
 PASS HPACK decoded cap aborts at 256KB
@@ -14560,10 +14560,10 @@ intended endpoint classes by requiring TLS 1.3?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_reach/targets.md
-- scratch/eta_http_research/h_s3_reach/probe.ml
-- scratch/eta_http_research/h_s3_reach/results.md
-- scratch/eta_http_research/h_s3_reach/verdict.md
+- .scratch/research/evidence/eta_http_research/h_s3_reach/targets.md
+- .scratch/research/evidence/eta_http_research/h_s3_reach/probe.ml
+- .scratch/research/evidence/eta_http_research/h_s3_reach/results.md
+- .scratch/research/evidence/eta_http_research/h_s3_reach/verdict.md
 
 Hypothesis ledger:
 
@@ -14576,7 +14576,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_s3_reach/probe.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_s3_reach/probe.exe
 h_s3_reach name=honeycomb_otlp class=otlp_collector host=api.honeycomb.io outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
 h_s3_reach name=datadog_otlp_us1 class=otlp_collector host=otlp.datadoghq.com outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD CHACHA20 POLY1305" policy=tls12_ecdhe_aead_only
 h_s3_reach name=grafana_cloud_otlp_us_central class=otlp_collector host=otlp-gateway-prod-us-central-0.grafana.net outcome=ok version=tls12 alpn=h2 cipher="ECDHE RSA AEAD AES128 GCM" policy=tls12_ecdhe_aead_only
@@ -14617,12 +14617,12 @@ code inspection instead of relying on fixture convention?
 
 Artifacts:
 
-- scratch/eta_http_research/h_s3_enforce/default_config_builder.ml
-- scratch/eta_http_research/h_s3_enforce/invariants.ml
-- scratch/eta_http_research/h_s3_enforce/negative_tls13_override.ml
-- scratch/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
-- scratch/eta_http_research/h_s3_enforce/run_negative_compile.sh
-- scratch/eta_http_research/h_s3_enforce/results.md
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/default_config_builder.ml
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/invariants.ml
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/negative_tls13_override.ml
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/negative_dhe_cipher_override.ml
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/run_negative_compile.sh
+- .scratch/research/evidence/eta_http_research/h_s3_enforce/results.md
 
 Hypothesis ledger:
 
@@ -14635,7 +14635,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_s3_enforce/invariants.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_s3_enforce/invariants.exe
 PASS default_path version_range_tls12_only
 PASS default_path ciphers_exact_policy_set
 PASS default_path ciphers_no_dhe
@@ -14654,7 +14654,7 @@ PASS custom_alpn_path ciphers_no_dhe
 PASS custom_alpn_path no_tls13_ciphers
 h_s3_enforce_invariants passed
 
-nix develop -c bash scratch/eta_http_research/h_s3_enforce/run_negative_compile.sh
+nix develop -c bash .scratch/research/evidence/eta_http_research/h_s3_enforce/run_negative_compile.sh
 PASS expected compile failure: negative_tls13_override
 PASS expected compile failure: negative_dhe_cipher_override
 ~~~
@@ -14683,10 +14683,10 @@ mid-flight and header churn remain deferred to byte-level adapter hooks.
 
 Artifacts:
 
-- scratch/eta_http_research/h_q_envelope/attack_runner.ml
-- scratch/eta_http_research/h_q_envelope/monitoring.csv
-- scratch/eta_http_research/h_q_envelope/results.md
-- scratch/eta_http_research/h_q_envelope/defaults.md
+- .scratch/research/evidence/eta_http_research/h_q_envelope/attack_runner.ml
+- .scratch/research/evidence/eta_http_research/h_q_envelope/monitoring.csv
+- .scratch/research/evidence/eta_http_research/h_q_envelope/results.md
+- .scratch/research/evidence/eta_http_research/h_q_envelope/defaults.md
 
 Hypothesis ledger:
 
@@ -14701,7 +14701,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_q_envelope/fixtures.exe
 ATTACK id=headers_rst_every_stream group=H-Q2 verdict=PASS ... samples=31 ... streams(active=0 cancelled=0 live=0 opened=128 completed=128 remote_resets=128 rejected=872)
 ATTACK id=goaway_mid_flight group=H-Q2 verdict=DEFERRED ... error=connection_closed samples=31
 ATTACK id=header_churn group=H-Q2 verdict=DEFERRED ... error=response_header_change_rate_exceeded samples=31
@@ -14735,11 +14735,11 @@ passes the active-path falsifier.
 
 Artifacts:
 
-- scratch/eta_http_research/h_q_envelope/attack_runner.ml
-- scratch/eta_http_research/h_q_envelope/monitor.ml
-- scratch/eta_http_research/h_q_envelope/monitoring.csv
-- scratch/eta_http_research/h_q_envelope/results.md
-- scratch/eta_http_research/adrs/0003-http-security-defaults.md
+- .scratch/research/evidence/eta_http_research/h_q_envelope/attack_runner.ml
+- .scratch/research/evidence/eta_http_research/h_q_envelope/monitor.ml
+- .scratch/research/evidence/eta_http_research/h_q_envelope/monitoring.csv
+- .scratch/research/evidence/eta_http_research/h_q_envelope/results.md
+- .scratch/research/evidence/eta_http_research/adrs/0003-http-security-defaults.md
 
 Hypothesis ledger:
 
@@ -14757,7 +14757,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_q_envelope/fixtures.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_q_envelope/fixtures.exe
 ATTACK id=ping_flood group=H-Q5 verdict=PASS ... error=ping_rate_exceeded samples=31
 ATTACK id=settings_header_table_size_churn group=H-Q5 verdict=DEFERRED ... error=settings_churn_rate_exceeded samples=31
 ATTACK id=window_update_accounting group=H-Q5 verdict=PASS ... error=connection_protocol_violation samples=31 ... streams(active=0 cancelled=0 live=0 opened=1 completed=1)
@@ -14806,7 +14806,7 @@ Artifacts:
 - lib/eta-http/audit/run.sh
 - eta-http.opam
 - .backlog/Eta-a45.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -14868,7 +14868,7 @@ Artifacts:
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/test/tls/
 - lib/eta-http/audit/dep_usage.md
-- scratch/eta_http_research/adrs/0002-tls-substrate-pivot.md
+- .scratch/research/evidence/eta_http_research/adrs/0002-tls-substrate-pivot.md
 
 Hypothesis ledger:
 
@@ -15129,8 +15129,8 @@ Artifacts:
 - lib/eta-http/client/client.mli
 - lib/eta-http/h1/probes/s1_request_loop_probe.md
 - lib/eta-http/transport/probes/r4_dns_probe.md
-- scratch/eta_http_v1/probes/openai_401.ml
-- scratch/eta_http_v1/probes/dune
+- .scratch/research/evidence/eta_http_v1/probes/openai_401.ml
+- .scratch/research/evidence/eta_http_v1/probes/dune
 
 Hypothesis ledger:
 
@@ -15152,8 +15152,8 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 51
 Eta escape sites: 0
 
-nix develop -c dune build scratch/eta_http_v1/probes/openai_401.exe
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune build .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
 eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
 
 nix develop -c dune build @install
@@ -15220,7 +15220,7 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 63
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
 eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
 ~~~
 
@@ -15253,8 +15253,8 @@ verification remains open.
 
 Artifacts:
 
-- scratch/eta_http_v1/probes/reach_13.ml
-- scratch/eta_http_v1/probes/dune
+- .scratch/research/evidence/eta_http_v1/probes/reach_13.ml
+- .scratch/research/evidence/eta_http_v1/probes/dune
 - lib/eta-http/transport/probes/s1_reach_probe.md
 - lib/eta-http/transport/probes/r4_dns_probe.md
 - lib/eta-http/h1/client.ml
@@ -15277,7 +15277,7 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 63
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 ~~~
 
@@ -15357,10 +15357,10 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 67
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
 eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 
 nix develop -c dune build @install
@@ -15395,11 +15395,11 @@ closes after a keep-alive response.
 
 Artifacts:
 
-- scratch/eta_http_v1/probes/stale_idle.ml
-- scratch/eta_http_v1/probes/dune
+- .scratch/research/evidence/eta_http_v1/probes/stale_idle.ml
+- .scratch/research/evidence/eta_http_v1/probes/dune
 - lib/eta-http/h1/probes/r5_pool_health_probe.md
 - lib/eta-http/README.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15410,7 +15410,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_v1/probes/stale_idle.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/stale_idle.exe
 eta_http_r5_stale_idle_server connection=1 request_header_lines=4 closed_after_response=true
 eta_http_r5_stale_idle_server connection=2 request_header_lines=4 closed_after_response=true
 eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
@@ -15423,10 +15423,10 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 67
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
 eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 
 nix develop -c dune build @install
@@ -15487,13 +15487,13 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 70
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/stale_idle.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/stale_idle.exe
 eta_http_r5_stale_idle verdict=PASS first_body=one second_body=two opened=2 closed=1 health_rejected=1 idle_after_first=1 idle_after_second=1 protocol=h1 peer=loopback_close_after_response
 
-nix develop -c dune exec scratch/eta_http_v1/probes/openai_401.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/openai_401.exe
 eta_http_openai_401 outcome=ok status=401 body_bytes=151 protocol=h1
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_s1_reach_summary verdict=PASS targets=13 failed=<none> protocol=h1 policy=tls12_ecdhe_aead_only
 
 nix develop -c dune build @install
@@ -15532,9 +15532,9 @@ Artifacts:
 - lib/eta-http/h1/write.ml
 - lib/eta-http/h1/write.mli
 - lib/eta-http/test/test_eta_http.ml
-- scratch/eta_http_v1/probes/writer_alloc.ml
+- .scratch/research/evidence/eta_http_v1/probes/writer_alloc.ml
 - lib/eta-http/h1/probes/r2_writer_probe.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15556,7 +15556,7 @@ bash lib/eta-http/audit/run.sh
 Dependency sites: 70
 Eta escape sites: 0
 
-nix develop -c dune exec scratch/eta_http_v1/probes/writer_alloc.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/writer_alloc.exe
 eta_http_r2_writer_alloc verdict=PASS iterations=100000 minor_words=0 words_per_write=0.000000 checksum=15600000
 ~~~
 
@@ -15592,10 +15592,10 @@ Artifacts:
 - lib/eta-http/h1/parse.mli
 - lib/eta-http/h1/client.ml
 - lib/eta-http/test/test_eta_http.ml
-- scratch/eta_http_v1/probes/parser_alloc.ml
+- .scratch/research/evidence/eta_http_v1/probes/parser_alloc.ml
 - lib/eta-http/h1/probes/r1_parser_probe.md
 - lib/eta-http/audit/dep_usage.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15614,7 +15614,7 @@ nix develop -c dune build lib/eta-http
 nix develop -c dune runtest lib/eta-http --force
 eta-http: 28 tests passed
 
-nix develop -c dune exec scratch/eta_http_v1/probes/parser_alloc.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/parser_alloc.exe
 eta_http_r1_parser_alloc verdict=PASS iterations=100000 minor_words=0 words_per_parse=0.000000 checksum=28150000
 
 bash lib/eta-http/audit/run.sh
@@ -15660,7 +15660,7 @@ Artifacts:
 - lib/eta-test/eta_test.mli
 - lib/eta-http/audit/dep_usage.md
 - lib/eta-http/audit/eta_escapes.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15716,10 +15716,10 @@ writing are directly available without an external runtime adapter.
 
 Artifacts:
 
-- scratch/eta_http_v1/probes/h2_api_shape.ml
-- scratch/eta_http_v1/probes/dune
+- .scratch/research/evidence/eta_http_v1/probes/h2_api_shape.ml
+- .scratch/research/evidence/eta_http_v1/probes/dune
 - lib/eta-http/h2/probes/r7_api_shape_probe.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15732,7 +15732,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_v1/probes/h2_api_shape.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/h2_api_shape.exe
 eta_http_r7_h2_api_shape verdict=PASS status=200 body="hello-h2" target=/r7
 ~~~
 
@@ -15769,7 +15769,7 @@ Artifacts:
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/audit/run.sh
 - lib/eta-http/audit/dep_usage.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15826,7 +15826,7 @@ Artifacts:
 - lib/eta-http/transport/alpn.mli
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/transport/probes/s2_alpn_state_probe.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15875,10 +15875,10 @@ well-formed PRIORITY frames do not crash or force GOAWAY/error closure.
 
 Artifacts:
 
-- scratch/eta_http_v1/probes/h2_r8_push_priority.ml
-- scratch/eta_http_v1/probes/dune
+- .scratch/research/evidence/eta_http_v1/probes/h2_r8_push_priority.ml
+- .scratch/research/evidence/eta_http_v1/probes/dune
 - lib/eta-http/h2/probes/r8_push_priority_probe.md
-- scratch/eta_http_v1/OBJECTIVE.md
+- .scratch/research/evidence/eta_http_v1/OBJECTIVE.md
 
 Hypothesis ledger:
 
@@ -15892,7 +15892,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_v1/probes/h2_r8_push_priority.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/h2_r8_push_priority.exe
 eta_http_r8_push_priority verdict=PASS push_disabled=true forced_push_protocol_error=true priority_tolerated=true
 ~~~
 
@@ -16170,8 +16170,8 @@ Artifacts:
 - lib/eta-http/transport/connect.ml
 - lib/eta-http/transport/connect.mli
 - lib/eta-http/transport/probes/s2_dispatch_probe.md
-- scratch/eta_http_v1/probes/honeycomb_h2.ml
-- scratch/eta_http_v1/probes/reach_13.ml
+- .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.ml
+- .scratch/research/evidence/eta_http_v1/probes/reach_13.ml
 
 Hypothesis ledger:
 
@@ -16188,10 +16188,10 @@ Evidence:
 nix develop -c dune runtest lib/eta-http --force
 eta-http: 43 tests passed
 
-nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
 bash lib/eta-http/audit/run.sh
@@ -16228,7 +16228,7 @@ Artifacts:
 
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/h2/probes/s2_goaway_probe.md
-- scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml
+- .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.ml
 
 Hypothesis ledger:
 
@@ -16240,7 +16240,7 @@ Hypothesis ledger:
 Evidence:
 
 ~~~text
-nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
 h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
 
 nix develop -c dune runtest lib/eta-http --force
@@ -16279,13 +16279,13 @@ Evidence:
 nix develop -c dune runtest lib/eta-http --force
 eta-http: 44 tests passed
 
-nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
-nix develop -c dune exec scratch/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_research/h_s1_ocaml_h2_eio/goaway_raw_probe.exe
 h_s1_goaway_raw last_stream_id=1 stream_errors=0 connection_errors=0 closed_before_flush=false closed_after_flush=true writes_before=1 writes_after=1
 
 bash lib/eta-http/audit/run.sh
@@ -16390,7 +16390,7 @@ Artifacts:
 - lib/eta-http/client/client.ml
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/test/security/gzip_bomb.ml
-- scratch/eta_http_v1/probes/s3_gzip_rss.ml
+- .scratch/research/evidence/eta_http_v1/probes/s3_gzip_rss.ml
 - lib/eta-http/body/probes/s3_body_streaming_probe.md
 
 Evidence:
@@ -16400,13 +16400,13 @@ nix develop -c dune runtest lib/eta-http --force
 eta-http: 54 tests passed
 eta-http-security: 1 test passed
 
-nix develop -c dune exec scratch/eta_http_v1/probes/s3_gzip_rss.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/s3_gzip_rss.exe
 eta_http_s3_gzip_rss outcome=ok request_bytes=104857600 response_bytes=104857600 baseline_rss_kib=36580 max_rss_kib=50196 delta_rss_kib=13616 limit_kib=131072
 
-nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
 bash lib/eta-http/audit/run.sh
@@ -16463,7 +16463,7 @@ nix develop -c dune runtest lib/eta-http --force
 eta-http: 60 tests passed
 eta-http-security: 1 test passed
 
-nix develop -c dune exec --display=short scratch/eta_http_v1/probes/s4_envelope_alloc.exe
+nix develop -c dune exec --display=short .scratch/research/evidence/eta_http_v1/probes/s4_envelope_alloc.exe
 eta_http_s4_envelope_alloc attack=header_normalization outcome=ok error=Header_invalid minor_words=39 limit_words=2260
 eta_http_s4_envelope_alloc attack=settings_churn outcome=ok error=Settings_churn_rate_exceeded minor_words=61 limit_words=2260
 eta_http_s4_envelope_alloc attack=header_churn outcome=ok error=Response_header_change_rate_exceeded minor_words=63 limit_words=2260
@@ -16472,10 +16472,10 @@ eta_http_s4_envelope_alloc attack=hpack_block_cap outcome=ok error=Hpack_decode_
 eta_http_s4_envelope_alloc attack=continuation_cap outcome=ok error=Continuation_flood minor_words=62 limit_words=2260
 eta_http_s4_envelope_alloc_summary verdict=PASS attacks=6 max_minor_words=63 limit_words=2260
 
-nix develop -c dune exec scratch/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2
 
-nix develop -c dune exec scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none>
 ~~~
 
@@ -16584,7 +16584,7 @@ Artifacts:
 - lib/eta-http/client/retry.ml
 - lib/eta-http/test/test_eta_http.ml
 - lib/eta-http/client/probes/s5_retry_probe.md
-- scratch/eta_http_research/adrs/0005-retry-idempotency-replayability.md
+- .scratch/research/evidence/eta_http_research/adrs/0005-retry-idempotency-replayability.md
 
 Evidence:
 
@@ -16636,9 +16636,9 @@ Artifacts:
 - lib/eta-http/observability/tracer.ml
 - lib/eta-http/observability/meter.ml
 - lib/eta-http/observability/probes/s6_observability_probe.md
-- scratch/eta_http_research/adrs/0006-http-observability-recursion.md
-- scratch/eta_http_research/h_o1_observability/semconv_attributes.md
-- scratch/eta_http_research/h_o1_observability/results.md
+- .scratch/research/evidence/eta_http_research/adrs/0006-http-observability-recursion.md
+- .scratch/research/evidence/eta_http_research/h_o1_observability/semconv_attributes.md
+- .scratch/research/evidence/eta_http_research/h_o1_observability/results.md
 
 Evidence:
 
@@ -16655,10 +16655,10 @@ observability / h2 protocol attrs: PASS
 observability / recursion disabled: PASS
 observability / pool stats meter: PASS
 
-timeout 25s nix develop -c dune exec --display=short scratch/eta_http_v1/probes/honeycomb_h2.exe
+timeout 25s nix develop -c dune exec --display=short .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
 eta_http_s2_honeycomb outcome=ok status=404 body_bytes=19 protocol=h2 policy=tls12_ecdhe_aead_only
 
-timeout 240s nix develop -c dune exec --display=short scratch/eta_http_v1/probes/reach_13.exe
+timeout 240s nix develop -c dune exec --display=short .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 eta_http_reach_summary verdict=PASS targets=13 failed=<none> protocol=auto_alpn policy=tls12_ecdhe_aead_only
 
 bash lib/eta-http/audit/run.sh
@@ -16872,7 +16872,7 @@ user-visible mode/kind annotations. The verdict remains **V1-bare**.
 
 Decision: **reject generic user-created algebraic-effect services**.
 
-The `scratch/eta_research/effect_services/` lab and GPT-Pro review agree on the
+The `.scratch/research/evidence/eta_research/effect_services/` lab and GPT-Pro review agree on the
 core result: OCaml 5 native effects can make attractive direct-style call sites,
 but they do not provide typed service requirements. Without an `R`/environment
 type or effect rows, missing handlers compile and become runtime failures.
@@ -17006,7 +17006,7 @@ without any new API.
 1. Document the recipe in Eta docs: `Supervisor.scoped` + `Scope.start` +
    `Scope.await/cancel` + `Effect.acquire_release` for session-like lifetimes.
 2. Refactor WebSocket on a separate branch; diff captured at
-   `scratch/eta_research/scoped_sessions/p_scoped_3/refactor.diff`.
+   `.scratch/research/evidence/eta_research/scoped_sessions/p_scoped_3/refactor.diff`.
 3. Audit `lib/http/h1/h1_client.ml` for `Supervisor.scoped` migration.
 4. Defer any public helper until a second concrete consumer emerges.
 
@@ -17039,7 +17039,7 @@ abstraction.
 ### Evidence
 
 P-Scoped-5 tested external application-shaped fixtures under
-`scratch/eta_research/scoped_sessions/p_scoped_5/`:
+`.scratch/research/evidence/eta_research/scoped_sessions/p_scoped_5/`:
 
 - `background_no_handle.ml` proves `Effect.with_background` expresses the
   daemon-shaped no-handle case.
@@ -17066,13 +17066,13 @@ cancellation, and re-raise real child/finalizer failures.
 
 - `nix develop .#oxcaml -c dune runtest test/eta --force`
   - Result: 224 tests passed.
-- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/background_no_handle.exe`
+- `nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/scoped_sessions/p_scoped_5/background_no_handle.exe`
   - Result: passed.
-- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/fiber_scope_with_handle.exe`
+- `nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/scoped_sessions/p_scoped_5/fiber_scope_with_handle.exe`
   - Result: passed.
-- `nix develop .#oxcaml -c dune exec ./scratch/eta_research/scoped_sessions/p_scoped_5/external_app_comparison.exe`
+- `nix develop .#oxcaml -c dune exec .scratch/research/evidence/eta_research/scoped_sessions/p_scoped_5/external_app_comparison.exe`
   - Result: passed after making `Supervisor.Scope.cancel` cleanup-completing.
-- `nix develop .#oxcaml -c dune build ./scratch/eta_research/scoped_sessions/p_scoped_5/negative/fiber_scope_escape_negative.exe`
+- `nix develop .#oxcaml -c dune build .scratch/research/evidence/eta_research/scoped_sessions/p_scoped_5/negative/fiber_scope_escape_negative.exe`
   - Result: expected compile failure.
 
 ### Confidence
@@ -17106,10 +17106,10 @@ ship optional connector packages instead of widening the root `eta` package.
 
 Research artifacts are under:
 
-- `scratch/eta_research/duckdb_connector/`
-- `scratch/eta_research/turso_connector/`
-- `scratch/eta_research/ladybugdb_connector/`
-- `scratch/eta_research/graph_query_api/`
+- `.scratch/research/evidence/eta_research/duckdb_connector/`
+- `.scratch/research/evidence/eta_research/turso_connector/`
+- `.scratch/research/evidence/eta_research/ladybugdb_connector/`
+- `.scratch/research/evidence/eta_research/graph_query_api/`
 
 The Turso and LadybugDB v2 ADRs carry gates into implementation. The DuckDB
 notes include later stress-test refinements: connection survival and appender

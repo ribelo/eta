@@ -10,7 +10,7 @@ S2 without importing an external runtime adapter?
 
 ## Implementation
 
-- `.scratch/eta_http_v1/probes/h2_api_shape.ml` creates an in-process
+- `.scratch/research/evidence/eta_http_v1/probes/h2_api_shape.ml` creates an in-process
   `H2.Client_connection` and `H2.Server_connection`.
 - The probe issues one client GET with `Client_connection.request`, drains
   `next_write_operation` iovecs into the peer with `read`, schedules response
@@ -23,7 +23,7 @@ S2 without importing an external runtime adapter?
 ## Evidence
 
 ```sh
-nix develop -c dune exec .scratch/eta_http_v1/probes/h2_api_shape.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/h2_api_shape.exe
 ```
 
 Observed:

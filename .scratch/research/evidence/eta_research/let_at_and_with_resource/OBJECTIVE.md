@@ -95,7 +95,7 @@ P1 — Real-code refactor (HARD; the load-bearing probe).
     - the consumer example in this objective (`Pulse.Client.with_client +
       with_record_stream + Keyboard.Monitor.with_monitor + Ptt_loop.run`),
       reproduced as a synthetic fixture under
-      `.scratch/eta_research/let_at_and_with_resource/p1_consumer_fixture/`
+      `.scratch/research/evidence/eta_research/let_at_and_with_resource/p1_consumer_fixture/`
       with stub `with_*` functions of the right shape.
   - Rewrite each *all six ways*: H-A, H-B, H-C, H-D, H-E, H-F.
   - Capture for each: indentation depth, total non-blank lines, where the
@@ -239,7 +239,7 @@ Rows = decision criteria, columns = H-A through H-F. Required rows:
 
 ## Acceptance criteria (deliverables)
 
-1. `.scratch/eta_research/let_at_and_with_resource/` exists with:
+1. `.scratch/research/evidence/eta_research/let_at_and_with_resource/` exists with:
    - `README.md` — lab index, status of each hypothesis.
    - `prior_art.md` — P0 output.
    - `p1_consumer_fixture/` — synthetic 4-deep `with_*` chain compilable
@@ -323,8 +323,8 @@ Rows = decision criteria, columns = H-A through H-F. Required rows:
   `lib/eta/semaphore.mli` (with_permits), `lib/eta/syntax.{ml,mli}`,
   `lib/eta/supervisor.mli` (rank-2 scoped).
 - Existing soundness fixtures style: `lib/eta/test/soundness/`.
-- Prior labs to mirror in shape: `.scratch/eta_research/pool_survival/`,
-  `.scratch/eta_research/channel_choice/`, `.scratch/eta_research/timeout_choice/`.
+- Prior labs to mirror in shape: `.scratch/research/evidence/eta_research/pool_survival/`,
+  `.scratch/research/evidence/eta_research/channel_choice/`, `.scratch/research/evidence/eta_research/timeout_choice/`.
 - Prior art to read in P0: Effect-TS `Effect.acquireRelease` /
   `acquireUseRelease`, ZIO `ZIO.acquireReleaseWith` / `Scope` / `scoped`,
   Cats Effect `Resource`, Containers `CCFun.let@`, Eio `Switch.run` and

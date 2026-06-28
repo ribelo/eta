@@ -14,6 +14,11 @@ opam switches, third-party checkouts, downloaded source trees, and throwaway
 logs outside `.scratch/research/` unless they are intentionally curated as part
 of a preserved research bundle.
 
+Older journal entries may still mention legacy `scratch/...` lab names from
+before this tracked research lane existed. Those names are historical context,
+not current dependencies. Current preserved artifacts must point at tracked
+paths under `.scratch/research/evidence/`.
+
 If a research experiment needs Dune, keep it as a separate Dune project under
 this tree and build it explicitly with `dune build --root <path> ...`. Research
 projects are not part of the main repository Dune workspace.

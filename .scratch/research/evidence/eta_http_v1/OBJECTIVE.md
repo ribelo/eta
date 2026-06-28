@@ -625,7 +625,7 @@ Closeout evidence:
 - `Http.H2.Security.validate_headers` rejects empty, NUL-containing,
   uppercase, overlong-name, and overlong-value h2 response headers; the public
   h2 client invokes it after `ocaml-h2` header decode.
-- `.scratch/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six
+- `.scratch/research/evidence/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six
   deferred rows against the real h2 read adapter and samples active-path minor
   allocations; max observed is 63 words against the 2260-word envelope.
 - Live h2 Honeycomb smoke and the 13-endpoint reach probe still pass after the

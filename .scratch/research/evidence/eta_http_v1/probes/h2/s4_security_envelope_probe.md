@@ -24,7 +24,7 @@ ocaml-h2 adapter boundary before hostile frame shapes enter the substrate?
 - `validate_headers` rejects empty names, NULs, uppercase h2 names, and names
   over 8192 bytes, plus values over 65536 bytes; the public h2 client checks
   decoded response headers.
-- `.scratch/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six deferred
+- `.scratch/research/evidence/eta_http_v1/probes/s4_envelope_alloc.ml` replays all six deferred
   byte-envelope rows against the real h2 read adapter and samples active-path
   minor allocations.
 
@@ -32,9 +32,9 @@ Commands:
 
 ```sh
 nix develop -c dune runtest lib/http --force
-nix develop -c dune exec --display=short .scratch/eta_http_v1/probes/s4_envelope_alloc.exe
-nix develop -c dune exec .scratch/eta_http_v1/probes/honeycomb_h2.exe
-nix develop -c dune exec .scratch/eta_http_v1/probes/reach_13.exe
+nix develop -c dune exec --display=short .scratch/research/evidence/eta_http_v1/probes/s4_envelope_alloc.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/honeycomb_h2.exe
+nix develop -c dune exec .scratch/research/evidence/eta_http_v1/probes/reach_13.exe
 ```
 
 Observed:
