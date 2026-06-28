@@ -98,7 +98,7 @@ Read these before designing APIs:
 - `docs/packages.md`
 - `lib/http/README.md`
 - `docs/http-server-production-readiness-audit.md`
-- `docs/porting-http-test-candidates.md`
+- `docs/research/porting-http-test-candidates.md`
 - `lib/http/server.mli`
 - `lib/http/server_request.mli`
 - `lib/http/server_response.mli`
@@ -163,7 +163,7 @@ or tests.
     and middleware failure?
 16. What does a user test look like without sockets? What does one Eio
     integration test look like with sockets?
-17. Which existing `docs/porting-http-test-candidates.md` gaps are stale
+17. Which existing `docs/research/porting-http-test-candidates.md` gaps are stale
     because tests have since landed, and which still require new public API?
 18. What should explicitly not be built now?
 
@@ -237,7 +237,7 @@ Deliverables:
 
 - local `.scratch/eta_http_service_api/p0_inventory.md`
 - List what is already present.
-- List stale claims in `docs/porting-http-test-candidates.md`.
+- List stale claims in `docs/research/porting-http-test-candidates.md`.
 - Record exact commands run and results.
 
 Minimum gates:
