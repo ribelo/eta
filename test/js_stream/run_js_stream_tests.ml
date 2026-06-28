@@ -94,6 +94,18 @@ let tests =
            let s = String.concat ";" (List.map string_of_int actual) in
            fail "stream_flat_map" ("expected [1;1;2;2;3;3], got [" ^ s ^ "]")
        | _ -> fail "stream_flat_map" "expected ok"));
+    ("stream_fail_preserves_typed_error",
+     fun done_ ->
+       let runtime = Runtime.create () in
+       let stream : (int, [ `Boom | `Other ]) Stream.t = Stream.fail `Boom in
+       run_stream runtime stream done_ (function
+       | Exit.Error (Cause.Fail `Boom) -> ()
+       | Exit.Error (Cause.Fail _) ->
+           fail "stream_fail_preserves_typed_error"
+             "expected raw typed failure, got different typed value"
+       | Exit.Error _ ->
+           fail "stream_fail_preserves_typed_error" "expected typed failure"
+       | Exit.Ok _ -> fail "stream_fail_preserves_typed_error" "expected error"));
   ]
 
 let () =

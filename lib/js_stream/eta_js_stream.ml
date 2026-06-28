@@ -296,6 +296,10 @@ module Sink = struct
     }
 end
 
+let fail_cause cause =
+  Eta_js.Effect.Expert.make ~leaf_name:"eta_js_stream.fail_cause" @@ fun _ ->
+  Eta_js.Exit.error cause
+
 let run (source : ('a, 'err) stream) sink =
   let rec loop acc =
     Eta_js.Effect.bind
@@ -310,8 +314,7 @@ let run (source : ('a, 'err) stream) sink =
                     (sink.Sink.step acc x)
             in
             process_chunk acc xs
-        | Error cause ->
-            Eta_js.Effect.fail (Obj.magic cause))
+        | Error cause -> fail_cause cause)
       (source ())
   in
   loop (sink.Sink.init ())
