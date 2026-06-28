@@ -152,7 +152,7 @@ let expect_pool_shutdown_timeout label = function
         cause
 
 let test_pool_create_closes_database_on_eta_pool_create_failure_source () =
-  let source = read_file (find_source_file "lib/duckdb/pool.ml") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/pool.ml") in
   let create =
     source_between source ~start_marker:"let create ?blocking_pool"
       ~end_marker:"let with_connection t f ="
@@ -167,7 +167,7 @@ let test_pool_create_closes_database_on_eta_pool_create_failure_source () =
     (require_sub create ~needle:"release_on_create_failure := false" : int)
 
 let test_pool_shutdown_propagates_database_close_error_source () =
-  let source = read_file (find_source_file "lib/duckdb/pool.ml") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/pool.ml") in
   let shutdown =
     source_between source ~start_marker:"let shutdown ?deadline t ="
       ~end_marker:"let stats t ="
@@ -183,7 +183,7 @@ let test_pool_shutdown_propagates_database_close_error_source () =
        (find_sub_from shutdown ~needle:"ignore (Database.close t.database)" 0))
 
 let test_connect_runs_inside_blocking_section_source () =
-  let source = read_file (find_source_file "lib/duckdb/duckdb_stubs.c") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/duckdb_stubs.c") in
   let connect =
     source_between source ~start_marker:"CAMLprim value eta_duckdb_connect"
       ~end_marker:"CAMLprim value eta_duckdb_disconnect"
@@ -194,7 +194,7 @@ let test_connect_runs_inside_blocking_section_source () =
   ignore (require_sub connect ~needle:"caml_leave_blocking_section();" : int)
 
 let test_loader_closes_handle_on_symbol_failure_source () =
-  let source = read_file (find_source_file "lib/duckdb/duckdb_stubs.c") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/duckdb_stubs.c") in
   let loader =
     source_between source ~start_marker:"static int load_api_unlocked(void)"
       ~end_marker:"static int load_api(void)"
@@ -211,12 +211,12 @@ let test_loader_closes_handle_on_symbol_failure_source () =
       int)
 
 let test_bulk_row_avoids_append_source () =
-  let source = read_file (find_source_file "lib/duckdb/bulk_row.ml") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/bulk_row.ml") in
   Alcotest.(check bool) "bulk row append removed" false
     (Option.is_some (find_sub_from source ~needle:"row @ [" 0))
 
 let test_row_nth_value_uses_sequential_cursor_source () =
-  let source = read_file (find_source_file "lib/duckdb/types.ml") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/types.ml") in
   let body =
     source_between source ~start_marker:"let row_nth_value index row ="
       ~end_marker:"type raw_database"
@@ -248,8 +248,8 @@ let test_row_decode_cursor_preserves_indexed_decoding () =
   Alcotest.(check bool) "rewind third column" true active
 
 let test_transaction_begin_uses_duckdb_syntax_source () =
-  let connection = read_file (find_source_file "lib/duckdb/connection.ml") in
-  let interface = read_file (find_source_file "lib/duckdb/eta_duckdb.mli") in
+  let connection = read_file (find_source_file "drivers/eta_duckdb/connection.ml") in
+  let interface = read_file (find_source_file "drivers/eta_duckdb/eta_duckdb.mli") in
   Alcotest.(check bool)
     "no SQLite BEGIN IMMEDIATE mode" false
     (Option.is_some (find_sub_from connection ~needle:"BEGIN IMMEDIATE" 0));
@@ -318,7 +318,7 @@ let test_appender_failed_partial_row_closes_handle () =
   |> expect_closed "append after failed partial row"
 
 let test_appender_failure_paths_close_raw_source () =
-  let source = read_file (find_source_file "lib/duckdb/appender.ml") in
+  let source = read_file (find_source_file "drivers/eta_duckdb/appender.ml") in
   let append_row =
     source_between source ~start_marker:"let append_row appender values ="
       ~end_marker:"let flush appender ="

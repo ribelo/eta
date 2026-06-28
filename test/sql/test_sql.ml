@@ -50,7 +50,7 @@ let source_between source ~start_marker ~end_marker =
   String.sub source start (finish - start)
 
 let test_database_pool_shutdown_keeps_parent_open_on_timeout () =
-  let duckdb_source = read_file (find_source_file "lib/duckdb/pool.ml") in
+  let duckdb_source = read_file (find_source_file "drivers/eta_duckdb/pool.ml") in
   let duckdb_shutdown =
     source_between duckdb_source ~start_marker:"let shutdown ?deadline t ="
       ~end_marker:"let stats t ="
@@ -75,12 +75,12 @@ let test_database_pool_shutdown_keeps_parent_open_on_timeout () =
         (path ^ " does not bind past pool shutdown") false
         (contains_sub shutdown ~needle:"Eta.Effect.bind"))
     [
-      ("lib/turso/pool.ml", "let shutdown ?deadline t =", "let stats =");
+      ("drivers/eta_turso/pool.ml", "let shutdown ?deadline t =", "let stats =");
       ("lib/sql/pool.ml", "let shutdown ?deadline", "let stats");
     ]
 
 let test_turso_pool_uses_shared_interruptible_leased_blocking_source () =
-  let source = read_file (find_source_file "lib/turso/pool.ml") in
+  let source = read_file (find_source_file "drivers/eta_turso/pool.ml") in
   ignore
     (require_sub source ~needle:"Invalid_blocking_pool of string" : int);
   ignore
@@ -114,17 +114,17 @@ let test_turso_pool_uses_shared_interruptible_leased_blocking_source () =
            (require_sub body
               ~needle:"leased_blocking_result ?blocking_pool" :
              int));
-  let types_source = read_file (find_source_file "lib/turso/types.ml") in
+  let types_source = read_file (find_source_file "drivers/eta_turso/types.ml") in
   ignore (require_sub types_source ~needle:"external raw_interrupt" : int);
-  let connection_source = read_file (find_source_file "lib/turso/connection.ml") in
+  let connection_source = read_file (find_source_file "drivers/eta_turso/connection.ml") in
   ignore (require_sub connection_source ~needle:"let interrupt db =" : int);
-  let stubs_source = read_file (find_source_file "lib/turso/turso_stubs.c") in
+  let stubs_source = read_file (find_source_file "drivers/eta_turso/turso_stubs.c") in
   ignore (require_sub stubs_source ~needle:"void (*interrupt)(sqlite3 *);" : int);
   ignore (require_sub stubs_source ~needle:"LOAD(interrupt)" : int);
   ignore (require_sub stubs_source ~needle:"CAMLprim value eta_turso_interrupt" : int)
 
 let test_turso_close_marks_closed_only_after_native_success () =
-  let source = read_file (find_source_file "lib/turso/connection.ml") in
+  let source = read_file (find_source_file "drivers/eta_turso/connection.ml") in
   let close =
     source_between source ~start_marker:"let close db ="
       ~end_marker:"let close_exn db ="
@@ -145,7 +145,7 @@ let test_turso_close_marks_closed_only_after_native_success () =
        ~needle:"db.closed <- true;\n    check db ~operation:\"close\"")
 
 let test_turso_prepare_rejects_null_statement_success_source () =
-  let source = read_file (find_source_file "lib/turso/turso_stubs.c") in
+  let source = read_file (find_source_file "drivers/eta_turso/turso_stubs.c") in
   let prepare =
     source_between source ~start_marker:"CAMLprim value eta_turso_prepare"
       ~end_marker:"CAMLprim intnat eta_turso_finalize"

@@ -200,11 +200,11 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
-                lib/duckdb \
+                drivers/eta_duckdb \
                 lib/otel \
-                lib/ladybug \
+                drivers/eta_ladybug \
                 lib/schema \
-                lib/turso \
+                drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
                 test/redacted_eio \
@@ -228,11 +228,11 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
-                lib/duckdb \
+                drivers/eta_duckdb \
                 lib/otel \
-                lib/ladybug \
+                drivers/eta_ladybug \
                 lib/schema \
-                lib/turso \
+                drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
                 test/connectors \
@@ -313,9 +313,9 @@
                 lib/sql_dsl \
                 lib/sql_driver \
                 lib/sql \
-                lib/duckdb \
-                lib/turso \
-                lib/ladybug
+                drivers/eta_duckdb \
+                drivers/eta_turso \
+                drivers/eta_ladybug
 
               dune runtest --force
               dune build @bench

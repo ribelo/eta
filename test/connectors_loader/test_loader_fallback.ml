@@ -33,28 +33,28 @@ let find_source label candidates =
 let find_duckdb_stubs_source () =
   find_source "duckdb_stubs.c"
     [
-      "lib/duckdb/duckdb_stubs.c";
-      "../lib/duckdb/duckdb_stubs.c";
-      "../../lib/duckdb/duckdb_stubs.c";
-      "../../../lib/duckdb/duckdb_stubs.c";
+      "drivers/eta_duckdb/duckdb_stubs.c";
+      "../drivers/eta_duckdb/duckdb_stubs.c";
+      "../../drivers/eta_duckdb/duckdb_stubs.c";
+      "../../../drivers/eta_duckdb/duckdb_stubs.c";
     ]
 
 let find_ladybug_stubs_source () =
   find_source "ladybug_stubs.c"
     [
-      "lib/ladybug/ladybug_stubs.c";
-      "../lib/ladybug/ladybug_stubs.c";
-      "../../lib/ladybug/ladybug_stubs.c";
-      "../../../lib/ladybug/ladybug_stubs.c";
+      "drivers/eta_ladybug/ladybug_stubs.c";
+      "../drivers/eta_ladybug/ladybug_stubs.c";
+      "../../drivers/eta_ladybug/ladybug_stubs.c";
+      "../../../drivers/eta_ladybug/ladybug_stubs.c";
     ]
 
 let find_turso_stubs_source () =
   find_source "turso_stubs.c"
     [
-      "lib/turso/turso_stubs.c";
-      "../lib/turso/turso_stubs.c";
-      "../../lib/turso/turso_stubs.c";
-      "../../../lib/turso/turso_stubs.c";
+      "drivers/eta_turso/turso_stubs.c";
+      "../drivers/eta_turso/turso_stubs.c";
+      "../../drivers/eta_turso/turso_stubs.c";
+      "../../../drivers/eta_turso/turso_stubs.c";
     ]
 
 let find_sqlite_stubs_source () =
