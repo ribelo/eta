@@ -2,9 +2,8 @@
 
 Status: accepted.
 
-This document closes Track A Phase A-R for the master objective in
-docs/research/objectives/eta-otel-and-eta-ai.md. It records the decisions that constrain
-eta-ai Phase A-C and provider packages.
+This document records the accepted eta-ai API-shape decisions that constrain
+eta-ai core and provider packages.
 
 No production eta-ai code existed when this document was written.
 

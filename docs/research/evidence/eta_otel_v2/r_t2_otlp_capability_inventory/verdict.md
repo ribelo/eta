@@ -1,7 +1,7 @@
 # R-T2 OTLP Capability Inventory
 
 Status: Initial verdict with eta-http follow-up implemented. This is a probe
-result for Track O of `.objectives/eta-otel-and-eta-ai.md`.
+result from the historical eta-otel rebuild track.
 
 ## Question
 
