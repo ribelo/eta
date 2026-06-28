@@ -2842,6 +2842,35 @@ let test_time_interval_restarts_after_reobserve () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
+let test_time_interval_reobserve_ignores_stale_sleep () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let first_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Observer.dispose first_observer);
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  let second_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reobserved interval starts from cached value" 0
+    (run_ok rt (Signal.Observer.read second_observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "old half-elapsed sleep does not tick reobserve" 0
+    (run_ok rt (Signal.Observer.read second_observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "fresh reobserve sleep ticks after full interval" 1
+    (run_ok rt (Signal.Observer.read second_observer));
+  run_ok rt (Signal.Observer.dispose second_observer)
+
 let test_time_timer_becomes_inert_after_bind_switch () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create true in
@@ -2939,6 +2968,27 @@ let test_time_now_uses_runtime_clock () =
   Alcotest.(check int) "updated now" 5
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let first_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial now" 0
+    (run_ok rt (Signal.Observer.read first_observer));
+  run_ok rt (Signal.Observer.dispose first_observer);
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  let second_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reobserved now refreshes immediately" 5
+    (run_ok rt (Signal.Observer.read second_observer));
+  run_ok rt (Signal.Observer.dispose second_observer)
 
 let test_time_now_refreshes_after_idle_observe () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -3595,6 +3645,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
+          Alcotest.test_case "time interval ignores stale sleep after reobserve"
+            `Quick test_time_interval_reobserve_ignores_stale_sleep;
           Alcotest.test_case "time timer inert after bind switch" `Quick
             test_time_timer_becomes_inert_after_bind_switch;
           Alcotest.test_case "time branch churn keeps single sleeper" `Quick
@@ -3603,6 +3655,8 @@ let () =
             test_time_now_bind_activation_refreshes_next_stabilization;
           Alcotest.test_case "time now uses runtime clock" `Quick
             test_time_now_uses_runtime_clock;
+          Alcotest.test_case "time now refreshes on quick reobserve" `Quick
+            test_time_now_reobserve_refreshes_while_old_sleep_pending;
           Alcotest.test_case "time now refreshes after idle observe" `Quick
             test_time_now_refreshes_after_idle_observe;
           Alcotest.test_case "time after deadline" `Quick

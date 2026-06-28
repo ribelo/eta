@@ -225,7 +225,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_node = {
     mutable timer_active : bool;
-    mutable timer_running : bool;
+    mutable timer_running_generation : int option;
     mutable timer_finished : bool;
     mutable timer_generation : int;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
@@ -964,15 +964,19 @@ module Make (Observer_error : Observer_error) () = struct
     timer.timer_finished <- true;
     timer_stop_unlocked timer
 
+  let timer_has_current_daemon timer =
+    match timer.timer_running_generation with
+    | Some generation -> generation = timer.timer_generation
+    | None -> false
+
   let timer_start_unlocked timer =
-    if timer.timer_active || timer.timer_finished then None
+    if timer.timer_finished || (timer.timer_active && timer_has_current_daemon timer)
+    then None
     else (
       timer.timer_active <- true;
       timer.timer_generation <- timer.timer_generation + 1;
-      if timer.timer_running then None
-      else (
-        timer.timer_running <- true;
-        Some (timer.timer_start timer)))
+      timer.timer_running_generation <- Some timer.timer_generation;
+      Some (timer.timer_start timer))
 
   let collect_necessary_node_ids () =
     let seen = Hashtbl.create 16 in
@@ -1331,33 +1335,38 @@ module Make (Observer_error : Observer_error) () = struct
     let validate_future now deadline_ms =
       if deadline_ms <= now then Error `Past_deadline else Ok ()
 
-    let timer_active timer =
-      with_graph_lane_sync (fun () -> timer.timer_active)
-
-    let timer_mark_stopped timer =
-      with_graph_lane_sync (fun () -> timer.timer_running <- false)
-
-    let timer_mark_failed timer =
+    let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
-          timer.timer_running <- false;
-          if timer.timer_active then timer_stop_unlocked timer)
+          if timer.timer_running_generation = Some generation then
+            timer.timer_running_generation <- None)
 
-    let timer_cleanup_after_exit timer = function
-      | Eta.Exit.Ok _ -> timer_mark_stopped timer
-      | Eta.Exit.Error _ -> timer_mark_failed timer
+    let timer_mark_failed timer generation =
+      with_graph_lane_sync (fun () ->
+          if timer.timer_running_generation = Some generation then (
+            timer.timer_running_generation <- None;
+            if timer.timer_active then timer_stop_unlocked timer))
 
-    let timer_cleanup_failed_start timer = function
+    let timer_cleanup_after_exit timer generation = function
+      | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
+      | Eta.Exit.Error _ -> timer_mark_failed timer generation
+
+    let timer_cleanup_failed_start timer generation = function
       | Eta.Exit.Ok _ -> Effect.unit
-      | Eta.Exit.Error _ -> timer_mark_failed timer
+      | Eta.Exit.Error _ -> timer_mark_failed timer generation
 
-    let timer_after_update_state timer =
+    let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
-          if timer.timer_active then `Continue
+          if
+            timer.timer_active
+            && timer.timer_generation = generation
+            && timer.timer_running_generation = Some generation
+          then `Continue
           else (
-            timer.timer_running <- false;
+            if timer.timer_running_generation = Some generation then
+              timer.timer_running_generation <- None;
             `Stop))
 
-    let rec timer_loop timer driver update =
+    let rec timer_loop timer generation driver update =
       Effect.now
       |> Effect.bind (fun now_ms ->
              let delay, driver =
@@ -1367,42 +1376,41 @@ module Make (Observer_error : Observer_error) () = struct
              in
              Effect.sleep delay)
       |> Effect.bind (fun () ->
-             timer_active timer
-             |> Effect.bind (fun active ->
-                    if not active then
-                      timer_mark_stopped timer
-                    else
+             timer_after_update_state timer generation
+             |> Effect.bind (function
+                  | `Stop -> Effect.unit
+                  | `Continue ->
                       update.timer_update timer
                       |> Effect.bind (fun () ->
-                             timer_after_update_state timer
+                             timer_after_update_state timer generation
                              |> Effect.bind (function
-                                  | `Continue ->
-                                      timer_loop timer driver update
+                                  | `Continue -> timer_loop timer generation driver update
                                   | `Stop -> Effect.unit))))
 
     let attach_timer ?(update_on_start = false) signal interval update =
       let timer =
         {
           timer_active = false;
-          timer_running = false;
+          timer_running_generation = None;
           timer_finished = false;
           timer_generation = 0;
           timer_start =
             (fun timer ->
+              let generation = timer.timer_generation in
               let driver = Schedule.start (Schedule.spaced interval) in
               let start_loop () =
                 Effect.daemon
-                  (timer_loop timer driver update
-                  |> Effect.on_exit (timer_cleanup_after_exit timer))
+                  (timer_loop timer generation driver update
+                  |> Effect.on_exit (timer_cleanup_after_exit timer generation))
               in
               if update_on_start then
                 (update.timer_update timer
                 |> Effect.bind (fun () ->
-                       timer_after_update_state timer
+                       timer_after_update_state timer generation
                        |> Effect.bind (function
                             | `Continue -> start_loop ()
                             | `Stop -> Effect.unit)))
-                |> Effect.on_exit (timer_cleanup_failed_start timer)
+                |> Effect.on_exit (timer_cleanup_failed_start timer generation)
               else start_loop ());
         }
       in
