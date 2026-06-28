@@ -2,25 +2,14 @@
 
 ## Verification
 
+- [ ] nix develop -c dune build @install
 - [ ] nix develop -c dune runtest --force
-- [ ] nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_hardening/run.sh
-- [ ] nix develop -c bash scratch/oxcaml_research/concurrency_model/h3_caveats/run.sh
+- [ ] nix develop -c eta-oxcaml-test-shipped
+- [ ] JS track if applicable: nix develop .#mainline -c dune runtest <target> --force
+- [ ] Benchmarks if performance-sensitive: nix develop -c dune build @bench or nix develop -c bash bench/run.sh --quick
 
-## H3 Invariants
+## Boundary Check
 
-For PRs touching runtime, scheduler, supervisor, stream, or exporter code,
-cite the relevant invariant or write N/A with a reason.
-
-- Inbox ownership:
-- Task identity:
-- Result ordering:
-- Failure ordering:
-- Cancellation:
-- Failure payload:
-- Timeout/clock:
-- Observability:
-- Eio non-leakage:
-- Backpressure:
-- Dispatch under skew:
-- Random/jitter:
-- Phase 8 transport:
+- [ ] Root `eta` did not gain optional/provider/test/system dependencies.
+- [ ] Optional features live in their `eta_<feature>` package.
+- [ ] Public API changes update both `.ml` and `.mli` files.
