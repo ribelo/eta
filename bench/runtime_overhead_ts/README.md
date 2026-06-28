@@ -85,5 +85,5 @@ so the OCaml-side bench still produces a result file.
   by 100k. The OCaml row times one `runSync` call with a pre-created
   runtime; comparing the two requires that division.
 - Effect v4 (`effect-smol`) is a beta and its perf may shift between
-  releases. The pinned version is recorded in `package.json` and
-  reflected in any committed `bench/results/*.json` snapshot.
+  releases. The pinned version is recorded in `package.json` and reflected
+  in promoted benchmark evidence snapshots.

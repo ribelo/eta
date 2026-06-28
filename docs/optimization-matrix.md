@@ -1,7 +1,8 @@
 # Package Optimization Matrix
 
 This file tracks which packages have already had an optimization pass. It does
-not record benchmark numbers; benchmark history stays under `bench/results/`.
+not record benchmark numbers; retained benchmark history lives under
+`docs/research/evidence/bench-results/`.
 
 ## Status Key
 

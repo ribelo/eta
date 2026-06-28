@@ -19,6 +19,7 @@ docs/big-picture/
 .motel-data/
 .nema/
 bench/fixtures/cache/*.bin
+bench/results/*.json
 bench/runtime_overhead_ts/node_modules/
 bench/runtime_overhead_zio/.scala-build/
 bench/runtime_overhead_zio/.bsp/

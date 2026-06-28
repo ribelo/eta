@@ -8,10 +8,11 @@ historical effet-otel baseline?
 
 ## Baseline
 
-The benchmark comparison uses `bench/results/eta-otel-encoder-repeat-current.json`
-as the historical encoder baseline. It was recorded on the same machine and
-OxCaml toolchain family before the OS6 cutover work and contains five samples
-for each eta-otel encoder row.
+The benchmark comparison uses
+`docs/research/evidence/bench-results/eta-otel-encoder-repeat-current.json` as
+the historical encoder baseline. It was recorded on the same machine and OxCaml
+toolchain family before the OS6 cutover work and contains five samples for each
+eta-otel encoder row.
 
 ## Evidence
 
@@ -41,8 +42,8 @@ README, opam files, and `dune-project` for:
 effet-otel|Effet_otel|effet_otel|packages/effet-otel
 ```
 
-It excludes historical `journal.md`, `.scratch/`, and committed
-`bench/results/`. Result: no active legacy imports.
+It excludes historical `journal.md`, `.scratch/`, and retained benchmark
+evidence. Result: no active legacy imports.
 
 ## Decision
 

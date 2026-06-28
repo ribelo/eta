@@ -44,7 +44,7 @@ Fixtures:
 - bench/r_t0_linkage/no_otel_eta_only.ml
 - bench/r_t0_linkage/with_otel_linked.ml
 - bench/r_t0_branch_elision/r_t0_branch_elision.ml
-- bench/results/eta-r-t0-paygo-current.json
+- docs/research/evidence/bench-results/eta-r-t0-paygo-current.json
 - .scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/run.sh
 - .scratch/eta_otel_v2/r_t0_transparent_cost/os4_branch_elision/verdict.md
 
