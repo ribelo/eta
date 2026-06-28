@@ -22,6 +22,9 @@ let dynamic_table_size_update capacity =
       "dynamic_table_size_update only supports one-byte HPACK capacities";
   String.make 1 (Char.chr (0x20 lor capacity))
 
+let string_of_codes codes =
+  String.init (List.length codes) (fun i -> Char.chr (List.nth codes i))
+
 let decode_ok decoder block =
   match Eta_http_h2.Hpack.decode_headers_string decoder block with
   | Ok headers -> headers
@@ -91,6 +94,16 @@ let test_hpack_decode_truncated_string_returns_error () =
   let malformed = String.make 1 (Char.chr 0x40) ^ "\003x" in
   match Eta_http_h2.Hpack.decode_headers_string decoder malformed with
   | Ok _ -> Alcotest.fail "truncated string decoded"
+  | Error _ -> ()
+
+let test_hpack_decode_oversized_string_length_returns_error () =
+  let decoder = Eta_http_h2.Hpack.create 4096 in
+  let oversized_name_length =
+    string_of_codes [ 0x7f; 0x80; 0xff; 0xff; 0xff; 0xff; 0xff; 0xff; 0xff; 0x3f ]
+  in
+  let malformed = String.make 1 (Char.chr 0x00) ^ oversized_name_length in
+  match Eta_http_h2.Hpack.decode_headers_string decoder malformed with
+  | Ok _ -> Alcotest.fail "oversized string length decoded"
   | Error _ -> ()
 
 let test_hpack_encoder_handles_large_header_block () =

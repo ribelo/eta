@@ -487,6 +487,8 @@ let () =
             test_hpack_encoder_respects_zero_peer_table_size;
           Alcotest.test_case "truncated string is decode error" `Quick
             test_hpack_decode_truncated_string_returns_error;
+          Alcotest.test_case "oversized string length is decode error" `Quick
+            test_hpack_decode_oversized_string_length_returns_error;
           Alcotest.test_case "encoder handles large header block" `Quick
             test_hpack_encoder_handles_large_header_block;
         ] );

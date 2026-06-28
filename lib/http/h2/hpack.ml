@@ -584,7 +584,11 @@ let[@zero_alloc] [@inline always] decode_int_prefix prefix prefix_bits bytes pos
     while (not !finished) && !pos_ref < bytes_len do
       let b = Char.code (Bytes.unsafe_get bytes !pos_ref) in
       incr pos_ref;
-      j := !j + ((b land 127) lsl !m);
+      let chunk = b land 127 in
+      if !m >= Sys.int_size then raise Exit;
+      let max_chunk = (max_int - !j) lsr !m in
+      if chunk > max_chunk then raise Exit;
+      j := !j + (chunk lsl !m);
       if b land 128 = 0 then begin
         result := !j;
         finished := true
@@ -600,7 +604,7 @@ let decode_string_literal bytes pos_ref =
   incr pos_ref;
   let str_len = decode_int_prefix h 7 bytes pos_ref in
   let huffman = h land 128 <> 0 in
-  if str_len < 0 || !pos_ref + str_len > Bytes.length bytes then raise Exit;
+  if str_len < 0 || str_len > Bytes.length bytes - !pos_ref then raise Exit;
   if huffman then (
     let out = Buffer.create str_len in
     let decoded_len =
