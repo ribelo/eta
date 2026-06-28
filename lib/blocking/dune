@@ -1,6 +1,6 @@
 (library
  (name eta_blocking)
-(public_name eta_blocking)
-(synopsis "Native blocking worker pools for Eta")
+ (public_name eta_blocking)
+ (synopsis "Native blocking worker pools for Eta")
  (private_modules blocking_runtime)
-(libraries eta))
+ (libraries eta))
