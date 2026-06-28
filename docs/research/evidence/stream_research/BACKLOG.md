@@ -12,8 +12,8 @@ tracing.
 
 ### Design
 
-Use the V-S decisions in `journal.md` and the contract in
-`scratch/stream_research/STUB_stream.mli`.
+Use the V-S decisions in `journal.md` and the summarized contract in
+`docs/research/evidence/stream_research/README.md`.
 
 - Stream is the public core GADT.
 - Sink is a fold/effectful-fold record.
@@ -27,7 +27,8 @@ Use the V-S decisions in `journal.md` and the contract in
 ### Acceptance Criteria
 
 - `packages/effet-stream/` builds as public package `effet-stream`.
-- Public `.mli` matches `scratch/stream_research/STUB_stream.mli` unless the
+- Public `.mli` matches the summarized contract in
+  `docs/research/evidence/stream_research/README.md` unless the
   implementation session records a new V-S revision in `journal.md`.
 - Tests include the curated Effect-TS Stream/Sink slice named in the journal.
 - `nix develop -c dune runtest --force` passes.

@@ -42,7 +42,6 @@ Read and explicitly supersede or reaffirm:
 - `docs/research/journal.md`, section `effet-stream design - Stream / Sink / Channel`
   around V-S1..V-S10.
 - `docs/research/evidence/stream_research/README.md`
-- `docs/research/evidence/stream_research/STUB_stream.mli`
 - `docs/research/evidence/stream_research/BACKLOG.md`
 - current `lib/stream/eta_stream.mli`
 - current `lib/stream/eta_stream.ml`
@@ -63,18 +62,19 @@ Use the evidence-based-coding workflow. Keep the hypothesis space alive until
 fixtures close it. Do not reject a candidate because it is harder to prove,
 unfamiliar, more ZIO-like, or broader than the current design.
 
-Create a bounded lab under:
+Create a bounded lab under local scratch:
 
 ```text
-docs/research/evidence/stream-core-reopen/
+.scratch/evidence/stream-core-reopen/
 ```
 
-At minimum include:
+Keep only durable markdown conclusions under
+`docs/research/evidence/stream-core-reopen/`. At minimum include:
 
 - `README.md` describing the question and proof obligations.
 - `candidates.md` with a hypothesis ledger.
-- runnable OCaml fixtures/probes for serious candidates.
-- negative fixtures for claimed invariants.
+- runnable OCaml fixtures/probes for serious candidates in `.scratch`.
+- negative fixtures for claimed invariants in `.scratch`.
 - `verdict.md` with numbered decisions that supersede or reaffirm V-S1..V-S10.
 
 ## Candidate Space

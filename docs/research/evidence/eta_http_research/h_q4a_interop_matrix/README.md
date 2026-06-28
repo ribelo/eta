@@ -9,16 +9,17 @@ implementations: curl, nghttp2/nghttpd, nginx, and Caddy.
 
 ## Harness
 
-scripts/run_matrix.sh starts local nginx, Caddy, and nghttpd instances from
-the Nix dev shell, generates a temporary self-signed certificate, creates a
-sparse 100MB body fixture, and runs curl, nghttp2, and eta-http probes against
-the servers.
+The historical `scripts/run_matrix.sh` lab starts local nginx, Caddy, and
+nghttpd instances from the Nix dev shell, generates a temporary self-signed
+certificate, creates a sparse 100MB body fixture, and runs curl, nghttp2, and
+eta-http probes against the servers.
 
-The script writes results.tsv and results.md.
+The script writes raw `results.tsv` under local `.scratch`; the durable tracked
+summary is `results.md`.
 
 ## Reproduce
 
-    nix develop -c bash scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_matrix.sh
+    nix develop -c bash .scratch/eta_http_research/h_q4a_interop_matrix/scripts/run_matrix.sh
 
 The Nix shell supplies curl, nghttp2/nghttpd, nginx, Caddy, and OpenSSL through
 flake.nix.

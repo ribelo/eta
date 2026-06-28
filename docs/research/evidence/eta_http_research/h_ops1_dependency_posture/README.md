@@ -50,5 +50,5 @@ tracked upgrade plan.
 nix develop -c opam show --just-file --field=name,depends,license: ./eta.opam
 nix develop -c opam list --installed --columns=name,version,license:
 nix develop -c bash packages/eta-http/audit/run.sh
-nix develop -c curl -sS --max-time 30 -H 'Content-Type: application/json' --data @scratch/eta_http_research/h_ops1_dependency_posture/osv-query.json https://api.osv.dev/v1/querybatch
+nix develop -c curl -sS --max-time 30 -H 'Content-Type: application/json' --data @.scratch/eta_http_research/h_ops1_dependency_posture/osv-query.json https://api.osv.dev/v1/querybatch
 ```

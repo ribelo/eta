@@ -31,7 +31,7 @@ Command:
 ```sh
 nix develop -c curl -sS --max-time 30 \
   -H 'Content-Type: application/json' \
-  --data @scratch/eta_http_research/h_ops1_dependency_posture/osv-query.json \
+  --data @.scratch/eta_http_research/h_ops1_dependency_posture/osv-query.json \
   https://api.osv.dev/v1/querybatch
 ```
 
