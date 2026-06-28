@@ -296,6 +296,7 @@
   eta
   eta_blocking
   eta_sql_driver
+  eta_sql_dsl
   conf-pkg-config
   conf-sqlite3))
 
