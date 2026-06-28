@@ -3,7 +3,7 @@
  (libraries eta_eio bench_lib eta eta_http eta_http_eio eta_http_tls_openssl eio_main))
 
 (rule
- (alias legacy_bench)
+ (alias tls-openssl-bench)
  (action
   (setenv EIO_BACKEND posix
    (run ./tls_openssl.exe --quick))))

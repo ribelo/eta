@@ -34,7 +34,8 @@ let metric_chain n =
              Effect.metric_update ~name:"bench.metric"
                ~description:"bench" ~unit_:"1"
                ~attrs:[ ("phase", "bench") ]
-               ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1))
+               ~kind:(Capabilities.Counter { monotonic = true })
+               (Capabilities.Number (Capabilities.Int 1)))
            acc)
   in
   go n Effect.unit
@@ -111,9 +112,9 @@ let point i : Eta.Meter.point =
     name = "bench.metric";
     description = "bench";
     unit_ = "1";
-    kind = Capabilities.Counter_monotonic;
+    kind = Capabilities.Counter { monotonic = true };
     attrs = [ ("route", "/bench") ];
-    value = Capabilities.Int 1;
+    value = Capabilities.Number (Capabilities.Int 1);
     ts_ms = i;
   }
 

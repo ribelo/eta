@@ -1,9 +1,0 @@
-(executable
- (name runtime_schema)
- (libraries eta_eio bench_lib eta eta_schema eio_main))
-
-(rule
- (alias legacy_bench)
- (action
-  (setenv EIO_BACKEND posix
-   (run ./runtime_schema.exe --quick))))

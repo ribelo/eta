@@ -53,8 +53,20 @@ run_runtime() {
   "$exe" "${args[@]}" >> "$tmp"
 }
 
+run_json_script() {
+  script="$1"
+  args=()
+  if [ "$quick" = true ]; then args+=("--quick"); fi
+  if [ -n "$filter" ]; then args+=("--filter" "$filter"); fi
+  "$script" "${args[@]}" >> "$tmp"
+}
+
 build_targets=(
   lib/eta/bench/bench_eta.exe
+  bench/runtime_concurrency/runtime_concurrency.exe
+  bench/runtime_overhead/runtime_overhead.exe
+  bench/runtime_real/runtime_real.exe
+  bench/runtime_observability/runtime_observability.exe
   lib/signal/bench/bench_signal.exe
   lib/stream/bench/bench_stream.exe
   lib/schema/bench/bench_schema.exe
@@ -81,6 +93,11 @@ for target in "${build_targets[@]}"; do
 done
 
 run_runtime _build/default/lib/eta/bench/bench_eta.exe
+run_runtime _build/default/bench/runtime_concurrency/runtime_concurrency.exe
+run_runtime _build/default/bench/runtime_overhead/runtime_overhead.exe
+run_runtime _build/default/bench/runtime_real/runtime_real.exe
+run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
+run_json_script bench/runtime_overhead_ts/run.sh
 run_runtime _build/default/lib/signal/bench/bench_signal.exe
 run_runtime _build/default/lib/stream/bench/bench_stream.exe
 run_runtime _build/default/lib/schema/bench/bench_schema.exe

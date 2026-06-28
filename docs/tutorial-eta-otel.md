@@ -17,7 +17,8 @@ let work =
      let* () = Effect.log "handling request" in
      let* () =
        Effect.metric_update ~name:"requests.total"
-         ~kind:Capabilities.Counter_monotonic (Capabilities.Int 1)
+         ~kind:(Capabilities.Counter { monotonic = true })
+         (Capabilities.Number (Capabilities.Int 1))
      in
      Effect.pure "ok")
 

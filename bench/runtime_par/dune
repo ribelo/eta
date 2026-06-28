@@ -3,6 +3,6 @@
  (libraries eta_par unix))
 
 (rule
- (alias legacy_bench)
+ (alias bench)
  (action
   (run ./runtime_par.exe --quick)))
