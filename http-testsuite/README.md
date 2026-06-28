@@ -106,4 +106,3 @@ h2 adversarial fixtures use TLS with ALPN `h2` negotiation so that `eta_http` ex
 - `@http-bench` is intentionally quick: it covers small/medium GET and POST body paths. The 100 MiB download correctness case remains in `@interop`; concurrent h2 stress is not part of the default bench alias.
 - Stock nginx does not include the `echo` module, so `/echo` and `/reflect` endpoints return an empty body with status 200. Both `eta_http` and `curl` receive the same empty response, so differential testing still passes, but true body echo is only verified against Caddy.
 - Server configs are embedded as OCaml strings in `lib/nginx.ml` and `lib/caddy.ml` and rendered to a per-run temp directory. No checked-in template files are used.
-- `config/` exists as a directory for future expansion but is empty in v1.

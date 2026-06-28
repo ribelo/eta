@@ -5,7 +5,6 @@
 (rule
  (alias interop)
  (deps
-  (source_tree ../../lib)
-  (source_tree ../../config))
+  (source_tree ../../lib))
  (action
   (run %{dep:run.exe})))
