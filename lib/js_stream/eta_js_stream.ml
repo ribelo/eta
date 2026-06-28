@@ -187,12 +187,12 @@ module Stream = struct
             (function
               | Done ->
                   if !buffer <> [] then begin
-                    let group = List.rev !buffer in
+                    let group = !buffer in
                     buffer := [];
                     Eta_js.Effect.pure (Chunk [ group ])
                   end else Eta_js.Effect.pure Done
               | Chunk xs ->
-                  buffer := List.rev_append (List.rev xs) !buffer;
+                  buffer := !buffer @ xs;
                   emit_or_fill ()
               | Error cause -> Eta_js.Effect.pure (Error cause))
             (source ())

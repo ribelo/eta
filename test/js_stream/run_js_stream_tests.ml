@@ -81,6 +81,28 @@ let tests =
            in
            fail "stream_grouped" ("expected [[1;2];[3;4];[5]], got [" ^ s ^ "]")
        | _ -> fail "stream_grouped" "expected ok"));
+    ("stream_grouped_preserves_order_across_chunks",
+     fun done_ ->
+       let runtime = Runtime.create () in
+       let stream =
+         Stream.concat (Stream.from_iterable [ 1; 2; 3 ])
+           (Stream.from_iterable [ 4; 5 ])
+         |> Stream.grouped 2
+       in
+       run_stream runtime stream done_ (function
+       | Exit.Ok [ [ 1; 2 ]; [ 3; 4 ]; [ 5 ] ] -> ()
+       | Exit.Ok actual ->
+           let s =
+             String.concat ";"
+               (List.map
+                  (fun l ->
+                    "[" ^ String.concat ";" (List.map string_of_int l) ^ "]")
+                  actual)
+           in
+           fail "stream_grouped_preserves_order_across_chunks"
+             ("expected [[1;2];[3;4];[5]], got [" ^ s ^ "]")
+       | _ ->
+           fail "stream_grouped_preserves_order_across_chunks" "expected ok"));
     ("stream_flat_map",
      fun done_ ->
        let runtime = Runtime.create () in
