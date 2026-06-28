@@ -1061,6 +1061,36 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_invalidated_var_watchers_detach_from_sources () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then Signal.Var.watch left else Signal.Var.watch right)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial left branch" 10
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "switched to right branch" 20
+    (run_ok rt (Signal.Observer.read observer));
+  let before_inactive_set = run_ok rt (Signal.stats ()) in
+  run_ok rt (Signal.Var.set left 11);
+  run_ok rt Signal.stabilize;
+  let after_inactive_set = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "inactive source set does not stale invalidated watchers"
+    before_inactive_set.Signal.stale_node_count
+    after_inactive_set.Signal.stale_node_count;
+  Alcotest.(check int) "inactive source set keeps selected value" 20
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_invalidated_bind_rhs_cannot_be_observed () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -3432,6 +3462,8 @@ let () =
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
+          Alcotest.test_case "bind invalidated var watchers detach" `Quick
+            test_bind_invalidated_var_watchers_detach_from_sources;
           Alcotest.test_case "invalidated bind rhs cannot be observed" `Quick
             test_invalidated_bind_rhs_cannot_be_observed;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick

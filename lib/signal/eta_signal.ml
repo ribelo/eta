@@ -467,6 +467,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let mark_self_dirty (P signal) = signal.dirty <- true
 
+  let remove_var_watcher source signal =
+    source.watchers <-
+      List.filter
+        (fun (P candidate) -> candidate.id <> signal.id)
+        source.watchers
+
   let remember_staged_var (V var as packed) =
     let generation = current_generation () in
     if var.staged_var_generation <> generation then (
@@ -587,12 +593,13 @@ module Make (Observer_error : Observer_error) () = struct
       signal.dependencies <- [];
       List.iter mark_self_dirty signal.dependents;
       match signal.kind with
+      | Var source -> remove_var_watcher source signal
       | Bind bind -> (
           match bind.inner_scope with
           | None -> ()
           | Some scope -> invalidate_scope scope)
-      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-      | Map7 _ | Map8 _ | Map9 _ | All _ ->
+      | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
+      | Map8 _ | Map9 _ | All _ ->
           ())
 
   let make_bind ?equal source selector =
