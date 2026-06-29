@@ -1933,17 +1933,35 @@ module Make (Observer_error : Observer_error) () = struct
     let advance_due next_due_ms interval_ms missed =
       add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
 
-    let rec run_timer_updates timer generation remaining update =
-      if remaining <= 0 then Effect.unit
+    let timer_catch_up_batch_size = 64
+
+    let rec run_timer_update_batch timer generation remaining update =
+      if remaining <= 0 then Effect.pure `Continue
       else
         timer_after_update_state timer generation
         |> Effect.bind (function
-             | `Stop -> Effect.unit
+             | `Stop -> Effect.pure `Stop
              | `Continue ->
                  Effect.sync (fun () -> update.timer_update timer generation)
                  |> Effect.bind (fun update_eff -> update_eff)
                  |> Effect.bind (fun () ->
-                        run_timer_updates timer generation (remaining - 1) update))
+                        run_timer_update_batch timer generation (remaining - 1)
+                          update))
+
+    let rec run_timer_updates timer generation remaining update =
+      if remaining <= 0 then Effect.unit
+      else
+        let batch = min remaining timer_catch_up_batch_size in
+        run_timer_update_batch timer generation batch update
+        |> Effect.bind (function
+             | `Stop -> Effect.unit
+             | `Continue ->
+                 let remaining = remaining - batch in
+                 if remaining <= 0 then Effect.unit
+                 else
+                   Effect.yield
+                   |> Effect.bind (fun () ->
+                          run_timer_updates timer generation remaining update))
 
     let rec timer_loop timer generation interval_ms next_due_ms update =
       Effect.now

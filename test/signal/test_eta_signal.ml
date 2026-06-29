@@ -3652,6 +3652,90 @@ let test_time_step_catches_up_after_late_sleep () =
   run_ok rt (Signal.Observer.dispose observer);
   release ()
 
+let with_cooperative_timer_host f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_ms = ref 0 in
+  let sleep_calls = ref 0 in
+  let yield_calls = ref 0 in
+  let module Unix = struct
+    let run_in_systhread ?label:_ f = f ()
+  end in
+  let module Eio_ops = struct
+    module Time = struct
+      let now _clock = float_of_int !now_ms /. 1000.0
+
+      let sleep _clock _seconds =
+        incr sleep_calls;
+        if !sleep_calls = 1 then now_ms := 10_000
+        else raise (Eio.Cancel.Cancelled (Failure "timer catch-up test stop"))
+    end
+
+    module Net = struct
+      let getaddrinfo_stream ?service:_ _net _host = []
+      let connect ~sw:_ _net _addr = failwith "unused net connect"
+    end
+
+    module Flow = struct
+      let single_read _source _buffer = failwith "unused flow read"
+      let write _sink _buffers = failwith "unused flow write"
+    end
+
+    module Switch = struct
+      let run = Eio.Switch.run
+      let fail = Eio.Switch.fail
+    end
+
+    module Fiber = struct
+      let get = Eio.Fiber.get
+      let with_binding = Eio.Fiber.with_binding
+      let first = Eio.Fiber.first
+      let await_cancel = Eio.Fiber.await_cancel
+      let fork = Eio.Fiber.fork
+      let fork_daemon = Eio.Fiber.fork_daemon
+
+      let yield () =
+        incr yield_calls;
+        Eio.Fiber.yield ()
+
+      let check = Eio.Fiber.check
+    end
+
+    module Stream = struct
+      type 'a t = 'a Eio.Stream.t
+
+      let create = Eio.Stream.create
+      let add = Eio.Stream.add
+      let take = Eio.Stream.take
+      let take_nonblocking = Eio.Stream.take_nonblocking
+    end
+
+    module Cancel = struct
+      let sub = Eio.Cancel.sub
+      let cancel = Eio.Cancel.cancel
+    end
+  end in
+  let host =
+    Eta_eio.Host.make ~unix:(module Unix) ~eio:(module Eio_ops) ()
+  in
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env) @@ fun rt ->
+  f rt sleep_calls yield_calls
+
+let test_time_catch_up_yields_between_batches () =
+  with_cooperative_timer_host @@ fun rt sleep_calls yield_calls ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "catch-up timer attempted next sleep" (fun () -> !sleep_calls >= 2);
+  Alcotest.(check bool)
+    "large catch-up yielded cooperatively" true
+    (!yield_calls > 0);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "catch-up still applies every cadence" 1_000
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -4628,6 +4712,8 @@ let () =
             test_time_interval_catches_up_after_late_sleep;
           Alcotest.test_case "time step catches up after late sleep" `Quick
             test_time_step_catches_up_after_late_sleep;
+          Alcotest.test_case "time catch-up yields between batches" `Quick
+            test_time_catch_up_yields_between_batches;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick

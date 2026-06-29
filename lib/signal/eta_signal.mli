@@ -301,7 +301,8 @@ module Make (Observer_error : Observer_error) () : sig
         stabilization. When a clock jump wakes several elapsed cadences under
         the runtime clock, interval and step nodes apply one source update per
         awakened cadence before the next stabilization observes the final
-        source value. *)
+        source value. Large catch-up runs yield cooperatively between internal
+        batches. *)
 
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
