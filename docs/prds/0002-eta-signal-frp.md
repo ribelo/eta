@@ -441,7 +441,9 @@ This means slow or abandoned stream consumers can miss updates without blocking
 other observers or graph progress.
 Disposing the returned observer closes the stream after buffered updates drain.
 Stopping, taking from, or abandoning the stream early does not dispose the
-observer; the returned observer remains the lifecycle owner.
+observer; the returned observer remains the lifecycle owner. The returned
+stream is backed by Eta's same-domain queue and must be consumed on the graph
+owner domain.
 
 The target does not include a stream-to-signal bridge in the kernel. Converting
 an arbitrary stream into a signal requires policy choices for initial value,
@@ -559,6 +561,8 @@ invalidation, heights, scopes, or observer scheduling.
   stabilization are the batch.
 - Graph mutation, lifecycle changes, timer updates, and stabilization are
   serialized per graph while observer-handle reads do not mutate the graph.
+- Signal graph instances and streams returned by `Stream.observe` are
+  same-domain resources; they are not portable cross-domain handoff channels.
 - Raw derived signals have no public value read; initialized observer handles
   are the derived value-read surface.
 - Interruption of queued or active graph-lane work cleans up without leaving
@@ -714,6 +718,7 @@ PRD contract:
 - `Stream.observe ?capacity` returns the observer lifecycle handle and stream,
   defaults capacity to 1024, drops newest stream updates when its bounded queue
   is full, closes on observer disposal after buffered updates drain, and does
-  not dispose the observer when consumers stop early.
+  not dispose the observer when consumers stop early. The returned stream
+  inherits the graph's same-domain restriction.
 
 No unresolved implementation audit notes remain.

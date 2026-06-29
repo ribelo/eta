@@ -81,6 +81,8 @@ let () =
         ] );
       ( "Queue",
         [
+          Alcotest.test_case "rejects cross-domain use" `Quick
+            test_queue_rejects_cross_domain_use;
           Alcotest.test_case "resolves sender outside lock" `Quick
             test_queue_resolves_sender_outside_lock;
         ] );

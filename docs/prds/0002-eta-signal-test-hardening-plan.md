@@ -58,7 +58,7 @@ few accepted decisions.
 | T25 | Bind churn | Add rapid non-time bind switching across A/B/C branches over many stabilizations; inactive branches do not recompute/emit, reactivated branches use latest source once, and scope/demand stats move plausibly. | High | Dynamic dependency churn |
 | T26 | Stream overflow progress | Fill a `Stream.observe ~capacity:1` bridge queue, verify stabilization and later observers still progress, dropped bridge updates do not hold the graph lane, and disposal still drains buffered updates before closing. | Medium-high | Eta progress plus stream bridge |
 | T27 | Timer startup/shutdown race | If deterministic without test-only hooks, cover timer becoming necessary then losing demand around daemon startup so no sleeper/daemon leaks and re-observation starts exactly one timer. Otherwise keep as lower-priority stress. | Medium | Eta timer daemon lifecycle |
-| T28 | Public docs | Update `.mli` docs for public semantic guarantees hardened by tests: explicit stabilization, observer handle role, physical equality, bind invalid scope, observer phase semantics, stream ownership/overflow, and timer demand ownership. | Medium | Consumer-facing contract |
+| T28 | Public docs | Update `.mli` docs for public semantic guarantees hardened by tests: explicit stabilization, observer handle role, physical equality, bind invalid scope, observer phase semantics, stream ownership/domain/overflow, and timer demand ownership. | Medium | Consumer-facing contract |
 | T29 | Build-checked examples | Add tiny build-checked examples for explicit stabilization with derived state and for timer or stream bridge lifecycle/disposal. Use them as API smoke tests, not tutorials. | Low-medium | API usability |
 
 ## Explicit Non-Ports

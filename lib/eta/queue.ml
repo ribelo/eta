@@ -22,6 +22,7 @@ type ('a, 'err) sender = {
 }
 
 type ('a, 'err) t = {
+  owner_domain : Domain.id;
   mutex : Sync_lock.t;
   overflow : overflow;
   values : 'a Stdlib.Queue.t;
@@ -65,6 +66,7 @@ let validate_overflow = function
 let create ?(overflow = Unbounded) () =
   validate_overflow overflow;
   {
+    owner_domain = Domain.self ();
     mutex = Sync_lock.create ();
     overflow;
     values = Stdlib.Queue.create ();
@@ -82,7 +84,14 @@ let create ?(overflow = Unbounded) () =
 
 let unbounded () = create ~overflow:Unbounded ()
 
+let context_error_message =
+  "Eta.Queue: queue APIs must be called on the domain that created the queue"
+
+let ensure_owner_domain t =
+  if Domain.self () <> t.owner_domain then invalid_arg context_error_message
+
 let with_lock (t : ('a, 'err) t) f =
+  ensure_owner_domain t;
   Sync_lock.use t.mutex f
 
 let with_lock_during_cancel contract t f =
@@ -453,7 +462,7 @@ let close_with_error_effect t error =
   Effect.sync (fun () -> close_with_error t error)
 
 let stats t =
-  Sync_lock.use t.mutex @@ fun () ->
+  with_lock t @@ fun () ->
   {
     depth = Stdlib.Queue.length t.values;
     sent = t.sent;

@@ -86,6 +86,31 @@ let with_reentry_alarm f =
       Sys.Safe.set_signal Sys.sigalrm previous)
     f
 
+let run_in_domain f =
+  let domain =
+    (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      f
+  in
+  Domain.join domain
+
+let test_queue_rejects_cross_domain_use () =
+  let queue = Queue.create () in
+  match
+    run_in_domain @@ fun () ->
+    try Ok (ignore (Queue.stats queue : Queue.stats))
+    with
+    | Invalid_argument message -> Error message
+    | exn ->
+        Alcotest.failf "expected Invalid_argument, got %s"
+          (Printexc.to_string exn)
+  with
+  | Error message ->
+      Alcotest.(check string)
+        "cross-domain queue failure"
+        "Eta.Queue: queue APIs must be called on the domain that created the queue"
+        message
+  | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
+
 let test_queue_resolves_sender_outside_lock () =
   let rt = Test_runtime.create () in
   let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in

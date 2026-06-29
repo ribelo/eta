@@ -266,7 +266,9 @@ module Make (Observer_error : Observer_error) () : sig
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers
         such as {!Eta_stream.Stream.take} do not dispose the observer; the
-        returned observer remains the lifecycle handle.
+        returned observer remains the lifecycle handle. The returned stream is
+        part of the same graph-domain contract and must be consumed on the
+        graph owner domain.
 
         Fails with [`Invalid_capacity] when [capacity <= 0]. *)
   end

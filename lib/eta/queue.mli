@@ -3,7 +3,10 @@
     Queue is an Eta-owned producer/consumer primitive for handoff between
     fibers. It owns the close fence: after [close] or [close_with_error], future
     offers are rejected and already buffered values remain drainable before
-    receivers observe the close reason. *)
+    receivers observe the close reason.
+
+    Create and use each queue on one domain. Queue APIs raise
+    [Invalid_argument] when called from a different domain. *)
 
 type ('a, 'err) t
 
