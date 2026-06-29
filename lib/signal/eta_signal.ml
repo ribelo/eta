@@ -366,7 +366,11 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_cancelled;
         lane.lane_cancelled <- lane.lane_cancelled + 1;
         release_lane_locked lane
-    | Lane_claimed | Lane_cancelled -> ()
+    | Lane_claimed ->
+        waiter.lane_state <- Lane_cancelled;
+        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        release_lane_locked lane
+    | Lane_cancelled -> ()
 
   let claim_lane_waiter_locked waiter =
     match waiter.lane_state with
@@ -412,23 +416,36 @@ module Make (Observer_error : Observer_error) () = struct
   let leave_lane_sync lane =
     with_lane_lock lane @@ fun () -> release_lane_locked lane
 
-  let enter_graph_lane () =
-    Effect.Expert.make ~leaf_name:"Eta_signal.enter_graph_lane" (fun context ->
-        let contract = Effect.Expert.contract context in
-        try
-          enter_lane_sync contract graph.lane;
-          Eta.Exit.Ok ()
-        with exn
-          when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-          raise exn)
+  let release_graph_lane_sync owns_lane =
+    if !owns_lane then (
+      owns_lane := false;
+      leave_lane_sync graph.lane)
 
-  let leave_graph_lane () =
-    Effect.sync (fun () -> leave_lane_sync graph.lane)
+  let release_graph_lane owns_lane =
+    Effect.sync (fun () -> release_graph_lane_sync owns_lane)
 
   let with_graph_lane eff =
-    enter_graph_lane ()
-    |> Effect.bind (fun () ->
-           eff |> Effect.on_exit (fun _exit -> leave_graph_lane ()))
+    Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane" (fun context ->
+        let contract = Effect.Expert.contract context in
+        let owns_lane = ref false in
+        let release_after_interrupt () =
+          contract.Runtime_contract.protect (fun () ->
+              release_graph_lane_sync owns_lane)
+        in
+        try
+          enter_lane_sync contract graph.lane;
+          owns_lane := true;
+          Effect.Expert.eval context
+            (eff |> Effect.on_exit (fun _exit -> release_graph_lane owns_lane))
+        with
+        | exn
+          when Option.is_some
+                 (contract.Runtime_contract.cancellation_reason exn) ->
+            release_after_interrupt ();
+            raise exn
+        | exn ->
+            release_after_interrupt ();
+            Effect.Expert.exit_of_exn context exn)
 
   let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
 
