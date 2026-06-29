@@ -1,7 +1,13 @@
 (** Incremental-style reactive signals for Eta.
 
     Each functor application owns one graph. Signals describe graph structure;
-    observer handles are the public read surface for stabilized derived values. *)
+    observer handles are the public read surface for stabilized derived values.
+
+    A graph is single-domain: create and use all vars, signals, observers, and
+    stabilization effects from the domain that applied the functor. The graph
+    lane serializes Eta fibers on that domain; it is not a multi-domain mutex.
+    Signal APIs raise [Invalid_argument] when called from another domain or
+    from a runtime worker callback. *)
 
 module type Observer_error = sig
   type t

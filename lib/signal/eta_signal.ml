@@ -267,6 +267,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type graph = {
     lane : lane;
+    owner_domain : Domain.id;
     mutable next_id : int;
     mutable next_scope_id : int;
     mutable phase : phase;
@@ -299,6 +300,7 @@ module Make (Observer_error : Observer_error) () = struct
           lane_waiting = 0;
           lane_cancelled = 0;
         };
+      owner_domain = Domain.self ();
       next_id = 0;
       next_scope_id = 1;
       phase = Not_stabilizing;
@@ -318,6 +320,16 @@ module Make (Observer_error : Observer_error) () = struct
       nodes_became_unnecessary = 0;
       necessary_node_ids = Hashtbl.create 16;
     }
+
+  let graph_context_error_message =
+    "Eta_signal: signal graph APIs must be called on the domain that created "
+    ^ "the graph and not from runtime worker callbacks"
+
+  let ensure_graph_context () =
+    if
+      Domain.self () <> graph.owner_domain
+      || Runtime_contract.in_registered_worker_context ()
+    then invalid_arg graph_context_error_message
 
   let with_lane_lock lane f = Sync_lock.use lane.lane_lock f
 
@@ -433,6 +445,7 @@ module Make (Observer_error : Observer_error) () = struct
               release_graph_lane_sync owns_lane)
         in
         try
+          ensure_graph_context ();
           enter_lane_sync contract graph.lane;
           owns_lane := true;
           Effect.Expert.eval context
@@ -450,6 +463,7 @@ module Make (Observer_error : Observer_error) () = struct
   let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
 
   let next_id () =
+    ensure_graph_context ();
     let id = graph.next_id in
     graph.next_id <- id + 1;
     id
@@ -591,6 +605,7 @@ module Make (Observer_error : Observer_error) () = struct
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
+    ensure_graph_context ();
     List.iter validate_dependency dependencies;
     let scope = signal_scope () in
     let signal =
@@ -1213,7 +1228,9 @@ module Make (Observer_error : Observer_error) () = struct
         watchers = [];
       }
 
-    let value (source : 'a t) = source.source_value
+    let value (source : 'a t) =
+      ensure_graph_context ();
+      source.source_value
 
     let watch (source : 'a t) =
       let signal = new_signal (Var source) [] in
@@ -1301,6 +1318,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let read observer =
       Effect.sync (fun () ->
+          ensure_graph_context ();
           if observer.obs_disposed then Error `Disposed_observer
           else
             match observer.obs_current with
@@ -1312,6 +1330,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
+      ensure_graph_context ();
       if observer.obs_disposed then invalid_arg "Eta_signal observer is disposed";
       match observer.obs_current with
       | Some value -> value
