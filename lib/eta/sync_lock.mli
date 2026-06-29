@@ -9,5 +9,11 @@ type t
 
 val create : unit -> t
 val lock : t -> unit
+(** Acquire [t]. Raises [Invalid_argument] if the current domain already owns
+    [t]. *)
+
 val unlock : t -> unit
+(** Release [t]. Raises [Invalid_argument] when called by a non-owner or when
+    [t] is not locked. *)
+
 val use : t -> (unit -> 'a) -> 'a

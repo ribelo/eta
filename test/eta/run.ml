@@ -6,6 +6,7 @@ open Test_eta_blocking
 open Test_eta_supervisor
 open Test_eta_channel
 open Test_eta_queue
+open Test_eta_sync_lock
 open Test_eta_observability
 
 let () =
@@ -87,6 +88,11 @@ let () =
             test_queue_resolves_sender_outside_lock;
           Alcotest.test_case "stats counters saturate" `Quick
             test_queue_stats_counters_saturate;
+        ] );
+      ( "Sync_lock",
+        [
+          Alcotest.test_case "reentrant use fails fast" `Quick
+            test_sync_lock_reentrant_use_fails_fast;
         ] );
       ( "Observability",
         [
