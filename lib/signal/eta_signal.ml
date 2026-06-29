@@ -215,6 +215,10 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_current : 'a option;
     mutable obs_staged_current : 'a option;
     mutable obs_initialized : bool;
+    mutable obs_delivered_current : 'a option;
+    mutable obs_staged_delivered_current : 'a option;
+    mutable obs_delivered_initialized : bool;
+    mutable obs_delivery_pending : bool;
     mutable obs_failed_without_current : bool;
     mutable obs_disposed : bool;
     mutable obs_staged_generation : int;
@@ -525,6 +529,10 @@ module Make (Observer_error : Observer_error) () = struct
     remember_staged_observer (O observer);
     observer.obs_staged_current <- Some value
 
+  let stage_observer_delivered_current observer value =
+    remember_staged_observer (O observer);
+    observer.obs_staged_delivered_current <- Some value
+
   let signal_scope () =
     match graph.phase with
     | Not_stabilizing -> graph.current_scope
@@ -711,11 +719,19 @@ module Make (Observer_error : Observer_error) () = struct
            observer.obs_current <- Some value;
            observer.obs_failed_without_current <- false;
            observer.obs_initialized <- true);
-      observer.obs_staged_current <- None)
+      (match observer.obs_staged_delivered_current with
+       | None -> ()
+       | Some value ->
+           observer.obs_delivered_current <- Some value;
+           observer.obs_delivered_initialized <- true;
+           observer.obs_delivery_pending <- false);
+      observer.obs_staged_current <- None;
+      observer.obs_staged_delivered_current <- None)
 
   let rollback_observer (O observer) =
-    if observer.obs_staged_generation = current_generation () then
-      observer.obs_staged_current <- None
+    if observer.obs_staged_generation = current_generation () then (
+      observer.obs_staged_current <- None;
+      observer.obs_staged_delivered_current <- None)
 
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
@@ -1043,17 +1059,32 @@ module Make (Observer_error : Observer_error) () = struct
     else (
       let value, changed = compute observer.obs_signal in
       let event =
-        if not observer.obs_initialized then Some (Initialized value)
+        if not observer.obs_delivered_initialized then Some (Initialized value)
         else
-          match observer.obs_current with
+          match observer.obs_delivered_current with
           | None -> Some (Initialized value)
           | Some old_value ->
-              if changed && not (observer.obs_equal old_value value) then
-                Some (Changed { old_value; new_value = value })
+              if changed || observer.obs_delivery_pending then
+                if observer.obs_equal old_value value then (
+                  stage_observer_delivered_current observer value;
+                  None)
+                else Some (Changed { old_value; new_value = value })
               else None
       in
       stage_observer_current observer value;
       Option.map (fun update -> E (observer, update)) event)
+
+  let mark_event_pending (E (observer, _)) =
+    observer.obs_delivery_pending <- true
+
+  let delivered_value = function
+    | Initialized value -> value
+    | Changed { new_value; _ } -> new_value
+
+  let acknowledge_event_delivery observer update =
+    observer.obs_delivered_current <- Some (delivered_value update);
+    observer.obs_delivered_initialized <- true;
+    observer.obs_delivery_pending <- false
 
   let begin_stabilize () =
     if graph.phase <> Not_stabilizing then Error `Reentrant_stabilization
@@ -1076,6 +1107,7 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter stage_pending_var pending_at_start;
         let events = List.filter_map collect_observer_event observers in
         commit_staging ();
+        List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.phase <- Running_observers;
         Ok events
@@ -1103,7 +1135,9 @@ module Make (Observer_error : Observer_error) () = struct
         | Ok observer_eff ->
             observer_eff
             |> Effect.map_error (fun err -> `Observer_error err)
-            |> Effect.bind (fun () -> run_events rest))
+            |> Effect.bind (fun () ->
+                   acknowledge_event_delivery observer update;
+                   run_events rest))
 
   let stabilize =
     with_graph_lane_sync begin_stabilize
@@ -1185,6 +1219,10 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_current = None;
                 obs_staged_current = None;
                 obs_initialized = false;
+                obs_delivered_current = None;
+                obs_staged_delivered_current = None;
+                obs_delivered_initialized = false;
+                obs_delivery_pending = false;
                 obs_failed_without_current = false;
                 obs_disposed = false;
                 obs_staged_generation = -1;

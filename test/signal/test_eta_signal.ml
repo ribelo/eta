@@ -1852,15 +1852,16 @@ let test_observer_failure_fails_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (function
-         | Initialized _ -> Effect.fail `Observer_failed
-         | Changed _ -> Effect.unit))
-      : int Signal.observer);
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe observed (function
+        | Initialized _ -> Effect.fail `Observer_failed
+        | Changed _ -> Effect.unit))
+  in
   expect_fail "observer failure"
     (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize))
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_typed_failure_retries_after_flag_fixed () =
   with_runtime @@ fun rt ->
@@ -1920,6 +1921,8 @@ let test_observer_failure_is_fail_fast () =
   Alcotest.(check int) "skipped observer snapshot published" 1
     (run_ok rt (Signal.Observer.read later_observer));
   run_ok rt (Signal.Observer.dispose failing_observer);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "skipped observer event retries" true !later_ran;
   run_ok rt (Signal.Observer.dispose later_observer)
 
 let test_observer_registration_and_self_disposal_inside_callback () =
@@ -1971,20 +1974,22 @@ let test_observer_effects_before_later_failure_are_not_rolled_back () =
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
   let effects = ref [] in
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (fun _ ->
-            Effect.sync (fun () -> effects := "first" :: !effects)))
-      : int Signal.observer);
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
-      : int Signal.observer);
+  let first_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           Effect.sync (fun () -> effects := "first" :: !effects)))
+  in
+  let failing_observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
+  in
   expect_fail "later observer failure"
     (function `Observer_error `Observer_failed -> true | _ -> false)
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   Alcotest.(check (list string))
-    "already-run observer effect remains" [ "first" ] (List.rev !effects)
+    "already-run observer effect remains" [ "first" ] (List.rev !effects);
+  run_ok rt (Signal.Observer.dispose first_observer);
+  run_ok rt (Signal.Observer.dispose failing_observer)
 
 let test_observer_callback_construction_defect_does_not_poison_graph () =
   with_runtime @@ fun rt ->
@@ -3478,7 +3483,7 @@ let test_stream_bridge_interrupted_backpressure_releases_lane () =
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
-   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | [ Signal.Changed { old_value = 1; new_value = 3 } ] -> ()
    | _ -> Alcotest.fail "expected later changed stream update");
   run_ok rt (Signal.Observer.dispose observer);
   (match run_ok rt (Eta_stream.run_collect stream) with
