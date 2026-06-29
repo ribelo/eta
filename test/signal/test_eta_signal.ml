@@ -1616,6 +1616,8 @@ let test_bind_branch_churn_releases_inactive_scopes () =
     "branch churn released unnecessary nodes" true
     (after_churn.Signal.nodes_became_unnecessary
      > before_churn.Signal.nodes_became_unnecessary);
+  Alcotest.(check int) "branch churn does not retain invalid nodes"
+    before_churn.Signal.total_node_count after_churn.Signal.total_node_count;
   Alcotest.(check int) "branch churn did not add observers"
     before_churn.Signal.active_observer_count
     after_churn.Signal.active_observer_count;
@@ -2736,6 +2738,9 @@ let test_stats_and_dot_are_read_only () =
     Alcotest.(check int)
       (label ^ " stabilization_count")
       expected.Signal.stabilization_count actual.Signal.stabilization_count;
+    Alcotest.(check int)
+      (label ^ " total_node_count")
+      expected.Signal.total_node_count actual.Signal.total_node_count;
     Alcotest.(check int)
       (label ^ " active_observer_count")
       expected.Signal.active_observer_count actual.Signal.active_observer_count;

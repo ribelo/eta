@@ -37,6 +37,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type stats = {
     stabilization_count : int;
+    total_node_count : int;
     active_observer_count : int;
     necessary_node_count : int;
     stale_node_count : int;
@@ -640,11 +641,17 @@ module Make (Observer_error : Observer_error) () = struct
     signal.initialized <- true;
     signal
 
-  let rec invalidate_scope scope =
+  let prune_invalid_nodes_unlocked () =
+    graph.all_nodes <-
+      List.filter (fun (P signal) -> signal.valid) graph.all_nodes
+
+  let rec invalidate_scope ?(prune = true) scope =
     if scope.scope_valid then (
       scope.scope_valid <- false;
       graph.dynamic_scope_invalidations <- graph.dynamic_scope_invalidations + 1;
-      List.iter invalidate_node scope.scope_nodes)
+      List.iter invalidate_node scope.scope_nodes;
+      scope.scope_nodes <- [];
+      if prune then prune_invalid_nodes_unlocked ())
 
   and invalidate_node (P signal) =
     if signal.valid then (
@@ -668,7 +675,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Bind bind -> (
           match bind.inner_scope with
           | None -> ()
-          | Some scope -> invalidate_scope scope)
+          | Some scope -> invalidate_scope ~prune:false scope)
       | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
       | Map8 _ | Map9 _ | All _ ->
           ())
@@ -1393,6 +1400,7 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync @@ fun () ->
     {
       stabilization_count = graph.stabilization_count;
+      total_node_count = List.length graph.all_nodes;
       active_observer_count = active_observer_count ();
       necessary_node_count = necessary_node_count ();
       stale_node_count = stale_node_count ();

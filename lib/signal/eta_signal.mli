@@ -46,6 +46,7 @@ module Make (Observer_error : Observer_error) () : sig
 
   type stats = {
     stabilization_count : int;
+    total_node_count : int;
     active_observer_count : int;
     necessary_node_count : int;
     stale_node_count : int;
