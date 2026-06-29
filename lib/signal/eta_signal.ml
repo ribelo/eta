@@ -238,11 +238,11 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   and timer_update = {
-    timer_update : 'err. timer_node -> (unit, 'err) Effect.t;
+    timer_update : 'err. timer_node -> int -> (unit, 'err) Effect.t;
   }
 
   and 'a source_timer_update = {
-    source_timer_update : 'err. timer_node -> 'a var -> (unit, 'err) Effect.t;
+    source_timer_update : 'err. timer_node -> int -> 'a var -> (unit, 'err) Effect.t;
   }
 
   type event = E : 'a observer * 'a update -> event
@@ -1533,6 +1533,18 @@ module Make (Observer_error : Observer_error) () = struct
               timer.timer_cancel <- None);
             `Stop))
 
+    let timer_set_source timer generation (source : 'a var) value =
+      with_graph_lane_sync (fun () ->
+          if
+            timer.timer_active
+            && timer.timer_generation = generation
+            && timer.timer_running_generation = Some generation
+          then (
+            source.source_value <- value;
+            Var.queue_var source;
+            `Updated)
+          else `Stopped)
+
     let add_ms_capped left right =
       if right <= 0 then left
       else if left > max_int - right then max_int
@@ -1557,7 +1569,7 @@ module Make (Observer_error : Observer_error) () = struct
         |> Effect.bind (function
              | `Stop -> Effect.unit
              | `Continue ->
-                 Effect.sync (fun () -> update.timer_update timer)
+                 Effect.sync (fun () -> update.timer_update timer generation)
                  |> Effect.bind (fun update_eff -> update_eff)
                  |> Effect.bind (fun () ->
                         run_timer_updates timer generation (remaining - 1) update))
@@ -1609,7 +1621,7 @@ module Make (Observer_error : Observer_error) () = struct
                                  (timer_cleanup_after_exit timer generation))))
               in
               if update_on_start then
-                (update.timer_update timer
+                (update.timer_update timer generation
                 |> Effect.bind (fun () ->
                        timer_after_update_state timer generation
                        |> Effect.bind (function
@@ -1627,7 +1639,11 @@ module Make (Observer_error : Observer_error) () = struct
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
       attach_timer ~update_on_start signal interval
-        { timer_update = (fun timer -> update.source_timer_update timer source) }
+        {
+          timer_update =
+            (fun timer generation ->
+              update.source_timer_update timer generation source);
+        }
 
     let now ~every () =
       Effect.sync (fun () -> validate_interval every)
@@ -1639,9 +1655,11 @@ module Make (Observer_error : Observer_error) () = struct
                       initial every
                       {
                         source_timer_update =
-                          (fun _timer source ->
+                          (fun timer generation source ->
                             Effect.now
-                            |> Effect.bind (fun now_ms -> Var.set source now_ms));
+                            |> Effect.bind (fun now_ms ->
+                                   timer_set_source timer generation source now_ms
+                                   |> Effect.map (fun _ -> ())));
                       }))
 
     let deadline ~every deadline_ms =
@@ -1656,17 +1674,23 @@ module Make (Observer_error : Observer_error) () = struct
                              ~equal:Bool.equal false every
                              {
                                source_timer_update =
-                                 (fun timer source ->
+                                 (fun timer generation source ->
                                    Effect.now
                                    |> Effect.bind (fun now_ms ->
                                           if now_ms >= deadline_ms then
-                                            Var.set source true
-                                            |> Effect.bind (fun () ->
-                                                   with_graph_lane_sync
-                                                     (fun () ->
-                                                       timer_finish_unlocked
-                                                         timer))
-                                          else Var.set source false));
+                                            timer_set_source timer generation
+                                              source true
+                                            |> Effect.bind (function
+                                                 | `Updated ->
+                                                     with_graph_lane_sync
+                                                       (fun () ->
+                                                         timer_finish_unlocked
+                                                           timer)
+                                                 | `Stopped -> Effect.unit)
+                                          else
+                                            timer_set_source timer generation
+                                              source false
+                                            |> Effect.map (fun _ -> ())));
                              })))
 
     let after ~every duration =
@@ -1684,9 +1708,10 @@ module Make (Observer_error : Observer_error) () = struct
              make_timer_signal ~equal:Int.equal 0 interval
                {
                  source_timer_update =
-                   (fun _timer source ->
+                   (fun timer generation source ->
                      let next = Var.value source + 1 in
-                     Var.set source next);
+                     timer_set_source timer generation source next
+                     |> Effect.map (fun _ -> ()));
                })
 
     let step ~every ~initial f =
@@ -1696,9 +1721,10 @@ module Make (Observer_error : Observer_error) () = struct
              make_timer_signal initial every
                {
                  source_timer_update =
-                   (fun _timer source ->
+                   (fun timer generation source ->
                      let next = f (Var.value source) in
-                     Var.set source next);
+                     timer_set_source timer generation source next
+                     |> Effect.map (fun _ -> ()));
                })
   end
 

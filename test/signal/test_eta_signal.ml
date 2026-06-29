@@ -3271,6 +3271,39 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
+let test_time_timer_dispose_during_step_prevents_update () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let observer_ref = ref None in
+  let disposed_during_step = ref false in
+  let signal =
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun value ->
+           if not !disposed_during_step then (
+             disposed_during_step := true;
+             Option.iter
+               (fun observer -> run_ok rt (Signal.Observer.dispose observer))
+               !observer_ref);
+           value + 1))
+  in
+  let first_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  observer_ref := Some first_observer;
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial step value" 0
+    (run_ok rt (Signal.Observer.read first_observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  Alcotest.(check bool) "step disposed observer" true !disposed_during_step;
+  let second_observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "unnecessary timer step did not update source" 0
+    (run_ok rt (Signal.Observer.read second_observer));
+  run_ok rt (Signal.Observer.dispose second_observer)
+
 let test_time_interval_restarts_after_reobserve () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -4121,6 +4154,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "time timer dispose during step prevents update"
+            `Quick test_time_timer_dispose_during_step_prevents_update;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time interval ignores stale sleep after reobserve"
