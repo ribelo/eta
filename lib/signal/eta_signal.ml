@@ -145,7 +145,10 @@ module Make (Observer_error : Observer_error) () = struct
     mutable value : 'a option;
     mutable staged : 'a option;
     mutable initialized : bool;
+    mutable version : int;
     mutable dirty : bool;
+    mutable dependency_versions : (signal_id * int) list;
+    mutable staged_dependency_versions : (signal_id * int) list option;
     mutable dependencies : packed_signal list;
     mutable dependents : packed_signal list;
     mutable computing : bool;
@@ -606,6 +609,27 @@ module Make (Observer_error : Observer_error) () = struct
     signal.staged_generation <- generation;
     signal.staged <- Some value
 
+  let effective_signal_version signal =
+    if signal.staged_generation = current_generation () then
+      match signal.staged with
+      | Some _ -> saturating_succ signal.version
+      | None -> signal.version
+    else signal.version
+
+  let dependency_versions dependencies =
+    List.map
+      (fun (P signal) -> (signal.id, effective_signal_version signal))
+      dependencies
+
+  let dependencies_changed signal dependencies =
+    signal.dependency_versions <> dependency_versions dependencies
+
+  let stage_dependency_versions signal dependencies =
+    let generation = current_generation () in
+    if signal.staged_generation <> generation then signal.staged <- None;
+    signal.staged_generation <- generation;
+    signal.staged_dependency_versions <- Some (dependency_versions dependencies)
+
   let effective_signal_value signal =
     if signal.staged_generation = current_generation () then
       match signal.staged with
@@ -696,7 +720,10 @@ module Make (Observer_error : Observer_error) () = struct
         value = None;
         staged = None;
         initialized = false;
+        version = 0;
         dirty;
+        dependency_versions = [];
+        staged_dependency_versions = None;
         dependencies = [];
         dependents = [];
         computing = false;
@@ -790,12 +817,20 @@ module Make (Observer_error : Observer_error) () = struct
        | None -> ()
        | Some value ->
            signal.value <- Some value;
-           signal.initialized <- true);
-      signal.staged <- None);
+           signal.initialized <- true;
+           signal.version <- saturating_succ signal.version);
+      signal.staged <- None;
+      (match signal.staged_dependency_versions with
+       | None -> ()
+       | Some dependency_versions ->
+           signal.dependency_versions <- dependency_versions);
+      signal.staged_dependency_versions <- None);
     signal.dirty <- false
 
   let rollback_signal (P signal) =
-    if signal.staged_generation = current_generation () then signal.staged <- None
+    if signal.staged_generation = current_generation () then (
+      signal.staged <- None;
+      signal.staged_dependency_versions <- None)
 
   let commit_var (V var) =
     if var.staged_var_generation = current_generation () then (
@@ -959,6 +994,13 @@ module Make (Observer_error : Observer_error) () = struct
       (if changed then value else current_or_raise signal), changed
     in
     let use_cached () = (current_or_raise signal, false) in
+    let dependency_changed dependencies =
+      dependencies_changed signal dependencies
+    in
+    let recompute_with_dependencies dependencies value =
+      stage_dependency_versions signal dependencies;
+      recompute value
+    in
     match signal.kind with
     | Const value ->
         if signal.dirty || not signal.initialized then recompute value else use_cached ()
@@ -968,28 +1010,41 @@ module Make (Observer_error : Observer_error) () = struct
         else use_cached ()
     | Map (a, f) ->
         let av, ac = compute a in
-        if signal.dirty || ac || not signal.initialized then recompute (f av)
+        let dependencies = [ P a ] in
+        if
+          signal.dirty || ac || dependency_changed dependencies
+          || not signal.initialized
+        then recompute_with_dependencies dependencies (f av)
         else use_cached ()
     | Map2 (a, b, f) ->
         let av, ac = compute a in
         let bv, bc = compute b in
-        if signal.dirty || ac || bc || not signal.initialized then
-          recompute (f av bv)
+        let dependencies = [ P a; P b ] in
+        if
+          signal.dirty || ac || bc || dependency_changed dependencies
+          || not signal.initialized
+        then recompute_with_dependencies dependencies (f av bv)
         else use_cached ()
     | Map3 (a, b, c, f) ->
         let av, ac = compute a in
         let bv, bc = compute b in
         let cv, cc = compute c in
-        if signal.dirty || ac || bc || cc || not signal.initialized then
-          recompute (f av bv cv)
+        let dependencies = [ P a; P b; P c ] in
+        if
+          signal.dirty || ac || bc || cc || dependency_changed dependencies
+          || not signal.initialized
+        then recompute_with_dependencies dependencies (f av bv cv)
         else use_cached ()
     | Map4 (a, b, c, d, f) ->
         let av, ac = compute a in
         let bv, bc = compute b in
         let cv, cc = compute c in
         let dv, dc = compute d in
-        if signal.dirty || ac || bc || cc || dc || not signal.initialized then
-          recompute (f av bv cv dv)
+        let dependencies = [ P a; P b; P c; P d ] in
+        if
+          signal.dirty || ac || bc || cc || dc || dependency_changed dependencies
+          || not signal.initialized
+        then recompute_with_dependencies dependencies (f av bv cv dv)
         else use_cached ()
     | Map5 (a, b, c, d, e, f) ->
         let av, ac = compute a in
@@ -997,9 +1052,11 @@ module Make (Observer_error : Observer_error) () = struct
         let cv, cc = compute c in
         let dv, dc = compute d in
         let ev, ec = compute e in
+        let dependencies = [ P a; P b; P c; P d; P e ] in
         if
           signal.dirty || ac || bc || cc || dc || ec || not signal.initialized
-        then recompute (f av bv cv dv ev)
+          || dependency_changed dependencies
+        then recompute_with_dependencies dependencies (f av bv cv dv ev)
         else use_cached ()
     | Map6 (a, b, c, d, e, f_signal, f) ->
         let av, ac = compute a in
@@ -1008,10 +1065,11 @@ module Make (Observer_error : Observer_error) () = struct
         let dv, dc = compute d in
         let ev, ec = compute e in
         let fv, fc = compute f_signal in
+        let dependencies = [ P a; P b; P c; P d; P e; P f_signal ] in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc
-          || not signal.initialized
-        then recompute (f av bv cv dv ev fv)
+          || dependency_changed dependencies || not signal.initialized
+        then recompute_with_dependencies dependencies (f av bv cv dv ev fv)
         else use_cached ()
     | Map7 (a, b, c, d, e, f_signal, g, f) ->
         let av, ac = compute a in
@@ -1021,10 +1079,11 @@ module Make (Observer_error : Observer_error) () = struct
         let ev, ec = compute e in
         let fv, fc = compute f_signal in
         let gv, gc = compute g in
+        let dependencies = [ P a; P b; P c; P d; P e; P f_signal; P g ] in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc
-          || not signal.initialized
-        then recompute (f av bv cv dv ev fv gv)
+          || dependency_changed dependencies || not signal.initialized
+        then recompute_with_dependencies dependencies (f av bv cv dv ev fv gv)
         else use_cached ()
     | Map8 (a, b, c, d, e, f_signal, g, h, f) ->
         let av, ac = compute a in
@@ -1035,10 +1094,14 @@ module Make (Observer_error : Observer_error) () = struct
         let fv, fc = compute f_signal in
         let gv, gc = compute g in
         let hv, hc = compute h in
+        let dependencies =
+          [ P a; P b; P c; P d; P e; P f_signal; P g; P h ]
+        in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc
-          || not signal.initialized
-        then recompute (f av bv cv dv ev fv gv hv)
+          || dependency_changed dependencies || not signal.initialized
+        then
+          recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv)
         else use_cached ()
     | Map9 (a, b, c, d, e, f_signal, g, h, i, f) ->
         let av, ac = compute a in
@@ -1050,10 +1113,14 @@ module Make (Observer_error : Observer_error) () = struct
         let gv, gc = compute g in
         let hv, hc = compute h in
         let iv, ic = compute i in
+        let dependencies =
+          [ P a; P b; P c; P d; P e; P f_signal; P g; P h; P i ]
+        in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc || ic
-          || not signal.initialized
-        then recompute (f av bv cv dv ev fv gv hv iv)
+          || dependency_changed dependencies || not signal.initialized
+        then
+          recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv iv)
         else use_cached ()
     | All signals ->
         let values, changed =
@@ -1063,20 +1130,23 @@ module Make (Observer_error : Observer_error) () = struct
               (value :: values, changed || child_changed))
             signals ([], false)
         in
-        if signal.dirty || changed || not signal.initialized then
-          recompute values
+        let dependencies = List.map (fun signal -> P signal) signals in
+        if
+          signal.dirty || changed || dependency_changed dependencies
+          || not signal.initialized
+        then recompute_with_dependencies dependencies values
         else use_cached ()
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         let needs_new_inner =
           match bind_effective_source_value bind with
           | None -> true
-          | Some previous -> source_changed && not (bind.source.equal previous source_value)
+          | Some previous -> not (bind.source.equal previous source_value)
         in
         if needs_new_inner then (
           let scope = new_scope () in
           let previous_scope = graph.current_scope in
-          let inner, inner_value, changed =
+          let inner, inner_value, changed, dependencies =
             try
               graph.current_scope <- Some scope;
               let inner =
@@ -1085,6 +1155,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (fun () -> bind.selector source_value)
               in
               let inner_value, _inner_changed = compute inner in
+              let dependencies = [ P bind.source; P inner ] in
               graph.recompute_count <- saturating_succ graph.recompute_count;
               let changed =
                 (not signal.initialized)
@@ -1093,13 +1164,14 @@ module Make (Observer_error : Observer_error) () = struct
                 | None -> true
                 | Some old_value -> not (signal.equal old_value inner_value)
               in
-              (inner, inner_value, changed)
+              (inner, inner_value, changed, dependencies)
             with exn ->
               graph.current_scope <- previous_scope;
               invalidate_scope scope;
               raise exn
           in
           stage_bind_switch bind source_value inner scope;
+          stage_dependency_versions signal dependencies;
           if changed then stage_signal signal inner_value;
           (if changed then inner_value else current_or_raise signal), changed)
         else
@@ -1109,10 +1181,11 @@ module Make (Observer_error : Observer_error) () = struct
             | None -> raise (Graph_error `Invalid_scope)
           in
           let inner_value, inner_changed = compute inner in
+          let dependencies = [ P bind.source; P inner ] in
           if
             signal.dirty || source_changed || inner_changed
-            || not signal.initialized
-          then recompute inner_value
+            || dependency_changed dependencies || not signal.initialized
+          then recompute_with_dependencies dependencies inner_value
           else use_cached ()
 
   let timer_stop_unlocked ?(cancel_running = true) timer =

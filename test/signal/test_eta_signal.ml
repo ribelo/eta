@@ -895,6 +895,44 @@ let test_cutoff_suppresses_downstream_recompute () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "downstream not recomputed" 1 !downstream_calls
 
+let test_unnecessary_derived_recomputes_after_dependency_change () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let watched = Signal.Var.watch source in
+  let mapped_calls = ref 0 in
+  let mapped =
+    Signal.map
+      (fun value ->
+        incr mapped_calls;
+        value + 1)
+      watched
+  in
+  let source_observer =
+    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
+  in
+  let mapped_observer =
+    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial mapped value" 1
+    (run_ok rt (Signal.Observer.read mapped_observer));
+  Alcotest.(check int) "initial mapped recompute" 1 !mapped_calls;
+  run_ok rt (Signal.Observer.dispose mapped_observer);
+  run_ok rt (Signal.Var.set source 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "source stayed necessary" 1
+    (run_ok rt (Signal.Observer.read source_observer));
+  Alcotest.(check int) "unnecessary mapped not recomputed" 1 !mapped_calls;
+  let reobserved =
+    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reobserved mapped value is fresh" 2
+    (run_ok rt (Signal.Observer.read reobserved));
+  Alcotest.(check int) "mapped recomputed on reobserve" 2 !mapped_calls;
+  run_ok rt (Signal.Observer.dispose source_observer);
+  run_ok rt (Signal.Observer.dispose reobserved)
+
 let test_source_equality_suppresses_graph_propagation () =
   with_runtime @@ fun rt ->
   let source =
@@ -4269,6 +4307,9 @@ let () =
             `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
           Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
             test_cutoff_suppresses_downstream_recompute;
+          Alcotest.test_case
+            "unnecessary derived recomputes after dependency change" `Quick
+            test_unnecessary_derived_recomputes_after_dependency_change;
           Alcotest.test_case "source equality suppresses propagation" `Quick
             test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
