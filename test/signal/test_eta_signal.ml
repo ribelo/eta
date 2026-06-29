@@ -1476,6 +1476,41 @@ let test_invalidated_bind_rhs_cannot_be_wrapped () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_rejects_reused_dynamic_scope_inner () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let watched = Signal.Var.watch source in
+  let captured = ref None in
+  let selected =
+    Signal.bind watched (fun _ ->
+        match !captured with
+        | Some stale -> stale
+        | None ->
+            let signal =
+              Signal.map
+                (fun value -> "branch " ^ string_of_int value)
+                watched
+            in
+            captured := Some signal;
+            signal)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "initial branch" "branch 0"
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set source 1);
+  expect_fail "reused dynamic-scope inner" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check string) "failed switch preserves previous branch" "branch 0"
+    (run_ok rt (Signal.Observer.read observer));
+  captured := None;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "later valid switch succeeds" "branch 1"
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_bind_switch_invalidates_external_derived_branch_dependents () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -4381,6 +4416,8 @@ let () =
             test_invalidated_bind_rhs_cannot_be_observed;
           Alcotest.test_case "invalidated bind rhs cannot be wrapped" `Quick
             test_invalidated_bind_rhs_cannot_be_wrapped;
+          Alcotest.test_case "bind rejects reused dynamic-scope inner" `Quick
+            test_bind_rejects_reused_dynamic_scope_inner;
           Alcotest.test_case "bind switch invalidates external branch dependents"
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
           Alcotest.test_case "bind switch invalidates branch observers" `Quick

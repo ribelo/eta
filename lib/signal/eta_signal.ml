@@ -708,6 +708,13 @@ module Make (Observer_error : Observer_error) () = struct
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
+  let validate_bind_inner_scope scope inner =
+    if not inner.valid then raise (Graph_error `Invalid_scope);
+    match inner.scope with
+    | None -> ()
+    | Some inner_scope when inner_scope == scope -> ()
+    | Some _ -> raise (Graph_error `Invalid_scope)
+
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
     List.iter validate_dependency dependencies;
@@ -1154,6 +1161,7 @@ module Make (Observer_error : Observer_error) () = struct
                   ~finally:(fun () -> graph.current_scope <- previous_scope)
                   (fun () -> bind.selector source_value)
               in
+              validate_bind_inner_scope scope inner;
               let inner_value, _inner_changed = compute inner in
               let dependencies = [ P bind.source; P inner ] in
               graph.recompute_count <- saturating_succ graph.recompute_count;
