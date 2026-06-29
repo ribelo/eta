@@ -1746,8 +1746,20 @@ module Make (Observer_error : Observer_error) () = struct
       else
         Ok
           (Queue.create
-             ~overflow:(Queue.Backpressure { capacity })
+             ~overflow:(Queue.Drop_new { capacity })
              ())
+
+    let offer_bridge_update queue update =
+      Queue.try_send queue update
+      |> Effect.bind (function
+           | `Sent | `Dropped | `Closed -> Effect.unit
+           | `Full ->
+               Effect.sync (fun () ->
+                   failwith "Eta_signal.Stream.observe: unexpected full queue")
+           | `Closed_with_error _ ->
+               Effect.sync (fun () ->
+                   failwith
+                     "Eta_signal.Stream.observe: bridge queue closed with error"))
 
     let observe ?(capacity = default_capacity) ?equal signal =
       Effect.sync (fun () -> create_bridge_queue capacity)
@@ -1756,7 +1768,7 @@ module Make (Observer_error : Observer_error) () = struct
              Observer.observe_with_hooks ?equal
                ~on_dispose:[ (fun () -> Queue.close queue) ]
                signal
-               (fun update -> Queue.send queue update |> Effect.ignore)
+               (offer_bridge_update queue)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, Eta_stream.Stream.from_queue queue)))

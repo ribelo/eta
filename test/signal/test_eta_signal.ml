@@ -3772,12 +3772,16 @@ let test_stream_bridge_equal_suppresses_updates () =
    | _ -> Alcotest.fail "expected changed stream update after unequal value");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_stream_bridge_backpressures_at_capacity () =
+let test_stream_bridge_full_queue_does_not_block () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let observer, stream =
     run_ok rt (Signal.Stream.observe ~capacity:1 signal)
+  in
+  let later_events = ref [] in
+  let later_observer =
+    run_ok rt (Signal.Observer.observe signal (record_observer later_events))
   in
   run_ok rt Signal.stabilize;
   run_ok rt (Signal.Var.set source 2);
@@ -3789,26 +3793,36 @@ let test_stream_bridge_backpressures_at_capacity () =
     Eta_test.Async.yield ()
   done;
   Alcotest.(check bool)
-    "stabilization waits for bridge capacity" false
+    "stabilization does not wait for bridge capacity" true
     (Eio.Promise.is_resolved stabilizer);
+  ignore
+    (expect_exit_ok "full bridge stabilize"
+       (Eio.Promise.await_exn stabilizer)
+      : unit);
+  (match List.rev !later_events with
+   | [
+    Signal.Initialized 1;
+    Signal.Changed { old_value = 1; new_value = 2 };
+   ] ->
+       ()
+   | _ -> Alcotest.fail "expected later observer to run behind full bridge");
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected initial stream update");
-  ignore
-    (expect_exit_ok "backpressured stabilize"
-       (Eio.Promise.await_exn stabilizer)
-      : unit);
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
-   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
-   | _ -> Alcotest.fail "expected changed stream update after capacity frees");
-  run_ok rt (Signal.Observer.dispose observer)
+   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected later changed stream update after drop");
+  run_ok rt (Signal.Observer.dispose observer);
+  run_ok rt (Signal.Observer.dispose later_observer)
 
-let test_stream_bridge_dispose_unblocks_backpressure () =
-  with_runtime_and_switch @@ fun sw rt ->
+let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
+  with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let observer, stream =
@@ -3816,27 +3830,16 @@ let test_stream_bridge_dispose_unblocks_backpressure () =
   in
   run_ok rt Signal.stabilize;
   run_ok rt (Signal.Var.set source 2);
-  let stabilizer =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eta_eio.Runtime.run rt (widen Signal.stabilize))
-  in
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check bool)
-    "stabilization waits for bridge capacity" false
-    (Eio.Promise.is_resolved stabilizer);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer snapshot advances while bridge full" 2
+    (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer);
-  ignore
-    (expect_exit_ok "dispose unblocks backpressured stabilize"
-       (Eio.Promise.await_exn stabilizer)
-      : unit);
   (match run_ok rt (Eta_stream.run_collect stream) with
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected buffered update to drain after dispose")
 
-let test_stream_bridge_backpressure_then_observer_failure_releases_phase () =
-  with_runtime_and_switch @@ fun sw rt ->
+let test_stream_bridge_full_queue_failure_releases_phase () =
+  with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let bridge_observer, stream =
@@ -3852,31 +3855,16 @@ let test_stream_bridge_backpressure_then_observer_failure_releases_phase () =
   run_ok rt Signal.stabilize;
   fail_next := true;
   run_ok rt (Signal.Var.set source 2);
-  let stabilizer =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eta_eio.Runtime.run rt (widen Signal.stabilize))
-  in
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check bool)
-    "stabilization waits before later observer failure" false
-    (Eio.Promise.is_resolved stabilizer);
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected initial stream update before failure");
-  expect_fail "backpressure then observer failure"
+  expect_fail "full bridge then observer failure"
     (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eio.Promise.await_exn stabilizer);
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   Alcotest.(check int) "bridge snapshot published before failure" 2
     (run_ok rt (Signal.Observer.read bridge_observer));
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
-   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
-   | _ -> Alcotest.fail "expected changed stream update before failure");
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected initial stream update after dropped change");
   fail_next := false;
   run_ok rt (Signal.Var.set source 3);
   run_ok rt Signal.stabilize;
@@ -3926,8 +3914,8 @@ let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
     (run_ok rt (Signal.Observer.read disposer));
   run_ok rt (Signal.Observer.dispose disposer)
 
-let test_stream_bridge_interrupted_backpressure_releases_lane () =
-  with_runtime_and_switch @@ fun sw rt ->
+let test_stream_bridge_repeated_full_queue_keeps_lane () =
+  with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let observer, stream =
@@ -3935,38 +3923,24 @@ let test_stream_bridge_interrupted_backpressure_releases_lane () =
   in
   run_ok rt Signal.stabilize;
   run_ok rt (Signal.Var.set source 2);
-  let cancel_ctx = ref None in
-  let stabilizer =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eio.Cancel.sub @@ fun ctx ->
-        cancel_ctx := Some ctx;
-        Eta_eio.Runtime.run rt (widen Signal.stabilize))
-  in
-  wait_until "backpressured stabilize cancellation context" (fun () ->
-      Option.is_some !cancel_ctx);
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check bool)
-    "stabilization is blocked by stream backpressure" false
-    (Eio.Promise.is_resolved stabilizer);
-  Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
-  await_cancelled "backpressured stream stabilize" stabilizer;
-  Alcotest.(check int) "interrupted observer snapshot was published" 2
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer snapshot advances through dropped updates" 3
     (run_ok rt (Signal.Observer.read observer));
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
    | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected initial stream update after cancellation");
-  run_ok rt (Signal.Var.set source 3);
+   | _ -> Alcotest.fail "expected initial stream update after drops");
+  run_ok rt (Signal.Var.set source 4);
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "graph lane released for later stabilization" 3
+  Alcotest.(check int) "graph lane remains available" 4
     (run_ok rt (Signal.Observer.read observer));
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
-   | [ Signal.Changed { old_value = 1; new_value = 3 } ] -> ()
+   | [ Signal.Changed { old_value = 3; new_value = 4 } ] -> ()
    | _ -> Alcotest.fail "expected later changed stream update");
   run_ok rt (Signal.Observer.dispose observer);
   (match run_ok rt (Eta_stream.run_collect stream) with
@@ -4196,18 +4170,17 @@ let () =
             `Quick test_stream_bridge_multiple_bridges_dispose_independently;
           Alcotest.test_case "stream bridge equality suppresses" `Quick
             test_stream_bridge_equal_suppresses_updates;
-          Alcotest.test_case "stream bridge backpressures" `Quick
-            test_stream_bridge_backpressures_at_capacity;
-          Alcotest.test_case "stream bridge dispose unblocks backpressure"
-            `Quick test_stream_bridge_dispose_unblocks_backpressure;
+          Alcotest.test_case "stream bridge full queue does not block"
+            `Quick test_stream_bridge_full_queue_does_not_block;
+          Alcotest.test_case "stream bridge full queue dispose closes"
+            `Quick test_stream_bridge_full_queue_dispose_closes_without_waiting;
           Alcotest.test_case
-            "stream bridge backpressure plus observer failure releases phase"
-            `Quick
-            test_stream_bridge_backpressure_then_observer_failure_releases_phase;
+            "stream bridge full queue plus observer failure releases phase"
+            `Quick test_stream_bridge_full_queue_failure_releases_phase;
           Alcotest.test_case "stream bridge dispose during observer phase"
             `Quick
             test_stream_bridge_dispose_during_observer_phase_is_deterministic;
-          Alcotest.test_case "stream bridge interrupted backpressure"
-            `Quick test_stream_bridge_interrupted_backpressure_releases_lane;
+          Alcotest.test_case "stream bridge repeated full queue keeps lane"
+            `Quick test_stream_bridge_repeated_full_queue_keeps_lane;
         ] );
     ]

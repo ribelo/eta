@@ -435,7 +435,10 @@ reaches a stable snapshot and runs the observer effect phase.
 
 The v1 public bridge is `Stream.observe ?capacity signal`, returning the
 observer lifecycle handle and the stream. `capacity` defaults to 1024 and bounds
-an Eta queue, so stream publication backpressures when the queue is full.
+an Eta queue. Stream publication from stabilization is nonblocking; when the
+queue is full, the newest stream update is dropped and stabilization continues.
+This means slow or abandoned stream consumers can miss updates without blocking
+other observers or graph progress.
 Disposing the returned observer closes the stream after buffered updates drain.
 Stopping, taking from, or abandoning the stream early does not dispose the
 observer; the returned observer remains the lifecycle owner.
@@ -622,7 +625,7 @@ contract and summarized in the review resolution below.
   disposal or bind invalidation, dynamic timer activation refresh timing, timer
   restart after re-observation, timer callback daemon diagnostics, and
   signal-to-stream emission, closure, validation, equality suppression,
-  backpressure, and disposal while backpressured.
+  bounded overflow dropping, and disposal while full.
 - Benchmark evidence: `lib/signal/bench/bench_signal.ml` compares Eta signal
   update/stabilization cost against manual `Mutable_ref` recomputation for both
   representative static and dynamic graphs.
@@ -667,7 +670,7 @@ contract.
 | Expected public failures use small operation-scoped typed error families with clear printers | `lib/signal/eta_signal.mli`, `test_error_pretty_printers_are_clear` | Covered |
 | User callback exceptions are defects and do not permanently poison the graph | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Stats and debug introspection expose demand/recompute/scope behavior without mutating | `test_stats_and_dot_are_read_only` | Covered |
-| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_backpressures_at_capacity`, `test_stream_bridge_dispose_unblocks_backpressure`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
+| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_full_queue_does_not_block`, `test_stream_bridge_full_queue_dispose_closes_without_waiting`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
 | No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered |
 | Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_after_elapsed_before_observe`, `test_time_absolute_deadline` | Covered |
@@ -709,8 +712,8 @@ PRD contract:
   delayed to the next stabilization; pure recompute functions remain synchronous
   and cannot mutate through Eta effects.
 - `Stream.observe ?capacity` returns the observer lifecycle handle and stream,
-  defaults capacity to 1024, backpressures through Eta queues, closes on observer
-  disposal after buffered updates drain, and does not dispose the observer when
-  consumers stop early.
+  defaults capacity to 1024, drops newest stream updates when its bounded queue
+  is full, closes on observer disposal after buffered updates drain, and does
+  not dispose the observer when consumers stop early.
 
 No unresolved implementation audit notes remain.

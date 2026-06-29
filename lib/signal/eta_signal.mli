@@ -257,9 +257,11 @@ module Make (Observer_error : Observer_error) () : sig
       ('a observer * ('a update, graph_error) Eta_stream.Stream.t, stream_error)
       Eta.Effect.t
     (** [observe ?capacity signal] creates an observer and a stream of observer
-        updates. [capacity] defaults to [1024] and bounds the bridge queue with
-        backpressure; stabilization waits while the stream has [capacity]
-        buffered updates and no consumer has made room.
+        updates. [capacity] defaults to [1024] and bounds the bridge queue.
+        Publication from stabilization is nonblocking: when the bridge already
+        has [capacity] buffered updates, the newest stream update is dropped
+        and stabilization continues. A later delivered change may therefore
+        report an [old_value] that was not itself delivered through the stream.
 
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers
