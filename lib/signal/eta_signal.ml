@@ -532,9 +532,17 @@ module Make (Observer_error : Observer_error) () = struct
     parent.dependencies <-
       List.filter (fun (P candidate) -> candidate.id <> child.id) parent.dependencies
 
+  let has_dependency parent child =
+    List.exists (fun (P candidate) -> candidate.id = child.id) parent.dependencies
+
+  let has_dependent child parent =
+    List.exists (fun (P candidate) -> candidate.id = parent.id) child.dependents
+
   let attach_dependency parent child =
-    child.dependents <- P parent :: child.dependents;
-    parent.dependencies <- P child :: parent.dependencies
+    if not (has_dependent child parent) then
+      child.dependents <- P parent :: child.dependents;
+    if not (has_dependency parent child) then
+      parent.dependencies <- P child :: parent.dependencies
 
   let attach_packed_dependency parent (P child) =
     attach_dependency parent child
@@ -1552,6 +1560,8 @@ module Make (Observer_error : Observer_error) () = struct
         bool_field "initialized" signal.initialized;
         bool_field "dirty" signal.dirty;
         bool_field "computing" signal.computing;
+        "dependencies=" ^ string_of_int (List.length signal.dependencies);
+        "dependents=" ^ string_of_int (List.length signal.dependents);
       ]
     in
     match signal.kind with

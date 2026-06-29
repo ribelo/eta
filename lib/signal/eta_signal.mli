@@ -236,7 +236,8 @@ module Make (Observer_error : Observer_error) () : sig
       demand debugging. Use [dot_scope = `All_valid] to include retained valid
       nodes that are not currently necessary, or [`All_including_invalid] to
       include invalid nodes still retained by the graph. The metadata flags add
-      observer, timer, dirty/queued, and dynamic-scope state to the dump. *)
+      observer, timer, dirty/queued, dependency/dependent edge counts, and
+      dynamic-scope state to the dump. *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call
