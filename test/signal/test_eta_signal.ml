@@ -3635,6 +3635,37 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
+let test_time_invalidated_timer_cancels_sleeping_daemon () =
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let use_timer = Signal.Var.create true in
+  let created_timers = ref 0 in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+        if use_timer then (
+          incr created_timers;
+          run_ok rt (Signal.Time.interval (Duration.days 1)))
+        else Signal.const 0)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 1;
+  Alcotest.(check int) "dynamic timer created once" 1 !created_timers;
+  run_ok rt (Signal.Var.set use_timer false);
+  run_ok rt Signal.stabilize;
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "invalidated long-interval timer daemon drains without clock advance" true
+    (Eio.Promise.is_resolved drained);
+  Eio.Promise.await_exn drained;
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_timer_dispose_during_step_prevents_update () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let observer_ref = ref None in
@@ -4549,6 +4580,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "time invalidated timer cancels sleeping daemon"
+            `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
           Alcotest.test_case "time interval restarts after reobserve" `Quick

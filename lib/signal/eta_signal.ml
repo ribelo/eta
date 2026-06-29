@@ -715,6 +715,14 @@ module Make (Observer_error : Observer_error) () = struct
     | Some inner_scope when inner_scope == scope -> ()
     | Some _ -> raise (Graph_error `Invalid_scope)
 
+  let timer_stop_unlocked ?(cancel_running = true) timer =
+    let cancel = timer.timer_cancel in
+    timer.timer_active <- false;
+    timer.timer_generation <- timer.timer_generation + 1;
+    timer.timer_running_generation <- None;
+    timer.timer_cancel <- None;
+    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel
+
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
     List.iter validate_dependency dependencies;
@@ -772,9 +780,7 @@ module Make (Observer_error : Observer_error) () = struct
       let dependencies = signal.dependencies in
       let dependents = signal.dependents in
       Option.iter
-        (fun timer ->
-          timer.timer_active <- false;
-          timer.timer_generation <- timer.timer_generation + 1)
+        (fun timer -> timer_stop_unlocked timer)
         signal.timer;
       signal.valid <- false;
       dispose_signal_observers signal;
@@ -1195,14 +1201,6 @@ module Make (Observer_error : Observer_error) () = struct
             || dependency_changed dependencies || not signal.initialized
           then recompute_with_dependencies dependencies inner_value
           else use_cached ()
-
-  let timer_stop_unlocked ?(cancel_running = true) timer =
-    let cancel = timer.timer_cancel in
-    timer.timer_active <- false;
-    timer.timer_generation <- timer.timer_generation + 1;
-    timer.timer_running_generation <- None;
-    timer.timer_cancel <- None;
-    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel
 
   let timer_finish_unlocked timer =
     timer.timer_finished <- true;
