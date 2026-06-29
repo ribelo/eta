@@ -1779,9 +1779,13 @@ module Make (Observer_error : Observer_error) () = struct
                {
                  source_timer_update =
                    (fun timer generation source ->
-                     let next = f (Var.value source) in
-                     timer_set_source timer generation source next
-                     |> Effect.map (fun _ -> ()));
+                     Effect.sync (fun () -> f (Var.value source))
+                     |> Effect.annotate ~key:"eta_signal.timer.kind"
+                          ~value:"step"
+                     |> Effect.named "eta_signal.time.step"
+                     |> Effect.bind (fun next ->
+                            timer_set_source timer generation source next
+                            |> Effect.map (fun _ -> ())));
                })
   end
 

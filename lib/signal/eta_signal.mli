@@ -245,8 +245,14 @@ module Make (Observer_error : Observer_error) () : sig
       initial:'a ->
       ('a -> 'a) ->
       ('a signal, time_error) Eta.Effect.t
-    (** Step a value with a pure function after each [every] interval while
-        necessary. *)
+    (** Step a value with a pure total function after each [every] interval
+        while necessary.
+
+        [f] runs in the demand-owned timer daemon, not during stabilization. If
+        [f] raises, Eta reports the defect through daemon diagnostics with
+        [eta_signal.time.step] context; it is not delivered as a [stabilize]
+        failure. The failed daemon cleans up timer state so later demand can
+        restart it. *)
   end
 
   module Stream : sig

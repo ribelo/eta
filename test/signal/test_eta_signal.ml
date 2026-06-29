@@ -3672,6 +3672,12 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
        Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
          record.body;
        Alcotest.(check (option string))
+         "step diagnostic span" (Some "eta_signal.time.step")
+         (List.assoc_opt "eta.die.span_name" record.attrs);
+       Alcotest.(check (option string))
+         "step diagnostic annotation" (Some "step")
+         (List.assoc_opt "eta.annotation.eta_signal.timer.kind" record.attrs);
+       Alcotest.(check (option string))
          "step exception message" (Some "Failure(\"time step defect\")")
          (List.assoc_opt "exception.message" record.attrs)
    | records ->
