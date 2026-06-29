@@ -103,13 +103,31 @@ module Make (Observer_error : Observer_error) () = struct
   let saturating_succ value =
     if value = max_int then max_int else value + 1
 
+  type signal_id = Signal_id of int
+  type scope_id = Scope_id of int
+  type var_id = Var_id of int
+  type observer_id = Observer_id of int
+
+  let signal_id_int (Signal_id id) = id
+  let scope_id_int (Scope_id id) = id
+  let var_id_int (Var_id id) = id
+  let observer_id_int (Observer_id id) = id
+
+  let signal_id_label id = "s" ^ string_of_int (signal_id_int id)
+  let scope_id_label id = "sc" ^ string_of_int (scope_id_int id)
+  let var_id_label id = "v" ^ string_of_int (var_id_int id)
+  let observer_id_label id = "o" ^ string_of_int (observer_id_int id)
+
+  let compare_observer_id left right =
+    Int.compare (observer_id_int left) (observer_id_int right)
+
   type phase =
     | Not_stabilizing
     | Pure
     | Running_observers
 
   type scope = {
-    scope_id : int;
+    scope_id : scope_id;
     mutable scope_valid : bool;
     mutable scope_nodes : packed_signal list;
   }
@@ -117,7 +135,7 @@ module Make (Observer_error : Observer_error) () = struct
   and packed_signal = P : 'a signal -> packed_signal
 
   and 'a signal = {
-    id : int;
+    id : signal_id;
     equal : 'a -> 'a -> bool;
     mutable kind : 'a kind;
     mutable value : 'a option;
@@ -220,7 +238,7 @@ module Make (Observer_error : Observer_error) () = struct
   and packed_bind = B : ('a, 'b) bind -> packed_bind
 
   and 'a var = {
-    var_id : int;
+    var_id : var_id;
     var_equal : 'a -> 'a -> bool;
     mutable source_value : 'a;
     mutable graph_value : 'a;
@@ -234,7 +252,7 @@ module Make (Observer_error : Observer_error) () = struct
   and packed_var = V : 'a var -> packed_var
 
   and 'a observer = {
-    obs_id : int;
+    obs_id : observer_id;
     obs_signal : 'a signal;
     obs_equal : 'a -> 'a -> bool;
     obs_callback : 'a update -> (unit, observer_error) Effect.t;
@@ -313,7 +331,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable dynamic_scope_invalidations : int;
     mutable nodes_became_necessary : int;
     mutable nodes_became_unnecessary : int;
-    mutable necessary_node_ids : (int, unit) Hashtbl.t;
+    mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
   }
 
   exception Graph_error of graph_error
@@ -507,10 +525,14 @@ module Make (Observer_error : Observer_error) () = struct
     graph.next_id <- id + 1;
     id
 
+  let next_signal_id () = Signal_id (next_id ())
+  let next_var_id () = Var_id (next_id ())
+  let next_observer_id () = Observer_id (next_id ())
+
   let new_scope () =
     let id = graph.next_scope_id in
     graph.next_scope_id <- id + 1;
-    { scope_id = id; scope_valid = true; scope_nodes = [] }
+    { scope_id = Scope_id id; scope_valid = true; scope_nodes = [] }
 
   let current_generation () = graph.stabilization_id
 
@@ -648,7 +670,7 @@ module Make (Observer_error : Observer_error) () = struct
     let scope = signal_scope () in
     let signal =
       {
-        id = next_id ();
+        id = next_signal_id ();
         equal = Option.value equal ~default:default_equal;
         kind;
         value = None;
@@ -1217,7 +1239,8 @@ module Make (Observer_error : Observer_error) () = struct
       let observers =
         graph.observers
         |> List.filter observer_active
-        |> List.sort (fun (O a) (O b) -> Int.compare a.obs_id b.obs_id)
+        |> List.sort (fun (O a) (O b) ->
+               compare_observer_id a.obs_id b.obs_id)
       in
       try
         List.iter stage_pending_var pending_at_start;
@@ -1313,7 +1336,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let create ?(equal = default_equal) value =
       {
-        var_id = next_id ();
+        var_id = next_var_id ();
         var_equal = equal;
         source_value = value;
         graph_value = value;
@@ -1379,7 +1402,7 @@ module Make (Observer_error : Observer_error) () = struct
           else
             let observer =
               {
-                obs_id = next_id ();
+                obs_id = next_observer_id ();
                 obs_signal = signal;
                 obs_equal = equal;
                 obs_callback = callback;
@@ -1534,7 +1557,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Bind _ -> "bind"
 
   let signal_selected :
-      type a. dot_options -> (int, unit) Hashtbl.t -> a signal -> bool =
+      type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
    fun options necessary signal ->
     match options.dot_scope with
     | `Necessary -> Hashtbl.mem necessary signal.id
@@ -1559,6 +1582,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Var source ->
         base
         @ [
+            "var_id=" ^ var_id_label source.var_id;
             bool_field "queued" source.queued;
             bool_field "updating" source.updating;
           ]
@@ -1569,13 +1593,14 @@ module Make (Observer_error : Observer_error) () = struct
   let signal_scope_fields : type a. a signal -> string list =
    fun signal ->
     match signal.scope with
-    | None -> [ "scope=root" ]
+    | None -> [ "scope=root"; "scope_id=root" ]
     | Some scope ->
         [
           "scope="
-          ^ string_of_int scope.scope_id
+          ^ scope_id_label scope.scope_id
           ^ ":"
           ^ (if scope.scope_valid then "valid" else "invalid");
+          "scope_id=" ^ scope_id_label scope.scope_id;
         ]
 
   let signal_timer_fields : type a. a signal -> string list =
@@ -1598,7 +1623,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->
-    let fields = [ kind_name signal.kind ^ ":" ^ string_of_int signal.id ] in
+    let fields =
+      [ "kind=" ^ kind_name signal.kind; "signal_id=" ^ signal_id_label signal.id ]
+    in
     let fields =
       if options.dot_state then fields @ signal_state_fields signal else fields
     in
@@ -1614,7 +1641,8 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_label (O observer) =
     String.concat " "
       [
-        "observer:" ^ string_of_int observer.obs_id;
+        "observer:" ^ observer_id_label observer.obs_id;
+        "observer_id=" ^ observer_id_label observer.obs_id;
         bool_field "initialized" observer.obs_initialized;
         bool_field "delivered" observer.obs_delivered_initialized;
         bool_field "pending" observer.obs_delivery_pending;
@@ -1632,7 +1660,8 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) ->
         if selected signal then (
-          Format.fprintf formatter "  n%d [label=%S];@." signal.id
+          Format.fprintf formatter "  %s [label=%S];@."
+            (signal_id_label signal.id)
             (signal_label options signal);
           let emitted_edges = Hashtbl.create 8 in
           List.iter
@@ -1642,20 +1671,23 @@ module Make (Observer_error : Observer_error) () = struct
                 && not (Hashtbl.mem emitted_edges dependency.id)
               then (
                 Hashtbl.add emitted_edges dependency.id ();
-                Format.fprintf formatter "  n%d -> n%d;@." dependency.id
-                  signal.id))
+                Format.fprintf formatter "  %s -> %s;@."
+                  (signal_id_label dependency.id)
+                  (signal_id_label signal.id)))
             signal.dependencies))
       graph.all_nodes;
     if options.dot_observers then
       List.iter
         (fun (O observer as packed) ->
           if not observer.obs_disposed then (
-            Format.fprintf formatter "  o%d [shape=box,label=%S];@."
-              observer.obs_id (observer_label packed);
+            Format.fprintf formatter "  %s [shape=box,label=%S];@."
+              (observer_id_label observer.obs_id)
+              (observer_label packed);
             if selected observer.obs_signal then
               Format.fprintf formatter
-                "  n%d -> o%d [style=dashed,label=\"observes\"];@."
-                observer.obs_signal.id observer.obs_id))
+                "  %s -> %s [style=dashed,label=\"observes\"];@."
+                (signal_id_label observer.obs_signal.id)
+                (observer_id_label observer.obs_id)))
         graph.observers;
     Format.fprintf formatter "}@.";
     Format.pp_print_flush formatter ();

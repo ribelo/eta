@@ -3013,6 +3013,12 @@ let test_to_dot_debug_options_expose_hidden_state () =
     (count_occurrences debug_dot "dirty=true" > 0);
   Alcotest.(check bool) "debug dot shows dynamic scope state" true
     (count_occurrences debug_dot "scope=" > 0);
+  Alcotest.(check bool) "debug dot labels signal identities" true
+    (count_occurrences debug_dot "signal_id=s" > 0);
+  Alcotest.(check bool) "debug dot labels source identities" true
+    (count_occurrences debug_dot "var_id=v" > 0);
+  Alcotest.(check bool) "debug dot labels scope identities" true
+    (count_occurrences debug_dot "scope_id=sc" > 0);
   run_ok rt (Dot_signal.Observer.dispose observer);
   run_ok rt (Dot_signal.Observer.dispose timer_observer);
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
