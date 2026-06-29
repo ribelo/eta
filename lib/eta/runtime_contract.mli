@@ -153,7 +153,9 @@ val of_runtime : (module RUNTIME) -> t
 (** Erase a module-shaped runtime implementation into the interpreter record.
     New backends should implement {!RUNTIME}; this adapter is the only place
     that should cast backend-owned scope, cancellation, promise, resolver, and
-    stream values into Eta's erased representation. *)
+    stream values into Eta's erased representation. Erased tokens produced by
+    one returned contract are owned by that contract; using them with another
+    contract raises [Invalid_argument]. *)
 
 module Backend : sig
   val local_id : 'a local -> int
@@ -173,4 +175,6 @@ module Backend : sig
 end
 (** Unsafe token bridge for backend packages and {!of_runtime}. Keep use
     localized to runtime implementations such as [eta_eio] and do not build
-    additional erased runtime surfaces on top of it. *)
+    additional erased runtime surfaces on top of it. Tokens produced directly by
+    this bridge are raw backend values; ordinary code should use tokens returned
+    by {!of_runtime} operations. *)

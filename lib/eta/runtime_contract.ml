@@ -1,8 +1,13 @@
-type scope = Obj.t
-type cancel_context = Obj.t
-type 'a promise = Obj.t
-type 'a resolver = Obj.t
-type 'a stream = Obj.t
+type token = {
+  runtime_id : int;
+  value : Obj.t;
+}
+
+type scope = token
+type cancel_context = token
+type 'a promise = token
+type 'a resolver = token
+type 'a stream = token
 type 'a local = 'a Type.Id.t
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -82,6 +87,16 @@ let create_service_key () =
   ignore (Atomic.fetch_and_add next_service_key 1);
   Type.Id.make ()
 
+let next_runtime_id = Atomic.make 0
+let unsafe_runtime_id = -1
+let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
+let fresh_runtime_id () = Atomic.fetch_and_add next_runtime_id 1
+let token runtime_id value = { runtime_id; value }
+
+let checked_token_value runtime_id token =
+  if token.runtime_id <> runtime_id then invalid_arg foreign_runtime_token;
+  token.value
+
 let worker_context_probes : (unit -> bool) list Atomic.t = Atomic.make []
 
 let rec register_worker_context_probe probe =
@@ -109,33 +124,37 @@ module Backend = struct
     | Some Type.Equal -> Some value
     | None -> None
 
-  let scope value = value
-  let scope_value value = value
-  let cancel_context value = value
-  let cancel_context_value value = value
-  let promise value = value
-  let promise_value value = value
-  let resolver value = value
-  let resolver_value value = value
-  let stream value = value
-  let stream_value value = value
+  let unsafe_token value = token unsafe_runtime_id value
+  let token_value token = token.value
+  let scope = unsafe_token
+  let scope_value = token_value
+  let cancel_context = unsafe_token
+  let cancel_context_value = token_value
+  let promise = unsafe_token
+  let promise_value = token_value
+  let resolver = unsafe_token
+  let resolver_value = token_value
+  let stream = unsafe_token
+  let stream_value = token_value
 end
 
 let of_runtime (module R : RUNTIME) =
+  let runtime_id = fresh_runtime_id () in
   let scope_value scope =
-    (Obj.obj (Backend.scope_value scope) : R.scope)
+    (Obj.obj (checked_token_value runtime_id scope) : R.scope)
   in
   let cancel_context_value cancel_context =
-    (Obj.obj (Backend.cancel_context_value cancel_context) : R.cancel_context)
+    (Obj.obj (checked_token_value runtime_id cancel_context) : R.cancel_context)
   in
+  let own value = token runtime_id (Obj.repr value) in
   {
-    root_scope = Backend.scope (Obj.repr R.root_scope);
+    root_scope = own R.root_scope;
     now_ms = R.now_ms;
     sleep = R.sleep;
     protect = R.protect;
     run_scope =
       (fun ?name f ->
-        R.run_scope ?name @@ fun scope -> f (Backend.scope (Obj.repr scope)));
+        R.run_scope ?name @@ fun scope -> f (own scope));
     fail_scope =
       (fun ?bt scope exn -> R.fail_scope ?bt (scope_value scope) exn);
     fork = (fun scope f -> R.fork (scope_value scope) f);
@@ -146,38 +165,38 @@ let of_runtime (module R : RUNTIME) =
     create_promise =
       (fun (type a) () ->
         let promise, resolver = R.create_promise () in
-        (Backend.promise (Obj.repr promise), Backend.resolver (Obj.repr resolver)));
+        (own promise, own resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
         let resolver =
-          (Obj.obj (Backend.resolver_value resolver) : a R.resolver)
+          (Obj.obj (checked_token_value runtime_id resolver) : a R.resolver)
         in
         R.resolve_promise resolver value);
     await_promise =
       (fun (type a) (promise : a promise) ->
         let promise =
-          (Obj.obj (Backend.promise_value promise) : a R.promise)
+          (Obj.obj (checked_token_value runtime_id promise) : a R.promise)
         in
         R.await_promise promise);
     create_stream =
       (fun (type a) capacity ->
-        Backend.stream (Obj.repr (R.create_stream capacity : a R.stream)));
+        token runtime_id (Obj.repr (R.create_stream capacity : a R.stream)));
     stream_add =
       (fun (type a) (stream : a stream) (value : a) ->
         let stream =
-          (Obj.obj (Backend.stream_value stream) : a R.stream)
+          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
         in
         R.stream_add stream value);
     stream_take =
       (fun (type a) (stream : a stream) ->
         let stream =
-          (Obj.obj (Backend.stream_value stream) : a R.stream)
+          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
         in
         R.stream_take stream);
     stream_take_nonblocking =
       (fun (type a) (stream : a stream) ->
         let stream =
-          (Obj.obj (Backend.stream_value stream) : a R.stream)
+          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
         in
         R.stream_take_nonblocking stream);
     with_worker_context = R.with_worker_context;
@@ -187,7 +206,7 @@ let of_runtime (module R : RUNTIME) =
     cancel_sub =
       (fun f ->
         R.cancel_sub @@ fun cancel ->
-        f (Backend.cancel_context (Obj.repr cancel)));
+        f (own cancel));
     cancel =
       (fun cancel_context exn ->
         R.cancel (cancel_context_value cancel_context) exn);

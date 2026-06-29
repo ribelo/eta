@@ -125,6 +125,44 @@ let test_expert_custom_effect_uses_runtime_contract () =
   in
   Direct.run rt eff |> check_exit_ok Alcotest.int "expert result" 15
 
+let check_foreign_token_rejected name f =
+  match f () with
+  | () -> Alcotest.failf "%s: expected foreign token rejection" name
+  | exception Invalid_argument message
+    when String.equal message "Eta.Runtime_contract: foreign runtime token" ->
+      ()
+  | exception exn ->
+      Alcotest.failf "%s: expected foreign token rejection, got %s" name
+        (Printexc.to_string exn)
+
+let test_erased_tokens_reject_foreign_runtime_contract () =
+  let first =
+    Runtime_contract.of_runtime
+      (module Direct_runtime : Runtime_contract.RUNTIME)
+  in
+  let second =
+    Runtime_contract.of_runtime
+      (module Direct_runtime : Runtime_contract.RUNTIME)
+  in
+  let promise, resolver = first.Runtime_contract.create_promise () in
+  check_foreign_token_rejected "resolver" (fun () ->
+      second.Runtime_contract.resolve_promise resolver 1);
+  check_foreign_token_rejected "promise" (fun () ->
+      ignore (second.Runtime_contract.await_promise promise : int));
+  let stream = first.Runtime_contract.create_stream 1 in
+  check_foreign_token_rejected "stream add" (fun () ->
+      second.Runtime_contract.stream_add stream 1);
+  check_foreign_token_rejected "stream take" (fun () ->
+      ignore (second.Runtime_contract.stream_take stream : int));
+  let forked = ref false in
+  check_foreign_token_rejected "scope" (fun () ->
+      second.Runtime_contract.fork first.Runtime_contract.root_scope (fun () ->
+          forked := true));
+  Alcotest.(check bool) "foreign scope did not reach backend" false !forked;
+  first.Runtime_contract.cancel_sub @@ fun cancel_context ->
+  check_foreign_token_rejected "cancel context" (fun () ->
+      second.Runtime_contract.cancel cancel_context Exit)
+
 let tests =
   [
     ( "Runtime contract",
@@ -137,5 +175,7 @@ let tests =
           test_direct_runtime_preserves_task_context;
         Alcotest.test_case "expert custom effect uses runtime contract" `Quick
           test_expert_custom_effect_uses_runtime_contract;
+        Alcotest.test_case "erased tokens reject foreign runtime contract" `Quick
+          test_erased_tokens_reject_foreign_runtime_contract;
       ] );
   ]
