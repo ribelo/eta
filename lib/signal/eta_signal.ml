@@ -47,6 +47,25 @@ module Make (Observer_error : Observer_error) () = struct
     nodes_became_unnecessary : int;
   }
 
+  type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
+
+  type dot_options = {
+    dot_scope : dot_scope;
+    dot_observers : bool;
+    dot_timers : bool;
+    dot_state : bool;
+    dot_dynamic_scopes : bool;
+  }
+
+  let default_dot_options =
+    {
+      dot_scope = `Necessary;
+      dot_observers = false;
+      dot_timers = false;
+      dot_state = false;
+      dot_dynamic_scopes = false;
+    }
+
   let pp_graph_error ppf = function
     | `Ambiguous_scope -> Format.pp_print_string ppf "ambiguous dynamic scope"
     | `Cycle -> Format.pp_print_string ppf "cycle detected"
@@ -1485,24 +1504,128 @@ module Make (Observer_error : Observer_error) () = struct
     | All _ -> "all"
     | Bind _ -> "bind"
 
-  let to_dot () =
+  let signal_selected :
+      type a. dot_options -> (int, unit) Hashtbl.t -> a signal -> bool =
+   fun options necessary signal ->
+    match options.dot_scope with
+    | `Necessary -> Hashtbl.mem necessary signal.id
+    | `All_valid -> signal.valid
+    | `All_including_invalid -> true
+
+  let bool_field name value = name ^ "=" ^ string_of_bool value
+
+  let signal_state_fields : type a. a signal -> string list =
+   fun signal ->
+    let base =
+      [
+        bool_field "valid" signal.valid;
+        bool_field "initialized" signal.initialized;
+        bool_field "dirty" signal.dirty;
+        bool_field "computing" signal.computing;
+      ]
+    in
+    match signal.kind with
+    | Var source ->
+        base
+        @ [
+            bool_field "queued" source.queued;
+            bool_field "updating" source.updating;
+          ]
+    | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
+    | Map8 _ | Map9 _ | All _ | Bind _ ->
+        base
+
+  let signal_scope_fields : type a. a signal -> string list =
+   fun signal ->
+    match signal.scope with
+    | None -> [ "scope=root" ]
+    | Some scope ->
+        [
+          "scope="
+          ^ string_of_int scope.scope_id
+          ^ ":"
+          ^ (if scope.scope_valid then "valid" else "invalid");
+        ]
+
+  let signal_timer_fields : type a. a signal -> string list =
+   fun signal ->
+    match signal.timer with
+    | None -> []
+    | Some timer ->
+        let running =
+          match timer.timer_running_generation with
+          | None -> "none"
+          | Some generation -> string_of_int generation
+        in
+        [
+          bool_field "timer_active" timer.timer_active;
+          "timer_running=" ^ running;
+          bool_field "timer_cancel" (Option.is_some timer.timer_cancel);
+          bool_field "timer_finished" timer.timer_finished;
+          "timer_generation=" ^ string_of_int timer.timer_generation;
+        ]
+
+  let signal_label : type a. dot_options -> a signal -> string =
+   fun options signal ->
+    let fields = [ kind_name signal.kind ^ ":" ^ string_of_int signal.id ] in
+    let fields =
+      if options.dot_state then fields @ signal_state_fields signal else fields
+    in
+    let fields =
+      if options.dot_dynamic_scopes then fields @ signal_scope_fields signal
+      else fields
+    in
+    let fields =
+      if options.dot_timers then fields @ signal_timer_fields signal else fields
+    in
+    String.concat " " fields
+
+  let observer_label (O observer) =
+    String.concat " "
+      [
+        "observer:" ^ string_of_int observer.obs_id;
+        bool_field "initialized" observer.obs_initialized;
+        bool_field "delivered" observer.obs_delivered_initialized;
+        bool_field "pending" observer.obs_delivery_pending;
+        bool_field "failed_without_current" observer.obs_failed_without_current;
+        bool_field "disposed" observer.obs_disposed;
+      ]
+
+  let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
     let necessary = collect_necessary_node_ids () in
+    let selected signal = signal_selected options necessary signal in
     let buffer = Buffer.create 256 in
     let formatter = Format.formatter_of_buffer buffer in
     Format.fprintf formatter "digraph eta_signal {@.";
     List.iter
       (fun (P signal) ->
-        if Hashtbl.mem necessary signal.id then (
-          Format.fprintf formatter "  n%d [label=\"%s:%d\"];@." signal.id
-            (kind_name signal.kind) signal.id;
+        if selected signal then (
+          Format.fprintf formatter "  n%d [label=%S];@." signal.id
+            (signal_label options signal);
+          let emitted_edges = Hashtbl.create 8 in
           List.iter
             (fun (P dependency) ->
-              if Hashtbl.mem necessary dependency.id then
+              if
+                selected dependency
+                && not (Hashtbl.mem emitted_edges dependency.id)
+              then (
+                Hashtbl.add emitted_edges dependency.id ();
                 Format.fprintf formatter "  n%d -> n%d;@." dependency.id
-                  signal.id)
+                  signal.id))
             signal.dependencies))
       graph.all_nodes;
+    if options.dot_observers then
+      List.iter
+        (fun (O observer as packed) ->
+          if not observer.obs_disposed then (
+            Format.fprintf formatter "  o%d [shape=box,label=%S];@."
+              observer.obs_id (observer_label packed);
+            if selected observer.obs_signal then
+              Format.fprintf formatter
+                "  n%d -> o%d [style=dashed,label=\"observes\"];@."
+                observer.obs_signal.id observer.obs_id))
+        graph.observers;
     Format.fprintf formatter "}@.";
     Format.pp_print_flush formatter ();
     Buffer.contents buffer

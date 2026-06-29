@@ -9,6 +9,7 @@ end
 
 module Signal = Eta_signal.Make (Observer_error) ()
 module Other_signal = Eta_signal.Make (Observer_error) ()
+module Dot_signal = Eta_signal.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -2849,6 +2850,77 @@ let test_stats_and_dot_are_read_only () =
     (after_dispose.Signal.nodes_became_unnecessary
      > after_stabilize.Signal.nodes_became_unnecessary)
 
+let test_to_dot_deduplicates_repeated_dependency_edges () =
+  with_runtime @@ fun rt ->
+  let source = Dot_signal.Var.create 1 in
+  let base = Dot_signal.Var.watch source in
+  let repeated = Dot_signal.map2 (fun left _right -> left) base base in
+  let observer =
+    run_ok rt (Dot_signal.Observer.observe repeated (fun _ -> Effect.unit))
+  in
+  run_ok rt Dot_signal.stabilize;
+  let dot = run_ok rt (Dot_signal.to_dot ()) in
+  Alcotest.(check int) "repeated dependency edge rendered once" 1
+    (count_occurrences dot " -> ");
+  run_ok rt (Dot_signal.Observer.dispose observer)
+
+let test_to_dot_debug_options_expose_hidden_state () =
+  with_logger_test_clock @@ fun _sw _clock rt _logger ->
+  let source = Dot_signal.Var.create 1 in
+  let observed =
+    Dot_signal.Var.watch source |> Dot_signal.map (fun value -> value + 1)
+  in
+  let _unobserved =
+    Dot_signal.Var.watch (Dot_signal.Var.create 10)
+    |> Dot_signal.map (fun value -> value + 1)
+  in
+  let timer = run_ok rt (Dot_signal.Time.interval (Duration.ms 50)) in
+  let branch = Dot_signal.Var.create true in
+  let scoped =
+    Dot_signal.bind (Dot_signal.Var.watch branch) (fun enabled ->
+        if enabled then Dot_signal.const 1 else Dot_signal.const 0)
+  in
+  let observer =
+    run_ok rt (Dot_signal.Observer.observe observed (fun _ -> Effect.unit))
+  in
+  let timer_observer =
+    run_ok rt (Dot_signal.Observer.observe timer (fun _ -> Effect.unit))
+  in
+  let scoped_observer =
+    run_ok rt (Dot_signal.Observer.observe scoped (fun _ -> Effect.unit))
+  in
+  run_ok rt Dot_signal.stabilize;
+  run_ok rt (Dot_signal.Var.set source 2);
+  let necessary_dot = run_ok rt (Dot_signal.to_dot ()) in
+  let debug_options : Dot_signal.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = true;
+      dot_timers = true;
+      dot_state = true;
+      dot_dynamic_scopes = true;
+    }
+  in
+  let debug_dot =
+    run_ok rt (Dot_signal.to_dot ~options:debug_options ())
+  in
+  Alcotest.(check bool) "debug dot shows more than necessary graph" true
+    (count_occurrences debug_dot "[label="
+     > count_occurrences necessary_dot "[label=");
+  Alcotest.(check bool) "debug dot shows observers" true
+    (count_occurrences debug_dot "observer:" > 0);
+  Alcotest.(check bool) "debug dot shows timer state" true
+    (count_occurrences debug_dot "timer_active=true" > 0);
+  Alcotest.(check bool) "debug dot shows queued source state" true
+    (count_occurrences debug_dot "queued=true" > 0);
+  Alcotest.(check bool) "debug dot shows dirty state" true
+    (count_occurrences debug_dot "dirty=true" > 0);
+  Alcotest.(check bool) "debug dot shows dynamic scope state" true
+    (count_occurrences debug_dot "scope=" > 0);
+  run_ok rt (Dot_signal.Observer.dispose observer);
+  run_ok rt (Dot_signal.Observer.dispose timer_observer);
+  run_ok rt (Dot_signal.Observer.dispose scoped_observer)
+
 let test_deterministic_model_matches_small_dynamic_graph () =
   with_runtime @@ fun rt ->
   let left = Signal.Var.create 1 in
@@ -4190,6 +4262,10 @@ let () =
             test_active_graph_operation_interruption_releases_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
+          Alcotest.test_case "to_dot deduplicates repeated dependency edges"
+            `Quick test_to_dot_deduplicates_repeated_dependency_edges;
+          Alcotest.test_case "to_dot debug options expose hidden state" `Quick
+            test_to_dot_debug_options_expose_hidden_state;
           Alcotest.test_case "deterministic model matches dynamic graph" `Quick
             test_deterministic_model_matches_small_dynamic_graph;
           Alcotest.test_case "randomized model matches dynamic graph" `Quick

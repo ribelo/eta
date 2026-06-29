@@ -56,6 +56,19 @@ module Make (Observer_error : Observer_error) () : sig
     nodes_became_unnecessary : int;
   }
 
+  type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
+
+  type dot_options = {
+    dot_scope : dot_scope;
+    dot_observers : bool;
+    dot_timers : bool;
+    dot_state : bool;
+    dot_dynamic_scopes : bool;
+  }
+
+  val default_dot_options : dot_options
+  (** Necessary-only graph dump without extra metadata. *)
+
   val pp_graph_error : Format.formatter -> graph_error -> unit
   val pp_observer_read_error : Format.formatter -> observer_read_error -> unit
   val pp_stabilize_error : Format.formatter -> stabilize_error -> unit
@@ -207,7 +220,13 @@ module Make (Observer_error : Observer_error) () : sig
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, 'err) Eta.Effect.t
-  val to_dot : unit -> (string, 'err) Eta.Effect.t
+
+  val to_dot : ?options:dot_options -> unit -> (string, 'err) Eta.Effect.t
+  (** Return a read-only DOT dump. The default is necessary-only for compact
+      demand debugging. Use [dot_scope = `All_valid] to include retained valid
+      nodes that are not currently necessary, or [`All_including_invalid] to
+      include invalid nodes still retained by the graph. The metadata flags add
+      observer, timer, dirty/queued, and dynamic-scope state to the dump. *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call
