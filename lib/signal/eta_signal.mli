@@ -119,7 +119,11 @@ module Make (Observer_error : Observer_error) () : sig
     (** Create a lifecycle handle for observing [signal]. Registering an
         observer does not run its callback; the first explicit stabilization
         initializes observed values and callbacks run after a consistent
-        snapshot is published. *)
+        snapshot is published.
+
+        Without [?equal], observer callback emission uses physical equality as
+        its cutoff. The observer's current value still advances to the latest
+        stabilized value when a callback is suppressed. *)
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
     (** Read the last stabilized observed value. This is the primary value-read
@@ -134,7 +138,12 @@ module Make (Observer_error : Observer_error) () : sig
   end
 
   val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
+  (** Constant signal. Without [?equal], the signal cutoff is physical equality. *)
+
   val map : ?equal:('b -> 'b -> bool) -> ('a -> 'b) -> 'a signal -> 'b signal
+  (** Map one dependency. Without [?equal], the derived-value cutoff is physical
+      equality. Freshly allocated but structurally equal values are therefore
+      treated as changes unless a structural [?equal] is supplied. *)
 
   val map2 :
     ?equal:('c -> 'c -> bool) ->
@@ -142,6 +151,9 @@ module Make (Observer_error : Observer_error) () : sig
     'a signal ->
     'b signal ->
     'c signal
+  (** Map two dependencies. Without [?equal], the derived-value cutoff is
+      physical equality. The same default applies to [map3] through [map9] and
+      {!both}. *)
 
   val map3 :
     ?equal:('d -> 'd -> bool) ->
@@ -222,11 +234,16 @@ module Make (Observer_error : Observer_error) () : sig
 
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
+  (** Collect a list of signals. Without [?equal], the list cutoff is physical
+      equality. *)
+
   val bind : ?equal:('b -> 'b -> bool) -> 'a signal -> ('a -> 'b signal) -> 'b signal
   (** Dynamically select a signal from the current value of another signal.
       Nodes created by an inactive branch are invalidated when that branch is
       replaced; observing a captured inactive-branch node fails with
-      [`Invalid_scope]. *)
+      [`Invalid_scope].
+
+      Without [?equal], the selected output cutoff is physical equality. *)
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, 'err) Eta.Effect.t
@@ -294,6 +311,9 @@ module Make (Observer_error : Observer_error) () : sig
       Eta.Effect.t
     (** [observe ?capacity signal] creates an observer and a stream of observer
         updates. [capacity] defaults to [1024] and bounds the bridge queue.
+        Without [?equal], stream update emission uses physical equality as its
+        observer cutoff.
+
         Publication from stabilization is nonblocking: when the bridge already
         has [capacity] buffered updates, the newest stream update is dropped
         and stabilization continues. A later delivered change may therefore

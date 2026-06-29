@@ -956,6 +956,32 @@ let test_default_cutoff_is_physical_equality () =
     (run_ok rt (Signal.Observer.read observer) == next);
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_derived_default_cutoff_is_physical_equality () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let mapped = Signal.Var.watch source |> Signal.map (fun _ -> Array.make 1 1) in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe mapped (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 1);
+  run_ok rt Signal.stabilize;
+  (match List.rev !events with
+   | [ Signal.Initialized initialized; Changed { old_value; new_value } ] ->
+       Alcotest.(check (list int)) "initialized derived value" [ 1 ]
+         (Array.to_list initialized);
+       Alcotest.(check (list int)) "old derived value" [ 1 ]
+         (Array.to_list old_value);
+       Alcotest.(check (list int)) "new derived value" [ 1 ]
+         (Array.to_list new_value);
+       Alcotest.(check bool) "fresh equal arrays still changed" false
+         (old_value == new_value)
+   | _ ->
+       Alcotest.fail
+         "expected derived physical cutoff to emit structurally equal block");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_default_physical_cutoff_suppresses_in_place_mutation () =
   with_runtime @@ fun rt ->
   let block = Array.make 1 1 in
@@ -4241,6 +4267,8 @@ let () =
             test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
+          Alcotest.test_case "derived default cutoff is physical equality"
+            `Quick test_derived_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "observer equality is observer-local" `Quick
