@@ -3252,6 +3252,25 @@ let test_time_timer_becomes_inert_after_dispose () =
   Alcotest.(check int) "disposed timer did not reschedule" 0
     (Eta_test.Test_clock.sleeper_count clock)
 
+let test_time_timer_dispose_cancels_sleeping_daemon () =
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt (Signal.Observer.dispose observer);
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "disposed long-interval timer daemon drains without clock advance" true
+    (Eio.Promise.is_resolved drained);
+  Eio.Promise.await_exn drained
+
 let test_time_interval_restarts_after_reobserve () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -4100,6 +4119,8 @@ let () =
             test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
+          Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
+            test_time_timer_dispose_cancels_sleeping_daemon;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time interval ignores stale sleep after reobserve"

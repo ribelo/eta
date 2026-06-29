@@ -231,6 +231,7 @@ module Make (Observer_error : Observer_error) () = struct
   and timer_node = {
     mutable timer_active : bool;
     mutable timer_running_generation : int option;
+    mutable timer_cancel : (unit -> unit) option;
     mutable timer_finished : bool;
     mutable timer_generation : int;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
@@ -1034,13 +1035,17 @@ module Make (Observer_error : Observer_error) () = struct
           then recompute inner_value
           else use_cached ()
 
-  let timer_stop_unlocked timer =
+  let timer_stop_unlocked ?(cancel_running = true) timer =
+    let cancel = timer.timer_cancel in
     timer.timer_active <- false;
-    timer.timer_generation <- timer.timer_generation + 1
+    timer.timer_generation <- timer.timer_generation + 1;
+    timer.timer_running_generation <- None;
+    timer.timer_cancel <- None;
+    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel
 
   let timer_finish_unlocked timer =
     timer.timer_finished <- true;
-    timer_stop_unlocked timer
+    timer_stop_unlocked ~cancel_running:false timer
 
   let timer_has_current_daemon timer =
     match timer.timer_running_generation with
@@ -1054,6 +1059,7 @@ module Make (Observer_error : Observer_error) () = struct
       timer.timer_active <- true;
       timer.timer_generation <- timer.timer_generation + 1;
       timer.timer_running_generation <- Some timer.timer_generation;
+      timer.timer_cancel <- None;
       Some (timer.timer_start timer))
 
   let collect_necessary_node_ids () =
@@ -1448,22 +1454,63 @@ module Make (Observer_error : Observer_error) () = struct
     Buffer.contents buffer
 
   module Time = struct
+    exception Timer_cancelled
+
     let validate_interval duration =
       if Duration.to_ms duration <= 0 then Error `Invalid_interval else Ok ()
 
     let validate_future now deadline_ms =
       if deadline_ms <= now then Error `Past_deadline else Ok ()
 
+    let install_timer_cancel timer generation cancel =
+      with_graph_lane_sync (fun () ->
+          if
+            timer.timer_active
+            && timer.timer_running_generation = Some generation
+          then (
+            timer.timer_cancel <- Some cancel;
+            `Continue)
+          else `Stop)
+
+    let cancellable_timer_loop timer generation loop =
+      Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
+      let contract = Effect.Expert.contract context in
+      let cancelled_exit = function
+        | Eta.Exit.Error cause when Eta.Cause.is_interrupt_only cause ->
+            Eta.Exit.Ok ()
+        | exit -> exit
+      in
+      try
+        contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+        let cancel () =
+          contract.Runtime_contract.cancel cancel_context Timer_cancelled
+        in
+        match
+          Effect.Expert.eval context
+            (install_timer_cancel timer generation cancel)
+        with
+        | Eta.Exit.Error _ as error -> error
+        | Eta.Exit.Ok `Stop -> Eta.Exit.Ok ()
+        | Eta.Exit.Ok `Continue ->
+            Effect.Expert.eval context loop |> cancelled_exit
+      with exn ->
+        if Option.is_some (contract.Runtime_contract.cancellation_reason exn)
+        then Eta.Exit.Ok ()
+        else Effect.Expert.exit_of_exn context exn
+
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
-          if timer.timer_running_generation = Some generation then
-            timer.timer_running_generation <- None)
+          if timer.timer_running_generation = Some generation then (
+            timer.timer_running_generation <- None;
+            timer.timer_cancel <- None))
 
     let timer_mark_failed timer generation =
       with_graph_lane_sync (fun () ->
           if timer.timer_running_generation = Some generation then (
             timer.timer_running_generation <- None;
-            if timer.timer_active then timer_stop_unlocked timer))
+            timer.timer_cancel <- None;
+            if timer.timer_active then
+              timer_stop_unlocked ~cancel_running:false timer))
 
     let timer_cleanup_after_exit timer generation = function
       | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
@@ -1481,8 +1528,9 @@ module Make (Observer_error : Observer_error) () = struct
             && timer.timer_running_generation = Some generation
           then `Continue
           else (
-            if timer.timer_running_generation = Some generation then
+            if timer.timer_running_generation = Some generation then (
               timer.timer_running_generation <- None;
+              timer.timer_cancel <- None);
             `Stop))
 
     let add_ms_capped left right =
@@ -1542,6 +1590,7 @@ module Make (Observer_error : Observer_error) () = struct
         {
           timer_active = false;
           timer_running_generation = None;
+          timer_cancel = None;
           timer_finished = false;
           timer_generation = 0;
           timer_start =
@@ -1553,10 +1602,11 @@ module Make (Observer_error : Observer_error) () = struct
                 |> Effect.bind (fun now_ms ->
                        let next_due_ms = add_ms_capped now_ms interval_ms in
                        Effect.daemon
-                         (timer_loop timer generation interval_ms next_due_ms
-                            update
-                         |> Effect.on_exit
-                              (timer_cleanup_after_exit timer generation)))
+                         (cancellable_timer_loop timer generation
+                            (timer_loop timer generation interval_ms next_due_ms
+                               update
+                            |> Effect.on_exit
+                                 (timer_cleanup_after_exit timer generation))))
               in
               if update_on_start then
                 (update.timer_update timer
