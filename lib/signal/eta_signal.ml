@@ -514,15 +514,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let current_generation () = graph.stabilization_id
 
-  let remove_signal_dependency dependent dependencies =
-    List.filter
-      (fun (P candidate) ->
-        not
-          (List.exists
-             (fun (P dependency) -> dependency.id = candidate.id)
-             dependencies))
-      dependent
-
   let remove_dependent child parent =
     child.dependents <-
       List.filter (fun (P candidate) -> candidate.id <> parent.id) child.dependents
