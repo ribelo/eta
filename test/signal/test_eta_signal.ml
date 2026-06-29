@@ -2989,7 +2989,11 @@ let test_stats_and_dot_are_read_only () =
     Alcotest.(check int)
       (label ^ " nodes_became_unnecessary")
       expected.Signal.nodes_became_unnecessary
-      actual.Signal.nodes_became_unnecessary
+      actual.Signal.nodes_became_unnecessary;
+    Alcotest.(check int)
+      (label ^ " stream_bridge_drop_count")
+      expected.Signal.stream_bridge_drop_count
+      actual.Signal.stream_bridge_drop_count
   in
   let count_occurrences text needle =
     let text_len = String.length text in
@@ -4382,6 +4386,51 @@ let test_stream_bridge_full_queue_does_not_block () =
   run_ok rt (Signal.Observer.dispose observer);
   run_ok rt (Signal.Observer.dispose later_observer)
 
+let test_stream_bridge_drop_callback_reports_loss () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let drops = ref [] in
+  let before = run_ok rt (Signal.stats ()) in
+  let observer, stream =
+    run_ok rt
+      (Signal.Stream.observe ~capacity:1
+         ~on_drop:(fun update -> drops := update :: !drops)
+         signal)
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer snapshot advances after dropped update" 2
+    (run_ok rt (Signal.Observer.read observer));
+  (match List.rev !drops with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected dropped stream update to be reported");
+  let after_drop = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "stats reports stream bridge drop"
+    (before.Signal.stream_bridge_drop_count + 1)
+    after_drop.Signal.stream_bridge_drop_count;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected buffered initial update");
+  run_ok rt (Signal.Var.set source 3);
+  run_ok rt Signal.stabilize;
+  (match List.rev !drops with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "drop callback should not run for delivered update");
+  let after_delivery = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "delivered update does not increment drop stats"
+    after_drop.Signal.stream_bridge_drop_count
+    after_delivery.Signal.stream_bridge_drop_count;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected delivered update after draining");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -4768,6 +4817,8 @@ let () =
             test_stream_bridge_equal_suppresses_updates;
           Alcotest.test_case "stream bridge full queue does not block"
             `Quick test_stream_bridge_full_queue_does_not_block;
+          Alcotest.test_case "stream bridge drop callback reports loss"
+            `Quick test_stream_bridge_drop_callback_reports_loss;
           Alcotest.test_case "stream bridge full queue dispose closes"
             `Quick test_stream_bridge_full_queue_dispose_closes_without_waiting;
           Alcotest.test_case

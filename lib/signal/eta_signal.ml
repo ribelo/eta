@@ -51,6 +51,7 @@ module Make (Observer_error : Observer_error) () = struct
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
+    stream_bridge_drop_count : int;
   }
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
@@ -347,6 +348,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable dynamic_scope_invalidations : int;
     mutable nodes_became_necessary : int;
     mutable nodes_became_unnecessary : int;
+    mutable stream_bridge_drop_count : int;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
   }
 
@@ -381,6 +383,7 @@ module Make (Observer_error : Observer_error) () = struct
       dynamic_scope_invalidations = 0;
       nodes_became_necessary = 0;
       nodes_became_unnecessary = 0;
+      stream_bridge_drop_count = 0;
       necessary_node_ids = Hashtbl.create 16;
     }
 
@@ -1665,7 +1668,13 @@ module Make (Observer_error : Observer_error) () = struct
       dynamic_scope_invalidations = graph.dynamic_scope_invalidations;
       nodes_became_necessary = graph.nodes_became_necessary;
       nodes_became_unnecessary = graph.nodes_became_unnecessary;
+      stream_bridge_drop_count = graph.stream_bridge_drop_count;
     }
+
+  let record_stream_bridge_drop () =
+    with_graph_lane_sync (fun () ->
+        graph.stream_bridge_drop_count <-
+          saturating_succ graph.stream_bridge_drop_count)
 
   let kind_name : type a. a kind -> string = function
     | Const _ -> "const"
@@ -2135,10 +2144,18 @@ module Make (Observer_error : Observer_error) () = struct
              ~overflow:(Queue.Drop_new { capacity })
              ())
 
-    let offer_bridge_update queue update =
+    let report_dropped_update on_drop update =
+      record_stream_bridge_drop ()
+      |> Effect.bind (fun () ->
+             match on_drop with
+             | None -> Effect.unit
+             | Some on_drop -> Effect.sync (fun () -> on_drop update))
+
+    let offer_bridge_update on_drop queue update =
       Queue.try_send queue update
       |> Effect.bind (function
-           | `Sent | `Dropped | `Closed -> Effect.unit
+           | `Sent | `Closed -> Effect.unit
+           | `Dropped -> report_dropped_update on_drop update
            | `Full ->
                Effect.sync (fun () ->
                    failwith "Eta_signal.Stream.observe: unexpected full queue")
@@ -2147,14 +2164,14 @@ module Make (Observer_error : Observer_error) () = struct
                    failwith
                      "Eta_signal.Stream.observe: bridge queue closed with error"))
 
-    let observe ?(capacity = default_capacity) ?equal signal =
+    let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> create_bridge_queue capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
              Observer.observe_with_hooks ?equal
                ~on_dispose:[ (fun () -> Queue.close queue) ]
                signal
-               (offer_bridge_update queue)
+               (offer_bridge_update on_drop queue)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, Eta_stream.Stream.from_queue queue)))

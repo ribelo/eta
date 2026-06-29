@@ -72,6 +72,7 @@ module Make (Observer_error : Observer_error) () : sig
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
+    stream_bridge_drop_count : int;
   }
   (** Read-only graph counters for diagnostics.
 
@@ -79,7 +80,8 @@ module Make (Observer_error : Observer_error) () : sig
       [callback_delivery_count] advances only after all observer callbacks for a
       stabilization are delivered successfully. [live_dirty_node_count] counts
       valid dirty nodes; [dead_node_count] counts invalid nodes still retained
-      by graph indexes. *)
+      by graph indexes. [stream_bridge_drop_count] counts updates dropped by
+      lossy {!Stream.observe} bridge queues. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
@@ -347,6 +349,7 @@ module Make (Observer_error : Observer_error) () : sig
   module Stream : sig
     val observe :
       ?capacity:int ->
+      ?on_drop:('a update -> unit) ->
       ?equal:('a -> 'a -> bool) ->
       'a signal ->
       ('a observer * ('a update, graph_error) Eta_stream.Stream.t, stream_error)
@@ -360,6 +363,10 @@ module Make (Observer_error : Observer_error) () : sig
         has [capacity] buffered updates, the newest stream update is dropped
         and stabilization continues. A later delivered change may therefore
         report an [old_value] that was not itself delivered through the stream.
+        Pass [?on_drop] to observe each dropped update; the hook runs
+        synchronously during observer delivery and should be reserved for
+        counters, metrics, or lightweight logging. If the hook raises,
+        stabilization fails with that defect.
 
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers

@@ -583,6 +583,8 @@ invalidation, heights, scopes, or observer scheduling.
   mutating the graph.
 - Signal-to-stream bridge emits observer updates after stabilization; the kernel
   does not include stream-to-signal policy.
+- Lossy signal-to-stream bridge overflow is observable through graph stats and
+  a drop hook.
 - No public expert/custom-node surface bypasses graph invariants.
 - Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives
   and do not run observer callbacks outside explicit stabilization.
@@ -681,7 +683,7 @@ contract.
 | Expected public failures use small operation-scoped typed error families with clear printers | `lib/signal/eta_signal.mli`, `test_error_pretty_printers_are_clear` | Covered |
 | User callback exceptions are defects and do not permanently poison the graph | `test_pure_failure_does_not_publish_partial_snapshot_and_can_retry`, `test_observer_callback_construction_defect_does_not_poison_graph` | Covered |
 | Stats and debug introspection expose demand/recompute/scope behavior without mutating | `test_stats_and_dot_are_read_only` | Covered |
-| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_full_queue_does_not_block`, `test_stream_bridge_full_queue_dispose_closes_without_waiting`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
+| Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_full_queue_does_not_block`, `test_stream_bridge_drop_callback_reports_loss`, `test_stream_bridge_full_queue_dispose_closes_without_waiting`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
 | No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered |
 | Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_after_elapsed_before_observe`, `test_time_absolute_deadline` | Covered |
