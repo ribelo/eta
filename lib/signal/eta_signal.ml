@@ -1227,21 +1227,26 @@ module Make (Observer_error : Observer_error) () = struct
       with_graph_lane_sync (fun () -> source.updating <- false)
 
     let update_effect (source : 'a t) f =
+      let acquired = ref false in
       let acquire =
         with_graph_lane_sync (fun () ->
             if source.updating then Error `Reentrant_update
             else (
               source.updating <- true;
+              acquired := true;
               Ok source.source_value))
         |> Effect.flatten_result
       in
-      acquire
-      |> Effect.bind (fun old_value ->
-             Effect.sync (fun () -> f old_value)
-             |> Effect.bind (fun update_eff -> update_eff)
-             |> Effect.bind (fun new_value ->
-                    set source new_value |> Effect.map (fun () -> new_value))
-             |> Effect.on_exit (fun _ -> release_update source))
+      let release_if_acquired () =
+        if !acquired then release_update source else Effect.unit
+      in
+      (acquire
+       |> Effect.bind (fun old_value ->
+              Effect.sync (fun () -> f old_value)
+              |> Effect.bind (fun update_eff -> update_eff)
+              |> Effect.bind (fun new_value ->
+                     set source new_value |> Effect.map (fun () -> new_value))))
+      |> Effect.on_exit (fun _ -> release_if_acquired ())
   end
 
   module Observer = struct

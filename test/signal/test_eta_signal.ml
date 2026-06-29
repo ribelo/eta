@@ -93,6 +93,98 @@ let with_runtime_and_switch f =
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) () in
   f sw rt
 
+exception Cleanup_interrupt
+
+module Cleanup_interrupt_runtime = struct
+  type scope = unit
+  type cancel_context = unit
+  type 'a promise = 'a option ref
+  type 'a resolver = 'a option ref
+  type 'a stream = 'a Stdlib.Queue.t
+
+  let interrupt_next_protect_return = ref false
+  let now = ref 0
+  let root_scope = ()
+  let now_ms () = !now
+  let sleep duration = now := !now + Duration.to_ms duration
+
+  let protect f =
+    let value = f () in
+    if !interrupt_next_protect_return then (
+      interrupt_next_protect_return := false;
+      raise Cleanup_interrupt);
+    value
+
+  let run_scope ?name:_ f = f ()
+  let fail_scope ?bt:_ () exn = raise exn
+  let fork () f = f ()
+  let fork_daemon () f = ignore (f () : [ `Stop_daemon ])
+  let await_cancel () = raise Cleanup_interrupt
+  let yield () = ()
+  let check () = ()
+
+  let create_promise () =
+    let cell = ref None in
+    (cell, cell)
+
+  let resolve_promise resolver value =
+    match !resolver with
+    | Some _ ->
+        invalid_arg "Cleanup_interrupt_runtime.resolve_promise: already resolved"
+    | None -> resolver := Some value
+
+  let await_promise promise =
+    match !promise with
+    | Some value -> value
+    | None -> failwith "Cleanup_interrupt_runtime.await_promise: unresolved"
+
+  let create_stream _capacity = Stdlib.Queue.create ()
+  let stream_add stream value = Stdlib.Queue.add value stream
+
+  let stream_take stream =
+    if Stdlib.Queue.is_empty stream then
+      failwith "Cleanup_interrupt_runtime.stream_take: empty"
+    else Stdlib.Queue.take stream
+
+  let stream_take_nonblocking stream =
+    if Stdlib.Queue.is_empty stream then None else Some (Stdlib.Queue.take stream)
+
+  let with_worker_context f = f ()
+  let in_worker_context () = false
+
+  let cancellation_reason = function
+    | Cleanup_interrupt -> Some Cleanup_interrupt
+    | _ -> None
+
+  let multiple_exceptions _ = None
+  let cancel_sub f = f ()
+  let cancel () exn = raise exn
+
+  let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
+    Hashtbl.create 8
+
+  let local_get local =
+    match Hashtbl.find_opt locals (Runtime_contract.Backend.local_id local) with
+    | None -> None
+    | Some bindings ->
+        List.find_map
+          (Runtime_contract.Backend.local_binding_value local)
+          bindings
+
+  let local_with_binding local value f =
+    let id = Runtime_contract.Backend.local_id local in
+    let previous = Hashtbl.find_opt locals id in
+    let stack = Option.value previous ~default:[] in
+    Hashtbl.replace locals id
+      (Runtime_contract.Local_binding (local, value) :: stack);
+    Fun.protect
+      ~finally:(fun () ->
+        match previous with
+        | Some stack -> Hashtbl.replace locals id stack
+        | None -> Hashtbl.remove locals id)
+      f
+end
+
 let with_logger_test_clock f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -2337,6 +2429,38 @@ let test_effectful_update_interruption_preserves_value_and_releases_slot () =
        (Signal.Var.update_effect source (fun current ->
             Effect.pure (current + 1))))
 
+let test_effectful_update_acquire_interruption_releases_slot () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
+  Cleanup_interrupt_runtime.now := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  (match
+     Runtime.run rt
+       (widen
+          (Signal.Var.update_effect source (fun current ->
+               Effect.pure (current + 1))))
+   with
+  | Exit.Error _ -> ()
+  | Exit.Ok value ->
+      Alcotest.failf "expected injected interruption, got Ok %d" value);
+  Alcotest.(check int) "interrupted acquire leaves value unchanged" 1
+    (Signal.Var.value source);
+  (match
+     Runtime.run rt
+       (widen
+          (Signal.Var.update_effect source (fun current ->
+               Effect.pure (current + 1))))
+   with
+  | Exit.Ok value ->
+      Alcotest.(check int) "slot released after acquire interruption" 2 value
+  | Exit.Error cause ->
+      Alcotest.failf "expected released slot, got %a" (Cause.pp pp_hidden) cause)
+
 let test_queued_graph_operation_cancellation_does_not_run () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -3750,6 +3874,8 @@ let () =
             test_effectful_update_failures_preserve_value_and_release_slot;
           Alcotest.test_case "effectful update interruption cleanup" `Quick
             test_effectful_update_interruption_preserves_value_and_releases_slot;
+          Alcotest.test_case "effectful update acquire interruption cleanup"
+            `Quick test_effectful_update_acquire_interruption_releases_slot;
           Alcotest.test_case "queued graph operation cancellation" `Quick
             test_queued_graph_operation_cancellation_does_not_run;
           Alcotest.test_case "active graph interruption releases lane" `Quick
