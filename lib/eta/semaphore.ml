@@ -7,6 +7,8 @@ type waiter = {
   mutable state : waiter_state;
 }
 
+type wakeup = Wake_waiter of waiter
+
 type t = {
   max_permits : int;
   mutex : Sync_lock.t;
@@ -43,6 +45,16 @@ let with_lock t f =
 let with_lock_during_cancel contract t f =
   contract.Runtime_contract.protect (fun () -> with_lock t f)
 
+let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+
+let resolve_wakeup = function
+  | Wake_waiter waiter ->
+      waiter.contract.Runtime_contract.protect (fun () ->
+          waiter.contract.Runtime_contract.resolve_promise waiter.resolver ())
+
+let resolve_wakeups wakeups =
+  List.iter resolve_wakeup (List.rev wakeups)
+
 let validate_request name t n =
   if n <= 0 || n > t.max_permits then
     invalid_arg
@@ -73,36 +85,46 @@ let compact_cancelled_waiters_locked t =
     Stdlib.Queue.clear t.waiters;
     Stdlib.Queue.iter (fun waiter -> Stdlib.Queue.push waiter t.waiters) live)
 
-let rec wake_waiters_locked t =
+let rec wake_waiters_locked wakeups t =
   match take_ready_waiter t with
   | None -> ()
   | Some waiter ->
       t.available <- t.available - waiter.permits;
       waiter.state <- Resolved_unclaimed;
-      waiter.contract.Runtime_contract.resolve_promise waiter.resolver ();
-      wake_waiters_locked t
+      add_wakeup wakeups (Wake_waiter waiter);
+      wake_waiters_locked wakeups t
 
 let try_acquire t n =
   validate_request "try_acquire" t n;
-  with_lock t @@ fun () ->
-  compact_cancelled_waiters_locked t;
-  wake_waiters_locked t;
-  if not (Stdlib.Queue.is_empty t.waiters) then false
-  else if t.available >= n then (
-    t.available <- t.available - n;
-    true)
-  else false
+  let wakeups = ref [] in
+  let acquired =
+    with_lock t @@ fun () ->
+    compact_cancelled_waiters_locked t;
+    wake_waiters_locked wakeups t;
+    if not (Stdlib.Queue.is_empty t.waiters) then false
+    else if t.available >= n then (
+      t.available <- t.available - n;
+      true)
+    else false
+  in
+  resolve_wakeups !wakeups;
+  acquired
 
 let release t n =
   if n <= 0 then invalid_arg "Eta.Semaphore.release: n must be > 0";
-  with_lock t @@ fun () ->
-  if t.available + n > t.max_permits then
-    invalid_arg "Eta.Semaphore.release: release would exceed semaphore capacity";
-  t.available <- t.available + n;
-  wake_waiters_locked t
+  let wakeups = ref [] in
+  with_lock t
+    (fun () ->
+      if t.available + n > t.max_permits then
+        invalid_arg
+          "Eta.Semaphore.release: release would exceed semaphore capacity";
+      t.available <- t.available + n;
+      wake_waiters_locked wakeups t);
+  resolve_wakeups !wakeups
 
 let cleanup_waiter contract t waiter =
-  with_lock_during_cancel contract t @@ fun () ->
+  let wakeups = ref [] in
+  with_lock_during_cancel contract t (fun () ->
   (* Invariant (validated): on cancellation a permit is returned only while the
      waiter has not yet taken ownership. [Waiting] was never granted a permit;
      [Resolved_unclaimed] was granted one that the fiber never claimed, so it
@@ -114,14 +136,15 @@ let cleanup_waiter contract t waiter =
       waiter.state <- Cancelled;
       t.cancelled_waiters <- t.cancelled_waiters + 1;
       compact_cancelled_waiters_locked t;
-      wake_waiters_locked t
+      wake_waiters_locked wakeups t
   | Resolved_unclaimed ->
       waiter.state <- Cancelled;
       t.cancelled_waiters <- t.cancelled_waiters + 1;
       t.available <- min t.max_permits (t.available + waiter.permits);
       compact_cancelled_waiters_locked t;
-      wake_waiters_locked t
-  | Claimed | Cancelled -> ()
+      wake_waiters_locked wakeups t
+  | Claimed | Cancelled -> ());
+  resolve_wakeups !wakeups
 
 let acquire t n =
   validate_request "acquire" t n;
@@ -130,10 +153,11 @@ let acquire t n =
          let contract = frame.Effect_core.runtime.Runtime_core.contract in
          let promise, resolver = contract.Runtime_contract.create_promise () in
          let waiter = { permits = n; contract; resolver; state = Waiting } in
+         let wakeups = ref [] in
          let acquisition =
            with_lock t @@ fun () ->
            compact_cancelled_waiters_locked t;
-           wake_waiters_locked t;
+           wake_waiters_locked wakeups t;
            if Stdlib.Queue.is_empty t.waiters && t.available >= n then (
              t.available <- t.available - n;
              `Acquired)
@@ -141,6 +165,7 @@ let acquire t n =
              Stdlib.Queue.push waiter t.waiters;
              `Waiting (contract, promise, waiter))
          in
+         resolve_wakeups !wakeups;
          match acquisition with
          | `Acquired -> ()
          | `Waiting (contract, promise, waiter) -> (

@@ -44,6 +44,10 @@ type ('a, 'err) publisher = {
   mutable active : bool;
 }
 
+type ('a, 'err) wakeup =
+  | Wake_receiver of receiver
+  | Wake_publisher of ('a, 'err) publisher * 'err publish_out
+
 type ('a, 'err) entry = {
   seq : int;
   value : 'a;
@@ -112,13 +116,25 @@ let close_result = function
   | Clean -> `Closed
   | Failed err -> `Closed_with_error err
 
+let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+
 let resolve_receiver (receiver : receiver) =
-  receiver.contract.Runtime_contract.resolve_promise receiver.resolver ()
+  receiver.contract.Runtime_contract.protect (fun () ->
+      receiver.contract.Runtime_contract.resolve_promise receiver.resolver ())
 
 let resolve_publisher
     (publisher : ('a, 'err) publisher)
     (result : 'err publish_out) =
-  publisher.contract.Runtime_contract.resolve_promise publisher.resolver result
+  publisher.contract.Runtime_contract.protect (fun () ->
+      publisher.contract.Runtime_contract.resolve_promise publisher.resolver
+        result)
+
+let resolve_wakeup = function
+  | Wake_receiver receiver -> resolve_receiver receiver
+  | Wake_publisher (publisher, result) -> resolve_publisher publisher result
+
+let resolve_wakeups wakeups =
+  List.iter resolve_wakeup (List.rev wakeups)
 
 let capacity_available t =
   match t.overflow with
@@ -162,20 +178,20 @@ let compact_cancelled_receivers_locked (sub : ('a, 'err) subscription) =
       (fun receiver -> Stdlib.Queue.push receiver sub.receivers)
       live)
 
-let wake_receiver t (receiver : receiver) =
+let wake_receiver wakeups t (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
-    resolve_receiver receiver)
+    add_wakeup wakeups (Wake_receiver receiver))
 
-let wake_subscription_receivers t (sub : ('a, 'err) subscription) =
+let wake_subscription_receivers wakeups t (sub : ('a, 'err) subscription) =
   while not (Stdlib.Queue.is_empty sub.receivers) do
-    wake_receiver t (Stdlib.Queue.take sub.receivers)
+    wake_receiver wakeups t (Stdlib.Queue.take sub.receivers)
   done
 
-let wake_all_receivers t =
+let wake_all_receivers wakeups t =
   List.iter
-    (fun sub -> if sub.active then wake_subscription_receivers t sub)
+    (fun sub -> if sub.active then wake_subscription_receivers wakeups t sub)
     t.subscribers
 
 let decrement_entry (entry : ('a, 'err) entry) =
@@ -198,7 +214,7 @@ let find_entry t seq =
     t.entries;
   !found
 
-let rec admit_value_locked t value =
+let rec admit_value_locked wakeups t value =
   let subscriber_count = active_subscriber_count t in
   if subscriber_count = 0 then { subscriber_count = 0; dropped = 0 }
   else (
@@ -209,10 +225,10 @@ let rec admit_value_locked t value =
     Stdlib.Queue.add entry t.entries;
     t.depth <- t.depth + 1;
     t.published <- t.published + 1;
-    wake_all_receivers t;
+    wake_all_receivers wakeups t;
     { subscriber_count; dropped = 0 })
 
-and admit_waiting_publishers_locked t =
+and admit_waiting_publishers_locked wakeups t =
   match t.overflow with
   | Unbounded | Drop_new _ -> ()
   | Backpressure _ ->
@@ -225,15 +241,16 @@ and admit_waiting_publishers_locked t =
           | Some publisher ->
               publisher.active <- false;
               t.waiting_publishers <- t.waiting_publishers - 1;
-              let result = admit_value_locked t publisher.value in
-              resolve_publisher publisher (`Published result);
+              let result = admit_value_locked wakeups t publisher.value in
+              add_wakeup wakeups
+                (Wake_publisher (publisher, `Published result));
               loop ()
       in
       loop ()
 
-let cleanup_locked t =
+let cleanup_locked wakeups t =
   drop_drained_head_entries t;
-  admit_waiting_publishers_locked t
+  admit_waiting_publishers_locked wakeups t
 
 let enqueue_publisher contract t value =
   let promise, resolver = contract.Runtime_contract.create_promise () in
@@ -242,15 +259,16 @@ let enqueue_publisher contract t value =
   t.waiting_publishers <- t.waiting_publishers + 1;
   (promise, publisher)
 
-let cancel_publisher t (publisher : ('a, 'err) publisher) =
+let cancel_publisher wakeups t (publisher : ('a, 'err) publisher) =
   if publisher.active then (
     publisher.active <- false;
     t.waiting_publishers <- t.waiting_publishers - 1;
     t.cancelled_publishers <- t.cancelled_publishers + 1;
     compact_cancelled_publishers_locked t;
-    admit_waiting_publishers_locked t)
+    admit_waiting_publishers_locked wakeups t)
 
 let publish_sync contract t value =
+  let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
     match t.closed with
@@ -266,14 +284,18 @@ let publish_sync contract t value =
             let promise, publisher = enqueue_publisher contract t value in
             `Wait (promise, publisher)
         | Unbounded | Drop_new _ | Backpressure _ ->
-            `Ready (`Published (admit_value_locked t value)))
+            `Ready (`Published (admit_value_locked wakeups t value)))
   with
-  | `Ready result -> result
+  | `Ready result ->
+      resolve_wakeups !wakeups;
+      result
   | `Wait (promise, publisher) -> (
       try contract.Runtime_contract.await_promise promise
       with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
+        let cancel_wakeups = ref [] in
         with_lock_during_cancel contract t
-          (fun () -> cancel_publisher t publisher);
+          (fun () -> cancel_publisher cancel_wakeups t publisher);
+        resolve_wakeups !cancel_wakeups;
         raise exn)
 
 let publish t value =
@@ -307,15 +329,19 @@ let add_subscription t =
 
 let release_subscription sub =
   let t = sub.hub in
-  with_lock t @@ fun () ->
-  if sub.active then (
-    sub.active <- false;
-    t.subscribers <- List.filter (fun other -> other.id <> sub.id) t.subscribers;
-    Stdlib.Queue.iter
-      (fun entry -> if entry.seq >= sub.cursor then decrement_entry entry)
-      t.entries;
-    wake_subscription_receivers t sub;
-    cleanup_locked t)
+  let wakeups = ref [] in
+  with_lock t
+    (fun () ->
+      if sub.active then (
+        sub.active <- false;
+        t.subscribers <-
+          List.filter (fun other -> other.id <> sub.id) t.subscribers;
+        Stdlib.Queue.iter
+          (fun entry -> if entry.seq >= sub.cursor then decrement_entry entry)
+          t.entries;
+        wake_subscription_receivers wakeups t sub;
+        cleanup_locked wakeups t));
+  resolve_wakeups !wakeups
 
 let subscribe t f =
   Effect.scoped
@@ -323,7 +349,7 @@ let subscribe t f =
        ~release:(fun sub -> Effect.sync (fun () -> release_subscription sub))
     |> Effect.bind f)
 
-let consume_available_locked sub =
+let consume_available_locked wakeups sub =
   let t = sub.hub in
   if not sub.active then `Closed
   else
@@ -333,7 +359,7 @@ let consume_available_locked sub =
         sub.cursor <- sub.cursor + 1;
         decrement_entry entry;
         t.received <- t.received + 1;
-        cleanup_locked t;
+        cleanup_locked wakeups t;
         `Item value
     | None ->
         if sub.cursor < t.next_seq then
@@ -359,15 +385,18 @@ let cancel_receiver sub (receiver : receiver) =
 
 let recv_sync contract sub =
   let rec loop () =
+    let wakeups = ref [] in
     match
       with_lock sub.hub @@ fun () ->
-      match consume_available_locked sub with
+      match consume_available_locked wakeups sub with
       | `Empty ->
           let promise, receiver = enqueue_receiver contract sub in
           `Wait (promise, receiver)
       | ((`Item _ | `Closed | `Closed_with_error _) as result) -> `Ready result
     with
-    | `Ready result -> result
+    | `Ready result ->
+        resolve_wakeups !wakeups;
+        result
     | `Wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
@@ -390,9 +419,15 @@ let recv sub =
        | `Closed_with_error err -> Effect.fail (`Closed_with_error err))
 
 let try_recv sub =
-  Effect.sync (fun () -> with_lock sub.hub (fun () -> consume_available_locked sub))
+  Effect.sync (fun () ->
+      let wakeups = ref [] in
+      let result =
+        with_lock sub.hub (fun () -> consume_available_locked wakeups sub)
+      in
+      resolve_wakeups !wakeups;
+      result)
 
-let close_locked t reason =
+let close_locked wakeups t reason =
   if Option.is_none t.closed then (
     t.closed <- Some reason;
     while not (Stdlib.Queue.is_empty t.publishers) do
@@ -401,14 +436,20 @@ let close_locked t reason =
       | Some publisher ->
           publisher.active <- false;
           t.waiting_publishers <- t.waiting_publishers - 1;
-          resolve_publisher publisher (close_result reason)
+          add_wakeup wakeups
+            (Wake_publisher (publisher, close_result reason))
     done;
-    wake_all_receivers t)
+    wake_all_receivers wakeups t)
 
-let close t = with_lock t @@ fun () -> close_locked t Clean
+let close t =
+  let wakeups = ref [] in
+  with_lock t (fun () -> close_locked wakeups t Clean);
+  resolve_wakeups !wakeups
 
 let close_with_error t err =
-  with_lock t @@ fun () -> close_locked t (Failed err)
+  let wakeups = ref [] in
+  with_lock t (fun () -> close_locked wakeups t (Failed err));
+  resolve_wakeups !wakeups
 
 let close_effect t = Effect.sync (fun () -> close t)
 let close_with_error_effect t err =

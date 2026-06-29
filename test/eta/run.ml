@@ -5,6 +5,7 @@ open Test_eta_effect_uninterruptible
 open Test_eta_blocking
 open Test_eta_supervisor
 open Test_eta_channel
+open Test_eta_queue
 open Test_eta_observability
 
 let () =
@@ -77,6 +78,11 @@ let () =
             test_channel_cancel_receiver_overflow_does_not_corrupt;
           Alcotest.test_case "parent switch teardown" `Quick
             test_channel_parent_switch_teardown_does_not_hang;
+        ] );
+      ( "Queue",
+        [
+          Alcotest.test_case "resolves sender outside lock" `Quick
+            test_queue_resolves_sender_outside_lock;
         ] );
       ( "Observability",
         [

@@ -653,18 +653,25 @@ let rec wait_until_drained t =
            |> Effect.bind (fun () -> wait_until_drained t))
 
 let begin_shutdown t =
+  let resolve_shutdown = ref false in
   let snapshot_idle =
     Effect.sync @@ fun () ->
     with_lock t @@ fun () ->
     if not t.shutting_down then (
       t.shutting_down <- true;
       if Atomic.compare_and_set t.shutdown_resolved false true then
-        t.shutdown_contract.Runtime_contract.resolve_promise
-          t.shutdown_resolver ());
+        resolve_shutdown := true);
     t.idle
   in
   log t ~level:Capabilities.Info "eta.pool.shutdown_started"
   |> Effect.bind (fun () -> snapshot_idle)
+  |> Effect.bind (fun idle ->
+         Effect.sync (fun () ->
+             if !resolve_shutdown then
+               t.shutdown_contract.Runtime_contract.protect (fun () ->
+                   t.shutdown_contract.Runtime_contract.resolve_promise
+                     t.shutdown_resolver ()))
+         |> Effect.map (fun () -> idle))
   |> Effect.bind (close_idle_entries t)
   |> Effect.bind (fun () -> emit_gauges t)
 

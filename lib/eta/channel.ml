@@ -43,6 +43,10 @@ type ('a, 'err) t = {
   mutable cancelled_senders : int;
 }
 
+type ('a, 'err) wakeup =
+  | Wake_sender of ('a, 'err) sender * 'err send_result
+  | Wake_receiver of ('a, 'err) receiver * ('a, 'err) recv_result
+
 type stats = {
   depth : int;
   sent : int;
@@ -77,13 +81,24 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
+let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+
 let resolve_sender (sender : ('a, 'err) sender) (result : 'err send_result) =
-  sender.contract.Runtime_contract.resolve_promise sender.resolver result
+  sender.contract.Runtime_contract.protect (fun () ->
+      sender.contract.Runtime_contract.resolve_promise sender.resolver result)
 
 let resolve_receiver
     (receiver : ('a, 'err) receiver)
     (result : ('a, 'err) recv_result) =
-  receiver.contract.Runtime_contract.resolve_promise receiver.resolver result
+  receiver.contract.Runtime_contract.protect (fun () ->
+      receiver.contract.Runtime_contract.resolve_promise receiver.resolver result)
+
+let resolve_wakeup = function
+  | Wake_sender (sender, result) -> resolve_sender sender result
+  | Wake_receiver (receiver, result) -> resolve_receiver receiver result
+
+let resolve_wakeups wakeups =
+  List.iter resolve_wakeup (List.rev wakeups)
 
 let capacity_used (t : ('a, 'err) t) =
   t.depth + t.pending_receivers
@@ -185,10 +200,11 @@ let release_receiver_delivery (t : ('a, 'err) t) =
     invalid_arg "Eta.Channel.deliver_receiver: pending receiver underflow";
   t.pending_receivers <- t.pending_receivers - 1
 
-let deliver_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) value =
+let deliver_receiver wakeups (t : ('a, 'err) t)
+    (receiver : ('a, 'err) receiver) value =
   reserve_receiver_delivery t;
   receiver.state <- Delivered value;
-  resolve_receiver receiver (`Item value)
+  add_wakeup wakeups (Wake_receiver (receiver, `Item value))
 
 let claim_receiver (t : ('a, 'err) t) receiver =
   match receiver.state with
@@ -198,21 +214,21 @@ let claim_receiver (t : ('a, 'err) t) receiver =
       t.received <- t.received + 1
   | Waiting | Claimed | Cancelled -> ()
 
-let return_unclaimed_value (t : ('a, 'err) t) value =
+let return_unclaimed_value wakeups (t : ('a, 'err) t) value =
   match take_receiver t with
-  | Some receiver -> deliver_receiver t receiver value
+  | Some receiver -> deliver_receiver wakeups t receiver value
   | None -> push_front t value
 
-let rec drain_buffer_to_receivers (t : ('a, 'err) t) =
+let rec drain_buffer_to_receivers wakeups (t : ('a, 'err) t) =
   if t.depth > 0 then
     match take_receiver t with
     | None -> ()
     | Some receiver ->
         let value = pop_raw t in
-        deliver_receiver t receiver value;
-        drain_buffer_to_receivers t
+        deliver_receiver wakeups t receiver value;
+        drain_buffer_to_receivers wakeups t
 
-let rec admit_waiting_senders (t : ('a, 'err) t) =
+let rec admit_waiting_senders wakeups (t : ('a, 'err) t) =
   if Option.is_none t.closed && capacity_used t < t.capacity then
     match take_sender t with
     | None -> ()
@@ -221,21 +237,21 @@ let rec admit_waiting_senders (t : ('a, 'err) t) =
           match take_receiver t with
           | Some receiver ->
               t.sent <- t.sent + 1;
-              deliver_receiver t receiver sender.value;
-              resolve_sender sender `Sent;
-              admit_waiting_senders t
+              deliver_receiver wakeups t receiver sender.value;
+              add_wakeup wakeups (Wake_sender (sender, `Sent));
+              admit_waiting_senders wakeups t
           | None ->
               push_counted t sender.value;
-              resolve_sender sender `Sent;
-              admit_waiting_senders t
+              add_wakeup wakeups (Wake_sender (sender, `Sent));
+              admit_waiting_senders wakeups t
         else (
           push_counted t sender.value;
-          resolve_sender sender `Sent;
-          admit_waiting_senders t))
+          add_wakeup wakeups (Wake_sender (sender, `Sent));
+          admit_waiting_senders wakeups t))
 
-let pump (t : ('a, 'err) t) =
-  drain_buffer_to_receivers t;
-  admit_waiting_senders t
+let pump wakeups (t : ('a, 'err) t) =
+  drain_buffer_to_receivers wakeups t;
+  admit_waiting_senders wakeups t
 
 let with_lock (t : ('a, 'err) t) f =
   Sync_lock.use t.mutex f
@@ -257,36 +273,37 @@ let enqueue_receiver contract (t : ('a, 'err) t) =
   t.waiting_receivers <- t.waiting_receivers + 1;
   (promise, receiver)
 
-let cancel_sender (t : ('a, 'err) t) (sender : ('a, 'err) sender) =
+let cancel_sender wakeups (t : ('a, 'err) t) (sender : ('a, 'err) sender) =
   if sender.active then (
     sender.active <- false;
     t.waiting_senders <- t.waiting_senders - 1;
     t.cancelled_senders <- t.cancelled_senders + 1;
     compact_cancelled_senders_locked t;
-    pump t)
+    pump wakeups t)
 
-let cancel_receiver (t : ('a, 'err) t) (receiver : ('a, 'err) receiver) =
+let cancel_receiver wakeups (t : ('a, 'err) t)
+    (receiver : ('a, 'err) receiver) =
   match receiver.state with
   | Waiting ->
       receiver.state <- Cancelled;
       t.waiting_receivers <- t.waiting_receivers - 1;
       compact_cancelled_receivers_locked t;
-      pump t
+      pump wakeups t
   | Delivered value ->
       receiver.state <- Cancelled;
       release_receiver_delivery t;
-      return_unclaimed_value t value;
-      pump t
+      return_unclaimed_value wakeups t value;
+      pump wakeups t
   | Claimed | Cancelled -> ()
 
-let close_locked (t : ('a, 'err) t) reason =
+let close_locked wakeups (t : ('a, 'err) t) reason =
   if Option.is_none t.closed then (
     t.closed <- Some reason;
     let rec close_senders () =
       match take_sender t with
       | None -> ()
       | Some sender ->
-          resolve_sender sender (close_result reason);
+          add_wakeup wakeups (Wake_sender (sender, close_result reason));
           close_senders ()
     in
     let rec close_receivers () =
@@ -294,13 +311,14 @@ let close_locked (t : ('a, 'err) t) reason =
       | None -> ()
       | Some receiver ->
           receiver.state <- Cancelled;
-          resolve_receiver receiver (close_result reason);
+          add_wakeup wakeups (Wake_receiver (receiver, close_result reason));
           close_receivers ()
     in
     close_senders ();
     close_receivers ())
 
 let send_sync contract (t : ('a, 'err) t) value =
+  let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
     match t.closed with
@@ -309,7 +327,7 @@ let send_sync contract (t : ('a, 'err) t) value =
         match take_receiver t with
         | Some receiver ->
             t.sent <- t.sent + 1;
-            deliver_receiver t receiver value;
+            deliver_receiver wakeups t receiver value;
             `Ready `Sent
         | None ->
             push_counted t value;
@@ -321,26 +339,32 @@ let send_sync contract (t : ('a, 'err) t) value =
         let promise, sender = enqueue_sender contract t value in
         `Wait (promise, sender)
   with
-  | `Ready result -> result
+  | `Ready result ->
+      resolve_wakeups !wakeups;
+      result
   | `Wait (promise, sender) -> (
       try contract.Runtime_contract.await_promise promise
       with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-        with_lock_during_cancel contract t (fun () -> cancel_sender t sender);
+        let cancel_wakeups = ref [] in
+        with_lock_during_cancel contract t (fun () ->
+            cancel_sender cancel_wakeups t sender);
+        resolve_wakeups !cancel_wakeups;
         raise exn)
 
 let recv_sync contract (t : ('a, 'err) t) =
+  let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
     if t.depth > 0 then (
       let value = pop t in
-      pump t;
+      pump wakeups t;
       `Ready (`Item value))
     else
       match take_sender t with
       | Some sender ->
           t.sent <- t.sent + 1;
           t.received <- t.received + 1;
-          resolve_sender sender `Sent;
+          add_wakeup wakeups (Wake_sender (sender, `Sent));
           `Ready (`Item sender.value)
       | None -> (
           match t.closed with
@@ -349,18 +373,25 @@ let recv_sync contract (t : ('a, 'err) t) =
               let promise, receiver = enqueue_receiver contract t in
               `Wait (promise, receiver))
   with
-  | `Ready result -> result
+  | `Ready result ->
+      resolve_wakeups !wakeups;
+      result
   | `Wait (promise, receiver) -> (
       try
         match contract.Runtime_contract.await_promise promise with
         | `Item _ as result ->
+            let claim_wakeups = ref [] in
             with_lock t (fun () ->
                 claim_receiver t receiver;
-                pump t);
+                pump claim_wakeups t);
+            resolve_wakeups !claim_wakeups;
             result
         | (`Empty | `Closed | `Closed_with_error _) as result -> result
       with exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-        with_lock_during_cancel contract t (fun () -> cancel_receiver t receiver);
+        let cancel_wakeups = ref [] in
+        with_lock_during_cancel contract t (fun () ->
+            cancel_receiver cancel_wakeups t receiver);
+        resolve_wakeups !cancel_wakeups;
         raise exn)
 
 let send t value =
@@ -385,46 +416,61 @@ let recv t =
 
 let try_send (t : ('a, 'err) t) value =
   Effect.sync @@ fun () ->
-  with_lock t @@ fun () ->
-  match t.closed with
-  | Some reason -> close_result reason
-  | None when capacity_used t < t.capacity && t.depth = 0 -> (
-      match take_receiver t with
-      | Some receiver ->
-          t.sent <- t.sent + 1;
-          deliver_receiver t receiver value;
-          `Sent
-      | None ->
-          push_counted t value;
-          `Sent)
-  | None when capacity_used t = t.capacity -> `Full
-  | None ->
-      push_counted t value;
-      `Sent
+  let wakeups = ref [] in
+  let result =
+    with_lock t @@ fun () ->
+    match t.closed with
+    | Some reason -> close_result reason
+    | None when capacity_used t < t.capacity && t.depth = 0 -> (
+        match take_receiver t with
+        | Some receiver ->
+            t.sent <- t.sent + 1;
+            deliver_receiver wakeups t receiver value;
+            `Sent
+        | None ->
+            push_counted t value;
+            `Sent)
+    | None when capacity_used t = t.capacity -> `Full
+    | None ->
+        push_counted t value;
+        `Sent
+  in
+  resolve_wakeups !wakeups;
+  result
 
 let try_recv (t : ('a, 'err) t) =
   Effect.sync @@ fun () ->
-  with_lock t @@ fun () ->
-  if t.depth > 0 then (
-    let value = pop t in
-    pump t;
-    `Item value)
-  else
-    match take_sender t with
-    | Some sender ->
-        t.sent <- t.sent + 1;
-        t.received <- t.received + 1;
-        resolve_sender sender `Sent;
-        `Item sender.value
-    | None -> (
-        match t.closed with
-        | Some reason -> close_result reason
-        | None -> `Empty)
+  let wakeups = ref [] in
+  let result =
+    with_lock t @@ fun () ->
+    if t.depth > 0 then (
+      let value = pop t in
+      pump wakeups t;
+      `Item value)
+    else
+      match take_sender t with
+      | Some sender ->
+          t.sent <- t.sent + 1;
+          t.received <- t.received + 1;
+          add_wakeup wakeups (Wake_sender (sender, `Sent));
+          `Item sender.value
+      | None -> (
+          match t.closed with
+          | Some reason -> close_result reason
+          | None -> `Empty)
+  in
+  resolve_wakeups !wakeups;
+  result
 
-let close (t : ('a, 'err) t) = with_lock t @@ fun () -> close_locked t Clean
+let close (t : ('a, 'err) t) =
+  let wakeups = ref [] in
+  with_lock t (fun () -> close_locked wakeups t Clean);
+  resolve_wakeups !wakeups
 
 let close_with_error (t : ('a, 'err) t) error =
-  with_lock t @@ fun () -> close_locked t (Error error)
+  let wakeups = ref [] in
+  with_lock t (fun () -> close_locked wakeups t (Error error));
+  resolve_wakeups !wakeups
 
 let close_effect t = Effect.sync (fun () -> close t)
 let close_with_error_effect t error =

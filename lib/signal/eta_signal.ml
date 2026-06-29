@@ -358,16 +358,23 @@ module Make (Observer_error : Observer_error) () = struct
         (fun waiter -> Stdlib.Queue.push waiter lane.lane_waiters)
         live)
 
-  let grant_lane_waiter waiter =
+  let grant_lane_waiter_locked waiter =
     waiter.lane_state <- Lane_granted;
-    waiter.lane_contract.Runtime_contract.resolve_promise waiter.lane_resolver ()
+    waiter
+
+  let resolve_lane_waiter waiter =
+    waiter.lane_contract.Runtime_contract.protect (fun () ->
+        waiter.lane_contract.Runtime_contract.resolve_promise
+          waiter.lane_resolver ())
 
   let release_lane_locked lane =
     match take_waiting_waiter lane.lane_waiters with
     | Some waiter ->
         lane.lane_waiting <- lane.lane_waiting - 1;
-        grant_lane_waiter waiter
-    | None -> lane.lane_busy <- false
+        Some (grant_lane_waiter_locked waiter)
+    | None ->
+        lane.lane_busy <- false;
+        None
 
   let cancel_lane_waiter_locked lane waiter =
     match waiter.lane_state with
@@ -375,7 +382,8 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_cancelled;
         lane.lane_waiting <- lane.lane_waiting - 1;
         lane.lane_cancelled <- lane.lane_cancelled + 1;
-        compact_cancelled_lane_waiters_locked lane
+        compact_cancelled_lane_waiters_locked lane;
+        None
     | Lane_granted ->
         waiter.lane_state <- Lane_cancelled;
         lane.lane_cancelled <- lane.lane_cancelled + 1;
@@ -384,7 +392,7 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_cancelled;
         lane.lane_cancelled <- lane.lane_cancelled + 1;
         release_lane_locked lane
-    | Lane_cancelled -> ()
+    | Lane_cancelled -> None
 
   let claim_lane_waiter_locked waiter =
     match waiter.lane_state with
@@ -424,11 +432,13 @@ module Make (Observer_error : Observer_error) () = struct
         with exn
           when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
           with_lane_lock_during_cancel contract lane (fun () ->
-              cancel_lane_waiter_locked lane waiter);
+              cancel_lane_waiter_locked lane waiter)
+          |> Option.iter resolve_lane_waiter;
           raise exn)
 
   let leave_lane_sync lane =
-    with_lane_lock lane @@ fun () -> release_lane_locked lane
+    with_lane_lock lane (fun () -> release_lane_locked lane)
+    |> Option.iter resolve_lane_waiter
 
   let release_graph_lane_sync owns_lane =
     if !owns_lane then (

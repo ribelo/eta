@@ -37,6 +37,10 @@ type ('a, 'err) t = {
   mutable cancelled_receivers : int;
 }
 
+type ('a, 'err) wakeup =
+  | Wake_sender of ('a, 'err) sender * 'err send_result
+  | Wake_receiver of receiver
+
 type stats = {
   depth : int;
   sent : int;
@@ -88,15 +92,24 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
+let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+
 let resolve_sender
     (sender : ('a, 'err) sender)
     (result : 'err send_result) =
-  sender.contract.Runtime_contract.resolve_promise sender.resolver result
+  sender.contract.Runtime_contract.protect (fun () ->
+      sender.contract.Runtime_contract.resolve_promise sender.resolver result)
 
 let wake_receiver (receiver : receiver) =
-  if receiver.active then (
-    receiver.active <- false;
-    receiver.contract.Runtime_contract.resolve_promise receiver.resolver ())
+  receiver.contract.Runtime_contract.protect (fun () ->
+      receiver.contract.Runtime_contract.resolve_promise receiver.resolver ())
+
+let resolve_wakeup = function
+  | Wake_sender (sender, result) -> resolve_sender sender result
+  | Wake_receiver receiver -> wake_receiver receiver
+
+let resolve_wakeups wakeups =
+  List.iter resolve_wakeup (List.rev wakeups)
 
 let capacity_available (t : ('a, 'err) t) =
   match t.overflow with
@@ -124,19 +137,20 @@ let take_sender_locked (t : ('a, 'err) t) =
       t.waiting_senders <- t.waiting_senders - 1;
       Some sender
 
-let wake_one_receiver_locked (t : ('a, 'err) t) =
+let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
   match take_active_receiver t.receivers with
   | None -> ()
   | Some receiver ->
       t.waiting_receivers <- t.waiting_receivers - 1;
-      wake_receiver receiver
+      receiver.active <- false;
+      add_wakeup wakeups (Wake_receiver receiver)
 
-let enqueue_value_locked (t : ('a, 'err) t) value =
+let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
   Stdlib.Queue.add value t.values;
   t.sent <- t.sent + 1;
-  wake_one_receiver_locked t
+  wake_one_receiver_locked wakeups t
 
-let rec admit_waiting_senders_locked (t : ('a, 'err) t) =
+let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
   match t.overflow with
   | Unbounded | Drop_new _ -> ()
   | Backpressure _ ->
@@ -144,27 +158,28 @@ let rec admit_waiting_senders_locked (t : ('a, 'err) t) =
         match take_sender_locked t with
         | None -> ()
         | Some sender ->
-            enqueue_value_locked t sender.value;
-            resolve_sender sender `Sent;
-            admit_waiting_senders_locked t
+            enqueue_value_locked wakeups t sender.value;
+            add_wakeup wakeups (Wake_sender (sender, `Sent));
+            admit_waiting_senders_locked wakeups t
 
-let wake_all_receivers_locked (t : ('a, 'err) t) =
+let wake_all_receivers_locked wakeups (t : ('a, 'err) t) =
   let rec loop () =
     match take_active_receiver t.receivers with
     | None -> ()
     | Some receiver ->
         t.waiting_receivers <- t.waiting_receivers - 1;
-        wake_receiver receiver;
+        receiver.active <- false;
+        add_wakeup wakeups (Wake_receiver receiver);
         loop ()
   in
   loop ()
 
-let wake_all_senders_locked (t : ('a, 'err) t) reason =
+let wake_all_senders_locked wakeups (t : ('a, 'err) t) reason =
   let rec loop () =
     match take_sender_locked t with
     | None -> ()
     | Some sender ->
-        resolve_sender sender (close_result reason);
+        add_wakeup wakeups (Wake_sender (sender, close_result reason));
         loop ()
   in
   loop ()
@@ -200,13 +215,13 @@ let cancel_receiver (t : ('a, 'err) t) (receiver : receiver) =
     t.cancelled_receivers <- t.cancelled_receivers + 1;
     compact_cancelled_receivers_locked t)
 
-let cancel_sender (t : ('a, 'err) t) sender =
+let cancel_sender wakeups (t : ('a, 'err) t) sender =
   if sender.active then (
     sender.active <- false;
     t.waiting_senders <- t.waiting_senders - 1;
     t.cancelled_senders <- t.cancelled_senders + 1;
     compact_cancelled_senders_locked t;
-    admit_waiting_senders_locked t)
+    admit_waiting_senders_locked wakeups t)
 
 let enqueue_sender contract (t : ('a, 'err) t) value =
   let promise, resolver = contract.Runtime_contract.create_promise () in
@@ -216,29 +231,35 @@ let enqueue_sender contract (t : ('a, 'err) t) value =
   (promise, sender)
 
 let try_send_sync t value =
-  with_lock t @@ fun () ->
-  match t.closed with
-  | Some reason -> close_result reason
-  | None ->
-      if capacity_available t then (
-        enqueue_value_locked t value;
-        `Sent)
-      else
-        match t.overflow with
-        | Unbounded -> assert false
-        | Drop_new _ ->
-            t.dropped <- t.dropped + 1;
-            `Dropped
-        | Backpressure _ -> `Full
+  let wakeups = ref [] in
+  let result =
+    with_lock t @@ fun () ->
+    match t.closed with
+    | Some reason -> close_result reason
+    | None ->
+        if capacity_available t then (
+          enqueue_value_locked wakeups t value;
+          `Sent)
+        else
+          match t.overflow with
+          | Unbounded -> assert false
+          | Drop_new _ ->
+              t.dropped <- t.dropped + 1;
+              `Dropped
+          | Backpressure _ -> `Full
+  in
+  resolve_wakeups !wakeups;
+  result
 
 let offer_sync contract t value =
+  let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
     match t.closed with
     | Some reason -> `Ready (close_result reason)
     | None ->
         if capacity_available t then (
-          enqueue_value_locked t value;
+          enqueue_value_locked wakeups t value;
           `Ready `Sent)
         else
           match t.overflow with
@@ -250,13 +271,18 @@ let offer_sync contract t value =
               let promise, sender = enqueue_sender contract t value in
               `Wait (promise, sender)
   with
-  | `Ready result -> result
+  | `Ready result ->
+      resolve_wakeups !wakeups;
+      result
   | `Wait (promise, sender) -> (
       try contract.Runtime_contract.await_promise promise
       with exn
         when Option.is_some
                (contract.Runtime_contract.cancellation_reason exn) ->
-        with_lock_during_cancel contract t (fun () -> cancel_sender t sender);
+        let cancel_wakeups = ref [] in
+        with_lock_during_cancel contract t (fun () ->
+            cancel_sender cancel_wakeups t sender);
+        resolve_wakeups !cancel_wakeups;
         raise exn)
 
 let try_send t value = Effect.sync (fun () -> try_send_sync t value)
@@ -296,22 +322,27 @@ let send t value =
        | true -> Effect.unit
        | false -> Effect.fail `Dropped)
 
-let take_value t =
+let take_value wakeups t =
   let value = Stdlib.Queue.take t.values in
   t.received <- t.received + 1;
-  admit_waiting_senders_locked t;
+  admit_waiting_senders_locked wakeups t;
   `Item value
 
 let try_recv t =
   Effect.sync @@ fun () ->
-  with_lock t @@ fun () ->
-  if not (Stdlib.Queue.is_empty t.values) then take_value t
-  else
-    match t.closed with
-    | None -> `Empty
-    | Some reason -> close_result reason
+  let wakeups = ref [] in
+  let result =
+    with_lock t @@ fun () ->
+    if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
+    else
+      match t.closed with
+      | None -> `Empty
+      | Some reason -> close_result reason
+  in
+  resolve_wakeups !wakeups;
+  result
 
-let drain_locked t max =
+let drain_locked wakeups t max =
   let rec loop remaining acc =
     if remaining = 0 || Stdlib.Queue.is_empty t.values then List.rev acc
     else
@@ -320,11 +351,11 @@ let drain_locked t max =
       loop (remaining - 1) (value :: acc)
   in
   let values = loop max [] in
-  if values <> [] then admit_waiting_senders_locked t;
+  if values <> [] then admit_waiting_senders_locked wakeups t;
   values
 
-let drain_result_locked t max =
-  let values = drain_locked t max in
+let drain_result_locked wakeups t max =
+  let values = drain_locked wakeups t max in
   match values with
   | _ :: _ -> `Items values
   | [] -> (
@@ -333,19 +364,25 @@ let drain_result_locked t max =
       | Some reason -> close_result reason)
 
 let take_all t =
+  let wakeups = ref [] in
   Effect.sync (fun () ->
       with_lock t @@ fun () ->
-      drain_result_locked t (Stdlib.Queue.length t.values))
+      drain_result_locked wakeups t (Stdlib.Queue.length t.values))
   |> Effect.bind (function
-       | `Items values -> Effect.pure values
+       | `Items values ->
+           Effect.sync (fun () -> resolve_wakeups !wakeups)
+           |> Effect.map (fun () -> values)
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let take_batch t ~max =
   if max <= 0 then invalid_arg "Eta.Queue.take_batch: max must be > 0";
-  Effect.sync (fun () -> with_lock t @@ fun () -> drain_result_locked t max)
+  let wakeups = ref [] in
+  Effect.sync (fun () -> with_lock t @@ fun () -> drain_result_locked wakeups t max)
   |> Effect.bind (function
-       | `Items values -> Effect.pure values
+       | `Items values ->
+           Effect.sync (fun () -> resolve_wakeups !wakeups)
+           |> Effect.map (fun () -> values)
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
@@ -358,9 +395,11 @@ let enqueue_receiver contract t =
 
 let recv_sync contract t =
   let rec loop () =
+    let wakeups = ref [] in
     match
       with_lock t @@ fun () ->
-      if not (Stdlib.Queue.is_empty t.values) then `Ready (take_value t)
+      if not (Stdlib.Queue.is_empty t.values) then
+        `Ready (take_value wakeups t)
       else
         match t.closed with
         | Some reason -> `Ready (close_result reason)
@@ -368,7 +407,9 @@ let recv_sync contract t =
             let promise, receiver = enqueue_receiver contract t in
             `Wait (promise, receiver)
     with
-    | `Ready result -> result
+    | `Ready result ->
+        resolve_wakeups !wakeups;
+        result
     | `Wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
@@ -393,13 +434,16 @@ let recv t =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let close_with reason t =
-  with_lock t @@ fun () ->
-  match t.closed with
-  | Some _ -> ()
-  | None ->
-      t.closed <- Some reason;
-      wake_all_senders_locked t reason;
-      wake_all_receivers_locked t
+  let wakeups = ref [] in
+  with_lock t
+    (fun () ->
+      match t.closed with
+      | Some _ -> ()
+      | None ->
+          t.closed <- Some reason;
+          wake_all_senders_locked wakeups t reason;
+          wake_all_receivers_locked wakeups t);
+  resolve_wakeups !wakeups
 
 let close t = close_with Clean t
 let close_with_error t error = close_with (Error error) t
