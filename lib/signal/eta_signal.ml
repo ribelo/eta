@@ -587,7 +587,11 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
     | Some scope -> scope.scope_nodes <- P signal :: scope.scope_nodes
 
+  let validate_dependency (P signal) =
+    if not signal.valid then raise (Graph_error `Invalid_scope)
+
   let new_signal ?(dirty = true) ?equal kind dependencies =
+    List.iter validate_dependency dependencies;
     let scope = signal_scope () in
     let signal =
       {
@@ -629,6 +633,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   and invalidate_node (P signal) =
     if signal.valid then (
+      let dependencies = signal.dependencies in
+      let dependents = signal.dependents in
       Option.iter
         (fun timer ->
           timer.timer_active <- false;
@@ -638,9 +644,10 @@ module Make (Observer_error : Observer_error) () = struct
       dispose_signal_observers signal;
       List.iter
         (fun (P dependency) -> remove_dependent dependency signal)
-        signal.dependencies;
+        dependencies;
       signal.dependencies <- [];
-      List.iter mark_self_dirty signal.dependents;
+      signal.dependents <- [];
+      List.iter invalidate_node dependents;
       match signal.kind with
       | Var source -> remove_var_watcher source signal
       | Bind bind -> (
