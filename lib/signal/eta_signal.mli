@@ -139,7 +139,8 @@ module Make (Observer_error : Observer_error) () : sig
     (** Create a lifecycle handle for observing [signal]. Registering an
         observer does not run its callback; the first explicit stabilization
         initializes observed values and callbacks run after a consistent
-        snapshot is published.
+        snapshot is published. If an observer is disposed before its callback is
+        delivered, the collected callback is skipped.
 
         Without [?equal], observer callback emission uses physical equality as
         its cutoff. The observer's current value still advances to the latest

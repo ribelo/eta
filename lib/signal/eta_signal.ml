@@ -1327,17 +1327,24 @@ module Make (Observer_error : Observer_error) () = struct
         graph.callback_delivery_count <-
           saturating_succ graph.callback_delivery_count)
 
+  let event_observer_active observer =
+    with_graph_lane_sync (fun () -> observer_active (O observer))
+
   let rec run_events = function
     | [] -> Effect.unit
     | E (observer, update) :: rest -> (
-        match
-          try Ok (observer.obs_callback update)
-          with Graph_error err -> Error (err :> stabilize_error)
-        with
-        | Error err -> Effect.fail err
-        | Ok observer_eff ->
-            run_observer_effect observer update observer_eff
-            |> Effect.bind (fun () -> run_events rest))
+        event_observer_active observer
+        |> Effect.bind (function
+             | false -> run_events rest
+             | true -> (
+                 match
+                   try Ok (observer.obs_callback update)
+                   with Graph_error err -> Error (err :> stabilize_error)
+                 with
+                 | Error err -> Effect.fail err
+                 | Ok observer_eff ->
+                     run_observer_effect observer update observer_eff
+                     |> Effect.bind (fun () -> run_events rest))))
 
   let stabilize =
     with_graph_lane_sync begin_stabilize

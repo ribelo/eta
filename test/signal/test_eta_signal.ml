@@ -1179,7 +1179,7 @@ let test_observer_callbacks_read_consistent_published_snapshot () =
   run_ok rt (Signal.Observer.dispose right_handle);
   run_ok rt (Signal.Observer.dispose total_handle)
 
-let test_observer_dispose_during_callback_keeps_collected_event () =
+let test_observer_dispose_during_callback_skips_collected_event () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -1202,8 +1202,8 @@ let test_observer_dispose_during_callback_keeps_collected_event () =
   later_observer := Some second_observer;
   run_ok rt Signal.stabilize;
   Alcotest.(check (list string))
-    "collected event still runs after same-stabilization disposal"
-    [ "first"; "second" ] (List.rev !events);
+    "collected event is skipped after same-stabilization disposal"
+    [ "first" ] (List.rev !events);
   expect_fail "same-stabilization disposed observer read" (( = ) `Disposed_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read second_observer)));
   events := [];
@@ -4286,8 +4286,8 @@ let () =
             test_observer_ordering_across_graph_branches_is_deterministic;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
-          Alcotest.test_case "observer dispose keeps collected event" `Quick
-            test_observer_dispose_during_callback_keeps_collected_event;
+          Alcotest.test_case "observer dispose skips collected event" `Quick
+            test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case "bind invalidates old scope" `Quick
