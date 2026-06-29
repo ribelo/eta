@@ -45,16 +45,26 @@ module Make (Observer_error : Observer_error) () : sig
       }
 
   type stats = {
-    stabilization_count : int;
+    pure_snapshot_commit_count : int;
+    callback_delivery_count : int;
     total_node_count : int;
     active_observer_count : int;
+    invalid_observer_count : int;
     necessary_node_count : int;
-    stale_node_count : int;
+    dead_node_count : int;
+    live_dirty_node_count : int;
     recompute_count : int;
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
   }
+  (** Read-only graph counters for diagnostics.
+
+      [pure_snapshot_commit_count] advances when a pure graph snapshot commits.
+      [callback_delivery_count] advances only after all observer callbacks for a
+      stabilization are delivered successfully. [live_dirty_node_count] counts
+      valid dirty nodes; [dead_node_count] counts invalid nodes still retained
+      by graph indexes. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 

@@ -36,11 +36,14 @@ module Make (Observer_error : Observer_error) () = struct
       }
 
   type stats = {
-    stabilization_count : int;
+    pure_snapshot_commit_count : int;
+    callback_delivery_count : int;
     total_node_count : int;
     active_observer_count : int;
+    invalid_observer_count : int;
     necessary_node_count : int;
-    stale_node_count : int;
+    dead_node_count : int;
+    live_dirty_node_count : int;
     recompute_count : int;
     dynamic_scope_invalidations : int;
     nodes_became_necessary : int;
@@ -304,7 +307,8 @@ module Make (Observer_error : Observer_error) () = struct
     mutable observers : packed_observer list;
     mutable all_nodes : packed_signal list;
     mutable current_scope : scope option;
-    mutable stabilization_count : int;
+    mutable pure_snapshot_commit_count : int;
+    mutable callback_delivery_count : int;
     mutable recompute_count : int;
     mutable dynamic_scope_invalidations : int;
     mutable nodes_became_necessary : int;
@@ -337,7 +341,8 @@ module Make (Observer_error : Observer_error) () = struct
       observers = [];
       all_nodes = [];
       current_scope = None;
-      stabilization_count = 0;
+      pure_snapshot_commit_count = 0;
+      callback_delivery_count = 0;
       recompute_count = 0;
       dynamic_scope_invalidations = 0;
       nodes_became_necessary = 0;
@@ -856,7 +861,8 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
-    graph.stabilization_count <- saturating_succ graph.stabilization_count
+    graph.pure_snapshot_commit_count <-
+      saturating_succ graph.pure_snapshot_commit_count
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (
@@ -1274,6 +1280,11 @@ module Make (Observer_error : Observer_error) () = struct
         Eta.Exit.Ok ()
     | Eta.Exit.Error _ as error -> error
 
+  let mark_callback_delivery_complete () =
+    with_graph_lane_sync (fun () ->
+        graph.callback_delivery_count <-
+          saturating_succ graph.callback_delivery_count)
+
   let rec run_events = function
     | [] -> Effect.unit
     | E (observer, update) :: rest -> (
@@ -1293,7 +1304,9 @@ module Make (Observer_error : Observer_error) () = struct
          | Error (#graph_error as err) -> Error (err :> stabilize_error))
     |> Effect.flatten_result
     |> Effect.bind (fun events ->
-           (refresh_timer_demand () |> Effect.bind (fun () -> run_events events))
+           (refresh_timer_demand ()
+            |> Effect.bind (fun () -> run_events events)
+            |> Effect.bind mark_callback_delivery_complete)
            |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))
 
   module Var = struct
@@ -1466,23 +1479,40 @@ module Make (Observer_error : Observer_error) () = struct
         if observer_active observer then saturating_succ count else count)
       0 graph.observers
 
+  let invalid_observer_count () =
+    List.fold_left
+      (fun count (O observer as packed) ->
+        if observer_active packed && not observer.obs_signal.valid then
+          saturating_succ count
+        else count)
+      0 graph.observers
+
   let necessary_node_count () =
     Hashtbl.length (collect_necessary_node_ids ())
 
-  let stale_node_count () =
+  let dead_node_count () =
     List.fold_left
       (fun count (P signal) ->
-        if signal.dirty then saturating_succ count else count)
+        if signal.valid then count else saturating_succ count)
+      0 graph.all_nodes
+
+  let live_dirty_node_count () =
+    List.fold_left
+      (fun count (P signal) ->
+        if signal.valid && signal.dirty then saturating_succ count else count)
       0 graph.all_nodes
 
   let stats () =
     with_graph_lane_sync @@ fun () ->
     {
-      stabilization_count = graph.stabilization_count;
+      pure_snapshot_commit_count = graph.pure_snapshot_commit_count;
+      callback_delivery_count = graph.callback_delivery_count;
       total_node_count = List.length graph.all_nodes;
       active_observer_count = active_observer_count ();
+      invalid_observer_count = invalid_observer_count ();
       necessary_node_count = necessary_node_count ();
-      stale_node_count = stale_node_count ();
+      dead_node_count = dead_node_count ();
+      live_dirty_node_count = live_dirty_node_count ();
       recompute_count = graph.recompute_count;
       dynamic_scope_invalidations = graph.dynamic_scope_invalidations;
       nodes_became_necessary = graph.nodes_became_necessary;

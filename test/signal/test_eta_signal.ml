@@ -1287,8 +1287,8 @@ let test_bind_invalidated_var_watchers_detach_from_sources () =
   run_ok rt Signal.stabilize;
   let after_inactive_set = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "inactive source set does not stale invalidated watchers"
-    before_inactive_set.Signal.stale_node_count
-    after_inactive_set.Signal.stale_node_count;
+    before_inactive_set.Signal.live_dirty_node_count
+    after_inactive_set.Signal.live_dirty_node_count;
   Alcotest.(check int) "inactive source set keeps selected value" 20
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
@@ -1439,10 +1439,15 @@ let test_bind_switch_disposes_observers_of_invalidated_scope () =
     (run_ok rt (Signal.Observer.read branch_observer));
   run_ok rt (Signal.Var.set choose_left false);
   run_ok rt Signal.stabilize;
+  let after_switch = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "selected switched to right" 20
     (run_ok rt (Signal.Observer.read selected_observer));
   expect_fail "invalidated branch observer read" (( = ) `Disposed_observer)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
+  Alcotest.(check int) "invalidated branch observer removed from stats" 0
+    after_switch.Signal.invalid_observer_count;
+  Alcotest.(check int) "invalidated branch nodes pruned from stats" 0
+    after_switch.Signal.dead_node_count;
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "later stabilization ignores invalidated observer" 21
@@ -1926,8 +1931,8 @@ let test_observer_read_does_not_force_recompute () =
     (run_ok rt (Signal.Observer.read observer));
   let after_read = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "observer read does not stabilize"
-    before_read.Signal.stabilization_count
-    after_read.Signal.stabilization_count;
+    before_read.Signal.pure_snapshot_commit_count
+    after_read.Signal.pure_snapshot_commit_count;
   Alcotest.(check int) "observer read does not recompute"
     before_read.Signal.recompute_count after_read.Signal.recompute_count;
   Alcotest.(check int) "pending update not recomputed by read" 1 !calls;
@@ -1938,8 +1943,8 @@ let test_observer_read_does_not_force_recompute () =
      > after_read.Signal.recompute_count);
   Alcotest.(check int) "map recomputed by later stabilization" 2 !calls;
   Alcotest.(check bool) "stabilization count advanced" true
-    (after_second_stabilize.Signal.stabilization_count
-     > after_stabilize.Signal.stabilization_count);
+    (after_second_stabilize.Signal.pure_snapshot_commit_count
+     > after_stabilize.Signal.pure_snapshot_commit_count);
   Alcotest.(check int) "observer sees new snapshot after stabilize" 2
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
@@ -2751,8 +2756,13 @@ let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
   let check_stats label expected actual =
     Alcotest.(check int)
-      (label ^ " stabilization_count")
-      expected.Signal.stabilization_count actual.Signal.stabilization_count;
+      (label ^ " pure_snapshot_commit_count")
+      expected.Signal.pure_snapshot_commit_count
+      actual.Signal.pure_snapshot_commit_count;
+    Alcotest.(check int)
+      (label ^ " callback_delivery_count")
+      expected.Signal.callback_delivery_count
+      actual.Signal.callback_delivery_count;
     Alcotest.(check int)
       (label ^ " total_node_count")
       expected.Signal.total_node_count actual.Signal.total_node_count;
@@ -2760,11 +2770,17 @@ let test_stats_and_dot_are_read_only () =
       (label ^ " active_observer_count")
       expected.Signal.active_observer_count actual.Signal.active_observer_count;
     Alcotest.(check int)
+      (label ^ " invalid_observer_count")
+      expected.Signal.invalid_observer_count actual.Signal.invalid_observer_count;
+    Alcotest.(check int)
       (label ^ " necessary_node_count")
       expected.Signal.necessary_node_count actual.Signal.necessary_node_count;
     Alcotest.(check int)
-      (label ^ " stale_node_count")
-      expected.Signal.stale_node_count actual.Signal.stale_node_count;
+      (label ^ " dead_node_count")
+      expected.Signal.dead_node_count actual.Signal.dead_node_count;
+    Alcotest.(check int)
+      (label ^ " live_dirty_node_count")
+      expected.Signal.live_dirty_node_count actual.Signal.live_dirty_node_count;
     Alcotest.(check int)
       (label ^ " recompute_count")
       expected.Signal.recompute_count actual.Signal.recompute_count;
@@ -2808,18 +2824,26 @@ let test_stats_and_dot_are_read_only () =
   Alcotest.(check bool) "necessary nodes visible" true
     (after_observe.Signal.necessary_node_count
      > before.Signal.necessary_node_count);
-  Alcotest.(check bool) "stale nodes visible before stabilize" true
-    (after_observe.Signal.stale_node_count > before.Signal.stale_node_count);
+  Alcotest.(check bool) "live dirty nodes visible before stabilize" true
+    (after_observe.Signal.live_dirty_node_count
+     > before.Signal.live_dirty_node_count);
   run_ok rt Signal.stabilize;
   let after_stabilize = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "stabilization count increments"
-    (before.Signal.stabilization_count + 1)
-    after_stabilize.Signal.stabilization_count;
+  Alcotest.(check int) "pure snapshot commit count increments"
+    (before.Signal.pure_snapshot_commit_count + 1)
+    after_stabilize.Signal.pure_snapshot_commit_count;
+  Alcotest.(check int) "callback delivery count increments"
+    (before.Signal.callback_delivery_count + 1)
+    after_stabilize.Signal.callback_delivery_count;
+  Alcotest.(check int) "invalid observers are explicit" 0
+    after_stabilize.Signal.invalid_observer_count;
+  Alcotest.(check int) "dead nodes are explicit" 0
+    after_stabilize.Signal.dead_node_count;
   Alcotest.(check bool) "recompute count visible" true
     (after_stabilize.Signal.recompute_count > before.Signal.recompute_count);
-  Alcotest.(check bool) "stale nodes clear after stabilize" true
-    (after_stabilize.Signal.stale_node_count
-     < after_observe.Signal.stale_node_count);
+  Alcotest.(check bool) "live dirty nodes clear after stabilize" true
+    (after_stabilize.Signal.live_dirty_node_count
+     < after_observe.Signal.live_dirty_node_count);
   let after_stats_read = run_ok rt (Signal.stats ()) in
   check_stats "stats read-only" after_stabilize after_stats_read;
   let dot_before_unobserved = run_ok rt (Signal.to_dot ()) in
@@ -2849,6 +2873,45 @@ let test_stats_and_dot_are_read_only () =
   Alcotest.(check bool) "unnecessary transition counted" true
     (after_dispose.Signal.nodes_became_unnecessary
      > after_stabilize.Signal.nodes_became_unnecessary)
+
+let test_stats_split_snapshot_commit_from_callback_delivery () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let fail_once = ref true in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe (Signal.Var.watch source) (fun _update ->
+           if !fail_once then (
+             fail_once := false;
+             Effect.fail `Observer_failed)
+           else Effect.unit))
+  in
+  let before = run_ok rt (Signal.stats ()) in
+  expect_fail "observer callback failure"
+    (function
+      | `Observer_error `Observer_failed -> true
+      | _ -> false)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  let after_failure = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "failed callback still committed pure snapshot"
+    (before.Signal.pure_snapshot_commit_count + 1)
+    after_failure.Signal.pure_snapshot_commit_count;
+  Alcotest.(check int) "failed callback did not complete delivery"
+    before.Signal.callback_delivery_count
+    after_failure.Signal.callback_delivery_count;
+  Alcotest.(check int) "no invalid observer hidden by necessary count" 0
+    after_failure.Signal.invalid_observer_count;
+  Alcotest.(check int) "no retained invalid nodes after failure" 0
+    after_failure.Signal.dead_node_count;
+  run_ok rt Signal.stabilize;
+  let after_retry = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "retry commits second pure snapshot"
+    (after_failure.Signal.pure_snapshot_commit_count + 1)
+    after_retry.Signal.pure_snapshot_commit_count;
+  Alcotest.(check int) "retry completes callback delivery"
+    (after_failure.Signal.callback_delivery_count + 1)
+    after_retry.Signal.callback_delivery_count;
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_to_dot_deduplicates_repeated_dependency_edges () =
   with_runtime @@ fun rt ->
@@ -4262,6 +4325,9 @@ let () =
             test_active_graph_operation_interruption_releases_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
+          Alcotest.test_case
+            "stats split snapshot commit from callback delivery" `Quick
+            test_stats_split_snapshot_commit_from_callback_delivery;
           Alcotest.test_case "to_dot deduplicates repeated dependency edges"
             `Quick test_to_dot_deduplicates_repeated_dependency_edges;
           Alcotest.test_case "to_dot debug options expose hidden state" `Quick
