@@ -1709,7 +1709,10 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              Effect.now
              |> Effect.bind (fun now_ms ->
-                    deadline ~every (now_ms + Duration.to_ms duration)))
+                    let deadline_ms =
+                      add_ms_capped now_ms (Duration.to_ms duration)
+                    in
+                    deadline ~every deadline_ms))
 
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)

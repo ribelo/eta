@@ -3537,6 +3537,22 @@ let test_time_after_elapsed_before_observe () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_after_saturates_overflowing_deadline () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  Eta_test.Test_clock.set_time clock (max_int - 5);
+  let signal =
+    run_ok rt
+      (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "saturated future deadline starts pending" false
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_absolute_deadline () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
@@ -4161,6 +4177,8 @@ let () =
             test_time_after_deadline;
           Alcotest.test_case "time after elapsed before observe" `Quick
             test_time_after_elapsed_before_observe;
+          Alcotest.test_case "time after saturates overflowing deadline"
+            `Quick test_time_after_saturates_overflowing_deadline;
           Alcotest.test_case "time absolute deadline" `Quick
             test_time_absolute_deadline;
           Alcotest.test_case "time step function" `Quick
