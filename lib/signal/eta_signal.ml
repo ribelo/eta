@@ -308,6 +308,10 @@ module Make (Observer_error : Observer_error) () = struct
     | Lane_claimed
     | Lane_cancelled
 
+  type lane_claim_result =
+    | Lane_claimed_ok
+    | Lane_claim_cancelled
+
   type lane_waiter = {
     lane_contract : Runtime_contract.t;
     lane_resolver : unit Runtime_contract.resolver;
@@ -453,10 +457,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let claim_lane_waiter_locked waiter =
     match waiter.lane_state with
-    | Lane_granted -> waiter.lane_state <- Lane_claimed
+    | Lane_granted ->
+        waiter.lane_state <- Lane_claimed;
+        Lane_claimed_ok
     | Lane_waiting ->
         invalid_arg "Eta_signal lane waiter was not granted"
-    | Lane_claimed | Lane_cancelled -> ()
+    | Lane_claimed ->
+        invalid_arg "Eta_signal lane waiter was already claimed"
+    | Lane_cancelled -> Lane_claim_cancelled
 
   let with_lane_lock_during_cancel contract lane f =
     contract.Runtime_contract.protect (fun () -> with_lane_lock lane f)
@@ -484,8 +492,12 @@ module Make (Observer_error : Observer_error) () = struct
     | `Wait (promise, waiter) -> (
         try
           contract.Runtime_contract.await_promise promise;
-          with_lane_lock_during_cancel contract lane (fun () ->
-              claim_lane_waiter_locked waiter)
+          (match
+             with_lane_lock_during_cancel contract lane (fun () ->
+                 claim_lane_waiter_locked waiter)
+           with
+           | Lane_claimed_ok -> ()
+           | Lane_claim_cancelled -> contract.Runtime_contract.await_cancel ())
         with exn
           when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
           with_lane_lock_during_cancel contract lane (fun () ->
