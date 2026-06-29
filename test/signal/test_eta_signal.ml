@@ -933,6 +933,55 @@ let test_unnecessary_derived_recomputes_after_dependency_change () =
   run_ok rt (Signal.Observer.dispose source_observer);
   run_ok rt (Signal.Observer.dispose reobserved)
 
+let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let watched = Signal.Var.watch source in
+  let first_calls = ref 0 in
+  let second_calls = ref 0 in
+  let first =
+    Signal.map
+      (fun value ->
+        incr first_calls;
+        value + 1)
+      watched
+  in
+  let second =
+    Signal.map
+      (fun value ->
+        incr second_calls;
+        value * 10)
+      first
+  in
+  let source_observer =
+    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
+  in
+  let second_observer =
+    run_ok rt (Signal.Observer.observe second (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial chain value" 10
+    (run_ok rt (Signal.Observer.read second_observer));
+  Alcotest.(check int) "initial first recompute" 1 !first_calls;
+  Alcotest.(check int) "initial second recompute" 1 !second_calls;
+  run_ok rt (Signal.Observer.dispose second_observer);
+  run_ok rt (Signal.Var.set source 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "source remained necessary" 1
+    (run_ok rt (Signal.Observer.read source_observer));
+  Alcotest.(check int) "unnecessary first not recomputed" 1 !first_calls;
+  Alcotest.(check int) "unnecessary second not recomputed" 1 !second_calls;
+  let reobserved =
+    run_ok rt (Signal.Observer.observe second (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reactivated chain value is fresh" 20
+    (run_ok rt (Signal.Observer.read reobserved));
+  Alcotest.(check int) "first recomputed on reactivation" 2 !first_calls;
+  Alcotest.(check int) "second recomputed on reactivation" 2 !second_calls;
+  run_ok rt (Signal.Observer.dispose source_observer);
+  run_ok rt (Signal.Observer.dispose reobserved)
+
 let test_source_equality_suppresses_graph_propagation () =
   with_runtime @@ fun rt ->
   let source =
@@ -4415,6 +4464,9 @@ let () =
           Alcotest.test_case
             "unnecessary derived recomputes after dependency change" `Quick
             test_unnecessary_derived_recomputes_after_dependency_change;
+          Alcotest.test_case
+            "newly necessary derived chain refreshes dependency versions" `Quick
+            test_newly_necessary_derived_chain_refreshes_dependency_versions;
           Alcotest.test_case "source equality suppresses propagation" `Quick
             test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
