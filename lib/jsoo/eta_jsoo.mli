@@ -22,6 +22,12 @@ module Runtime : sig
     ?capture_backtrace:bool ->
     unit ->
     'err t
+  (** Create a JavaScript runtime.
+
+      The default runtime clock is [performance.now()] and sleeps use
+      [setTimeout], so Eta time is monotonic elapsed runtime time rather than
+      wall/civil time. Any [?sleep] override must preserve that same time-base
+      relationship with {!Eta.Effect.now}. *)
 
   val run :
     'err t ->

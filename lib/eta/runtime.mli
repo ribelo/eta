@@ -23,6 +23,12 @@ val create_with_runtime :
     internal representation; the module boundary is the public contract for
     future functorized runtimes.
 
+    [sleep] and [now_ms] override the backend runtime clock. Eta treats them as
+    one monotonic runtime-clock pair: [now_ms] is elapsed runtime time in
+    milliseconds, and [sleep] must suspend on that same time base. Override one
+    side only when the other side already uses the same monotonic clock or the
+    effect path being tested never composes the two.
+
     [services] attaches optional runtime-package services. Root [eta] does not
     inspect their types; packages such as [eta_blocking] own their keys and
     retrieve them through [Effect.Expert].
@@ -46,7 +52,10 @@ module Make (_ : Runtime_contract.RUNTIME) : sig
     ?capture_backtrace:bool ->
     unit ->
     'err t
-  (** Create an interpreter using the runtime module applied to this functor. *)
+  (** Create an interpreter using the runtime module applied to this functor.
+
+      [sleep] and [now_ms] have the same monotonic runtime-clock contract as
+      {!create_with_runtime}. *)
 
   val run : 'err t -> ('a, 'err) Effect.t -> ('a, 'err) Exit.t
 

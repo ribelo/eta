@@ -385,16 +385,18 @@ val retry_or_else :
     suppressed or reported as a finalizer diagnostic. *)
 
 val now : (int, 'err) t
-(** Read the active runtime clock in milliseconds. Runtime constructors and
-    tests can override this clock with their [?now_ms] argument. *)
+(** Read the active monotonic runtime clock in milliseconds. This is runtime
+    elapsed time, not wall/civil time. Runtime constructors and tests can
+    override this clock with their [?now_ms] argument. *)
 
 val sleep : Duration.t -> (unit, 'err) t
-(** Sleep through the active runtime clock. Runtime constructors and tests can
-    override this sleeper with their [?sleep] argument. *)
+(** Sleep through the active monotonic runtime clock. The sleeper and {!now}
+    must use the same time base. Runtime constructors and tests can override
+    this sleeper with their [?sleep] argument. *)
 
 val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
 val timed : ('a, 'err) t -> (Duration.t * 'a, 'err) t
-(** Measure an effect with the active runtime clock.
+(** Measure an effect with the active monotonic runtime clock.
 
     On success, [timed eff] returns [(elapsed, value)]. Typed failures,
     defects, interruption, and finalizer diagnostics are preserved as the

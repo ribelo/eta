@@ -298,11 +298,13 @@ module Make (Observer_error : Observer_error) () : sig
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call
         {!stabilize}; observers see timer changes only after explicit
-        stabilization. When a clock jump wakes several elapsed cadences under
-        the runtime clock, interval and step nodes apply one source update per
-        awakened cadence before the next stabilization observes the final
-        source value. Large catch-up runs yield cooperatively between internal
-        batches. *)
+        stabilization.
+
+        Signal time is measured by Eta's monotonic runtime clock, not by
+        wall/civil time. When a runtime-clock jump wakes several elapsed
+        cadences, interval and step nodes apply one source update per awakened
+        cadence before the next stabilization observes the final source value.
+        Large catch-up runs yield cooperatively between internal batches. *)
 
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
@@ -314,9 +316,9 @@ module Make (Observer_error : Observer_error) () : sig
       every:Eta.Duration.t ->
       int ->
       (bool signal, time_error) Eta.Effect.t
-    (** [deadline ~every deadline_ms] becomes [true] after the runtime clock
-        reaches [deadline_ms]. [deadline_ms] must be in the future when the
-        signal is created. *)
+    (** [deadline ~every deadline_ms] becomes [true] after the monotonic
+        runtime clock reaches [deadline_ms]. [deadline_ms] must be in the
+        future on that clock when the signal is created. *)
 
     val after :
       every:Eta.Duration.t ->

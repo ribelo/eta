@@ -71,7 +71,13 @@ type t = {
     interpreter. The [Obj.t] representation is confined to the adapter and
     {!Backend} bridge below; do not add another mirror record of backend
     operations. Concurrency and parallelism semantics belong to the backend
-    implementation; the contract only states what Eta can ask for. *)
+    implementation; the contract only states what Eta can ask for.
+
+    [now_ms] is monotonic runtime time in milliseconds, not wall/civil time.
+    [sleep] must suspend on the same monotonic time base. Eta timers,
+    schedules, timeouts, and elapsed-time measurements assume these operations
+    are one clock pair; mixing a wall-clock [now_ms] with a relative monotonic
+    sleeper makes clock-jump behavior undefined. *)
 
 module type RUNTIME = sig
   type scope
@@ -82,9 +88,14 @@ module type RUNTIME = sig
 
   val root_scope : scope
   val now_ms : unit -> int
+  (** Current monotonic runtime clock in milliseconds. This is elapsed runtime
+      time, not wall/civil time, and should not move backwards during ordinary
+      execution. *)
+
   val sleep : Duration.t -> unit
-  (** Suspend the current runtime task for at least [duration]. Backends may
-      ignore non-positive durations. *)
+  (** Suspend the current runtime task for at least [duration] on the same
+      monotonic time base as {!now_ms}. Backends may ignore non-positive
+      durations. *)
 
   val protect : (unit -> 'a) -> 'a
   (** Run [f] with parent cancellation deferred. If cancellation is pending

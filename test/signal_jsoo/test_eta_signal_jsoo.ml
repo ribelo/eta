@@ -200,40 +200,40 @@ let test_stream_bridge_emits_and_closes done_ =
           [] ) -> ()
       | _ -> fail "stream bridge" "unexpected stream updates")
 
-let test_interrupted_stream_backpressure_cleans_up done_ =
+let test_stream_bridge_full_queue_drops_without_blocking done_ =
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let eff =
     let* observer, stream = Signal.Stream.observe ~capacity:1 signal in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
-    let* timeout_exit =
+    let* stabilize_exit =
       E.exit
         (E.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout
            (widen Signal.stabilize))
     in
-    let* after_timeout = Signal.Observer.read observer in
+    let* after_full_queue = Signal.Observer.read observer in
     let* first = Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect in
     let* () = Signal.Var.set source 3 in
     let* () = Signal.stabilize in
     let* final = Signal.Observer.read observer in
     let* second = Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect in
     let+ () = Signal.Observer.dispose observer in
-    (timeout_exit, after_timeout, first, final, second)
+    (stabilize_exit, after_full_queue, first, final, second)
   in
   run_eta eff done_ (fun result ->
-      let timeout_exit, after_timeout, first, final, second =
-        expect_ok "interrupted stream backpressure" result
+      let stabilize_exit, after_full_queue, first, final, second =
+        expect_ok "stream bridge full queue" result
       in
-      expect_fail "backpressured stabilization timeout" (( = ) `Timeout)
-        timeout_exit;
-      check_equal_int "snapshot published before interruption" 2 after_timeout;
+      ignore (expect_ok "full queue stabilization completes" stabilize_exit : unit);
+      check_equal_int "snapshot advances while bridge is full" 2
+        after_full_queue;
       check_equal_int "final snapshot after cleanup" 3 final;
       match (first, second) with
       | ( [ Signal.Initialized 1 ],
           [ Signal.Changed { old_value = 2; new_value = 3 } ] ) -> ()
       | _ ->
-          fail "interrupted stream backpressure" "unexpected stream updates")
+          fail "stream bridge full queue" "unexpected stream updates")
 
 let tests =
   [
@@ -242,7 +242,7 @@ let tests =
     ("failure_and_defect_propagation", test_failure_and_defect_propagation);
     ("time_nodes_require_explicit_stabilization", test_time_nodes_require_explicit_stabilization);
     ("stream_bridge_emits_and_closes", test_stream_bridge_emits_and_closes);
-    ("interrupted_stream_backpressure_cleans_up", test_interrupted_stream_backpressure_cleans_up);
+    ("stream_bridge_full_queue_drops_without_blocking", test_stream_bridge_full_queue_drops_without_blocking);
   ]
 
 let () = Eta_js_test.main tests

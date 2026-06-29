@@ -7,7 +7,10 @@ module Host : sig
 
   module type TIME = sig
     val now : [> float Eio.Time.clock_ty ] Eio.Std.r -> float
+    (** Current monotonic Eio clock time in seconds. *)
+
     val sleep : [> float Eio.Time.clock_ty ] Eio.Std.r -> float -> unit
+    (** Sleep on the same Eio clock used by {!now}. *)
   end
 
   module type NET = sig
@@ -110,6 +113,11 @@ module Runtime : sig
     ?capture_backtrace:bool ->
     unit ->
     'err t
+  (** Create an Eta runtime backed by [clock].
+
+      By default, [now_ms] and [sleep] both use [clock]. If either is
+      overridden, the resulting pair must still describe one monotonic runtime
+      clock; do not mix wall-clock reads with relative monotonic sleeps. *)
 
   val with_host :
     Host.t ->
@@ -127,6 +135,10 @@ module Runtime : sig
     ?capture_backtrace:bool ->
     ('err t -> 'a) ->
     'a
+  (** Create a runtime with an explicit host adapter.
+
+      The optional [now_ms] override must remain on the same monotonic time
+      base as [clock], whose sleep operation is still used by the backend. *)
 
   val run_host :
     Host.t ->

@@ -464,6 +464,11 @@ already exist: runtime clock reads, `Duration`, `Effect.sleep`, `Schedule`, and
 runtime-managed fibers. `eta_signal` must not introduce a separate timing wheel
 or scheduler.
 
+Eta runtime time is monotonic elapsed time, not civil/wall-clock time. Runtime
+backends and test overrides must keep `now_ms` and `sleep` on the same
+monotonic time base; mixing wall-clock reads with relative monotonic sleeps
+makes clock-jump behavior undefined for schedules, timeouts, and signal timers.
+
 Internal timer drivers may use Eta `Schedule`, but v1 does not expose a public
 schedule-taking time-node constructor. Public time constructors use explicit
 runtime-clock and duration arguments.
@@ -581,6 +586,8 @@ invalidation, heights, scopes, or observer scheduling.
 - No public expert/custom-node surface bypasses graph invariants.
 - Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives
   and do not run observer callbacks outside explicit stabilization.
+- Eta runtime clock reads and sleeps share one monotonic time base; public time
+  APIs do not interpret deadlines as wall-clock/civil timestamps.
 - Time/clock nodes mark sources stale but do not call stabilization from the
   kernel.
 - Time/clock nodes start work only while necessary and stop or become inert when

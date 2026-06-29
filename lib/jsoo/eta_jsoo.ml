@@ -13,7 +13,8 @@ let fresh_id () = Atomic.fetch_and_add next_id 1 + 1
 module Js_host = struct
   let set_timeout_ = Unsafe.js_expr "setTimeout"
   let clear_timeout_ = Unsafe.js_expr "clearTimeout"
-  let date_now_ = Unsafe.js_expr "Date.now"
+  let performance_now_ =
+    Unsafe.js_expr "(function () { return performance.now(); })"
 
   let set_timeout ~ms f =
     (Unsafe.fun_call set_timeout_
@@ -25,7 +26,7 @@ module Js_host = struct
 
   let now_ms () =
     int_of_float
-      (Js.to_float (Unsafe.fun_call date_now_ [||] : Js.number_t))
+      (Js.to_float (Unsafe.fun_call performance_now_ [||] : Js.number_t))
 
   let post_task : (unit -> unit) -> unit =
     if

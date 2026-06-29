@@ -12,7 +12,8 @@ module Test_clock : sig
   (** [create ()] starts a virtual clock at millisecond 0. *)
 
   val sleep : t -> Eta.Duration.t -> unit
-  (** [sleep clock duration] is passed to [Eta_eio.Runtime.create ~sleep]. *)
+  (** [sleep clock duration] is passed to [Eta_eio.Runtime.create ~sleep] with
+      [now_ms] so test runtimes keep one monotonic virtual time base. *)
 
   val adjust : t -> Eta.Duration.t -> unit
   (** [adjust clock (Duration.ms 10)] advances virtual time and wakes due
@@ -22,7 +23,8 @@ module Test_clock : sig
   (** [set_time clock 100] moves virtual time to millisecond 100. *)
 
   val now_ms : t -> int
-  (** [now_ms clock] returns the current virtual millisecond timestamp. *)
+  (** [now_ms clock] returns the current monotonic virtual millisecond
+      timestamp. *)
 
   val sleeper_count : t -> int
   (** [sleeper_count clock] returns the number of fibers waiting on the test

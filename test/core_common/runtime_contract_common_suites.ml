@@ -104,6 +104,21 @@ let test_first_class_runtime_uses_contract_sleep () =
   Runtime.run rt eff |> check_exit_ok Alcotest.string "delay result" "done";
   Alcotest.(check int) "direct clock advanced" 7 (Direct_runtime.now_ms ())
 
+let test_runtime_sleep_and_now_share_monotonic_timebase () =
+  Direct_runtime.now := 10;
+  let rt = Direct.create () in
+  let eff =
+    Effect.now
+    |> Effect.bind (fun before ->
+           Effect.sleep (Duration.ms 5)
+           |> Effect.bind (fun () ->
+                  Effect.now |> Effect.map (fun after -> (before, after))))
+  in
+  Direct.run rt eff
+  |> check_exit_ok
+       Alcotest.(pair int int)
+       "runtime clock pair" (10, 15)
+
 let test_direct_runtime_preserves_task_context () =
   let tracer = Tracer.in_memory () in
   let rt = Direct.create ~tracer:(Tracer.as_capability tracer) () in
@@ -171,6 +186,8 @@ let tests =
           test_functor_runtime_runs_core_effect;
         Alcotest.test_case "first-class runtime uses contract sleep" `Quick
           test_first_class_runtime_uses_contract_sleep;
+        Alcotest.test_case "sleep and now share monotonic timebase" `Quick
+          test_runtime_sleep_and_now_share_monotonic_timebase;
         Alcotest.test_case "direct runtime preserves task context" `Quick
           test_direct_runtime_preserves_task_context;
         Alcotest.test_case "expert custom effect uses runtime contract" `Quick
