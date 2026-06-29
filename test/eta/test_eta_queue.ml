@@ -134,3 +134,35 @@ let test_queue_resolves_sender_outside_lock () =
   Alcotest.(check bool) "resolver hook ran" true !hook_ran;
   Alcotest.(check int) "admitted blocked sender" 2
     (run_ok rt (Queue.recv queue))
+
+let set_queue_counter queue field value =
+  (* Public APIs cannot drive stats counters to [max_int] in a focused test. *)
+  Obj.set_field (Obj.repr queue) field (Obj.repr value)
+
+let test_queue_stats_counters_saturate () =
+  let rt = Test_runtime.create () in
+  let sent_queue = Queue.create () in
+  set_queue_counter sent_queue 7 (max_int - 1);
+  run_ok rt (Queue.send sent_queue 1);
+  run_ok rt (Queue.send sent_queue 2);
+  Alcotest.(check int) "sent saturates" max_int
+    (Queue.stats sent_queue).Queue.sent;
+  let received_queue = Queue.create () in
+  run_ok rt (Queue.send received_queue 1);
+  run_ok rt (Queue.send received_queue 2);
+  set_queue_counter received_queue 8 (max_int - 1);
+  Alcotest.(check int) "first received value" 1
+    (run_ok rt (Queue.recv received_queue));
+  Alcotest.(check int) "second received value" 2
+    (run_ok rt (Queue.recv received_queue));
+  Alcotest.(check int) "received saturates" max_int
+    (Queue.stats received_queue).Queue.received;
+  let dropped_queue = Queue.create ~overflow:(Queue.Drop_new { capacity = 1 }) () in
+  run_ok rt (Queue.send dropped_queue 1);
+  set_queue_counter dropped_queue 9 (max_int - 1);
+  Alcotest.(check bool) "first drop" false
+    (run_ok rt (Queue.offer dropped_queue 2));
+  Alcotest.(check bool) "second drop" false
+    (run_ok rt (Queue.offer dropped_queue 3));
+  Alcotest.(check int) "dropped saturates" max_int
+    (Queue.stats dropped_queue).Queue.dropped

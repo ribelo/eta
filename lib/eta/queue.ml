@@ -63,6 +63,9 @@ let validate_overflow = function
       if capacity <= 0 then
         invalid_arg "Eta.Queue.create: bounded capacity must be > 0"
 
+let saturating_succ value =
+  if value = max_int then max_int else value + 1
+
 let create ?(overflow = Unbounded) () =
   validate_overflow overflow;
   {
@@ -156,7 +159,7 @@ let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
 
 let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
   Stdlib.Queue.add value t.values;
-  t.sent <- t.sent + 1;
+  t.sent <- saturating_succ t.sent;
   wake_one_receiver_locked wakeups t
 
 let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
@@ -221,14 +224,14 @@ let cancel_receiver (t : ('a, 'err) t) (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
-    t.cancelled_receivers <- t.cancelled_receivers + 1;
+    t.cancelled_receivers <- saturating_succ t.cancelled_receivers;
     compact_cancelled_receivers_locked t)
 
 let cancel_sender wakeups (t : ('a, 'err) t) sender =
   if sender.active then (
     sender.active <- false;
     t.waiting_senders <- t.waiting_senders - 1;
-    t.cancelled_senders <- t.cancelled_senders + 1;
+    t.cancelled_senders <- saturating_succ t.cancelled_senders;
     compact_cancelled_senders_locked t;
     admit_waiting_senders_locked wakeups t)
 
@@ -253,7 +256,7 @@ let try_send_sync t value =
           match t.overflow with
           | Unbounded -> assert false
           | Drop_new _ ->
-              t.dropped <- t.dropped + 1;
+              t.dropped <- saturating_succ t.dropped;
               `Dropped
           | Backpressure _ -> `Full
   in
@@ -274,7 +277,7 @@ let offer_sync contract t value =
           match t.overflow with
           | Unbounded -> assert false
           | Drop_new _ ->
-              t.dropped <- t.dropped + 1;
+              t.dropped <- saturating_succ t.dropped;
               `Ready `Dropped
           | Backpressure _ ->
               let promise, sender = enqueue_sender contract t value in
@@ -333,7 +336,7 @@ let send t value =
 
 let take_value wakeups t =
   let value = Stdlib.Queue.take t.values in
-  t.received <- t.received + 1;
+  t.received <- saturating_succ t.received;
   admit_waiting_senders_locked wakeups t;
   `Item value
 
@@ -356,7 +359,7 @@ let drain_locked wakeups t max =
     if remaining = 0 || Stdlib.Queue.is_empty t.values then List.rev acc
     else
       let value = Stdlib.Queue.take t.values in
-      t.received <- t.received + 1;
+      t.received <- saturating_succ t.received;
       loop (remaining - 1) (value :: acc)
   in
   let values = loop max [] in

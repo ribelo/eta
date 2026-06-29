@@ -3124,6 +3124,38 @@ let test_time_interval_requires_explicit_stabilization () =
    | _ -> Alcotest.fail "expected timer update after explicit stabilize");
   run_ok rt (Signal.Observer.dispose observer)
 
+let seed_interval_source signal value =
+  (* Public APIs cannot drive an interval to [max_int] in a focused test. *)
+  let signal_obj = Obj.repr signal in
+  let kind = Obj.field signal_obj 2 in
+  if Obj.tag kind <> 1 then Alcotest.fail "expected interval source signal";
+  let source = Obj.field kind 0 in
+  Obj.set_field source 2 (Obj.repr value);
+  Obj.set_field source 3 (Obj.repr value)
+
+let test_time_interval_saturates_at_max_int () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  seed_interval_source signal (max_int - 1);
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial interval boundary" (max_int - 1)
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "interval tick saturates" max_int
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "interval remains saturated" max_int
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let check_timer_snapshot label
@@ -4145,6 +4177,8 @@ let () =
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
+          Alcotest.test_case "time interval saturates at max_int" `Quick
+            test_time_interval_saturates_at_max_int;
           Alcotest.test_case "time large clock jump catches up explicitly"
             `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
           Alcotest.test_case "time interval catches up after late sleep" `Quick

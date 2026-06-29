@@ -78,6 +78,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let default_equal a b = a == b
 
+  let saturating_succ value =
+    if value = max_int then max_int else value + 1
+
   type phase =
     | Not_stabilizing
     | Pure
@@ -659,7 +662,8 @@ module Make (Observer_error : Observer_error) () = struct
   let rec invalidate_scope ?(prune = true) scope =
     if scope.scope_valid then (
       scope.scope_valid <- false;
-      graph.dynamic_scope_invalidations <- graph.dynamic_scope_invalidations + 1;
+      graph.dynamic_scope_invalidations <-
+        saturating_succ graph.dynamic_scope_invalidations;
       List.iter invalidate_node scope.scope_nodes;
       scope.scope_nodes <- [];
       if prune then prune_invalid_nodes_unlocked ())
@@ -833,7 +837,7 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
-    graph.stabilization_count <- graph.stabilization_count + 1
+    graph.stabilization_count <- saturating_succ graph.stabilization_count
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (
@@ -877,7 +881,7 @@ module Make (Observer_error : Observer_error) () = struct
    fun signal ->
     remember_computed (P signal);
     let recompute value =
-      graph.recompute_count <- graph.recompute_count + 1;
+      graph.recompute_count <- saturating_succ graph.recompute_count;
       let changed =
         (not signal.initialized)
         ||
@@ -1015,7 +1019,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (fun () -> bind.selector source_value)
               in
               let inner_value, _inner_changed = compute inner in
-              graph.recompute_count <- graph.recompute_count + 1;
+              graph.recompute_count <- saturating_succ graph.recompute_count;
               let changed =
                 (not signal.initialized)
                 ||
@@ -1090,12 +1094,14 @@ module Make (Observer_error : Observer_error) () = struct
     Hashtbl.iter
       (fun id () ->
         if not (Hashtbl.mem graph.necessary_node_ids id) then
-          graph.nodes_became_necessary <- graph.nodes_became_necessary + 1)
+          graph.nodes_became_necessary <-
+            saturating_succ graph.nodes_became_necessary)
       next;
     Hashtbl.iter
       (fun id () ->
         if not (Hashtbl.mem next id) then
-          graph.nodes_became_unnecessary <- graph.nodes_became_unnecessary + 1)
+          graph.nodes_became_unnecessary <-
+            saturating_succ graph.nodes_became_unnecessary)
       graph.necessary_node_ids;
     graph.necessary_node_ids <- next
 
@@ -1401,7 +1407,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let active_observer_count () =
     List.fold_left
-      (fun count observer -> if observer_active observer then count + 1 else count)
+      (fun count observer ->
+        if observer_active observer then saturating_succ count else count)
       0 graph.observers
 
   let necessary_node_count () =
@@ -1409,7 +1416,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let stale_node_count () =
     List.fold_left
-      (fun count (P signal) -> if signal.dirty then count + 1 else count)
+      (fun count (P signal) ->
+        if signal.dirty then saturating_succ count else count)
       0 graph.all_nodes
 
   let stats () =
@@ -1567,7 +1575,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
       if now_ms < next_due_ms then 0
-      else ((now_ms - next_due_ms) / interval_ms) + 1
+      else saturating_succ ((now_ms - next_due_ms) / interval_ms)
 
     let advance_due next_due_ms interval_ms missed =
       add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
@@ -1722,7 +1730,7 @@ module Make (Observer_error : Observer_error) () = struct
                {
                  source_timer_update =
                    (fun timer generation source ->
-                     let next = Var.value source + 1 in
+                     let next = saturating_succ (Var.value source) in
                      timer_set_source timer generation source next
                      |> Effect.map (fun _ -> ()));
                })
