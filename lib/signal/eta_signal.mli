@@ -38,7 +38,10 @@ module Make (Observer_error : Observer_error) () : sig
       when wrapping an invalidated dynamic-scope node. *)
 
   type observer_read_error =
-    [ `Disposed_observer | `No_current_value | `Uninitialized_observer ]
+    [ `Disposed_observer
+    | `Invalid_scope
+    | `No_current_value
+    | `Uninitialized_observer ]
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
 
@@ -145,7 +148,10 @@ module Make (Observer_error : Observer_error) () : sig
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
     (** Read the last stabilized observed value. This is the primary value-read
         surface for derived values and reports invalid observer state through
-        typed Eta failures. *)
+        typed Eta failures.
+
+        Returns [`Invalid_scope] when the observer was invalidated because its
+        dynamic-scope signal was replaced. *)
 
     val unsafe_read_exn : 'a t -> 'a
     (** Synchronous read for tests and debugging. Raises when the observer is

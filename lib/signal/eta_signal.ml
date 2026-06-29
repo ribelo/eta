@@ -22,7 +22,10 @@ module Make (Observer_error : Observer_error) () = struct
     | `Reentrant_update ]
 
   type observer_read_error =
-    [ `Disposed_observer | `No_current_value | `Uninitialized_observer ]
+    [ `Disposed_observer
+    | `Invalid_scope
+    | `No_current_value
+    | `Uninitialized_observer ]
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
   type time_error = [ `Invalid_interval | `Past_deadline ]
@@ -80,6 +83,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let pp_observer_read_error ppf = function
     | `Disposed_observer -> Format.pp_print_string ppf "disposed observer"
+    | `Invalid_scope -> Format.pp_print_string ppf "invalid dynamic scope"
     | `No_current_value -> Format.pp_print_string ppf "no current observer value"
     | `Uninitialized_observer ->
         Format.pp_print_string ppf "uninitialized observer"
@@ -251,6 +255,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_var = V : 'a var -> packed_var
 
+  and observer_state =
+    | Observer_active
+    | Observer_disposed
+    | Observer_invalid_scope
+
   and 'a observer = {
     obs_id : observer_id;
     obs_signal : 'a signal;
@@ -264,7 +273,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_delivered_initialized : bool;
     mutable obs_delivery_pending : bool;
     mutable obs_failed_without_current : bool;
-    mutable obs_disposed : bool;
+    mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
     mutable obs_on_dispose : (unit -> unit) list;
   }
@@ -624,7 +633,10 @@ module Make (Observer_error : Observer_error) () = struct
     remember_staged_observer (O observer);
     observer.obs_staged_delivered_current <- Some value
 
-  let observer_active (O observer) = not observer.obs_disposed
+  let observer_active (O observer) =
+    match observer.obs_state with
+    | Observer_active -> true
+    | Observer_disposed | Observer_invalid_scope -> false
 
   let remove_observer observer =
     graph.observers <-
@@ -632,12 +644,20 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
         graph.observers
 
+  let finish_observer_unlocked observer state =
+    match observer.obs_state with
+    | Observer_active ->
+        observer.obs_state <- state;
+        remove_observer observer;
+        List.iter (fun f -> f ()) observer.obs_on_dispose;
+        observer.obs_on_dispose <- []
+    | Observer_disposed | Observer_invalid_scope -> ()
+
   let dispose_observer_unlocked observer =
-    if not observer.obs_disposed then (
-      observer.obs_disposed <- true;
-      remove_observer observer;
-      List.iter (fun f -> f ()) observer.obs_on_dispose;
-      observer.obs_on_dispose <- [])
+    finish_observer_unlocked observer Observer_disposed
+
+  let invalidate_observer_unlocked observer =
+    finish_observer_unlocked observer Observer_invalid_scope
 
   let dispose_signal_observers signal =
     let observers =
@@ -645,7 +665,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O observer) -> observer.obs_signal.id = signal.id)
         graph.observers
     in
-    List.iter (fun (O observer) -> dispose_observer_unlocked observer) observers
+    List.iter (fun (O observer) -> invalidate_observer_unlocked observer) observers
 
   let signal_scope () =
     match graph.phase with
@@ -1131,7 +1151,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter
       (fun (O observer) ->
-        if not observer.obs_disposed then visit (P observer.obs_signal))
+        if observer_active (O observer) then visit (P observer.obs_signal))
       graph.observers;
     seen
 
@@ -1162,7 +1182,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter
       (fun (O observer) ->
-        if not observer.obs_disposed then visit (P observer.obs_signal))
+        if observer_active (O observer) then visit (P observer.obs_signal))
       graph.observers;
     timers
 
@@ -1187,13 +1207,13 @@ module Make (Observer_error : Observer_error) () = struct
   let dispose_observer_effect observer =
     with_graph_lane_sync
       (fun () ->
-        if not observer.obs_disposed then (
+        if observer_active (O observer) then (
           dispose_observer_unlocked observer;
           update_necessity_counters_unlocked ()))
     |> Effect.bind (fun () -> refresh_timer_demand ())
 
   let collect_observer_event (O observer) =
-    if observer.obs_disposed then None
+    if not (observer_active (O observer)) then None
     else (
       let value, changed = compute observer.obs_signal in
       let event =
@@ -1414,7 +1434,7 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_delivered_initialized = false;
                 obs_delivery_pending = false;
                 obs_failed_without_current = false;
-                obs_disposed = false;
+                obs_state = Observer_active;
                 obs_staged_generation = -1;
                 obs_on_dispose = on_dispose;
               }
@@ -1438,22 +1458,30 @@ module Make (Observer_error : Observer_error) () = struct
     let read observer =
       Effect.sync (fun () ->
           ensure_graph_context ();
-          if observer.obs_disposed then Error `Disposed_observer
-          else
-            match observer.obs_current with
-            | Some value -> Ok value
-            | None ->
-                if observer.obs_failed_without_current || observer.obs_initialized
-                then Error `No_current_value
-                else Error `Uninitialized_observer)
+          match observer.obs_state with
+          | Observer_disposed -> Error `Disposed_observer
+          | Observer_invalid_scope -> Error `Invalid_scope
+          | Observer_active -> (
+              match observer.obs_current with
+              | Some value -> Ok value
+              | None ->
+                  if
+                    observer.obs_failed_without_current
+                    || observer.obs_initialized
+                  then Error `No_current_value
+                  else Error `Uninitialized_observer))
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
       ensure_graph_context ();
-      if observer.obs_disposed then invalid_arg "Eta_signal observer is disposed";
-      match observer.obs_current with
-      | Some value -> value
-      | None -> invalid_arg "Eta_signal observer is not initialized"
+      match observer.obs_state with
+      | Observer_disposed -> invalid_arg "Eta_signal observer is disposed"
+      | Observer_invalid_scope ->
+          invalid_arg "Eta_signal observer scope is invalid"
+      | Observer_active -> (
+          match observer.obs_current with
+          | Some value -> value
+          | None -> invalid_arg "Eta_signal observer is not initialized")
 
     let dispose observer = dispose_observer_effect observer
   end
@@ -1638,16 +1666,21 @@ module Make (Observer_error : Observer_error) () = struct
     in
     String.concat " " fields
 
+  let observer_state_label = function
+    | Observer_active -> "active"
+    | Observer_disposed -> "disposed"
+    | Observer_invalid_scope -> "invalid_scope"
+
   let observer_label (O observer) =
     String.concat " "
       [
         "observer:" ^ observer_id_label observer.obs_id;
         "observer_id=" ^ observer_id_label observer.obs_id;
+        "state=" ^ observer_state_label observer.obs_state;
         bool_field "initialized" observer.obs_initialized;
         bool_field "delivered" observer.obs_delivered_initialized;
         bool_field "pending" observer.obs_delivery_pending;
         bool_field "failed_without_current" observer.obs_failed_without_current;
-        bool_field "disposed" observer.obs_disposed;
       ]
 
   let to_dot ?(options = default_dot_options) () =
@@ -1679,7 +1712,7 @@ module Make (Observer_error : Observer_error) () = struct
     if options.dot_observers then
       List.iter
         (fun (O observer as packed) ->
-          if not observer.obs_disposed then (
+          if observer_active packed then (
             Format.fprintf formatter "  %s [shape=box,label=%S];@."
               (observer_id_label observer.obs_id)
               (observer_label packed);

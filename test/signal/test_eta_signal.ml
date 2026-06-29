@@ -293,6 +293,8 @@ let test_error_pretty_printers_are_clear () =
     "same-variable effectful update reentry";
   check_render "disposed observer" Signal.pp_observer_read_error
     `Disposed_observer "disposed observer";
+  check_render "invalid observer scope" Signal.pp_observer_read_error
+    `Invalid_scope "invalid dynamic scope";
   check_render "no current observer value" Signal.pp_observer_read_error
     `No_current_value "no current observer value";
   check_render "uninitialized observer" Signal.pp_observer_read_error
@@ -1431,7 +1433,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "selected switched to right" 20
     (run_ok rt (Signal.Observer.read selected_observer));
-  expect_fail "wrapped branch observer disposed" (( = ) `Disposed_observer)
+  expect_fail "wrapped branch observer invalidated" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read wrapped_observer)));
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
@@ -1439,7 +1441,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_bind_switch_disposes_observers_of_invalidated_scope () =
+let test_bind_switch_invalidates_observers_of_invalidated_scope () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -1473,7 +1475,7 @@ let test_bind_switch_disposes_observers_of_invalidated_scope () =
   let after_switch = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "selected switched to right" 20
     (run_ok rt (Signal.Observer.read selected_observer));
-  expect_fail "invalidated branch observer read" (( = ) `Disposed_observer)
+  expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
   Alcotest.(check int) "invalidated branch observer removed from stats" 0
     after_switch.Signal.invalid_observer_count;
@@ -4298,8 +4300,8 @@ let () =
             test_invalidated_bind_rhs_cannot_be_wrapped;
           Alcotest.test_case "bind switch invalidates external branch dependents"
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
-          Alcotest.test_case "bind switch disposes branch observers" `Quick
-            test_bind_switch_disposes_observers_of_invalidated_scope;
+          Alcotest.test_case "bind switch invalidates branch observers" `Quick
+            test_bind_switch_invalidates_observers_of_invalidated_scope;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
           Alcotest.test_case "dynamic list bind switches dependency set" `Quick
