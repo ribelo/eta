@@ -2169,6 +2169,20 @@ let test_ambiguous_node_creation_during_observer_callback_is_typed_failure () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_ambiguous_node_creation_during_observer_effect_is_typed_failure () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _ ->
+           Effect.sync (fun () ->
+               ignore (Signal.const 1 : int Signal.signal))))
+  in
+  expect_fail "observer effect ambiguous scope" (( = ) `Ambiguous_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_observer_failure_fails_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -4122,6 +4136,9 @@ let () =
           Alcotest.test_case "observer ambiguous node creation typed failure"
             `Quick
             test_ambiguous_node_creation_during_observer_callback_is_typed_failure;
+          Alcotest.test_case
+            "observer effect ambiguous node creation typed failure" `Quick
+            test_ambiguous_node_creation_during_observer_effect_is_typed_failure;
           Alcotest.test_case "observer failure fails stabilize" `Quick
             test_observer_failure_fails_stabilize;
           Alcotest.test_case "observer typed failure retries" `Quick

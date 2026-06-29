@@ -1216,6 +1216,45 @@ module Make (Observer_error : Observer_error) () = struct
     | Running_observers | Pure -> graph.phase <- Not_stabilizing
     | Not_stabilizing -> ()
 
+  let graph_error_of_die die =
+    match die.Eta.Cause.exn with
+    | Graph_error err -> Some err
+    | _ -> None
+
+  let rec observer_cause_to_stabilize = function
+    | Eta.Cause.Fail err -> Eta.Cause.Fail (`Observer_error err)
+    | Eta.Cause.Die die -> (
+        match graph_error_of_die die with
+        | Some err -> Eta.Cause.Fail (err :> stabilize_error)
+        | None -> Eta.Cause.Die die)
+    | Eta.Cause.Interrupt id -> Eta.Cause.Interrupt id
+    | Eta.Cause.Sequential causes ->
+        Eta.Cause.Sequential (List.map observer_cause_to_stabilize causes)
+    | Eta.Cause.Concurrent causes ->
+        Eta.Cause.Concurrent (List.map observer_cause_to_stabilize causes)
+    | Eta.Cause.Finalizer cause -> Eta.Cause.Finalizer cause
+    | Eta.Cause.Suppressed { primary; finalizer } ->
+        Eta.Cause.Suppressed
+          { primary = observer_cause_to_stabilize primary; finalizer }
+
+  let run_observer_effect observer update observer_eff =
+    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+    let exit =
+      try
+        match Effect.Expert.eval context observer_eff with
+        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
+        | Eta.Exit.Error cause ->
+            Eta.Exit.Error (observer_cause_to_stabilize cause)
+      with
+      | Graph_error err ->
+          Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
+    in
+    match exit with
+    | Eta.Exit.Ok () ->
+        acknowledge_event_delivery observer update;
+        Eta.Exit.Ok ()
+    | Eta.Exit.Error _ as error -> error
+
   let rec run_events = function
     | [] -> Effect.unit
     | E (observer, update) :: rest -> (
@@ -1225,11 +1264,8 @@ module Make (Observer_error : Observer_error) () = struct
         with
         | Error err -> Effect.fail err
         | Ok observer_eff ->
-            observer_eff
-            |> Effect.map_error (fun err -> `Observer_error err)
-            |> Effect.bind (fun () ->
-                   acknowledge_event_delivery observer update;
-                   run_events rest))
+            run_observer_effect observer update observer_eff
+            |> Effect.bind (fun () -> run_events rest))
 
   let stabilize =
     with_graph_lane_sync begin_stabilize
