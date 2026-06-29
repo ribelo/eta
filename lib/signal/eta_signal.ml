@@ -1429,26 +1429,57 @@ module Make (Observer_error : Observer_error) () = struct
               timer.timer_running_generation <- None;
             `Stop))
 
-    let rec timer_loop timer generation driver update =
+    let add_ms_capped left right =
+      if right <= 0 then left
+      else if left > max_int - right then max_int
+      else left + right
+
+    let mul_ms_capped left right =
+      if left <= 0 || right <= 0 then 0
+      else if left > max_int / right then max_int
+      else left * right
+
+    let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
+      if now_ms < next_due_ms then 0
+      else ((now_ms - next_due_ms) / interval_ms) + 1
+
+    let advance_due next_due_ms interval_ms missed =
+      add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
+
+    let rec run_timer_updates timer generation remaining update =
+      if remaining <= 0 then Effect.unit
+      else
+        timer_after_update_state timer generation
+        |> Effect.bind (function
+             | `Stop -> Effect.unit
+             | `Continue ->
+                 Effect.sync (fun () -> update.timer_update timer)
+                 |> Effect.bind (fun update_eff -> update_eff)
+                 |> Effect.bind (fun () ->
+                        run_timer_updates timer generation (remaining - 1) update))
+
+    let rec timer_loop timer generation interval_ms next_due_ms update =
       Effect.now
       |> Effect.bind (fun now_ms ->
-             let delay, driver =
-               match Schedule.next ~now_ms ~input:() driver with
-               | Some (metadata, driver) -> (metadata.delay, driver)
-               | None -> assert false
-             in
-             Effect.sleep delay)
+             let delay_ms = max 0 (next_due_ms - now_ms) in
+             Effect.sleep (Duration.ms delay_ms))
       |> Effect.bind (fun () ->
-             timer_after_update_state timer generation
-             |> Effect.bind (function
-                  | `Stop -> Effect.unit
-                  | `Continue ->
-                      update.timer_update timer
-                      |> Effect.bind (fun () ->
-                             timer_after_update_state timer generation
-                             |> Effect.bind (function
-                                  | `Continue -> timer_loop timer generation driver update
-                                  | `Stop -> Effect.unit))))
+             Effect.now
+             |> Effect.bind (fun now_ms ->
+                    let missed =
+                      missed_cadences ~interval_ms ~next_due_ms ~now_ms
+                    in
+                    let next_due_ms =
+                      advance_due next_due_ms interval_ms missed
+                    in
+                    run_timer_updates timer generation missed update
+                    |> Effect.bind (fun () ->
+                           timer_after_update_state timer generation
+                           |> Effect.bind (function
+                                | `Continue ->
+                                    timer_loop timer generation interval_ms
+                                      next_due_ms update
+                                | `Stop -> Effect.unit))))
 
     let attach_timer ?(update_on_start = false) signal interval update =
       let timer =
@@ -1460,11 +1491,16 @@ module Make (Observer_error : Observer_error) () = struct
           timer_start =
             (fun timer ->
               let generation = timer.timer_generation in
-              let driver = Schedule.start (Schedule.spaced interval) in
+              let interval_ms = Duration.to_ms interval in
               let start_loop () =
-                Effect.daemon
-                  (timer_loop timer generation driver update
-                  |> Effect.on_exit (timer_cleanup_after_exit timer generation))
+                Effect.now
+                |> Effect.bind (fun now_ms ->
+                       let next_due_ms = add_ms_capped now_ms interval_ms in
+                       Effect.daemon
+                         (timer_loop timer generation interval_ms next_due_ms
+                            update
+                         |> Effect.on_exit
+                              (timer_cleanup_after_exit timer generation)))
               in
               if update_on_start then
                 (update.timer_update timer

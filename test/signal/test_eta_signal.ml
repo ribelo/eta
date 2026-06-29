@@ -101,6 +101,7 @@ let with_logger_test_clock f =
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
       ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
       ~logger:(Logger.as_capability logger) ()
   in
   f sw clock rt logger
@@ -2872,6 +2873,58 @@ let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
    | _ -> Alcotest.fail "unexpected large clock jump events");
   run_ok rt (Signal.Observer.dispose observer)
 
+let with_late_timer_wake f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_ms = ref 0 in
+  let sleep_calls = ref 0 in
+  let hold, hold_resolver = Eio.Promise.create () in
+  let released = ref false in
+  let sleep _duration =
+    incr sleep_calls;
+    if !sleep_calls = 1 then now_ms := 100
+    else Eio.Promise.await hold
+  in
+  let release () =
+    if not !released then (
+      released := true;
+      Eio.Promise.resolve hold_resolver ())
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
+      ~now_ms:(fun () -> !now_ms)
+      ()
+  in
+  f rt sleep_calls release
+
+let test_time_interval_catches_up_after_late_sleep () =
+  with_late_timer_wake @@ fun rt sleep_calls release ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "late interval wake rescheduled" (fun () -> !sleep_calls >= 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "late interval wake catches up" 10
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer);
+  release ()
+
+let test_time_step_catches_up_after_late_sleep () =
+  with_late_timer_wake @@ fun rt sleep_calls release ->
+  let signal =
+    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "late step wake rescheduled" (fun () -> !sleep_calls >= 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "late step wake catches up" 10
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer);
+  release ()
+
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -3715,6 +3768,10 @@ let () =
             test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time large clock jump catches up explicitly"
             `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
+          Alcotest.test_case "time interval catches up after late sleep" `Quick
+            test_time_interval_catches_up_after_late_sleep;
+          Alcotest.test_case "time step catches up after late sleep" `Quick
+            test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
