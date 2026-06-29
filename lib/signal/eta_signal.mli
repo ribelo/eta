@@ -25,6 +25,18 @@ module Make (Observer_error : Observer_error) () : sig
     | `Reentrant_stabilization
     | `Reentrant_update ]
 
+  exception Graph_error of graph_error
+  (** Raised by synchronous graph construction APIs when construction violates a
+      graph contract and there is no Eta effect error channel available.
+      Effectful APIs such as {!Observer.observe}, {!stabilize}, and
+      {!Stream.observe} convert graph failures into typed Eta failures instead.
+
+      Synchronous construction APIs include {!Var.watch}, {!const}, {!map},
+      [map2] through [map9], {!both}, {!all}, and {!bind}. They raise
+      [Graph_error `Ambiguous_scope] when a new node would be created in a phase
+      without an unambiguous dynamic scope, and [Graph_error `Invalid_scope]
+      when wrapping an invalidated dynamic-scope node. *)
+
   type observer_read_error =
     [ `Disposed_observer | `No_current_value | `Uninitialized_observer ]
 
@@ -97,6 +109,11 @@ module Make (Observer_error : Observer_error) () : sig
         the last stabilization. *)
 
     val watch : 'a t -> 'a signal
+    (** Synchronously create a signal for this source variable.
+
+        Raises [Graph_error] on graph construction failures; see
+        {!exception:Graph_error}. *)
+
     val set : 'a t -> 'a -> (unit, 'err) Eta.Effect.t
     (** Set the source value. Sets performed from observer callbacks are
         accepted, but are published by a later explicit stabilization rather
@@ -138,12 +155,18 @@ module Make (Observer_error : Observer_error) () : sig
   end
 
   val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
-  (** Constant signal. Without [?equal], the signal cutoff is physical equality. *)
+  (** Constant signal. Without [?equal], the signal cutoff is physical equality.
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
 
   val map : ?equal:('b -> 'b -> bool) -> ('a -> 'b) -> 'a signal -> 'b signal
   (** Map one dependency. Without [?equal], the derived-value cutoff is physical
       equality. Freshly allocated but structurally equal values are therefore
-      treated as changes unless a structural [?equal] is supplied. *)
+      treated as changes unless a structural [?equal] is supplied.
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
 
   val map2 :
     ?equal:('c -> 'c -> bool) ->
@@ -153,7 +176,10 @@ module Make (Observer_error : Observer_error) () : sig
     'c signal
   (** Map two dependencies. Without [?equal], the derived-value cutoff is
       physical equality. The same default applies to [map3] through [map9] and
-      {!both}. *)
+      {!both}.
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
 
   val map3 :
     ?equal:('d -> 'd -> bool) ->
@@ -235,7 +261,10 @@ module Make (Observer_error : Observer_error) () : sig
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
   (** Collect a list of signals. Without [?equal], the list cutoff is physical
-      equality. *)
+      equality.
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
 
   val bind : ?equal:('b -> 'b -> bool) -> 'a signal -> ('a -> 'b signal) -> 'b signal
   (** Dynamically select a signal from the current value of another signal.
@@ -243,7 +272,10 @@ module Make (Observer_error : Observer_error) () : sig
       replaced; observing a captured inactive-branch node fails with
       [`Invalid_scope].
 
-      Without [?equal], the selected output cutoff is physical equality. *)
+      Without [?equal], the selected output cutoff is physical equality.
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
   val stats : unit -> (stats, 'err) Eta.Effect.t

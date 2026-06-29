@@ -47,10 +47,13 @@ let expect_die label = function
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
-let expect_sync_failure label f =
+let expect_graph_error_exn label expected f =
   match f () with
-  | exception _ -> ()
-  | _ -> Alcotest.failf "%s: expected synchronous failure" label
+  | exception Signal.Graph_error actual when actual = expected -> ()
+  | exception exn ->
+      Alcotest.failf "%s: expected graph error, got %s" label
+        (Printexc.to_string exn)
+  | _ -> Alcotest.failf "%s: expected graph error" label
 
 let signal_graph_context_message =
   "Eta_signal: signal graph APIs must be called on the domain that created "
@@ -1385,7 +1388,8 @@ let test_invalidated_bind_rhs_cannot_be_wrapped () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "active branch switched" 20
     (run_ok rt (Signal.Observer.read observer));
-  expect_sync_failure "wrapped invalid scope construction" (fun () ->
+  expect_graph_error_exn "wrapped invalid scope construction" `Invalid_scope
+    (fun () ->
       ignore (Signal.map (fun value -> value + 1) captured : int Signal.signal));
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
