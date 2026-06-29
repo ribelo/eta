@@ -533,6 +533,29 @@ module Make (Observer_error : Observer_error) () = struct
     remember_staged_observer (O observer);
     observer.obs_staged_delivered_current <- Some value
 
+  let observer_active (O observer) = not observer.obs_disposed
+
+  let remove_observer observer =
+    graph.observers <-
+      List.filter
+        (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
+        graph.observers
+
+  let dispose_observer_unlocked observer =
+    if not observer.obs_disposed then (
+      observer.obs_disposed <- true;
+      remove_observer observer;
+      List.iter (fun f -> f ()) observer.obs_on_dispose;
+      observer.obs_on_dispose <- [])
+
+  let dispose_signal_observers signal =
+    let observers =
+      List.filter
+        (fun (O observer) -> observer.obs_signal.id = signal.id)
+        graph.observers
+    in
+    List.iter (fun (O observer) -> dispose_observer_unlocked observer) observers
+
   let signal_scope () =
     match graph.phase with
     | Not_stabilizing -> graph.current_scope
@@ -595,6 +618,7 @@ module Make (Observer_error : Observer_error) () = struct
           timer.timer_generation <- timer.timer_generation + 1)
         signal.timer;
       signal.valid <- false;
+      dispose_signal_observers signal;
       List.iter
         (fun (P dependency) -> remove_dependent dependency signal)
         signal.dependencies;
@@ -964,14 +988,6 @@ module Make (Observer_error : Observer_error) () = struct
           then recompute inner_value
           else use_cached ()
 
-  let observer_active (O observer) = not observer.obs_disposed
-
-  let remove_observer observer =
-    graph.observers <-
-      List.filter
-        (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
-        graph.observers
-
   let timer_stop_unlocked timer =
     timer.timer_active <- false;
     timer.timer_generation <- timer.timer_generation + 1
@@ -1258,10 +1274,7 @@ module Make (Observer_error : Observer_error) () = struct
       with_graph_lane_sync
         (fun () ->
           if not observer.obs_disposed then (
-            observer.obs_disposed <- true;
-            remove_observer observer;
-            List.iter (fun f -> f ()) observer.obs_on_dispose;
-            observer.obs_on_dispose <- [];
+            dispose_observer_unlocked observer;
             update_necessity_counters_unlocked ()))
       |> Effect.bind (fun () -> refresh_timer_demand ())
   end
