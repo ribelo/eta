@@ -2088,6 +2088,29 @@ let test_observer_callback_interruption_releases_phase () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_observe_failure_during_timer_start_does_not_leak () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_calls = ref 0 in
+  let now_ms () =
+    incr now_calls;
+    if !now_calls <= 2 then 0
+    else failwith "timer start clock failure"
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~now_ms ()
+  in
+  let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let before = run_ok rt (Signal.stats ()) in
+  expect_die "stream observe timer start failure"
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Stream.observe ~capacity:1 signal)));
+  let after = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int)
+    "failed stream observe does not leak observer"
+    before.Signal.active_observer_count after.Signal.active_observer_count;
+  run_ok rt Signal.stabilize
+
 let test_reentrant_stabilization_is_typed_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -3652,6 +3675,9 @@ let () =
             test_observer_callback_construction_defect_does_not_poison_graph;
           Alcotest.test_case "observer interruption releases phase" `Quick
             test_observer_callback_interruption_releases_phase;
+          Alcotest.test_case "stream observe failure during timer start"
+            `Quick
+            test_stream_observe_failure_during_timer_start_does_not_leak;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
           Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick

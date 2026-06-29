@@ -1070,6 +1070,14 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync refresh_timer_demand_unlocked
     |> Effect.bind Effect.concat
 
+  let dispose_observer_effect observer =
+    with_graph_lane_sync
+      (fun () ->
+        if not observer.obs_disposed then (
+          dispose_observer_unlocked observer;
+          update_necessity_counters_unlocked ()))
+    |> Effect.bind (fun () -> refresh_timer_demand ())
+
   let collect_observer_event (O observer) =
     if observer.obs_disposed then None
     else (
@@ -1222,7 +1230,8 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
-    let observe ?(equal = default_equal) signal callback =
+    let observe_with_hooks ?(equal = default_equal) ?(on_dispose = []) signal
+        callback =
       with_graph_lane_sync (fun () ->
           if not signal.valid then Error `Invalid_scope
           else
@@ -1242,7 +1251,7 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_failed_without_current = false;
                 obs_disposed = false;
                 obs_staged_generation = -1;
-                obs_on_dispose = [];
+                obs_on_dispose = on_dispose;
               }
             in
             graph.observers <- O observer :: graph.observers;
@@ -1250,7 +1259,16 @@ module Make (Observer_error : Observer_error) () = struct
             Ok observer)
       |> Effect.flatten_result
       |> Effect.bind (fun observer ->
-             refresh_timer_demand () |> Effect.map (fun () -> observer))
+             let transferred = ref false in
+             (refresh_timer_demand ()
+             |> Effect.map (fun () ->
+                    transferred := true;
+                    observer))
+             |> Effect.on_exit (fun _exit ->
+                    if !transferred then Effect.unit
+                    else dispose_observer_effect observer))
+
+    let observe ?equal signal callback = observe_with_hooks ?equal signal callback
 
     let read observer =
       Effect.sync (fun () ->
@@ -1270,13 +1288,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Some value -> value
       | None -> invalid_arg "Eta_signal observer is not initialized"
 
-    let dispose observer =
-      with_graph_lane_sync
-        (fun () ->
-          if not observer.obs_disposed then (
-            dispose_observer_unlocked observer;
-            update_necessity_counters_unlocked ()))
-      |> Effect.bind (fun () -> refresh_timer_demand ())
+    let dispose observer = dispose_observer_effect observer
   end
 
   let const ?equal value = new_const ?equal value
@@ -1563,12 +1575,12 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> create_bridge_queue capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
-             Observer.observe ?equal signal (fun update ->
-                 Queue.send queue update |> Effect.ignore)
+             Observer.observe_with_hooks ?equal
+               ~on_dispose:[ (fun () -> Queue.close queue) ]
+               signal
+               (fun update -> Queue.send queue update |> Effect.ignore)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
-                    observer.obs_on_dispose <-
-                      (fun () -> Queue.close queue) :: observer.obs_on_dispose;
                     (observer, Eta_stream.Stream.from_queue queue)))
   end
 end
