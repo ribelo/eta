@@ -108,6 +108,11 @@ module Make (Observer_error : Observer_error) () = struct
   let saturating_succ value =
     if value = max_int then max_int else value + 1
 
+  let counter_overflow name = invalid_arg ("Eta_signal: " ^ name ^ " overflow")
+
+  let checked_succ name value =
+    if value = max_int then counter_overflow name else value + 1
+
   type signal_id = Signal_id of int
   type scope_id = Scope_id of int
   type var_id = Var_id of int
@@ -549,7 +554,7 @@ module Make (Observer_error : Observer_error) () = struct
   let next_id () =
     ensure_graph_context ();
     let id = graph.next_id in
-    graph.next_id <- id + 1;
+    graph.next_id <- checked_succ "node id" id;
     id
 
   let next_signal_id () = Signal_id (next_id ())
@@ -558,7 +563,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let new_scope () =
     let id = graph.next_scope_id in
-    graph.next_scope_id <- id + 1;
+    graph.next_scope_id <- checked_succ "scope id" id;
     { scope_id = Scope_id id; scope_valid = true; scope_nodes = [] }
 
   let current_generation () = graph.stabilization_id
@@ -627,7 +632,7 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_signal_version signal =
     if signal.staged_generation = current_generation () then
       match signal.staged with
-      | Some _ -> saturating_succ signal.version
+      | Some _ -> checked_succ "signal version" signal.version
       | None -> signal.version
     else signal.version
 
@@ -733,10 +738,11 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_stop_unlocked ?(cancel_running = true) timer =
     let cancel = timer.timer_cancel in
     timer.timer_active <- false;
-    timer.timer_generation <- timer.timer_generation + 1;
     timer.timer_running_generation <- None;
     timer.timer_cancel <- None;
-    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel
+    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel;
+    timer.timer_generation <-
+      checked_succ "timer generation" timer.timer_generation
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -846,7 +852,7 @@ module Make (Observer_error : Observer_error) () = struct
        | Some value ->
            signal.value <- Some value;
            signal.initialized <- true;
-           signal.version <- saturating_succ signal.version);
+           signal.version <- checked_succ "signal version" signal.version);
       signal.staged <- None;
       (match signal.staged_dependency_versions with
        | None -> ()
@@ -1230,9 +1236,10 @@ module Make (Observer_error : Observer_error) () = struct
     if timer.timer_finished || (timer.timer_active && timer_has_current_daemon timer)
     then None
     else (
+      let generation = checked_succ "timer generation" timer.timer_generation in
       timer.timer_active <- true;
-      timer.timer_generation <- timer.timer_generation + 1;
-      timer.timer_running_generation <- Some timer.timer_generation;
+      timer.timer_generation <- generation;
+      timer.timer_running_generation <- Some generation;
       timer.timer_cancel <- None;
       Some (timer.timer_start timer))
 
@@ -1341,8 +1348,11 @@ module Make (Observer_error : Observer_error) () = struct
   let begin_stabilize () =
     if graph.phase <> Not_stabilizing then Error `Reentrant_stabilization
     else (
+      let generation =
+        checked_succ "stabilization generation" graph.stabilization_id
+      in
       graph.phase <- Pure;
-      graph.stabilization_id <- graph.stabilization_id + 1;
+      graph.stabilization_id <- generation;
       graph.computed_nodes <- [];
       graph.staged_vars <- [];
       graph.staged_binds <- [];

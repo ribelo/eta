@@ -3518,6 +3518,14 @@ let seed_interval_source signal value =
   Obj.set_field source 2 (Obj.repr value);
   Obj.set_field source 3 (Obj.repr value)
 
+let set_signal_timer_generation signal value =
+  (* Public APIs cannot drive timer generations to [max_int] in a focused test. *)
+  let signal_obj = Obj.repr signal in
+  let timer_opt = Obj.field signal_obj 19 in
+  if Obj.is_int timer_opt then Alcotest.fail "expected timer signal";
+  let timer = Obj.field timer_opt 0 in
+  Obj.set_field timer 4 (Obj.repr value)
+
 let test_time_interval_saturates_at_max_int () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -3540,6 +3548,18 @@ let test_time_interval_saturates_at_max_int () =
   Alcotest.(check int) "interval remains saturated" max_int
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_timer_generation_overflow_fails_loudly () =
+  let module Overflow_signal = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Overflow_signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Overflow_signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  set_signal_timer_generation signal max_int;
+  expect_die "timer generation overflow"
+    (Eta_eio.Runtime.run rt (widen (Overflow_signal.Observer.dispose observer)))
 
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -4755,6 +4775,8 @@ let () =
             test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time interval saturates at max_int" `Quick
             test_time_interval_saturates_at_max_int;
+          Alcotest.test_case "time timer generation overflow fails loudly"
+            `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case "time large clock jump catches up explicitly"
             `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
           Alcotest.test_case "time interval catches up after late sleep" `Quick
