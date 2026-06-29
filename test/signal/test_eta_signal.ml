@@ -1280,6 +1280,45 @@ let test_bind_detaches_old_dependency () =
   Alcotest.(check int) "right still active" 21
     (run_ok rt (Signal.Observer.read observer))
 
+let test_bind_switches_after_unnecessary_source_change () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let watched = Signal.Var.watch source in
+  let selector_calls = ref [] in
+  let bound =
+    Signal.bind watched (fun value ->
+        selector_calls := value :: !selector_calls;
+        Signal.const ("branch " ^ string_of_int value))
+  in
+  let source_observer =
+    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
+  in
+  let bound_observer =
+    run_ok rt (Signal.Observer.observe bound (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "initial branch" "branch 0"
+    (run_ok rt (Signal.Observer.read bound_observer));
+  Alcotest.(check (list int))
+    "initial selector call" [ 0 ] (List.rev !selector_calls);
+  run_ok rt (Signal.Observer.dispose bound_observer);
+  run_ok rt (Signal.Var.set source 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "source observer saw update" 1
+    (run_ok rt (Signal.Observer.read source_observer));
+  Alcotest.(check (list int))
+    "unnecessary bind not reselected" [ 0 ] (List.rev !selector_calls);
+  let reobserved =
+    run_ok rt (Signal.Observer.observe bound (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "reobserved branch is current" "branch 1"
+    (run_ok rt (Signal.Observer.read reobserved));
+  Alcotest.(check (list int))
+    "bind reselected on reobserve" [ 0; 1 ] (List.rev !selector_calls);
+  run_ok rt (Signal.Observer.dispose source_observer);
+  run_ok rt (Signal.Observer.dispose reobserved)
+
 let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -4331,6 +4370,9 @@ let () =
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
+          Alcotest.test_case
+            "bind switches after unnecessary source change" `Quick
+            test_bind_switches_after_unnecessary_source_change;
           Alcotest.test_case "bind invalidates old scope" `Quick
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
           Alcotest.test_case "bind invalidated var watchers detach" `Quick
