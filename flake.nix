@@ -74,10 +74,11 @@
             "${tursoSqlite3}/lib/libturso_sqlite3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
           ladybugLibraryPath =
             "${ladybugdb.lib}/lib/liblbug${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
-          oxCamlSetup = pkgs.writeShellApplication {
-            name = "eta-oxcaml-init";
+          etaOpamInstall = pkgs.writeShellApplication {
+            name = "eta-opam-install";
             runtimeInputs = [
               pkgs.autoconf
+              pkgs.coreutils
               pkgs.git
               pkgs.gnumake
               pkgs.m4
@@ -94,7 +95,7 @@
               pkgs.zlib
             ];
             text = ''
-              switch_name="''${1:-${oxCamlSwitch}}"
+              switch_name="''${ETA_OPAM_SWITCH:-${oxCamlSwitch}}"
               repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               cd "$repo_root"
 
@@ -102,39 +103,44 @@
               export OPAMYES=1
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
 
-              if [ ! -d "$OPAMROOT" ]; then
-                opam init --bare --disable-sandboxing --no-setup --yes
-              fi
-
               if ! opam switch list --short | grep -Fxq "$switch_name"; then
-                opam switch create "$switch_name" \
-                  --repos ox=git+https://github.com/oxcaml/opam-repository.git,default \
-                  --assume-depexts \
-                  --yes
+                echo "Missing OPAM switch '$switch_name'." >&2
+                echo "Run: shared-ocaml-switch-init" >&2
+                exit 1
               fi
 
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
-              opam install 'uring=0.9' --assume-depexts --yes
-              opam install . --deps-only --with-test --assume-depexts --yes
-              opam install \
-                'dune=3.22.2+ox' \
-                'ocamlformat=0.26.2+ox1' \
-                'merlin=5.2.1-502+ox1' \
-                'ocaml-lsp-server=1.19.0+ox1' \
-                'utop=2.16.0+ox1' \
-                --assume-depexts \
-                --yes
-              opam install \
-                'sqlite3=5.4.1' \
-                'caqti=2.3.0' \
-                'caqti-driver-sqlite3=2.3.0' \
-                'caqti-eio=2.3.0' \
-                --assume-depexts \
-                --yes
 
-              echo "OxCaml switch is ready: $switch_name"
-              echo "Enter it with: nix develop .#oxcaml"
+              eta_url="git+file://$repo_root"
+              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
+              if [ "$#" -gt 0 ]; then
+                packages="$*"
+              fi
+
+              package_args=()
+              for package in $packages; do
+                package_args+=("$package")
+                opam pin add --kind=git "$package" "$eta_url" --no-action --yes
+              done
+
+              opam install "''${package_args[@]}" --assume-depexts --yes
+
+              echo "Eta packages installed into OPAM switch: $switch_name"
+              echo "$packages"
+            '';
+          };
+          oxCamlSetup = pkgs.writeShellApplication {
+            name = "eta-oxcaml-init";
+            runtimeInputs = [
+              etaOpamInstall
+            ];
+            text = ''
+              if [ "$#" -gt 0 ]; then
+                export ETA_OPAM_SWITCH="$1"
+                shift
+              fi
+              exec eta-opam-install "$@"
             '';
           };
           oxCamlToolchainCheck = pkgs.writeShellApplication {
@@ -261,6 +267,7 @@
               pkgs.unzip
               pkgs.which
               tursoSqlite3
+              etaOpamInstall
               oxCamlSetup
               oxCamlShippedTests
               oxCamlToolchainCheck
@@ -338,7 +345,8 @@
               fi
               if [ -t 1 ]; then
                 echo "Eta OxCaml shell (${oxCamlSwitch})"
-                echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+                echo "Run 'shared-ocaml-switch-init' to create shared OPAM switches."
+                echo "Run 'eta-opam-install' to install Eta packages into ${oxCamlSwitch}."
                 echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
               fi
             '';
@@ -359,7 +367,8 @@
               fi
               if [ -t 1 ]; then
                 echo "Eta OxCaml research shell (${oxCamlSwitch})"
-                echo "Run 'eta-oxcaml-init' once to create the ${oxCamlSwitch} opam switch."
+                echo "Run 'shared-ocaml-switch-init' to create shared OPAM switches."
+                echo "Run 'eta-opam-install' to install Eta packages into ${oxCamlSwitch}."
                 echo "Run 'eta-oxcaml-test-shipped' after setup to test shipped packages only."
               fi
             '';

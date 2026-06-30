@@ -816,13 +816,22 @@ module Make (Observer_error : Observer_error) () = struct
     | Some parent -> scope_is_ancestor ~ancestor parent
 
   let validate_bind_inner_scope scope inner =
-    if not inner.valid then raise (Graph_error `Invalid_scope);
-    match inner.scope with
-    | None -> ()
-    | Some inner_scope ->
-        if inner_scope.scope_valid && scope_is_ancestor ~ancestor:inner_scope scope
-        then ()
-        else raise (Graph_error `Invalid_scope)
+    let seen = Hashtbl.create 16 in
+    let rec visit (P signal) =
+      if not signal.valid then raise (Graph_error `Invalid_scope);
+      if not (Hashtbl.mem seen signal.id) then (
+        Hashtbl.add seen signal.id ();
+        (match signal.scope with
+         | None -> ()
+         | Some signal_scope ->
+             if
+               signal_scope.scope_valid
+               && scope_is_ancestor ~ancestor:signal_scope scope
+             then ()
+             else raise (Graph_error `Invalid_scope));
+        List.iter visit signal.dependencies)
+    in
+    visit (P inner)
 
   let timer_stop_unlocked ?(cancel_running = true) timer =
     let cancel = timer.timer_cancel in
