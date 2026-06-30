@@ -310,6 +310,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_node = {
     mutable timer_state : timer_state;
+    mutable timer_on_demand_refresh_token : int;
+    timer_refresh_on_demand : (timer_node -> int -> unit) option;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
@@ -356,6 +358,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type pure_stabilize_result =
     | Pure_ok of disposal_hook list * event list
+    | Pure_timer_refresh of disposal_hook list * timer_node list
     | Pure_graph_error of disposal_hook list * graph_error
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
@@ -407,6 +410,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable nodes_became_unnecessary : int;
     mutable stream_bridge_drop_count : int;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
+    mutable next_timer_refresh_token : int;
   }
 
   exception Graph_error of graph_error
@@ -444,6 +448,7 @@ module Make (Observer_error : Observer_error) () = struct
       nodes_became_unnecessary = 0;
       stream_bridge_drop_count = 0;
       necessary_node_ids = Hashtbl.create 16;
+      next_timer_refresh_token = 0;
     }
 
   let kind_name : type a. a kind -> string = function
@@ -903,6 +908,12 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running _ ->
         false
 
+  let timer_can_refresh_on_demand token timer =
+    Option.is_some timer.timer_refresh_on_demand
+    && timer.timer_on_demand_refresh_token <> token
+    && (not (timer_active timer))
+    && not (timer_finished timer)
+
   let timer_running_generation timer =
     match timer.timer_state with
     | Timer_running_uncancellable generation | Timer_running (generation, _) ->
@@ -1343,6 +1354,31 @@ module Make (Observer_error : Observer_error) () = struct
     graph.phase <- Not_stabilizing;
     disposal_hooks
 
+  let restart_pure pending_at_start =
+    let disposal_hooks = reset_staging () in
+    List.iter requeue_if_needed pending_at_start;
+    graph.phase <- Not_stabilizing;
+    disposal_hooks
+
+  let next_timer_refresh_token_unlocked () =
+    let token = graph.next_timer_refresh_token in
+    graph.next_timer_refresh_token <-
+      checked_succ "timer refresh token" graph.next_timer_refresh_token;
+    token
+
+  let refresh_on_demand_timer_sources token timers =
+    Effect.now
+    |> Effect.bind (fun now_ms ->
+           with_graph_lane_sync (fun () ->
+               List.iter
+                 (fun timer ->
+                   if timer_can_refresh_on_demand token timer then (
+                     timer.timer_on_demand_refresh_token <- token;
+                     match timer.timer_refresh_on_demand with
+                     | None -> ()
+                     | Some refresh -> refresh timer now_ms))
+                 timers))
+
   let stage_pending_var (V var) =
     if not (var.var_equal var.graph_value var.source_value) then (
       stage_var_graph_value var var.source_value;
@@ -1611,6 +1647,20 @@ module Make (Observer_error : Observer_error) () = struct
         | Timer_running _ | Timer_finished _ ->
             `Stop)
 
+  (* Pre-commit timer refresh must see staged bind inners. Committed demand
+     counters and timer start/stop still use [signal.dependencies]. *)
+  let effective_necessary_dependencies : type a. a signal -> packed_signal list =
+   fun signal ->
+    match signal.kind with
+    | Bind bind ->
+        P bind.source
+        :: (match bind_effective_inner bind with
+            | None -> []
+            | Some inner -> [ P inner ])
+    | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+    | Map7 _ | Map8 _ | Map9 _ | All _ ->
+        signal.dependencies
+
   let collect_necessary_node_ids () =
     let seen = Hashtbl.create 16 in
     let rec visit (P signal) =
@@ -1654,6 +1704,28 @@ module Make (Observer_error : Observer_error) () = struct
         if observer_active (O observer) then visit (P observer.obs_signal))
       graph.observers;
     timers
+
+  let effective_necessary_timers () =
+    let seen_nodes = Hashtbl.create 16 in
+    let timers = Hashtbl.create 8 in
+    let rec visit (P signal) =
+      if signal.valid && not (Hashtbl.mem seen_nodes signal.id) then (
+        Hashtbl.add seen_nodes signal.id ();
+        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer) signal.timer;
+        List.iter visit (effective_necessary_dependencies signal))
+    in
+    List.iter
+      (fun (O observer) ->
+        if observer_active (O observer) then visit (P observer.obs_signal))
+      graph.observers;
+    timers
+
+  let on_demand_timer_refreshes token =
+    Hashtbl.fold
+      (fun _id timer refreshes ->
+        if timer_can_refresh_on_demand token timer then timer :: refreshes
+        else refreshes)
+      (effective_necessary_timers ()) []
 
   let all_timers () =
     List.filter_map
@@ -1872,7 +1944,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Observer_delivery_pending _ ->
             ())
 
-  let begin_stabilize () =
+  let begin_stabilize timer_refresh_token =
     if graph.phase <> Not_stabilizing then
       Pure_graph_error ([], `Reentrant_stabilization)
     else (
@@ -1898,11 +1970,16 @@ module Make (Observer_error : Observer_error) () = struct
       try
         List.iter stage_pending_var pending_at_start;
         let events = List.filter_map collect_observer_event observers in
-        let hooks = commit_staging () in
-        List.iter mark_event_pending events;
-        update_necessity_counters_unlocked ();
-        graph.phase <- Running_observers;
-        Pure_ok (hooks, events)
+        match on_demand_timer_refreshes timer_refresh_token with
+        | _ :: _ as refreshes ->
+            let hooks = restart_pure pending_at_start in
+            Pure_timer_refresh (hooks, refreshes)
+        | [] ->
+            let hooks = commit_staging () in
+            List.iter mark_event_pending events;
+            update_necessity_counters_unlocked ();
+            graph.phase <- Running_observers;
+            Pure_ok (hooks, events)
       with
       | Graph_error err ->
           let hooks = rollback_pure observers pending_at_start in
@@ -1986,18 +2063,20 @@ module Make (Observer_error : Observer_error) () = struct
                         run_observer_effect observer token update observer_eff
                         |> Effect.bind (fun () -> run_events rest))))
 
-  let begin_stabilize_with_pending_hooks hooks_ref finish_needed =
-    let result = begin_stabilize () in
+  let begin_stabilize_with_pending_hooks timer_refresh_token hooks_ref
+      finish_needed =
+    let result = begin_stabilize timer_refresh_token in
     let hooks =
       match result with
-      | Pure_ok (hooks, _) | Pure_graph_error (hooks, _)
+      | Pure_ok (hooks, _) | Pure_timer_refresh (hooks, _)
+      | Pure_graph_error (hooks, _)
       | Pure_defect (hooks, _, _) ->
           hooks
     in
     hooks_ref := hooks;
     (match result with
      | Pure_ok _ -> finish_needed := true
-     | Pure_graph_error _ | Pure_defect _ -> ());
+     | Pure_timer_refresh _ | Pure_graph_error _ | Pure_defect _ -> ());
     result
 
   let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
@@ -2008,20 +2087,39 @@ module Make (Observer_error : Observer_error) () = struct
            else Effect.unit)
 
   let stabilize =
-    Effect.sync (fun () -> (ref [], ref false, ref false))
-    |> Effect.bind (fun (hooks_ref, refresh_timers, finish_needed) ->
-           with_graph_lane_sync (fun () ->
-               begin_stabilize_with_pending_hooks hooks_ref finish_needed)
-           |> Effect.bind (function
-                | Pure_graph_error (_, err) ->
-                    graph_error_with_pending_disposal_hooks hooks_ref err
-                | Pure_defect (_, exn, backtrace) ->
-                    defect_with_pending_disposal_hooks hooks_ref exn backtrace
-                | Pure_ok (_, events) ->
-                    refresh_timers := true;
-                    run_pending_stabilize_cleanup hooks_ref refresh_timers
-                    |> Effect.bind (fun () -> run_events events)
-                    |> Effect.bind mark_callback_delivery_complete)
+    Effect.sync (fun () -> (ref [], ref false, ref false, ref None))
+    |> Effect.bind
+         (fun (hooks_ref, refresh_timers, finish_needed, timer_refresh_token) ->
+           let get_timer_refresh_token () =
+             match !timer_refresh_token with
+             | Some token -> token
+             | None ->
+                 let token = next_timer_refresh_token_unlocked () in
+                 timer_refresh_token := Some token;
+                 token
+           in
+           let rec loop () =
+             with_graph_lane_sync (fun () ->
+                 let token = get_timer_refresh_token () in
+                 (token, begin_stabilize_with_pending_hooks token hooks_ref
+                           finish_needed))
+             |> Effect.bind (function
+                  | token, Pure_timer_refresh (_, timers) ->
+                      run_pending_disposal_hooks_as_finalizers hooks_ref
+                      |> Effect.bind (fun () ->
+                             refresh_on_demand_timer_sources token timers)
+                      |> Effect.bind loop
+                  | _, Pure_graph_error (_, err) ->
+                      graph_error_with_pending_disposal_hooks hooks_ref err
+                  | _, Pure_defect (_, exn, backtrace) ->
+                      defect_with_pending_disposal_hooks hooks_ref exn backtrace
+                  | _, Pure_ok (_, events) ->
+                      refresh_timers := true;
+                      run_pending_stabilize_cleanup hooks_ref refresh_timers
+                      |> Effect.bind (fun () -> run_events events)
+                      |> Effect.bind mark_callback_delivery_complete)
+           in
+           loop ()
            |> Effect.on_exit (fun _exit ->
                   finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
                     finish_needed))
@@ -2707,10 +2805,13 @@ module Make (Observer_error : Observer_error) () = struct
                                       next_due_ms update
                                 | `Stop -> Effect.unit))))
 
-    let attach_timer ?(update_on_start = false) signal interval update =
+    let attach_timer ?(update_on_start = false) ?refresh_on_demand signal
+        interval update =
       let timer =
         {
           timer_state = Timer_inactive 0;
+          timer_on_demand_refresh_token = -1;
+          timer_refresh_on_demand = refresh_on_demand;
           timer_start =
             (fun timer ->
               let generation = timer_generation timer in
@@ -2749,11 +2850,16 @@ module Make (Observer_error : Observer_error) () = struct
       signal.timer <- Some timer;
       signal
 
-    let make_timer_signal ?(update_on_start = false) ?equal initial interval
-        update =
+    let make_timer_signal ?(update_on_start = false) ?equal ?refresh_on_demand
+        initial interval update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
-      attach_timer ~update_on_start signal interval
+      let refresh_on_demand =
+        Option.map
+          (fun refresh timer now_ms -> refresh source timer now_ms)
+          refresh_on_demand
+      in
+      attach_timer ~update_on_start ?refresh_on_demand signal interval
         {
           timer_update =
             (fun timer generation ->
@@ -2776,6 +2882,8 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun initial ->
                     construct_timer_signal (fun () ->
                         make_timer_signal ~update_on_start:true ~equal:Int.equal
+                          ~refresh_on_demand:(fun source _timer now_ms ->
+                            Var.set_unlocked source now_ms)
                           initial every
                           {
                             source_timer_update =
@@ -2790,6 +2898,11 @@ module Make (Observer_error : Observer_error) () = struct
     let construct_deadline_signal every deadline_ms =
       construct_timer_signal (fun () ->
           make_timer_signal ~update_on_start:true ~equal:Bool.equal false every
+            ~refresh_on_demand:(fun source timer now_ms ->
+              if now_ms >= deadline_ms then (
+                Var.set_unlocked source true;
+                timer_finish_unlocked timer)
+              else Var.set_unlocked source false)
             {
               source_timer_update =
                 (fun timer generation source ->
