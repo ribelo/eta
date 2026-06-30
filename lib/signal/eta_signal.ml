@@ -269,19 +269,22 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_disposed
     | Observer_invalid_scope
 
+  and 'a observer_value_state =
+    | Observer_uninitialized
+    | Observer_current of 'a
+    | Observer_failed_without_current
+
   and 'a observer = {
     obs_id : observer_id;
     obs_signal : 'a signal;
     obs_equal : 'a -> 'a -> bool;
     obs_callback : 'a update -> (unit, observer_error) Effect.t;
-    mutable obs_current : 'a option;
+    mutable obs_value_state : 'a observer_value_state;
     mutable obs_staged_current : 'a option;
-    mutable obs_initialized : bool;
     mutable obs_delivered_current : 'a option;
     mutable obs_staged_delivered_current : 'a option;
     mutable obs_delivered_initialized : bool;
     mutable obs_delivery_pending : bool;
-    mutable obs_failed_without_current : bool;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
     mutable obs_on_dispose : (unit -> unit) list;
@@ -1058,9 +1061,7 @@ module Make (Observer_error : Observer_error) () = struct
       (match observer.obs_staged_current with
        | None -> ()
        | Some value ->
-           observer.obs_current <- Some value;
-           observer.obs_failed_without_current <- false;
-           observer.obs_initialized <- true);
+           observer.obs_value_state <- Observer_current value);
       (match observer.obs_staged_delivered_current with
        | None -> ()
        | Some value ->
@@ -1105,7 +1106,10 @@ module Make (Observer_error : Observer_error) () = struct
       graph.pending_vars <- packed :: graph.pending_vars)
 
   let mark_failed_without_current (O observer) =
-    if observer.obs_current = None then observer.obs_failed_without_current <- true
+    match observer.obs_value_state with
+    | Observer_uninitialized ->
+        observer.obs_value_state <- Observer_failed_without_current
+    | Observer_current _ | Observer_failed_without_current -> ()
 
   let rollback_pure observers pending_at_start =
     let disposal_hooks = reset_staging () in
@@ -1672,14 +1676,12 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_signal = signal;
                 obs_equal = equal;
                 obs_callback = callback;
-                obs_current = None;
+                obs_value_state = Observer_uninitialized;
                 obs_staged_current = None;
-                obs_initialized = false;
                 obs_delivered_current = None;
                 obs_staged_delivered_current = None;
                 obs_delivered_initialized = false;
                 obs_delivery_pending = false;
-                obs_failed_without_current = false;
                 obs_state = Observer_active;
                 obs_staged_generation = -1;
                 obs_on_dispose = on_dispose;
@@ -1708,14 +1710,10 @@ module Make (Observer_error : Observer_error) () = struct
           | Observer_disposed -> Error `Disposed_observer
           | Observer_invalid_scope -> Error `Invalid_scope
           | Observer_active -> (
-              match observer.obs_current with
-              | Some value -> Ok value
-              | None ->
-                  if
-                    observer.obs_failed_without_current
-                    || observer.obs_initialized
-                  then Error `No_current_value
-                  else Error `Uninitialized_observer))
+              match observer.obs_value_state with
+              | Observer_current value -> Ok value
+              | Observer_failed_without_current -> Error `No_current_value
+              | Observer_uninitialized -> Error `Uninitialized_observer))
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
@@ -1725,9 +1723,10 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_invalid_scope ->
           invalid_arg "Eta_signal observer scope is invalid"
       | Observer_active -> (
-          match observer.obs_current with
-          | Some value -> value
-          | None -> invalid_arg "Eta_signal observer is not initialized")
+          match observer.obs_value_state with
+          | Observer_current value -> value
+          | Observer_uninitialized | Observer_failed_without_current ->
+              invalid_arg "Eta_signal observer is not initialized")
 
     let dispose observer = dispose_observer_effect observer
   end
@@ -1970,16 +1969,20 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_disposed -> "disposed"
     | Observer_invalid_scope -> "invalid_scope"
 
+  let observer_value_state_label = function
+    | Observer_uninitialized -> "uninitialized"
+    | Observer_current _ -> "current"
+    | Observer_failed_without_current -> "failed_without_current"
+
   let observer_label (O observer) =
     String.concat " "
       [
         "observer:" ^ observer_id_label observer.obs_id;
         "observer_id=" ^ observer_id_label observer.obs_id;
         "state=" ^ observer_state_label observer.obs_state;
-        bool_field "initialized" observer.obs_initialized;
+        "value_state=" ^ observer_value_state_label observer.obs_value_state;
         bool_field "delivered" observer.obs_delivered_initialized;
         bool_field "pending" observer.obs_delivery_pending;
-        bool_field "failed_without_current" observer.obs_failed_without_current;
       ]
 
   let to_dot ?(options = default_dot_options) () =
