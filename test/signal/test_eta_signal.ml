@@ -1824,6 +1824,11 @@ let signal_version signal =
   let signal_obj = Obj.repr signal in
   (Obj.obj (Obj.field signal_obj 6) : int)
 
+let set_signal_version signal value =
+  (* Public APIs cannot drive a signal version to [max_int] in a focused test. *)
+  let signal_obj = Obj.repr signal in
+  Obj.set_field signal_obj 6 (Obj.repr value)
+
 let signal_valid signal =
   let signal_obj = Obj.repr signal in
   (Obj.obj (Obj.field signal_obj 18) : bool)
@@ -2477,6 +2482,35 @@ let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "later stabilization retries graph" 3
     (run_ok rt (Signal.Observer.read observer))
+
+let test_signal_version_overflow_does_not_publish_partial_snapshot () =
+  let module Overflow_signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let source = Overflow_signal.Var.create 1 in
+  let signal = Overflow_signal.Var.watch source in
+  let events = ref [] in
+  let observer =
+    run_ok rt
+      (Overflow_signal.Observer.observe signal (fun update ->
+           Effect.sync (fun () -> events := update :: !events)))
+  in
+  run_ok rt Overflow_signal.stabilize;
+  set_signal_version signal max_int;
+  run_ok rt (Overflow_signal.Var.set source 2);
+  expect_die "signal version overflow"
+    (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize));
+  Alcotest.(check int) "old snapshot remains after version overflow" 1
+    (run_ok rt (Overflow_signal.Observer.read observer));
+  set_signal_version signal 0;
+  run_ok rt Overflow_signal.stabilize;
+  Alcotest.(check int) "retry publishes pending source" 2
+    (run_ok rt (Overflow_signal.Observer.read observer));
+  (match List.rev !events with
+   | [ Overflow_signal.Initialized 1;
+       Changed { old_value = 1; new_value = 2 } ] ->
+       ()
+   | _ -> Alcotest.fail "expected retry to deliver changed event");
+  run_ok rt (Overflow_signal.Observer.dispose observer)
 
 let test_failed_initial_stabilization_leaves_no_current_value () =
   with_runtime @@ fun rt ->
@@ -5865,6 +5899,8 @@ let () =
             test_dispose_unlinks_observer_from_graph;
           Alcotest.test_case "pure failure does not publish snapshot" `Quick
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
+          Alcotest.test_case "version overflow does not publish snapshot" `Quick
+            test_signal_version_overflow_does_not_publish_partial_snapshot;
           Alcotest.test_case "failed initial stabilize has no current" `Quick
             test_failed_initial_stabilization_leaves_no_current_value;
           Alcotest.test_case "cutoff exception preserves snapshot" `Quick

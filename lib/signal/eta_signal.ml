@@ -1083,9 +1083,10 @@ module Make (Observer_error : Observer_error) () = struct
         (match signal.staged with
          | None -> ()
          | Some value ->
+             let next_version = checked_succ "signal version" signal.version in
              signal.value <- Some value;
              signal.initialized <- true;
-             signal.version <- checked_succ "signal version" signal.version);
+             signal.version <- next_version);
         (match signal.staged_dependency_versions with
          | None -> ()
          | Some dependency_versions ->
@@ -1174,6 +1175,64 @@ module Make (Observer_error : Observer_error) () = struct
       disposal_hooks)
     else []
 
+  let collect_scope_invalidations_into seen collected scope =
+    let rec visit_scope scope =
+      if scope.scope_valid then List.iter visit scope.scope_nodes
+    and visit (P signal as packed) =
+      if signal.valid && not (Hashtbl.mem seen signal.id) then (
+        Hashtbl.add seen signal.id ();
+        collected := packed :: !collected;
+        List.iter visit signal.dependents;
+        match signal.kind with
+        | Bind bind -> Option.iter visit_scope bind.inner_scope
+        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            ())
+    in
+    visit_scope scope
+
+  let preflight_timer_stop timer =
+    if
+      timer.timer_active
+      || Option.is_some timer.timer_running_generation
+      || Option.is_some timer.timer_cancel
+    then ignore (checked_succ "timer generation" timer.timer_generation : int)
+
+  let preflight_staged_bind_commit seen collected (B bind) =
+    if bind.staged_bind_generation = current_generation () then
+      match
+        ( bind.owner,
+          bind.staged_source_value,
+          bind.staged_inner,
+          bind.staged_inner_scope )
+      with
+      | Some _, Some _, Some _, Some _ ->
+          Option.iter
+            (collect_scope_invalidations_into seen collected)
+            bind.inner_scope
+      | _ -> raise (Graph_error `Invalid_scope)
+
+  let preflight_signal_commit invalidated_ids (P signal) =
+    if
+      signal.valid
+      && not (Hashtbl.mem invalidated_ids signal.id)
+      && signal.staged_generation = current_generation ()
+    then
+      match signal.staged with
+      | None -> ()
+      | Some _ -> ignore (checked_succ "signal version" signal.version : int)
+
+  let preflight_commit_staging () =
+    let invalidated_ids = Hashtbl.create 16 in
+    let invalidated_nodes = ref [] in
+    List.iter
+      (preflight_staged_bind_commit invalidated_ids invalidated_nodes)
+      graph.staged_binds;
+    List.iter
+      (fun (P signal) -> Option.iter preflight_timer_stop signal.timer)
+      !invalidated_nodes;
+    List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes
+
   let clear_observer_staging observer =
     observer.obs_staged_current <- None;
     observer.obs_staged_delivery_state <- None
@@ -1214,6 +1273,7 @@ module Make (Observer_error : Observer_error) () = struct
     disposal_hooks
 
   let commit_staging () =
+    preflight_commit_staging ();
     List.iter commit_var graph.staged_vars;
     let commit_hooks = List.concat_map commit_bind graph.staged_binds in
     remember_pure_disposal_hooks commit_hooks;
