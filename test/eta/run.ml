@@ -89,6 +89,10 @@ let () =
           Alcotest.test_case
             "backpressure admission wins racing cancellation" `Quick
             test_queue_backpressure_admission_wins_racing_cancellation;
+          Alcotest.test_case "take_batch wakes interrupted admission" `Quick
+            test_queue_take_batch_interrupted_wakeup_still_admits_sender;
+          Alcotest.test_case "take_all wakes interrupted admission" `Quick
+            test_queue_take_all_interrupted_wakeup_still_admits_sender;
           Alcotest.test_case "unbounded offer never reports full" `Quick
             test_queue_unbounded_offer_never_reports_full;
           Alcotest.test_case "backpressure offer waits instead of full" `Quick

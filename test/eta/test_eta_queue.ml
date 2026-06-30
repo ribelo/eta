@@ -185,6 +185,59 @@ let test_queue_backpressure_admission_wins_racing_cancellation () =
   Alcotest.(check int) "admitted sender not counted cancelled" 0
     stats.Queue.cancelled_senders
 
+let check_queue_drain_interrupted_wakeup_still_admits_sender drain =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  let drain_ran = ref false in
+  let interrupted_wakeup = ref false in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.await_hook :=
+        (fun () ->
+          Hooked_runtime.await_hook := (fun () -> ());
+          Hooked_runtime.resolve_hook :=
+            (fun () ->
+              if not !interrupted_wakeup then (
+                interrupted_wakeup := true;
+                Hooked_runtime.resolve_hook := (fun () -> ());
+                raise Await_cancelled));
+          drain_ran := true;
+          match Test_runtime.run rt (drain queue) with
+          | Exit.Ok [ 1 ] -> ()
+          | exception Await_cancelled -> ()
+          | Exit.Ok values ->
+              Alcotest.failf "unexpected drained values: [%s]"
+                (String.concat "; " (List.map string_of_int values))
+          | Exit.Error cause ->
+              Alcotest.failf "unexpected drain failure: %a"
+                (Cause.pp pp_hidden) cause);
+      match Test_runtime.run rt (Queue.offer queue 2) with
+      | Exit.Ok true -> ()
+      | Exit.Ok false -> Alcotest.fail "admitted backpressure offer returned false"
+      | Exit.Error cause ->
+          Alcotest.failf "expected admitted offer, got %a"
+            (Cause.pp pp_hidden) cause
+      | exception Await_cancelled ->
+          Alcotest.fail
+            "consumer interruption stranded an admitted backpressure sender");
+  Alcotest.(check bool) "drain ran" true !drain_ran;
+  Alcotest.(check bool) "wakeup was interrupted" true !interrupted_wakeup;
+  Alcotest.(check int) "admitted value remains" 2
+    (run_ok rt (Queue.recv queue));
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "admitted sender not counted cancelled" 0
+    stats.Queue.cancelled_senders
+
+let test_queue_take_batch_interrupted_wakeup_still_admits_sender () =
+  check_queue_drain_interrupted_wakeup_still_admits_sender (fun queue ->
+      Queue.take_batch queue ~max:1)
+
+let test_queue_take_all_interrupted_wakeup_still_admits_sender () =
+  check_queue_drain_interrupted_wakeup_still_admits_sender Queue.take_all
+
 let test_queue_unbounded_offer_never_reports_full () =
   let rt = Test_runtime.create () in
   let queue = Queue.create () in

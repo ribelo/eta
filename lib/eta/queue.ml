@@ -12,6 +12,7 @@ type receiver = {
   contract : Runtime_contract.t;
   resolver : unit Runtime_contract.resolver;
   mutable active : bool;
+  mutable notified : bool;
 }
 
 type ('a, 'err) sender = {
@@ -20,6 +21,7 @@ type ('a, 'err) sender = {
   resolver : 'err send_result Runtime_contract.resolver;
   mutable active : bool;
   mutable result : 'err send_result option;
+  mutable notified : bool;
 }
 
 type ('a, 'err) t = {
@@ -113,12 +115,16 @@ let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
 let resolve_sender
     (sender : ('a, 'err) sender)
     (result : 'err send_result) =
-  sender.contract.Runtime_contract.protect (fun () ->
-      sender.contract.Runtime_contract.resolve_promise sender.resolver result)
+  if not sender.notified then
+    sender.contract.Runtime_contract.protect (fun () ->
+        sender.contract.Runtime_contract.resolve_promise sender.resolver result;
+        sender.notified <- true)
 
 let wake_receiver (receiver : receiver) =
-  receiver.contract.Runtime_contract.protect (fun () ->
-      receiver.contract.Runtime_contract.resolve_promise receiver.resolver ())
+  if not receiver.notified then
+    receiver.contract.Runtime_contract.protect (fun () ->
+        receiver.contract.Runtime_contract.resolve_promise receiver.resolver ();
+        receiver.notified <- true)
 
 let resolve_wakeup = function
   | Wake_sender (sender, result) -> resolve_sender sender result
@@ -126,6 +132,25 @@ let resolve_wakeup = function
 
 let resolve_wakeups wakeups =
   List.iter resolve_wakeup (List.rev wakeups)
+
+let wakeup_notified = function
+  | Wake_sender (sender, _) -> sender.notified
+  | Wake_receiver receiver -> receiver.notified
+
+let resolve_pending_wakeups pending =
+  let rec loop () =
+    match !pending with
+    | [] -> ()
+    | wakeup :: rest -> (
+        try
+          resolve_wakeup wakeup;
+          pending := rest;
+          loop ()
+        with exn ->
+          if wakeup_notified wakeup then pending := rest;
+          raise exn)
+  in
+  loop ()
 
 let settle_sender wakeups sender result =
   sender.result <- Some result;
@@ -245,7 +270,9 @@ let cancel_sender wakeups (t : ('a, 'err) t) sender =
 
 let enqueue_sender contract (t : ('a, 'err) t) value =
   let promise, resolver = contract.Runtime_contract.create_promise () in
-  let sender = { value; contract; resolver; active = true; result = None } in
+  let sender =
+    { value; contract; resolver; active = true; result = None; notified = false }
+  in
   Stdlib.Queue.add sender t.senders;
   t.waiting_senders <- t.waiting_senders + 1;
   (promise, sender)
@@ -393,32 +420,44 @@ let drain_result_locked wakeups t max =
       | None -> `Items []
       | Some reason -> close_result reason)
 
-let take_all t =
-  let wakeups = ref [] in
-  Effect.sync (fun () ->
-      with_lock t @@ fun () ->
+let drain_with_committed_wakeups t drain =
+  let pending_wakeups = ref [] in
+  Effect.sync
+    (fun () ->
+      let wakeups = ref [] in
+      let result = with_lock t @@ fun () -> drain wakeups in
+      pending_wakeups := List.rev !wakeups;
+      resolve_pending_wakeups pending_wakeups;
+      result)
+  |> Effect.finally
+       (Effect.sync (fun () -> resolve_pending_wakeups pending_wakeups))
+
+let drain_result_effect t max =
+  drain_with_committed_wakeups t (fun wakeups ->
+      drain_result_locked wakeups t max)
+
+let drain_all_result_effect t =
+  drain_with_committed_wakeups t (fun wakeups ->
       drain_result_locked wakeups t (Stdlib.Queue.length t.values))
+
+let take_all t =
+  drain_all_result_effect t
   |> Effect.bind (function
-       | `Items values ->
-           Effect.sync (fun () -> resolve_wakeups !wakeups)
-           |> Effect.map (fun () -> values)
+       | `Items values -> Effect.pure values
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let take_batch t ~max =
   if max <= 0 then invalid_arg "Eta.Queue.take_batch: max must be > 0";
-  let wakeups = ref [] in
-  Effect.sync (fun () -> with_lock t @@ fun () -> drain_result_locked wakeups t max)
+  drain_result_effect t max
   |> Effect.bind (function
-       | `Items values ->
-           Effect.sync (fun () -> resolve_wakeups !wakeups)
-           |> Effect.map (fun () -> values)
+       | `Items values -> Effect.pure values
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let enqueue_receiver contract t =
   let promise, resolver = contract.Runtime_contract.create_promise () in
-  let receiver = { contract; resolver; active = true } in
+  let receiver = { contract; resolver; active = true; notified = false } in
   Stdlib.Queue.add receiver t.receivers;
   t.waiting_receivers <- t.waiting_receivers + 1;
   (promise, receiver)
