@@ -1449,6 +1449,61 @@ let test_observer_dispose_after_active_check_skips_callback () =
       expect_fail "target disposed by active-check hook" (( = ) `Disposed_observer)
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
+let test_observer_registration_skips_callbacks_until_returned () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observe_returned = ref false in
+  let callback_before_return = ref false in
+  let callback_count = ref 0 in
+  Cleanup_interrupt_runtime.after_local_binding_count :=
+    Some
+      ( 1,
+        fun () ->
+          ignore
+            (expect_exit_ok "stabilize during observer registration"
+               (Runtime.run rt (widen Signal.stabilize))
+              : unit) );
+  let observer =
+    Fun.protect
+      ~finally:(fun () ->
+        Cleanup_interrupt_runtime.after_local_binding_count := None)
+      (fun () ->
+        expect_exit_ok "observer registration"
+          (Runtime.run rt
+             (widen
+                (Signal.Observer.observe signal (fun _ ->
+                     Effect.sync (fun () ->
+                         incr callback_count;
+                         if not !observe_returned then
+                           callback_before_return := true))))))
+  in
+  observe_returned := true;
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
+    (fun () ->
+      Alcotest.(check bool)
+        "registration window did not run callback" false
+        !callback_before_return;
+      Alcotest.(check int) "no callback before observe returned" 0
+        !callback_count;
+      ignore
+        (expect_exit_ok "stabilize after observer registration"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      Alcotest.(check int) "callback after observe returned" 1 !callback_count)
+
 let test_bind_detaches_old_dependency () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -5374,6 +5429,7 @@ let test_stream_observe_timer_initialization_race () =
   in
   expect_exit_ok "stream observe race stabilize"
     (Eio.Promise.await_exn stabilize);
+  run_ok rt Signal.stabilize;
   (match
      run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
    with
@@ -5979,6 +6035,8 @@ let () =
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
             `Quick test_observer_dispose_after_active_check_skips_callback;
+          Alcotest.test_case "observer registration skips callbacks until returned"
+            `Quick test_observer_registration_skips_callbacks_until_returned;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case

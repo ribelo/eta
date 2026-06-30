@@ -270,6 +270,7 @@ module Make (Observer_error : Observer_error) () = struct
   and packed_var = V : 'a var -> packed_var
 
   and observer_state =
+    | Observer_registering
     | Observer_active
     | Observer_disposed
     | Observer_invalid_scope
@@ -782,6 +783,11 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_active (O observer) =
     match observer.obs_state with
     | Observer_active -> true
+    | Observer_registering | Observer_disposed | Observer_invalid_scope -> false
+
+  let observer_demands_signal (O observer) =
+    match observer.obs_state with
+    | Observer_registering | Observer_active -> true
     | Observer_disposed | Observer_invalid_scope -> false
 
   let remove_observer observer =
@@ -802,6 +808,15 @@ module Make (Observer_error : Observer_error) () = struct
 
   let finish_observer_unlocked observer state =
     match (observer.obs_state, state) with
+    | Observer_registering, Observer_disposed ->
+        clear_observer_delivery observer;
+        observer.obs_state <- state;
+        remove_observer observer;
+        take_observer_finish_hooks observer state
+    | Observer_registering, Observer_invalid_scope ->
+        clear_observer_delivery observer;
+        observer.obs_state <- state;
+        take_observer_finish_hooks observer state
     | Observer_active, Observer_disposed ->
         clear_observer_delivery observer;
         observer.obs_state <- state;
@@ -816,8 +831,9 @@ module Make (Observer_error : Observer_error) () = struct
         observer.obs_state <- state;
         remove_observer observer;
         []
-    | _, Observer_active ->
-        invalid_arg "Eta_signal: observer finish target cannot be active"
+    | _, (Observer_registering | Observer_active) ->
+        invalid_arg
+          "Eta_signal: observer finish target cannot be registering or active"
     | Observer_disposed, _ | Observer_invalid_scope, Observer_invalid_scope ->
         []
 
@@ -1671,7 +1687,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter
       (fun (O observer) ->
-        if observer_active (O observer) then visit (P observer.obs_signal))
+        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
       graph.observers;
     seen
 
@@ -1702,7 +1718,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter
       (fun (O observer) ->
-        if observer_active (O observer) then visit (P observer.obs_signal))
+        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
       graph.observers;
     timers
 
@@ -1717,7 +1733,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter
       (fun (O observer) ->
-        if observer_active (O observer) then visit (P observer.obs_signal))
+        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
       graph.observers;
     timers
 
@@ -2240,6 +2256,9 @@ module Make (Observer_error : Observer_error) () = struct
     let return_active_observer observer =
       with_graph_lane_sync (fun () ->
           match observer.obs_state with
+          | Observer_registering ->
+              observer.obs_state <- Observer_active;
+              Ok observer
           | Observer_active -> Ok observer
           | Observer_invalid_scope | Observer_disposed -> Error `Invalid_scope)
       |> Effect.flatten_result
@@ -2259,7 +2278,7 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_staged_current = None;
                 obs_delivery_state = Observer_never_delivered;
                 obs_staged_delivery_state = None;
-                obs_state = Observer_active;
+                obs_state = Observer_registering;
                 obs_staged_generation = -1;
                 obs_after_ack = [];
                 obs_on_finish = on_finish;
@@ -2289,6 +2308,7 @@ module Make (Observer_error : Observer_error) () = struct
     let read observer =
       with_graph_lane_sync (fun () ->
           match observer.obs_state with
+          | Observer_registering -> Error `Uninitialized_observer
           | Observer_disposed -> Error `Disposed_observer
           | Observer_invalid_scope -> Error `Invalid_scope
           | Observer_active -> (
@@ -2301,6 +2321,8 @@ module Make (Observer_error : Observer_error) () = struct
     let unsafe_read_exn observer =
       ensure_graph_context ();
       match observer.obs_state with
+      | Observer_registering ->
+          invalid_arg "Eta_signal observer registration has not completed"
       | Observer_disposed -> invalid_arg "Eta_signal observer is disposed"
       | Observer_invalid_scope ->
           invalid_arg "Eta_signal observer scope is invalid"
@@ -2573,6 +2595,7 @@ module Make (Observer_error : Observer_error) () = struct
     String.concat " " fields
 
   let observer_state_label = function
+    | Observer_registering -> "registering"
     | Observer_active -> "active"
     | Observer_disposed -> "disposed"
     | Observer_invalid_scope -> "invalid_scope"
@@ -2604,7 +2627,7 @@ module Make (Observer_error : Observer_error) () = struct
     ||
     match observer.obs_state with
     | Observer_invalid_scope -> include_invalid
-    | Observer_disposed | Observer_active -> false
+    | Observer_registering | Observer_disposed | Observer_active -> false
 
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
@@ -3059,6 +3082,7 @@ module Make (Observer_error : Observer_error) () = struct
                    | Observer_disposed -> Queue.close queue
                    | Observer_invalid_scope ->
                        Queue.close_with_error queue `Invalid_scope
+                   | Observer_registering
                    | Observer_active -> ());
                  ]
                signal
