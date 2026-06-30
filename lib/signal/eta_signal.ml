@@ -302,6 +302,28 @@ module Make (Observer_error : Observer_error) () = struct
     timer_update : 'err. timer_node -> int -> (unit, 'err) Effect.t;
   }
 
+  and dead_timer = {
+    dead_timer_active : bool;
+    dead_timer_running_generation : int option;
+    dead_timer_cancel : bool;
+    dead_timer_finished : bool;
+    dead_timer_generation : int;
+  }
+
+  and dead_signal = {
+    dead_id : signal_id;
+    dead_kind : string;
+    dead_initialized : bool;
+    dead_dirty : bool;
+    dead_computing : bool;
+    dead_dependency_ids : signal_id list;
+    dead_dependency_count : int;
+    dead_dependent_count : int;
+    dead_scope_id : scope_id option;
+    dead_scope_valid : bool option;
+    dead_timer : dead_timer option;
+  }
+
   and 'a source_timer_update = {
     source_timer_update : 'err. timer_node -> int -> 'a var -> (unit, 'err) Effect.t;
   }
@@ -346,6 +368,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable staged_observers : packed_observer list;
     mutable observers : packed_observer list;
     mutable all_nodes : packed_signal list;
+    mutable dead_nodes : dead_signal list;
     mutable current_scope : scope option;
     mutable pure_snapshot_commit_count : int;
     mutable callback_delivery_count : int;
@@ -381,6 +404,7 @@ module Make (Observer_error : Observer_error) () = struct
       staged_observers = [];
       observers = [];
       all_nodes = [];
+      dead_nodes = [];
       current_scope = None;
       pure_snapshot_commit_count = 0;
       callback_delivery_count = 0;
@@ -391,6 +415,21 @@ module Make (Observer_error : Observer_error) () = struct
       stream_bridge_drop_count = 0;
       necessary_node_ids = Hashtbl.create 16;
     }
+
+  let kind_name : type a. a kind -> string = function
+    | Const _ -> "const"
+    | Var _ -> "var"
+    | Map _ -> "map"
+    | Map2 _ -> "map2"
+    | Map3 _ -> "map3"
+    | Map4 _ -> "map4"
+    | Map5 _ -> "map5"
+    | Map6 _ -> "map6"
+    | Map7 _ -> "map7"
+    | Map8 _ -> "map8"
+    | Map9 _ -> "map9"
+    | All _ -> "all"
+    | Bind _ -> "bind"
 
   let graph_context_error_message =
     "Eta_signal: signal graph APIs must be called on the domain that created "
@@ -797,6 +836,52 @@ module Make (Observer_error : Observer_error) () = struct
     graph.all_nodes <-
       List.filter (fun (P signal) -> signal.valid) graph.all_nodes
 
+  let max_dead_signal_tombstones = 1024
+
+  let rec take_dead_signal_tombstones remaining = function
+    | [] -> []
+    | _ when remaining <= 0 -> []
+    | tombstone :: rest ->
+        tombstone :: take_dead_signal_tombstones (remaining - 1) rest
+
+  let timer_tombstone timer =
+    {
+      dead_timer_active = timer.timer_active;
+      dead_timer_running_generation = timer.timer_running_generation;
+      dead_timer_cancel = Option.is_some timer.timer_cancel;
+      dead_timer_finished = timer.timer_finished;
+      dead_timer_generation = timer.timer_generation;
+    }
+
+  let signal_tombstone (P signal) =
+    let dead_scope_id, dead_scope_valid =
+      match signal.scope with
+      | None -> (None, None)
+      | Some scope -> (Some scope.scope_id, Some scope.scope_valid)
+    in
+    {
+      dead_id = signal.id;
+      dead_kind = kind_name signal.kind;
+      dead_initialized = signal.initialized;
+      dead_dirty = signal.dirty;
+      dead_computing = signal.computing;
+      dead_dependency_ids =
+        List.map (fun (P dependency) -> dependency.id) signal.dependencies;
+      dead_dependency_count = List.length signal.dependencies;
+      dead_dependent_count = List.length signal.dependents;
+      dead_scope_id;
+      dead_scope_valid;
+      dead_timer = Option.map timer_tombstone signal.timer;
+    }
+
+  let record_dead_node_unlocked (P signal as packed) =
+    graph.dead_nodes <-
+      signal_tombstone packed
+      :: List.filter
+           (fun tombstone -> tombstone.dead_id <> signal.id)
+           graph.dead_nodes
+      |> take_dead_signal_tombstones max_dead_signal_tombstones
+
   let rec invalidate_scope ?(prune = true) scope =
     if scope.scope_valid then (
       scope.scope_valid <- false;
@@ -814,6 +899,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun timer -> timer_stop_unlocked timer)
         signal.timer;
       signal.valid <- false;
+      record_dead_node_unlocked (P signal);
       dispose_signal_observers signal;
       List.iter
         (fun (P dependency) -> remove_dependent dependency signal)
@@ -1665,7 +1751,8 @@ module Make (Observer_error : Observer_error) () = struct
     List.fold_left
       (fun count (P signal) ->
         if signal.valid then count else saturating_succ count)
-      0 graph.all_nodes
+      (List.length graph.dead_nodes)
+      graph.all_nodes
 
   let live_dirty_node_count () =
     List.fold_left
@@ -1695,21 +1782,6 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync (fun () ->
         graph.stream_bridge_drop_count <-
           saturating_succ graph.stream_bridge_drop_count)
-
-  let kind_name : type a. a kind -> string = function
-    | Const _ -> "const"
-    | Var _ -> "var"
-    | Map _ -> "map"
-    | Map2 _ -> "map2"
-    | Map3 _ -> "map3"
-    | Map4 _ -> "map4"
-    | Map5 _ -> "map5"
-    | Map6 _ -> "map6"
-    | Map7 _ -> "map7"
-    | Map8 _ -> "map8"
-    | Map9 _ -> "map9"
-    | All _ -> "all"
-    | Bind _ -> "bind"
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
@@ -1776,6 +1848,45 @@ module Make (Observer_error : Observer_error) () = struct
           "timer_generation=" ^ string_of_int timer.timer_generation;
         ]
 
+  let dead_signal_state_fields dead =
+    [
+      bool_field "valid" false;
+      bool_field "initialized" dead.dead_initialized;
+      bool_field "dirty" dead.dead_dirty;
+      bool_field "computing" dead.dead_computing;
+      "dependencies=" ^ string_of_int dead.dead_dependency_count;
+      "dependents=" ^ string_of_int dead.dead_dependent_count;
+    ]
+
+  let dead_signal_scope_fields dead =
+    match (dead.dead_scope_id, dead.dead_scope_valid) with
+    | None, None -> [ "scope=root"; "scope_id=root" ]
+    | Some scope_id, Some scope_valid ->
+        [
+          "scope="
+          ^ scope_id_label scope_id
+          ^ ":"
+          ^ (if scope_valid then "valid" else "invalid");
+          "scope_id=" ^ scope_id_label scope_id;
+        ]
+    | _ -> invalid_arg "Eta_signal: inconsistent dead signal scope"
+
+  let dead_timer_fields = function
+    | None -> []
+    | Some timer ->
+        let running =
+          match timer.dead_timer_running_generation with
+          | None -> "none"
+          | Some generation -> string_of_int generation
+        in
+        [
+          bool_field "timer_active" timer.dead_timer_active;
+          "timer_running=" ^ running;
+          bool_field "timer_cancel" timer.dead_timer_cancel;
+          bool_field "timer_finished" timer.dead_timer_finished;
+          "timer_generation=" ^ string_of_int timer.dead_timer_generation;
+        ]
+
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->
     let fields =
@@ -1790,6 +1901,28 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let fields =
       if options.dot_timers then fields @ signal_timer_fields signal else fields
+    in
+    String.concat " " fields
+
+  let dead_signal_label options dead =
+    let fields =
+      [
+        "kind=" ^ dead.dead_kind;
+        "signal_id=" ^ signal_id_label dead.dead_id;
+        "tombstone=true";
+      ]
+    in
+    let fields =
+      if options.dot_state then fields @ dead_signal_state_fields dead
+      else fields
+    in
+    let fields =
+      if options.dot_dynamic_scopes then fields @ dead_signal_scope_fields dead
+      else fields
+    in
+    let fields =
+      if options.dot_timers then fields @ dead_timer_fields dead.dead_timer
+      else fields
     in
     String.concat " " fields
 
@@ -1814,6 +1947,20 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync @@ fun () ->
     let necessary = collect_necessary_node_ids () in
     let selected signal = signal_selected options necessary signal in
+    let include_dead_nodes =
+      match options.dot_scope with
+      | `All_including_invalid -> true
+      | `Necessary | `All_valid -> false
+    in
+    let selected_ids = Hashtbl.create 16 in
+    List.iter
+      (fun (P signal) ->
+        if selected signal then Hashtbl.replace selected_ids signal.id ())
+      graph.all_nodes;
+    if include_dead_nodes then
+      List.iter
+        (fun tombstone -> Hashtbl.replace selected_ids tombstone.dead_id ())
+        graph.dead_nodes;
     let buffer = Buffer.create 256 in
     let formatter = Format.formatter_of_buffer buffer in
     Format.fprintf formatter "digraph eta_signal {@.";
@@ -1836,6 +1983,25 @@ module Make (Observer_error : Observer_error) () = struct
                   (signal_id_label signal.id)))
             signal.dependencies))
       graph.all_nodes;
+    if include_dead_nodes then
+      List.iter
+        (fun tombstone ->
+          Format.fprintf formatter "  %s [label=%S];@."
+            (signal_id_label tombstone.dead_id)
+            (dead_signal_label options tombstone);
+          let emitted_edges = Hashtbl.create 8 in
+          List.iter
+            (fun dependency_id ->
+              if
+                Hashtbl.mem selected_ids dependency_id
+                && not (Hashtbl.mem emitted_edges dependency_id)
+              then (
+                Hashtbl.add emitted_edges dependency_id ();
+                Format.fprintf formatter "  %s -> %s;@."
+                  (signal_id_label dependency_id)
+                  (signal_id_label tombstone.dead_id)))
+            tombstone.dead_dependency_ids)
+        graph.dead_nodes;
     if options.dot_observers then
       List.iter
         (fun (O observer as packed) ->

@@ -81,9 +81,9 @@ module Make (Observer_error : Observer_error) () : sig
       stabilization are delivered successfully. [invalid_observer_count] counts
       observer handles invalidated by dynamic-scope replacement and not yet
       disposed. [live_dirty_node_count] counts valid dirty nodes;
-      [dead_node_count] counts invalid nodes still retained by graph indexes.
-      [stream_bridge_drop_count] counts updates dropped by lossy
-      {!Stream.observe} bridge queues. *)
+      [dead_node_count] counts invalid nodes retained in the bounded diagnostic
+      tombstone index. [stream_bridge_drop_count] counts updates dropped by
+      lossy {!Stream.observe} bridge queues. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
@@ -295,9 +295,10 @@ module Make (Observer_error : Observer_error) () : sig
   (** Return a read-only DOT dump. The default is necessary-only for compact
       demand debugging. Use [dot_scope = `All_valid] to include retained valid
       nodes that are not currently necessary, or [`All_including_invalid] to
-      include invalid nodes still retained by the graph. The metadata flags add
-      observer, timer, dirty/queued, dependency/dependent edge counts, typed
-      graph identity labels, and dynamic-scope state to the dump. *)
+      include invalid-node tombstones still retained for diagnostics. The
+      metadata flags add observer, timer, dirty/queued, dependency/dependent
+      edge counts, typed graph identity labels, and dynamic-scope state to the
+      dump. *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call

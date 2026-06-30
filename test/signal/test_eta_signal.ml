@@ -1632,6 +1632,7 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "branch observer initialized" 10
     (run_ok rt (Signal.Observer.read branch_observer));
+  let before_switch = run_ok rt (Signal.stats ()) in
   run_ok rt (Signal.Var.set choose_left false);
   run_ok rt Signal.stabilize;
   let after_switch = run_ok rt (Signal.stats ()) in
@@ -1641,8 +1642,8 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
   Alcotest.(check int) "invalidated branch observer is counted" 1
     after_switch.Signal.invalid_observer_count;
-  Alcotest.(check int) "invalidated branch nodes pruned from stats" 0
-    after_switch.Signal.dead_node_count;
+  Alcotest.(check bool) "invalidated branch nodes counted in stats" true
+    (after_switch.Signal.dead_node_count > before_switch.Signal.dead_node_count);
   run_ok rt (Signal.Observer.dispose branch_observer);
   let after_dispose = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "disposed invalid branch observer is uncounted" 0
@@ -3042,7 +3043,8 @@ let test_stats_and_dot_are_read_only () =
     after_stabilize.Signal.callback_delivery_count;
   Alcotest.(check int) "invalid observers are explicit" 0
     after_stabilize.Signal.invalid_observer_count;
-  Alcotest.(check int) "dead nodes are explicit" 0
+  Alcotest.(check int) "stabilize does not add dead nodes"
+    before.Signal.dead_node_count
     after_stabilize.Signal.dead_node_count;
   Alcotest.(check bool) "recompute count visible" true
     (after_stabilize.Signal.recompute_count > before.Signal.recompute_count);
@@ -3106,7 +3108,8 @@ let test_stats_split_snapshot_commit_from_callback_delivery () =
     after_failure.Signal.callback_delivery_count;
   Alcotest.(check int) "no invalid observer hidden by necessary count" 0
     after_failure.Signal.invalid_observer_count;
-  Alcotest.(check int) "no retained invalid nodes after failure" 0
+  Alcotest.(check int) "failure does not add dead nodes"
+    before.Signal.dead_node_count
     after_failure.Signal.dead_node_count;
   run_ok rt Signal.stabilize;
   let after_retry = run_ok rt (Signal.stats ()) in
@@ -3226,6 +3229,43 @@ let test_to_dot_debug_options_expose_hidden_state () =
   run_ok rt (Dot_signal.Observer.dispose observer);
   run_ok rt (Dot_signal.Observer.dispose timer_observer);
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
+
+let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
+  let module Tombstone_signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let choose_left = Tombstone_signal.Var.create true in
+  let selected =
+    Tombstone_signal.bind (Tombstone_signal.Var.watch choose_left) (fun use_left ->
+        if use_left then
+          Tombstone_signal.const 10 |> Tombstone_signal.map (fun value -> value + 1)
+        else Tombstone_signal.const 20)
+  in
+  let observer =
+    run_ok rt (Tombstone_signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Tombstone_signal.stabilize;
+  let before_switch = run_ok rt (Tombstone_signal.stats ()) in
+  run_ok rt (Tombstone_signal.Var.set choose_left false);
+  run_ok rt Tombstone_signal.stabilize;
+  let after_switch = run_ok rt (Tombstone_signal.stats ()) in
+  Alcotest.(check bool) "dead branch nodes are counted" true
+    (after_switch.Tombstone_signal.dead_node_count
+     > before_switch.Tombstone_signal.dead_node_count);
+  let options : Tombstone_signal.dot_options =
+    {
+      dot_scope = `All_including_invalid;
+      dot_observers = false;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = true;
+    }
+  in
+  let dot = run_ok rt (Tombstone_signal.to_dot ~options ()) in
+  Alcotest.(check bool) "all-including-invalid dot shows dead nodes" true
+    (count_occurrences dot "valid=false" > 0);
+  Alcotest.(check bool) "all-including-invalid dot shows invalid scopes" true
+    (count_occurrences dot ":invalid" > 0);
+  run_ok rt (Tombstone_signal.Observer.dispose observer)
 
 let test_deterministic_model_matches_small_dynamic_graph () =
   with_runtime @@ fun rt ->
@@ -4770,6 +4810,8 @@ let () =
             `Quick test_to_dot_deduplicates_repeated_dependency_edges;
           Alcotest.test_case "to_dot debug options expose hidden state" `Quick
             test_to_dot_debug_options_expose_hidden_state;
+          Alcotest.test_case "dead nodes and dot include pruned invalid nodes"
+            `Quick test_dead_nodes_and_dot_include_pruned_invalid_nodes;
           Alcotest.test_case "deterministic model matches dynamic graph" `Quick
             test_deterministic_model_matches_small_dynamic_graph;
           Alcotest.test_case "randomized model matches dynamic graph" `Quick
