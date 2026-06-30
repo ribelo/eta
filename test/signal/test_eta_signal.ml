@@ -3103,6 +3103,7 @@ let test_effectful_update_acquire_interruption_releases_slot () =
 let test_queued_graph_operation_cancellation_does_not_run () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
+  let before_stats = run_ok rt (Signal.stats ()) in
   let started, started_resolver = Eio.Promise.create () in
   let release, release_resolver = Eio.Promise.create () in
   let block_once = ref true in
@@ -3146,6 +3147,61 @@ let test_queued_graph_operation_cancellation_does_not_run () =
   ignore (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
   Alcotest.(check int) "cancelled set did not run" 1 (Signal.Var.value source);
   Alcotest.(check int) "observer kept original value" 1
+    (run_ok rt (Signal.Observer.read observer));
+  let after_stats = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "cancelled waiter counted"
+    (before_stats.Signal.lane_cancelled_waiter_count + 1)
+    after_stats.Signal.lane_cancelled_waiter_count;
+  Alcotest.(check int) "cancelled waiter not left waiting" 0
+    after_stats.Signal.lane_waiter_count
+
+let test_stats_report_lane_waiters () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref true in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           n)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  let stats =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen (Signal.stats ())))
+  in
+  let queued_set =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen (Signal.Var.set source 2)))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool) "stats waits behind graph lane" false
+    (Eio.Promise.is_resolved stats);
+  Alcotest.(check bool) "set waits behind graph lane" false
+    (Eio.Promise.is_resolved queued_set);
+  Eio.Promise.resolve release_resolver ();
+  ignore (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
+  let snapshot = expect_exit_ok "queued stats" (Eio.Promise.await_exn stats) in
+  Alcotest.(check bool) "stats reports waiters queued behind it" true
+    (snapshot.Signal.lane_waiter_count > 0);
+  ignore (expect_exit_ok "queued set" (Eio.Promise.await_exn queued_set) : unit);
+  Alcotest.(check int) "queued set ran after stats" 2 (Signal.Var.value source);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "observer sees queued set" 2
     (run_ok rt (Signal.Observer.read observer))
 
 let test_active_graph_operation_interruption_releases_lane () =
@@ -3351,7 +3407,14 @@ let test_stats_and_dot_are_read_only () =
     Alcotest.(check int)
       (label ^ " stream_bridge_drop_count")
       expected.Signal.stream_bridge_drop_count
-      actual.Signal.stream_bridge_drop_count
+      actual.Signal.stream_bridge_drop_count;
+    Alcotest.(check int)
+      (label ^ " lane_waiter_count")
+      expected.Signal.lane_waiter_count actual.Signal.lane_waiter_count;
+    Alcotest.(check int)
+      (label ^ " lane_cancelled_waiter_count")
+      expected.Signal.lane_cancelled_waiter_count
+      actual.Signal.lane_cancelled_waiter_count
   in
   let count_occurrences text needle =
     let text_len = String.length text in
@@ -5366,6 +5429,8 @@ let () =
             `Quick test_effectful_update_acquire_interruption_releases_slot;
           Alcotest.test_case "queued graph operation cancellation" `Quick
             test_queued_graph_operation_cancellation_does_not_run;
+          Alcotest.test_case "stats report lane waiters" `Quick
+            test_stats_report_lane_waiters;
           Alcotest.test_case "active graph interruption releases lane" `Quick
             test_active_graph_operation_interruption_releases_lane;
           Alcotest.test_case "observer read waits for graph lane" `Quick

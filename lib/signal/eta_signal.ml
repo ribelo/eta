@@ -52,6 +52,8 @@ module Make (Observer_error : Observer_error) () = struct
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
     stream_bridge_drop_count : int;
+    lane_waiter_count : int;
+    lane_cancelled_waiter_count : int;
   }
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
@@ -510,16 +512,16 @@ module Make (Observer_error : Observer_error) () = struct
     | Lane_waiting ->
         waiter.lane_state <- Lane_cancelled;
         lane.lane_waiting <- lane.lane_waiting - 1;
-        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
         compact_cancelled_lane_waiters_locked lane;
         None
     | Lane_granted ->
         waiter.lane_state <- Lane_cancelled;
-        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
         release_lane_locked lane
     | Lane_claimed ->
         waiter.lane_state <- Lane_cancelled;
-        lane.lane_cancelled <- lane.lane_cancelled + 1;
+        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
         release_lane_locked lane
     | Lane_cancelled -> None
 
@@ -543,7 +545,7 @@ module Make (Observer_error : Observer_error) () = struct
       { lane_contract = contract; lane_resolver = resolver; lane_state = Lane_waiting }
     in
     Stdlib.Queue.push waiter lane.lane_waiters;
-    lane.lane_waiting <- lane.lane_waiting + 1;
+    lane.lane_waiting <- saturating_succ lane.lane_waiting;
     (promise, waiter)
 
   let enter_lane_sync contract lane =
@@ -1992,6 +1994,8 @@ module Make (Observer_error : Observer_error) () = struct
       nodes_became_necessary = graph.nodes_became_necessary;
       nodes_became_unnecessary = graph.nodes_became_unnecessary;
       stream_bridge_drop_count = graph.stream_bridge_drop_count;
+      lane_waiter_count = graph.lane.lane_waiting;
+      lane_cancelled_waiter_count = graph.lane.lane_cancelled;
     }
 
   let record_stream_bridge_drop_unlocked () =

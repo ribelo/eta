@@ -77,6 +77,8 @@ module Make (Observer_error : Observer_error) () : sig
     nodes_became_necessary : int;
     nodes_became_unnecessary : int;
     stream_bridge_drop_count : int;
+    lane_waiter_count : int;
+    lane_cancelled_waiter_count : int;
   }
   (** Read-only graph counters for diagnostics.
 
@@ -87,7 +89,10 @@ module Make (Observer_error : Observer_error) () : sig
       disposed. [live_dirty_node_count] counts valid dirty nodes;
       [dead_node_count] counts invalid nodes retained in the bounded diagnostic
       tombstone index. [stream_bridge_drop_count] counts lossy
-      {!Stream.observe} bridge updates that were acknowledged as dropped. *)
+      {!Stream.observe} bridge updates that were acknowledged as dropped.
+      [lane_waiter_count] is the number of graph-lane waiters queued behind the
+      running stats read; [lane_cancelled_waiter_count] is the cumulative count
+      of waiters cancelled while acquiring or owning the graph lane. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
