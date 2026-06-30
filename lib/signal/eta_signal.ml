@@ -1400,21 +1400,32 @@ module Make (Observer_error : Observer_error) () = struct
     timer.timer_finished <- true;
     timer_stop_unlocked ~cancel_running:false timer
 
-  let timer_has_current_daemon timer =
+  let timer_has_current_start timer =
     match timer.timer_running_generation with
     | Some generation -> generation = timer.timer_generation
     | None -> false
 
   let timer_start_unlocked timer =
-    if timer.timer_finished || (timer.timer_active && timer_has_current_daemon timer)
+    if timer.timer_finished || (timer.timer_active && timer_has_current_start timer)
     then None
     else (
       let generation = checked_succ "timer generation" timer.timer_generation in
       timer.timer_active <- true;
       timer.timer_generation <- generation;
-      timer.timer_running_generation <- Some generation;
+      timer.timer_running_generation <- None;
       timer.timer_cancel <- None;
       Some (timer.timer_start timer))
+
+  let timer_begin_start timer generation =
+    with_graph_lane_sync (fun () ->
+        if
+          timer.timer_active
+          && timer.timer_generation = generation
+          && Option.is_none timer.timer_running_generation
+        then (
+          timer.timer_running_generation <- Some generation;
+          `Continue)
+        else `Stop)
 
   let collect_necessary_node_ids () =
     let seen = Hashtbl.create 16 in
@@ -2331,15 +2342,24 @@ module Make (Observer_error : Observer_error) () = struct
                             |> Effect.on_exit
                                  (timer_cleanup_after_exit timer generation))))
               in
-              if update_on_start then
-                (update.timer_update timer generation
-                |> Effect.bind (fun () ->
-                       timer_after_update_state timer generation
-                       |> Effect.bind (function
-                            | `Continue -> start_loop ()
-                            | `Stop -> Effect.unit)))
-                |> Effect.on_exit (timer_cleanup_failed_start timer generation)
-              else start_loop ());
+              let start =
+                if update_on_start then
+                  update.timer_update timer generation
+                  |> Effect.bind (fun () ->
+                         timer_after_update_state timer generation
+                         |> Effect.bind (function
+                              | `Continue -> start_loop ()
+                              | `Stop -> Effect.unit))
+                else start_loop ()
+              in
+              timer_begin_start timer generation
+              |> Effect.bind (function
+                   | `Stop -> Effect.unit
+                   | `Continue ->
+                       start
+                       |> Effect.on_exit
+                            (timer_cleanup_failed_start timer generation));
+            );
         }
       in
       signal.timer <- Some timer;

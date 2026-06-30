@@ -2720,6 +2720,48 @@ let test_stream_observe_failure_during_timer_start_does_not_leak () =
     before.Signal.active_observer_count after.Signal.active_observer_count;
   run_ok rt Signal.stabilize
 
+let test_time_timer_start_failure_retries_necessary_timer () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let fail_next_now = ref false in
+  let now_ms () =
+    if !fail_next_now then (
+      fail_next_now := false;
+      failwith "timer start clock failure")
+    else Eta_test.Test_clock.now_ms clock
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let use_timer = Signal.Var.create false in
+  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun enabled ->
+        if enabled then timer else Signal.const 0)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial non-timer branch" 0
+    (run_ok rt (Signal.Observer.read observer));
+  fail_next_now := true;
+  run_ok rt (Signal.Var.set use_timer true);
+  expect_die "timer branch start failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "failed start installed no sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 1;
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "timer restarted and ticked" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_reentrant_stabilization_is_typed_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -4960,6 +5002,8 @@ let () =
           Alcotest.test_case "stream observe failure during timer start"
             `Quick
             test_stream_observe_failure_during_timer_start_does_not_leak;
+          Alcotest.test_case "time timer start failure retries necessary timer"
+            `Quick test_time_timer_start_failure_retries_necessary_timer;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
           Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick
