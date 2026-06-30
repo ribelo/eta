@@ -86,6 +86,9 @@ let () =
             test_queue_rejects_cross_domain_use;
           Alcotest.test_case "resolves sender outside lock" `Quick
             test_queue_resolves_sender_outside_lock;
+          Alcotest.test_case
+            "backpressure admission wins racing cancellation" `Quick
+            test_queue_backpressure_admission_wins_racing_cancellation;
           Alcotest.test_case "stats counters saturate" `Quick
             test_queue_stats_counters_saturate;
         ] );

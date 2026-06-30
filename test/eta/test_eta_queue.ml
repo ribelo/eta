@@ -1,6 +1,7 @@
 open Eta
 
 exception Promise_blocked
+exception Await_cancelled
 exception Reentered_locked_queue
 
 module Hooked_runtime = struct
@@ -11,6 +12,8 @@ module Hooked_runtime = struct
   type 'a stream = 'a Stdlib.Queue.t
 
   let resolve_hook = ref (fun () -> ())
+  let await_hook = ref (fun () -> ())
+  let cancel_after_resolved_await = ref false
   let root_scope = ()
   let now_ms () = 0
   let sleep _ = ()
@@ -34,7 +37,14 @@ module Hooked_runtime = struct
     | None -> resolver := Some value
 
   let await_promise promise =
-    match !promise with Some value -> value | None -> raise Promise_blocked
+    if Option.is_none !promise then !await_hook ();
+    match !promise with
+    | Some value ->
+        if !cancel_after_resolved_await then (
+          cancel_after_resolved_await := false;
+          raise Await_cancelled);
+        value
+    | None -> raise Promise_blocked
 
   let create_stream _capacity = Stdlib.Queue.create ()
   let stream_add stream value = Stdlib.Queue.add value stream
@@ -49,7 +59,9 @@ module Hooked_runtime = struct
 
   let with_worker_context f = f ()
   let in_worker_context () = false
-  let cancellation_reason _ = None
+  let cancellation_reason = function
+    | Await_cancelled -> Some Await_cancelled
+    | _ -> None
   let multiple_exceptions _ = None
   let cancel_sub f = f ()
   let cancel () exn = raise exn
@@ -134,6 +146,44 @@ let test_queue_resolves_sender_outside_lock () =
   Alcotest.(check bool) "resolver hook ran" true !hook_ran;
   Alcotest.(check int) "admitted blocked sender" 2
     (run_ok rt (Queue.recv queue))
+
+let reset_hooked_runtime () =
+  Hooked_runtime.resolve_hook := (fun () -> ());
+  Hooked_runtime.await_hook := (fun () -> ());
+  Hooked_runtime.cancel_after_resolved_await := false
+
+let test_queue_backpressure_admission_wins_racing_cancellation () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  let await_hook_ran = ref false in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.await_hook :=
+        (fun () ->
+          await_hook_ran := true;
+          Hooked_runtime.await_hook := (fun () -> ());
+          Alcotest.(check int)
+            "first value opened capacity" 1
+            (run_ok rt (Queue.recv queue));
+          Hooked_runtime.cancel_after_resolved_await := true);
+      match Test_runtime.run rt (Queue.offer queue 2) with
+      | Exit.Ok true -> ()
+      | Exit.Ok false -> Alcotest.fail "admitted backpressure offer returned false"
+      | Exit.Error cause ->
+          Alcotest.failf "expected admitted offer, got %a"
+            (Cause.pp pp_hidden) cause
+      | exception Await_cancelled ->
+          Alcotest.fail
+            "cancellation after queue admission made the sender look uncommitted");
+  Alcotest.(check bool) "await hook ran" true !await_hook_ran;
+  Alcotest.(check int) "admitted value remains exactly once" 2
+    (run_ok rt (Queue.recv queue));
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "admitted sender not counted cancelled" 0
+    stats.Queue.cancelled_senders
 
 let set_queue_counter queue field value =
   (* Public APIs cannot drive stats counters to [max_int] in a focused test. *)

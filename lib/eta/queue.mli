@@ -54,7 +54,9 @@ val offer :
 
     [Unbounded] admits immediately. [Drop_new] returns [false] when the queue
     is full. [Backpressure] waits until the value is admitted or the queue is
-    closed. Cancellation while waiting removes the sender waiter. *)
+    closed. Cancellation while still waiting removes the sender waiter. If
+    cancellation races with admission or queue close, the committed admission or
+    close result wins. *)
 
 val offer_all :
   ('a, 'err) t ->

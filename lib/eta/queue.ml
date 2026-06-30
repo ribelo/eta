@@ -19,6 +19,7 @@ type ('a, 'err) sender = {
   contract : Runtime_contract.t;
   resolver : 'err send_result Runtime_contract.resolver;
   mutable active : bool;
+  mutable result : 'err send_result option;
 }
 
 type ('a, 'err) t = {
@@ -123,6 +124,10 @@ let resolve_wakeup = function
 let resolve_wakeups wakeups =
   List.iter resolve_wakeup (List.rev wakeups)
 
+let settle_sender wakeups sender result =
+  sender.result <- Some result;
+  add_wakeup wakeups (Wake_sender (sender, result))
+
 let capacity_available (t : ('a, 'err) t) =
   match t.overflow with
   | Unbounded -> true
@@ -171,7 +176,7 @@ let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
         | None -> ()
         | Some sender ->
             enqueue_value_locked wakeups t sender.value;
-            add_wakeup wakeups (Wake_sender (sender, `Sent));
+            settle_sender wakeups sender `Sent;
             admit_waiting_senders_locked wakeups t
 
 let wake_all_receivers_locked wakeups (t : ('a, 'err) t) =
@@ -191,7 +196,7 @@ let wake_all_senders_locked wakeups (t : ('a, 'err) t) reason =
     match take_sender_locked t with
     | None -> ()
     | Some sender ->
-        add_wakeup wakeups (Wake_sender (sender, close_result reason));
+        settle_sender wakeups sender (close_result reason);
         loop ()
   in
   loop ()
@@ -237,7 +242,7 @@ let cancel_sender wakeups (t : ('a, 'err) t) sender =
 
 let enqueue_sender contract (t : ('a, 'err) t) value =
   let promise, resolver = contract.Runtime_contract.create_promise () in
-  let sender = { value; contract; resolver; active = true } in
+  let sender = { value; contract; resolver; active = true; result = None } in
   Stdlib.Queue.add sender t.senders;
   t.waiting_senders <- t.waiting_senders + 1;
   (promise, sender)
@@ -292,10 +297,18 @@ let offer_sync contract t value =
         when Option.is_some
                (contract.Runtime_contract.cancellation_reason exn) ->
         let cancel_wakeups = ref [] in
-        with_lock_during_cancel contract t (fun () ->
-            cancel_sender cancel_wakeups t sender);
+        let cancellation =
+          with_lock_during_cancel contract t (fun () ->
+              match sender.result with
+              | Some result -> `Settled result
+              | None ->
+                  cancel_sender cancel_wakeups t sender;
+                  `Cancelled)
+        in
         resolve_wakeups !cancel_wakeups;
-        raise exn)
+        match cancellation with
+        | `Settled result -> result
+        | `Cancelled -> raise exn)
 
 let try_send t value = Effect.sync (fun () -> try_send_sync t value)
 
