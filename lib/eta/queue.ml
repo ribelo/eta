@@ -67,6 +67,9 @@ let validate_overflow = function
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
+let invariant_failed message =
+  invalid_arg ("Eta.Queue invariant failed: " ^ message)
+
 let create ?(overflow = Unbounded) () =
   validate_overflow overflow;
   {
@@ -259,7 +262,8 @@ let try_send_sync t value =
           `Sent)
         else
           match t.overflow with
-          | Unbounded -> assert false
+          | Unbounded ->
+              invariant_failed "unbounded queue reported no capacity"
           | Drop_new _ ->
               t.dropped <- saturating_succ t.dropped;
               `Dropped
@@ -280,7 +284,8 @@ let offer_sync contract t value =
           `Ready `Sent)
         else
           match t.overflow with
-          | Unbounded -> assert false
+          | Unbounded ->
+              invariant_failed "unbounded queue reported no capacity"
           | Drop_new _ ->
               t.dropped <- saturating_succ t.dropped;
               `Ready `Dropped
@@ -319,7 +324,7 @@ let offer t value =
   |> Effect.bind (function
        | `Sent -> Effect.pure true
        | `Dropped -> Effect.pure false
-       | `Full -> assert false
+       | `Full -> invariant_failed "blocking offer returned Full"
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
@@ -454,7 +459,7 @@ let recv t =
          recv_sync frame.Effect_core.runtime.Runtime_core.contract t))
   |> Effect.bind (function
        | `Item value -> Effect.pure value
-       | `Empty -> assert false
+       | `Empty -> invariant_failed "blocking recv returned Empty"
        | `Closed -> Effect.fail `Closed
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 

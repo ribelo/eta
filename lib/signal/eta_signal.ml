@@ -475,6 +475,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let with_lane_lock lane f = Sync_lock.use lane.lane_lock f
 
+  let lane_invariant_failed message =
+    invalid_arg ("Eta_signal invariant failed: " ^ message)
+
   let rec take_waiting_waiter waiters =
     if Stdlib.Queue.is_empty waiters then None
     else
@@ -540,9 +543,9 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_claimed;
         Lane_claimed_ok
     | Lane_waiting ->
-        invalid_arg "Eta_signal lane waiter was not granted"
+        lane_invariant_failed "lane waiter was not granted"
     | Lane_claimed ->
-        invalid_arg "Eta_signal lane waiter was already claimed"
+        lane_invariant_failed "lane waiter was already claimed"
     | Lane_cancelled -> Lane_claim_cancelled
 
   let with_lane_lock_during_cancel contract lane f =

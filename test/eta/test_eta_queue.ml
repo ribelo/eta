@@ -185,6 +185,55 @@ let test_queue_backpressure_admission_wins_racing_cancellation () =
   Alcotest.(check int) "admitted sender not counted cancelled" 0
     stats.Queue.cancelled_senders
 
+let test_queue_unbounded_offer_never_reports_full () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create () in
+  for value = 1 to 100 do
+    Alcotest.(check bool)
+      (Printf.sprintf "offer %d" value)
+      true
+      (run_ok rt (Queue.offer queue value))
+  done;
+  Alcotest.(check int) "unbounded queue depth" 100
+    (Queue.stats queue).Queue.depth;
+  for expected = 1 to 100 do
+    Alcotest.(check int)
+      (Printf.sprintf "recv %d" expected)
+      expected
+      (run_ok rt (Queue.recv queue))
+  done
+
+let test_queue_backpressure_offer_waits_instead_of_returning_full () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  (match run_ok rt (Queue.try_send queue 2) with
+  | `Full -> ()
+  | result ->
+      Alcotest.failf "expected try_send to report Full, got %s"
+        (match result with
+        | `Sent -> "Sent"
+        | `Dropped -> "Dropped"
+        | `Full -> "Full"
+        | `Closed -> "Closed"
+        | `Closed_with_error _ -> "Closed_with_error"));
+  expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
+  Alcotest.(check int) "waiting sender recorded" 1
+    (Queue.stats queue).Queue.waiting_senders
+
+let test_queue_recv_waits_instead_of_returning_empty () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create () in
+  (match run_ok rt (Queue.try_recv queue) with
+  | `Empty -> ()
+  | `Item _ -> Alcotest.fail "try_recv unexpectedly returned an item"
+  | `Closed -> Alcotest.fail "try_recv unexpectedly reported clean close"
+  | `Closed_with_error _ ->
+      Alcotest.fail "try_recv unexpectedly reported error close");
+  expect_blocked (Test_runtime.run rt (Queue.recv queue));
+  Alcotest.(check int) "waiting receiver recorded" 1
+    (Queue.stats queue).Queue.waiting_receivers
+
 let set_queue_counter queue field value =
   (* Public APIs cannot drive stats counters to [max_int] in a focused test. *)
   Obj.set_field (Obj.repr queue) field (Obj.repr value)

@@ -89,6 +89,12 @@ let () =
           Alcotest.test_case
             "backpressure admission wins racing cancellation" `Quick
             test_queue_backpressure_admission_wins_racing_cancellation;
+          Alcotest.test_case "unbounded offer never reports full" `Quick
+            test_queue_unbounded_offer_never_reports_full;
+          Alcotest.test_case "backpressure offer waits instead of full" `Quick
+            test_queue_backpressure_offer_waits_instead_of_returning_full;
+          Alcotest.test_case "recv waits instead of empty" `Quick
+            test_queue_recv_waits_instead_of_returning_empty;
           Alcotest.test_case "stats counters saturate" `Quick
             test_queue_stats_counters_saturate;
         ] );
