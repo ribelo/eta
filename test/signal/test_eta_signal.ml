@@ -3068,6 +3068,60 @@ let test_time_timer_start_failure_retries_necessary_timer () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_timer_start_failure_preserves_pending_observer_event () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let fail_next_now = ref false in
+  let now_ms () =
+    if !fail_next_now then (
+      fail_next_now := false;
+      failwith "timer start clock failure")
+    else Eta_test.Test_clock.now_ms clock
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let use_timer = Signal.Var.create false in
+  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun enabled ->
+        if enabled then timer else Signal.const (-1))
+  in
+  let events = ref [] in
+  let event_new_values () =
+    List.map
+      (function
+        | Signal.Initialized value -> value
+        | Signal.Changed { new_value; _ } -> new_value)
+      (List.rev !events)
+  in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe selected (fun update ->
+           Effect.sync (fun () -> events := update :: !events)))
+  in
+  run_ok rt Signal.stabilize;
+  let after_initial = run_ok rt (Signal.stats ()) in
+  fail_next_now := true;
+  run_ok rt (Signal.Var.set use_timer true);
+  expect_die "timer branch start failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int)
+    "post-commit failed start publishes snapshot for reads" 0
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check (list int)) "failed start did not deliver callback" [ -1 ]
+    (event_new_values ());
+  let after_failure = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "failed cleanup does not complete delivery"
+    after_initial.Signal.callback_delivery_count
+    after_failure.Signal.callback_delivery_count;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int)) "retry delivers pending event once" [ -1; 0 ]
+    (event_new_values ());
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_timer_start_failure_rolls_back_unstarted_timers () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -6212,6 +6266,9 @@ let () =
             test_stream_observe_failure_during_timer_start_does_not_leak;
           Alcotest.test_case "time timer start failure retries necessary timer"
             `Quick test_time_timer_start_failure_retries_necessary_timer;
+          Alcotest.test_case
+            "time timer start failure preserves pending observer event" `Quick
+            test_time_timer_start_failure_preserves_pending_observer_event;
           Alcotest.test_case "time timer start failure rolls back unstarted timers"
             `Quick test_time_timer_start_failure_rolls_back_unstarted_timers;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick

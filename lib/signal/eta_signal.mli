@@ -301,6 +301,20 @@ module Make (Observer_error : Observer_error) () : sig
       {!exception:Graph_error}. *)
 
   val stabilize : (unit, stabilize_error) Eta.Effect.t
+  (** Run one explicit stabilization.
+
+      Pure graph recomputation is transactional: graph failures before snapshot
+      commit leave the previous stabilized snapshot in place and keep source
+      updates retryable. Once a pure snapshot commits, observer current values
+      and pending callback deliveries are published before timer lifecycle
+      refresh, disposal cleanup, and observer callbacks run.
+
+      Failures after that commit point, including observer callback failures,
+      timer start/stop lifecycle defects, disposal-hook failures, or
+      interruption, do not roll back the committed snapshot. Undelivered
+      observer callbacks remain pending and are retried by a later
+      stabilization unless the observer is disposed or invalidated first. *)
+
   val stats : unit -> (stats, 'err) Eta.Effect.t
 
   val to_dot : ?options:dot_options -> unit -> (string, 'err) Eta.Effect.t
