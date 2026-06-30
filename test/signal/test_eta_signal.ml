@@ -223,6 +223,8 @@ module Cleanup_interrupt_runtime = struct
   let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
     Hashtbl.create 8
 
+  let local_binding_count = ref 0
+
   let local_get local =
     match Hashtbl.find_opt locals (Runtime_contract.Backend.local_id local) with
     | None -> None
@@ -235,6 +237,7 @@ module Cleanup_interrupt_runtime = struct
     let id = Runtime_contract.Backend.local_id local in
     let previous = Hashtbl.find_opt locals id in
     let stack = Option.value previous ~default:[] in
+    local_binding_count := !local_binding_count + 1;
     Hashtbl.replace locals id
       (Runtime_contract.Local_binding (local, value) :: stack);
     Fun.protect
@@ -3216,6 +3219,47 @@ let test_time_interval_construction_waits_for_graph_lane () =
     (( = ) `Ambiguous_scope)
     (Eio.Promise.await_exn constructor)
 
+let test_observer_delivery_acknowledgement_uses_graph_lane () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let count_before_ack = ref None in
+  let observer =
+    expect_exit_ok "observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe observed (fun _update ->
+                 Effect.sync (fun () ->
+                     count_before_ack :=
+                       Some !Cleanup_interrupt_runtime.local_binding_count)))))
+  in
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  ignore
+    (expect_exit_ok "stabilize"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  let before_ack =
+    match !count_before_ack with
+    | Some count -> count
+    | None -> Alcotest.fail "observer callback did not run"
+  in
+  Alcotest.(check int)
+    "acknowledgement, delivery completion, and phase cleanup enter the graph lane"
+    3
+    (!Cleanup_interrupt_runtime.local_binding_count - before_ack);
+  ignore
+    (expect_exit_ok "observer disposal"
+       (Runtime.run rt (widen (Signal.Observer.dispose observer)))
+      : unit)
+
 let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
   let check_stats label expected actual =
@@ -5149,6 +5193,9 @@ let () =
             test_observer_read_waits_for_graph_lane;
           Alcotest.test_case "time interval construction waits for graph lane"
             `Quick test_time_interval_construction_waits_for_graph_lane;
+          Alcotest.test_case
+            "observer delivery acknowledgement uses graph lane" `Quick
+            test_observer_delivery_acknowledgement_uses_graph_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
           Alcotest.test_case

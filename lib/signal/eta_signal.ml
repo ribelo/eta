@@ -280,7 +280,7 @@ module Make (Observer_error : Observer_error) () = struct
   and 'a observer_delivery_state =
     | Observer_never_delivered
     | Observer_delivered of 'a
-    | Observer_delivery_pending of 'a update
+    | Observer_delivery_pending of int * 'a update
 
   and 'a observer = {
     obs_id : observer_id;
@@ -341,7 +341,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type disposal_hook = unit -> unit
 
-  type event = E : 'a observer * 'a update -> event
+  type event = E : int * 'a observer * 'a update -> event
 
   type pure_stabilize_result =
     | Pure_ok of disposal_hook list * event list
@@ -1558,8 +1558,8 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_delivery_base = function
     | Observer_never_delivered -> None
     | Observer_delivered value -> Some value
-    | Observer_delivery_pending (Initialized _) -> None
-    | Observer_delivery_pending (Changed { old_value; _ }) -> Some old_value
+    | Observer_delivery_pending (_, Initialized _) -> None
+    | Observer_delivery_pending (_, Changed { old_value; _ }) -> Some old_value
 
   let observer_delivery_pending = function
     | Observer_delivery_pending _ -> true
@@ -1583,15 +1583,23 @@ module Make (Observer_error : Observer_error) () = struct
             else None
       in
       stage_observer_current observer value;
-      Option.map (fun update -> E (observer, update)) event)
+      Option.map
+        (fun update -> E (current_generation (), observer, update))
+        event)
 
-  let mark_event_pending (E (observer, update)) =
+  let mark_event_pending (E (token, observer, update)) =
     if observer_active (O observer) then
-      observer.obs_delivery_state <- Observer_delivery_pending update
+      observer.obs_delivery_state <- Observer_delivery_pending (token, update)
 
-  let acknowledge_event_delivery observer update =
-    if observer_active (O observer) then
-      observer.obs_delivery_state <- Observer_delivered (delivered_value update)
+  let acknowledge_event_delivery observer token update =
+    with_graph_lane_sync (fun () ->
+        match observer.obs_delivery_state with
+        | Observer_delivery_pending (pending_token, _)
+          when observer_active (O observer) && pending_token = token ->
+            observer.obs_delivery_state <- Observer_delivered (delivered_value update)
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ ->
+            ())
 
   let begin_stabilize () =
     if graph.phase <> Not_stabilizing then
@@ -1659,23 +1667,17 @@ module Make (Observer_error : Observer_error) () = struct
         Eta.Cause.Suppressed
           { primary = observer_cause_to_stabilize primary; finalizer }
 
-  let run_observer_effect observer update observer_eff =
-    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
-    let exit =
-      try
-        match Effect.Expert.eval context observer_eff with
-        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
-        | Eta.Exit.Error cause ->
-            Eta.Exit.Error (observer_cause_to_stabilize cause)
-      with
-      | Graph_error err ->
-          Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
-    in
-    match exit with
-    | Eta.Exit.Ok () ->
-        acknowledge_event_delivery observer update;
-        Eta.Exit.Ok ()
-    | Eta.Exit.Error _ as error -> error
+  let run_observer_effect observer token update observer_eff =
+    (Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+     try
+       match Effect.Expert.eval context observer_eff with
+       | Eta.Exit.Ok () -> Eta.Exit.Ok ()
+       | Eta.Exit.Error cause ->
+           Eta.Exit.Error (observer_cause_to_stabilize cause)
+     with
+     | Graph_error err ->
+         Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))
+    |> Effect.bind (fun () -> acknowledge_event_delivery observer token update)
 
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
@@ -1687,7 +1689,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let rec run_events = function
     | [] -> Effect.unit
-    | E (observer, update) :: rest -> (
+    | E (token, observer, update) :: rest -> (
         event_observer_active observer
         |> Effect.bind (function
              | false -> run_events rest
@@ -1698,7 +1700,7 @@ module Make (Observer_error : Observer_error) () = struct
                  with
                  | Error err -> Effect.fail err
                  | Ok observer_eff ->
-                     run_observer_effect observer update observer_eff
+                     run_observer_effect observer token update observer_eff
                      |> Effect.bind (fun () -> run_events rest))))
 
   let stabilize =
