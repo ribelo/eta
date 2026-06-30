@@ -727,24 +727,28 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
         graph.observers
 
+  let take_observer_disposal_hooks observer =
+    let hooks = observer.obs_on_dispose in
+    observer.obs_on_dispose <- [];
+    hooks
+
   let finish_observer_unlocked observer state =
     match (observer.obs_state, state) with
     | Observer_active, Observer_disposed ->
         observer.obs_state <- state;
         remove_observer observer;
-        List.iter (fun f -> f ()) observer.obs_on_dispose;
-        observer.obs_on_dispose <- []
+        take_observer_disposal_hooks observer
     | Observer_active, Observer_invalid_scope ->
         observer.obs_state <- state;
-        List.iter (fun f -> f ()) observer.obs_on_dispose;
-        observer.obs_on_dispose <- []
+        take_observer_disposal_hooks observer
     | Observer_invalid_scope, Observer_disposed ->
         observer.obs_state <- state;
-        remove_observer observer
+        remove_observer observer;
+        []
     | _, Observer_active ->
         invalid_arg "Eta_signal: observer finish target cannot be active"
     | Observer_disposed, _ | Observer_invalid_scope, Observer_invalid_scope ->
-        ()
+        []
 
   let dispose_observer_unlocked observer =
     finish_observer_unlocked observer Observer_disposed
@@ -758,7 +762,9 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O observer) -> observer.obs_signal.id = signal.id)
         graph.observers
     in
-    List.iter (fun (O observer) -> invalidate_observer_unlocked observer) observers
+    List.concat_map
+      (fun (O observer) -> invalidate_observer_unlocked observer)
+      observers
 
   let signal_scope () =
     match graph.phase with
@@ -887,9 +893,11 @@ module Make (Observer_error : Observer_error) () = struct
       scope.scope_valid <- false;
       graph.dynamic_scope_invalidations <-
         saturating_succ graph.dynamic_scope_invalidations;
-      List.iter invalidate_node scope.scope_nodes;
+      let hooks = List.concat_map invalidate_node scope.scope_nodes in
       scope.scope_nodes <- [];
-      if prune then prune_invalid_nodes_unlocked ())
+      if prune then prune_invalid_nodes_unlocked ();
+      hooks)
+    else []
 
   and invalidate_node (P signal) =
     if signal.valid then (
@@ -900,22 +908,28 @@ module Make (Observer_error : Observer_error) () = struct
         signal.timer;
       signal.valid <- false;
       record_dead_node_unlocked (P signal);
-      dispose_signal_observers signal;
+      let observer_hooks = dispose_signal_observers signal in
       List.iter
         (fun (P dependency) -> remove_dependent dependency signal)
         dependencies;
       signal.dependencies <- [];
       signal.dependents <- [];
-      List.iter invalidate_node dependents;
-      match signal.kind with
-      | Var source -> remove_var_watcher source signal
-      | Bind bind -> (
-          match bind.inner_scope with
-          | None -> ()
-          | Some scope -> invalidate_scope ~prune:false scope)
-      | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
-      | Map8 _ | Map9 _ | All _ ->
-          ())
+      let dependent_hooks = List.concat_map invalidate_node dependents in
+      let kind_hooks =
+        match signal.kind with
+        | Var source ->
+            remove_var_watcher source signal;
+            []
+        | Bind bind -> (
+            match bind.inner_scope with
+            | None -> []
+            | Some scope -> invalidate_scope ~prune:false scope)
+        | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+        | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            []
+      in
+      observer_hooks @ dependent_hooks @ kind_hooks)
+    else []
 
   let make_bind ?equal source selector =
     let bind =
@@ -1001,30 +1015,43 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_bind (B bind) =
     if bind.staged_bind_generation = current_generation () then (
-      (match
-         ( bind.owner,
-           bind.staged_source_value,
-           bind.staged_inner,
-           bind.staged_inner_scope )
-       with
-       | Some owner, Some source_value, Some inner, Some scope ->
-           (match bind.inner with
-            | None -> ()
-            | Some old_inner -> detach_dependency owner old_inner);
-           (match bind.inner_scope with
-            | None -> ()
-            | Some old_scope -> invalidate_scope old_scope);
-           bind.source_value <- Some source_value;
-           bind.inner <- Some inner;
-           bind.inner_scope <- Some scope;
-           attach_dependency owner inner
-       | _ -> raise (Graph_error `Invalid_scope));
-      clear_staged_bind bind)
+      let disposal_hooks =
+        match
+          ( bind.owner,
+            bind.staged_source_value,
+            bind.staged_inner,
+            bind.staged_inner_scope )
+        with
+        | Some owner, Some source_value, Some inner, Some scope ->
+            (match bind.inner with
+             | None -> ()
+             | Some old_inner -> detach_dependency owner old_inner);
+            let hooks =
+              match bind.inner_scope with
+              | None -> []
+              | Some old_scope -> invalidate_scope old_scope
+            in
+            bind.source_value <- Some source_value;
+            bind.inner <- Some inner;
+            bind.inner_scope <- Some scope;
+            attach_dependency owner inner;
+            hooks
+        | _ -> raise (Graph_error `Invalid_scope)
+      in
+      clear_staged_bind bind;
+      disposal_hooks)
+    else []
 
   let rollback_bind (B bind) =
     if bind.staged_bind_generation = current_generation () then (
-      Option.iter invalidate_scope bind.staged_inner_scope;
-      clear_staged_bind bind)
+      let disposal_hooks =
+        match bind.staged_inner_scope with
+        | None -> []
+        | Some scope -> invalidate_scope scope
+      in
+      clear_staged_bind bind;
+      disposal_hooks)
+    else []
 
   let commit_observer (O observer) =
     if observer.obs_staged_generation = current_generation () then (
@@ -1051,16 +1078,17 @@ module Make (Observer_error : Observer_error) () = struct
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
     List.iter rollback_var graph.staged_vars;
-    List.iter rollback_bind graph.staged_binds;
+    let disposal_hooks = List.concat_map rollback_bind graph.staged_binds in
     List.iter rollback_observer graph.staged_observers;
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
     graph.staged_binds <- [];
-    graph.staged_observers <- []
+    graph.staged_observers <- [];
+    disposal_hooks
 
   let commit_staging () =
     List.iter commit_var graph.staged_vars;
-    List.iter commit_bind graph.staged_binds;
+    let disposal_hooks = List.concat_map commit_bind graph.staged_binds in
     List.iter commit_signal graph.computed_nodes;
     List.iter commit_observer graph.staged_observers;
     graph.computed_nodes <- [];
@@ -1068,7 +1096,8 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_snapshot_commit_count <-
-      saturating_succ graph.pure_snapshot_commit_count
+      saturating_succ graph.pure_snapshot_commit_count;
+    disposal_hooks
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (
@@ -1079,10 +1108,11 @@ module Make (Observer_error : Observer_error) () = struct
     if observer.obs_current = None then observer.obs_failed_without_current <- true
 
   let rollback_pure observers pending_at_start =
-    reset_staging ();
+    let disposal_hooks = reset_staging () in
     List.iter mark_failed_without_current observers;
     List.iter requeue_if_needed pending_at_start;
-    graph.phase <- Not_stabilizing
+    graph.phase <- Not_stabilizing;
+    disposal_hooks
 
   let stage_pending_var (V var) =
     if not (var.var_equal var.graph_value var.source_value) then (
@@ -1298,7 +1328,7 @@ module Make (Observer_error : Observer_error) () = struct
               (inner, inner_value, changed, dependencies)
             with exn ->
               graph.current_scope <- previous_scope;
-              invalidate_scope scope;
+              ignore (invalidate_scope scope);
               raise exn
           in
           stage_bind_switch bind source_value inner scope;
@@ -1401,13 +1431,21 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync refresh_timer_demand_unlocked
     |> Effect.bind Effect.concat
 
+  let run_disposal_hooks = function
+    | [] -> Effect.unit
+    | hooks -> Effect.sync (fun () -> List.iter (fun hook -> hook ()) hooks)
+
   let dispose_observer_effect observer =
     with_graph_lane_sync
       (fun () ->
         if observer.obs_state <> Observer_disposed then (
-          dispose_observer_unlocked observer;
-          update_necessity_counters_unlocked ()))
-    |> Effect.bind (fun () -> refresh_timer_demand ())
+          let hooks = dispose_observer_unlocked observer in
+          update_necessity_counters_unlocked ();
+          hooks)
+        else [])
+    |> Effect.bind (fun hooks ->
+           refresh_timer_demand ()
+           |> Effect.bind (fun () -> run_disposal_hooks hooks))
 
   let collect_observer_event (O observer) =
     if not (observer_active (O observer)) then None
@@ -1442,7 +1480,7 @@ module Make (Observer_error : Observer_error) () = struct
     observer.obs_delivery_pending <- false
 
   let begin_stabilize () =
-    if graph.phase <> Not_stabilizing then Error `Reentrant_stabilization
+    if graph.phase <> Not_stabilizing then Error ([], `Reentrant_stabilization)
     else (
       let generation =
         checked_succ "stabilization generation" graph.stabilization_id
@@ -1465,17 +1503,17 @@ module Make (Observer_error : Observer_error) () = struct
       try
         List.iter stage_pending_var pending_at_start;
         let events = List.filter_map collect_observer_event observers in
-        commit_staging ();
+        let hooks = commit_staging () in
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.phase <- Running_observers;
-        Ok events
+        Ok (hooks, events)
       with
       | Graph_error err ->
-          rollback_pure observers pending_at_start;
-          Error err
+          let hooks = rollback_pure observers pending_at_start in
+          Error (hooks, err)
       | exn ->
-          rollback_pure observers pending_at_start;
+          ignore (rollback_pure observers pending_at_start);
           raise exn)
 
   let finish_stabilize () =
@@ -1548,15 +1586,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let stabilize =
     with_graph_lane_sync begin_stabilize
-    |> Effect.map (function
-         | Ok events -> Ok events
-         | Error (#graph_error as err) -> Error (err :> stabilize_error))
-    |> Effect.flatten_result
-    |> Effect.bind (fun events ->
-           (refresh_timer_demand ()
-            |> Effect.bind (fun () -> run_events events)
-            |> Effect.bind mark_callback_delivery_complete)
-           |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))
+    |> Effect.bind (function
+         | Error (hooks, err) ->
+             run_disposal_hooks hooks
+             |> Effect.bind (fun () -> Effect.fail (err :> stabilize_error))
+         | Ok (hooks, events) ->
+             (refresh_timer_demand ()
+              |> Effect.bind (fun () -> run_disposal_hooks hooks)
+              |> Effect.bind (fun () -> run_events events)
+              |> Effect.bind mark_callback_delivery_complete)
+             |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))
 
   module Var = struct
     type 'a t = 'a var

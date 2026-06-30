@@ -3573,6 +3573,12 @@ let set_signal_timer_generation signal value =
   let timer = Obj.field timer_opt 0 in
   Obj.set_field timer 4 (Obj.repr value)
 
+let set_observer_on_dispose observer hooks =
+  (* Public APIs only install internal stream hooks; this keeps the regression
+     focused on hook failure without widening the signal API. *)
+  let observer_obj = Obj.repr observer in
+  Obj.set_field observer_obj 14 (Obj.repr hooks)
+
 let test_time_interval_saturates_at_max_int () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -3836,6 +3842,28 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
   done;
   Alcotest.(check bool)
     "disposed long-interval timer daemon drains without clock advance" true
+    (Eio.Promise.is_resolved drained);
+  Eio.Promise.await_exn drained
+
+let test_time_timer_dispose_hook_failure_still_cleans_graph () =
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  set_observer_on_dispose observer
+    [ (fun () -> failwith "dispose hook failure") ];
+  expect_die "dispose hook failure"
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "failing dispose hook did not skip timer cleanup" true
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
@@ -4838,6 +4866,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "time timer dispose hook failure cleans graph"
+            `Quick test_time_timer_dispose_hook_failure_still_cleans_graph;
           Alcotest.test_case "time invalidated timer cancels sleeping daemon"
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
