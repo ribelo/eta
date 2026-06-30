@@ -283,6 +283,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_never_delivered
     | Observer_delivered of 'a
     | Observer_delivery_pending of int * 'a update
+    | Observer_delivery_running of int * 'a update
 
   and 'a observer = {
     obs_id : observer_id;
@@ -1881,9 +1882,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivered value -> Some value
     | Observer_delivery_pending (_, Initialized _) -> None
     | Observer_delivery_pending (_, Changed { old_value; _ }) -> Some old_value
+    | Observer_delivery_running (_, Initialized _) -> None
+    | Observer_delivery_running (_, Changed { old_value; _ }) -> Some old_value
 
   let observer_delivery_pending = function
-    | Observer_delivery_pending _ -> true
+    | Observer_delivery_pending _ | Observer_delivery_running _ -> true
     | Observer_never_delivered | Observer_delivered _ -> false
 
   let collect_observer_event (O observer) =
@@ -1917,11 +1920,12 @@ module Make (Observer_error : Observer_error) () = struct
   let add_after_ack observer action =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | Observer_delivery_pending (token, _) when observer_active (O observer)
-          ->
+        | ( Observer_delivery_pending (token, _)
+          | Observer_delivery_running (token, _) )
+          when observer_active (O observer) ->
             observer.obs_after_ack <- (token, action) :: observer.obs_after_ack
         | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ ->
+        | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
 
   let run_after_ack observer token =
@@ -1936,12 +1940,35 @@ module Make (Observer_error : Observer_error) () = struct
   let acknowledge_event_delivery observer token update =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | Observer_delivery_pending (pending_token, _)
+        | ( Observer_delivery_pending (pending_token, _)
+          | Observer_delivery_running (pending_token, _) )
           when observer_active (O observer) && pending_token = token ->
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
             run_after_ack observer pending_token
         | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ ->
+        | Observer_delivery_pending _ | Observer_delivery_running _ ->
+            ())
+
+  let claim_event_delivery observer token =
+    with_graph_lane_sync (fun () ->
+        match observer.obs_delivery_state with
+        | Observer_delivery_pending (pending_token, update)
+          when observer_active (O observer) && pending_token = token ->
+            observer.obs_delivery_state <-
+              Observer_delivery_running (pending_token, update);
+            true
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ | Observer_delivery_running _ ->
+            false)
+
+  let release_event_delivery_claim observer token update =
+    with_graph_lane_sync (fun () ->
+        match observer.obs_delivery_state with
+        | Observer_delivery_running (running_token, _)
+          when observer_active (O observer) && running_token = token ->
+            observer.obs_delivery_state <- Observer_delivery_pending (token, update)
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
 
   let begin_stabilize timer_refresh_token =
@@ -2017,9 +2044,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let run_observer_effect observer token update observer_eff =
     let delivered = ref false in
-    let acknowledge_if_delivered () =
+    let finish_delivery_after_error () =
       if !delivered then acknowledge_event_delivery observer token update
-      else Effect.unit
+      else release_event_delivery_claim observer token update
     in
     ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
       try
@@ -2035,7 +2062,7 @@ module Make (Observer_error : Observer_error) () = struct
      |> Effect.bind (fun () -> acknowledge_event_delivery observer token update))
     |> Effect.on_exit (function
          | Eta.Exit.Ok _ -> Effect.unit
-         | Eta.Exit.Error _ -> acknowledge_if_delivered ())
+         | Eta.Exit.Error _ -> finish_delivery_after_error ())
 
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
@@ -2058,10 +2085,20 @@ module Make (Observer_error : Observer_error) () = struct
         |> Effect.bind (function
              | false -> run_events rest
              | true ->
-                 construct_observer_effect observer update
-                 |> Effect.bind (fun observer_eff ->
-                        run_observer_effect observer token update observer_eff
-                        |> Effect.bind (fun () -> run_events rest))))
+                 claim_event_delivery observer token
+                 |> Effect.bind (function
+                      | false -> run_events rest
+                      | true ->
+                          (construct_observer_effect observer update
+                           |> Effect.bind (fun observer_eff ->
+                                  run_observer_effect observer token update
+                                  observer_eff))
+                          |> Effect.on_exit (function
+                               | Eta.Exit.Ok _ -> Effect.unit
+                               | Eta.Exit.Error _ ->
+                                   release_event_delivery_claim observer token
+                                     update)
+                          |> Effect.bind (fun () -> run_events rest))))
 
   let begin_stabilize_with_pending_hooks timer_refresh_token hooks_ref
       finish_needed =
@@ -2549,6 +2586,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_never_delivered -> "never_delivered"
     | Observer_delivered _ -> "delivered"
     | Observer_delivery_pending _ -> "pending"
+    | Observer_delivery_running _ -> "running"
 
   let observer_label (O observer) =
     String.concat " "

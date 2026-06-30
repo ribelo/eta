@@ -208,6 +208,7 @@ module Cleanup_interrupt_runtime = struct
 
   let interrupt_next_protect_return = ref false
   let interrupt_on_local_binding_count = ref None
+  let after_local_binding_count : (int * (unit -> unit)) option ref = ref None
   let now = ref 0
   let root_scope = ()
   let now_ms () = !now
@@ -298,6 +299,13 @@ module Cleanup_interrupt_runtime = struct
         | Some stack -> Hashtbl.replace locals id stack
         | None -> Hashtbl.remove locals id)
       (fun () -> if interrupt then raise Cleanup_interrupt else f ())
+    |> fun value ->
+    (match !after_local_binding_count with
+     | Some (target, hook) when target = !local_binding_count ->
+         after_local_binding_count := None;
+         hook ()
+     | Some _ | None -> ());
+    value
 end
 
 let run_effect_in_foreign_domain eff =
@@ -1363,6 +1371,83 @@ let test_observer_dispose_during_callback_skips_collected_event () =
     "disposed observer is absent from later stabilization" [ "first" ]
     (List.rev !events);
   run_ok rt (Signal.Observer.dispose first_observer)
+
+let test_observer_dispose_after_active_check_skips_callback () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let target_ref = ref None in
+  let target_callback_ran = ref false in
+  let arm_dispose = ref false in
+  let marker =
+    expect_exit_ok "marker observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe signal (function
+              | Signal.Changed _ when !arm_dispose ->
+                  Effect.sync (fun () ->
+                      Cleanup_interrupt_runtime.after_local_binding_count :=
+                        Some
+                          ( !Cleanup_interrupt_runtime.local_binding_count + 2,
+                            fun () ->
+                              match !target_ref with
+                              | None ->
+                                  Alcotest.fail "target observer was not registered"
+                              | Some target ->
+                                  ignore
+                                    (expect_exit_ok
+                                       "target dispose after active check"
+                                       (Runtime.run rt
+                                          (widen
+                                             (Signal.Observer.dispose target)))
+                                      : unit) ))
+              | Initialized _ | Changed _ -> Effect.unit))))
+  in
+  let target =
+    expect_exit_ok "target observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe signal (fun _ ->
+                 Effect.sync (fun () -> target_callback_ran := true)))))
+  in
+  target_ref := Some target;
+  Fun.protect
+    ~finally:(fun () ->
+      Cleanup_interrupt_runtime.after_local_binding_count := None;
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose target)) : _ Exit.t);
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose marker)) : _ Exit.t))
+    (fun () ->
+      ignore
+        (expect_exit_ok "initial stabilize"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      target_callback_ran := false;
+      arm_dispose := true;
+      ignore
+        (expect_exit_ok "set source"
+           (Runtime.run rt (widen (Signal.Var.set source 2)))
+          : unit);
+      ignore
+        (expect_exit_ok "stabilize with racing dispose"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      Alcotest.(check bool)
+        "disposed observer callback is skipped after active check" false
+        !target_callback_ran;
+      expect_fail "target disposed by active-check hook" (( = ) `Disposed_observer)
+        (Runtime.run rt (widen (Signal.Observer.read target))))
 
 let test_bind_detaches_old_dependency () =
   with_runtime @@ fun rt ->
@@ -5892,6 +5977,8 @@ let () =
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case "observer dispose skips collected event" `Quick
             test_observer_dispose_during_callback_skips_collected_event;
+          Alcotest.test_case "observer dispose after active check skips callback"
+            `Quick test_observer_dispose_after_active_check_skips_callback;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case
