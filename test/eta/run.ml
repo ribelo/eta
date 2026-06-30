@@ -27,6 +27,12 @@ let () =
             test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic;
           Alcotest.test_case "runtime run propagates eio cancellation" `Quick
             test_runtime_run_propagates_eio_cancellation;
+          Alcotest.test_case "eio runtime contract same-domain callbacks"
+            `Quick
+            test_eio_runtime_contract_callbacks_stay_on_owner_domain;
+          Alcotest.test_case "timeout cancellation stays on owner domain"
+            `Quick
+            test_effect_timeout_cancellation_stays_on_owner_domain;
           Alcotest.test_case "catch preserves concurrent interrupt" `Quick
             test_effect_catch_preserves_concurrent_interrupt;
           Alcotest.test_case "drain does not busy wait" `Quick

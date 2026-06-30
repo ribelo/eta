@@ -220,6 +220,99 @@ let test_runtime_run_propagates_eio_cancellation () =
       raised_cancelled := true);
   Alcotest.(check bool) "raised Cancelled" true !raised_cancelled
 
+let check_owner_domain owner label =
+  Alcotest.(check bool) label true (Domain.self () = owner)
+
+let test_eio_runtime_contract_callbacks_stay_on_owner_domain () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock stdenv in
+  Eio.Fiber.first
+    (fun () ->
+      let owner = Domain.self () in
+      let contract =
+        Runtime_contract.of_runtime (Eta_eio.runtime ~sw ~clock)
+      in
+      let expect_owner label actual =
+        Alcotest.(check bool) label true (actual = owner)
+      in
+      contract.protect (fun () -> check_owner_domain owner "protect callback");
+      contract.run_scope ~name:"same-domain conformance" (fun child_scope ->
+          check_owner_domain owner "run_scope callback";
+          let promise, resolver = contract.create_promise () in
+          contract.fork child_scope (fun () ->
+              check_owner_domain owner "fork callback";
+              contract.resolve_promise resolver (Domain.self ()));
+          expect_owner "promise await resumed on owner"
+            (contract.await_promise promise));
+      let daemon_promise, daemon_resolver = contract.create_promise () in
+      contract.fork_daemon contract.root_scope (fun () ->
+          check_owner_domain owner "daemon callback";
+          contract.resolve_promise daemon_resolver (Domain.self ());
+          `Stop_daemon);
+      expect_owner "daemon promise resolved on owner"
+        (contract.await_promise daemon_promise);
+      let cancelled = Failure "same-domain cancellation" in
+      let cancellation_observed = ref false in
+      contract.cancel_sub (fun ctx ->
+          check_owner_domain owner "cancel_sub callback";
+          contract.cancel ctx cancelled;
+          try
+            contract.check ();
+            Alcotest.fail "expected cancellation checkpoint"
+          with exn -> (
+            check_owner_domain owner "cancellation observed on owner";
+            match contract.cancellation_reason exn with
+            | Some reason when reason == cancelled ->
+                cancellation_observed := true
+            | Some reason ->
+                Alcotest.failf "unexpected cancellation reason: %s"
+                  (Printexc.to_string reason)
+            | None -> raise exn));
+      Alcotest.(check bool)
+        "cancellation reason observed" true !cancellation_observed;
+      let local = Runtime_contract.create_local () in
+      contract.local_with_binding local 42 (fun () ->
+          check_owner_domain owner "local callback";
+          Alcotest.(check (option int))
+            "local binding" (Some 42) (contract.local_get local));
+      let cross_domain =
+        (Domain.spawn [@alert "-do_not_spawn_domains"]
+           [@alert "-unsafe_multidomain"])
+          (fun () ->
+            try Ok (ignore (contract.now_ms () : int))
+            with Invalid_argument message -> Error message)
+      in
+      match Domain.join cross_domain with
+      | Error _ -> ()
+      | Ok () -> Alcotest.fail "contract accepted cross-domain use")
+    (fun () ->
+      Eio.Time.sleep clock 1.0;
+      Alcotest.fail "runtime contract conformance timed out")
+
+let test_effect_timeout_cancellation_stays_on_owner_domain () =
+  with_test_clock @@ fun sw clock rt ->
+  let owner = Domain.self () in
+  let finalizer_domain = ref None in
+  let body =
+    Effect.delay (Duration.ms 1_000) Effect.unit
+    |> Effect.finally
+         (Effect.sync (fun () -> finalizer_domain := Some (Domain.self ())))
+  in
+  let promise = fork_run sw rt (Effect.timeout (Duration.ms 1) body) in
+  wait_for_sleepers clock 2;
+  Test_clock.adjust clock (Duration.ms 1);
+  match Eio.Promise.await promise with
+  | Exit.Error (Cause.Fail `Timeout) ->
+      Alcotest.(check (option bool))
+        "timeout finalizer ran on owner" (Some true)
+        (Option.map (fun domain -> domain = owner) !finalizer_domain)
+  | Exit.Error cause ->
+      Alcotest.failf "expected timeout, got %a"
+        (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>"))
+        cause
+  | Exit.Ok () -> Alcotest.fail "expected timeout"
+
 let test_effect_catch_preserves_concurrent_interrupt () =
   with_test_clock @@ fun sw _clock rt ->
   let handler_ran = ref false in
