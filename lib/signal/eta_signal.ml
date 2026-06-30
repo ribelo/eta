@@ -863,20 +863,29 @@ module Make (Observer_error : Observer_error) () = struct
     in
     visit (P inner)
 
-  let timer_stop_unlocked ?(cancel_running = true) timer =
+  let timer_cancel_running_unlocked timer =
+    let cancel = timer.timer_cancel in
+    timer.timer_running_generation <- None;
+    timer.timer_cancel <- None;
+    Option.iter (fun cancel -> cancel ()) cancel
+
+  let timer_invalidate_generation_unlocked timer =
+    timer.timer_generation <-
+      checked_succ "timer generation" timer.timer_generation
+
+  let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
     if
       (not timer.timer_active)
       && Option.is_none timer.timer_running_generation
       && Option.is_none timer.timer_cancel
     then ()
     else (
-      let cancel = timer.timer_cancel in
       timer.timer_active <- false;
-      timer.timer_running_generation <- None;
-      timer.timer_cancel <- None;
-      if cancel_running then Option.iter (fun cancel -> cancel ()) cancel;
-      timer.timer_generation <-
-        checked_succ "timer generation" timer.timer_generation)
+      if cancel_running then timer_cancel_running_unlocked timer
+      else (
+        timer.timer_running_generation <- None;
+        timer.timer_cancel <- None);
+      timer_invalidate_generation_unlocked timer)
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -989,7 +998,7 @@ module Make (Observer_error : Observer_error) () = struct
       let dependencies = signal.dependencies in
       let dependents = signal.dependents in
       Option.iter
-        (fun timer -> timer_stop_unlocked timer)
+        (fun timer -> timer_mark_unneeded_unlocked timer)
         signal.timer;
       signal.valid <- false;
       record_dead_node_unlocked (P signal);
@@ -1455,7 +1464,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_finish_unlocked timer =
     timer.timer_finished <- true;
-    timer_stop_unlocked ~cancel_running:false timer
+    timer_mark_unneeded_unlocked ~cancel_running:false timer
 
   let timer_has_current_start timer =
     match timer.timer_running_generation with
@@ -1539,7 +1548,7 @@ module Make (Observer_error : Observer_error) () = struct
     |> List.filter_map (fun (id, timer) ->
            if Hashtbl.mem needed id then timer_start_unlocked timer
            else (
-             timer_stop_unlocked timer;
+             timer_mark_unneeded_unlocked timer;
              None))
 
   let refresh_timer_demand () =
@@ -2351,7 +2360,7 @@ module Make (Observer_error : Observer_error) () = struct
             timer.timer_running_generation <- None;
             timer.timer_cancel <- None;
             if timer.timer_active then
-              timer_stop_unlocked ~cancel_running:false timer))
+              timer_mark_unneeded_unlocked ~cancel_running:false timer))
 
     let timer_cleanup_after_exit timer generation = function
       | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
