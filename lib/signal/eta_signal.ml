@@ -338,7 +338,14 @@ module Make (Observer_error : Observer_error) () = struct
     source_timer_update : 'err. timer_node -> int -> 'a var -> (unit, 'err) Effect.t;
   }
 
+  type disposal_hook = unit -> unit
+
   type event = E : 'a observer * 'a update -> event
+
+  type pure_stabilize_result =
+    | Pure_ok of disposal_hook list * event list
+    | Pure_graph_error of disposal_hook list * graph_error
+    | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
   type lane_waiter_state =
     | Lane_waiting
@@ -376,6 +383,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable staged_binds : packed_bind list;
     mutable computed_nodes : packed_signal list;
     mutable staged_observers : packed_observer list;
+    mutable pure_disposal_hooks : disposal_hook list;
     mutable observers : packed_observer list;
     mutable all_nodes : packed_signal list;
     mutable dead_nodes : dead_signal list;
@@ -412,6 +420,7 @@ module Make (Observer_error : Observer_error) () = struct
       staged_binds = [];
       computed_nodes = [];
       staged_observers = [];
+      pure_disposal_hooks = [];
       observers = [];
       all_nodes = [];
       dead_nodes = [];
@@ -1119,26 +1128,35 @@ module Make (Observer_error : Observer_error) () = struct
       observer.obs_staged_current <- None;
       observer.obs_staged_delivery_state <- None)
 
+  let remember_pure_disposal_hooks hooks =
+    graph.pure_disposal_hooks <- hooks @ graph.pure_disposal_hooks
+
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
     List.iter rollback_var graph.staged_vars;
-    let disposal_hooks = List.concat_map rollback_bind graph.staged_binds in
+    let disposal_hooks =
+      List.concat_map rollback_bind graph.staged_binds @ graph.pure_disposal_hooks
+    in
     List.iter rollback_observer graph.staged_observers;
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
+    graph.pure_disposal_hooks <- [];
     disposal_hooks
 
   let commit_staging () =
     List.iter commit_var graph.staged_vars;
-    let disposal_hooks = List.concat_map commit_bind graph.staged_binds in
+    let commit_hooks = List.concat_map commit_bind graph.staged_binds in
+    remember_pure_disposal_hooks commit_hooks;
     List.iter commit_signal graph.computed_nodes;
     List.iter commit_observer graph.staged_observers;
+    let disposal_hooks = graph.pure_disposal_hooks in
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
+    graph.pure_disposal_hooks <- [];
     graph.pure_snapshot_commit_count <-
       saturating_succ graph.pure_snapshot_commit_count;
     disposal_hooks
@@ -1374,9 +1392,10 @@ module Make (Observer_error : Observer_error) () = struct
               in
               (inner, inner_value, changed, dependencies)
             with exn ->
+              let backtrace = Printexc.get_raw_backtrace () in
               graph.current_scope <- previous_scope;
-              ignore (invalidate_scope scope);
-              raise exn
+              remember_pure_disposal_hooks (invalidate_scope scope);
+              Printexc.raise_with_backtrace exn backtrace
           in
           stage_bind_switch bind source_value inner scope;
           stage_dependency_versions signal dependencies;
@@ -1493,6 +1512,16 @@ module Make (Observer_error : Observer_error) () = struct
     | [] -> Effect.unit
     | hooks -> Effect.sync (fun () -> List.iter (fun hook -> hook ()) hooks)
 
+  let fail_with_disposal_hooks hooks effect =
+    effect |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
+
+  let graph_error_with_disposal_hooks hooks err =
+    fail_with_disposal_hooks hooks (Effect.fail (err :> stabilize_error))
+
+  let defect_with_disposal_hooks hooks exn backtrace =
+    fail_with_disposal_hooks hooks
+      (Effect.sync (fun () -> Printexc.raise_with_backtrace exn backtrace))
+
   let dispose_observer_effect observer =
     with_graph_lane_sync
       (fun () ->
@@ -1548,7 +1577,8 @@ module Make (Observer_error : Observer_error) () = struct
       observer.obs_delivery_state <- Observer_delivered (delivered_value update)
 
   let begin_stabilize () =
-    if graph.phase <> Not_stabilizing then Error ([], `Reentrant_stabilization)
+    if graph.phase <> Not_stabilizing then
+      Pure_graph_error ([], `Reentrant_stabilization)
     else (
       let generation =
         checked_succ "stabilization generation" graph.stabilization_id
@@ -1559,6 +1589,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_vars <- [];
       graph.staged_binds <- [];
       graph.staged_observers <- [];
+      graph.pure_disposal_hooks <- [];
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
       List.iter (fun (V var) -> var.queued <- false) pending_at_start;
@@ -1575,14 +1606,15 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.phase <- Running_observers;
-        Ok (hooks, events)
+        Pure_ok (hooks, events)
       with
       | Graph_error err ->
           let hooks = rollback_pure observers pending_at_start in
-          Error (hooks, err)
+          Pure_graph_error (hooks, err)
       | exn ->
-          ignore (rollback_pure observers pending_at_start);
-          raise exn)
+          let backtrace = Printexc.get_raw_backtrace () in
+          let hooks = rollback_pure observers pending_at_start in
+          Pure_defect (hooks, exn, backtrace))
 
   let finish_stabilize () =
     match graph.phase with
@@ -1655,10 +1687,10 @@ module Make (Observer_error : Observer_error) () = struct
   let stabilize =
     with_graph_lane_sync begin_stabilize
     |> Effect.bind (function
-         | Error (hooks, err) ->
-             run_disposal_hooks hooks
-             |> Effect.bind (fun () -> Effect.fail (err :> stabilize_error))
-         | Ok (hooks, events) ->
+         | Pure_graph_error (hooks, err) -> graph_error_with_disposal_hooks hooks err
+         | Pure_defect (hooks, exn, backtrace) ->
+             defect_with_disposal_hooks hooks exn backtrace
+         | Pure_ok (hooks, events) ->
              (refresh_timer_demand ()
               |> Effect.bind (fun () -> run_disposal_hooks hooks)
               |> Effect.bind (fun () -> run_events events)
