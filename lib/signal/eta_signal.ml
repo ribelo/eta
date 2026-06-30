@@ -138,6 +138,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   type scope = {
     scope_id : scope_id;
+    scope_owner : signal_id;
+    scope_parent : scope option;
     mutable scope_valid : bool;
     mutable scope_nodes : packed_signal list;
   }
@@ -323,6 +325,8 @@ module Make (Observer_error : Observer_error) () = struct
     dead_dependency_count : int;
     dead_dependent_count : int;
     dead_scope_id : scope_id option;
+    dead_scope_owner : signal_id option;
+    dead_scope_parent : scope_id option;
     dead_scope_valid : bool option;
     dead_timer : dead_timer option;
   }
@@ -603,10 +607,16 @@ module Make (Observer_error : Observer_error) () = struct
   let next_var_id () = Var_id (next_id ())
   let next_observer_id () = Observer_id (next_id ())
 
-  let new_scope () =
+  let new_scope owner =
     let id = graph.next_scope_id in
     graph.next_scope_id <- checked_succ "scope id" id;
-    { scope_id = Scope_id id; scope_valid = true; scope_nodes = [] }
+    {
+      scope_id = Scope_id id;
+      scope_owner = owner.id;
+      scope_parent = owner.scope;
+      scope_valid = true;
+      scope_nodes = [];
+    }
 
   let current_generation () = graph.stabilization_id
 
@@ -786,12 +796,21 @@ module Make (Observer_error : Observer_error) () = struct
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
+  let rec scope_is_ancestor ~ancestor scope =
+    ancestor == scope
+    ||
+    match scope.scope_parent with
+    | None -> false
+    | Some parent -> scope_is_ancestor ~ancestor parent
+
   let validate_bind_inner_scope scope inner =
     if not inner.valid then raise (Graph_error `Invalid_scope);
     match inner.scope with
     | None -> ()
-    | Some inner_scope when inner_scope == scope -> ()
-    | Some _ -> raise (Graph_error `Invalid_scope)
+    | Some inner_scope ->
+        if inner_scope.scope_valid && scope_is_ancestor ~ancestor:inner_scope scope
+        then ()
+        else raise (Graph_error `Invalid_scope)
 
   let timer_stop_unlocked ?(cancel_running = true) timer =
     let cancel = timer.timer_cancel in
@@ -863,10 +882,14 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let signal_tombstone (P signal) =
-    let dead_scope_id, dead_scope_valid =
+    let dead_scope_id, dead_scope_owner, dead_scope_parent, dead_scope_valid =
       match signal.scope with
-      | None -> (None, None)
-      | Some scope -> (Some scope.scope_id, Some scope.scope_valid)
+      | None -> (None, None, None, None)
+      | Some scope ->
+          ( Some scope.scope_id,
+            Some scope.scope_owner,
+            Option.map (fun parent -> parent.scope_id) scope.scope_parent,
+            Some scope.scope_valid )
     in
     {
       dead_id = signal.id;
@@ -879,6 +902,8 @@ module Make (Observer_error : Observer_error) () = struct
       dead_dependency_count = List.length signal.dependencies;
       dead_dependent_count = List.length signal.dependents;
       dead_scope_id;
+      dead_scope_owner;
+      dead_scope_parent;
       dead_scope_valid;
       dead_timer = Option.map timer_tombstone signal.timer;
     }
@@ -1308,7 +1333,7 @@ module Make (Observer_error : Observer_error) () = struct
           | Some previous -> not (bind.source.equal previous source_value)
         in
         if needs_new_inner then (
-          let scope = new_scope () in
+          let scope = new_scope signal in
           let previous_scope = graph.current_scope in
           let inner, inner_value, changed, dependencies =
             try
@@ -1858,14 +1883,27 @@ module Make (Observer_error : Observer_error) () = struct
   let signal_scope_fields : type a. a signal -> string list =
    fun signal ->
     match signal.scope with
-    | None -> [ "scope=root"; "scope_id=root" ]
+    | None ->
+        [
+          "scope=root";
+          "scope_id=root";
+          "scope_owner=root";
+          "scope_parent=root";
+        ]
     | Some scope ->
+        let parent =
+          match scope.scope_parent with
+          | None -> "root"
+          | Some parent -> scope_id_label parent.scope_id
+        in
         [
           "scope="
           ^ scope_id_label scope.scope_id
           ^ ":"
           ^ (if scope.scope_valid then "valid" else "invalid");
           "scope_id=" ^ scope_id_label scope.scope_id;
+          "scope_owner=" ^ signal_id_label scope.scope_owner;
+          "scope_parent=" ^ parent;
         ]
 
   let signal_timer_fields : type a. a signal -> string list =
@@ -1897,15 +1935,31 @@ module Make (Observer_error : Observer_error) () = struct
     ]
 
   let dead_signal_scope_fields dead =
-    match (dead.dead_scope_id, dead.dead_scope_valid) with
-    | None, None -> [ "scope=root"; "scope_id=root" ]
-    | Some scope_id, Some scope_valid ->
+    match
+      ( dead.dead_scope_id,
+        dead.dead_scope_owner,
+        dead.dead_scope_parent,
+        dead.dead_scope_valid )
+    with
+    | None, None, None, None ->
+        [
+          "scope=root";
+          "scope_id=root";
+          "scope_owner=root";
+          "scope_parent=root";
+        ]
+    | Some scope_id, Some owner, parent, Some scope_valid ->
         [
           "scope="
           ^ scope_id_label scope_id
           ^ ":"
           ^ (if scope_valid then "valid" else "invalid");
           "scope_id=" ^ scope_id_label scope_id;
+          "scope_owner=" ^ signal_id_label owner;
+          "scope_parent="
+          ^ Option.fold ~none:"root"
+              ~some:(fun parent -> scope_id_label parent)
+              parent;
         ]
     | _ -> invalid_arg "Eta_signal: inconsistent dead signal scope"
 

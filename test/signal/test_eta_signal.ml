@@ -1560,6 +1560,28 @@ let test_bind_rejects_reused_dynamic_scope_inner () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_accepts_ancestor_dynamic_scope_inner () =
+  with_runtime @@ fun rt ->
+  let outer_source = Signal.Var.create true in
+  let inner_source = Signal.Var.create 0 in
+  let inner_watch = Signal.Var.watch inner_source in
+  let selected =
+    Signal.bind (Signal.Var.watch outer_source) (fun _ ->
+        let ancestor = Signal.map (fun value -> value + 10) inner_watch in
+        Signal.bind inner_watch (fun _ -> ancestor))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial ancestor inner" 10
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set inner_source 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "updated ancestor inner" 11
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_bind_switch_invalidates_external_derived_branch_dependents () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -3226,6 +3248,10 @@ let test_to_dot_debug_options_expose_hidden_state () =
     (count_occurrences debug_dot "var_id=v" > 0);
   Alcotest.(check bool) "debug dot labels scope identities" true
     (count_occurrences debug_dot "scope_id=sc" > 0);
+  Alcotest.(check bool) "debug dot labels scope owners" true
+    (count_occurrences debug_dot "scope_owner=s" > 0);
+  Alcotest.(check bool) "debug dot labels scope parents" true
+    (count_occurrences debug_dot "scope_parent=" > 0);
   run_ok rt (Dot_signal.Observer.dispose observer);
   run_ok rt (Dot_signal.Observer.dispose timer_observer);
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
@@ -4729,6 +4755,8 @@ let () =
             test_invalidated_bind_rhs_cannot_be_wrapped;
           Alcotest.test_case "bind rejects reused dynamic-scope inner" `Quick
             test_bind_rejects_reused_dynamic_scope_inner;
+          Alcotest.test_case "bind accepts ancestor dynamic-scope inner" `Quick
+            test_bind_accepts_ancestor_dynamic_scope_inner;
           Alcotest.test_case "bind switch invalidates external branch dependents"
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
           Alcotest.test_case "bind switch invalidates branch observers" `Quick
