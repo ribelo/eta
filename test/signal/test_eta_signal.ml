@@ -5004,6 +5004,69 @@ let test_time_validation_errors () =
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.deadline ~every:(Duration.ms 1) 0)))
 
+let with_yield_after_daemon_fork_runtime f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let daemon_forked, daemon_forked_resolver = Eio.Promise.create () in
+  let daemon_forked_once = ref false in
+  let module Eio_ops = struct
+    module Time = Eio.Time
+    module Net = Eio.Net
+    module Flow = Eio.Flow
+    module Switch = Eio.Switch
+
+    module Fiber = struct
+      let get = Eio.Fiber.get
+      let with_binding = Eio.Fiber.with_binding
+      let first = Eio.Fiber.first
+      let await_cancel = Eio.Fiber.await_cancel
+      let fork = Eio.Fiber.fork
+
+      let fork_daemon ~sw f =
+        Eio.Fiber.fork_daemon ~sw f;
+        if not !daemon_forked_once then (
+          daemon_forked_once := true;
+          Eio.Promise.resolve daemon_forked_resolver ();
+          Eio.Fiber.yield ())
+
+      let yield = Eio.Fiber.yield
+      let check = Eio.Fiber.check
+    end
+
+    module Stream = Eio.Stream
+    module Cancel = Eio.Cancel
+  end in
+  let host =
+    Eta_eio.Host.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()
+  in
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env) @@ fun rt ->
+  f sw rt daemon_forked
+
+let test_stream_observe_timer_initialization_race () =
+  with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let stabilize =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Promise.await daemon_forked;
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  let observe =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen (Signal.Stream.observe signal)))
+  in
+  let observer, stream =
+    expect_exit_ok "stream observe race registration"
+      (Eio.Promise.await_exn observe)
+  in
+  expect_exit_ok "stream observe race stabilize"
+    (Eio.Promise.await_exn stabilize);
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 0 ] -> ()
+   | _ -> Alcotest.fail "expected initialized stream update");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_emits_after_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -5724,6 +5787,8 @@ let () =
             test_time_step_defect_logs_daemon_diagnostic_and_restarts;
           Alcotest.test_case "time validation errors" `Quick
             test_time_validation_errors;
+          Alcotest.test_case "stream observe timer initialization race" `Quick
+            test_stream_observe_timer_initialization_race;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick
             test_stream_bridge_emits_after_stabilize;
           Alcotest.test_case "stream bridge validates capacity" `Quick

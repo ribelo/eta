@@ -1959,17 +1959,17 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
-    let observe_with_hooks ?(equal = default_equal) ?(on_finish = []) signal
-        callback =
+    let observe_with_hooks_callback ?(equal = default_equal) ?(on_finish = [])
+        signal callback =
       with_graph_lane_sync (fun () ->
           if not signal.valid then Error `Invalid_scope
           else
-            let observer =
+            let rec observer =
               {
                 obs_id = next_observer_id ();
                 obs_signal = signal;
                 obs_equal = equal;
-                obs_callback = callback;
+                obs_callback = (fun update -> callback observer update);
                 obs_value_state = Observer_uninitialized;
                 obs_staged_current = None;
                 obs_delivery_state = Observer_never_delivered;
@@ -1993,6 +1993,10 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.on_exit (fun _exit ->
                     if !transferred then Effect.unit
                     else dispose_observer_effect observer))
+
+    let observe_with_hooks ?equal ?on_finish signal callback =
+      observe_with_hooks_callback ?equal ?on_finish signal
+        (fun _observer update -> callback update)
 
     let observe ?equal signal callback = observe_with_hooks ?equal signal callback
 
@@ -2755,8 +2759,7 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> create_bridge_queue capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
-             let observer_ref = ref None in
-             Observer.observe_with_hooks ?equal
+             Observer.observe_with_hooks_callback ?equal
                ~on_finish:
                  [
                    (function
@@ -2766,16 +2769,10 @@ module Make (Observer_error : Observer_error) () = struct
                    | Observer_active -> ());
                  ]
                signal
-               (fun update ->
-                 match !observer_ref with
-                 | Some observer -> offer_bridge_update observer on_drop queue update
-                 | None ->
-                     Effect.sync (fun () ->
-                         failwith
-                           "Eta_signal.Stream.observe: observer not registered"))
+               (fun observer update ->
+                 offer_bridge_update observer on_drop queue update)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
-                    observer_ref := Some observer;
                     (observer, Eta_stream.Stream.from_queue queue)))
   end
 end
