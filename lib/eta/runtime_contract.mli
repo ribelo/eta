@@ -68,10 +68,12 @@ type t = {
     This record is one of the two runtime layers Eta intentionally exposes:
     backend packages author against the typed {!RUNTIME} module shape, and
     {!of_runtime} erases that implementation into this record for the root
-    interpreter. The [Obj.t] representation is confined to the adapter and
-    {!Backend} bridge below; do not add another mirror record of backend
-    operations. Concurrency and parallelism semantics belong to the backend
-    implementation; the contract only states what Eta can ask for.
+    interpreter. Erased values are wrapped in distinct private token kinds for
+    scopes, cancellation handles, promises, resolvers, and streams. The [Obj.t]
+    representation is confined to those wrappers, the adapter, and {!Backend}
+    bridge below; do not add another mirror record of backend operations.
+    Concurrency and parallelism semantics belong to the backend implementation;
+    the contract only states what Eta can ask for.
 
     [now_ms] is monotonic runtime time in milliseconds, not wall/civil time.
     [sleep] must suspend on the same monotonic time base. Eta timers,
@@ -184,7 +186,9 @@ module Backend : sig
   val stream : Obj.t -> 'a stream
   val stream_value : 'a stream -> Obj.t
 end
-(** Unsafe token bridge for backend packages and {!of_runtime}. Keep use
+(** Unsafe token bridge for backend packages and {!of_runtime}. Each function
+    still preserves the runtime token kind in Eta's representation, but the
+    payload crossing this bridge is an unchecked backend-owned [Obj.t]. Keep use
     localized to runtime implementations such as [eta_eio] and do not build
     additional erased runtime surfaces on top of it. Tokens produced directly by
     this bridge are raw backend values; ordinary code should use tokens returned

@@ -3,11 +3,11 @@ type token = {
   value : Obj.t;
 }
 
-type scope = token
-type cancel_context = token
-type 'a promise = token
-type 'a resolver = token
-type 'a stream = token
+type scope = Scope of token
+type cancel_context = Cancel_context of token
+type 'a promise = Promise of token
+type 'a resolver = Resolver of token
+type 'a stream = Stream of token
 type 'a local = 'a Type.Id.t
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -97,6 +97,21 @@ let checked_token_value runtime_id token =
   if token.runtime_id <> runtime_id then invalid_arg foreign_runtime_token;
   token.value
 
+let checked_scope_value runtime_id (Scope token) =
+  checked_token_value runtime_id token
+
+let checked_cancel_context_value runtime_id (Cancel_context token) =
+  checked_token_value runtime_id token
+
+let checked_promise_value runtime_id (Promise token) =
+  checked_token_value runtime_id token
+
+let checked_resolver_value runtime_id (Resolver token) =
+  checked_token_value runtime_id token
+
+let checked_stream_value runtime_id (Stream token) =
+  checked_token_value runtime_id token
+
 let worker_context_probes : (unit -> bool) list Atomic.t = Atomic.make []
 
 let rec register_worker_context_probe probe =
@@ -124,37 +139,44 @@ module Backend = struct
     | Some Type.Equal -> Some value
     | None -> None
 
-  let unsafe_token value = token unsafe_runtime_id value
-  let token_value token = token.value
-  let scope = unsafe_token
-  let scope_value = token_value
-  let cancel_context = unsafe_token
-  let cancel_context_value = token_value
-  let promise = unsafe_token
-  let promise_value = token_value
-  let resolver = unsafe_token
-  let resolver_value = token_value
-  let stream = unsafe_token
-  let stream_value = token_value
+  let unsafe_token value = { runtime_id = unsafe_runtime_id; value }
+  let scope value = Scope (unsafe_token value)
+  let scope_value (Scope token) = token.value
+  let cancel_context value = Cancel_context (unsafe_token value)
+  let cancel_context_value (Cancel_context token) = token.value
+  let promise value = Promise (unsafe_token value)
+  let promise_value (Promise token) = token.value
+  let resolver value = Resolver (unsafe_token value)
+  let resolver_value (Resolver token) = token.value
+  let stream value = Stream (unsafe_token value)
+  let stream_value (Stream token) = token.value
 end
 
 let of_runtime (module R : RUNTIME) =
   let runtime_id = fresh_runtime_id () in
+  let scope value = Scope (token runtime_id (Obj.repr value)) in
+  let cancel_context value =
+    Cancel_context (token runtime_id (Obj.repr value))
+  in
+  let promise value = Promise (token runtime_id (Obj.repr value)) in
+  let resolver value = Resolver (token runtime_id (Obj.repr value)) in
+  let stream value = Stream (token runtime_id (Obj.repr value)) in
   let scope_value scope =
-    (Obj.obj (checked_token_value runtime_id scope) : R.scope)
+    (Obj.obj (checked_scope_value runtime_id scope) : R.scope)
   in
   let cancel_context_value cancel_context =
-    (Obj.obj (checked_token_value runtime_id cancel_context) : R.cancel_context)
+    (Obj.obj
+       (checked_cancel_context_value runtime_id cancel_context)
+      : R.cancel_context)
   in
-  let own value = token runtime_id (Obj.repr value) in
   {
-    root_scope = own R.root_scope;
+    root_scope = scope R.root_scope;
     now_ms = R.now_ms;
     sleep = R.sleep;
     protect = R.protect;
     run_scope =
       (fun ?name f ->
-        R.run_scope ?name @@ fun scope -> f (own scope));
+        R.run_scope ?name @@ fun child_scope -> f (scope child_scope));
     fail_scope =
       (fun ?bt scope exn -> R.fail_scope ?bt (scope_value scope) exn);
     fork = (fun scope f -> R.fork (scope_value scope) f);
@@ -164,39 +186,41 @@ let of_runtime (module R : RUNTIME) =
     check = R.check;
     create_promise =
       (fun (type a) () ->
-        let promise, resolver = R.create_promise () in
-        (own promise, own resolver));
+        let raw_promise, raw_resolver = R.create_promise () in
+        (promise raw_promise, resolver raw_resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
         let resolver =
-          (Obj.obj (checked_token_value runtime_id resolver) : a R.resolver)
+          (Obj.obj
+             (checked_resolver_value runtime_id resolver)
+            : a R.resolver)
         in
         R.resolve_promise resolver value);
     await_promise =
       (fun (type a) (promise : a promise) ->
         let promise =
-          (Obj.obj (checked_token_value runtime_id promise) : a R.promise)
+          (Obj.obj (checked_promise_value runtime_id promise) : a R.promise)
         in
         R.await_promise promise);
     create_stream =
       (fun (type a) capacity ->
-        token runtime_id (Obj.repr (R.create_stream capacity : a R.stream)));
+        stream (R.create_stream capacity : a R.stream));
     stream_add =
       (fun (type a) (stream : a stream) (value : a) ->
         let stream =
-          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
+          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
         R.stream_add stream value);
     stream_take =
       (fun (type a) (stream : a stream) ->
         let stream =
-          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
+          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
         R.stream_take stream);
     stream_take_nonblocking =
       (fun (type a) (stream : a stream) ->
         let stream =
-          (Obj.obj (checked_token_value runtime_id stream) : a R.stream)
+          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
         R.stream_take_nonblocking stream);
     with_worker_context = R.with_worker_context;
@@ -206,7 +230,7 @@ let of_runtime (module R : RUNTIME) =
     cancel_sub =
       (fun f ->
         R.cancel_sub @@ fun cancel ->
-        f (own cancel));
+        f (cancel_context cancel));
     cancel =
       (fun cancel_context exn ->
         R.cancel (cancel_context_value cancel_context) exn);
