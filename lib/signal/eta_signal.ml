@@ -2,7 +2,6 @@ module Effect = Eta.Effect
 module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
-module Schedule = Eta.Schedule
 module Sync_lock = Eta.Sync_lock
 
 module type Observer_error = sig
@@ -363,12 +362,11 @@ module Make (Observer_error : Observer_error) () = struct
   type lane_waiter_state =
     | Lane_waiting
     | Lane_granted
-    | Lane_claimed
     | Lane_cancelled
 
   type lane_claim_result =
-    | Lane_claimed_ok
-    | Lane_claim_cancelled
+    | Lane_grant_accepted
+    | Lane_grant_cancelled
 
   type lane_waiter = {
     lane_contract : Runtime_contract.t;
@@ -484,8 +482,7 @@ module Make (Observer_error : Observer_error) () = struct
       let waiter = Stdlib.Queue.take waiters in
       match waiter.lane_state with
       | Lane_waiting -> Some waiter
-      | Lane_granted | Lane_claimed | Lane_cancelled ->
-          take_waiting_waiter waiters
+      | Lane_granted | Lane_cancelled -> take_waiting_waiter waiters
 
   let compact_cancelled_lane_waiters_locked lane =
     if lane.lane_cancelled > 0 then (
@@ -494,7 +491,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun waiter ->
           match waiter.lane_state with
           | Lane_waiting -> Stdlib.Queue.push waiter live
-          | Lane_granted | Lane_claimed | Lane_cancelled -> ())
+          | Lane_granted | Lane_cancelled -> ())
         lane.lane_waiters;
       Stdlib.Queue.clear lane.lane_waiters;
       Stdlib.Queue.iter
@@ -531,22 +528,14 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_cancelled;
         lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
         release_lane_locked lane
-    | Lane_claimed ->
-        waiter.lane_state <- Lane_cancelled;
-        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
-        release_lane_locked lane
     | Lane_cancelled -> None
 
   let claim_lane_waiter_locked waiter =
     match waiter.lane_state with
-    | Lane_granted ->
-        waiter.lane_state <- Lane_claimed;
-        Lane_claimed_ok
+    | Lane_granted -> Lane_grant_accepted
     | Lane_waiting ->
         lane_invariant_failed "lane waiter was not granted"
-    | Lane_claimed ->
-        lane_invariant_failed "lane waiter was already claimed"
-    | Lane_cancelled -> Lane_claim_cancelled
+    | Lane_cancelled -> Lane_grant_cancelled
 
   let with_lane_lock_during_cancel contract lane f =
     contract.Runtime_contract.protect (fun () -> with_lane_lock lane f)
@@ -572,18 +561,27 @@ module Make (Observer_error : Observer_error) () = struct
     with
     | `Ready -> ()
     | `Wait (promise, waiter) -> (
+        let claimed = ref false in
         try
           contract.Runtime_contract.await_promise promise;
           (match
              with_lane_lock_during_cancel contract lane (fun () ->
-                 claim_lane_waiter_locked waiter)
+                 match claim_lane_waiter_locked waiter with
+                 | Lane_grant_accepted ->
+                     claimed := true;
+                     Lane_grant_accepted
+                 | Lane_grant_cancelled -> Lane_grant_cancelled)
            with
-           | Lane_claimed_ok -> ()
-           | Lane_claim_cancelled -> contract.Runtime_contract.await_cancel ())
+           | Lane_grant_accepted -> ()
+           | Lane_grant_cancelled -> contract.Runtime_contract.await_cancel ())
         with exn
           when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-          with_lane_lock_during_cancel contract lane (fun () ->
-              cancel_lane_waiter_locked lane waiter)
+          (if !claimed then
+             with_lane_lock_during_cancel contract lane (fun () ->
+                 release_lane_locked lane)
+           else
+             with_lane_lock_during_cancel contract lane (fun () ->
+                 cancel_lane_waiter_locked lane waiter))
           |> Option.iter resolve_lane_waiter;
           raise exn)
 
