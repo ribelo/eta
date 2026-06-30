@@ -1582,27 +1582,68 @@ module Make (Observer_error : Observer_error) () = struct
   let run_disposal_hooks_as_finalizers hooks =
     Effect.unit |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
 
-  let fail_with_disposal_hooks hooks effect =
-    effect |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
+  let run_pending_disposal_hooks_as_finalizers hooks_ref =
+    match !hooks_ref with
+    | [] -> Effect.unit
+    | hooks ->
+        run_disposal_hooks_as_finalizers hooks
+        |> Effect.on_exit (fun _exit ->
+               Effect.sync (fun () -> hooks_ref := []))
 
-  let graph_error_with_disposal_hooks hooks err =
-    fail_with_disposal_hooks hooks (Effect.fail (err :> stabilize_error))
+  let fail_with_pending_disposal_hooks hooks_ref effect =
+    effect
+    |> Effect.on_exit (fun _exit ->
+           run_pending_disposal_hooks_as_finalizers hooks_ref)
 
-  let defect_with_disposal_hooks hooks exn backtrace =
-    fail_with_disposal_hooks hooks
+  let graph_error_with_pending_disposal_hooks hooks_ref err =
+    fail_with_pending_disposal_hooks hooks_ref
+      (Effect.fail (err :> stabilize_error))
+
+  let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
+    fail_with_pending_disposal_hooks hooks_ref
       (Effect.sync (fun () -> Printexc.raise_with_backtrace exn backtrace))
 
+  let run_pending_stabilize_cleanup hooks_ref refresh_timers =
+    if !refresh_timers then
+      (Effect.sync (fun () -> refresh_timers := false)
+       |> Effect.bind (fun () ->
+              refresh_timer_demand ()
+              |> Effect.bind (fun () ->
+                     run_pending_disposal_hooks_as_finalizers hooks_ref)))
+      |> Effect.uninterruptible
+    else run_pending_disposal_hooks_as_finalizers hooks_ref
+
+  let pending_disposal_hooks hooks_ref =
+    match !hooks_ref with
+    | [] -> false
+    | _ :: _ -> true
+
+  let run_pending_dispose_cleanup hooks_ref refresh_timers =
+    if !refresh_timers || pending_disposal_hooks hooks_ref then
+      ((if !refresh_timers then
+          Effect.sync (fun () -> refresh_timers := false)
+          |> Effect.bind (fun () -> refresh_timer_demand ())
+        else Effect.unit)
+       |> Effect.bind (fun () ->
+              run_pending_disposal_hooks_as_finalizers hooks_ref))
+      |> Effect.uninterruptible
+    else Effect.unit
+
   let dispose_observer_effect observer =
+    let hooks_ref = ref [] in
+    let refresh_timers = ref false in
     with_graph_lane_sync
       (fun () ->
         if observer.obs_state <> Observer_disposed then (
           let hooks = dispose_observer_unlocked observer in
-          update_necessity_counters_unlocked ();
-          hooks)
-        else [])
-    |> Effect.bind (fun hooks ->
-           refresh_timer_demand ()
-           |> Effect.bind (fun () -> run_disposal_hooks_as_finalizers hooks))
+          hooks_ref := hooks;
+          refresh_timers := true;
+          update_necessity_counters_unlocked ())
+        else ())
+    |> Effect.bind (fun () ->
+           run_pending_dispose_cleanup hooks_ref refresh_timers)
+    |> Effect.on_exit (fun _exit ->
+           run_pending_dispose_cleanup hooks_ref refresh_timers)
 
   let delivered_value = function
     | Initialized value -> value
@@ -1778,18 +1819,45 @@ module Make (Observer_error : Observer_error) () = struct
                      run_observer_effect observer token update observer_eff
                      |> Effect.bind (fun () -> run_events rest))))
 
+  let begin_stabilize_with_pending_hooks hooks_ref finish_needed =
+    let result = begin_stabilize () in
+    let hooks =
+      match result with
+      | Pure_ok (hooks, _) | Pure_graph_error (hooks, _)
+      | Pure_defect (hooks, _, _) ->
+          hooks
+    in
+    hooks_ref := hooks;
+    (match result with
+     | Pure_ok _ -> finish_needed := true
+     | Pure_graph_error _ | Pure_defect _ -> ());
+    result
+
+  let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
+      finish_needed =
+    run_pending_stabilize_cleanup hooks_ref refresh_timers
+    |> Effect.on_exit (fun _exit ->
+           if !finish_needed then with_graph_lane_sync finish_stabilize
+           else Effect.unit)
+
   let stabilize =
-    with_graph_lane_sync begin_stabilize
-    |> Effect.bind (function
-         | Pure_graph_error (hooks, err) -> graph_error_with_disposal_hooks hooks err
-         | Pure_defect (hooks, exn, backtrace) ->
-             defect_with_disposal_hooks hooks exn backtrace
-         | Pure_ok (hooks, events) ->
-             (refresh_timer_demand ()
-              |> Effect.bind (fun () -> run_disposal_hooks_as_finalizers hooks)
-              |> Effect.bind (fun () -> run_events events)
-              |> Effect.bind mark_callback_delivery_complete)
-             |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))
+    Effect.sync (fun () -> (ref [], ref false, ref false))
+    |> Effect.bind (fun (hooks_ref, refresh_timers, finish_needed) ->
+           with_graph_lane_sync (fun () ->
+               begin_stabilize_with_pending_hooks hooks_ref finish_needed)
+           |> Effect.bind (function
+                | Pure_graph_error (_, err) ->
+                    graph_error_with_pending_disposal_hooks hooks_ref err
+                | Pure_defect (_, exn, backtrace) ->
+                    defect_with_pending_disposal_hooks hooks_ref exn backtrace
+                | Pure_ok (_, events) ->
+                    refresh_timers := true;
+                    run_pending_stabilize_cleanup hooks_ref refresh_timers
+                    |> Effect.bind (fun () -> run_events events)
+                    |> Effect.bind mark_callback_delivery_complete)
+           |> Effect.on_exit (fun _exit ->
+                  finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
+                    finish_needed))
 
   module Var = struct
     type 'a t = 'a var

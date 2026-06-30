@@ -4419,6 +4419,87 @@ let test_disposal_hooks_continue_after_failure () =
     "third dispose hook failure" exit;
   Alcotest.(check bool) "later hook still ran" true !later_hook_ran
 
+let test_observer_dispose_interruption_runs_finish_hooks () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.now := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let observer =
+    expect_exit_ok "observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+                 Effect.unit))))
+  in
+  let hook_ran = ref false in
+  set_observer_on_dispose observer [ (fun _ -> hook_ran := true) ];
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
+  (match Runtime.run rt (widen (Signal.Observer.dispose observer)) with
+  | Exit.Error _ -> ()
+  | Exit.Ok () -> Alcotest.fail "expected injected disposal interruption");
+  Alcotest.(check bool)
+    "interrupted dispose still runs finish hook" true !hook_ran
+
+let test_stabilize_interruption_runs_invalidation_hooks () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.now := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let use_branch = Signal.Var.create true in
+  let captured_branch = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+        if active then (
+          let branch = Signal.const 1 in
+          captured_branch := Some branch;
+          branch)
+        else Signal.const 0)
+  in
+  let selected_observer =
+    expect_exit_ok "selected observer registration"
+      (Runtime.run rt
+         (widen (Signal.Observer.observe selected (fun _ -> Effect.unit))))
+  in
+  ignore
+    (expect_exit_ok "initial stabilize"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  let branch =
+    match !captured_branch with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured dynamic branch"
+  in
+  let branch_observer =
+    expect_exit_ok "branch observer registration"
+      (Runtime.run rt
+         (widen (Signal.Observer.observe branch (fun _ -> Effect.unit))))
+  in
+  let hook_ran = ref false in
+  set_observer_on_dispose branch_observer [ (fun _ -> hook_ran := true) ];
+  ignore
+    (expect_exit_ok "switch branch"
+       (Runtime.run rt (widen (Signal.Var.set use_branch false)))
+      : unit);
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
+  (match Runtime.run rt (widen Signal.stabilize) with
+  | Exit.Error _ -> ()
+  | Exit.Ok () -> Alcotest.fail "expected injected stabilize interruption");
+  Alcotest.(check bool)
+    "interrupted stabilize still runs invalidation hook" true !hook_ran;
+  ignore
+    (expect_exit_ok "selected observer dispose"
+       (Runtime.run rt (widen (Signal.Observer.dispose selected_observer)))
+      : unit)
+
 let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
@@ -5552,6 +5633,10 @@ let () =
             test_time_timer_dispose_cancels_sleeping_daemon;
           Alcotest.test_case "disposal hooks continue after failure" `Quick
             test_disposal_hooks_continue_after_failure;
+          Alcotest.test_case "observer dispose interruption runs finish hooks"
+            `Quick test_observer_dispose_interruption_runs_finish_hooks;
+          Alcotest.test_case "stabilize interruption runs invalidation hooks"
+            `Quick test_stabilize_interruption_runs_invalidation_hooks;
           Alcotest.test_case "time timer dispose hook failure cleans graph"
             `Quick test_time_timer_dispose_hook_failure_still_cleans_graph;
           Alcotest.test_case "time invalidated timer cancels sleeping daemon"
