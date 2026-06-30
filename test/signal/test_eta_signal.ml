@@ -5805,6 +5805,78 @@ let test_stream_bridge_drop_callback_reports_loss () =
    | _ -> Alcotest.fail "expected delivered update after draining");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let drops = ref [] in
+  let interrupt_first_drop = ref true in
+  let before = expect_exit_ok "stats before drop retry"
+      (Runtime.run rt (widen (Signal.stats ())))
+  in
+  let observer, stream =
+    expect_exit_ok "stream observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Stream.observe ~capacity:1
+               ~on_drop:(fun update ->
+                 drops := update :: !drops;
+                 if !interrupt_first_drop then (
+                   interrupt_first_drop := false;
+                   Cleanup_interrupt_runtime.interrupt_on_local_binding_count :=
+                     Some
+                       (!Cleanup_interrupt_runtime.local_binding_count + 1)))
+               signal)))
+  in
+  ignore
+    (expect_exit_ok "initial stabilize"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  ignore
+    (expect_exit_ok "set source"
+       (Runtime.run rt (widen (Signal.Var.set source 2)))
+      : unit);
+  (match Runtime.run rt (widen Signal.stabilize) with
+  | exception Cleanup_interrupt -> ()
+  | Exit.Error _ -> ()
+  | Exit.Ok () -> Alcotest.fail "expected injected drop acknowledgement interrupt");
+  ignore
+    (expect_exit_ok "retry dropped update"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  (match List.rev !drops with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | [ Signal.Changed { old_value = 1; new_value = 2 }; Signal.Changed _ ] ->
+       Alcotest.fail "interrupted drop callback ran twice for one update"
+   | _ -> Alcotest.fail "expected one dropped changed update");
+  let after_retry =
+    expect_exit_ok "stats after drop retry"
+      (Runtime.run rt (widen (Signal.stats ())))
+  in
+  Alcotest.(check int) "retried drop counts once"
+    (before.Signal.stream_bridge_drop_count + 1)
+    after_retry.Signal.stream_bridge_drop_count;
+  ignore
+    (expect_exit_ok "stream observer dispose"
+       (Runtime.run rt (widen (Signal.Observer.dispose observer)))
+      : unit);
+  (match
+     expect_exit_ok "stream collect after interrupted drop"
+       (Runtime.run rt
+          (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)))
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected buffered initialized stream update")
+
 let test_stream_bridge_drop_callback_failure_does_not_count_retry () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -6302,6 +6374,9 @@ let () =
             `Quick test_stream_bridge_full_queue_does_not_block;
           Alcotest.test_case "stream bridge drop callback reports loss"
             `Quick test_stream_bridge_drop_callback_reports_loss;
+          Alcotest.test_case
+            "stream bridge interrupted drop callback does not duplicate" `Quick
+            test_stream_bridge_interrupted_drop_callback_does_not_duplicate;
           Alcotest.test_case
             "stream bridge failed drop callback does not count retry" `Quick
             test_stream_bridge_drop_callback_failure_does_not_count_retry;

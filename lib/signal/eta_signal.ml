@@ -2421,6 +2421,21 @@ module Make (Observer_error : Observer_error) () = struct
     graph.stream_bridge_drop_count <-
       saturating_succ graph.stream_bridge_drop_count
 
+  let acknowledge_stream_drop_delivery observer update =
+    with_graph_lane_sync (fun () ->
+        match observer.obs_delivery_state with
+        | ( Observer_delivery_pending (pending_token, _)
+          | Observer_delivery_running (pending_token, _) )
+          when observer_active (O observer) ->
+            observer.obs_after_ack <-
+              (pending_token, record_stream_bridge_drop_unlocked)
+              :: observer.obs_after_ack;
+            observer.obs_delivery_state <- Observer_delivered (delivered_value update);
+            run_after_ack observer pending_token
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ | Observer_delivery_running _ ->
+            ())
+
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
    fun options necessary signal ->
@@ -3056,11 +3071,16 @@ module Make (Observer_error : Observer_error) () = struct
              ())
 
     let report_dropped_update observer on_drop update =
-      (match on_drop with
-      | None -> Effect.unit
-      | Some on_drop -> Effect.sync (fun () -> on_drop update))
-      |> Effect.bind (fun () ->
-             add_after_ack observer record_stream_bridge_drop_unlocked)
+      let drop_published = ref false in
+      let acknowledge_published_drop () =
+        if !drop_published then acknowledge_stream_drop_delivery observer update
+        else Effect.unit
+      in
+      (Effect.sync (fun () ->
+           Option.iter (fun on_drop -> on_drop update) on_drop;
+           drop_published := true)
+       |> Effect.bind (fun () -> acknowledge_published_drop ()))
+      |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
     let offer_bridge_update observer on_drop queue update =
       Queue.try_send queue update
