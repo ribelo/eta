@@ -28,7 +28,7 @@ module Make (Observer_error : Observer_error) () = struct
     | `Uninitialized_observer ]
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
-  type time_error = [ `Invalid_interval | `Past_deadline ]
+  type time_error = [ graph_error | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a update =
@@ -95,6 +95,7 @@ module Make (Observer_error : Observer_error) () = struct
         Format.fprintf ppf "observer callback failed: %a" Observer_error.pp err
 
   let pp_time_error ppf = function
+    | #graph_error as err -> pp_graph_error ppf err
     | `Invalid_interval -> Format.pp_print_string ppf "invalid interval"
     | `Past_deadline -> Format.pp_print_string ppf "deadline is in the past"
 
@@ -575,6 +576,9 @@ module Make (Observer_error : Observer_error) () = struct
     with_lane_lock lane (fun () -> release_lane_locked lane)
     |> Option.iter resolve_lane_waiter
 
+  let graph_lane_depth_local : int Runtime_contract.local =
+    Runtime_contract.create_local ()
+
   let release_graph_lane_sync owns_lane =
     if !owns_lane then (
       owns_lane := false;
@@ -583,30 +587,43 @@ module Make (Observer_error : Observer_error) () = struct
   let with_graph_lane_sync f =
     Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane_sync" (fun context ->
         let contract = Effect.Expert.contract context in
-        let owns_lane = ref false in
-        let release_after_interrupt () =
-          contract.Runtime_contract.protect (fun () ->
-              release_graph_lane_sync owns_lane)
+        let lane_depth =
+          Option.value
+            (contract.Runtime_contract.local_get graph_lane_depth_local)
+            ~default:0
         in
-        try
-          ensure_graph_context ();
-          enter_lane_sync contract graph.lane;
-          owns_lane := true;
-          let release_graph_lane =
-            Effect.sync (fun () -> release_graph_lane_sync owns_lane)
+        if lane_depth > 0 then
+          try
+            ensure_graph_context ();
+            Effect.Expert.eval context (Effect.sync f)
+          with exn -> Effect.Expert.exit_of_exn context exn
+        else
+          let owns_lane = ref false in
+          let release_after_interrupt () =
+            contract.Runtime_contract.protect (fun () ->
+                release_graph_lane_sync owns_lane)
           in
-          Effect.Expert.eval context
-            (Effect.sync f
-            |> Effect.on_exit (fun _exit -> release_graph_lane))
-        with
-        | exn
-          when Option.is_some
-                 (contract.Runtime_contract.cancellation_reason exn) ->
-            release_after_interrupt ();
-            raise exn
-        | exn ->
-            release_after_interrupt ();
-            Effect.Expert.exit_of_exn context exn)
+          try
+            ensure_graph_context ();
+            enter_lane_sync contract graph.lane;
+            owns_lane := true;
+            let release_graph_lane =
+              Effect.sync (fun () -> release_graph_lane_sync owns_lane)
+            in
+            contract.Runtime_contract.local_with_binding graph_lane_depth_local 1
+              (fun () ->
+                Effect.Expert.eval context
+                  (Effect.sync f
+                  |> Effect.on_exit (fun _exit -> release_graph_lane)))
+          with
+          | exn
+            when Option.is_some
+                   (contract.Runtime_contract.cancellation_reason exn) ->
+              release_after_interrupt ();
+              raise exn
+          | exn ->
+              release_after_interrupt ();
+              Effect.Expert.exit_of_exn context exn)
 
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
@@ -1810,8 +1827,7 @@ module Make (Observer_error : Observer_error) () = struct
     let observe ?equal signal callback = observe_with_hooks ?equal signal callback
 
     let read observer =
-      Effect.sync (fun () ->
-          ensure_graph_context ();
+      with_graph_lane_sync (fun () ->
           match observer.obs_state with
           | Observer_disposed -> Error `Disposed_observer
           | Observer_invalid_scope -> Error `Invalid_scope
@@ -2420,22 +2436,32 @@ module Make (Observer_error : Observer_error) () = struct
               update.source_timer_update timer generation source);
         }
 
+    let construct_timer_signal f =
+      with_graph_lane_sync (fun () ->
+          try
+            ignore (signal_scope ());
+            Ok (f ())
+          with Graph_error err -> Error (err :> time_error))
+      |> Effect.flatten_result
+
     let now ~every () =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
              Effect.now
-             |> Effect.map (fun initial ->
-                    make_timer_signal ~update_on_start:true ~equal:Int.equal
-                      initial every
-                      {
-                        source_timer_update =
-                          (fun timer generation source ->
-                            Effect.now
-                            |> Effect.bind (fun now_ms ->
-                                   timer_set_source timer generation source now_ms
-                                   |> Effect.map (fun _ -> ())));
-                      }))
+             |> Effect.bind (fun initial ->
+                    construct_timer_signal (fun () ->
+                        make_timer_signal ~update_on_start:true ~equal:Int.equal
+                          initial every
+                          {
+                            source_timer_update =
+                              (fun timer generation source ->
+                                Effect.now
+                                |> Effect.bind (fun now_ms ->
+                                       timer_set_source timer generation source
+                                         now_ms
+                                       |> Effect.map (fun _ -> ())));
+                          })))
 
     let deadline ~every deadline_ms =
       Effect.sync (fun () -> validate_interval every)
@@ -2444,29 +2470,30 @@ module Make (Observer_error : Observer_error) () = struct
              Effect.now
              |> Effect.bind (fun now_ms ->
                     Effect.from_result (validate_future now_ms deadline_ms)
-                    |> Effect.map (fun () ->
-                           make_timer_signal ~update_on_start:true
-                             ~equal:Bool.equal false every
-                             {
-                               source_timer_update =
-                                 (fun timer generation source ->
-                                   Effect.now
-                                   |> Effect.bind (fun now_ms ->
-                                          if now_ms >= deadline_ms then
-                                            timer_set_source timer generation
-                                              source true
-                                            |> Effect.bind (function
-                                                 | `Updated ->
-                                                     with_graph_lane_sync
-                                                       (fun () ->
-                                                         timer_finish_unlocked
-                                                           timer)
-                                                 | `Stopped -> Effect.unit)
-                                          else
-                                            timer_set_source timer generation
-                                              source false
-                                            |> Effect.map (fun _ -> ())));
-                             })))
+                    |> Effect.bind (fun () ->
+                           construct_timer_signal (fun () ->
+                               make_timer_signal ~update_on_start:true
+                                 ~equal:Bool.equal false every
+                                 {
+                                   source_timer_update =
+                                     (fun timer generation source ->
+                                       Effect.now
+                                       |> Effect.bind (fun now_ms ->
+                                              if now_ms >= deadline_ms then
+                                                timer_set_source timer generation
+                                                  source true
+                                                |> Effect.bind (function
+                                                     | `Updated ->
+                                                         with_graph_lane_sync
+                                                           (fun () ->
+                                                             timer_finish_unlocked
+                                                               timer)
+                                                     | `Stopped -> Effect.unit)
+                                              else
+                                                timer_set_source timer generation
+                                                  source false
+                                                |> Effect.map (fun _ -> ())));
+                                 }))))
 
     let after ~every duration =
       Effect.sync (fun () -> validate_interval duration)
@@ -2482,32 +2509,34 @@ module Make (Observer_error : Observer_error) () = struct
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)
       |> Effect.flatten_result
-      |> Effect.map (fun () ->
-             make_timer_signal ~equal:Int.equal 0 interval
-               {
-                 source_timer_update =
-                   (fun timer generation source ->
-                     let next = saturating_succ (Var.value source) in
-                     timer_set_source timer generation source next
-                     |> Effect.map (fun _ -> ()));
-               })
+      |> Effect.bind (fun () ->
+             construct_timer_signal (fun () ->
+                 make_timer_signal ~equal:Int.equal 0 interval
+                   {
+                     source_timer_update =
+                       (fun timer generation source ->
+                         let next = saturating_succ (Var.value source) in
+                         timer_set_source timer generation source next
+                         |> Effect.map (fun _ -> ()));
+                   }))
 
     let step ~every ~initial f =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
-      |> Effect.map (fun () ->
-             make_timer_signal initial every
-               {
-                 source_timer_update =
-                   (fun timer generation source ->
-                     Effect.sync (fun () -> f (Var.value source))
-                     |> Effect.annotate ~key:"eta_signal.timer.kind"
-                          ~value:"step"
-                     |> Effect.named "eta_signal.time.step"
-                     |> Effect.bind (fun next ->
-                            timer_set_source timer generation source next
-                            |> Effect.map (fun _ -> ())));
-               })
+      |> Effect.bind (fun () ->
+             construct_timer_signal (fun () ->
+                 make_timer_signal initial every
+                   {
+                     source_timer_update =
+                       (fun timer generation source ->
+                         Effect.sync (fun () -> f (Var.value source))
+                         |> Effect.annotate ~key:"eta_signal.timer.kind"
+                              ~value:"step"
+                         |> Effect.named "eta_signal.time.step"
+                         |> Effect.bind (fun next ->
+                                timer_set_source timer generation source next
+                                |> Effect.map (fun _ -> ())));
+                   }))
   end
 
   module Stream = struct

@@ -3137,6 +3137,85 @@ let test_active_graph_operation_interruption_releases_lane () =
   Alcotest.(check int) "lane released for later set/stabilize" 2
     (run_ok rt (Signal.Observer.read observer))
 
+let test_observer_read_waits_for_graph_lane () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref false in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           value)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  block_once := true;
+  run_ok rt (Signal.Var.set source 2);
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  let read =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool) "read waits behind graph lane" false
+    (Eio.Promise.is_resolved read);
+  Eio.Promise.resolve release_resolver ();
+  ignore (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
+  Alcotest.(check int) "read observes committed value after lane release" 2
+    (expect_exit_ok "queued read" (Eio.Promise.await_exn read))
+
+let test_time_interval_construction_waits_for_graph_lane () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref true in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           value)
+  in
+  ignore
+    (run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+      : int Signal.observer);
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  let constructor =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt
+          (widen (Signal.Time.interval (Duration.ms 10))))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool) "timer construction waits behind graph lane" false
+    (Eio.Promise.is_resolved constructor);
+  Eio.Promise.resolve release_resolver ();
+  ignore (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
+  expect_fail "timer constructor sees ambiguous phase after lane release"
+    (( = ) `Ambiguous_scope)
+    (Eio.Promise.await_exn constructor)
+
 let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
   let check_stats label expected actual =
@@ -5066,6 +5145,10 @@ let () =
             test_queued_graph_operation_cancellation_does_not_run;
           Alcotest.test_case "active graph interruption releases lane" `Quick
             test_active_graph_operation_interruption_releases_lane;
+          Alcotest.test_case "observer read waits for graph lane" `Quick
+            test_observer_read_waits_for_graph_lane;
+          Alcotest.test_case "time interval construction waits for graph lane"
+            `Quick test_time_interval_construction_waits_for_graph_lane;
           Alcotest.test_case "stats and dot introspection" `Quick
             test_stats_and_dot_are_read_only;
           Alcotest.test_case

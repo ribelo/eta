@@ -49,7 +49,7 @@ module Make (Observer_error : Observer_error) () : sig
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
 
-  type time_error = [ `Invalid_interval | `Past_deadline ]
+  type time_error = [ graph_error | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a var
