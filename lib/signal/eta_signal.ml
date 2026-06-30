@@ -276,6 +276,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_current of 'a
     | Observer_failed_without_current
 
+  and 'a observer_delivery_state =
+    | Observer_never_delivered
+    | Observer_delivered of 'a
+    | Observer_delivery_pending of 'a update
+
   and 'a observer = {
     obs_id : observer_id;
     obs_signal : 'a signal;
@@ -283,10 +288,8 @@ module Make (Observer_error : Observer_error) () = struct
     obs_callback : 'a update -> (unit, observer_error) Effect.t;
     mutable obs_value_state : 'a observer_value_state;
     mutable obs_staged_current : 'a option;
-    mutable obs_delivered_current : 'a option;
-    mutable obs_staged_delivered_current : 'a option;
-    mutable obs_delivered_initialized : bool;
-    mutable obs_delivery_pending : bool;
+    mutable obs_delivery_state : 'a observer_delivery_state;
+    mutable obs_staged_delivery_state : 'a observer_delivery_state option;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
     mutable obs_on_dispose : (unit -> unit) list;
@@ -727,9 +730,9 @@ module Make (Observer_error : Observer_error) () = struct
     remember_staged_observer (O observer);
     observer.obs_staged_current <- Some value
 
-  let stage_observer_delivered_current observer value =
+  let stage_observer_delivery_state observer state =
     remember_staged_observer (O observer);
-    observer.obs_staged_delivered_current <- Some value
+    observer.obs_staged_delivery_state <- Some state
 
   let observer_active (O observer) =
     match observer.obs_state with
@@ -747,16 +750,23 @@ module Make (Observer_error : Observer_error) () = struct
     observer.obs_on_dispose <- [];
     hooks
 
+  let clear_observer_delivery observer =
+    observer.obs_delivery_state <- Observer_never_delivered;
+    observer.obs_staged_delivery_state <- None
+
   let finish_observer_unlocked observer state =
     match (observer.obs_state, state) with
     | Observer_active, Observer_disposed ->
+        clear_observer_delivery observer;
         observer.obs_state <- state;
         remove_observer observer;
         take_observer_disposal_hooks observer
     | Observer_active, Observer_invalid_scope ->
+        clear_observer_delivery observer;
         observer.obs_state <- state;
         take_observer_disposal_hooks observer
     | Observer_invalid_scope, Observer_disposed ->
+        clear_observer_delivery observer;
         observer.obs_state <- state;
         remove_observer observer;
         []
@@ -1089,19 +1099,16 @@ module Make (Observer_error : Observer_error) () = struct
        | None -> ()
        | Some value ->
            observer.obs_value_state <- Observer_current value);
-      (match observer.obs_staged_delivered_current with
+      (match observer.obs_staged_delivery_state with
        | None -> ()
-       | Some value ->
-           observer.obs_delivered_current <- Some value;
-           observer.obs_delivered_initialized <- true;
-           observer.obs_delivery_pending <- false);
+       | Some state -> observer.obs_delivery_state <- state);
       observer.obs_staged_current <- None;
-      observer.obs_staged_delivered_current <- None)
+      observer.obs_staged_delivery_state <- None)
 
   let rollback_observer (O observer) =
     if observer.obs_staged_generation = current_generation () then (
       observer.obs_staged_current <- None;
-      observer.obs_staged_delivered_current <- None)
+      observer.obs_staged_delivery_state <- None)
 
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
@@ -1478,37 +1485,47 @@ module Make (Observer_error : Observer_error) () = struct
            refresh_timer_demand ()
            |> Effect.bind (fun () -> run_disposal_hooks hooks))
 
+  let delivered_value = function
+    | Initialized value -> value
+    | Changed { new_value; _ } -> new_value
+
+  let observer_delivery_base = function
+    | Observer_never_delivered -> None
+    | Observer_delivered value -> Some value
+    | Observer_delivery_pending (Initialized _) -> None
+    | Observer_delivery_pending (Changed { old_value; _ }) -> Some old_value
+
+  let observer_delivery_pending = function
+    | Observer_delivery_pending _ -> true
+    | Observer_never_delivered | Observer_delivered _ -> false
+
   let collect_observer_event (O observer) =
     if not (observer_active (O observer)) then None
     else (
       let value, changed = compute observer.obs_signal in
       let event =
-        if not observer.obs_delivered_initialized then Some (Initialized value)
-        else
-          match observer.obs_delivered_current with
-          | None -> Some (Initialized value)
-          | Some old_value ->
-              if changed || observer.obs_delivery_pending then
-                if observer.obs_equal old_value value then (
-                  stage_observer_delivered_current observer value;
-                  None)
-                else Some (Changed { old_value; new_value = value })
-              else None
+        match observer_delivery_base observer.obs_delivery_state with
+        | None -> Some (Initialized value)
+        | Some old_value ->
+            if changed || observer_delivery_pending observer.obs_delivery_state
+            then
+              if observer.obs_equal old_value value then (
+                stage_observer_delivery_state observer
+                  (Observer_delivered value);
+                None)
+              else Some (Changed { old_value; new_value = value })
+            else None
       in
       stage_observer_current observer value;
       Option.map (fun update -> E (observer, update)) event)
 
-  let mark_event_pending (E (observer, _)) =
-    observer.obs_delivery_pending <- true
-
-  let delivered_value = function
-    | Initialized value -> value
-    | Changed { new_value; _ } -> new_value
+  let mark_event_pending (E (observer, update)) =
+    if observer_active (O observer) then
+      observer.obs_delivery_state <- Observer_delivery_pending update
 
   let acknowledge_event_delivery observer update =
-    observer.obs_delivered_current <- Some (delivered_value update);
-    observer.obs_delivered_initialized <- true;
-    observer.obs_delivery_pending <- false
+    if observer_active (O observer) then
+      observer.obs_delivery_state <- Observer_delivered (delivered_value update)
 
   let begin_stabilize () =
     if graph.phase <> Not_stabilizing then Error ([], `Reentrant_stabilization)
@@ -1705,10 +1722,8 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_callback = callback;
                 obs_value_state = Observer_uninitialized;
                 obs_staged_current = None;
-                obs_delivered_current = None;
-                obs_staged_delivered_current = None;
-                obs_delivered_initialized = false;
-                obs_delivery_pending = false;
+                obs_delivery_state = Observer_never_delivered;
+                obs_staged_delivery_state = None;
                 obs_state = Observer_active;
                 obs_staged_generation = -1;
                 obs_on_dispose = on_dispose;
@@ -2030,6 +2045,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_current _ -> "current"
     | Observer_failed_without_current -> "failed_without_current"
 
+  let observer_delivery_state_label = function
+    | Observer_never_delivered -> "never_delivered"
+    | Observer_delivered _ -> "delivered"
+    | Observer_delivery_pending _ -> "pending"
+
   let observer_label (O observer) =
     String.concat " "
       [
@@ -2037,8 +2057,8 @@ module Make (Observer_error : Observer_error) () = struct
         "observer_id=" ^ observer_id_label observer.obs_id;
         "state=" ^ observer_state_label observer.obs_state;
         "value_state=" ^ observer_value_state_label observer.obs_value_state;
-        bool_field "delivered" observer.obs_delivered_initialized;
-        bool_field "pending" observer.obs_delivery_pending;
+        "delivery_state="
+        ^ observer_delivery_state_label observer.obs_delivery_state;
       ]
 
   let to_dot ?(options = default_dot_options) () =
