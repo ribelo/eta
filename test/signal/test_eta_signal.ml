@@ -3864,6 +3864,8 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
   let dot = run_ok rt (Tombstone_signal.to_dot ~options ()) in
   Alcotest.(check bool) "all-including-invalid dot shows dead nodes" true
     (count_occurrences dot "valid=false" > 0);
+  Alcotest.(check bool) "all-including-invalid dot namespaces tombstones" true
+    (count_occurrences dot "dead_s" > 0);
   Alcotest.(check bool) "all-including-invalid dot shows invalid scopes" true
     (count_occurrences dot ":invalid" > 0);
   Alcotest.(check int) "all-including-invalid dot shows invalid observer" 1

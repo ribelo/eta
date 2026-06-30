@@ -127,6 +127,7 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_id_int (Observer_id id) = id
 
   let signal_id_label id = "s" ^ string_of_int (signal_id_int id)
+  let dead_signal_id_label id = "dead_" ^ signal_id_label id
   let scope_id_label id = "sc" ^ string_of_int (scope_id_int id)
   let var_id_label id = "v" ^ string_of_int (var_id_int id)
   let observer_id_label id = "o" ^ string_of_int (observer_id_int id)
@@ -2441,15 +2442,21 @@ module Make (Observer_error : Observer_error) () = struct
       | `All_including_invalid -> true
       | `Necessary | `All_valid -> false
     in
-    let selected_ids = Hashtbl.create 16 in
+    let live_ids = Hashtbl.create 16 in
+    let dead_ids = Hashtbl.create 16 in
     List.iter
       (fun (P signal) ->
-        if selected signal then Hashtbl.replace selected_ids signal.id ())
+        if selected signal then Hashtbl.replace live_ids signal.id ())
       graph.all_nodes;
     if include_dead_nodes then
       List.iter
-        (fun tombstone -> Hashtbl.replace selected_ids tombstone.dead_id ())
+        (fun tombstone -> Hashtbl.replace dead_ids tombstone.dead_id ())
         graph.dead_nodes;
+    let selected_id id = Hashtbl.mem live_ids id || Hashtbl.mem dead_ids id in
+    let dot_signal_id id =
+      if Hashtbl.mem live_ids id then signal_id_label id
+      else dead_signal_id_label id
+    in
     let buffer = Buffer.create 256 in
     let formatter = Format.formatter_of_buffer buffer in
     Format.fprintf formatter "digraph eta_signal {@.";
@@ -2476,19 +2483,19 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter
         (fun tombstone ->
           Format.fprintf formatter "  %s [label=%S];@."
-            (signal_id_label tombstone.dead_id)
+            (dead_signal_id_label tombstone.dead_id)
             (dead_signal_label options tombstone);
           let emitted_edges = Hashtbl.create 8 in
           List.iter
             (fun dependency_id ->
               if
-                Hashtbl.mem selected_ids dependency_id
+                selected_id dependency_id
                 && not (Hashtbl.mem emitted_edges dependency_id)
               then (
                 Hashtbl.add emitted_edges dependency_id ();
                 Format.fprintf formatter "  %s -> %s;@."
-                  (signal_id_label dependency_id)
-                  (signal_id_label tombstone.dead_id)))
+                  (dot_signal_id dependency_id)
+                  (dead_signal_id_label tombstone.dead_id)))
             tombstone.dead_dependency_ids)
         graph.dead_nodes;
     if options.dot_observers then
@@ -2498,10 +2505,10 @@ module Make (Observer_error : Observer_error) () = struct
             Format.fprintf formatter "  %s [shape=box,label=%S];@."
               (observer_id_label observer.obs_id)
               (observer_label packed);
-            if Hashtbl.mem selected_ids observer.obs_signal.id then
+            if selected_id observer.obs_signal.id then
               Format.fprintf formatter
                 "  %s -> %s [style=dashed,label=\"observes\"];@."
-                (signal_id_label observer.obs_signal.id)
+                (dot_signal_id observer.obs_signal.id)
                 (observer_id_label observer.obs_id)))
         graph.observers;
     Format.fprintf formatter "}@.";
