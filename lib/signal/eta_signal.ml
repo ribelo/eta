@@ -302,12 +302,15 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_observer = O : 'a observer -> packed_observer
 
+  and timer_state =
+    | Timer_inactive of int
+    | Timer_starting of int
+    | Timer_running_uncancellable of int
+    | Timer_running of int * (unit -> unit)
+    | Timer_finished of int
+
   and timer_node = {
-    mutable timer_active : bool;
-    mutable timer_running_generation : int option;
-    mutable timer_cancel : (unit -> unit) option;
-    mutable timer_finished : bool;
-    mutable timer_generation : int;
+    mutable timer_state : timer_state;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
@@ -869,43 +872,76 @@ module Make (Observer_error : Observer_error) () = struct
     in
     visit (P inner)
 
-  let timer_cancel_running_unlocked timer =
-    let cancel = timer.timer_cancel in
-    timer.timer_running_generation <- None;
-    timer.timer_cancel <- None;
-    match cancel with
-    | None -> []
-    | Some cancel -> [ cancel ]
+  let timer_state_generation = function
+    | Timer_inactive generation
+    | Timer_starting generation
+    | Timer_running_uncancellable generation
+    | Timer_running (generation, _)
+    | Timer_finished generation ->
+        generation
+
+  let timer_generation timer = timer_state_generation timer.timer_state
+
+  let timer_state_label = function
+    | Timer_inactive _ -> "inactive"
+    | Timer_starting _ -> "starting"
+    | Timer_running_uncancellable _ -> "running_uncancellable"
+    | Timer_running _ -> "running"
+    | Timer_finished _ -> "finished"
+
+  let timer_active timer =
+    match timer.timer_state with
+    | Timer_starting _ | Timer_running_uncancellable _ | Timer_running _ ->
+        true
+    | Timer_inactive _ | Timer_finished _ -> false
+
+  let timer_finished timer =
+    match timer.timer_state with
+    | Timer_finished _ -> true
+    | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+    | Timer_running _ ->
+        false
+
+  let timer_running_generation timer =
+    match timer.timer_state with
+    | Timer_running_uncancellable generation | Timer_running (generation, _) ->
+        Some generation
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+
+  let timer_has_cancel timer =
+    match timer.timer_state with
+    | Timer_running (_, _) -> true
+    | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+    | Timer_finished _ ->
+        false
+
+  let timer_running_current timer generation =
+    match timer.timer_state with
+    | Timer_running_uncancellable running_generation
+    | Timer_running (running_generation, _) ->
+        running_generation = generation
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
 
   let timer_invalidate_generation_unlocked timer =
-    timer.timer_generation <-
-      checked_succ "timer generation" timer.timer_generation
+    let generation = checked_succ "timer generation" (timer_generation timer) in
+    timer.timer_state <- Timer_inactive generation
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
-    if
-      (not timer.timer_active)
-      && Option.is_none timer.timer_running_generation
-      && Option.is_none timer.timer_cancel
-    then []
-    else (
-      timer.timer_active <- false;
-      let cancel_hooks =
-        if cancel_running then timer_cancel_running_unlocked timer
-        else (
-          timer.timer_running_generation <- None;
-          timer.timer_cancel <- None;
-          [])
-      in
-      timer_invalidate_generation_unlocked timer;
-      cancel_hooks)
+    match timer.timer_state with
+    | Timer_inactive _ | Timer_finished _ -> []
+    | Timer_starting _ | Timer_running_uncancellable _ ->
+        timer_invalidate_generation_unlocked timer;
+        []
+    | Timer_running (_, cancel) ->
+        timer_invalidate_generation_unlocked timer;
+        if cancel_running then [ cancel ] else []
 
   let timer_rollback_unclaimed_start_unlocked timer =
-    if
-      timer.timer_active
-      && Option.is_none timer.timer_running_generation
-      && Option.is_none timer.timer_cancel
-    then timer_mark_unneeded_unlocked timer
-    else []
+    match timer.timer_state with
+    | Timer_starting _ -> timer_mark_unneeded_unlocked timer
+    | Timer_inactive _ | Timer_running_uncancellable _ | Timer_running _
+    | Timer_finished _ ->
+        []
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -960,11 +996,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_tombstone timer =
     {
-      dead_timer_active = timer.timer_active;
-      dead_timer_running_generation = timer.timer_running_generation;
-      dead_timer_cancel = Option.is_some timer.timer_cancel;
-      dead_timer_finished = timer.timer_finished;
-      dead_timer_generation = timer.timer_generation;
+      dead_timer_active = timer_active timer;
+      dead_timer_running_generation = timer_running_generation timer;
+      dead_timer_cancel = timer_has_cancel timer;
+      dead_timer_finished = timer_finished timer;
+      dead_timer_generation = timer_generation timer;
     }
 
   let signal_tombstone (P signal) =
@@ -1193,11 +1229,9 @@ module Make (Observer_error : Observer_error) () = struct
     visit_scope scope
 
   let preflight_timer_stop timer =
-    if
-      timer.timer_active
-      || Option.is_some timer.timer_running_generation
-      || Option.is_some timer.timer_cancel
-    then ignore (checked_succ "timer generation" timer.timer_generation : int)
+    if timer_active timer || Option.is_some (timer_running_generation timer)
+       || timer_has_cancel timer
+    then ignore (checked_succ "timer generation" (timer_generation timer) : int)
 
   let preflight_staged_bind_commit seen collected (B bind) =
     if bind.staged_bind_generation = current_generation () then
@@ -1545,37 +1579,36 @@ module Make (Observer_error : Observer_error) () = struct
           else use_cached ()
 
   let timer_finish_unlocked timer =
-    timer.timer_finished <- true;
-    ignore
-      (timer_mark_unneeded_unlocked ~cancel_running:false timer
-        : (unit -> unit) list)
+    let generation =
+      if timer_active timer then
+        checked_succ "timer generation" (timer_generation timer)
+      else timer_generation timer
+    in
+    timer.timer_state <- Timer_finished generation
 
   let timer_has_current_start timer =
-    match timer.timer_running_generation with
-    | Some generation -> generation = timer.timer_generation
-    | None -> false
+    match timer.timer_state with
+    | Timer_running_uncancellable _ | Timer_running _ -> true
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
 
   let timer_start_unlocked timer =
-    if timer.timer_finished || (timer.timer_active && timer_has_current_start timer)
+    if timer_finished timer || (timer_active timer && timer_has_current_start timer)
     then None
     else (
-      let generation = checked_succ "timer generation" timer.timer_generation in
-      timer.timer_active <- true;
-      timer.timer_generation <- generation;
-      timer.timer_running_generation <- None;
-      timer.timer_cancel <- None;
+      let generation = checked_succ "timer generation" (timer_generation timer) in
+      timer.timer_state <- Timer_starting generation;
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
-        if
-          timer.timer_active
-          && timer.timer_generation = generation
-          && Option.is_none timer.timer_running_generation
-        then (
-          timer.timer_running_generation <- Some generation;
-          `Continue)
-        else `Stop)
+        match timer.timer_state with
+        | Timer_starting starting_generation
+          when starting_generation = generation ->
+            timer.timer_state <- Timer_running_uncancellable generation;
+            `Continue
+        | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+        | Timer_running _ | Timer_finished _ ->
+            `Stop)
 
   let collect_necessary_node_ids () =
     let seen = Hashtbl.create 16 in
@@ -2296,16 +2329,17 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> []
     | Some timer ->
         let running =
-          match timer.timer_running_generation with
+          match timer_running_generation timer with
           | None -> "none"
           | Some generation -> string_of_int generation
         in
         [
-          bool_field "timer_active" timer.timer_active;
+          "timer_state=" ^ timer_state_label timer.timer_state;
+          bool_field "timer_active" (timer_active timer);
           "timer_running=" ^ running;
-          bool_field "timer_cancel" (Option.is_some timer.timer_cancel);
-          bool_field "timer_finished" timer.timer_finished;
-          "timer_generation=" ^ string_of_int timer.timer_generation;
+          bool_field "timer_cancel" (timer_has_cancel timer);
+          bool_field "timer_finished" (timer_finished timer);
+          "timer_generation=" ^ string_of_int (timer_generation timer);
         ]
 
   let dead_signal_state_fields dead =
@@ -2531,13 +2565,16 @@ module Make (Observer_error : Observer_error) () = struct
 
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
-          if
-            timer.timer_active
-            && timer.timer_running_generation = Some generation
-          then (
-            timer.timer_cancel <- Some cancel;
-            `Continue)
-          else `Stop)
+          match timer.timer_state with
+          | Timer_running_uncancellable running_generation
+          | Timer_running (running_generation, _)
+            when running_generation = generation ->
+              timer.timer_state <- Timer_running (generation, cancel);
+              `Continue
+          | Timer_inactive _ | Timer_starting _
+          | Timer_running_uncancellable _ | Timer_running _ | Timer_finished _
+            ->
+              `Stop)
 
     let cancellable_timer_loop timer generation loop =
       Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
@@ -2567,19 +2604,15 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
-          if timer.timer_running_generation = Some generation then (
-            timer.timer_running_generation <- None;
-            timer.timer_cancel <- None))
+          if timer_running_current timer generation then
+            timer.timer_state <- Timer_inactive generation)
 
     let timer_mark_failed timer generation =
       with_graph_lane_sync (fun () ->
-          if timer.timer_running_generation = Some generation then (
-            timer.timer_running_generation <- None;
-            timer.timer_cancel <- None;
-            if timer.timer_active then
-              ignore
-                (timer_mark_unneeded_unlocked ~cancel_running:false timer
-                  : (unit -> unit) list)))
+          if timer_running_current timer generation then
+            ignore
+              (timer_mark_unneeded_unlocked ~cancel_running:false timer
+                : (unit -> unit) list))
 
     let timer_cleanup_after_exit timer generation = function
       | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
@@ -2591,24 +2624,11 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
-          if
-            timer.timer_active
-            && timer.timer_generation = generation
-            && timer.timer_running_generation = Some generation
-          then `Continue
-          else (
-            if timer.timer_running_generation = Some generation then (
-              timer.timer_running_generation <- None;
-              timer.timer_cancel <- None);
-            `Stop))
+          if timer_running_current timer generation then `Continue else `Stop)
 
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_sync (fun () ->
-          if
-            timer.timer_active
-            && timer.timer_generation = generation
-            && timer.timer_running_generation = Some generation
-          then (
+          if timer_running_current timer generation then (
             source.source_value <- value;
             Var.queue_var source;
             `Updated)
@@ -2689,14 +2709,10 @@ module Make (Observer_error : Observer_error) () = struct
     let attach_timer ?(update_on_start = false) signal interval update =
       let timer =
         {
-          timer_active = false;
-          timer_running_generation = None;
-          timer_cancel = None;
-          timer_finished = false;
-          timer_generation = 0;
+          timer_state = Timer_inactive 0;
           timer_start =
             (fun timer ->
-              let generation = timer.timer_generation in
+              let generation = timer_generation timer in
               let interval_ms = Duration.to_ms interval in
               let start_loop () =
                 Effect.now

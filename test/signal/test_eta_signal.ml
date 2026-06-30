@@ -3796,6 +3796,8 @@ let test_to_dot_debug_options_expose_hidden_state () =
     (count_occurrences debug_dot "observer:" > 0);
   Alcotest.(check bool) "debug dot shows timer state" true
     (count_occurrences debug_dot "timer_active=true" > 0);
+  Alcotest.(check bool) "debug dot shows timer lifecycle state" true
+    (count_occurrences debug_dot "timer_state=" > 0);
   Alcotest.(check bool) "debug dot shows queued source state" true
     (count_occurrences debug_dot "queued=true" > 0);
   Alcotest.(check bool) "debug dot shows dirty state" true
@@ -4193,7 +4195,14 @@ let set_signal_timer_generation signal value =
   let timer_opt = Obj.field signal_obj 19 in
   if Obj.is_int timer_opt then Alcotest.fail "expected timer signal";
   let timer = Obj.field timer_opt 0 in
-  Obj.set_field timer 4 (Obj.repr value)
+  let timer_state = Obj.field timer 0 in
+  if Obj.is_int timer_state then Alcotest.fail "expected timer state";
+  let updated_state = Obj.new_block (Obj.tag timer_state) (Obj.size timer_state) in
+  for index = 0 to Obj.size timer_state - 1 do
+    Obj.set_field updated_state index (Obj.field timer_state index)
+  done;
+  Obj.set_field updated_state 0 (Obj.repr value);
+  Obj.set_field timer 0 updated_state
 
 let set_observer_on_dispose observer hooks =
   (* Public APIs only install internal stream hooks; this keeps the regression
