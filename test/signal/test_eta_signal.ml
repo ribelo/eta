@@ -1608,6 +1608,43 @@ let test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 0 in
+  let watched = Signal.Var.watch source in
+  let captured = ref None in
+  let selected =
+    Signal.bind watched (fun value ->
+        match !captured with
+        | Some stale when value = 1 ->
+            Signal.map (fun value -> value ^ " wrapped") stale
+        | _ ->
+            let signal =
+              Signal.map
+                (fun value -> "branch " ^ string_of_int value)
+                watched
+            in
+            if value = 0 then captured := Some signal;
+            signal)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "initial branch" "branch 0"
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Var.set source 1);
+  expect_fail "new-scope wrapper over reused dynamic-scope inner"
+    (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check string) "failed switch preserves previous branch" "branch 0"
+    (run_ok rt (Signal.Observer.read observer));
+  captured := None;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check string) "later valid switch succeeds" "branch 1"
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_bind_accepts_ancestor_dynamic_scope_inner () =
   with_runtime @@ fun rt ->
   let outer_source = Signal.Var.create true in
@@ -4806,6 +4843,10 @@ let () =
           Alcotest.test_case
             "bind rejects root wrapper over reused dynamic-scope inner" `Quick
             test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner;
+          Alcotest.test_case
+            "bind rejects new-scope wrapper over reused dynamic-scope inner"
+            `Quick
+            test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner;
           Alcotest.test_case "bind accepts ancestor dynamic-scope inner" `Quick
             test_bind_accepts_ancestor_dynamic_scope_inner;
           Alcotest.test_case "bind switch invalidates external branch dependents"
