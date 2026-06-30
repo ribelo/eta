@@ -292,7 +292,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_staged_delivery_state : 'a observer_delivery_state option;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
-    mutable obs_on_dispose : (unit -> unit) list;
+    mutable obs_on_finish : (observer_state -> unit) list;
   }
 
   and packed_observer = O : 'a observer -> packed_observer
@@ -745,10 +745,10 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
         graph.observers
 
-  let take_observer_disposal_hooks observer =
-    let hooks = observer.obs_on_dispose in
-    observer.obs_on_dispose <- [];
-    hooks
+  let take_observer_finish_hooks observer state =
+    let hooks = observer.obs_on_finish in
+    observer.obs_on_finish <- [];
+    List.map (fun hook () -> hook state) hooks
 
   let clear_observer_delivery observer =
     observer.obs_delivery_state <- Observer_never_delivered;
@@ -760,11 +760,11 @@ module Make (Observer_error : Observer_error) () = struct
         clear_observer_delivery observer;
         observer.obs_state <- state;
         remove_observer observer;
-        take_observer_disposal_hooks observer
+        take_observer_finish_hooks observer state
     | Observer_active, Observer_invalid_scope ->
         clear_observer_delivery observer;
         observer.obs_state <- state;
-        take_observer_disposal_hooks observer
+        take_observer_finish_hooks observer state
     | Observer_invalid_scope, Observer_disposed ->
         clear_observer_delivery observer;
         observer.obs_state <- state;
@@ -1718,7 +1718,7 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
-    let observe_with_hooks ?(equal = default_equal) ?(on_dispose = []) signal
+    let observe_with_hooks ?(equal = default_equal) ?(on_finish = []) signal
         callback =
       with_graph_lane_sync (fun () ->
           if not signal.valid then Error `Invalid_scope
@@ -1735,7 +1735,7 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_staged_delivery_state = None;
                 obs_state = Observer_active;
                 obs_staged_generation = -1;
-                obs_on_dispose = on_dispose;
+                obs_on_finish = on_finish;
               }
             in
             graph.observers <- O observer :: graph.observers;
@@ -2482,7 +2482,14 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
              Observer.observe_with_hooks ?equal
-               ~on_dispose:[ (fun () -> Queue.close queue) ]
+               ~on_finish:
+                 [
+                   (function
+                   | Observer_disposed -> Queue.close queue
+                   | Observer_invalid_scope ->
+                       Queue.close_with_error queue `Invalid_scope
+                   | Observer_active -> ());
+                 ]
                signal
                (offer_bridge_update on_drop queue)
              |> Effect.map_error (fun err -> (err :> stream_error))

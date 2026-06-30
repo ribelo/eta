@@ -3964,7 +3964,7 @@ let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   in
   wait_for_sleepers clock 1;
   set_observer_on_dispose observer
-    [ (fun () -> failwith "dispose hook failure") ];
+    [ (fun _ -> failwith "dispose hook failure") ];
   expect_die "dispose hook failure"
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
   let drained =
@@ -4508,6 +4508,44 @@ let test_stream_bridge_multiple_bridges_dispose_independently () =
    | _ -> Alcotest.fail "expected second bridge changed update");
   run_ok rt (Signal.Observer.dispose second_observer)
 
+let test_stream_bridge_invalidated_scope_fails_stream () =
+  with_runtime @@ fun rt ->
+  let use_branch = Signal.Var.create true in
+  let captured = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+        if active then (
+          let branch = Signal.const 1 in
+          captured := Some branch;
+          branch)
+        else Signal.const 2)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let branch =
+    match !captured with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured branch signal"
+  in
+  let branch_observer, stream = run_ok rt (Signal.Stream.observe branch) in
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected branch stream initialization");
+  run_ok rt (Signal.Var.set use_branch false);
+  run_ok rt Signal.stabilize;
+  expect_fail "invalidated branch stream" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Eta_stream.run_collect stream)));
+  expect_fail "branch observer invalidated" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
+  Alcotest.(check int) "selected switched" 2
+    (run_ok rt (Signal.Observer.read selected_observer));
+  run_ok rt (Signal.Observer.dispose selected_observer)
+
 let test_stream_bridge_equal_suppresses_updates () =
   with_runtime_and_switch @@ fun sw rt ->
   let fresh_a () = Bytes.to_string (Bytes.of_string "a") in
@@ -5034,6 +5072,8 @@ let () =
             test_stream_bridge_take_does_not_dispose_observer;
           Alcotest.test_case "stream bridge multiple bridges dispose separately"
             `Quick test_stream_bridge_multiple_bridges_dispose_independently;
+          Alcotest.test_case "stream bridge invalidated scope fails stream"
+            `Quick test_stream_bridge_invalidated_scope_fails_stream;
           Alcotest.test_case "stream bridge equality suppresses" `Quick
             test_stream_bridge_equal_suppresses_updates;
           Alcotest.test_case "stream bridge full queue does not block"
