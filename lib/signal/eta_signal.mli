@@ -125,10 +125,13 @@ module Make (Observer_error : Observer_error) () : sig
         Raises [Graph_error] on graph construction failures; see
         {!exception:Graph_error}. *)
 
-    val set : 'a t -> 'a -> (unit, 'err) Eta.Effect.t
+    val set : 'a t -> 'a -> (unit, [> `Reentrant_update ] as 'err) Eta.Effect.t
     (** Set the source value. Sets performed from observer callbacks are
         accepted, but are published by a later explicit stabilization rather
-        than by the currently running observer phase. *)
+        than by the currently running observer phase.
+
+        Fails with [`Reentrant_update] if an effectful update currently owns
+        this variable. *)
 
     val update_effect :
       'a t ->

@@ -1695,10 +1695,22 @@ module Make (Observer_error : Observer_error) () = struct
         source.queued <- true;
         graph.pending_vars <- V source :: graph.pending_vars)
 
-    let set (source : 'a t) value =
-      with_graph_lane_sync @@ fun () ->
+    let set_unlocked (source : 'a t) value =
       source.source_value <- value;
       queue_var source
+
+    let set (source : 'a t) value =
+      with_graph_lane_sync (fun () ->
+          if source.updating then Error `Reentrant_update
+          else (
+            set_unlocked source value;
+            Ok ()))
+      |> Effect.flatten_result
+
+    let set_from_update (source : 'a t) value =
+      with_graph_lane_sync (fun () ->
+          set_unlocked source value;
+          value)
 
     let release_update (source : 'a t) =
       with_graph_lane_sync (fun () -> source.updating <- false)
@@ -1722,7 +1734,7 @@ module Make (Observer_error : Observer_error) () = struct
               Effect.sync (fun () -> f old_value)
               |> Effect.bind (fun update_eff -> update_eff)
               |> Effect.bind (fun new_value ->
-                     set source new_value |> Effect.map (fun () -> new_value))))
+                     set_from_update source new_value)))
       |> Effect.on_exit (fun _ -> release_if_acquired ())
   end
 

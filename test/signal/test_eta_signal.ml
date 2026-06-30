@@ -1241,7 +1241,9 @@ let test_observer_callbacks_read_consistent_published_snapshot () =
   let left_handle =
     run_ok rt
       (Signal.Observer.observe left (fun _ ->
-           Signal.Var.set source 100 |> Effect.bind (fun () -> record_snapshot "left")))
+           Signal.Var.set source 100
+           |> Effect.map_error (fun _ -> `Observer_failed)
+           |> Effect.bind (fun () -> record_snapshot "left")))
   in
   let right_handle =
     run_ok rt (Signal.Observer.observe right (fun _ -> record_snapshot "right"))
@@ -2135,7 +2137,9 @@ let test_observer_mutation_is_delayed_to_next_stabilization () =
   let observer =
     run_ok rt
       (Signal.Observer.observe signal (function
-        | Signal.Initialized 1 -> Signal.Var.set source 2
+        | Signal.Initialized 1 ->
+            Signal.Var.set source 2
+            |> Effect.map_error (fun _ -> `Observer_failed)
         | Initialized _ | Changed _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
@@ -2161,11 +2165,13 @@ let test_observer_phase_multiple_sets_publish_final_next_value () =
                   match (!observer_ref, update) with
                   | Some observer, Signal.Initialized 1 ->
                       Signal.Var.set source 2
+                      |> Effect.map_error (fun _ -> `Observer_failed)
                       |> Effect.bind (fun () ->
                              Effect.sync (fun () ->
                                  pending_values :=
                                    Signal.Var.value source :: !pending_values))
                       |> Effect.bind (fun () -> Signal.Var.set source 3)
+                      |> Effect.map_error (fun _ -> `Observer_failed)
                       |> Effect.bind (fun () ->
                              Signal.Observer.read observer
                              |> Effect.map_error (fun _ -> `Observer_failed))
@@ -2846,6 +2852,34 @@ let test_concurrent_effectful_update_same_variable_fails_fast () =
   Alcotest.(check int) "first update succeeds" 11
     (expect_exit_ok "first update" (Eio.Promise.await_exn first));
   Alcotest.(check int) "slot released after first update" 12
+    (run_ok rt
+       (Signal.Var.update_effect source (fun current ->
+            Effect.pure (current + 1))))
+
+let test_effectful_update_rejects_concurrent_set_same_variable () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let updating =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt
+          (widen
+             (Signal.Var.update_effect source (fun current ->
+                  Effect.sync (fun () ->
+                      Eio.Promise.resolve started_resolver ();
+                      Eio.Promise.await release;
+                      current + 10)))))
+  in
+  Eio.Promise.await started;
+  expect_fail "concurrent set" (( = ) `Reentrant_update)
+    (Eta_eio.Runtime.run rt (widen (Signal.Var.set source 100)));
+  Alcotest.(check int) "failed set leaves value unchanged" 1
+    (Signal.Var.value source);
+  Eio.Promise.resolve release_resolver ();
+  Alcotest.(check int) "effectful update still commits" 11
+    (expect_exit_ok "effectful update" (Eio.Promise.await_exn updating));
+  Alcotest.(check int) "slot released after update" 12
     (run_ok rt
        (Signal.Var.update_effect source (fun current ->
             Effect.pure (current + 1))))
@@ -5012,6 +5046,9 @@ let () =
             test_effectful_update_reentry_fails_and_preserves_value;
           Alcotest.test_case "concurrent effectful update fails fast" `Quick
             test_concurrent_effectful_update_same_variable_fails_fast;
+          Alcotest.test_case
+            "effectful update rejects concurrent set on same variable" `Quick
+            test_effectful_update_rejects_concurrent_set_same_variable;
           Alcotest.test_case "effectful update publishes once" `Quick
             test_effectful_update_success_publishes_once;
           Alcotest.test_case "effectful update sees pending source value"
