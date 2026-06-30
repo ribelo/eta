@@ -4,10 +4,14 @@
     observer handles are the public read surface for stabilized derived values.
 
     A graph is single-domain: create and use all vars, signals, observers, and
-    stabilization effects from the domain that applied the functor. The graph
-    lane serializes Eta fibers on that domain; it is not a multi-domain mutex.
-    Signal APIs raise [Invalid_argument] when called from another domain or
-    from a runtime worker callback. *)
+    stabilization effects from the domain that applied the functor. Effectful
+    graph operations acquire the graph lane to serialize Eta fibers on that
+    domain. Synchronous construction and read APIs are serialized only by
+    same-domain cooperative execution: they do not yield, do not acquire the
+    graph lane, and must remain free of Eta effect boundaries while mutating
+    graph state. The graph lane is not a multi-domain mutex. Signal APIs raise
+    [Invalid_argument] when called from another domain or from a runtime worker
+    callback. *)
 
 module type Observer_error = sig
   type t

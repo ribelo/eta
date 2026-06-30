@@ -597,6 +597,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
 
+  (* Synchronous constructors mutate graph indexes without entering the graph
+     lane. Keep this path same-domain, non-effectful, and callback-free;
+     effectful public operations must use [with_graph_lane]. *)
   let next_id () =
     ensure_graph_context ();
     let id = graph.next_id in
