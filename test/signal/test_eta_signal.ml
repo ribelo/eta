@@ -3588,14 +3588,29 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
   let module Tombstone_signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Tombstone_signal.Var.create true in
+  let captured_left = ref None in
   let selected =
     Tombstone_signal.bind (Tombstone_signal.Var.watch choose_left) (fun use_left ->
         if use_left then
-          Tombstone_signal.const 10 |> Tombstone_signal.map (fun value -> value + 1)
+          let signal =
+            Tombstone_signal.const 10
+            |> Tombstone_signal.map (fun value -> value + 1)
+          in
+          captured_left := Some signal;
+          signal
         else Tombstone_signal.const 20)
   in
   let observer =
     run_ok rt (Tombstone_signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Tombstone_signal.stabilize;
+  let branch =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind branch"
+  in
+  let branch_observer =
+    run_ok rt (Tombstone_signal.Observer.observe branch (fun _ -> Effect.unit))
   in
   run_ok rt Tombstone_signal.stabilize;
   let before_switch = run_ok rt (Tombstone_signal.stats ()) in
@@ -3608,7 +3623,7 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
   let options : Tombstone_signal.dot_options =
     {
       dot_scope = `All_including_invalid;
-      dot_observers = false;
+      dot_observers = true;
       dot_timers = false;
       dot_state = true;
       dot_dynamic_scopes = true;
@@ -3619,6 +3634,13 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
     (count_occurrences dot "valid=false" > 0);
   Alcotest.(check bool) "all-including-invalid dot shows invalid scopes" true
     (count_occurrences dot ":invalid" > 0);
+  Alcotest.(check int) "all-including-invalid dot shows invalid observer" 1
+    (count_occurrences dot "state=invalid_scope");
+  Alcotest.(check int) "all-including-invalid dot shows both observers" 2
+    (count_occurrences dot "observer:");
+  Alcotest.(check int) "all-including-invalid dot shows observer edges" 2
+    (count_occurrences dot "style=dashed,label=\"observes\"");
+  run_ok rt (Tombstone_signal.Observer.dispose branch_observer);
   run_ok rt (Tombstone_signal.Observer.dispose observer)
 
 let test_deterministic_model_matches_small_dynamic_graph () =

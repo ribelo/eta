@@ -302,10 +302,10 @@ module Make (Observer_error : Observer_error) () : sig
   (** Return a read-only DOT dump. The default is necessary-only for compact
       demand debugging. Use [dot_scope = `All_valid] to include retained valid
       nodes that are not currently necessary, or [`All_including_invalid] to
-      include invalid-node tombstones still retained for diagnostics. The
-      metadata flags add observer, timer, dirty/queued, dependency/dependent
-      edge counts, typed graph identity labels, and dynamic-scope state to the
-      dump. *)
+      include invalid-node tombstones and invalid observer handles still
+      retained for diagnostics. The metadata flags add observer, timer,
+      dirty/queued, dependency/dependent edge counts, typed graph identity
+      labels, and dynamic-scope state to the dump. *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call

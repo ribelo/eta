@@ -2172,6 +2172,13 @@ module Make (Observer_error : Observer_error) () = struct
         ^ observer_delivery_state_label observer.obs_delivery_state;
       ]
 
+  let observer_selected ~include_invalid (O observer as packed) =
+    observer_active packed
+    ||
+    match observer.obs_state with
+    | Observer_invalid_scope -> include_invalid
+    | Observer_disposed | Observer_active -> false
+
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
     let necessary = collect_necessary_node_ids () in
@@ -2234,11 +2241,11 @@ module Make (Observer_error : Observer_error) () = struct
     if options.dot_observers then
       List.iter
         (fun (O observer as packed) ->
-          if observer_active packed then (
+          if observer_selected ~include_invalid:include_dead_nodes packed then (
             Format.fprintf formatter "  %s [shape=box,label=%S];@."
               (observer_id_label observer.obs_id)
               (observer_label packed);
-            if selected observer.obs_signal then
+            if Hashtbl.mem selected_ids observer.obs_signal.id then
               Format.fprintf formatter
                 "  %s -> %s [style=dashed,label=\"observes\"];@."
                 (signal_id_label observer.obs_signal.id)
