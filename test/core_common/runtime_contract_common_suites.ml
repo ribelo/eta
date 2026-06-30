@@ -150,6 +150,17 @@ let check_foreign_token_rejected name f =
       Alcotest.failf "%s: expected foreign token rejection, got %s" name
         (Printexc.to_string exn)
 
+let runtime_contract_domain_message =
+  "Eta.Runtime_contract: runtime contract APIs must be called on the domain "
+  ^ "that created the contract"
+
+let run_in_domain f =
+  let domain =
+    (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      f
+  in
+  Domain.join domain
+
 let test_erased_tokens_reject_foreign_runtime_contract () =
   let first =
     Runtime_contract.of_runtime
@@ -178,6 +189,25 @@ let test_erased_tokens_reject_foreign_runtime_contract () =
   check_foreign_token_rejected "cancel context" (fun () ->
       second.Runtime_contract.cancel cancel_context Exit)
 
+let test_erased_runtime_contract_rejects_foreign_domain_use () =
+  let contract =
+    Runtime_contract.of_runtime
+      (module Direct_runtime : Runtime_contract.RUNTIME)
+  in
+  match
+    run_in_domain @@ fun () ->
+    try Ok (contract.Runtime_contract.now_ms ()) with
+    | Invalid_argument message -> Error message
+    | exn ->
+        Alcotest.failf "expected Invalid_argument, got %s"
+          (Printexc.to_string exn)
+  with
+  | Error message ->
+      Alcotest.(check string)
+        "cross-domain runtime contract failure"
+        runtime_contract_domain_message message
+  | Ok _ -> Alcotest.fail "expected cross-domain runtime contract use to fail"
+
 let tests =
   [
     ( "Runtime contract",
@@ -194,5 +224,7 @@ let tests =
           test_expert_custom_effect_uses_runtime_contract;
         Alcotest.test_case "erased tokens reject foreign runtime contract" `Quick
           test_erased_tokens_reject_foreign_runtime_contract;
+        Alcotest.test_case "erased contract rejects cross-domain use" `Quick
+          test_erased_runtime_contract_rejects_foreign_domain_use;
       ] );
   ]

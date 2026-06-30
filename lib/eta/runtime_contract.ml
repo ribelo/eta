@@ -89,6 +89,10 @@ let create_service_key () =
 
 let next_runtime_id = Atomic.make 0
 let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
+let wrong_domain =
+  "Eta.Runtime_contract: runtime contract APIs must be called on the domain "
+  ^ "that created the contract"
+
 let fresh_runtime_id () = Atomic.fetch_and_add next_runtime_id 1
 let token runtime_id value = { runtime_id; value }
 
@@ -142,6 +146,10 @@ end
 
 let of_runtime (module R : RUNTIME) =
   let runtime_id = fresh_runtime_id () in
+  let owner_domain = Domain.self () in
+  let ensure_owner_domain () =
+    if Domain.self () <> owner_domain then invalid_arg wrong_domain
+  in
   let scope value = Scope (token runtime_id (Obj.repr value)) in
   let cancel_context value =
     Cancel_context (token runtime_id (Obj.repr value))
@@ -159,25 +167,62 @@ let of_runtime (module R : RUNTIME) =
   in
   {
     root_scope = scope R.root_scope;
-    now_ms = R.now_ms;
-    sleep = R.sleep;
-    protect = R.protect;
+    now_ms =
+      (fun () ->
+        ensure_owner_domain ();
+        R.now_ms ());
+    sleep =
+      (fun duration ->
+        ensure_owner_domain ();
+        R.sleep duration);
+    protect =
+      (fun f ->
+        ensure_owner_domain ();
+        R.protect @@ fun () ->
+        ensure_owner_domain ();
+        f ());
     run_scope =
       (fun ?name f ->
-        R.run_scope ?name @@ fun child_scope -> f (scope child_scope));
+        ensure_owner_domain ();
+        R.run_scope ?name @@ fun child_scope ->
+        ensure_owner_domain ();
+        f (scope child_scope));
     fail_scope =
-      (fun ?bt scope exn -> R.fail_scope ?bt (scope_value scope) exn);
-    fork = (fun scope f -> R.fork (scope_value scope) f);
-    fork_daemon = (fun scope f -> R.fork_daemon (scope_value scope) f);
-    await_cancel = (fun () -> R.await_cancel ());
-    yield = R.yield;
-    check = R.check;
+      (fun ?bt scope exn ->
+        ensure_owner_domain ();
+        R.fail_scope ?bt (scope_value scope) exn);
+    fork =
+      (fun scope f ->
+        ensure_owner_domain ();
+        R.fork (scope_value scope) (fun () ->
+            ensure_owner_domain ();
+            f ()));
+    fork_daemon =
+      (fun scope f ->
+        ensure_owner_domain ();
+        R.fork_daemon (scope_value scope) (fun () ->
+            ensure_owner_domain ();
+            f ()));
+    await_cancel =
+      (fun () ->
+        ensure_owner_domain ();
+        R.await_cancel ());
+    yield =
+      (fun () ->
+        ensure_owner_domain ();
+        R.yield ());
+    check =
+      (fun () ->
+        ensure_owner_domain ();
+        R.check ());
     create_promise =
       (fun (type a) () ->
+        ensure_owner_domain ();
         let raw_promise, raw_resolver = R.create_promise () in
         (promise raw_promise, resolver raw_resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
+        ensure_owner_domain ();
         let resolver =
           (Obj.obj
              (checked_resolver_value runtime_id resolver)
@@ -186,42 +231,64 @@ let of_runtime (module R : RUNTIME) =
         R.resolve_promise resolver value);
     await_promise =
       (fun (type a) (promise : a promise) ->
+        ensure_owner_domain ();
         let promise =
           (Obj.obj (checked_promise_value runtime_id promise) : a R.promise)
         in
-        R.await_promise promise);
+        let value = R.await_promise promise in
+        ensure_owner_domain ();
+        value);
     create_stream =
       (fun (type a) capacity ->
+        ensure_owner_domain ();
         stream (R.create_stream capacity : a R.stream));
     stream_add =
       (fun (type a) (stream : a stream) (value : a) ->
+        ensure_owner_domain ();
         let stream =
           (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
         R.stream_add stream value);
     stream_take =
       (fun (type a) (stream : a stream) ->
+        ensure_owner_domain ();
         let stream =
           (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
-        R.stream_take stream);
+        let value = R.stream_take stream in
+        ensure_owner_domain ();
+        value);
     stream_take_nonblocking =
       (fun (type a) (stream : a stream) ->
+        ensure_owner_domain ();
         let stream =
           (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
         in
-        R.stream_take_nonblocking stream);
+        let value = R.stream_take_nonblocking stream in
+        ensure_owner_domain ();
+        value);
     with_worker_context = R.with_worker_context;
     in_worker_context = R.in_worker_context;
     cancellation_reason = R.cancellation_reason;
     multiple_exceptions = R.multiple_exceptions;
     cancel_sub =
       (fun f ->
+        ensure_owner_domain ();
         R.cancel_sub @@ fun cancel ->
+        ensure_owner_domain ();
         f (cancel_context cancel));
     cancel =
       (fun cancel_context exn ->
+        ensure_owner_domain ();
         R.cancel (cancel_context_value cancel_context) exn);
-    local_get = R.local_get;
-    local_with_binding = R.local_with_binding;
+    local_get =
+      (fun local ->
+        ensure_owner_domain ();
+        R.local_get local);
+    local_with_binding =
+      (fun local value f ->
+        ensure_owner_domain ();
+        R.local_with_binding local value (fun () ->
+            ensure_owner_domain ();
+            f ()));
   }

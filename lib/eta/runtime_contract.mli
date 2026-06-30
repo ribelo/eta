@@ -72,8 +72,16 @@ type t = {
     scopes, cancellation handles, promises, resolvers, and streams. The [Obj.t]
     representation is confined to those wrappers and the adapter; do not add
     another mirror record of backend operations.
-    Concurrency and parallelism semantics belong to the backend implementation;
-    the contract only states what Eta can ask for.
+
+    Erased runtime contracts are owner-domain values. Except for
+    [with_worker_context], [in_worker_context], [cancellation_reason], and
+    [multiple_exceptions], contract operations must be called on the domain that
+    created the erased contract, and callbacks supplied to [run_scope], [fork],
+    [fork_daemon], [protect], [cancel_sub], and [local_with_binding] must resume
+    on that same domain. This is part of the backend contract: Eta-owned queues,
+    signal graph lanes, and in-memory wait queues use same-domain locks and
+    cannot be resumed from arbitrary worker domains. Cross-domain contract use
+    raises [Invalid_argument].
 
     [now_ms] is monotonic runtime time in milliseconds, not wall/civil time.
     [sleep] must suspend on the same monotonic time base. Eta timers,
@@ -145,7 +153,14 @@ end
     erased interpreter representation. Fully functorizing the interpreter over
     [RUNTIME] remains the long-term endgame if this boundary becomes a measured
     cost or correctness constraint, but it is not treated as imminent migration
-    work. Until then, keep the design to these two layers. *)
+    work. Until then, keep the design to these two layers.
+
+    Backends must preserve same-domain execution for ordinary Eta fibers:
+    promise resolution, cancellation propagation, scope callbacks, forked
+    fibers, daemon fibers, and runtime-local bindings must not resume Eta code
+    on a different OCaml domain from the one running the erased contract.
+    Worker callbacks are represented explicitly by [with_worker_context]; they
+    must not call Eta graph or queue APIs directly. *)
 
 val create_local : unit -> 'a local
 (** Create a runtime-local key. *)
