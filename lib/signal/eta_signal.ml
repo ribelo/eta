@@ -568,11 +568,8 @@ module Make (Observer_error : Observer_error) () = struct
       owns_lane := false;
       leave_lane_sync graph.lane)
 
-  let release_graph_lane owns_lane =
-    Effect.sync (fun () -> release_graph_lane_sync owns_lane)
-
-  let with_graph_lane eff =
-    Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane" (fun context ->
+  let with_graph_lane_sync f =
+    Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane_sync" (fun context ->
         let contract = Effect.Expert.contract context in
         let owns_lane = ref false in
         let release_after_interrupt () =
@@ -583,8 +580,12 @@ module Make (Observer_error : Observer_error) () = struct
           ensure_graph_context ();
           enter_lane_sync contract graph.lane;
           owns_lane := true;
+          let release_graph_lane =
+            Effect.sync (fun () -> release_graph_lane_sync owns_lane)
+          in
           Effect.Expert.eval context
-            (eff |> Effect.on_exit (fun _exit -> release_graph_lane owns_lane))
+            (Effect.sync f
+            |> Effect.on_exit (fun _exit -> release_graph_lane))
         with
         | exn
           when Option.is_some
@@ -595,11 +596,9 @@ module Make (Observer_error : Observer_error) () = struct
             release_after_interrupt ();
             Effect.Expert.exit_of_exn context exn)
 
-  let with_graph_lane_sync f = with_graph_lane (Effect.sync f)
-
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
-     effectful public operations must use [with_graph_lane]. *)
+     effectful public operations must use [with_graph_lane_sync]. *)
   let next_id () =
     ensure_graph_context ();
     let id = graph.next_id in
