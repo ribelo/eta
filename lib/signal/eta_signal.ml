@@ -2462,6 +2462,9 @@ module Make (Observer_error : Observer_error) () = struct
     let validate_future now deadline_ms =
       if deadline_ms <= now then Error `Past_deadline else Ok ()
 
+    let validate_positive_duration duration =
+      if Duration.to_ms duration <= 0 then Error `Past_deadline else Ok ()
+
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
           if
@@ -2703,6 +2706,26 @@ module Make (Observer_error : Observer_error) () = struct
                                        |> Effect.map (fun _ -> ())));
                           })))
 
+    let construct_deadline_signal every deadline_ms =
+      construct_timer_signal (fun () ->
+          make_timer_signal ~update_on_start:true ~equal:Bool.equal false every
+            {
+              source_timer_update =
+                (fun timer generation source ->
+                  Effect.now
+                  |> Effect.bind (fun now_ms ->
+                         if now_ms >= deadline_ms then
+                           timer_set_source timer generation source true
+                           |> Effect.bind (function
+                                | `Updated ->
+                                    with_graph_lane_sync (fun () ->
+                                        timer_finish_unlocked timer)
+                                | `Stopped -> Effect.unit)
+                         else
+                           timer_set_source timer generation source false
+                           |> Effect.map (fun _ -> ())));
+            })
+
     let deadline ~every deadline_ms =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
@@ -2711,35 +2734,21 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun now_ms ->
                     Effect.from_result (validate_future now_ms deadline_ms)
                     |> Effect.bind (fun () ->
-                           construct_timer_signal (fun () ->
-                               make_timer_signal ~update_on_start:true
-                                 ~equal:Bool.equal false every
-                                 {
-                                   source_timer_update =
-                                     (fun timer generation source ->
-                                       Effect.now
-                                       |> Effect.bind (fun now_ms ->
-                                              if now_ms >= deadline_ms then
-                                                timer_set_source timer generation
-                                                  source true
-                                                |> Effect.bind (function
-                                                     | `Updated ->
-                                                         with_graph_lane_sync
-                                                           (fun () ->
-                                                             timer_finish_unlocked
-                                                               timer)
-                                                     | `Stopped -> Effect.unit)
-                                              else
-                                                timer_set_source timer generation
-                                                  source false
-                                                |> Effect.map (fun _ -> ())));
-                                 }))))
+                           construct_deadline_signal every deadline_ms)))
 
     let after ~every duration =
-      Effect.now
-      |> Effect.bind (fun now_ms ->
-             let deadline_ms = add_ms_capped now_ms (Duration.to_ms duration) in
-             deadline ~every deadline_ms)
+      Effect.sync (fun () ->
+          match validate_interval every with
+          | Error _ as error -> error
+          | Ok () -> validate_positive_duration duration)
+      |> Effect.flatten_result
+      |> Effect.bind (fun () ->
+             Effect.now
+             |> Effect.bind (fun now_ms ->
+                    let deadline_ms =
+                      add_ms_capped now_ms (Duration.to_ms duration)
+                    in
+                    construct_deadline_signal every deadline_ms))
 
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)

@@ -4973,6 +4973,22 @@ let test_time_after_deadline () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_after_positive_duration_tolerates_advancing_clock () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let current_now_ms = ref 0 in
+  let now_ms () =
+    let current = !current_now_ms in
+    incr current_now_ms;
+    current
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~now_ms ()
+  in
+  ignore
+    (run_ok rt
+       (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 1)))
+
 let test_time_after_elapsed_before_observe () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
@@ -6004,6 +6020,8 @@ let () =
             test_time_now_refreshes_after_idle_observe;
           Alcotest.test_case "time after deadline" `Quick
             test_time_after_deadline;
+          Alcotest.test_case "time after positive duration tolerates advancing clock"
+            `Quick test_time_after_positive_duration_tolerates_advancing_clock;
           Alcotest.test_case "time after elapsed before observe" `Quick
             test_time_after_elapsed_before_observe;
           Alcotest.test_case "time after saturates overflowing deadline"
