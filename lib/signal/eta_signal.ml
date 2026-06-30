@@ -1934,21 +1934,23 @@ module Make (Observer_error : Observer_error) () = struct
   let event_observer_active observer =
     with_graph_lane_sync (fun () -> observer_active (O observer))
 
+  let construct_observer_effect observer update =
+    Effect.sync (fun () ->
+        try Ok (observer.obs_callback update)
+        with Graph_error err -> Error (err :> stabilize_error))
+    |> Effect.flatten_result
+
   let rec run_events = function
     | [] -> Effect.unit
     | E (token, observer, update) :: rest -> (
         event_observer_active observer
         |> Effect.bind (function
              | false -> run_events rest
-             | true -> (
-                 match
-                   try Ok (observer.obs_callback update)
-                   with Graph_error err -> Error (err :> stabilize_error)
-                 with
-                 | Error err -> Effect.fail err
-                 | Ok observer_eff ->
-                     run_observer_effect observer token update observer_eff
-                     |> Effect.bind (fun () -> run_events rest))))
+             | true ->
+                 construct_observer_effect observer update
+                 |> Effect.bind (fun observer_eff ->
+                        run_observer_effect observer token update observer_eff
+                        |> Effect.bind (fun () -> run_events rest))))
 
   let begin_stabilize_with_pending_hooks hooks_ref finish_needed =
     let result = begin_stabilize () in
