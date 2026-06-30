@@ -1040,26 +1040,32 @@ module Make (Observer_error : Observer_error) () = struct
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
+  let clear_signal_staging signal =
+    signal.staged <- None;
+    signal.staged_dependency_versions <- None
+
   let commit_signal (P signal) =
-    if signal.staged_generation = current_generation () then (
-      (match signal.staged with
-       | None -> ()
-       | Some value ->
-           signal.value <- Some value;
-           signal.initialized <- true;
-           signal.version <- checked_succ "signal version" signal.version);
-      signal.staged <- None;
-      (match signal.staged_dependency_versions with
-       | None -> ()
-       | Some dependency_versions ->
-           signal.dependency_versions <- dependency_versions);
-      signal.staged_dependency_versions <- None);
-    signal.dirty <- false
+    if not signal.valid then (
+      if signal.staged_generation = current_generation () then
+        clear_signal_staging signal)
+    else (
+      if signal.staged_generation = current_generation () then (
+        (match signal.staged with
+         | None -> ()
+         | Some value ->
+             signal.value <- Some value;
+             signal.initialized <- true;
+             signal.version <- checked_succ "signal version" signal.version);
+        (match signal.staged_dependency_versions with
+         | None -> ()
+         | Some dependency_versions ->
+             signal.dependency_versions <- dependency_versions);
+        clear_signal_staging signal);
+      signal.dirty <- false)
 
   let rollback_signal (P signal) =
     if signal.staged_generation = current_generation () then (
-      signal.staged <- None;
-      signal.staged_dependency_versions <- None)
+      clear_signal_staging signal)
 
   let commit_var (V var) =
     if var.staged_var_generation = current_generation () then (
@@ -1138,8 +1144,15 @@ module Make (Observer_error : Observer_error) () = struct
       disposal_hooks)
     else []
 
+  let clear_observer_staging observer =
+    observer.obs_staged_current <- None;
+    observer.obs_staged_delivery_state <- None
+
   let commit_observer (O observer) =
-    if observer.obs_staged_generation = current_generation () then (
+    if not (observer_active (O observer)) then (
+      if observer.obs_staged_generation = current_generation () then
+        clear_observer_staging observer)
+    else if observer.obs_staged_generation = current_generation () then (
       (match observer.obs_staged_current with
        | None -> ()
        | Some value ->
@@ -1147,13 +1160,11 @@ module Make (Observer_error : Observer_error) () = struct
       (match observer.obs_staged_delivery_state with
        | None -> ()
        | Some state -> observer.obs_delivery_state <- state);
-      observer.obs_staged_current <- None;
-      observer.obs_staged_delivery_state <- None)
+      clear_observer_staging observer)
 
   let rollback_observer (O observer) =
     if observer.obs_staged_generation = current_generation () then (
-      observer.obs_staged_current <- None;
-      observer.obs_staged_delivery_state <- None)
+      clear_observer_staging observer)
 
   let remember_pure_disposal_hooks hooks =
     graph.pure_disposal_hooks <- hooks @ graph.pure_disposal_hooks

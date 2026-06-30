@@ -1812,6 +1812,71 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let signal_version signal =
+  let signal_obj = Obj.repr signal in
+  (Obj.obj (Obj.field signal_obj 6) : int)
+
+let signal_valid signal =
+  let signal_obj = Obj.repr signal in
+  (Obj.obj (Obj.field signal_obj 18) : bool)
+
+let test_commit_skips_invalidated_staged_entries () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let captured_left = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then (
+          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
+          captured_left := Some signal;
+          signal)
+        else Signal.Var.watch right)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let captured =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind RHS signal"
+  in
+  let branch_version = signal_version captured in
+  let branch_observer =
+    run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
+  in
+  run_ok rt (Signal.Var.set left 11);
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "selected switched to right" 20
+    (run_ok rt (Signal.Observer.read selected_observer));
+  Alcotest.(check bool) "captured branch invalidated" false
+    (signal_valid captured);
+  Alcotest.(check int) "invalidated staged branch version unchanged"
+    branch_version (signal_version captured);
+  expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
+  let options =
+    {
+      Signal.dot_scope = `All_including_invalid;
+      dot_observers = true;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok rt (Signal.to_dot ~options ()) in
+  Alcotest.(check bool) "invalid observer shown" true
+    (contains_substring dot "state=invalid_scope");
+  Alcotest.(check bool) "invalid observer remains uninitialized" true
+    (contains_substring dot "state=invalid_scope value_state=uninitialized");
+  Alcotest.(check bool) "invalid observer did not commit current value" false
+    (contains_substring dot "state=invalid_scope value_state=current");
+  run_ok rt (Signal.Observer.dispose branch_observer);
+  run_ok rt (Signal.Observer.dispose selected_observer)
+
 let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
   with_runtime @@ fun rt ->
   let a_target = Signal.Var.create (Signal.const 1) in
@@ -5332,6 +5397,8 @@ let () =
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
           Alcotest.test_case "bind switch invalidates branch observers" `Quick
             test_bind_switch_invalidates_observers_of_invalidated_scope;
+          Alcotest.test_case "commit skips invalidated staged entries" `Quick
+            test_commit_skips_invalidated_staged_entries;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
           Alcotest.test_case "dynamic list bind switches dependency set" `Quick
