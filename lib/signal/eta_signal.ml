@@ -1525,9 +1525,32 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync refresh_timer_demand_unlocked
     |> Effect.bind Effect.concat
 
-  let run_disposal_hooks = function
-    | [] -> Effect.unit
-    | hooks -> Effect.sync (fun () -> List.iter (fun hook -> hook ()) hooks)
+  let fail_disposal_hooks causes =
+    let cause =
+      match causes with
+      | [] -> invalid_arg "Eta_signal.fail_disposal_hooks: empty causes"
+      | [ cause ] -> cause
+      | causes -> Eta.Cause.sequential causes
+    in
+    Effect.Expert.make ~leaf_name:"Eta_signal.run_disposal_hooks" (fun _ ->
+        Eta.Exit.Error cause)
+
+  let run_disposal_hooks hooks =
+    let rec loop failures = function
+      | [] -> (
+          match List.rev failures with
+          | [] -> Effect.unit
+          | causes -> fail_disposal_hooks causes)
+      | hook :: rest ->
+          Effect.exit (Effect.sync hook)
+          |> Effect.bind (function
+               | Eta.Exit.Ok () -> loop failures rest
+               | Eta.Exit.Error cause -> loop (cause :: failures) rest)
+    in
+    loop [] hooks
+
+  let run_disposal_hooks_as_finalizers hooks =
+    Effect.unit |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
 
   let fail_with_disposal_hooks hooks effect =
     effect |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
@@ -1549,7 +1572,7 @@ module Make (Observer_error : Observer_error) () = struct
         else [])
     |> Effect.bind (fun hooks ->
            refresh_timer_demand ()
-           |> Effect.bind (fun () -> run_disposal_hooks hooks))
+           |> Effect.bind (fun () -> run_disposal_hooks_as_finalizers hooks))
 
   let delivered_value = function
     | Initialized value -> value
@@ -1711,7 +1734,7 @@ module Make (Observer_error : Observer_error) () = struct
              defect_with_disposal_hooks hooks exn backtrace
          | Pure_ok (hooks, events) ->
              (refresh_timer_demand ()
-              |> Effect.bind (fun () -> run_disposal_hooks hooks)
+              |> Effect.bind (fun () -> run_disposal_hooks_as_finalizers hooks)
               |> Effect.bind (fun () -> run_events events)
               |> Effect.bind mark_callback_delivery_complete)
              |> Effect.on_exit (fun _exit -> with_graph_lane_sync finish_stabilize))

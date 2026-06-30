@@ -53,6 +53,50 @@ let expect_die label = function
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
+let contains_substring haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec matches_at haystack_index needle_index =
+    needle_index = needle_len
+    || (haystack_index + needle_index < haystack_len
+       && Char.equal haystack.[haystack_index + needle_index]
+            needle.[needle_index]
+       && matches_at haystack_index (needle_index + 1))
+  in
+  let rec search index =
+    needle_len = 0
+    || (index + needle_len <= haystack_len
+       && (matches_at index 0 || search (index + 1)))
+  in
+  search 0
+
+let rec finalizer_has_die_message expected = function
+  | Cause.Finalizer.Die die ->
+      contains_substring (Printexc.to_string die.exn) expected
+  | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> false
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      List.exists (finalizer_has_die_message expected) causes
+  | Cause.Finalizer.Finalizer cause -> finalizer_has_die_message expected cause
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_has_die_message expected primary
+      || finalizer_has_die_message expected finalizer
+
+let rec cause_has_finalizer_die_message expected = function
+  | Cause.Finalizer finalizer -> finalizer_has_die_message expected finalizer
+  | Cause.Suppressed { primary; finalizer } ->
+      cause_has_finalizer_die_message expected primary
+      || finalizer_has_die_message expected finalizer
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (cause_has_finalizer_die_message expected) causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+
+let expect_finalizer_die label expected = function
+  | Exit.Error cause when cause_has_finalizer_die_message expected cause -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected finalizer defect %S, got %a" label expected
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok _ -> Alcotest.failf "%s: expected finalizer defect, got Ok" label
+
 let expect_graph_error_exn label expected f =
   match f () with
   | exception Signal.Graph_error actual when actual = expected -> ()
@@ -4155,6 +4199,27 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
+let test_disposal_hooks_continue_after_failure () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observer =
+    run_ok rt (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
+        Effect.unit))
+  in
+  let later_hook_ran = ref false in
+  set_observer_on_dispose observer
+    [
+      (fun _ -> failwith "first dispose hook failure");
+      (fun _ -> later_hook_ran := true);
+      (fun _ -> failwith "third dispose hook failure");
+    ];
+  let exit = Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)) in
+  expect_finalizer_die "first dispose hook failure"
+    "first dispose hook failure" exit;
+  expect_finalizer_die "third dispose hook failure"
+    "third dispose hook failure" exit;
+  Alcotest.(check bool) "later hook still ran" true !later_hook_ran
+
 let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
@@ -4164,7 +4229,7 @@ let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   wait_for_sleepers clock 1;
   set_observer_on_dispose observer
     [ (fun _ -> failwith "dispose hook failure") ];
-  expect_die "dispose hook failure"
+  expect_finalizer_die "dispose hook failure" "dispose hook failure"
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
   let drained =
     Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
@@ -5235,6 +5300,8 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "disposal hooks continue after failure" `Quick
+            test_disposal_hooks_continue_after_failure;
           Alcotest.test_case "time timer dispose hook failure cleans graph"
             `Quick test_time_timer_dispose_hook_failure_still_cleans_graph;
           Alcotest.test_case "time invalidated timer cancels sleeping daemon"
