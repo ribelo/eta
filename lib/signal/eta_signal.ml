@@ -860,13 +860,19 @@ module Make (Observer_error : Observer_error) () = struct
     visit (P inner)
 
   let timer_stop_unlocked ?(cancel_running = true) timer =
-    let cancel = timer.timer_cancel in
-    timer.timer_active <- false;
-    timer.timer_running_generation <- None;
-    timer.timer_cancel <- None;
-    if cancel_running then Option.iter (fun cancel -> cancel ()) cancel;
-    timer.timer_generation <-
-      checked_succ "timer generation" timer.timer_generation
+    if
+      (not timer.timer_active)
+      && Option.is_none timer.timer_running_generation
+      && Option.is_none timer.timer_cancel
+    then ()
+    else (
+      let cancel = timer.timer_cancel in
+      timer.timer_active <- false;
+      timer.timer_running_generation <- None;
+      timer.timer_cancel <- None;
+      if cancel_running then Option.iter (fun cancel -> cancel ()) cancel;
+      timer.timer_generation <-
+        checked_succ "timer generation" timer.timer_generation)
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
