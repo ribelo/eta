@@ -4395,32 +4395,25 @@ let test_time_catch_up_yields_between_batches () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_catch_up_overflow_logs_daemon_diagnostic () =
+let test_time_large_catch_up_applies_beyond_old_cap () =
   with_cooperative_timer_host ~jump_ms:10_250
-  @@ fun rt sleep_calls _yield_calls logger ->
+  @@ fun rt sleep_calls yield_calls logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
-  wait_until "catch-up processed" (fun () ->
-      Logger.dump logger <> [] || !sleep_calls >= 2);
-  let records = Logger.dump logger in
+  wait_until "large catch-up processed" (fun () -> !sleep_calls >= 2);
+  Alcotest.(check bool)
+    "large catch-up yielded cooperatively" true
+    (!yield_calls > 0);
+  Alcotest.(check int) "large catch-up logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "large catch-up applies every cadence" 1_025
+    (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer);
-  (match records with
-   | [ record ] ->
-       Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
-         record.body;
-       (match List.assoc_opt "exception.message" record.attrs with
-        | Some message
-          when contains_substring message "Eta_signal: timer catch-up overflow"
-          ->
-            ()
-        | actual ->
-            Alcotest.failf "expected catch-up overflow diagnostic, got %s"
-              (Option.value actual ~default:"<missing>"))
-   | records ->
-       Alcotest.failf "expected one catch-up overflow diagnostic, got %d"
-         (List.length records))
+  Alcotest.(check int) "dispose logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger))
 
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -5683,8 +5676,8 @@ let () =
             test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time catch-up yields between batches" `Quick
             test_time_catch_up_yields_between_batches;
-          Alcotest.test_case "time catch-up overflow logs diagnostic" `Quick
-            test_time_catch_up_overflow_logs_daemon_diagnostic;
+          Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
+            test_time_large_catch_up_applies_beyond_old_cap;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick

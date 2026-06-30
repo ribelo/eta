@@ -2497,15 +2497,11 @@ module Make (Observer_error : Observer_error) () = struct
       else if left > max_int / right then max_int
       else left * right
 
-    let timer_max_catch_up_per_wake = 1024
-
     let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
       if now_ms < next_due_ms then 0
       else
         let elapsed = (now_ms - next_due_ms) / interval_ms in
-        if elapsed >= timer_max_catch_up_per_wake then
-          counter_overflow "timer catch-up"
-        else elapsed + 1
+        checked_succ "timer catch-up" elapsed
 
     let advance_due next_due_ms interval_ms missed =
       add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
