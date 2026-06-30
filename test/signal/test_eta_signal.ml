@@ -3933,28 +3933,38 @@ let set_observer_on_dispose observer hooks =
   let observer_obj = Obj.repr observer in
   Obj.set_field observer_obj 10 (Obj.repr hooks)
 
-let test_time_interval_saturates_at_max_int () =
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
+let test_time_interval_overflow_logs_daemon_diagnostic () =
+  with_logger_test_clock @@ fun _sw clock rt logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  seed_interval_source signal (max_int - 1);
+  seed_interval_source signal max_int;
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial interval boundary" (max_int - 1)
+  Alcotest.(check int) "initial interval max" max_int
     (run_ok rt (Signal.Observer.read observer));
   Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "interval tick saturates" max_int
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "interval remains saturated" max_int
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  let records = Logger.dump logger in
+  run_ok rt (Signal.Observer.dispose observer);
+  (match records with
+   | [ record ] ->
+       Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
+         record.body;
+       (match List.assoc_opt "exception.message" record.attrs with
+        | Some message
+          when contains_substring message "Eta_signal: interval counter overflow"
+          ->
+            ()
+        | actual ->
+            Alcotest.failf "expected interval overflow diagnostic, got %s"
+              (Option.value actual ~default:"<missing>"))
+   | records ->
+       Alcotest.failf "expected one interval overflow diagnostic, got %d"
+         (List.length records))
 
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Overflow_signal = Eta_signal.Make (Observer_error) () in
@@ -4083,12 +4093,13 @@ let test_time_step_catches_up_after_late_sleep () =
   run_ok rt (Signal.Observer.dispose observer);
   release ()
 
-let with_cooperative_timer_host f =
+let with_cooperative_timer_host ?(jump_ms = 10_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let now_ms = ref 0 in
   let sleep_calls = ref 0 in
   let yield_calls = ref 0 in
+  let logger = Logger.in_memory () in
   let module Unix = struct
     let run_in_systhread ?label:_ f = f ()
   end in
@@ -4098,7 +4109,7 @@ let with_cooperative_timer_host f =
 
       let sleep _clock _seconds =
         incr sleep_calls;
-        if !sleep_calls = 1 then now_ms := 10_000
+        if !sleep_calls = 1 then now_ms := jump_ms
         else raise (Eio.Cancel.Cancelled (Failure "timer catch-up test stop"))
     end
 
@@ -4149,11 +4160,12 @@ let with_cooperative_timer_host f =
   let host =
     Eta_eio.Host.make ~unix:(module Unix) ~eio:(module Eio_ops) ()
   in
-  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env) @@ fun rt ->
-  f rt sleep_calls yield_calls
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
+    ~logger:(Logger.as_capability logger) @@ fun rt ->
+  f rt sleep_calls yield_calls logger
 
 let test_time_catch_up_yields_between_batches () =
-  with_cooperative_timer_host @@ fun rt sleep_calls yield_calls ->
+  with_cooperative_timer_host @@ fun rt sleep_calls yield_calls _logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -4166,6 +4178,33 @@ let test_time_catch_up_yields_between_batches () =
   Alcotest.(check int) "catch-up still applies every cadence" 1_000
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_catch_up_overflow_logs_daemon_diagnostic () =
+  with_cooperative_timer_host ~jump_ms:10_250
+  @@ fun rt sleep_calls _yield_calls logger ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "catch-up processed" (fun () ->
+      Logger.dump logger <> [] || !sleep_calls >= 2);
+  let records = Logger.dump logger in
+  run_ok rt (Signal.Observer.dispose observer);
+  (match records with
+   | [ record ] ->
+       Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
+         record.body;
+       (match List.assoc_opt "exception.message" record.attrs with
+        | Some message
+          when contains_substring message "Eta_signal: timer catch-up overflow"
+          ->
+            ()
+        | actual ->
+            Alcotest.failf "expected catch-up overflow diagnostic, got %s"
+              (Option.value actual ~default:"<missing>"))
+   | records ->
+       Alcotest.failf "expected one catch-up overflow diagnostic, got %d"
+         (List.length records))
 
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -5287,8 +5326,8 @@ let () =
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
-          Alcotest.test_case "time interval saturates at max_int" `Quick
-            test_time_interval_saturates_at_max_int;
+          Alcotest.test_case "time interval overflow logs diagnostic" `Quick
+            test_time_interval_overflow_logs_daemon_diagnostic;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case "time large clock jump catches up explicitly"
@@ -5299,6 +5338,8 @@ let () =
             test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time catch-up yields between batches" `Quick
             test_time_catch_up_yields_between_batches;
+          Alcotest.test_case "time catch-up overflow logs diagnostic" `Quick
+            test_time_catch_up_overflow_logs_daemon_diagnostic;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
