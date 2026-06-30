@@ -689,13 +689,23 @@ module Make (Observer_error : Observer_error) () = struct
         graph.observers
 
   let finish_observer_unlocked observer state =
-    match observer.obs_state with
-    | Observer_active ->
+    match (observer.obs_state, state) with
+    | Observer_active, Observer_disposed ->
         observer.obs_state <- state;
         remove_observer observer;
         List.iter (fun f -> f ()) observer.obs_on_dispose;
         observer.obs_on_dispose <- []
-    | Observer_disposed | Observer_invalid_scope -> ()
+    | Observer_active, Observer_invalid_scope ->
+        observer.obs_state <- state;
+        List.iter (fun f -> f ()) observer.obs_on_dispose;
+        observer.obs_on_dispose <- []
+    | Observer_invalid_scope, Observer_disposed ->
+        observer.obs_state <- state;
+        remove_observer observer
+    | _, Observer_active ->
+        invalid_arg "Eta_signal: observer finish target cannot be active"
+    | Observer_disposed, _ | Observer_invalid_scope, Observer_invalid_scope ->
+        ()
 
   let dispose_observer_unlocked observer =
     finish_observer_unlocked observer Observer_disposed
@@ -1308,7 +1318,7 @@ module Make (Observer_error : Observer_error) () = struct
   let dispose_observer_effect observer =
     with_graph_lane_sync
       (fun () ->
-        if observer_active (O observer) then (
+        if observer.obs_state <> Observer_disposed then (
           dispose_observer_unlocked observer;
           update_necessity_counters_unlocked ()))
     |> Effect.bind (fun () -> refresh_timer_demand ())
@@ -1642,8 +1652,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let invalid_observer_count () =
     List.fold_left
-      (fun count (O observer as packed) ->
-        if observer_active packed && not observer.obs_signal.valid then
+      (fun count (O observer) ->
+        if observer.obs_state = Observer_invalid_scope then
           saturating_succ count
         else count)
       0 graph.observers

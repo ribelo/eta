@@ -1596,6 +1596,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
     (run_ok rt (Signal.Observer.read selected_observer));
   expect_fail "wrapped branch observer invalidated" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read wrapped_observer)));
+  run_ok rt (Signal.Observer.dispose wrapped_observer);
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "later stabilization ignores invalidated wrapper" 21
@@ -1638,10 +1639,16 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
     (run_ok rt (Signal.Observer.read selected_observer));
   expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
-  Alcotest.(check int) "invalidated branch observer removed from stats" 0
+  Alcotest.(check int) "invalidated branch observer is counted" 1
     after_switch.Signal.invalid_observer_count;
   Alcotest.(check int) "invalidated branch nodes pruned from stats" 0
     after_switch.Signal.dead_node_count;
+  run_ok rt (Signal.Observer.dispose branch_observer);
+  let after_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "disposed invalid branch observer is uncounted" 0
+    after_dispose.Signal.invalid_observer_count;
+  expect_fail "disposed invalid branch observer read" (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "later stabilization ignores invalidated observer" 21

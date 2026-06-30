@@ -78,10 +78,12 @@ module Make (Observer_error : Observer_error) () : sig
 
       [pure_snapshot_commit_count] advances when a pure graph snapshot commits.
       [callback_delivery_count] advances only after all observer callbacks for a
-      stabilization are delivered successfully. [live_dirty_node_count] counts
-      valid dirty nodes; [dead_node_count] counts invalid nodes still retained
-      by graph indexes. [stream_bridge_drop_count] counts updates dropped by
-      lossy {!Stream.observe} bridge queues. *)
+      stabilization are delivered successfully. [invalid_observer_count] counts
+      observer handles invalidated by dynamic-scope replacement and not yet
+      disposed. [live_dirty_node_count] counts valid dirty nodes;
+      [dead_node_count] counts invalid nodes still retained by graph indexes.
+      [stream_bridge_drop_count] counts updates dropped by lossy
+      {!Stream.observe} bridge queues. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
