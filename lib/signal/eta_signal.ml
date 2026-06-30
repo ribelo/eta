@@ -2875,14 +2875,10 @@ module Make (Observer_error : Observer_error) () = struct
       Queue.try_send queue update
       |> Effect.bind (function
            | `Sent | `Closed -> Effect.unit
-           | `Dropped -> report_dropped_update observer on_drop update
-           | `Full ->
-               Effect.sync (fun () ->
-                   failwith "Eta_signal.Stream.observe: unexpected full queue")
-           | `Closed_with_error _ ->
-               Effect.sync (fun () ->
-                   failwith
-                     "Eta_signal.Stream.observe: bridge queue closed with error"))
+           | `Dropped | `Full ->
+               report_dropped_update observer on_drop update
+           | `Closed_with_error err ->
+               Effect.sync (fun () -> raise (Graph_error err)))
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> create_bridge_queue capacity)
