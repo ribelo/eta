@@ -70,8 +70,8 @@ type t = {
     {!of_runtime} erases that implementation into this record for the root
     interpreter. Erased values are wrapped in distinct private token kinds for
     scopes, cancellation handles, promises, resolvers, and streams. The [Obj.t]
-    representation is confined to those wrappers, the adapter, and {!Backend}
-    bridge below; do not add another mirror record of backend operations.
+    representation is confined to those wrappers and the adapter; do not add
+    another mirror record of backend operations.
     Concurrency and parallelism semantics belong to the backend implementation;
     the contract only states what Eta can ask for.
 
@@ -165,9 +165,9 @@ val in_registered_worker_context : unit -> bool
 val of_runtime : (module RUNTIME) -> t
 (** Erase a module-shaped runtime implementation into the interpreter record.
     New backends should implement {!RUNTIME}; this adapter is the only place
-    that should cast backend-owned scope, cancellation, promise, resolver, and
-    stream values into Eta's erased representation. Erased tokens produced by
-    one returned contract are owned by that contract; using them with another
+    that casts backend-owned scope, cancellation, promise, resolver, and stream
+    values into Eta's erased representation. Erased tokens produced by one
+    returned contract are owned by that contract; using them with another
     contract raises [Invalid_argument]. *)
 
 module Backend : sig
@@ -175,21 +175,8 @@ module Backend : sig
   val local_binding_value : 'a local -> local_binding -> 'a option
   val service_key_id : 'a service_key -> int
   val service_value : 'a service_key -> service -> 'a option
-  val scope : Obj.t -> scope
-  val scope_value : scope -> Obj.t
-  val cancel_context : Obj.t -> cancel_context
-  val cancel_context_value : cancel_context -> Obj.t
-  val promise : Obj.t -> 'a promise
-  val promise_value : 'a promise -> Obj.t
-  val resolver : Obj.t -> 'a resolver
-  val resolver_value : 'a resolver -> Obj.t
-  val stream : Obj.t -> 'a stream
-  val stream_value : 'a stream -> Obj.t
 end
-(** Unsafe token bridge for backend packages and {!of_runtime}. Each function
-    still preserves the runtime token kind in Eta's representation, but the
-    payload crossing this bridge is an unchecked backend-owned [Obj.t]. Keep use
-    localized to runtime implementations such as [eta_eio] and do not build
-    additional erased runtime surfaces on top of it. Tokens produced directly by
-    this bridge are raw backend values; ordinary code should use tokens returned
-    by {!of_runtime} operations. *)
+(** Backend helpers that do not erase runtime-owned tokens. Runtime packages
+    may use these helpers for typed locals and service bindings. Backend-owned
+    scopes, cancellation handles, promises, resolvers, and streams must cross
+    the interpreter boundary through {!of_runtime}. *)

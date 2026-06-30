@@ -88,7 +88,6 @@ let create_service_key () =
   Type.Id.make ()
 
 let next_runtime_id = Atomic.make 0
-let unsafe_runtime_id = -1
 let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
 let fresh_runtime_id () = Atomic.fetch_and_add next_runtime_id 1
 let token runtime_id value = { runtime_id; value }
@@ -139,17 +138,6 @@ module Backend = struct
     | Some Type.Equal -> Some value
     | None -> None
 
-  let unsafe_token value = { runtime_id = unsafe_runtime_id; value }
-  let scope value = Scope (unsafe_token value)
-  let scope_value (Scope token) = token.value
-  let cancel_context value = Cancel_context (unsafe_token value)
-  let cancel_context_value (Cancel_context token) = token.value
-  let promise value = Promise (unsafe_token value)
-  let promise_value (Promise token) = token.value
-  let resolver value = Resolver (unsafe_token value)
-  let resolver_value (Resolver token) = token.value
-  let stream value = Stream (unsafe_token value)
-  let stream_value (Stream token) = token.value
 end
 
 let of_runtime (module R : RUNTIME) =
