@@ -1,13 +1,31 @@
-type token = {
-  runtime_id : int;
-  value : Obj.t;
-}
+let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
 
-type scope = Scope of token
-type cancel_context = Cancel_context of token
-type 'a promise = Promise of token
-type 'a resolver = Resolver of token
-type 'a stream = Stream of token
+type runtime_id = Runtime_id of int
+
+module Erased_token = struct
+  type ('kind, 'payload) t = {
+    runtime_id : runtime_id;
+    value : Obj.t;
+  }
+
+  let make runtime_id value = { runtime_id; value = Obj.repr value }
+
+  let cast runtime_id token =
+    if token.runtime_id <> runtime_id then invalid_arg foreign_runtime_token;
+    Obj.obj token.value
+end
+
+type scope_token
+type cancel_context_token
+type promise_token
+type resolver_token
+type stream_token
+
+type scope = Scope of (scope_token, unit) Erased_token.t
+type cancel_context = Cancel_context of (cancel_context_token, unit) Erased_token.t
+type 'a promise = Promise of (promise_token, 'a) Erased_token.t
+type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
+type 'a stream = Stream of (stream_token, 'a) Erased_token.t
 type 'a local = 'a Type.Id.t
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -88,32 +106,11 @@ let create_service_key () =
   Type.Id.make ()
 
 let next_runtime_id = Atomic.make 0
-let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
 let wrong_domain =
   "Eta.Runtime_contract: runtime contract APIs must be called on the domain "
   ^ "that created the contract"
 
-let fresh_runtime_id () = Atomic.fetch_and_add next_runtime_id 1
-let token runtime_id value = { runtime_id; value }
-
-let checked_token_value runtime_id token =
-  if token.runtime_id <> runtime_id then invalid_arg foreign_runtime_token;
-  token.value
-
-let checked_scope_value runtime_id (Scope token) =
-  checked_token_value runtime_id token
-
-let checked_cancel_context_value runtime_id (Cancel_context token) =
-  checked_token_value runtime_id token
-
-let checked_promise_value runtime_id (Promise token) =
-  checked_token_value runtime_id token
-
-let checked_resolver_value runtime_id (Resolver token) =
-  checked_token_value runtime_id token
-
-let checked_stream_value runtime_id (Stream token) =
-  checked_token_value runtime_id token
+let fresh_runtime_id () = Runtime_id (Atomic.fetch_and_add next_runtime_id 1)
 
 let worker_context_probes : (unit -> bool) list Atomic.t = Atomic.make []
 
@@ -150,20 +147,27 @@ let of_runtime (module R : RUNTIME) =
   let ensure_owner_domain () =
     if Domain.self () <> owner_domain then invalid_arg wrong_domain
   in
-  let scope value = Scope (token runtime_id (Obj.repr value)) in
+  let scope value = Scope (Erased_token.make runtime_id value) in
   let cancel_context value =
-    Cancel_context (token runtime_id (Obj.repr value))
+    Cancel_context (Erased_token.make runtime_id value)
   in
-  let promise value = Promise (token runtime_id (Obj.repr value)) in
-  let resolver value = Resolver (token runtime_id (Obj.repr value)) in
-  let stream value = Stream (token runtime_id (Obj.repr value)) in
-  let scope_value scope =
-    (Obj.obj (checked_scope_value runtime_id scope) : R.scope)
+  let promise value = Promise (Erased_token.make runtime_id value) in
+  let resolver value = Resolver (Erased_token.make runtime_id value) in
+  let stream value = Stream (Erased_token.make runtime_id value) in
+  let scope_value (Scope token) =
+    (Erased_token.cast runtime_id token : R.scope)
   in
-  let cancel_context_value cancel_context =
-    (Obj.obj
-       (checked_cancel_context_value runtime_id cancel_context)
-      : R.cancel_context)
+  let cancel_context_value (Cancel_context token) =
+    (Erased_token.cast runtime_id token : R.cancel_context)
+  in
+  let promise_value : type a. a promise -> a R.promise =
+   fun (Promise token) -> Erased_token.cast runtime_id token
+  in
+  let resolver_value : type a. a resolver -> a R.resolver =
+   fun (Resolver token) -> Erased_token.cast runtime_id token
+  in
+  let stream_value : type a. a stream -> a R.stream =
+   fun (Stream token) -> Erased_token.cast runtime_id token
   in
   {
     root_scope = scope R.root_scope;
@@ -223,19 +227,11 @@ let of_runtime (module R : RUNTIME) =
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
         ensure_owner_domain ();
-        let resolver =
-          (Obj.obj
-             (checked_resolver_value runtime_id resolver)
-            : a R.resolver)
-        in
-        R.resolve_promise resolver value);
+        R.resolve_promise (resolver_value resolver) value);
     await_promise =
       (fun (type a) (promise : a promise) ->
         ensure_owner_domain ();
-        let promise =
-          (Obj.obj (checked_promise_value runtime_id promise) : a R.promise)
-        in
-        let value = R.await_promise promise in
+        let value = R.await_promise (promise_value promise) in
         ensure_owner_domain ();
         value);
     create_stream =
@@ -245,26 +241,17 @@ let of_runtime (module R : RUNTIME) =
     stream_add =
       (fun (type a) (stream : a stream) (value : a) ->
         ensure_owner_domain ();
-        let stream =
-          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
-        in
-        R.stream_add stream value);
+        R.stream_add (stream_value stream) value);
     stream_take =
       (fun (type a) (stream : a stream) ->
         ensure_owner_domain ();
-        let stream =
-          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
-        in
-        let value = R.stream_take stream in
+        let value = R.stream_take (stream_value stream) in
         ensure_owner_domain ();
         value);
     stream_take_nonblocking =
       (fun (type a) (stream : a stream) ->
         ensure_owner_domain ();
-        let stream =
-          (Obj.obj (checked_stream_value runtime_id stream) : a R.stream)
-        in
-        let value = R.stream_take_nonblocking stream in
+        let value = R.stream_take_nonblocking (stream_value stream) in
         ensure_owner_domain ();
         value);
     with_worker_context = R.with_worker_context;
