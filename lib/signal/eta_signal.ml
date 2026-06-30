@@ -1969,6 +1969,13 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
+    let return_active_observer observer =
+      with_graph_lane_sync (fun () ->
+          match observer.obs_state with
+          | Observer_active -> Ok observer
+          | Observer_invalid_scope | Observer_disposed -> Error `Invalid_scope)
+      |> Effect.flatten_result
+
     let observe_with_hooks_callback ?(equal = default_equal) ?(on_finish = [])
         signal callback =
       with_graph_lane_sync (fun () ->
@@ -1997,7 +2004,8 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun observer ->
              let transferred = ref false in
              (refresh_timer_demand ()
-             |> Effect.map (fun () ->
+             |> Effect.bind (fun () -> return_active_observer observer)
+             |> Effect.map (fun observer ->
                     transferred := true;
                     observer))
              |> Effect.on_exit (fun _exit ->
