@@ -207,6 +207,7 @@ module Cleanup_interrupt_runtime = struct
   type 'a stream = 'a Stdlib.Queue.t
 
   let interrupt_next_protect_return = ref false
+  let interrupt_on_local_binding_count = ref None
   let now = ref 0
   let root_scope = ()
   let now_ms () = !now
@@ -284,12 +285,19 @@ module Cleanup_interrupt_runtime = struct
     local_binding_count := !local_binding_count + 1;
     Hashtbl.replace locals id
       (Runtime_contract.Local_binding (local, value) :: stack);
+    let interrupt =
+      match !interrupt_on_local_binding_count with
+      | Some target when target = !local_binding_count ->
+          interrupt_on_local_binding_count := None;
+          true
+      | Some _ | None -> false
+    in
     Fun.protect
       ~finally:(fun () ->
         match previous with
         | Some stack -> Hashtbl.replace locals id stack
         | None -> Hashtbl.remove locals id)
-      f
+      (fun () -> if interrupt then raise Cleanup_interrupt else f ())
 end
 
 let run_effect_in_foreign_domain eff =
@@ -5067,6 +5075,67 @@ let test_stream_observe_timer_initialization_race () =
    | _ -> Alcotest.fail "expected initialized stream update");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_interrupted_publish_does_not_duplicate () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let arm_interrupt = ref false in
+  let marker =
+    expect_exit_ok "marker observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe signal (fun _update ->
+                 Effect.sync (fun () ->
+                     if !arm_interrupt then
+                       (* From this marker callback, the marker ack and the
+                          stream observer active check enter the lane before
+                          the stream delivery ack. *)
+                       Cleanup_interrupt_runtime.interrupt_on_local_binding_count
+                       := Some
+                            (!Cleanup_interrupt_runtime.local_binding_count + 3))))))
+  in
+  let observer, stream =
+    expect_exit_ok "stream observer registration"
+      (Runtime.run rt (widen (Signal.Stream.observe signal)))
+  in
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  arm_interrupt := true;
+  (match Runtime.run rt (widen Signal.stabilize) with
+  | exception Cleanup_interrupt -> ()
+  | Exit.Error _ -> ()
+  | Exit.Ok () -> Alcotest.fail "expected injected observer acknowledgement interrupt");
+  arm_interrupt := false;
+  ignore
+    (expect_exit_ok "retry stabilize"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  ignore
+    (expect_exit_ok "stream observer dispose"
+       (Runtime.run rt (widen (Signal.Observer.dispose observer)))
+      : unit);
+  ignore
+    (expect_exit_ok "marker observer dispose"
+       (Runtime.run rt (widen (Signal.Observer.dispose marker)))
+      : unit);
+  (match
+     expect_exit_ok "stream collect after interrupted publish"
+       (Runtime.run rt
+          (widen (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)))
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | [ Signal.Initialized 1; Signal.Initialized 1 ] ->
+       Alcotest.fail "interrupted stream publish was delivered twice"
+   | _ -> Alcotest.fail "expected one initialized stream update")
+
 let test_stream_bridge_emits_after_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -5789,6 +5858,8 @@ let () =
             test_time_validation_errors;
           Alcotest.test_case "stream observe timer initialization race" `Quick
             test_stream_observe_timer_initialization_race;
+          Alcotest.test_case "stream bridge interrupted publish does not duplicate"
+            `Quick test_stream_bridge_interrupted_publish_does_not_duplicate;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick
             test_stream_bridge_emits_after_stabilize;
           Alcotest.test_case "stream bridge validates capacity" `Quick

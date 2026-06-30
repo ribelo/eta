@@ -1808,16 +1808,26 @@ module Make (Observer_error : Observer_error) () = struct
           { primary = observer_cause_to_stabilize primary; finalizer }
 
   let run_observer_effect observer token update observer_eff =
-    (Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
-     try
-       match Effect.Expert.eval context observer_eff with
-       | Eta.Exit.Ok () -> Eta.Exit.Ok ()
-       | Eta.Exit.Error cause ->
-           Eta.Exit.Error (observer_cause_to_stabilize cause)
-     with
-     | Graph_error err ->
-         Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))
-    |> Effect.bind (fun () -> acknowledge_event_delivery observer token update)
+    let delivered = ref false in
+    let acknowledge_if_delivered () =
+      if !delivered then acknowledge_event_delivery observer token update
+      else Effect.unit
+    in
+    ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+      try
+        match Effect.Expert.eval context observer_eff with
+        | Eta.Exit.Ok () ->
+            delivered := true;
+            Eta.Exit.Ok ()
+        | Eta.Exit.Error cause ->
+            Eta.Exit.Error (observer_cause_to_stabilize cause)
+      with
+      | Graph_error err ->
+          Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))
+     |> Effect.bind (fun () -> acknowledge_event_delivery observer token update))
+    |> Effect.on_exit (function
+         | Eta.Exit.Ok _ -> Effect.unit
+         | Eta.Exit.Error _ -> acknowledge_if_delivered ())
 
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
