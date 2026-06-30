@@ -2880,6 +2880,62 @@ let test_time_timer_start_failure_retries_necessary_timer () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_timer_start_failure_rolls_back_unstarted_timers () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let fail_next_now = ref false in
+  let now_ms () =
+    if !fail_next_now then (
+      fail_next_now := false;
+      failwith "timer start clock failure")
+    else Eta_test.Test_clock.now_ms clock
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let use_timers = Signal.Var.create false in
+  let unstarted = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let failing = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observed =
+    Signal.bind (Signal.Var.watch use_timers) (fun enabled ->
+        if enabled then Signal.all [ failing; unstarted ]
+        else Signal.const [ 0; 0 ])
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe observed (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  fail_next_now := true;
+  run_ok rt (Signal.Var.set use_timers true);
+  expect_die "multi-timer start failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int) "failed refresh installed no sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  let options : Signal.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = false;
+      dot_timers = true;
+      dot_state = false;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok rt (Signal.to_dot ~options ()) in
+  Alcotest.(check int)
+    "failed refresh leaves no active timer without a start" 0
+    (count_occurrences dot
+       "timer_active=true timer_running=none timer_cancel=false");
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 2;
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int)) "both timers restart and tick" [ 1; 1 ]
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_reentrant_stabilization_is_typed_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -5551,6 +5607,8 @@ let () =
             test_stream_observe_failure_during_timer_start_does_not_leak;
           Alcotest.test_case "time timer start failure retries necessary timer"
             `Quick test_time_timer_start_failure_retries_necessary_timer;
+          Alcotest.test_case "time timer start failure rolls back unstarted timers"
+            `Quick test_time_timer_start_failure_rolls_back_unstarted_timers;
           Alcotest.test_case "reentrant stabilization typed failure" `Quick
             test_reentrant_stabilization_is_typed_failure;
           Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick

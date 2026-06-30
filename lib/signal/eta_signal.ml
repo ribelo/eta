@@ -310,6 +310,11 @@ module Make (Observer_error : Observer_error) () = struct
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
+  and 'err timer_start_attempt = {
+    start_timer : timer_node;
+    start_effect : (unit, 'err) Effect.t;
+  }
+
   and timer_update = {
     timer_update : 'err. timer_node -> int -> (unit, 'err) Effect.t;
   }
@@ -886,6 +891,13 @@ module Make (Observer_error : Observer_error) () = struct
         timer.timer_running_generation <- None;
         timer.timer_cancel <- None);
       timer_invalidate_generation_unlocked timer)
+
+  let timer_rollback_unclaimed_start_unlocked timer =
+    if
+      timer.timer_active
+      && Option.is_none timer.timer_running_generation
+      && Option.is_none timer.timer_cancel
+    then timer_mark_unneeded_unlocked timer
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -1480,7 +1492,7 @@ module Make (Observer_error : Observer_error) () = struct
       timer.timer_generation <- generation;
       timer.timer_running_generation <- None;
       timer.timer_cancel <- None;
-      Some (timer.timer_start timer))
+      Some { start_timer = timer; start_effect = timer.timer_start timer })
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
@@ -1551,9 +1563,21 @@ module Make (Observer_error : Observer_error) () = struct
              timer_mark_unneeded_unlocked timer;
              None))
 
+  let rollback_unclaimed_timer_starts attempts =
+    with_graph_lane_sync (fun () ->
+        List.iter
+          (fun attempt ->
+            timer_rollback_unclaimed_start_unlocked attempt.start_timer)
+          attempts)
+
+  let run_timer_start_attempts attempts =
+    Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
+
   let refresh_timer_demand () =
-    with_graph_lane_sync refresh_timer_demand_unlocked
-    |> Effect.bind Effect.concat
+    Effect.acquire_use_release
+      ~acquire:(with_graph_lane_sync refresh_timer_demand_unlocked)
+      ~release:rollback_unclaimed_timer_starts
+      run_timer_start_attempts
 
   let fail_disposal_hooks causes =
     let cause =
