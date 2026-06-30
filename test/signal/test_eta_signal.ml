@@ -4455,6 +4455,121 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
+let with_timer_cancel_tracking_host f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let graph_lifecycle_depth_key = Eio.Fiber.create_key () in
+  let cancel_inside_local_binding = ref false in
+  let graph_lifecycle_depth () =
+    try Option.value (Eio.Fiber.get graph_lifecycle_depth_key) ~default:0
+    with Stdlib.Effect.Unhandled _ -> 0
+  in
+  (* Eta_eio transports Runtime_contract locals as one context table. With
+     Tracer.noop below and auto-instrumentation disabled by default, the only
+     immediate [1] local in this harness is eta_signal's graph-lane depth. *)
+  let local_binding_is_graph_lifecycle_depth =
+    function
+    | Runtime_contract.Local_binding (_, value) ->
+        let value = Obj.repr value in
+        Obj.is_int value && (Obj.magic value : int) = 1
+  in
+  let context_has_graph_lifecycle_depth value =
+    let context :
+        (int, Runtime_contract.local_binding list) Hashtbl.t =
+      Obj.magic value
+    in
+    Hashtbl.fold
+      (fun _ bindings found ->
+        found || List.exists local_binding_is_graph_lifecycle_depth bindings)
+      context false
+  in
+  let module Eio_ops = struct
+    module Time = struct
+      let now _clock =
+        float_of_int (Eta_test.Test_clock.now_ms clock) /. 1000.0
+
+      let sleep _clock seconds =
+        Eta_test.Test_clock.sleep clock
+          (Duration.ms (int_of_float (seconds *. 1000.0)))
+    end
+
+    module Net = Eio.Net
+    module Flow = Eio.Flow
+    module Switch = Eio.Switch
+
+    module Fiber = struct
+      let get = Eio.Fiber.get
+
+      let with_binding key value f =
+        let depth =
+          if context_has_graph_lifecycle_depth value then
+            graph_lifecycle_depth () + 1
+          else graph_lifecycle_depth ()
+        in
+        Eio.Fiber.with_binding graph_lifecycle_depth_key depth
+          (fun () -> Eio.Fiber.with_binding key value f)
+
+      let first = Eio.Fiber.first
+      let await_cancel = Eio.Fiber.await_cancel
+      let fork = Eio.Fiber.fork
+      let fork_daemon = Eio.Fiber.fork_daemon
+      let yield = Eio.Fiber.yield
+      let check = Eio.Fiber.check
+    end
+
+    module Stream = Eio.Stream
+
+    module Cancel = struct
+      let sub = Eio.Cancel.sub
+
+      let cancel cancel_context exn =
+        if graph_lifecycle_depth () > 0 then
+          cancel_inside_local_binding := true;
+        Eio.Cancel.cancel cancel_context exn
+    end
+  end in
+  let host =
+    Eta_eio.Host.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()
+  in
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
+    ~tracer:Tracer.noop @@ fun rt ->
+  f clock rt cancel_inside_local_binding
+
+let test_time_timer_cancel_runs_outside_graph_lifecycle () =
+  with_timer_cancel_tracking_host
+  @@ fun clock rt cancel_inside_local_binding ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt (Signal.Observer.dispose observer);
+  Alcotest.(check bool)
+    "timer cancel ran outside graph lifecycle local binding" false
+    !cancel_inside_local_binding
+
+let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
+  with_timer_cancel_tracking_host
+  @@ fun clock rt cancel_inside_local_binding ->
+  let use_timer = Signal.Var.create true in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun active ->
+        if active then run_ok rt (Signal.Time.interval (Duration.days 1))
+        else Signal.const 0)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 1;
+  run_ok rt (Signal.Var.set use_timer false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool)
+    "invalidated timer cancel ran outside graph lifecycle local binding" false
+    !cancel_inside_local_binding;
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_disposal_hooks_continue_after_failure () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -5854,6 +5969,11 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case "time timer cancel outside graph lifecycle" `Quick
+            test_time_timer_cancel_runs_outside_graph_lifecycle;
+          Alcotest.test_case
+            "time invalidated timer cancel outside graph lifecycle" `Quick
+            test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle;
           Alcotest.test_case "disposal hooks continue after failure" `Quick
             test_disposal_hooks_continue_after_failure;
           Alcotest.test_case "observer dispose interruption runs finish hooks"

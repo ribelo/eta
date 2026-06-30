@@ -872,7 +872,9 @@ module Make (Observer_error : Observer_error) () = struct
     let cancel = timer.timer_cancel in
     timer.timer_running_generation <- None;
     timer.timer_cancel <- None;
-    Option.iter (fun cancel -> cancel ()) cancel
+    match cancel with
+    | None -> []
+    | Some cancel -> [ cancel ]
 
   let timer_invalidate_generation_unlocked timer =
     timer.timer_generation <-
@@ -883,14 +885,18 @@ module Make (Observer_error : Observer_error) () = struct
       (not timer.timer_active)
       && Option.is_none timer.timer_running_generation
       && Option.is_none timer.timer_cancel
-    then ()
+    then []
     else (
       timer.timer_active <- false;
-      if cancel_running then timer_cancel_running_unlocked timer
-      else (
-        timer.timer_running_generation <- None;
-        timer.timer_cancel <- None);
-      timer_invalidate_generation_unlocked timer)
+      let cancel_hooks =
+        if cancel_running then timer_cancel_running_unlocked timer
+        else (
+          timer.timer_running_generation <- None;
+          timer.timer_cancel <- None;
+          [])
+      in
+      timer_invalidate_generation_unlocked timer;
+      cancel_hooks)
 
   let timer_rollback_unclaimed_start_unlocked timer =
     if
@@ -898,6 +904,7 @@ module Make (Observer_error : Observer_error) () = struct
       && Option.is_none timer.timer_running_generation
       && Option.is_none timer.timer_cancel
     then timer_mark_unneeded_unlocked timer
+    else []
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -1009,9 +1016,11 @@ module Make (Observer_error : Observer_error) () = struct
     if signal.valid then (
       let dependencies = signal.dependencies in
       let dependents = signal.dependents in
-      Option.iter
-        (fun timer -> timer_mark_unneeded_unlocked timer)
-        signal.timer;
+      let timer_hooks =
+        match signal.timer with
+        | None -> []
+        | Some timer -> timer_mark_unneeded_unlocked timer
+      in
       signal.valid <- false;
       record_dead_node_unlocked (P signal);
       let observer_hooks = dispose_signal_observers signal in
@@ -1034,7 +1043,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Map7 _ | Map8 _ | Map9 _ | All _ ->
             []
       in
-      observer_hooks @ dependent_hooks @ kind_hooks)
+      timer_hooks @ observer_hooks @ dependent_hooks @ kind_hooks)
     else []
 
   let make_bind ?equal source selector =
@@ -1476,7 +1485,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_finish_unlocked timer =
     timer.timer_finished <- true;
-    timer_mark_unneeded_unlocked ~cancel_running:false timer
+    ignore
+      (timer_mark_unneeded_unlocked ~cancel_running:false timer
+        : (unit -> unit) list)
 
   let timer_has_current_start timer =
     match timer.timer_running_generation with
@@ -1554,31 +1565,6 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
       graph.all_nodes
 
-  let refresh_timer_demand_unlocked () =
-    let needed = necessary_timers () in
-    all_timers ()
-    |> List.filter_map (fun (id, timer) ->
-           if Hashtbl.mem needed id then timer_start_unlocked timer
-           else (
-             timer_mark_unneeded_unlocked timer;
-             None))
-
-  let rollback_unclaimed_timer_starts attempts =
-    with_graph_lane_sync (fun () ->
-        List.iter
-          (fun attempt ->
-            timer_rollback_unclaimed_start_unlocked attempt.start_timer)
-          attempts)
-
-  let run_timer_start_attempts attempts =
-    Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
-
-  let refresh_timer_demand () =
-    Effect.acquire_use_release
-      ~acquire:(with_graph_lane_sync refresh_timer_demand_unlocked)
-      ~release:rollback_unclaimed_timer_starts
-      run_timer_start_attempts
-
   let fail_disposal_hooks causes =
     let cause =
       match causes with
@@ -1622,6 +1608,56 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_error_with_pending_disposal_hooks hooks_ref err =
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
+
+  let run_pending_timer_cancel_hooks hooks_ref =
+    match !hooks_ref with
+    | [] -> Effect.unit
+    | hooks ->
+        (run_disposal_hooks hooks
+         |> Effect.on_exit (fun _exit ->
+                Effect.sync (fun () -> hooks_ref := [])))
+        |> Effect.uninterruptible
+
+  let refresh_timer_demand_unlocked () =
+    let needed = necessary_timers () in
+    let start_attempts = ref [] in
+    let cancel_hooks = ref [] in
+    List.iter
+      (fun (id, timer) ->
+        if Hashtbl.mem needed id then
+          Option.iter
+            (fun attempt -> start_attempts := attempt :: !start_attempts)
+            (timer_start_unlocked timer)
+        else
+          cancel_hooks :=
+            List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks)
+      (all_timers ());
+    (List.rev !start_attempts, List.rev !cancel_hooks)
+
+  let rollback_unclaimed_timer_starts attempts =
+    with_graph_lane_sync (fun () ->
+        List.concat_map
+          (fun attempt ->
+            timer_rollback_unclaimed_start_unlocked attempt.start_timer)
+          attempts)
+    |> Effect.bind run_disposal_hooks
+
+  let run_timer_start_attempts attempts =
+    Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
+
+  let refresh_timer_demand () =
+    Effect.acquire_use_release
+      ~acquire:
+        (with_graph_lane_sync (fun () ->
+             let start_attempts, cancel_hooks = refresh_timer_demand_unlocked () in
+             (start_attempts, ref cancel_hooks)))
+      ~release:(fun (start_attempts, cancel_hooks_ref) ->
+        rollback_unclaimed_timer_starts start_attempts
+        |> Effect.bind (fun () ->
+               run_pending_timer_cancel_hooks cancel_hooks_ref))
+      (fun (start_attempts, cancel_hooks_ref) ->
+        run_pending_timer_cancel_hooks cancel_hooks_ref
+        |> Effect.bind (fun () -> run_timer_start_attempts start_attempts))
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
     fail_with_pending_disposal_hooks hooks_ref
@@ -2474,7 +2510,9 @@ module Make (Observer_error : Observer_error) () = struct
             timer.timer_running_generation <- None;
             timer.timer_cancel <- None;
             if timer.timer_active then
-              timer_mark_unneeded_unlocked ~cancel_running:false timer))
+              ignore
+                (timer_mark_unneeded_unlocked ~cancel_running:false timer
+                  : (unit -> unit) list)))
 
     let timer_cleanup_after_exit timer generation = function
       | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
