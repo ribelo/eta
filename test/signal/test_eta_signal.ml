@@ -1833,6 +1833,12 @@ let signal_valid signal =
   let signal_obj = Obj.repr signal in
   (Obj.obj (Obj.field signal_obj 18) : bool)
 
+let set_signal_valid signal value =
+  (* Public invalidation normally prunes invalid nodes immediately; this
+     simulates a retained invalid node while checking the public stats contract. *)
+  let signal_obj = Obj.repr signal in
+  Obj.set_field signal_obj 18 (Obj.repr value)
+
 let test_commit_skips_invalidated_staged_entries () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -3868,6 +3874,18 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
     (count_occurrences dot "style=dashed,label=\"observes\"");
   run_ok rt (Tombstone_signal.Observer.dispose branch_observer);
   run_ok rt (Tombstone_signal.Observer.dispose observer)
+
+let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
+  let module Dead_count_signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let retained = Dead_count_signal.const 1 in
+  let before = run_ok rt (Dead_count_signal.stats ()) in
+  set_signal_valid retained false;
+  let after = run_ok rt (Dead_count_signal.stats ()) in
+  Alcotest.(check int)
+    "retained invalid non-tombstone is not counted as dead"
+    before.Dead_count_signal.dead_node_count
+    after.Dead_count_signal.dead_node_count
 
 let test_deterministic_model_matches_small_dynamic_graph () =
   with_runtime @@ fun rt ->
@@ -5991,6 +6009,9 @@ let () =
             test_to_dot_debug_options_expose_hidden_state;
           Alcotest.test_case "dead nodes and dot include pruned invalid nodes"
             `Quick test_dead_nodes_and_dot_include_pruned_invalid_nodes;
+          Alcotest.test_case
+            "dead node count ignores retained invalid non-tombstones" `Quick
+            test_dead_node_count_ignores_retained_invalid_non_tombstones;
           Alcotest.test_case "deterministic model matches dynamic graph" `Quick
             test_deterministic_model_matches_small_dynamic_graph;
           Alcotest.test_case "randomized model matches dynamic graph" `Quick

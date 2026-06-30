@@ -2195,12 +2195,7 @@ module Make (Observer_error : Observer_error) () = struct
   let necessary_node_count () =
     Hashtbl.length (collect_necessary_node_ids ())
 
-  let dead_node_count () =
-    List.fold_left
-      (fun count (P signal) ->
-        if signal.valid then count else saturating_succ count)
-      (List.length graph.dead_nodes)
-      graph.all_nodes
+  let dead_node_count () = List.length graph.dead_nodes
 
   let live_dirty_node_count () =
     List.fold_left
