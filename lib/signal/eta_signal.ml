@@ -2521,15 +2521,10 @@ module Make (Observer_error : Observer_error) () = struct
                                  }))))
 
     let after ~every duration =
-      Effect.sync (fun () -> validate_interval duration)
-      |> Effect.flatten_result
-      |> Effect.bind (fun () ->
-             Effect.now
-             |> Effect.bind (fun now_ms ->
-                    let deadline_ms =
-                      add_ms_capped now_ms (Duration.to_ms duration)
-                    in
-                    deadline ~every deadline_ms))
+      Effect.now
+      |> Effect.bind (fun now_ms ->
+             let deadline_ms = add_ms_capped now_ms (Duration.to_ms duration) in
+             deadline ~every deadline_ms)
 
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)
