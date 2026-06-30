@@ -86,8 +86,8 @@ module Make (Observer_error : Observer_error) () : sig
       observer handles invalidated by dynamic-scope replacement and not yet
       disposed. [live_dirty_node_count] counts valid dirty nodes;
       [dead_node_count] counts invalid nodes retained in the bounded diagnostic
-      tombstone index. [stream_bridge_drop_count] counts updates dropped by
-      lossy {!Stream.observe} bridge queues. *)
+      tombstone index. [stream_bridge_drop_count] counts lossy
+      {!Stream.observe} bridge updates that were acknowledged as dropped. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
@@ -376,7 +376,8 @@ module Make (Observer_error : Observer_error) () : sig
         Pass [?on_drop] to observe each dropped update; the hook runs
         synchronously during observer delivery and should be reserved for
         counters, metrics, or lightweight logging. If the hook raises,
-        stabilization fails with that defect.
+        stabilization fails with that defect, and the update can be retried by
+        the next stabilization.
 
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers

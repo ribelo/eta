@@ -293,6 +293,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_staged_delivery_state : 'a observer_delivery_state option;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
+    mutable obs_after_ack : (int * (unit -> unit)) list;
     mutable obs_on_finish : (observer_state -> unit) list;
   }
 
@@ -778,7 +779,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let clear_observer_delivery observer =
     observer.obs_delivery_state <- Observer_never_delivered;
-    observer.obs_staged_delivery_state <- None
+    observer.obs_staged_delivery_state <- None;
+    observer.obs_after_ack <- []
 
   let finish_observer_unlocked observer state =
     match (observer.obs_state, state) with
@@ -1617,15 +1619,37 @@ module Make (Observer_error : Observer_error) () = struct
         event)
 
   let mark_event_pending (E (token, observer, update)) =
-    if observer_active (O observer) then
+    if observer_active (O observer) then (
+      observer.obs_after_ack <- [];
       observer.obs_delivery_state <- Observer_delivery_pending (token, update)
+    )
+
+  let add_after_ack observer action =
+    with_graph_lane_sync (fun () ->
+        match observer.obs_delivery_state with
+        | Observer_delivery_pending (token, _) when observer_active (O observer)
+          ->
+            observer.obs_after_ack <- (token, action) :: observer.obs_after_ack
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ ->
+            ())
+
+  let run_after_ack observer token =
+    let actions, remaining =
+      List.partition
+        (fun (action_token, _) -> action_token = token)
+        observer.obs_after_ack
+    in
+    observer.obs_after_ack <- remaining;
+    List.iter (fun (_, action) -> action ()) actions
 
   let acknowledge_event_delivery observer token update =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
         | Observer_delivery_pending (pending_token, _)
           when observer_active (O observer) && pending_token = token ->
-            observer.obs_delivery_state <- Observer_delivered (delivered_value update)
+            observer.obs_delivery_state <- Observer_delivered (delivered_value update);
+            run_after_ack observer pending_token
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ ->
             ())
@@ -1838,6 +1862,7 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_staged_delivery_state = None;
                 obs_state = Observer_active;
                 obs_staged_generation = -1;
+                obs_after_ack = [];
                 obs_on_finish = on_finish;
               }
             in
@@ -1969,10 +1994,9 @@ module Make (Observer_error : Observer_error) () = struct
       stream_bridge_drop_count = graph.stream_bridge_drop_count;
     }
 
-  let record_stream_bridge_drop () =
-    with_graph_lane_sync (fun () ->
-        graph.stream_bridge_drop_count <-
-          saturating_succ graph.stream_bridge_drop_count)
+  let record_stream_bridge_drop_unlocked () =
+    graph.stream_bridge_drop_count <-
+      saturating_succ graph.stream_bridge_drop_count
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
@@ -2595,18 +2619,18 @@ module Make (Observer_error : Observer_error) () = struct
              ~overflow:(Queue.Drop_new { capacity })
              ())
 
-    let report_dropped_update on_drop update =
-      record_stream_bridge_drop ()
+    let report_dropped_update observer on_drop update =
+      (match on_drop with
+      | None -> Effect.unit
+      | Some on_drop -> Effect.sync (fun () -> on_drop update))
       |> Effect.bind (fun () ->
-             match on_drop with
-             | None -> Effect.unit
-             | Some on_drop -> Effect.sync (fun () -> on_drop update))
+             add_after_ack observer record_stream_bridge_drop_unlocked)
 
-    let offer_bridge_update on_drop queue update =
+    let offer_bridge_update observer on_drop queue update =
       Queue.try_send queue update
       |> Effect.bind (function
            | `Sent | `Closed -> Effect.unit
-           | `Dropped -> report_dropped_update on_drop update
+           | `Dropped -> report_dropped_update observer on_drop update
            | `Full ->
                Effect.sync (fun () ->
                    failwith "Eta_signal.Stream.observe: unexpected full queue")
@@ -2619,6 +2643,7 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> create_bridge_queue capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
+             let observer_ref = ref None in
              Observer.observe_with_hooks ?equal
                ~on_finish:
                  [
@@ -2629,9 +2654,16 @@ module Make (Observer_error : Observer_error) () = struct
                    | Observer_active -> ());
                  ]
                signal
-               (offer_bridge_update on_drop queue)
+               (fun update ->
+                 match !observer_ref with
+                 | Some observer -> offer_bridge_update observer on_drop queue update
+                 | None ->
+                     Effect.sync (fun () ->
+                         failwith
+                           "Eta_signal.Stream.observe: observer not registered"))
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
+                    observer_ref := Some observer;
                     (observer, Eta_stream.Stream.from_queue queue)))
   end
 end

@@ -3953,7 +3953,7 @@ let set_observer_on_dispose observer hooks =
   (* Public APIs only install internal stream hooks; this keeps the regression
      focused on hook failure without widening the signal API. *)
   let observer_obj = Obj.repr observer in
-  Obj.set_field observer_obj 10 (Obj.repr hooks)
+  Obj.set_field observer_obj 11 (Obj.repr hooks)
 
 let test_time_interval_overflow_logs_daemon_diagnostic () =
   with_logger_test_clock @@ fun _sw clock rt logger ->
@@ -5013,6 +5013,46 @@ let test_stream_bridge_drop_callback_reports_loss () =
    | _ -> Alcotest.fail "expected delivered update after draining");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_bridge_drop_callback_failure_does_not_count_retry () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let fail_drop = ref true in
+  let before = run_ok rt (Signal.stats ()) in
+  let observer, stream =
+    run_ok rt
+      (Signal.Stream.observe ~capacity:1
+         ~on_drop:(fun _update ->
+           if !fail_drop then (
+             fail_drop := false;
+             failwith "drop hook failure"))
+         signal)
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 2);
+  expect_die "drop hook failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  let after_failed_drop = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "failed drop is not final loss"
+    before.Signal.stream_bridge_drop_count
+    after_failed_drop.Signal.stream_bridge_drop_count;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected buffered initial update");
+  run_ok rt Signal.stabilize;
+  (match
+     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected retried update to be delivered");
+  let after_retry = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "delivered retry does not count as drop"
+    before.Signal.stream_bridge_drop_count
+    after_retry.Signal.stream_bridge_drop_count;
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -5436,6 +5476,9 @@ let () =
             `Quick test_stream_bridge_full_queue_does_not_block;
           Alcotest.test_case "stream bridge drop callback reports loss"
             `Quick test_stream_bridge_drop_callback_reports_loss;
+          Alcotest.test_case
+            "stream bridge failed drop callback does not count retry" `Quick
+            test_stream_bridge_drop_callback_failure_does_not_count_retry;
           Alcotest.test_case "stream bridge full queue dispose closes"
             `Quick test_stream_bridge_full_queue_dispose_closes_without_waiting;
           Alcotest.test_case
