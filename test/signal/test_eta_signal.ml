@@ -1478,6 +1478,83 @@ let test_observer_dispose_after_active_check_skips_callback () =
       expect_fail "target disposed by active-check hook" (( = ) `Disposed_observer)
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
+let test_observer_dispose_after_delivery_claim_skips_callback () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let target_ref = ref None in
+  let target_callback_ran = ref false in
+  let arm_dispose = ref false in
+  let marker =
+    expect_exit_ok "marker observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe signal (function
+              | Signal.Changed _ when !arm_dispose ->
+                  Effect.sync (fun () ->
+                      Cleanup_interrupt_runtime.after_local_binding_count :=
+                        Some
+                          ( !Cleanup_interrupt_runtime.local_binding_count + 3,
+                            fun () ->
+                              match !target_ref with
+                              | None ->
+                                  Alcotest.fail "target observer was not registered"
+                              | Some target ->
+                                  ignore
+                                    (expect_exit_ok
+                                       "target dispose after delivery claim"
+                                       (Runtime.run rt
+                                          (widen
+                                             (Signal.Observer.dispose target)))
+                                      : unit) ))
+              | Initialized _ | Changed _ -> Effect.unit))))
+  in
+  let target =
+    expect_exit_ok "target observer registration"
+      (Runtime.run rt
+         (widen
+            (Signal.Observer.observe signal (fun _ ->
+                 Effect.sync (fun () -> target_callback_ran := true)))))
+  in
+  target_ref := Some target;
+  Fun.protect
+    ~finally:(fun () ->
+      Cleanup_interrupt_runtime.after_local_binding_count := None;
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose target)) : _ Exit.t);
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose marker)) : _ Exit.t))
+    (fun () ->
+      ignore
+        (expect_exit_ok "initial stabilize"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      target_callback_ran := false;
+      arm_dispose := true;
+      ignore
+        (expect_exit_ok "set source"
+           (Runtime.run rt (widen (Signal.Var.set source 2)))
+          : unit);
+      ignore
+        (expect_exit_ok "stabilize with post-claim dispose"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      Alcotest.(check bool)
+        "disposed observer callback is skipped after delivery claim" false
+        !target_callback_ran;
+      expect_fail "target disposed by claim hook" (( = ) `Disposed_observer)
+        (Runtime.run rt (widen (Signal.Observer.read target))))
+
 let test_observer_registration_skips_callbacks_until_returned () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
@@ -6727,6 +6804,8 @@ let () =
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
             `Quick test_observer_dispose_after_active_check_skips_callback;
+          Alcotest.test_case "observer dispose after claim skips callback" `Quick
+            test_observer_dispose_after_delivery_claim_skips_callback;
           Alcotest.test_case "observer registration skips callbacks until returned"
             `Quick test_observer_registration_skips_callbacks_until_returned;
           Alcotest.test_case

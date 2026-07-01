@@ -2060,6 +2060,17 @@ module Make (Observer_error : Observer_error) () = struct
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
 
+  let claimed_event_delivery_active observer token =
+    match observer.obs_state with
+    | Observer_active -> (
+        match observer.obs_delivery_state with
+        | Observer_delivery_running (running_token, _, _) ->
+            running_token = token
+        | Observer_never_delivered | Observer_delivered _
+        | Observer_delivery_pending _ ->
+            false)
+    | Observer_registering | Observer_disposed | Observer_invalid_scope -> false
+
   let begin_stabilize timer_refresh_token =
     if graph.phase <> Not_stabilizing then
       Pure_graph_error ([], `Reentrant_stabilization)
@@ -2146,12 +2157,14 @@ module Make (Observer_error : Observer_error) () = struct
     in
     ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
       try
-        match Effect.Expert.eval context observer_eff with
-        | Eta.Exit.Ok () ->
-            delivered := true;
-            Eta.Exit.Ok ()
-        | Eta.Exit.Error cause ->
-            Eta.Exit.Error (observer_cause_to_stabilize cause)
+        if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
+        else
+          match Effect.Expert.eval context observer_eff with
+          | Eta.Exit.Ok () ->
+              delivered := true;
+              Eta.Exit.Ok ()
+          | Eta.Exit.Error cause ->
+              Eta.Exit.Error (observer_cause_to_stabilize cause)
       with
       | Graph_error err ->
           Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))
@@ -2168,9 +2181,12 @@ module Make (Observer_error : Observer_error) () = struct
   let event_observer_active observer =
     with_graph_lane_sync (fun () -> observer_active (O observer))
 
-  let construct_observer_effect observer update =
+  let construct_observer_effect observer token update =
     Effect.sync (fun () ->
-        try Ok (observer.obs_callback update)
+        try
+          if claimed_event_delivery_active observer token then
+            Ok (Some (observer.obs_callback update))
+          else Ok None
         with Graph_error err -> Error (err :> stabilize_error))
     |> Effect.flatten_result
 
@@ -2185,10 +2201,12 @@ module Make (Observer_error : Observer_error) () = struct
                  |> Effect.bind (function
                       | false -> run_events rest
                       | true ->
-                          (construct_observer_effect observer update
-                           |> Effect.bind (fun observer_eff ->
-                                  run_observer_effect observer token update
-                                  observer_eff))
+                          (construct_observer_effect observer token update
+                           |> Effect.bind (function
+                                | None -> Effect.unit
+                                | Some observer_eff ->
+                                    run_observer_effect observer token update
+                                      observer_eff))
                           |> Effect.on_exit (function
                                | Eta.Exit.Ok _ -> Effect.unit
                                | Eta.Exit.Error _ ->
