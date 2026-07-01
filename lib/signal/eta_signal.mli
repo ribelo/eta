@@ -160,7 +160,14 @@ module Make (Observer_error : Observer_error) () : sig
 
         Without [?equal], observer callback emission uses physical equality as
         its cutoff. The observer's current value still advances to the latest
-        stabilized value when a callback is suppressed. *)
+        stabilized value when a callback is suppressed.
+
+        Callback typed failures must be returned by the effect, for example
+        with [Eta.Effect.fail err]; those failures are reported by
+        {!stabilize} as [`Observer_error err]. Ordinary exceptions raised while
+        constructing the callback effect, or defects raised by the returned
+        effect, are Eta defects, not typed observer errors. [Graph_error]
+        raised from graph APIs remains a typed graph failure. *)
 
     val read : 'a t -> ('a, observer_read_error) Eta.Effect.t
     (** Read the last stabilized observed value. This is the primary value-read
