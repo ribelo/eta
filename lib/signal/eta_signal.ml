@@ -34,6 +34,7 @@ module Make (Observer_error : Observer_error) () = struct
   module Private_test_hooks = struct
     type hook =
       | After_observer_delivery_claim
+      | After_graph_lane_acquired
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
 
@@ -41,24 +42,28 @@ module Make (Observer_error : Observer_error) () = struct
 
     let noop = { run = (fun () -> Effect.unit) }
     let after_observer_delivery_claim = ref noop
+    let after_graph_lane_acquired = ref noop
     let after_stream_try_send_before_ack = ref noop
     let after_stream_drop_before_ack = ref noop
 
     let set hook action =
       match hook with
       | After_observer_delivery_claim -> after_observer_delivery_claim := action
+      | After_graph_lane_acquired -> after_graph_lane_acquired := action
       | After_stream_try_send_before_ack ->
           after_stream_try_send_before_ack := action
       | After_stream_drop_before_ack -> after_stream_drop_before_ack := action
 
     let clear () =
       after_observer_delivery_claim := noop;
+      after_graph_lane_acquired := noop;
       after_stream_try_send_before_ack := noop;
       after_stream_drop_before_ack := noop
 
     let run = function
       | After_observer_delivery_claim ->
           (!after_observer_delivery_claim).run ()
+      | After_graph_lane_acquired -> (!after_graph_lane_acquired).run ()
       | After_stream_try_send_before_ack ->
           (!after_stream_try_send_before_ack).run ()
       | After_stream_drop_before_ack ->
@@ -738,7 +743,8 @@ module Make (Observer_error : Observer_error) () = struct
             contract.Runtime_contract.local_with_binding graph_lane_depth_local 1
               (fun () ->
                 Effect.Expert.eval context
-                  (Effect.sync f
+                  (Private_test_hooks.run After_graph_lane_acquired
+                  |> Effect.bind (fun () -> Effect.sync f)
                   |> Effect.on_exit (fun _exit -> release_graph_lane)))
           with
           | exn
