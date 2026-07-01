@@ -133,6 +133,7 @@ module Make (Observer_error : Observer_error) () : sig
     type hook =
       | After_observer_delivery_claim
       | After_stream_try_send_before_ack
+      | After_stream_drop_before_ack
 
     type action = { run : 'err. unit -> (unit, 'err) Eta.Effect.t }
 

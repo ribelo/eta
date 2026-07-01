@@ -7071,6 +7071,80 @@ let test_stream_bridge_drop_callback_reports_loss () =
    | _ -> Alcotest.fail "expected delivered update after draining");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_stream_drop_update_is_acknowledged_on_cancellation () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let drops = ref [] in
+  let before = run_ok rt (Signal.stats ()) in
+  let observer, _stream =
+    run_ok rt
+      (Signal.Stream.observe ~capacity:1
+         ~on_drop:(fun update -> drops := update :: !drops)
+         signal)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      ignore
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
+          : _ Exit.t))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      run_ok rt (Signal.Var.set source 1);
+      let dropped, dropped_resolver = Eio.Promise.create () in
+      let release, release_resolver = Eio.Promise.create () in
+      let release_once =
+        let released = ref false in
+        fun () ->
+          if not !released then (
+            released := true;
+            Eio.Promise.resolve release_resolver ())
+      in
+      let hook_ran = ref false in
+      Signal.Private_test_hooks.set
+        Signal.Private_test_hooks.After_stream_drop_before_ack
+        {
+          run =
+            (fun () ->
+              Effect.sync (fun () ->
+                  if not !hook_ran then (
+                    hook_ran := true;
+                    Eio.Promise.resolve dropped_resolver ();
+                    Eio.Promise.await release)));
+        };
+      Fun.protect
+        ~finally:(fun () ->
+          Signal.Private_test_hooks.clear ();
+          release_once ())
+        (fun () ->
+          let cancel_ctx = ref None in
+          let stabilizer =
+            Eio.Fiber.fork_promise ~sw (fun () ->
+                Eio.Cancel.sub @@ fun ctx ->
+                cancel_ctx := Some ctx;
+                Eta_eio.Runtime.run rt (widen Signal.stabilize))
+          in
+          Eio.Promise.await dropped;
+          wait_until "stream drop hook cancellation context" (fun () ->
+              Option.is_some !cancel_ctx);
+          Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+          release_once ();
+          await_cancelled "stream drop acknowledgement stabilize" stabilizer);
+      run_ok rt Signal.stabilize;
+      (match List.rev !drops with
+       | [ Signal.Changed { old_value = 0; new_value = 1 } ] -> ()
+       | [
+        Signal.Changed { old_value = 0; new_value = 1 };
+        Signal.Changed { old_value = 0; new_value = 1 };
+       ] ->
+           Alcotest.fail "cancelled dropped stream update ran on_drop twice"
+       | _ -> Alcotest.fail "expected one dropped changed update");
+      let after_retry = run_ok rt (Signal.stats ()) in
+      Alcotest.(check int) "cancelled dropped update counts once"
+        (before.Signal.stream_bridge_drop_count + 1)
+        after_retry.Signal.stream_bridge_drop_count)
+
 let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
@@ -7715,6 +7789,9 @@ let () =
             `Quick test_stream_bridge_full_queue_does_not_block;
           Alcotest.test_case "stream bridge drop callback reports loss"
             `Quick test_stream_bridge_drop_callback_reports_loss;
+          Alcotest.test_case
+            "stream drop update acknowledged on cancellation" `Quick
+            test_stream_drop_update_is_acknowledged_on_cancellation;
           Alcotest.test_case
             "stream bridge interrupted drop callback does not duplicate" `Quick
             test_stream_bridge_interrupted_drop_callback_does_not_duplicate;

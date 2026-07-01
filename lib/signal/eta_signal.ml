@@ -35,28 +35,34 @@ module Make (Observer_error : Observer_error) () = struct
     type hook =
       | After_observer_delivery_claim
       | After_stream_try_send_before_ack
+      | After_stream_drop_before_ack
 
     type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
     let noop = { run = (fun () -> Effect.unit) }
     let after_observer_delivery_claim = ref noop
     let after_stream_try_send_before_ack = ref noop
+    let after_stream_drop_before_ack = ref noop
 
     let set hook action =
       match hook with
       | After_observer_delivery_claim -> after_observer_delivery_claim := action
       | After_stream_try_send_before_ack ->
           after_stream_try_send_before_ack := action
+      | After_stream_drop_before_ack -> after_stream_drop_before_ack := action
 
     let clear () =
       after_observer_delivery_claim := noop;
-      after_stream_try_send_before_ack := noop
+      after_stream_try_send_before_ack := noop;
+      after_stream_drop_before_ack := noop
 
     let run = function
       | After_observer_delivery_claim ->
           (!after_observer_delivery_claim).run ()
       | After_stream_try_send_before_ack ->
           (!after_stream_try_send_before_ack).run ()
+      | After_stream_drop_before_ack ->
+          (!after_stream_drop_before_ack).run ()
   end
 
   type 'a update =
@@ -3400,6 +3406,8 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.sync (fun () ->
            Option.iter (fun on_drop -> on_drop update) on_drop;
            drop_published := true)
+       |> Effect.bind (fun () ->
+              Private_test_hooks.run After_stream_drop_before_ack)
        |> Effect.bind (fun () -> acknowledge_published_drop ()))
       |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
