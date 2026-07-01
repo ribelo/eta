@@ -6198,6 +6198,25 @@ let test_time_deadline_catches_up_without_daemon_yield () =
       Alcotest.(check bool) "after deadline" true
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "interval daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial" 0
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 55;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "5 missed cadences" 5
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_active_deadline_refreshes_before_daemon_runs () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
@@ -7534,6 +7553,10 @@ let () =
             test_time_absolute_deadline;
           Alcotest.test_case "time deadline catches up without daemon yield"
             `Quick test_time_deadline_catches_up_without_daemon_yield;
+          Alcotest.test_case
+            "time interval catches up arithmetically without daemon yield"
+            `Quick
+            test_time_interval_catches_up_arithmetically_without_daemon_yield;
           Alcotest.test_case "time active deadline refreshes before daemon"
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case "time active interval refreshes before daemon"
