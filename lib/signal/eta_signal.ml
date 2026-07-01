@@ -2493,18 +2493,25 @@ module Make (Observer_error : Observer_error) () = struct
       lane_cancelled_waiter_count = graph.lane.lane_cancelled;
     }
 
-  let acknowledge_stream_drop_delivery observer update =
+  let acknowledge_stream_published_delivery observer update after_ack_actions =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
         | ( Observer_delivery_pending (pending_token, _, after_ack)
           | Observer_delivery_running (pending_token, _, after_ack) )
           when observer_active (O observer) ->
-            let after_ack = After_ack_record_stream_bridge_drop :: after_ack in
+            let after_ack = List.rev_append after_ack_actions after_ack in
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
             run_after_ack_actions_unlocked after_ack
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
+
+  let acknowledge_stream_sent_delivery observer update =
+    acknowledge_stream_published_delivery observer update []
+
+  let acknowledge_stream_drop_delivery observer update =
+    acknowledge_stream_published_delivery observer update
+      [ After_ack_record_stream_bridge_drop ]
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
@@ -3163,13 +3170,32 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
     let offer_bridge_update observer on_drop queue update =
-      Queue.try_send queue update
-      |> Effect.bind (function
-           | `Sent | `Closed -> Effect.unit
-           | `Dropped | `Full ->
-               report_dropped_update observer on_drop update
-           | `Closed_with_error err ->
-               Effect.sync (fun () -> raise (Graph_error err)))
+      Effect.sync (fun () -> (Queue.stats queue).sent)
+      |> Effect.bind (fun sent_before ->
+             let sent_published = ref false in
+             let acknowledge_published_sent () =
+               if !sent_published then
+                 acknowledge_stream_sent_delivery observer update
+               else
+                 Effect.sync (fun () ->
+                     if (Queue.stats queue).sent > sent_before then
+                       sent_published := true)
+                 |> Effect.bind (fun () ->
+                        if !sent_published then
+                          acknowledge_stream_sent_delivery observer update
+                        else Effect.unit)
+             in
+             (Queue.try_send queue update
+              |> Effect.bind (function
+                   | `Sent ->
+                       Effect.sync (fun () -> sent_published := true)
+                       |> Effect.bind (fun () -> acknowledge_published_sent ())
+                   | `Closed -> Effect.unit
+                   | `Dropped | `Full ->
+                       report_dropped_update observer on_drop update
+                   | `Closed_with_error err ->
+                       Effect.sync (fun () -> raise (Graph_error err))))
+             |> Effect.on_exit (fun _exit -> acknowledge_published_sent ()))
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> create_bridge_queue capacity)
