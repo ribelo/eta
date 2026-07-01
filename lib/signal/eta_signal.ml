@@ -3046,8 +3046,7 @@ module Make (Observer_error : Observer_error) () = struct
                      source_timer_update =
                        (fun timer generation source ->
                          Effect.sync (fun () ->
-                             checked_succ "interval counter"
-                               (Var.value source))
+                             saturating_succ (Var.value source))
                          |> Effect.annotate ~key:"eta_signal.timer.kind"
                               ~value:"interval"
                          |> Effect.named "eta_signal.time.interval"

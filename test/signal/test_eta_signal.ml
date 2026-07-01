@@ -4404,7 +4404,7 @@ let set_observer_on_dispose observer hooks =
   let observer_obj = Obj.repr observer in
   Obj.set_field observer_obj 11 (Obj.repr hooks)
 
-let test_time_interval_overflow_logs_daemon_diagnostic () =
+let test_time_interval_overflow_saturates () =
   with_logger_test_clock @@ fun _sw clock rt logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   seed_interval_source signal max_int;
@@ -4419,23 +4419,14 @@ let test_time_interval_overflow_logs_daemon_diagnostic () =
   for _ = 1 to 5 do
     Eta_test.Async.yield ()
   done;
-  let records = Logger.dump logger in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "interval remains saturated" max_int
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "overflow logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger));
   run_ok rt (Signal.Observer.dispose observer);
-  (match records with
-   | [ record ] ->
-       Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
-         record.body;
-       (match List.assoc_opt "exception.message" record.attrs with
-        | Some message
-          when contains_substring message "Eta_signal: interval counter overflow"
-          ->
-            ()
-        | actual ->
-            Alcotest.failf "expected interval overflow diagnostic, got %s"
-              (Option.value actual ~default:"<missing>"))
-   | records ->
-       Alcotest.failf "expected one interval overflow diagnostic, got %d"
-         (List.length records))
+  Alcotest.(check int) "dispose logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger))
 
 let test_time_inactive_timer_stop_is_idempotent () =
   let module Idempotent_signal = Eta_signal.Make (Observer_error) () in
@@ -6352,8 +6343,8 @@ let () =
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
-          Alcotest.test_case "time interval overflow logs diagnostic" `Quick
-            test_time_interval_overflow_logs_daemon_diagnostic;
+          Alcotest.test_case "time interval overflow saturates" `Quick
+            test_time_interval_overflow_saturates;
           Alcotest.test_case "time inactive timer stop is idempotent" `Quick
             test_time_inactive_timer_stop_is_idempotent;
           Alcotest.test_case "time timer generation overflow fails loudly"

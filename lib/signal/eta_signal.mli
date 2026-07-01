@@ -358,7 +358,8 @@ module Make (Observer_error : Observer_error) () : sig
     (** [after ~every duration] is a relative one-shot deadline. *)
 
     val interval : Eta.Duration.t -> (int signal, time_error) Eta.Effect.t
-    (** Tick counter that increments after each [interval] while necessary. *)
+    (** Tick counter that increments after each [interval] while necessary.
+        The counter saturates at [max_int]. *)
 
     val step :
       every:Eta.Duration.t ->
