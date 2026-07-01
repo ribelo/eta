@@ -4,6 +4,7 @@ let zero = { ms = 0 }
 let clamp_nonnegative n = if n < 0 then 0 else n
 let checked_mul name n factor =
   if n <= 0 then 0
+  else if factor <= 0 then invalid_arg name
   else if n > max_int / factor then invalid_arg name
   else n * factor
 
