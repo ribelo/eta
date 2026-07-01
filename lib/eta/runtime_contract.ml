@@ -3,14 +3,20 @@ let foreign_runtime_token = "Eta.Runtime_contract: foreign runtime token"
 type runtime_id = Runtime_id of int
 
 module Erased_token = struct
-  type ('kind, 'payload) t = {
+  (* This is the only backend-token erasure boundary. The kind parameter keeps
+     scopes, cancellation handles, promises, resolvers, and streams from being
+     interchanged in Eta's wrapper types. The concrete backend type cannot be
+     named here because [of_runtime] accepts an arbitrary [RUNTIME] module, so
+     unwrapping remains an unsafe result-polymorphic cast pinned at each
+     adapter call below. Do not add another erased mirror of backend values. *)
+  type 'kind t = {
     runtime_id : runtime_id;
     value : Obj.t;
   }
 
   let make runtime_id value = { runtime_id; value = Obj.repr value }
 
-  let cast runtime_id token =
+  let unsafe_cast_backend_value runtime_id token =
     if token.runtime_id <> runtime_id then invalid_arg foreign_runtime_token;
     Obj.obj token.value
 end
@@ -21,11 +27,11 @@ type promise_token
 type resolver_token
 type stream_token
 
-type scope = Scope of (scope_token, unit) Erased_token.t
-type cancel_context = Cancel_context of (cancel_context_token, unit) Erased_token.t
-type 'a promise = Promise of (promise_token, 'a) Erased_token.t
-type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
-type 'a stream = Stream of (stream_token, 'a) Erased_token.t
+type scope = Scope of scope_token Erased_token.t
+type cancel_context = Cancel_context of cancel_context_token Erased_token.t
+type 'a promise = Promise of promise_token Erased_token.t
+type 'a resolver = Resolver of resolver_token Erased_token.t
+type 'a stream = Stream of stream_token Erased_token.t
 type 'a local = 'a Type.Id.t
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -155,19 +161,19 @@ let of_runtime (module R : RUNTIME) =
   let resolver value = Resolver (Erased_token.make runtime_id value) in
   let stream value = Stream (Erased_token.make runtime_id value) in
   let scope_value (Scope token) =
-    (Erased_token.cast runtime_id token : R.scope)
+    (Erased_token.unsafe_cast_backend_value runtime_id token : R.scope)
   in
   let cancel_context_value (Cancel_context token) =
-    (Erased_token.cast runtime_id token : R.cancel_context)
+    (Erased_token.unsafe_cast_backend_value runtime_id token : R.cancel_context)
   in
   let promise_value : type a. a promise -> a R.promise =
-   fun (Promise token) -> Erased_token.cast runtime_id token
+   fun (Promise token) -> Erased_token.unsafe_cast_backend_value runtime_id token
   in
   let resolver_value : type a. a resolver -> a R.resolver =
-   fun (Resolver token) -> Erased_token.cast runtime_id token
+   fun (Resolver token) -> Erased_token.unsafe_cast_backend_value runtime_id token
   in
   let stream_value : type a. a stream -> a R.stream =
-   fun (Stream token) -> Erased_token.cast runtime_id token
+   fun (Stream token) -> Erased_token.unsafe_cast_backend_value runtime_id token
   in
   {
     root_scope = scope R.root_scope;
