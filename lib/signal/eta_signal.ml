@@ -3364,7 +3364,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
     let offer_bridge_update observer on_drop queue update =
-      Effect.sync (fun () -> (Queue.stats queue).sent)
+      Effect.sync (fun () -> Queue.sent_token queue)
       |> Effect.bind (fun sent_before ->
              let sent_published = ref false in
              let acknowledge_published_sent () =
@@ -3372,7 +3372,11 @@ module Make (Observer_error : Observer_error) () = struct
                  acknowledge_stream_sent_delivery observer update
                else
                  Effect.sync (fun () ->
-                     if (Queue.stats queue).sent > sent_before then
+                     if
+                       not
+                         (Queue.same_sent_token (Queue.sent_token queue)
+                            sent_before)
+                     then
                        sent_published := true)
                  |> Effect.bind (fun () ->
                         if !sent_published then

@@ -31,6 +31,7 @@ type 'err send_result =
   [ `Sent | `Dropped | `Full | `Closed | `Closed_with_error of 'err ]
 type ('a, 'err) recv_result =
   [ `Item of 'a | `Empty | `Closed | `Closed_with_error of 'err ]
+type sent_token
 
 val create : ?overflow:overflow -> unit -> ('a, 'err) t
 (** Create a queue.
@@ -93,6 +94,15 @@ val try_send : ('a, 'err) t -> 'a -> ('err send_result, 'never) Effect.t
     [Backpressure] queues return [`Full] instead of waiting when full.
     [Drop_new] queues return [`Dropped] when full. Unbounded queues never return
     [`Full] or [`Dropped]. *)
+
+val sent_token : ('a, 'err) t -> sent_token
+(** Opaque token that changes whenever a value is admitted to the queue. Unlike
+    {!stats}, this token is not a saturating counter and is suitable for
+    cancellation-safe publication bookkeeping. *)
+
+val same_sent_token : sent_token -> sent_token -> bool
+(** [same_sent_token a b] is [true] when both tokens represent the same queue
+    admission state. *)
 
 val try_recv : ('a, 'err) t -> (('a, 'err) recv_result, 'never) Effect.t
 (** Try to receive without waiting. *)

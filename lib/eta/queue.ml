@@ -8,6 +8,8 @@ type overflow =
 type 'err send_result =
   [ `Sent | `Dropped | `Full | `Closed | `Closed_with_error of 'err ]
 
+type sent_token = unit ref
+
 type receiver = {
   contract : Runtime_contract.t;
   resolver : unit Runtime_contract.resolver;
@@ -41,6 +43,7 @@ type ('a, 'err) t = {
   mutable cancelled_receivers : int;
   mutable cancelled_sender_debt : int;
   mutable cancelled_receiver_debt : int;
+  mutable sent_token : sent_token;
 }
 
 type ('a, 'err) wakeup =
@@ -71,6 +74,8 @@ let validate_overflow = function
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
+let new_sent_token () = ref ()
+
 let invariant_failed message =
   invalid_arg ("Eta.Queue invariant failed: " ^ message)
 
@@ -93,6 +98,7 @@ let create ?(overflow = Unbounded) () =
     cancelled_receivers = 0;
     cancelled_sender_debt = 0;
     cancelled_receiver_debt = 0;
+    sent_token = new_sent_token ();
   }
 
 let unbounded () = create ~overflow:Unbounded ()
@@ -222,6 +228,7 @@ let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
 let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
   Stdlib.Queue.add value t.values;
   t.sent <- saturating_succ t.sent;
+  t.sent_token <- new_sent_token ();
   wake_one_receiver_locked wakeups t
 
 let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
@@ -378,6 +385,9 @@ let offer_sync contract t value =
         | `Cancelled -> raise exn)
 
 let try_send t value = Effect.sync (fun () -> try_send_sync t value)
+
+let sent_token t = with_lock t @@ fun () -> t.sent_token
+let same_sent_token left right = left == right
 
 let offer t value =
   Effect_erasure.effect_to_public

@@ -6414,7 +6414,14 @@ let test_stream_bridge_interrupted_publish_does_not_duplicate () =
        Alcotest.fail "interrupted stream publish was delivered twice"
    | _ -> Alcotest.fail "expected one initialized stream update")
 
-let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
+let set_stream_bridge_sent_counter stream value =
+  (* Public stream APIs cannot drive the private bridge queue counter to
+     [max_int] in a focused test. *)
+  let queue = Obj.field (Obj.repr stream) 0 in
+  Obj.set_field queue 7 (Obj.repr value)
+
+let run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
+    ~saturate_sent_counter () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.now := 0;
@@ -6447,6 +6454,7 @@ let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
     expect_exit_ok "stream observer registration"
       (Runtime.run rt (widen (Signal.Stream.observe signal)))
   in
+  if saturate_sent_counter then set_stream_bridge_sent_counter stream max_int;
   expect_die "park stream receiver"
     (Runtime.run rt
        (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)));
@@ -6480,6 +6488,15 @@ let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
    | [ Signal.Initialized 1; Signal.Initialized 1 ] ->
        Alcotest.fail "interrupted sent wakeup was delivered twice"
    | _ -> Alcotest.fail "expected one initialized stream update")
+
+let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
+  run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
+    ~saturate_sent_counter:false ()
+
+let test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate
+    () =
+  run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
+    ~saturate_sent_counter:true ()
 
 let test_stream_bridge_emits_after_stabilize () =
   with_runtime @@ fun rt ->
@@ -7345,6 +7362,10 @@ let () =
           Alcotest.test_case
             "stream bridge interrupted sent wakeup does not duplicate" `Quick
             test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate;
+          Alcotest.test_case
+            "stream bridge saturated sent counter interrupted sent wakeup does not duplicate"
+            `Quick
+            test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick
             test_stream_bridge_emits_after_stabilize;
           Alcotest.test_case "stream bridge validates capacity" `Quick
