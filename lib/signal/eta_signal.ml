@@ -286,6 +286,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivery_pending of int * 'a update
     | Observer_delivery_running of int * 'a update
 
+  and observer_after_ack_action = After_ack_record_stream_bridge_drop
+
   and 'a observer = {
     obs_id : observer_id;
     obs_signal : 'a signal;
@@ -297,7 +299,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_staged_delivery_state : 'a observer_delivery_state option;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
-    mutable obs_after_ack : (int * (unit -> unit)) list;
+    mutable obs_after_ack : (int * observer_after_ack_action) list;
     mutable obs_on_finish : (observer_state -> unit) list;
   }
 
@@ -1938,25 +1940,21 @@ module Make (Observer_error : Observer_error) () = struct
       observer.obs_delivery_state <- Observer_delivery_pending (token, update)
     )
 
-  let add_after_ack observer action =
-    with_graph_lane_sync (fun () ->
-        match observer.obs_delivery_state with
-        | ( Observer_delivery_pending (token, _)
-          | Observer_delivery_running (token, _) )
-          when observer_active (O observer) ->
-            observer.obs_after_ack <- (token, action) :: observer.obs_after_ack
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ | Observer_delivery_running _ ->
-            ())
+  let run_after_ack_action_unlocked = function
+    | After_ack_record_stream_bridge_drop ->
+        graph.stream_bridge_drop_count <-
+          saturating_succ graph.stream_bridge_drop_count
 
-  let run_after_ack observer token =
+  let run_after_ack_actions_unlocked observer token =
     let actions, remaining =
       List.partition
         (fun (action_token, _) -> action_token = token)
         observer.obs_after_ack
     in
     observer.obs_after_ack <- remaining;
-    List.iter (fun (_, action) -> action ()) actions
+    List.iter
+      (fun (_, action) -> run_after_ack_action_unlocked action)
+      actions
 
   let acknowledge_event_delivery observer token update =
     with_graph_lane_sync (fun () ->
@@ -1965,7 +1963,7 @@ module Make (Observer_error : Observer_error) () = struct
           | Observer_delivery_running (pending_token, _) )
           when observer_active (O observer) && pending_token = token ->
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
-            run_after_ack observer pending_token
+            run_after_ack_actions_unlocked observer pending_token
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
@@ -2422,10 +2420,6 @@ module Make (Observer_error : Observer_error) () = struct
       lane_cancelled_waiter_count = graph.lane.lane_cancelled;
     }
 
-  let record_stream_bridge_drop_unlocked () =
-    graph.stream_bridge_drop_count <-
-      saturating_succ graph.stream_bridge_drop_count
-
   let acknowledge_stream_drop_delivery observer update =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
@@ -2433,10 +2427,10 @@ module Make (Observer_error : Observer_error) () = struct
           | Observer_delivery_running (pending_token, _) )
           when observer_active (O observer) ->
             observer.obs_after_ack <-
-              (pending_token, record_stream_bridge_drop_unlocked)
+              (pending_token, After_ack_record_stream_bridge_drop)
               :: observer.obs_after_ack;
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
-            run_after_ack observer pending_token
+            run_after_ack_actions_unlocked observer pending_token
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
