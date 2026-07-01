@@ -2233,6 +2233,65 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   run_ok rt (Signal.Observer.dispose branch_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 0 in
+  let captured_left = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then (
+          let signal = Signal.Var.watch left |> Signal.map Fun.id in
+          captured_left := Some signal;
+          signal)
+        else Signal.const 0)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let branch =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind RHS signal"
+  in
+  let branch_callbacks = ref 0 in
+  let branch_observer =
+    run_ok rt
+      (Signal.Observer.observe branch (fun _ ->
+           Effect.sync (fun () -> incr branch_callbacks)))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "branch observer initialized" 1 !branch_callbacks;
+  run_ok rt (Signal.Var.set left 1);
+  run_ok rt (Signal.Var.set choose_left false);
+  let delivery_claimed = ref false in
+  Signal.Private_test_hooks.set
+    Signal.Private_test_hooks.After_observer_delivery_claim
+    (fun () ->
+      Effect.sync (fun () ->
+          delivery_claimed := true;
+          Alcotest.fail "invalidated branch observer reached delivery claim"));
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose branch_observer))
+          : _ Exit.t);
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose selected_observer))
+          : _ Exit.t))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int)
+        "invalidated branch callback is skipped" 1 !branch_callbacks;
+      Alcotest.(check bool)
+        "invalidated branch observer was not claimed" false !delivery_claimed;
+      expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
+      Alcotest.(check int) "selected value is unchanged" 0
+        (run_ok rt (Signal.Observer.read selected_observer)))
+
 let signal_version signal =
   let signal_obj = Obj.repr signal in
   (Obj.obj (Obj.field signal_obj 6) : int)
@@ -7172,6 +7231,9 @@ let () =
             test_bind_switch_invalidates_observers_of_invalidated_scope;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
             test_bind_switch_skips_stale_branch_observer_before_invalidation;
+          Alcotest.test_case
+            "dynamic scope invalidation skips callback before claim" `Quick
+            test_dynamic_scope_invalidation_skips_callback_before_delivery_claim;
           Alcotest.test_case "commit skips invalidated staged entries" `Quick
             test_commit_skips_invalidated_staged_entries;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
