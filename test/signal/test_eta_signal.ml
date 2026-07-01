@@ -6261,7 +6261,7 @@ let test_time_active_interval_refreshes_before_daemon_runs () =
         4
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_active_step_refreshes_before_daemon_runs () =
+let test_time_active_step_waits_for_daemon_to_run () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal =
     run_ok rt (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 succ)
@@ -6281,8 +6281,31 @@ let test_time_active_step_refreshes_before_daemon_runs () =
       now_ms := 20;
       run_ok rt Signal.stabilize;
       Alcotest.(check int)
-        "active step catches up during stabilization before daemon resumes" 5
+        "active step waits for daemon-owned function replay" 1
         (run_ok rt (Signal.Observer.read observer)))
+
+let test_time_step_does_not_run_f_inside_stabilize () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let f_called = ref 0 in
+  let signal =
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun x ->
+           incr f_called;
+           if !f_called >= 0 then failwith "step f ran during stabilize"
+           else x + 1))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "step daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      now_ms := 20;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "f not called by stabilize" 0 !f_called)
 
 let test_time_active_timer_refresh_does_not_restart_pure_pass () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
@@ -7561,8 +7584,10 @@ let () =
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case "time active interval refreshes before daemon"
             `Quick test_time_active_interval_refreshes_before_daemon_runs;
-          Alcotest.test_case "time active step refreshes before daemon" `Quick
-            test_time_active_step_refreshes_before_daemon_runs;
+          Alcotest.test_case "time active step waits for daemon" `Quick
+            test_time_active_step_waits_for_daemon_to_run;
+          Alcotest.test_case "time step does not run function in stabilize"
+            `Quick test_time_step_does_not_run_f_inside_stabilize;
           Alcotest.test_case "time active timer refresh does not restart pure pass"
             `Quick test_time_active_timer_refresh_does_not_restart_pure_pass;
           Alcotest.test_case "time step function" `Quick

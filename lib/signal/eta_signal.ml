@@ -3353,21 +3353,8 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
              construct_timer_signal (fun () ->
-                 let interval_ms = Duration.to_ms every in
-                 let rec apply_missed remaining value =
-                   if remaining <= 0 then value
-                   else apply_missed (remaining - 1) (f value)
-                 in
                  make_timer_signal initial every
                    ~refresh_when_inactive:false
-                   ~refresh_on_demand:(fun source timer now_ms ->
-                     let missed =
-                       refresh_due_unlocked timer interval_ms now_ms
-                     in
-                     if missed > 0 then (
-                       source.source_value <-
-                         apply_missed missed source.source_value;
-                       Var.queue_var source))
                    {
                      source_timer_update =
                        (fun timer generation ~missed:_ source ->
