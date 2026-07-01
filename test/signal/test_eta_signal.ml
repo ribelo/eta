@@ -2233,6 +2233,51 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   run_ok rt (Signal.Observer.dispose branch_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let test_old_branch_observer_not_computed_on_switch () =
+  with_runtime @@ fun rt ->
+  let selector = Signal.Var.create true in
+  let branch_var = Signal.Var.create 0 in
+  let captured_old = ref None in
+  let old_branch_compute_count = ref 0 in
+  let top =
+    Signal.bind (Signal.Var.watch selector) (function
+      | true ->
+          let signal =
+            Signal.Var.watch branch_var
+            |> Signal.map (fun value ->
+                   incr old_branch_compute_count;
+                   if value = 1 then failwith "old branch was computed";
+                   value)
+          in
+          captured_old := Some signal;
+          signal
+      | false -> Signal.const 42)
+  in
+  let top_observer =
+    run_ok rt (Signal.Observer.observe top (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let old_signal =
+    match !captured_old with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured old branch signal"
+  in
+  let old_observer =
+    run_ok rt (Signal.Observer.observe old_signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set branch_var 1);
+  run_ok rt (Signal.Var.set selector false);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int)
+    "old branch map not recomputed during switch" 1 !old_branch_compute_count;
+  expect_fail "old branch observer invalidated" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read old_observer)));
+  Alcotest.(check int) "top switched to new branch" 42
+    (run_ok rt (Signal.Observer.read top_observer));
+  run_ok rt (Signal.Observer.dispose old_observer);
+  run_ok rt (Signal.Observer.dispose top_observer)
+
 let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -7231,6 +7276,9 @@ let () =
             test_bind_switch_invalidates_observers_of_invalidated_scope;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
             test_bind_switch_skips_stale_branch_observer_before_invalidation;
+          Alcotest.test_case
+            "old branch observer not computed on same stabilization switch"
+            `Quick test_old_branch_observer_not_computed_on_switch;
           Alcotest.test_case
             "dynamic scope invalidation skips callback before claim" `Quick
             test_dynamic_scope_invalidation_skips_callback_before_delivery_claim;
