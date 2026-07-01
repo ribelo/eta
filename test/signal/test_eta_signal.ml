@@ -6154,6 +6154,40 @@ let test_time_active_step_refreshes_before_daemon_runs () =
         "active step catches up during stabilization before daemon resumes" 5
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_active_timer_refresh_does_not_restart_pure_pass () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let source = Signal.Var.create 1 in
+  let pure_runs = ref 0 in
+  let mapped =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr pure_runs;
+           value)
+  in
+  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let combined =
+    Signal.map2 (fun value due -> if due then value else 0) mapped deadline
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "active deadline daemon is sleeping" (fun () ->
+          !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial combined value" 0
+        (run_ok rt (Signal.Observer.read observer));
+      pure_runs := 0;
+      now_ms := 10;
+      run_ok rt (Signal.Var.set source 2);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "refreshed combined value" 2
+        (run_ok rt (Signal.Observer.read observer));
+      Alcotest.(check int) "pre-timer pure closure ran once" 1 !pure_runs)
+
 let test_time_step_function () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
@@ -7387,6 +7421,8 @@ let () =
             `Quick test_time_active_interval_refreshes_before_daemon_runs;
           Alcotest.test_case "time active step refreshes before daemon" `Quick
             test_time_active_step_refreshes_before_daemon_runs;
+          Alcotest.test_case "time active timer refresh does not restart pure pass"
+            `Quick test_time_active_timer_refresh_does_not_restart_pure_pass;
           Alcotest.test_case "time step function" `Quick
             test_time_step_function;
           Alcotest.test_case "time step defect logs diagnostic" `Quick

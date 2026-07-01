@@ -385,7 +385,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   type pure_stabilize_result =
     | Pure_ok of disposal_hook list * event list
-    | Pure_timer_refresh of disposal_hook list * timer_node list
     | Pure_graph_error of disposal_hook list * graph_error
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
@@ -411,6 +410,11 @@ module Make (Observer_error : Observer_error) () = struct
     mutable lane_busy : bool;
     mutable lane_waiting : int;
     mutable lane_cancelled : int;
+  }
+
+  type timer_refresh_context = {
+    timer_refresh_token : int;
+    timer_refresh_now_ms : unit -> int;
   }
 
   type graph = {
@@ -439,11 +443,10 @@ module Make (Observer_error : Observer_error) () = struct
     mutable stream_bridge_drop_count : int;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
     mutable next_timer_refresh_token : int;
-    mutable active_timer_refresh_token : int option;
+    mutable active_timer_refresh : timer_refresh_context option;
   }
 
   exception Graph_error of graph_error
-  exception Timer_refresh_needed of timer_node list
 
   let graph =
     {
@@ -479,7 +482,7 @@ module Make (Observer_error : Observer_error) () = struct
       stream_bridge_drop_count = 0;
       necessary_node_ids = Hashtbl.create 16;
       next_timer_refresh_token = 0;
-      active_timer_refresh_token = None;
+      active_timer_refresh = None;
     }
 
   let kind_name : type a. a kind -> string = function
@@ -1481,14 +1484,7 @@ module Make (Observer_error : Observer_error) () = struct
     let disposal_hooks = reset_staging () in
     List.iter mark_failed_without_current observers;
     List.iter requeue_if_needed pending_at_start;
-    graph.active_timer_refresh_token <- None;
-    graph.phase <- Not_stabilizing;
-    disposal_hooks
-
-  let restart_pure pending_at_start =
-    let disposal_hooks = reset_staging () in
-    List.iter requeue_if_needed pending_at_start;
-    graph.active_timer_refresh_token <- None;
+    graph.active_timer_refresh <- None;
     graph.phase <- Not_stabilizing;
     disposal_hooks
 
@@ -1498,34 +1494,38 @@ module Make (Observer_error : Observer_error) () = struct
       checked_succ "timer refresh token" graph.next_timer_refresh_token;
     token
 
-  let refresh_on_demand_timer_sources token timers =
-    Effect.now
-    |> Effect.bind (fun now_ms ->
-           with_graph_lane_sync (fun () ->
-               List.iter
-                 (fun timer ->
-                   if timer_can_refresh_on_demand token timer then (
-                     timer.timer_on_demand_refresh_token <- token;
-                     match timer.timer_refresh_on_demand with
-                     | None -> ()
-                     | Some refresh -> refresh timer now_ms))
-                 timers))
-
-  let request_on_demand_timer_refresh signal =
-    match (graph.active_timer_refresh_token, signal.timer) with
-    | Some token, Some timer when timer_can_refresh_on_demand token timer ->
-        raise (Timer_refresh_needed [ timer ])
-    | None, _ | Some _, None | Some _, Some _ -> ()
-
   let stage_pending_var (V var) =
     if not (var.var_equal var.graph_value var.source_value) then (
       stage_var_graph_value var var.source_value;
       List.iter mark_self_dirty var.watchers)
 
+  let stage_timer_refresh_pending_vars () =
+    match graph.pending_vars with
+    | [] -> ()
+    | pending ->
+        graph.pending_vars <- [];
+        List.iter
+          (fun (V var as packed) ->
+            var.queued <- false;
+            stage_pending_var packed)
+          (List.rev pending)
+
+  let refresh_timer_source_for_compute signal =
+    match (graph.active_timer_refresh, signal.timer) with
+    | Some { timer_refresh_token; timer_refresh_now_ms }, Some timer
+      when timer_can_refresh_on_demand timer_refresh_token timer ->
+        timer.timer_on_demand_refresh_token <- timer_refresh_token;
+        let now_ms = timer_refresh_now_ms () in
+        (match timer.timer_refresh_on_demand with
+         | None -> ()
+         | Some refresh -> refresh timer now_ms);
+        stage_timer_refresh_pending_vars ()
+    | None, _ | Some _, None | Some _, Some _ -> ()
+
   let rec compute : type a. a signal -> a * bool =
    fun signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
-    request_on_demand_timer_refresh signal;
+    refresh_timer_source_for_compute signal;
     let generation = current_generation () in
     if signal.seen_generation = generation then
       (effective_signal_value signal, signal.changed_seen)
@@ -2136,7 +2136,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _ ->
         false
 
-  let begin_stabilize timer_refresh_token =
+  let begin_stabilize timer_refresh =
     if graph.phase <> Not_stabilizing then
       Pure_graph_error ([], `Reentrant_stabilization)
     else (
@@ -2150,7 +2150,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_binds <- [];
       graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
-      graph.active_timer_refresh_token <- Some timer_refresh_token;
+      graph.active_timer_refresh <- timer_refresh;
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
       List.iter (fun (V var) -> var.queued <- false) pending_at_start;
@@ -2167,13 +2167,10 @@ module Make (Observer_error : Observer_error) () = struct
         let hooks = commit_staging () in
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
-        graph.active_timer_refresh_token <- None;
+        graph.active_timer_refresh <- None;
         graph.phase <- Running_observers;
         Pure_ok (hooks, events)
       with
-      | Timer_refresh_needed timers ->
-          let hooks = restart_pure pending_at_start in
-          Pure_timer_refresh (hooks, timers)
       | Graph_error err ->
           let hooks = rollback_pure observers pending_at_start in
           Pure_graph_error (hooks, err)
@@ -2183,7 +2180,7 @@ module Make (Observer_error : Observer_error) () = struct
           Pure_defect (hooks, exn, backtrace))
 
   let finish_stabilize () =
-    graph.active_timer_refresh_token <- None;
+    graph.active_timer_refresh <- None;
     match graph.phase with
     | Running_observers | Pure -> graph.phase <- Not_stabilizing
     | Not_stabilizing -> ()
@@ -2273,20 +2270,18 @@ module Make (Observer_error : Observer_error) () = struct
                                    release_event_delivery_claim observer token)
                           |> Effect.bind (fun () -> run_events rest))))
 
-  let begin_stabilize_with_pending_hooks timer_refresh_token hooks_ref
-      finish_needed =
-    let result = begin_stabilize timer_refresh_token in
+  let begin_stabilize_with_pending_hooks timer_refresh hooks_ref finish_needed =
+    let result = begin_stabilize timer_refresh in
     let hooks =
       match result with
-      | Pure_ok (hooks, _) | Pure_timer_refresh (hooks, _)
-      | Pure_graph_error (hooks, _)
+      | Pure_ok (hooks, _) | Pure_graph_error (hooks, _)
       | Pure_defect (hooks, _, _) ->
           hooks
     in
     hooks_ref := hooks;
     (match result with
      | Pure_ok _ -> finish_needed := true
-     | Pure_timer_refresh _ | Pure_graph_error _ | Pure_defect _ -> ());
+     | Pure_graph_error _ | Pure_defect _ -> ());
     result
 
   let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
@@ -2296,40 +2291,39 @@ module Make (Observer_error : Observer_error) () = struct
            if !finish_needed then with_graph_lane_sync finish_stabilize
            else Effect.unit)
 
+  let current_runtime_contract =
+    Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
+      (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
+
   let stabilize =
-    Effect.sync (fun () -> (ref [], ref false, ref false, ref None))
+    Effect.sync (fun () -> (ref [], ref false, ref false))
     |> Effect.bind
-         (fun (hooks_ref, refresh_timers, finish_needed, timer_refresh_token) ->
-           let get_timer_refresh_token () =
-             match !timer_refresh_token with
-             | Some token -> token
-             | None ->
-                 let token = next_timer_refresh_token_unlocked () in
-                 timer_refresh_token := Some token;
-                 token
-           in
-           let rec loop () =
-             with_graph_lane_sync (fun () ->
-                 let token = get_timer_refresh_token () in
-                 (token, begin_stabilize_with_pending_hooks token hooks_ref
-                           finish_needed))
-             |> Effect.bind (function
-                  | token, Pure_timer_refresh (_, timers) ->
-                      run_pending_disposal_hooks_as_finalizers hooks_ref
-                      |> Effect.bind (fun () ->
-                             refresh_on_demand_timer_sources token timers)
-                      |> Effect.bind loop
-                  | _, Pure_graph_error (_, err) ->
-                      graph_error_with_pending_disposal_hooks hooks_ref err
-                  | _, Pure_defect (_, exn, backtrace) ->
-                      defect_with_pending_disposal_hooks hooks_ref exn backtrace
-                  | _, Pure_ok (_, events) ->
-                      refresh_timers := true;
-                      run_pending_stabilize_cleanup hooks_ref refresh_timers
-                      |> Effect.bind (fun () -> run_events events)
-                      |> Effect.bind mark_callback_delivery_complete)
-           in
-           loop ()
+         (fun (hooks_ref, refresh_timers, finish_needed) ->
+           current_runtime_contract
+           |> Effect.bind (fun runtime_contract ->
+                  with_graph_lane_sync (fun () ->
+                      let timer_refresh =
+                        Some
+                          {
+                            timer_refresh_token =
+                              next_timer_refresh_token_unlocked ();
+                            timer_refresh_now_ms =
+                              runtime_contract.Runtime_contract.now_ms;
+                          }
+                      in
+                      begin_stabilize_with_pending_hooks timer_refresh hooks_ref
+                        finish_needed)
+                  |> Effect.bind (function
+                       | Pure_graph_error (_, err) ->
+                           graph_error_with_pending_disposal_hooks hooks_ref err
+                       | Pure_defect (_, exn, backtrace) ->
+                           defect_with_pending_disposal_hooks hooks_ref exn
+                             backtrace
+                       | Pure_ok (_, events) ->
+                           refresh_timers := true;
+                           run_pending_stabilize_cleanup hooks_ref refresh_timers
+                           |> Effect.bind (fun () -> run_events events)
+                           |> Effect.bind mark_callback_delivery_complete))
            |> Effect.on_exit (fun _exit ->
                   finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
                     finish_needed))
