@@ -105,6 +105,16 @@ let () =
             test_queue_recv_interrupted_wakeup_still_admits_sender;
           Alcotest.test_case "close wakes interrupted sender" `Quick
             test_queue_close_interrupted_wakeup_still_wakes_sender;
+          Alcotest.test_case "try_recv wakeup finalizer" `Quick
+            test_queue_try_recv_admitted_sender_is_woken_even_if_resolver_raises;
+          Alcotest.test_case "recv wakeup finalizer" `Quick
+            test_queue_recv_admitted_sender_is_woken_even_if_resolver_raises;
+          Alcotest.test_case "take_all wakeup finalizer" `Quick
+            test_queue_take_all_admitted_sender_is_woken_even_if_resolver_raises;
+          Alcotest.test_case "take_batch wakeup finalizer" `Quick
+            test_queue_take_batch_admitted_sender_is_woken_even_if_resolver_raises;
+          Alcotest.test_case "close wakeup finalizer" `Quick
+            test_queue_close_senders_are_woken_even_if_resolver_raises;
           Alcotest.test_case "unbounded offer never reports full" `Quick
             test_queue_unbounded_offer_never_reports_full;
           Alcotest.test_case "backpressure offer waits instead of full" `Quick

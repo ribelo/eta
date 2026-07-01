@@ -336,6 +336,96 @@ let test_queue_close_interrupted_wakeup_still_wakes_sender () =
   Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
   Alcotest.(check int) "blocked value was not admitted" 1 stats.Queue.depth
 
+let setup_full_backpressure_queue_with_two_senders rt =
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
+  expect_blocked (Test_runtime.run rt (Queue.offer queue 3));
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "initial depth" 1 stats.Queue.depth;
+  Alcotest.(check int) "two senders waiting" 2 stats.Queue.waiting_senders;
+  queue
+
+let with_first_resolver_failure f =
+  let resolve_attempts = ref 0 in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.resolve_hook :=
+        (fun () ->
+          incr resolve_attempts;
+          if !resolve_attempts = 1 then raise Await_cancelled);
+      f resolve_attempts)
+
+let check_admitted_sender_woken_after_resolver_failure operation =
+  let rt = Test_runtime.create () in
+  let queue = setup_full_backpressure_queue_with_two_senders rt in
+  with_first_resolver_failure @@ fun resolve_attempts ->
+  (match Test_runtime.run rt (operation queue) with
+  | Exit.Ok () -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "unexpected operation failure: %a"
+        (Cause.pp pp_hidden) cause
+  | exception Await_cancelled -> ());
+  Alcotest.(check int) "resolver retried by finalizer" 2 !resolve_attempts;
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "admitted value buffered" 1 stats.Queue.depth;
+  Alcotest.(check int) "second sender still honestly waiting" 1
+    stats.Queue.waiting_senders;
+  Alcotest.(check int) "admitted value" 2 (run_ok rt (Queue.recv queue));
+  Alcotest.(check int) "second sender resolved after capacity opens" 3
+    !resolve_attempts;
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "no stranded sender" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "second waiting value" 3 (run_ok rt (Queue.recv queue))
+
+let test_queue_try_recv_admitted_sender_is_woken_even_if_resolver_raises () =
+  check_admitted_sender_woken_after_resolver_failure (fun queue ->
+      Queue.try_recv queue
+      |> Effect.map (function
+           | `Item 1 -> ()
+           | `Item value ->
+               Alcotest.failf "unexpected try_recv item: %d" value
+           | `Empty -> Alcotest.fail "try_recv unexpectedly returned empty"
+           | `Closed -> Alcotest.fail "try_recv unexpectedly reported clean close"
+           | `Closed_with_error _ ->
+               Alcotest.fail "try_recv unexpectedly reported error close"))
+
+let test_queue_recv_admitted_sender_is_woken_even_if_resolver_raises () =
+  check_admitted_sender_woken_after_resolver_failure (fun queue ->
+      Queue.recv queue
+      |> Effect.map (fun value ->
+             Alcotest.(check int) "received buffered value" 1 value))
+
+let test_queue_take_all_admitted_sender_is_woken_even_if_resolver_raises () =
+  check_admitted_sender_woken_after_resolver_failure (fun queue ->
+      Queue.take_all queue
+      |> Effect.map (fun values ->
+             Alcotest.(check (list int)) "drained values" [ 1 ] values))
+
+let test_queue_take_batch_admitted_sender_is_woken_even_if_resolver_raises () =
+  check_admitted_sender_woken_after_resolver_failure (fun queue ->
+      Queue.take_batch queue ~max:1
+      |> Effect.map (fun values ->
+             Alcotest.(check (list int)) "drained values" [ 1 ] values))
+
+let test_queue_close_senders_are_woken_even_if_resolver_raises () =
+  let rt = Test_runtime.create () in
+  let queue = setup_full_backpressure_queue_with_two_senders rt in
+  with_first_resolver_failure @@ fun resolve_attempts ->
+  (try Queue.close_with_error queue `Boom with Await_cancelled -> ());
+  Alcotest.(check int) "all close wakeups resolved" 3 !resolve_attempts;
+  let stats = Queue.stats queue in
+  Alcotest.(check bool) "queue closed" true stats.Queue.closed;
+  Alcotest.(check int) "no stranded sender" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "buffered value still drains" 1
+    (run_ok rt (Queue.recv queue));
+  (match Test_runtime.run rt (Queue.recv queue) with
+  | Exit.Error (Cause.Fail (`Closed_with_error `Boom)) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected close error, got %a" (Cause.pp pp_hidden) cause
+  | Exit.Ok value -> Alcotest.failf "unexpected value after close: %d" value)
+
 let test_queue_unbounded_offer_never_reports_full () =
   let rt = Test_runtime.create () in
   let queue = Queue.create () in
