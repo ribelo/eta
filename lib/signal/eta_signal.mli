@@ -365,8 +365,12 @@ module Make (Observer_error : Observer_error) () : sig
       Failures after that commit point, including observer callback failures,
       timer start/stop lifecycle defects, disposal-hook failures, or
       interruption, do not roll back the committed snapshot. Undelivered
-      observer callbacks remain pending and are retried by a later
-      stabilization unless the observer is disposed or invalidated first. *)
+      observer callbacks keep the observer's delivery cursor pending. A later
+      stabilization retries delivery against the latest stabilized value, so
+      intermediate failed blips are coalesced: if the value has returned to the
+      observer's last successfully delivered value, the pending delivery is
+      acknowledged without running a callback. Disposal or dynamic-scope
+      invalidation still skips pending callbacks. *)
 
   val stats : unit -> (stats, 'err) Eta.Effect.t
 
