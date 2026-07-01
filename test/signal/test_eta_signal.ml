@@ -1494,81 +1494,57 @@ let test_observer_dispose_after_active_check_skips_callback () =
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
 let test_observer_dispose_after_delivery_claim_skips_callback () =
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
-  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
-  Cleanup_interrupt_runtime.after_local_binding_count := None;
-  Cleanup_interrupt_runtime.now := 0;
-  Cleanup_interrupt_runtime.local_binding_count := 0;
-  Hashtbl.clear Cleanup_interrupt_runtime.locals;
-  let rt =
-    Runtime.create_with_runtime
-      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
-      ()
-  in
-  let source = Signal.Var.create 1 in
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
-  let target_ref = ref None in
-  let target_callback_ran = ref false in
-  let arm_dispose = ref false in
-  let marker =
-    expect_exit_ok "marker observer registration"
-      (Runtime.run rt
-         (widen
-            (Signal.Observer.observe signal (function
-              | Signal.Changed _ when !arm_dispose ->
-                  Effect.sync (fun () ->
-                      Cleanup_interrupt_runtime.after_local_binding_count :=
-                        Some
-                          ( !Cleanup_interrupt_runtime.local_binding_count + 3,
-                            fun () ->
-                              match !target_ref with
-                              | None ->
-                                  Alcotest.fail "target observer was not registered"
-                              | Some target ->
-                                  ignore
-                                    (expect_exit_ok
-                                       "target dispose after delivery claim"
-                                       (Runtime.run rt
-                                          (widen
-                                             (Signal.Observer.dispose target)))
-                                      : unit) ))
-              | Initialized _ | Changed _ -> Effect.unit))))
+  let callbacks = ref 0 in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe signal (fun _ ->
+           Effect.sync (fun () -> incr callbacks)))
   in
-  let target =
-    expect_exit_ok "target observer registration"
-      (Runtime.run rt
-         (widen
-            (Signal.Observer.observe signal (fun _ ->
-                 Effect.sync (fun () -> target_callback_ran := true)))))
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial callback" 1 !callbacks;
+  run_ok rt (Signal.Var.set source 1);
+  let claimed, claimed_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let hook_ran = ref false in
+  let release_once =
+    let released = ref false in
+    fun () ->
+      if not !released then (
+        released := true;
+        Eio.Promise.resolve release_resolver ())
   in
-  target_ref := Some target;
+  Signal.Private_test_hooks.set
+    Signal.Private_test_hooks.After_observer_delivery_claim
+    (fun () ->
+      Effect.sync (fun () ->
+          if not !hook_ran then (
+            hook_ran := true;
+            Eio.Promise.resolve claimed_resolver ();
+            Eio.Promise.await release)));
   Fun.protect
     ~finally:(fun () ->
-      Cleanup_interrupt_runtime.after_local_binding_count := None;
-      ignore
-        (Runtime.run rt (widen (Signal.Observer.dispose target)) : _ Exit.t);
-      ignore
-        (Runtime.run rt (widen (Signal.Observer.dispose marker)) : _ Exit.t))
+      Signal.Private_test_hooks.clear ();
+      release_once ();
+      ignore (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
     (fun () ->
-      ignore
-        (expect_exit_ok "initial stabilize"
-           (Runtime.run rt (widen Signal.stabilize))
-          : unit);
-      target_callback_ran := false;
-      arm_dispose := true;
-      ignore
-        (expect_exit_ok "set source"
-           (Runtime.run rt (widen (Signal.Var.set source 2)))
-          : unit);
+      let stabilizer =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Runtime.run rt (widen Signal.stabilize))
+      in
+      Eio.Promise.await claimed;
+      run_ok rt (Signal.Observer.dispose observer);
+      release_once ();
       ignore
         (expect_exit_ok "stabilize with post-claim dispose"
-           (Runtime.run rt (widen Signal.stabilize))
+           (Eio.Promise.await_exn stabilizer)
           : unit);
-      Alcotest.(check bool)
-        "disposed observer callback is skipped after delivery claim" false
-        !target_callback_ran;
+      Alcotest.(check int)
+        "disposed observer callback is skipped after delivery claim" 1 !callbacks;
       expect_fail "target disposed by claim hook" (( = ) `Disposed_observer)
-        (Runtime.run rt (widen (Signal.Observer.read target))))
+        (Runtime.run rt (widen (Signal.Observer.read observer))))
 
 let test_observer_registration_skips_callbacks_until_returned () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;

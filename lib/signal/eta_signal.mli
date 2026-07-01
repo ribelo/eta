@@ -127,6 +127,17 @@ module Make (Observer_error : Observer_error) () : sig
   type 'a signal
   type 'a observer
 
+  (**/**)
+
+  module Private_test_hooks : sig
+    type hook = After_observer_delivery_claim
+
+    val set : hook -> (unit -> (unit, stabilize_error) Eta.Effect.t) -> unit
+    val clear : unit -> unit
+  end
+
+  (**/**)
+
   type 'a update =
     | Initialized of 'a
     | Changed of {

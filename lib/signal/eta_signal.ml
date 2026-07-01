@@ -31,6 +31,22 @@ module Make (Observer_error : Observer_error) () = struct
     [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
+  module Private_test_hooks = struct
+    type hook = After_observer_delivery_claim
+
+    let noop () = Effect.unit
+    let after_observer_delivery_claim = ref noop
+
+    let set hook action =
+      match hook with
+      | After_observer_delivery_claim -> after_observer_delivery_claim := action
+
+    let clear () = after_observer_delivery_claim := noop
+
+    let run = function
+      | After_observer_delivery_claim -> !after_observer_delivery_claim ()
+  end
+
   type 'a update =
     | Initialized of 'a
     | Changed of {
@@ -2258,7 +2274,9 @@ module Make (Observer_error : Observer_error) () = struct
                  |> Effect.bind (function
                       | false -> run_events rest
                       | true ->
-                          (construct_observer_effect observer token update
+                          (Private_test_hooks.run After_observer_delivery_claim
+                           |> Effect.bind (fun () ->
+                                  construct_observer_effect observer token update)
                            |> Effect.bind (function
                                 | None -> Effect.unit
                                 | Some observer_eff ->
