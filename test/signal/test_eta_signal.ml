@@ -4689,6 +4689,148 @@ let test_time_deadline_saturated_catch_up_does_not_overflow () =
     (List.length (Logger.dump logger));
   run_ok rt (Signal.Observer.dispose observer)
 
+let with_delayed_first_daemon_start_host f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let daemon_started, daemon_started_resolver = Eio.Promise.create () in
+  let daemon_release, daemon_release_resolver = Eio.Promise.create () in
+  let daemon_delayed = ref false in
+  let daemon_released = ref false in
+  let release_daemon () =
+    if not !daemon_released then (
+      daemon_released := true;
+      Eio.Promise.resolve daemon_release_resolver ())
+  in
+  let module Eio_ops = struct
+    module Time = struct
+      let now _clock =
+        float_of_int (Eta_test.Test_clock.now_ms clock) /. 1000.0
+
+      let sleep _clock seconds =
+        Eta_test.Test_clock.sleep clock
+          (Duration.ms (int_of_float (seconds *. 1000.0)))
+    end
+
+    module Net = Eio.Net
+    module Flow = Eio.Flow
+    module Switch = Eio.Switch
+
+    module Fiber = struct
+      let get = Eio.Fiber.get
+      let with_binding = Eio.Fiber.with_binding
+      let first = Eio.Fiber.first
+      let await_cancel = Eio.Fiber.await_cancel
+      let fork = Eio.Fiber.fork
+
+      let fork_daemon ~sw f =
+        if !daemon_delayed then Eio.Fiber.fork_daemon ~sw f
+        else (
+          daemon_delayed := true;
+          Eio.Fiber.fork_daemon ~sw (fun () ->
+              Eio.Promise.resolve daemon_started_resolver ();
+              Eio.Promise.await daemon_release;
+              f ()))
+
+      let yield = Eio.Fiber.yield
+      let check = Eio.Fiber.check
+    end
+
+    module Stream = Eio.Stream
+    module Cancel = Eio.Cancel
+  end in
+  let host =
+    Eta_eio.Host.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()
+  in
+  Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env) @@ fun rt ->
+  f sw clock rt daemon_started release_daemon
+
+let test_time_timer_dispose_before_cancel_install_exits_daemon () =
+  with_delayed_first_daemon_start_host
+  @@ fun sw clock rt daemon_started release_daemon ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Eio.Promise.await daemon_started;
+  Alcotest.(check int) "uncancellable start has not installed a sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  run_ok rt (Signal.Observer.dispose observer);
+  release_daemon ();
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "uncancellable start exits after demand disappears" true
+    (Eio.Promise.is_resolved drained);
+  Eio.Promise.await_exn drained;
+  Alcotest.(check int) "stopped uncancellable start installed no sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock)
+
+let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let rt_ref = ref None in
+  let observer_ref = ref None in
+  let now_calls = ref 0 in
+  let drop_demand_during_update_on_start = ref false in
+  let now_ms () =
+    incr now_calls;
+    if !drop_demand_during_update_on_start && !now_calls = 3 then (
+      (match (!rt_ref, !observer_ref) with
+       | Some rt, Some observer -> run_ok rt (Signal.Observer.dispose observer)
+       | _ -> Alcotest.fail "missing observer for update-on-start demand drop");
+      30)
+    else if !now_calls >= 2 then 20
+    else 0
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  rt_ref := Some rt;
+  let use_timer = Signal.Var.create false in
+  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.days 1) ()) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+        if use_timer then now_signal else Signal.const (-1))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  observer_ref := Some observer;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial inactive branch" (-1)
+    (run_ok rt (Signal.Observer.read observer));
+  drop_demand_during_update_on_start := true;
+  run_ok rt (Signal.Var.set use_timer true);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "start update was stopped before daemon start" 3
+    !now_calls;
+  expect_fail "observer disposed during update_on_start"
+    (( = ) `Disposed_observer)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)));
+  Alcotest.(check int) "stopped update_on_start installed no sleeper" 0
+    (Eta_test.Test_clock.sleeper_count clock);
+  let options : Signal.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = false;
+      dot_timers = true;
+      dot_state = true;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok rt (Signal.to_dot ~options ()) in
+  Alcotest.(check int) "stopped update_on_start queued no source update" 0
+    (count_occurrences dot "queued=true");
+  Alcotest.(check int) "stopped update_on_start left no uncancellable timer" 0
+    (count_occurrences dot "timer_state=running_uncancellable")
+
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -6361,6 +6503,12 @@ let () =
             test_time_large_catch_up_applies_beyond_old_cap;
           Alcotest.test_case "time deadline saturated catch-up does not overflow"
             `Quick test_time_deadline_saturated_catch_up_does_not_overflow;
+          Alcotest.test_case
+            "time timer dispose before cancel install exits daemon" `Quick
+            test_time_timer_dispose_before_cancel_install_exits_daemon;
+          Alcotest.test_case
+            "time now update_on_start stops after demand drop" `Quick
+            test_time_now_update_on_start_demand_drop_does_not_queue_source;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
