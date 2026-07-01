@@ -1262,7 +1262,10 @@ module Make (Observer_error : Observer_error) () = struct
     in
     visit_scope scope
 
-  let preflight_timer_stop timer =
+  let preflight_timer_invalidation timer =
+    (* Scope invalidation stops active timers during commit. Check generation
+       overflow before commit mutates staged graph state; the actual stop
+       happens later in [invalidate_scope]. *)
     if timer_active timer || Option.is_some (timer_running_generation timer)
        || timer_has_cancel timer
     then ignore (checked_succ "timer generation" (timer_generation timer) : int)
@@ -1298,7 +1301,7 @@ module Make (Observer_error : Observer_error) () = struct
       (preflight_staged_bind_commit invalidated_ids invalidated_nodes)
       graph.staged_binds;
     List.iter
-      (fun (P signal) -> Option.iter preflight_timer_stop signal.timer)
+      (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       !invalidated_nodes;
     List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes
 
