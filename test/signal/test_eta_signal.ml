@@ -4837,7 +4837,7 @@ let set_observer_on_dispose observer hooks =
   (* Public APIs only install internal stream hooks; this keeps the regression
      focused on hook failure without widening the signal API. *)
   let observer_obj = Obj.repr observer in
-  Obj.set_field observer_obj 10 (Obj.repr hooks)
+  Obj.set_field observer_obj 5 (Obj.repr hooks)
 
 let test_time_interval_overflow_saturates () =
   with_logger_test_clock @@ fun _sw clock rt logger ->
