@@ -130,9 +130,13 @@ module Make (Observer_error : Observer_error) () : sig
   (**/**)
 
   module Private_test_hooks : sig
-    type hook = After_observer_delivery_claim
+    type hook =
+      | After_observer_delivery_claim
+      | After_stream_try_send_before_ack
 
-    val set : hook -> (unit -> (unit, stabilize_error) Eta.Effect.t) -> unit
+    type action = { run : 'err. unit -> (unit, 'err) Eta.Effect.t }
+
+    val set : hook -> action -> unit
     val clear : unit -> unit
   end
 

@@ -1518,12 +1518,15 @@ let test_observer_dispose_after_delivery_claim_skips_callback () =
   in
   Signal.Private_test_hooks.set
     Signal.Private_test_hooks.After_observer_delivery_claim
-    (fun () ->
-      Effect.sync (fun () ->
-          if not !hook_ran then (
-            hook_ran := true;
-            Eio.Promise.resolve claimed_resolver ();
-            Eio.Promise.await release)));
+    {
+      run =
+        (fun () ->
+          Effect.sync (fun () ->
+              if not !hook_ran then (
+                hook_ran := true;
+                Eio.Promise.resolve claimed_resolver ();
+                Eio.Promise.await release)));
+    };
   Fun.protect
     ~finally:(fun () ->
       Signal.Private_test_hooks.clear ();
@@ -2313,10 +2316,13 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
   let delivery_claimed = ref false in
   Signal.Private_test_hooks.set
     Signal.Private_test_hooks.After_observer_delivery_claim
-    (fun () ->
-      Effect.sync (fun () ->
-          delivery_claimed := true;
-          Alcotest.fail "invalidated branch observer reached delivery claim"));
+    {
+      run =
+        (fun () ->
+          Effect.sync (fun () ->
+              delivery_claimed := true;
+              Alcotest.fail "invalidated branch observer reached delivery claim"));
+    };
   Fun.protect
     ~finally:(fun () ->
       Signal.Private_test_hooks.clear ();
@@ -6725,6 +6731,79 @@ let test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_d
   run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
     ~saturate_sent_counter:true ()
 
+let test_stream_sent_update_is_acknowledged_on_cancellation () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:16 signal)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      ignore
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
+          : _ Exit.t))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      (match
+         run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+       with
+       | [ Signal.Initialized 0 ] -> ()
+       | _ -> Alcotest.fail "expected initial stream update");
+      run_ok rt (Signal.Var.set source 1);
+      let sent, sent_resolver = Eio.Promise.create () in
+      let release, release_resolver = Eio.Promise.create () in
+      let release_once =
+        let released = ref false in
+        fun () ->
+          if not !released then (
+            released := true;
+            Eio.Promise.resolve release_resolver ())
+      in
+      let hook_ran = ref false in
+      Signal.Private_test_hooks.set
+        Signal.Private_test_hooks.After_stream_try_send_before_ack
+        {
+          run =
+            (fun () ->
+              Effect.sync (fun () ->
+                  if not !hook_ran then (
+                    hook_ran := true;
+                    Eio.Promise.resolve sent_resolver ();
+                    Eio.Promise.await release)));
+        };
+      Fun.protect
+        ~finally:(fun () ->
+          Signal.Private_test_hooks.clear ();
+          release_once ())
+        (fun () ->
+          let cancel_ctx = ref None in
+          let stabilizer =
+            Eio.Fiber.fork_promise ~sw (fun () ->
+                Eio.Cancel.sub @@ fun ctx ->
+                cancel_ctx := Some ctx;
+                Eta_eio.Runtime.run rt (widen Signal.stabilize))
+          in
+          Eio.Promise.await sent;
+          wait_until "stream sent hook cancellation context" (fun () ->
+              Option.is_some !cancel_ctx);
+          Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+          release_once ();
+          await_cancelled "stream sent acknowledgement stabilize" stabilizer);
+      run_ok rt Signal.stabilize;
+      run_ok rt (Signal.Observer.dispose observer);
+      (match
+         run_ok rt (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)
+       with
+       | [ Signal.Changed { old_value = 0; new_value = 1 } ] -> ()
+       | [
+        Signal.Changed { old_value = 0; new_value = 1 };
+        Signal.Changed { old_value = 0; new_value = 1 };
+       ] ->
+           Alcotest.fail "cancelled sent stream update was delivered twice"
+       | _ -> Alcotest.fail "expected one changed stream update"))
+
 let test_stream_bridge_emits_after_stabilize () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -7613,6 +7692,9 @@ let () =
             "stream bridge saturated sent counter interrupted sent wakeup does not duplicate"
             `Quick
             test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate;
+          Alcotest.test_case
+            "stream sent update acknowledged on cancellation" `Quick
+            test_stream_sent_update_is_acknowledged_on_cancellation;
           Alcotest.test_case "stream bridge emits after stabilize" `Quick
             test_stream_bridge_emits_after_stabilize;
           Alcotest.test_case "stream bridge validates capacity" `Quick
