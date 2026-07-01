@@ -54,6 +54,22 @@ module Make (B : Runtime_backend.S) = struct
     in
     loop 200
 
+  let wait_until label predicate =
+    let rec loop attempts =
+      if predicate () then ()
+      else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
+      else (
+        B.yield ();
+        loop (attempts - 1))
+    in
+    loop 200
+
+  let check_owner_domain owner label =
+    Alcotest.(check bool) label true (Domain.self () = owner)
+
+  let expect_owner_domain owner label actual =
+    Alcotest.(check bool) label true (actual = owner)
+
   let string_contains ~needle haystack =
     let needle_len = String.length needle in
     let haystack_len = String.length haystack in
@@ -862,6 +878,113 @@ module Make (B : Runtime_backend.S) = struct
     check_ok (Alcotest.pair Alcotest.int Alcotest.int) "stream fifo" (1, 2)
       (B.run rt stream_eff)
 
+  let test_runtime_contract_callbacks_stay_on_owner_domain () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let owner = Domain.self () in
+    contract.Rc.protect (fun () ->
+        check_owner_domain owner "protect callback");
+    contract.Rc.run_scope ~name:"same-domain conformance" (fun child_scope ->
+        check_owner_domain owner "run_scope callback";
+        let promise, resolver = contract.Rc.create_promise () in
+        contract.Rc.fork child_scope (fun () ->
+            check_owner_domain owner "fork callback";
+            contract.Rc.resolve_promise resolver (Domain.self ()));
+        expect_owner_domain owner "promise await resumed on owner"
+          (contract.Rc.await_promise promise);
+        let stream = contract.Rc.create_stream 2 in
+        contract.Rc.fork child_scope (fun () ->
+            check_owner_domain owner "stream producer callback";
+            contract.Rc.stream_add stream (Domain.self ()));
+        expect_owner_domain owner "stream take resumed on owner"
+          (contract.Rc.stream_take stream);
+        contract.Rc.stream_add stream (Domain.self ());
+        expect_owner_domain owner "stream take_nonblocking stayed on owner"
+          (Option.get (contract.Rc.stream_take_nonblocking stream)));
+    let daemon_promise, daemon_resolver = contract.Rc.create_promise () in
+    contract.Rc.fork_daemon contract.Rc.root_scope (fun () ->
+        check_owner_domain owner "daemon callback";
+        contract.Rc.resolve_promise daemon_resolver (Domain.self ());
+        `Stop_daemon);
+    expect_owner_domain owner "daemon promise resolved on owner"
+      (contract.Rc.await_promise daemon_promise);
+    let cancelled = Failure "same-domain cancellation" in
+    let cancellation_observed = ref false in
+    contract.Rc.cancel_sub (fun ctx ->
+        check_owner_domain owner "cancel_sub callback";
+        contract.Rc.cancel ctx cancelled;
+        try
+          contract.Rc.check ();
+          Alcotest.fail "expected cancellation checkpoint"
+        with exn -> (
+          check_owner_domain owner "cancellation observed on owner";
+          match contract.Rc.cancellation_reason exn with
+          | Some reason when reason == cancelled -> cancellation_observed := true
+          | Some reason ->
+              Alcotest.failf "unexpected cancellation reason: %s"
+                (Printexc.to_string reason)
+          | None -> raise exn));
+    Alcotest.(check bool)
+      "cancellation reason observed" true !cancellation_observed;
+    let local = Rc.create_local () in
+    contract.Rc.local_with_binding local 42 (fun () ->
+        check_owner_domain owner "local callback";
+        Alcotest.(check (option int))
+          "local binding" (Some 42) (contract.Rc.local_get local))
+
+  let test_runtime_queue_wakeups_stay_on_owner_domain () =
+    B.with_runtime @@ fun ctx rt ->
+    let owner = Domain.self () in
+    let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    run_ok rt (Queue.send queue 1);
+    let sender =
+      B.fork_run ctx rt
+        (Queue.send queue 2 |> E.map (fun () -> Domain.self ()))
+    in
+    B.yield ();
+    Alcotest.(check bool) "sender waits for queue capacity" false
+      (B.is_resolved sender);
+    let receiver_domain =
+      run_ok rt (Queue.recv queue |> E.map (fun _ -> Domain.self ()))
+    in
+    expect_owner_domain owner "queue receiver resumed on owner" receiver_domain;
+    expect_owner_domain owner "queue sender resumed on owner" (expect_ok (B.await sender))
+
+  let test_runtime_cancellation_cleanup_stays_on_owner_domain () =
+    B.with_runtime @@ fun ctx rt ->
+    let owner = Domain.self () in
+    let started = ref false in
+    let finalizer_domain = ref None in
+    let program =
+      E.acquire_release
+        ~acquire:(E.sync (fun () -> started := true))
+        ~release:(fun () ->
+          E.sync (fun () -> finalizer_domain := Some (Domain.self ())))
+      |> E.bind (fun () -> B.await_cancel_effect ())
+    in
+    let fiber = B.fork_run_cancelable ctx rt program in
+    wait_until "cancelable effect start" (fun () -> !started);
+    B.cancel_fiber fiber;
+    (match B.await_cancelable fiber with
+    | `Cancelled -> ()
+    | `Returned (Exit.Ok _) -> Alcotest.fail "expected cancellation, got Ok"
+    | `Returned (Exit.Error cause) ->
+        Alcotest.failf "expected cancellation, got %a" (Cause.pp pp_hidden)
+          cause);
+    Alcotest.(check (option bool))
+      "cancellation finalizer ran on owner" (Some true)
+      (Option.map (fun domain -> domain = owner) !finalizer_domain)
+
+  let test_runtime_daemon_callbacks_stay_on_owner_domain () =
+    B.with_runtime @@ fun _ctx rt ->
+    let owner = Domain.self () in
+    let daemon_domain = ref None in
+    B.run rt (E.daemon (E.sync (fun () -> daemon_domain := Some (Domain.self ()))))
+    |> expect_ok |> ignore;
+    B.drain rt;
+    Alcotest.(check (option bool))
+      "daemon effect ran on owner" (Some true)
+      (Option.map (fun domain -> domain = owner) !daemon_domain)
+
   let test_daemon_drain () =
     B.with_runtime @@ fun _ctx rt ->
     let completed = ref false in
@@ -957,6 +1080,8 @@ module Make (B : Runtime_backend.S) = struct
           Alcotest.test_case "daemon drain" `Quick test_daemon_drain;
           Alcotest.test_case "runtime daemon scope does not join" `Quick
             test_runtime_fork_daemon_scope_does_not_join;
+          Alcotest.test_case "runtime daemon callbacks stay on owner domain"
+            `Quick test_runtime_daemon_callbacks_stay_on_owner_domain;
         ] );
       ( "Concurrency",
         [
@@ -977,6 +1102,8 @@ module Make (B : Runtime_backend.S) = struct
         [
           Alcotest.test_case "queue channel semaphore pubsub" `Quick
             test_queue_channel_semaphore_pubsub;
+          Alcotest.test_case "queue wakeups stay on owner domain" `Quick
+            test_runtime_queue_wakeups_stay_on_owner_domain;
           Alcotest.test_case "queue close and close_with_error drain" `Quick
             test_queue_close_and_close_with_error_drain;
           Alcotest.test_case "channel close and close_with_error drain" `Quick
@@ -1001,6 +1128,10 @@ module Make (B : Runtime_backend.S) = struct
             test_supervisor_await_and_cancel;
           Alcotest.test_case "runtime contract locals and stream" `Quick
             test_runtime_contract_locals_and_stream;
+          Alcotest.test_case "runtime contract callbacks stay on owner domain"
+            `Quick test_runtime_contract_callbacks_stay_on_owner_domain;
+          Alcotest.test_case "cancellation cleanup stays on owner domain" `Quick
+            test_runtime_cancellation_cleanup_stays_on_owner_domain;
         ] );
       ( "Observability",
         [
