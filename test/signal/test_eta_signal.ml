@@ -1533,6 +1533,75 @@ let test_observer_registration_skips_callbacks_until_returned () =
           : unit);
       Alcotest.(check int) "callback after observe returned" 1 !callback_count)
 
+let test_observer_observe_invalidated_after_activation_fails () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let use_branch = Signal.Var.create true in
+  let captured = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+        if active then (
+          let branch = Signal.const 1 in
+          captured := Some branch;
+          branch)
+        else Signal.const 2)
+  in
+  let selected_observer =
+    expect_exit_ok "selected observer registration"
+      (Runtime.run rt
+         (widen (Signal.Observer.observe selected (fun _ -> Effect.unit))))
+  in
+  ignore
+    (expect_exit_ok "initial stabilize"
+       (Runtime.run rt (widen Signal.stabilize))
+      : unit);
+  let branch =
+    match !captured with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured branch signal"
+  in
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Cleanup_interrupt_runtime.after_local_binding_count :=
+    Some
+      ( 4,
+        fun () ->
+          ignore
+            (expect_exit_ok "branch switch after observer activation"
+               (Runtime.run rt
+                  (widen
+                     (Signal.Var.set use_branch false
+                      |> Effect.bind (fun () -> Signal.stabilize))))
+              : unit) );
+  Fun.protect
+    ~finally:(fun () ->
+      Cleanup_interrupt_runtime.after_local_binding_count := None;
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose selected_observer))
+          : _ Exit.t))
+    (fun () ->
+      match
+        Runtime.run rt
+          (widen (Signal.Observer.observe branch (fun _ -> Effect.unit)))
+      with
+      | Exit.Error (Cause.Fail `Invalid_scope) -> ()
+      | Exit.Error cause ->
+          Alcotest.failf "expected Invalid_scope, got %a" (Cause.pp pp_hidden)
+            cause
+      | Exit.Ok observer ->
+          ignore
+            (Runtime.run rt (widen (Signal.Observer.dispose observer))
+              : _ Exit.t);
+          Alcotest.fail "observe returned an invalidated observer")
+
 let test_bind_detaches_old_dependency () =
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
@@ -6539,6 +6608,9 @@ let () =
             `Quick test_observer_dispose_after_active_check_skips_callback;
           Alcotest.test_case "observer registration skips callbacks until returned"
             `Quick test_observer_registration_skips_callbacks_until_returned;
+          Alcotest.test_case
+            "observer observe invalidated after activation fails" `Quick
+            test_observer_observe_invalidated_after_activation_fails;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case
