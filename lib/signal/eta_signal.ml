@@ -27,7 +27,8 @@ module Make (Observer_error : Observer_error) () = struct
     | `Uninitialized_observer ]
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
-  type time_error = [ graph_error | `Invalid_interval | `Past_deadline ]
+  type time_error =
+    [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a update =
@@ -97,6 +98,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let pp_time_error ppf = function
     | #graph_error as err -> pp_graph_error ppf err
+    | `Deadline_overflow ->
+        Format.pp_print_string ppf "deadline arithmetic overflow"
     | `Invalid_interval -> Format.pp_print_string ppf "invalid interval"
     | `Past_deadline -> Format.pp_print_string ppf "deadline is in the past"
 
@@ -2964,6 +2967,11 @@ module Make (Observer_error : Observer_error) () = struct
       else if left > max_int - right then max_int
       else left + right
 
+    let add_relative_deadline now_ms duration_ms =
+      if duration_ms <= 0 then Error `Past_deadline
+      else if now_ms > max_int - duration_ms then Error `Deadline_overflow
+      else Ok (now_ms + duration_ms)
+
     let mul_ms_capped left right =
       if left <= 0 || right <= 0 then 0
       else if left > max_int / right then max_int
@@ -3264,10 +3272,10 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              Effect.now
              |> Effect.bind (fun now_ms ->
-                    let deadline_ms =
-                      add_ms_capped now_ms (Duration.to_ms duration)
-                    in
-                    construct_deadline_signal every deadline_ms))
+                    Effect.from_result
+                      (add_relative_deadline now_ms (Duration.to_ms duration))
+                    |> Effect.bind (fun deadline_ms ->
+                           construct_deadline_signal every deadline_ms)))
 
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)

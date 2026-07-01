@@ -95,7 +95,8 @@ module Make (Observer_error : Observer_error) () : sig
 
   type stabilize_error = [ graph_error | `Observer_error of observer_error ]
 
-  type time_error = [ graph_error | `Invalid_interval | `Past_deadline ]
+  type time_error =
+    [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
   type 'a var
@@ -414,7 +415,9 @@ module Make (Observer_error : Observer_error) () : sig
       every:Eta.Duration.t ->
       Eta.Duration.t ->
       (bool signal, time_error) Eta.Effect.t
-    (** [after ~every duration] is a relative one-shot deadline. *)
+    (** [after ~every duration] is a relative one-shot deadline. It fails with
+        [`Deadline_overflow] when the current runtime time plus [duration]
+        cannot be represented. *)
 
     val interval : Eta.Duration.t -> (int signal, time_error) Eta.Effect.t
     (** Tick counter that increments after each [interval] while necessary.

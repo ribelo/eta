@@ -373,6 +373,8 @@ let test_error_pretty_printers_are_clear () =
     `Reentrant_stabilization "reentrant stabilization";
   check_render "stabilize observer error" Signal.pp_stabilize_error
     (`Observer_error `Observer_failed) "observer callback failed: observer failed";
+  check_render "deadline overflow" Signal.pp_time_error `Deadline_overflow
+    "deadline arithmetic overflow";
   check_render "invalid interval" Signal.pp_time_error `Invalid_interval
     "invalid interval";
   check_render "past deadline" Signal.pp_time_error `Past_deadline
@@ -6030,21 +6032,12 @@ let test_time_after_bind_activation_does_not_compute_stale_deadline () =
         "dynamic activation computes only refreshed deadline" "elapsed"
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_after_saturates_overflowing_deadline () =
+let test_time_after_rejects_overflowing_relative_deadline () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   Eta_test.Test_clock.set_time clock (max_int - 5);
-  let signal =
-    run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "saturated future deadline starts pending" false
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
+  expect_fail "overflowing relative deadline" (( = ) `Deadline_overflow)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))))
 
 let test_time_absolute_deadline () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -7327,8 +7320,8 @@ let () =
           Alcotest.test_case "time after bind activation skips stale compute"
             `Quick
             test_time_after_bind_activation_does_not_compute_stale_deadline;
-          Alcotest.test_case "time after saturates overflowing deadline"
-            `Quick test_time_after_saturates_overflowing_deadline;
+          Alcotest.test_case "time after rejects overflowing relative deadline"
+            `Quick test_time_after_rejects_overflowing_relative_deadline;
           Alcotest.test_case "time absolute deadline" `Quick
             test_time_absolute_deadline;
           Alcotest.test_case "time active deadline refreshes before daemon"
