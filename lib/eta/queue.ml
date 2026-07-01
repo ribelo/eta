@@ -134,9 +134,6 @@ let resolve_wakeup = function
   | Wake_sender (sender, result) -> resolve_sender sender result
   | Wake_receiver receiver -> wake_receiver receiver
 
-let resolve_wakeups wakeups =
-  List.iter resolve_wakeup (List.rev wakeups)
-
 let wakeup_notified = function
   | Wake_sender (sender, _) -> sender.notified
   | Wake_receiver receiver -> receiver.notified
@@ -155,6 +152,26 @@ let resolve_pending_wakeups pending =
           raise exn)
   in
   loop ()
+
+let with_committed_wakeups_locked lock f =
+  let pending_wakeups = ref [] in
+  Fun.protect
+    ~finally:(fun () -> resolve_pending_wakeups pending_wakeups)
+    (fun () ->
+      let wakeups = ref [] in
+      let result = lock (fun () -> f wakeups) in
+      pending_wakeups := List.rev !wakeups;
+      resolve_pending_wakeups pending_wakeups;
+      result)
+
+let with_committed_wakeups_sync t f =
+  with_committed_wakeups_locked (with_lock t) f
+
+let with_committed_wakeups_during_cancel contract t f =
+  with_committed_wakeups_locked (with_lock_during_cancel contract t) f
+
+let with_committed_wakeups_effect t f =
+  Effect.sync (fun () -> with_committed_wakeups_sync t f)
 
 let settle_sender wakeups sender result =
   sender.result <- Some result;
@@ -306,9 +323,7 @@ let enqueue_sender contract (t : ('a, 'err) t) value =
   (promise, sender)
 
 let try_send_sync t value =
-  let wakeups = ref [] in
-  let result =
-    with_lock t @@ fun () ->
+  with_committed_wakeups_sync t @@ fun wakeups ->
     match t.closed with
     | Some reason -> close_result reason
     | None ->
@@ -323,49 +338,41 @@ let try_send_sync t value =
               t.dropped <- saturating_succ t.dropped;
               `Dropped
           | Backpressure _ -> `Full
-  in
-  resolve_wakeups !wakeups;
-  result
 
 let offer_sync contract t value =
-  let wakeups = ref [] in
   match
-    with_lock t @@ fun () ->
-    match t.closed with
-    | Some reason -> `Ready (close_result reason)
-    | None ->
-        if capacity_available t then (
-          enqueue_value_locked wakeups t value;
-          `Ready `Sent)
-        else
-          match t.overflow with
-          | Unbounded ->
-              invariant_failed "unbounded queue reported no capacity"
-          | Drop_new _ ->
-              t.dropped <- saturating_succ t.dropped;
-              `Ready `Dropped
-          | Backpressure _ ->
-              let promise, sender = enqueue_sender contract t value in
-              `Wait (promise, sender)
+    with_committed_wakeups_sync t @@ fun wakeups ->
+      match t.closed with
+      | Some reason -> `Ready (close_result reason)
+      | None ->
+          if capacity_available t then (
+            enqueue_value_locked wakeups t value;
+            `Ready `Sent)
+          else
+            match t.overflow with
+            | Unbounded ->
+                invariant_failed "unbounded queue reported no capacity"
+            | Drop_new _ ->
+                t.dropped <- saturating_succ t.dropped;
+                `Ready `Dropped
+            | Backpressure _ ->
+                let promise, sender = enqueue_sender contract t value in
+                `Wait (promise, sender)
   with
-  | `Ready result ->
-      resolve_wakeups !wakeups;
-      result
+  | `Ready result -> result
   | `Wait (promise, sender) -> (
       try contract.Runtime_contract.await_promise promise
       with exn
         when Option.is_some
                (contract.Runtime_contract.cancellation_reason exn) ->
-        let cancel_wakeups = ref [] in
         let cancellation =
-          with_lock_during_cancel contract t (fun () ->
+          with_committed_wakeups_during_cancel contract t (fun cancel_wakeups ->
               match sender.result with
               | Some result -> `Settled result
               | None ->
                   cancel_sender cancel_wakeups t sender;
                   `Cancelled)
         in
-        resolve_wakeups !cancel_wakeups;
         match cancellation with
         | `Settled result -> result
         | `Cancelled -> raise exn)
@@ -414,18 +421,12 @@ let take_value wakeups t =
   `Item value
 
 let try_recv t =
-  Effect.sync @@ fun () ->
-  let wakeups = ref [] in
-  let result =
-    with_lock t @@ fun () ->
+  with_committed_wakeups_effect t @@ fun wakeups ->
     if not (Stdlib.Queue.is_empty t.values) then take_value wakeups t
     else
       match t.closed with
       | None -> `Empty
       | Some reason -> close_result reason
-  in
-  resolve_wakeups !wakeups;
-  result
 
 let drain_locked wakeups t max =
   let rec loop remaining acc =
@@ -448,24 +449,12 @@ let drain_result_locked wakeups t max =
       | None -> `Items []
       | Some reason -> close_result reason)
 
-let drain_with_committed_wakeups t drain =
-  let pending_wakeups = ref [] in
-  Effect.sync
-    (fun () ->
-      let wakeups = ref [] in
-      let result = with_lock t @@ fun () -> drain wakeups in
-      pending_wakeups := List.rev !wakeups;
-      resolve_pending_wakeups pending_wakeups;
-      result)
-  |> Effect.finally
-       (Effect.sync (fun () -> resolve_pending_wakeups pending_wakeups))
-
 let drain_result_effect t max =
-  drain_with_committed_wakeups t (fun wakeups ->
+  with_committed_wakeups_effect t (fun wakeups ->
       drain_result_locked wakeups t max)
 
 let drain_all_result_effect t =
-  drain_with_committed_wakeups t (fun wakeups ->
+  with_committed_wakeups_effect t (fun wakeups ->
       drain_result_locked wakeups t (Stdlib.Queue.length t.values))
 
 let take_all t =
@@ -492,21 +481,18 @@ let enqueue_receiver contract t =
 
 let recv_sync contract t =
   let rec loop () =
-    let wakeups = ref [] in
     match
-      with_lock t @@ fun () ->
-      if not (Stdlib.Queue.is_empty t.values) then
-        `Ready (take_value wakeups t)
-      else
-        match t.closed with
-        | Some reason -> `Ready (close_result reason)
-        | None ->
-            let promise, receiver = enqueue_receiver contract t in
-            `Wait (promise, receiver)
+      with_committed_wakeups_sync t @@ fun wakeups ->
+        if not (Stdlib.Queue.is_empty t.values) then
+          `Ready (take_value wakeups t)
+        else
+          match t.closed with
+          | Some reason -> `Ready (close_result reason)
+          | None ->
+              let promise, receiver = enqueue_receiver contract t in
+              `Wait (promise, receiver)
     with
-    | `Ready result ->
-        resolve_wakeups !wakeups;
-        result
+    | `Ready result -> result
     | `Wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
@@ -531,16 +517,14 @@ let recv t =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let close_with reason t =
-  let wakeups = ref [] in
-  with_lock t
-    (fun () ->
+  with_committed_wakeups_sync t
+    (fun wakeups ->
       match t.closed with
       | Some _ -> ()
       | None ->
           t.closed <- Some reason;
           wake_all_senders_locked wakeups t reason;
-          wake_all_receivers_locked wakeups t);
-  resolve_wakeups !wakeups
+          wake_all_receivers_locked wakeups t)
 
 let close t = close_with Clean t
 let close_with_error t error = close_with (Error error) t

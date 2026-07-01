@@ -238,6 +238,104 @@ let test_queue_take_batch_interrupted_wakeup_still_admits_sender () =
 let test_queue_take_all_interrupted_wakeup_still_admits_sender () =
   check_queue_drain_interrupted_wakeup_still_admits_sender Queue.take_all
 
+let check_queue_receive_interrupted_wakeup_still_admits_sender receive =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  let receive_ran = ref false in
+  let interrupted_wakeup = ref false in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.await_hook :=
+        (fun () ->
+          Hooked_runtime.await_hook := (fun () -> ());
+          Hooked_runtime.resolve_hook :=
+            (fun () ->
+              if not !interrupted_wakeup then (
+                interrupted_wakeup := true;
+                Hooked_runtime.resolve_hook := (fun () -> ());
+                raise Await_cancelled));
+          receive_ran := true;
+          match Test_runtime.run rt (receive queue) with
+          | Exit.Ok () -> ()
+          | Exit.Error _ when !interrupted_wakeup -> ()
+          | Exit.Error cause ->
+              Alcotest.failf "unexpected receive failure: %a"
+                (Cause.pp pp_hidden) cause
+          | exception Await_cancelled -> ());
+      match Test_runtime.run rt (Queue.offer queue 2) with
+      | Exit.Ok true -> ()
+      | Exit.Ok false -> Alcotest.fail "admitted backpressure offer returned false"
+      | Exit.Error cause ->
+          Alcotest.failf "expected admitted offer, got %a"
+            (Cause.pp pp_hidden) cause
+      | exception Await_cancelled ->
+          Alcotest.fail
+            "consumer interruption stranded an admitted backpressure sender");
+  Alcotest.(check bool) "receive ran" true !receive_ran;
+  Alcotest.(check bool) "wakeup was interrupted" true !interrupted_wakeup;
+  Alcotest.(check int) "admitted value remains" 2
+    (run_ok rt (Queue.recv queue));
+  let stats = Queue.stats queue in
+  Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "admitted sender not counted cancelled" 0
+    stats.Queue.cancelled_senders
+
+let test_queue_try_recv_interrupted_wakeup_still_admits_sender () =
+  check_queue_receive_interrupted_wakeup_still_admits_sender (fun queue ->
+      Queue.try_recv queue
+      |> Effect.map (function
+           | `Item 1 -> ()
+           | `Item value ->
+               Alcotest.failf "unexpected try_recv item: %d" value
+           | `Empty -> Alcotest.fail "try_recv unexpectedly returned empty"
+           | `Closed -> Alcotest.fail "try_recv unexpectedly reported clean close"
+           | `Closed_with_error _ ->
+               Alcotest.fail "try_recv unexpectedly reported error close"))
+
+let test_queue_recv_interrupted_wakeup_still_admits_sender () =
+  check_queue_receive_interrupted_wakeup_still_admits_sender (fun queue ->
+      Queue.recv queue
+      |> Effect.map (fun value ->
+             Alcotest.(check int) "received buffered value" 1 value))
+
+let test_queue_close_interrupted_wakeup_still_wakes_sender () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  let close_ran = ref false in
+  let interrupted_wakeup = ref false in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.await_hook :=
+        (fun () ->
+          Hooked_runtime.await_hook := (fun () -> ());
+          Hooked_runtime.resolve_hook :=
+            (fun () ->
+              if not !interrupted_wakeup then (
+                interrupted_wakeup := true;
+                Hooked_runtime.resolve_hook := (fun () -> ());
+                raise Await_cancelled));
+          close_ran := true;
+          try Queue.close_with_error queue `Boom with Await_cancelled -> ());
+      match Test_runtime.run rt (Queue.offer queue 2) with
+      | Exit.Error (Cause.Fail (`Closed_with_error `Boom)) -> ()
+      | Exit.Error cause ->
+          Alcotest.failf "expected close error, got %a"
+            (Cause.pp pp_hidden) cause
+      | Exit.Ok admitted ->
+          Alcotest.failf "closed backpressure offer returned %b" admitted
+      | exception Await_cancelled ->
+          Alcotest.fail "close interruption stranded a waiting sender");
+  Alcotest.(check bool) "close ran" true !close_ran;
+  Alcotest.(check bool) "wakeup was interrupted" true !interrupted_wakeup;
+  let stats = Queue.stats queue in
+  Alcotest.(check bool) "queue is closed" true stats.Queue.closed;
+  Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "blocked value was not admitted" 1 stats.Queue.depth
+
 let test_queue_unbounded_offer_never_reports_full () =
   let rt = Test_runtime.create () in
   let queue = Queue.create () in
