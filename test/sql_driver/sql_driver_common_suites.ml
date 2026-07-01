@@ -45,15 +45,30 @@ let test_leased_blocking_rejects_detach_started_pool () =
 
 let test_timed_leased_blocking_calls_on_cancel () =
   let interrupted = Atomic.make false in
+  let mutex = Mutex.create () in
+  let condition = Condition.create () in
+  let mark_interrupted () =
+    Mutex.lock mutex;
+    Atomic.set interrupted true;
+    Condition.broadcast condition;
+    Mutex.unlock mutex
+  in
+  let await_interrupted () =
+    Mutex.lock mutex;
+    Fun.protect
+      ~finally:(fun () -> Mutex.unlock mutex)
+      (fun () ->
+        while not (Atomic.get interrupted) do
+          Condition.wait condition mutex
+        done)
+  in
   with_runtime @@ fun rt ->
   let eff =
     Helper.leased_blocking_result_timeout ~timeout:(Eta.Duration.ms 5)
       ~on_timeout:`Timeout
-      ~on_cancel:(fun () -> Atomic.set interrupted true)
+      ~on_cancel:mark_interrupted
       (fun () ->
-        while not (Atomic.get interrupted) do
-          Unix.sleepf 0.001
-        done;
+        await_interrupted ();
         Error "interrupted")
   in
   match B.run rt eff with

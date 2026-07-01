@@ -8,8 +8,8 @@ module Counting_host_eio = struct
 
   module Eio_ops = struct
     module Time = struct
-      let now = Eio.Time.now
-      let sleep = Eio.Time.sleep
+      let now _ = 0.0
+      let sleep _ _ = invalid_arg "Counting_host_eio.Time.sleep: unexpected sleep"
     end
 
     module Net = struct
@@ -227,77 +227,70 @@ let test_eio_runtime_contract_callbacks_stay_on_owner_domain () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock stdenv in
-  Eio.Fiber.first
-    (fun () ->
-      let owner = Domain.self () in
-      let contract =
-        Runtime_contract.of_runtime (Eta_eio.runtime ~sw ~clock)
-      in
-      let expect_owner label actual =
-        Alcotest.(check bool) label true (actual = owner)
-      in
-      contract.protect (fun () -> check_owner_domain owner "protect callback");
-      contract.run_scope ~name:"same-domain conformance" (fun child_scope ->
-          check_owner_domain owner "run_scope callback";
-          let promise, resolver = contract.create_promise () in
-          contract.fork child_scope (fun () ->
-              check_owner_domain owner "fork callback";
-              contract.resolve_promise resolver (Domain.self ()));
-          expect_owner "promise await resumed on owner"
-            (contract.await_promise promise);
-          let stream = contract.create_stream 1 in
-          contract.fork child_scope (fun () ->
-              check_owner_domain owner "stream producer callback";
-              contract.stream_add stream (Domain.self ()));
-          expect_owner "stream take resumed on owner"
-            (contract.stream_take stream);
-          contract.stream_add stream (Domain.self ());
-          expect_owner "stream take_nonblocking stayed on owner"
-            (Option.get (contract.stream_take_nonblocking stream)));
-      let daemon_promise, daemon_resolver = contract.create_promise () in
-      contract.fork_daemon contract.root_scope (fun () ->
-          check_owner_domain owner "daemon callback";
-          contract.resolve_promise daemon_resolver (Domain.self ());
-          `Stop_daemon);
-      expect_owner "daemon promise resolved on owner"
-        (contract.await_promise daemon_promise);
-      let cancelled = Failure "same-domain cancellation" in
-      let cancellation_observed = ref false in
-      contract.cancel_sub (fun ctx ->
-          check_owner_domain owner "cancel_sub callback";
-          contract.cancel ctx cancelled;
-          try
-            contract.check ();
-            Alcotest.fail "expected cancellation checkpoint"
-          with exn -> (
-            check_owner_domain owner "cancellation observed on owner";
-            match contract.cancellation_reason exn with
-            | Some reason when reason == cancelled ->
-                cancellation_observed := true
-            | Some reason ->
-                Alcotest.failf "unexpected cancellation reason: %s"
-                  (Printexc.to_string reason)
-            | None -> raise exn));
-      Alcotest.(check bool)
-        "cancellation reason observed" true !cancellation_observed;
-      let local = Runtime_contract.create_local () in
-      contract.local_with_binding local 42 (fun () ->
-          check_owner_domain owner "local callback";
-          Alcotest.(check (option int))
-            "local binding" (Some 42) (contract.local_get local));
-      let cross_domain =
-        (Domain.spawn [@alert "-do_not_spawn_domains"]
-           [@alert "-unsafe_multidomain"])
-          (fun () ->
-            try Ok (ignore (contract.now_ms () : int))
-            with Invalid_argument message -> Error message)
-      in
-      match Domain.join cross_domain with
-      | Error _ -> ()
-      | Ok () -> Alcotest.fail "contract accepted cross-domain use")
-    (fun () ->
-      Eio.Time.sleep clock 1.0;
-      Alcotest.fail "runtime contract conformance timed out")
+  let owner = Domain.self () in
+  let contract = Runtime_contract.of_runtime (Eta_eio.runtime ~sw ~clock) in
+  let expect_owner label actual =
+    Alcotest.(check bool) label true (actual = owner)
+  in
+  contract.protect (fun () -> check_owner_domain owner "protect callback");
+  contract.run_scope ~name:"same-domain conformance" (fun child_scope ->
+      check_owner_domain owner "run_scope callback";
+      let promise, resolver = contract.create_promise () in
+      contract.fork child_scope (fun () ->
+          check_owner_domain owner "fork callback";
+          contract.resolve_promise resolver (Domain.self ()));
+      expect_owner "promise await resumed on owner"
+        (contract.await_promise promise);
+      let stream = contract.create_stream 1 in
+      contract.fork child_scope (fun () ->
+          check_owner_domain owner "stream producer callback";
+          contract.stream_add stream (Domain.self ()));
+      expect_owner "stream take resumed on owner"
+        (contract.stream_take stream);
+      contract.stream_add stream (Domain.self ());
+      expect_owner "stream take_nonblocking stayed on owner"
+        (Option.get (contract.stream_take_nonblocking stream)));
+  let daemon_promise, daemon_resolver = contract.create_promise () in
+  contract.fork_daemon contract.root_scope (fun () ->
+      check_owner_domain owner "daemon callback";
+      contract.resolve_promise daemon_resolver (Domain.self ());
+      `Stop_daemon);
+  expect_owner "daemon promise resolved on owner"
+    (contract.await_promise daemon_promise);
+  let cancelled = Failure "same-domain cancellation" in
+  let cancellation_observed = ref false in
+  contract.cancel_sub (fun ctx ->
+      check_owner_domain owner "cancel_sub callback";
+      contract.cancel ctx cancelled;
+      try
+        contract.check ();
+        Alcotest.fail "expected cancellation checkpoint"
+      with exn -> (
+        check_owner_domain owner "cancellation observed on owner";
+        match contract.cancellation_reason exn with
+        | Some reason when reason == cancelled ->
+            cancellation_observed := true
+        | Some reason ->
+            Alcotest.failf "unexpected cancellation reason: %s"
+              (Printexc.to_string reason)
+        | None -> raise exn));
+  Alcotest.(check bool)
+    "cancellation reason observed" true !cancellation_observed;
+  let local = Runtime_contract.create_local () in
+  contract.local_with_binding local 42 (fun () ->
+      check_owner_domain owner "local callback";
+      Alcotest.(check (option int))
+        "local binding" (Some 42) (contract.local_get local));
+  let cross_domain =
+    (Domain.spawn [@alert "-do_not_spawn_domains"]
+       [@alert "-unsafe_multidomain"])
+      (fun () ->
+        try Ok (contract.yield ())
+        with Invalid_argument message -> Error message)
+  in
+  match Domain.join cross_domain with
+  | Error _ -> ()
+  | Ok () -> Alcotest.fail "contract accepted cross-domain use"
 
 let test_effect_timeout_cancellation_stays_on_owner_domain () =
   with_test_clock @@ fun sw clock rt ->

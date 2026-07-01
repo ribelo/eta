@@ -46,8 +46,18 @@ let expect_die label defect = function
 let with_runtime ?now_ms f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let sleep duration =
+    Eta_test.Test_clock.adjust clock duration;
+    Eio.Fiber.yield ()
+  in
+  let now_ms =
+    match now_ms with
+    | Some now_ms -> now_ms
+    | None -> fun () -> Eta_test.Test_clock.now_ms clock
+  in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ?now_ms ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep ~now_ms ()
   in
   f rt
 

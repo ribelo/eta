@@ -1,6 +1,6 @@
 (test
  (name test_eta_cache)
- (libraries eta eta_cache eta_eio alcotest eio_main eio_linux eio.unix unix threads)
+ (libraries eta eta_cache eta_eio eta_test alcotest eio_main eio_linux eio.unix unix threads)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

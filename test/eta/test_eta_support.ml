@@ -43,17 +43,24 @@ let check_exit_error test name expected = function
 let with_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
+      ()
   in
   f rt
 
 let with_traced_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let tracer = Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~tracer:(Tracer.as_capability tracer) ()
   in
   f rt tracer
@@ -61,9 +68,12 @@ let with_traced_runtime f =
 let with_sampled_traced_runtime sampler f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let tracer = Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~tracer:(Tracer.as_capability tracer) ~sampler ()
   in
   f rt tracer
@@ -71,9 +81,12 @@ let with_sampled_traced_runtime sampler f =
 let with_auto_traced_runtime auto_instrument f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let tracer = Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~tracer:(Tracer.as_capability tracer) ~auto_instrument ()
   in
   f rt tracer
@@ -81,17 +94,25 @@ let with_auto_traced_runtime auto_instrument f =
 let with_runtime_capture_backtrace capture_backtrace f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~capture_backtrace ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~capture_backtrace
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
+      ()
   in
   f rt
 
 let with_logger f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let logger = Logger.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~logger:(Logger.as_capability logger) ()
   in
   f sw rt logger
@@ -99,9 +120,12 @@ let with_logger f =
 let with_tracer f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let tracer = Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~tracer:(Tracer.as_capability tracer) ()
   in
   f sw rt tracer
@@ -109,10 +133,13 @@ let with_tracer f =
 let with_logger_and_tracer f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Test_clock.create () in
   let logger = Logger.in_memory () in
   let tracer = Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Test_clock.sleep clock)
+      ~now_ms:(fun () -> Test_clock.now_ms clock)
       ~logger:(Logger.as_capability logger)
       ~tracer:(Tracer.as_capability tracer) ()
   in

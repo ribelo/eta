@@ -23,13 +23,42 @@ let run_ok rt eff =
         (Cause.pp (fun ppf _ -> Format.pp_print_string ppf "<err>"))
         cause
 
-let with_runtime f =
+let with_runtime_and_clock f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
   in
-  f env rt
+  f env sw clock rt
+
+let with_runtime f =
+  with_runtime_and_clock @@ fun env _sw _clock rt -> f env rt
+
+let wait_for_sleepers clock expected =
+  let rec loop attempts =
+    if Eta_test.Test_clock.sleeper_count clock >= expected then ()
+    else if attempts = 0 then
+      Alcotest.failf "expected %d sleepers, got %d" expected
+        (Eta_test.Test_clock.sleeper_count clock)
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 20
+
+let wait_until label predicate =
+  let rec loop attempts =
+    if predicate () then ()
+    else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 20
 
 let fd_count () =
   try Array.length (Sys.readdir "/proc/self/fd") with Sys_error _ -> -1
@@ -224,7 +253,6 @@ let test_zip_opposite_failure_closes_file () =
              Effect.sync (fun () -> incr seen)))
       right
     |> run_drain
-    |> Effect.timeout (Duration.ms 1_000)
   in
   (match Runtime.run rt eff with
   | Exit.Error (Cause.Fail `Stop) -> ()
@@ -264,7 +292,6 @@ let test_repeat_from_file_failure_closes () =
     source
     |> Eta_stream.Stream.repeat (Schedule.recurs 2)
     |> run_collect
-    |> Effect.timeout (Duration.ms 1_000)
   in
   (match Runtime.run rt eff with
   | Exit.Error (Cause.Fail `Repeat_failed) -> ()
@@ -306,7 +333,6 @@ let test_retry_from_file_closes_between_attempts () =
     source
     |> Eta_stream.Stream.retry (Schedule.recurs 1)
     |> run_collect
-    |> Effect.timeout (Duration.ms 1_000)
   in
   (match Runtime.run rt eff with
   | Exit.Ok [ first; second ] ->
@@ -326,7 +352,7 @@ let test_retry_from_file_closes_between_attempts () =
       before after
 
 let test_timeout_from_file_closes () =
-  with_runtime @@ fun env rt ->
+  with_runtime_and_clock @@ fun env sw clock rt ->
   let large = String.make (1024 * 1024) 'x' in
   with_file env "stream-timeout-file-close.tmp" large @@ fun path ->
   let before = fd_count () in
@@ -339,9 +365,14 @@ let test_timeout_from_file_closes () =
                   Effect.delay (Duration.ms 100) (Effect.pure chunk)))
     |> Eta_stream.Stream.timeout (Duration.ms 10)
     |> run_collect
-    |> Effect.timeout (Duration.ms 1_000)
   in
-  (match Runtime.run rt eff with
+  let promise, resolver = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Promise.resolve resolver (Runtime.run rt eff));
+  wait_until "file source pull" (fun () -> !seen > 0);
+  wait_for_sleepers clock 2;
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  (match Eio.Promise.await promise with
   | Exit.Ok [] -> ()
   | Exit.Ok chunks ->
       Alcotest.failf "timeout from_file unexpectedly emitted %d chunks"
@@ -433,7 +464,6 @@ let test_from_file_downstream_failure_closes () =
         Eta_stream.Stream.from_file ~chunk_size:4096 path
         |> Eta_stream.Stream.map_effect (fun _ -> Effect.fail `Stop)
         |> run_drain
-        |> Effect.timeout (Duration.ms 1_000)
       in
       (match Runtime.run rt eff with
       | Exit.Error (Cause.Fail `Stop) -> ()
