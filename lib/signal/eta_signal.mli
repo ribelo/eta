@@ -4,10 +4,16 @@
     observer handles are the public read surface for stabilized derived values.
 
     Equality cutoffs default to physical equality [( == )] for source vars,
-    derived signals, observers, and stream bridges. That keeps the default
-    cheap, but callers that publish mutable values or allocate fresh structural
-    values should usually supply [?equal]. In the examples below, [S] is a
-    signal module produced by {!Make}.
+    derived signals, observers, and stream bridges. This is a cheap identity
+    cutoff, not a structural-value cutoff.
+
+    Use the default only when object identity is the value semantics you want,
+    for example stable immutable tokens or values whose changes are always
+    represented by a new identity. Pass an explicit structural [?equal] for
+    arrays, mutable records, maps, sets, JSON-like trees, decoded rows, lists
+    rebuilt on every recomputation, and any derived value allocated fresh from
+    unchanged logical content. In the examples below, [S] is a signal module
+    produced by {!Make}.
 
     Mutating a heap block in place and setting the same block is suppressed by
     the default cutoff:
@@ -47,6 +53,24 @@
         |> S.map ~equal:array_equal (fun value -> [| value mod 2 |])
       in
       parity
+    ]}
+
+    Common structural cutoffs:
+
+    {[
+      let int_array_equal = Array.equal Int.equal
+
+      type user = {
+        id : int;
+        name : string;
+      }
+
+      let user_equal left right =
+        Int.equal left.id right.id && String.equal left.name right.name
+
+      module IntMap = Map.Make (Int)
+      let int_map_equal = IntMap.equal String.equal
+      let int_list_equal = List.equal Int.equal
     ]}
 
     A graph is single-domain: create and use all vars, signals, observers, and
@@ -165,7 +189,9 @@ module Make (Observer_error : Observer_error) () : sig
 
     val create : ?equal:('a -> 'a -> bool) -> 'a -> 'a t
     (** Create a source variable. Without [?equal], source updates use
-        physical equality as their cutoff. *)
+        physical equality as their cutoff. For mutable containers, records, or
+        other structural values, pass [?equal]; setting the same heap object
+        after in-place mutation is suppressed by the default cutoff. *)
 
     val value : 'a t -> 'a
     (** Synchronously read the current source value, including values set since
@@ -241,6 +267,8 @@ module Make (Observer_error : Observer_error) () : sig
   (** Map one dependency. Without [?equal], the derived-value cutoff is physical
       equality. Freshly allocated but structurally equal values are therefore
       treated as changes unless a structural [?equal] is supplied.
+      Pass [?equal] when [f] returns arrays, records, maps, lists, JSON-like
+      trees, or other freshly rebuilt structural values.
 
       The mapping function must be pure and total. Eta may evaluate pure graph
       closures during a stabilization that later rolls back because another
@@ -343,7 +371,8 @@ module Make (Observer_error : Observer_error) () : sig
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
   (** Collect a list of signals. Without [?equal], the list cutoff is physical
-      equality.
+      equality. Pass [~equal:(List.equal element_equal)] when list contents
+      define the logical value.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -360,6 +389,8 @@ module Make (Observer_error : Observer_error) () : sig
       contract.
 
       Without [?equal], the selected output cutoff is physical equality.
+      Pass [?equal] when selected branch outputs are structural values such as
+      arrays, records, maps, lists, or freshly rebuilt immutable trees.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -465,7 +496,8 @@ module Make (Observer_error : Observer_error) () : sig
     (** [observe ?capacity signal] creates an observer and a stream of observer
         updates. [capacity] defaults to [1024] and bounds the bridge queue.
         Without [?equal], stream update emission uses physical equality as its
-        observer cutoff.
+        observer cutoff. Pass [?equal] when stream consumers should receive
+        updates only for structural value changes.
 
         Publication from stabilization is nonblocking: when the bridge already
         has [capacity] buffered updates, the newest stream update is dropped
