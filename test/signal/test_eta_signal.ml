@@ -5057,8 +5057,10 @@ let with_timer_cancel_tracking_host f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
+  let owner_domain = Domain.self () in
   let graph_lifecycle_depth_key = Eio.Fiber.create_key () in
   let cancel_inside_local_binding = ref false in
+  let cancel_outside_owner_domain = ref false in
   let fail_next_cancel = ref false in
   let graph_lifecycle_depth () =
     try Option.value (Eio.Fiber.get graph_lifecycle_depth_key) ~default:0
@@ -5123,6 +5125,8 @@ let with_timer_cancel_tracking_host f =
       let sub = Eio.Cancel.sub
 
       let cancel cancel_context exn =
+        if Domain.self () <> owner_domain then
+          cancel_outside_owner_domain := true;
         if graph_lifecycle_depth () > 0 then
           cancel_inside_local_binding := true;
         Eio.Cancel.cancel cancel_context exn;
@@ -5136,11 +5140,13 @@ let with_timer_cancel_tracking_host f =
   in
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
     ~tracer:Tracer.noop @@ fun rt ->
-  f clock rt cancel_inside_local_binding fail_next_cancel
+  f clock rt cancel_inside_local_binding cancel_outside_owner_domain
+    fail_next_cancel
 
 let test_time_timer_cancel_runs_outside_graph_lifecycle () =
   with_timer_cancel_tracking_host
-  @@ fun clock rt cancel_inside_local_binding _fail_next_cancel ->
+  @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
+         _fail_next_cancel ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -5149,11 +5155,14 @@ let test_time_timer_cancel_runs_outside_graph_lifecycle () =
   run_ok rt (Signal.Observer.dispose observer);
   Alcotest.(check bool)
     "timer cancel ran outside graph lifecycle local binding" false
-    !cancel_inside_local_binding
+    !cancel_inside_local_binding;
+  Alcotest.(check bool)
+    "timer cancel ran on owner domain" false !cancel_outside_owner_domain
 
 let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   with_timer_cancel_tracking_host
-  @@ fun clock rt cancel_inside_local_binding _fail_next_cancel ->
+  @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
+         _fail_next_cancel ->
   let use_timer = Signal.Var.create true in
   let selected =
     Signal.bind (Signal.Var.watch use_timer) (fun active ->
@@ -5170,11 +5179,15 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   Alcotest.(check bool)
     "invalidated timer cancel ran outside graph lifecycle local binding" false
     !cancel_inside_local_binding;
+  Alcotest.(check bool)
+    "invalidated timer cancel ran on owner domain" false
+    !cancel_outside_owner_domain;
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_cancel_failure_preserves_committed_snapshot () =
   with_timer_cancel_tracking_host
-  @@ fun clock rt _cancel_inside_local_binding fail_next_cancel ->
+  @@ fun clock rt _cancel_inside_local_binding _cancel_outside_owner_domain
+         fail_next_cancel ->
   let use_timer = Signal.Var.create true in
   let selected =
     Signal.bind (Signal.Var.watch use_timer) (fun active ->

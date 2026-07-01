@@ -244,7 +244,16 @@ let test_eio_runtime_contract_callbacks_stay_on_owner_domain () =
               check_owner_domain owner "fork callback";
               contract.resolve_promise resolver (Domain.self ()));
           expect_owner "promise await resumed on owner"
-            (contract.await_promise promise));
+            (contract.await_promise promise);
+          let stream = contract.create_stream 1 in
+          contract.fork child_scope (fun () ->
+              check_owner_domain owner "stream producer callback";
+              contract.stream_add stream (Domain.self ()));
+          expect_owner "stream take resumed on owner"
+            (contract.stream_take stream);
+          contract.stream_add stream (Domain.self ());
+          expect_owner "stream take_nonblocking stayed on owner"
+            (Option.get (contract.stream_take_nonblocking stream)));
       let daemon_promise, daemon_resolver = contract.create_promise () in
       contract.fork_daemon contract.root_scope (fun () ->
           check_owner_domain owner "daemon callback";
