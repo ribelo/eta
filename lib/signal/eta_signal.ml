@@ -314,6 +314,7 @@ module Make (Observer_error : Observer_error) () = struct
   and timer_catch_up_policy =
     | Catch_up_every_cadence
     | Catch_up_once_per_wake
+    | Catch_up_coalesced
 
   and timer_node = {
     mutable timer_state : timer_state;
@@ -329,7 +330,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_update = {
     timer_catch_up_policy : timer_catch_up_policy;
-    timer_update : 'err. timer_node -> int -> (unit, 'err) Effect.t;
+    timer_update : 'err. timer_node -> int -> missed:int -> (unit, 'err) Effect.t;
   }
 
   and dead_timer = {
@@ -357,7 +358,8 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   and 'a source_timer_update = {
-    source_timer_update : 'err. timer_node -> int -> 'a var -> (unit, 'err) Effect.t;
+    source_timer_update :
+      'err. timer_node -> int -> missed:int -> 'a var -> (unit, 'err) Effect.t;
   }
 
   type disposal_hook = unit -> unit
@@ -2909,6 +2911,11 @@ module Make (Observer_error : Observer_error) () = struct
       else if left > max_int / right then max_int
       else left * right
 
+    let add_int_capped left right =
+      if right <= 0 then left
+      else if left > max_int - right then max_int
+      else left + right
+
     let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
       if now_ms < next_due_ms then 0
       else
@@ -2922,27 +2929,37 @@ module Make (Observer_error : Observer_error) () = struct
       match policy with
       | Catch_up_every_cadence -> missed
       | Catch_up_once_per_wake -> if missed <= 0 then 0 else 1
+      | Catch_up_coalesced -> if missed <= 0 then 0 else 1
+
+    let catch_up_update_missed policy missed =
+      match policy with
+      | Catch_up_every_cadence | Catch_up_once_per_wake -> 1
+      | Catch_up_coalesced -> missed
 
     let timer_catch_up_batch_size = 64
 
-    let rec run_timer_update_batch timer generation remaining update =
+    let rec run_timer_update_batch timer generation remaining update ~missed =
       if remaining <= 0 then Effect.pure `Continue
       else
         timer_after_update_state timer generation
         |> Effect.bind (function
              | `Stop -> Effect.pure `Stop
              | `Continue ->
-                 Effect.sync (fun () -> update.timer_update timer generation)
+                 Effect.sync (fun () ->
+                     update.timer_update timer generation ~missed)
                  |> Effect.bind (fun update_eff -> update_eff)
                  |> Effect.bind (fun () ->
                         run_timer_update_batch timer generation (remaining - 1)
-                          update))
+                          update ~missed))
 
-    let rec run_timer_updates timer generation remaining update =
+    let rec run_timer_updates timer generation remaining update ~missed =
       if remaining <= 0 then Effect.unit
       else
         let batch = min remaining timer_catch_up_batch_size in
-        run_timer_update_batch timer generation batch update
+        let missed =
+          catch_up_update_missed update.timer_catch_up_policy missed
+        in
+        run_timer_update_batch timer generation batch update ~missed
         |> Effect.bind (function
              | `Stop -> Effect.unit
              | `Continue ->
@@ -2951,7 +2968,8 @@ module Make (Observer_error : Observer_error) () = struct
                  else
                    Effect.yield
                    |> Effect.bind (fun () ->
-                          run_timer_updates timer generation remaining update))
+                          run_timer_updates timer generation remaining update
+                            ~missed))
 
     let rec timer_loop timer generation interval_ms next_due_ms update =
       Effect.now
@@ -2967,17 +2985,26 @@ module Make (Observer_error : Observer_error) () = struct
                     let next_due_ms =
                       advance_due next_due_ms interval_ms missed
                     in
+                    let saturated_due =
+                      next_due_ms = max_int && now_ms >= next_due_ms
+                    in
                     let updates =
                       catch_up_update_count update.timer_catch_up_policy missed
                     in
-                    run_timer_updates timer generation updates update
+                    run_timer_updates timer generation updates update ~missed
                     |> Effect.bind (fun () ->
-                           timer_after_update_state timer generation
-                           |> Effect.bind (function
-                                | `Continue ->
-                                    timer_loop timer generation interval_ms
-                                      next_due_ms update
-                                | `Stop -> Effect.unit))))
+                           (if saturated_due then
+                              with_graph_lane_sync (fun () ->
+                                  if timer_running_current timer generation
+                                  then timer_finish_unlocked timer)
+                            else Effect.unit)
+                           |> Effect.bind (fun () ->
+                                  timer_after_update_state timer generation
+                                  |> Effect.bind (function
+                                       | `Continue ->
+                                           timer_loop timer generation interval_ms
+                                             next_due_ms update
+                                       | `Stop -> Effect.unit)))))
 
     let attach_timer ?(update_on_start = false) ?refresh_on_demand signal
         interval update =
@@ -3003,7 +3030,7 @@ module Make (Observer_error : Observer_error) () = struct
               in
               let start =
                 if update_on_start then
-                  update.timer_update timer generation
+                  update.timer_update timer generation ~missed:1
                   |> Effect.bind (fun () ->
                          timer_after_update_state timer generation
                          |> Effect.bind (function
@@ -3038,8 +3065,8 @@ module Make (Observer_error : Observer_error) () = struct
         {
           timer_catch_up_policy = catch_up_policy;
           timer_update =
-            (fun timer generation ->
-              update.source_timer_update timer generation source);
+            (fun timer generation ~missed ->
+              update.source_timer_update timer generation ~missed source);
         }
 
     let construct_timer_signal f =
@@ -3058,12 +3085,13 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun initial ->
                     construct_timer_signal (fun () ->
                         make_timer_signal ~update_on_start:true ~equal:Int.equal
+                          ~catch_up_policy:Catch_up_once_per_wake
                           ~refresh_on_demand:(fun source _timer now_ms ->
                             Var.set_unlocked source now_ms)
                           initial every
                           {
                             source_timer_update =
-                              (fun timer generation source ->
+                              (fun timer generation ~missed:_ source ->
                                 Effect.now
                                 |> Effect.bind (fun now_ms ->
                                        timer_set_source timer generation source
@@ -3082,7 +3110,7 @@ module Make (Observer_error : Observer_error) () = struct
               else Var.set_unlocked source false)
             {
               source_timer_update =
-                (fun timer generation source ->
+                (fun timer generation ~missed:_ source ->
                   Effect.now
                   |> Effect.bind (fun now_ms ->
                          if now_ms >= deadline_ms then
@@ -3127,11 +3155,12 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              construct_timer_signal (fun () ->
                  make_timer_signal ~equal:Int.equal 0 interval
+                   ~catch_up_policy:Catch_up_coalesced
                    {
                      source_timer_update =
-                       (fun timer generation source ->
+                       (fun timer generation ~missed source ->
                          Effect.sync (fun () ->
-                             saturating_succ (Var.value source))
+                             add_int_capped (Var.value source) missed)
                          |> Effect.annotate ~key:"eta_signal.timer.kind"
                               ~value:"interval"
                          |> Effect.named "eta_signal.time.interval"
@@ -3148,7 +3177,7 @@ module Make (Observer_error : Observer_error) () = struct
                  make_timer_signal initial every
                    {
                      source_timer_update =
-                       (fun timer generation source ->
+                       (fun timer generation ~missed:_ source ->
                          Effect.sync (fun () -> f (Var.value source))
                          |> Effect.annotate ~key:"eta_signal.timer.kind"
                               ~value:"step"

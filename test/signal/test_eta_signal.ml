@@ -4829,7 +4829,9 @@ let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
 
 let test_time_catch_up_yields_between_batches () =
   with_cooperative_timer_host @@ fun rt sleep_calls yield_calls _logger ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let signal =
+    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -4838,7 +4840,7 @@ let test_time_catch_up_yields_between_batches () =
     "large catch-up yielded cooperatively" true
     (!yield_calls > 0);
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "catch-up still applies every cadence" 1_000
+  Alcotest.(check int) "step catch-up still applies every cadence" 1_000
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
@@ -4850,17 +4852,33 @@ let test_time_large_catch_up_applies_beyond_old_cap () =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_until "large catch-up processed" (fun () -> !sleep_calls >= 2);
-  Alcotest.(check bool)
-    "large catch-up yielded cooperatively" true
-    (!yield_calls > 0);
+  Alcotest.(check int) "large interval catch-up coalesced" 0 !yield_calls;
   Alcotest.(check int) "large catch-up logs no daemon diagnostic" 0
     (List.length (Logger.dump logger));
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "large catch-up applies every cadence" 1_025
+  Alcotest.(check int) "large catch-up applies every interval cadence" 1_025
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer);
   Alcotest.(check int) "dispose logs no daemon diagnostic" 0
     (List.length (Logger.dump logger))
+
+let test_time_interval_saturated_catch_up_coalesces () =
+  with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
+  @@ fun rt sleep_calls yield_calls logger ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "saturated interval catch-up processed" (fun () ->
+      !sleep_calls >= 1);
+  Alcotest.(check int) "saturated interval catch-up did not batch-yield" 0
+    !yield_calls;
+  Alcotest.(check int) "saturated interval catch-up logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "saturated interval catch-up reaches max_int" max_int
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_deadline_saturated_catch_up_does_not_overflow () =
   (* Start at -1 so the first 1ms cadence is due at 0, reproducing the
@@ -6901,10 +6919,12 @@ let () =
             test_time_interval_catches_up_after_late_sleep;
           Alcotest.test_case "time step catches up after late sleep" `Quick
             test_time_step_catches_up_after_late_sleep;
-          Alcotest.test_case "time catch-up yields between batches" `Quick
+          Alcotest.test_case "time step catch-up yields between batches" `Quick
             test_time_catch_up_yields_between_batches;
           Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
             test_time_large_catch_up_applies_beyond_old_cap;
+          Alcotest.test_case "time interval saturated catch-up coalesces" `Quick
+            test_time_interval_saturated_catch_up_coalesces;
           Alcotest.test_case "time deadline saturated catch-up does not overflow"
             `Quick test_time_deadline_saturated_catch_up_does_not_overflow;
           Alcotest.test_case

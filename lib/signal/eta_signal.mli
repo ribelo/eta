@@ -390,9 +390,11 @@ module Make (Observer_error : Observer_error) () : sig
 
         Signal time is measured by Eta's monotonic runtime clock, not by
         wall/civil time. When a runtime-clock jump wakes several elapsed
-        cadences, interval and step nodes apply one source update per awakened
-        cadence before the next stabilization observes the final source value.
-        Large catch-up runs yield cooperatively between internal batches. *)
+        cadences, deadline and now nodes coalesce to the final clock-derived
+        value, and interval nodes advance the counter arithmetically to the
+        final saturated value before the next stabilization observes it.
+        [step] nodes replay one source update per awakened cadence; large
+        [step] catch-up runs yield cooperatively between internal batches. *)
 
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
@@ -416,7 +418,9 @@ module Make (Observer_error : Observer_error) () : sig
 
     val interval : Eta.Duration.t -> (int signal, time_error) Eta.Effect.t
     (** Tick counter that increments after each [interval] while necessary.
-        The counter saturates at [max_int]. *)
+        Clock-jump catch-up advances the counter arithmetically rather than by
+        replaying every internal increment. The counter saturates at
+        [max_int]. *)
 
     val step :
       every:Eta.Duration.t ->
@@ -425,6 +429,10 @@ module Make (Observer_error : Observer_error) () : sig
       ('a signal, time_error) Eta.Effect.t
     (** Step a value with a pure total function after each [every] interval
         while necessary.
+
+        Clock-jump catch-up replays [f] once per awakened cadence, so very
+        large jumps can perform correspondingly large cooperative catch-up
+        work.
 
         [f] runs in the demand-owned timer daemon, not during stabilization. If
         [f] raises, Eta reports the defect through daemon diagnostics with
