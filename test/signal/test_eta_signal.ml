@@ -5905,6 +5905,96 @@ let test_time_absolute_deadline () =
     (Eta_test.Test_clock.sleeper_count clock);
   run_ok rt (Signal.Observer.dispose observer)
 
+let with_blocked_timer_daemon f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_ms = ref 0 in
+  let sleep_calls = ref 0 in
+  let hold, hold_resolver = Eio.Promise.create () in
+  let released = ref false in
+  let sleep _duration =
+    incr sleep_calls;
+    Eio.Promise.await hold
+  in
+  let release () =
+    if not !released then (
+      released := true;
+      Eio.Promise.resolve hold_resolver ())
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
+      ~now_ms:(fun () -> !now_ms)
+      ()
+  in
+  Fun.protect ~finally:release (fun () -> f rt now_ms sleep_calls)
+
+let test_time_active_deadline_refreshes_before_daemon_runs () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "active deadline daemon is sleeping" (fun () ->
+          !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool) "initial active deadline" false
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 10;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool)
+        "active deadline refreshes during stabilization before daemon resumes"
+        true
+        (run_ok rt (Signal.Observer.read observer)))
+
+let test_time_active_interval_refreshes_before_daemon_runs () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "active interval daemon is sleeping" (fun () ->
+          !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial active interval" 0
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 20;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int)
+        "active interval catches up during stabilization before daemon resumes"
+        4
+        (run_ok rt (Signal.Observer.read observer)))
+
+let test_time_active_step_refreshes_before_daemon_runs () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal =
+    run_ok rt (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 succ)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "active step daemon is sleeping" (fun () ->
+          !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial active step" 1
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 20;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int)
+        "active step catches up during stabilization before daemon resumes" 5
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_step_function () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
@@ -7069,6 +7159,12 @@ let () =
             `Quick test_time_after_saturates_overflowing_deadline;
           Alcotest.test_case "time absolute deadline" `Quick
             test_time_absolute_deadline;
+          Alcotest.test_case "time active deadline refreshes before daemon"
+            `Quick test_time_active_deadline_refreshes_before_daemon_runs;
+          Alcotest.test_case "time active interval refreshes before daemon"
+            `Quick test_time_active_interval_refreshes_before_daemon_runs;
+          Alcotest.test_case "time active step refreshes before daemon" `Quick
+            test_time_active_step_refreshes_before_daemon_runs;
           Alcotest.test_case "time step function" `Quick
             test_time_step_function;
           Alcotest.test_case "time step defect logs diagnostic" `Quick

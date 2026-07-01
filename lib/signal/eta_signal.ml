@@ -318,7 +318,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_node = {
     mutable timer_state : timer_state;
+    mutable timer_next_due_ms : int option;
     mutable timer_on_demand_refresh_token : int;
+    timer_refresh_when_inactive : bool;
     timer_refresh_on_demand : (timer_node -> int -> unit) option;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
@@ -938,7 +940,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_on_demand
     && timer.timer_on_demand_refresh_token <> token
-    && (not (timer_active timer))
+    && (timer.timer_refresh_when_inactive || timer_active timer)
     && not (timer_finished timer)
 
   let timer_running_generation timer =
@@ -963,6 +965,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
+    timer.timer_next_due_ms <- None;
     timer.timer_state <- Timer_inactive generation
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
@@ -1676,6 +1679,7 @@ module Make (Observer_error : Observer_error) () = struct
         checked_succ "timer generation" (timer_generation timer)
       else timer_generation timer
     in
+    timer.timer_next_due_ms <- None;
     timer.timer_state <- Timer_finished generation
 
   let timer_has_current_start timer =
@@ -1688,6 +1692,7 @@ module Make (Observer_error : Observer_error) () = struct
     then None
     else (
       let generation = checked_succ "timer generation" (timer_generation timer) in
+      timer.timer_next_due_ms <- None;
       timer.timer_state <- Timer_starting generation;
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
@@ -2889,8 +2894,10 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then
+          if timer_running_current timer generation then (
+            timer.timer_next_due_ms <- None;
             timer.timer_state <- Timer_inactive generation)
+          )
 
     let timer_mark_failed timer generation =
       with_graph_lane_sync (fun () ->
@@ -2956,6 +2963,29 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_catch_up_batch_size = 64
 
+    let timer_read_next_due timer generation fallback =
+      with_graph_lane_sync (fun () ->
+          if timer_running_current timer generation then
+            Some (Option.value timer.timer_next_due_ms ~default:fallback)
+          else None)
+
+    let timer_set_next_due timer generation next_due_ms =
+      with_graph_lane_sync (fun () ->
+          if timer_running_current timer generation then (
+            timer.timer_next_due_ms <- Some next_due_ms;
+            `Continue)
+          else `Stop)
+
+    let refresh_due_unlocked timer interval_ms now_ms =
+      match timer.timer_next_due_ms with
+      | None -> 0
+      | Some next_due_ms ->
+          let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
+          if missed > 0 then
+            timer.timer_next_due_ms <-
+              Some (advance_due next_due_ms interval_ms missed);
+          missed
+
     let rec run_timer_update_batch timer generation remaining update ~missed =
       if remaining <= 0 then Effect.pure `Continue
       else
@@ -2990,46 +3020,78 @@ module Make (Observer_error : Observer_error) () = struct
                             ~missed))
 
     let rec timer_loop timer generation interval_ms next_due_ms update =
-      Effect.now
-      |> Effect.bind (fun now_ms ->
-             let delay_ms = max 0 (next_due_ms - now_ms) in
-             Effect.sleep (Duration.ms delay_ms))
-      |> Effect.bind (fun () ->
-             Effect.now
-             |> Effect.bind (fun now_ms ->
-                    let missed =
-                      missed_cadences ~interval_ms ~next_due_ms ~now_ms
-                    in
-                    let next_due_ms =
-                      advance_due next_due_ms interval_ms missed
-                    in
-                    let saturated_due =
-                      next_due_ms = max_int && now_ms >= next_due_ms
-                    in
-                    let updates =
-                      catch_up_update_count update.timer_catch_up_policy missed
-                    in
-                    run_timer_updates timer generation updates update ~missed
-                    |> Effect.bind (fun () ->
-                           (if saturated_due then
-                              with_graph_lane_sync (fun () ->
-                                  if timer_running_current timer generation
-                                  then timer_finish_unlocked timer)
-                            else Effect.unit)
-                           |> Effect.bind (fun () ->
-                                  timer_after_update_state timer generation
-                                  |> Effect.bind (function
-                                       | `Continue ->
-                                           timer_loop timer generation interval_ms
-                                             next_due_ms update
-                                       | `Stop -> Effect.unit)))))
+      timer_read_next_due timer generation next_due_ms
+      |> Effect.bind (function
+           | None -> Effect.unit
+           | Some next_due_ms ->
+               Effect.now
+               |> Effect.bind (fun now_ms ->
+                      let delay_ms = max 0 (next_due_ms - now_ms) in
+                      Effect.sleep (Duration.ms delay_ms))
+               |> Effect.bind (fun () ->
+                      timer_read_next_due timer generation next_due_ms
+                      |> Effect.bind (function
+                           | None -> Effect.unit
+                           | Some next_due_ms ->
+                               Effect.now
+                               |> Effect.bind (fun now_ms ->
+                                      let missed =
+                                        missed_cadences ~interval_ms ~next_due_ms
+                                          ~now_ms
+                                      in
+                                      let next_due_ms =
+                                        advance_due next_due_ms interval_ms
+                                          missed
+                                      in
+                                      let saturated_due =
+                                        next_due_ms = max_int
+                                        && now_ms >= next_due_ms
+                                      in
+                                      let updates =
+                                        catch_up_update_count
+                                          update.timer_catch_up_policy missed
+                                      in
+                                      timer_set_next_due timer generation
+                                        next_due_ms
+                                      |> Effect.bind (function
+                                           | `Stop -> Effect.unit
+                                           | `Continue ->
+                                               run_timer_updates timer generation
+                                                 updates update ~missed
+                                               |> Effect.bind (fun () ->
+                                                      (if saturated_due then
+                                                         with_graph_lane_sync
+                                                           (fun () ->
+                                                             if
+                                                               timer_running_current
+                                                                 timer generation
+                                                             then
+                                                               timer_finish_unlocked
+                                                                 timer)
+                                                       else Effect.unit)
+                                                      |> Effect.bind (fun () ->
+                                                             timer_after_update_state
+                                                               timer generation
+                                                             |> Effect.bind
+                                                                  (function
+                                                                  | `Continue ->
+                                                                      timer_loop
+                                                                        timer
+                                                                        generation
+                                                                        interval_ms
+                                                                        next_due_ms
+                                                                        update
+                                                                  | `Stop ->
+                                                                      Effect.unit))))))))
 
-    let attach_timer ?(update_on_start = false) ?refresh_on_demand signal
-        interval update =
+    let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
+        ?refresh_on_demand signal interval update =
       let timer =
         {
           timer_state = Timer_inactive 0;
+          timer_next_due_ms = None;
           timer_on_demand_refresh_token = -1;
+          timer_refresh_when_inactive = refresh_when_inactive;
           timer_refresh_on_demand = refresh_on_demand;
           timer_start =
             (fun timer ->
@@ -3039,12 +3101,17 @@ module Make (Observer_error : Observer_error) () = struct
                 Effect.now
                 |> Effect.bind (fun now_ms ->
                        let next_due_ms = add_ms_capped now_ms interval_ms in
-                       Effect.daemon
-                         (cancellable_timer_loop timer generation
-                            (timer_loop timer generation interval_ms next_due_ms
-                               update
-                            |> Effect.on_exit
-                                 (timer_cleanup_after_exit timer generation))))
+                       timer_set_next_due timer generation next_due_ms
+                       |> Effect.bind (function
+                            | `Stop -> Effect.unit
+                            | `Continue ->
+                                Effect.daemon
+                                  (cancellable_timer_loop timer generation
+                                     (timer_loop timer generation interval_ms
+                                        next_due_ms update
+                                     |> Effect.on_exit
+                                          (timer_cleanup_after_exit timer
+                                             generation)))))
               in
               let start =
                 if update_on_start then
@@ -3070,8 +3137,9 @@ module Make (Observer_error : Observer_error) () = struct
       signal
 
     let make_timer_signal ?(update_on_start = false)
-        ?(catch_up_policy = Catch_up_every_cadence) ?equal ?refresh_on_demand
-        initial interval update =
+        ?(catch_up_policy = Catch_up_every_cadence)
+        ?(refresh_when_inactive = true) ?equal ?refresh_on_demand initial
+        interval update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
       let refresh_on_demand =
@@ -3079,7 +3147,8 @@ module Make (Observer_error : Observer_error) () = struct
           (fun refresh timer now_ms -> refresh source timer now_ms)
           refresh_on_demand
       in
-      attach_timer ~update_on_start ?refresh_on_demand signal interval
+      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_on_demand signal
+        interval
         {
           timer_catch_up_policy = catch_up_policy;
           timer_update =
@@ -3172,7 +3241,17 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
              construct_timer_signal (fun () ->
+                 let interval_ms = Duration.to_ms interval in
                  make_timer_signal ~equal:Int.equal 0 interval
+                   ~refresh_when_inactive:false
+                   ~refresh_on_demand:(fun source timer now_ms ->
+                     let missed =
+                       refresh_due_unlocked timer interval_ms now_ms
+                     in
+                     if missed > 0 then (
+                       source.source_value <-
+                         add_int_capped source.source_value missed;
+                       Var.queue_var source))
                    ~catch_up_policy:Catch_up_coalesced
                    {
                      source_timer_update =
@@ -3192,7 +3271,21 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
              construct_timer_signal (fun () ->
+                 let interval_ms = Duration.to_ms every in
+                 let rec apply_missed remaining value =
+                   if remaining <= 0 then value
+                   else apply_missed (remaining - 1) (f value)
+                 in
                  make_timer_signal initial every
+                   ~refresh_when_inactive:false
+                   ~refresh_on_demand:(fun source timer now_ms ->
+                     let missed =
+                       refresh_due_unlocked timer interval_ms now_ms
+                     in
+                     if missed > 0 then (
+                       source.source_value <-
+                         apply_missed missed source.source_value;
+                       Var.queue_var source))
                    {
                      source_timer_update =
                        (fun timer generation ~missed:_ source ->
