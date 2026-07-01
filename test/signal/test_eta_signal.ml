@@ -6179,6 +6179,25 @@ let with_blocked_timer_daemon f =
   in
   Fun.protect ~finally:release (fun () -> f rt now_ms sleep_calls)
 
+let test_time_deadline_catches_up_without_daemon_yield () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "deadline daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool) "before deadline" false
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 150;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool) "after deadline" true
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_active_deadline_refreshes_before_daemon_runs () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
@@ -7513,6 +7532,8 @@ let () =
             `Quick test_time_after_rejects_overflowing_relative_deadline;
           Alcotest.test_case "time absolute deadline" `Quick
             test_time_absolute_deadline;
+          Alcotest.test_case "time deadline catches up without daemon yield"
+            `Quick test_time_deadline_catches_up_without_daemon_yield;
           Alcotest.test_case "time active deadline refreshes before daemon"
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case "time active interval refreshes before daemon"
