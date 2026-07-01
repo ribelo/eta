@@ -1750,20 +1750,6 @@ module Make (Observer_error : Observer_error) () = struct
         | Timer_running _ | Timer_finished _ ->
             `Stop)
 
-  (* Pre-commit timer refresh must see staged bind inners. Committed demand
-     counters and timer start/stop still use [signal.dependencies]. *)
-  let effective_necessary_dependencies : type a. a signal -> packed_signal list =
-   fun signal ->
-    match signal.kind with
-    | Bind bind ->
-        P bind.source
-        :: (match bind_effective_inner bind with
-            | None -> []
-            | Some inner -> [ P inner ])
-    | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-    | Map7 _ | Map8 _ | Map9 _ | All _ ->
-        signal.dependencies
-
   let collect_necessary_node_ids () =
     let seen = Hashtbl.create 16 in
     let rec visit (P signal) =
@@ -1807,28 +1793,6 @@ module Make (Observer_error : Observer_error) () = struct
         if observer_demands_signal (O observer) then visit (P observer.obs_signal))
       graph.observers;
     timers
-
-  let effective_necessary_timers () =
-    let seen_nodes = Hashtbl.create 16 in
-    let timers = Hashtbl.create 8 in
-    let rec visit (P signal) =
-      if signal.valid && not (Hashtbl.mem seen_nodes signal.id) then (
-        Hashtbl.add seen_nodes signal.id ();
-        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer) signal.timer;
-        List.iter visit (effective_necessary_dependencies signal))
-    in
-    List.iter
-      (fun (O observer) ->
-        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
-      graph.observers;
-    timers
-
-  let on_demand_timer_refreshes token =
-    Hashtbl.fold
-      (fun _id timer refreshes ->
-        if timer_can_refresh_on_demand token timer then timer :: refreshes
-        else refreshes)
-      (effective_necessary_timers ()) []
 
   let all_timers () =
     List.filter_map
@@ -2147,17 +2111,12 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter stage_pending_var pending_at_start;
         plan_staged_bind_switches observers;
         let events = List.filter_map collect_observer_event observers in
-        match on_demand_timer_refreshes timer_refresh_token with
-        | _ :: _ as refreshes ->
-            let hooks = restart_pure pending_at_start in
-            Pure_timer_refresh (hooks, refreshes)
-        | [] ->
-            let hooks = commit_staging () in
-            List.iter mark_event_pending events;
-            update_necessity_counters_unlocked ();
-            graph.active_timer_refresh_token <- None;
-            graph.phase <- Running_observers;
-            Pure_ok (hooks, events)
+        let hooks = commit_staging () in
+        List.iter mark_event_pending events;
+        update_necessity_counters_unlocked ();
+        graph.active_timer_refresh_token <- None;
+        graph.phase <- Running_observers;
+        Pure_ok (hooks, events)
       with
       | Timer_refresh_needed timers ->
           let hooks = restart_pure pending_at_start in

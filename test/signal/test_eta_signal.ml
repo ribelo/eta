@@ -6353,6 +6353,46 @@ let test_observe_invalidated_before_return_fails () =
     (Eio.Promise.await_exn observe_branch);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let test_registering_timer_demand_does_not_restart_active_pure_closures () =
+  with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
+  let timer = run_ok rt (Signal.Time.interval (Duration.days 1)) in
+  let source = Signal.Var.create 0 in
+  let pure_runs = ref 0 in
+  let mapped =
+    Signal.map
+      (fun value ->
+        incr pure_runs;
+        value)
+      (Signal.Var.watch source)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  pure_runs := 0;
+  run_ok rt (Signal.Var.set source 1);
+  let observe_timer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt
+          (widen (Signal.Observer.observe timer (fun _ -> Effect.unit))))
+  in
+  let stabilize =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Promise.await daemon_forked;
+        Eta_eio.Runtime.run rt (widen Signal.stabilize))
+  in
+  let timer_observer =
+    expect_exit_ok "registering timer observer"
+      (Eio.Promise.await_exn observe_timer)
+  in
+  expect_exit_ok "stabilize while timer observer registers"
+    (Eio.Promise.await_exn stabilize);
+  Alcotest.(check int) "active pure closure ran once" 1 !pure_runs;
+  Alcotest.(check int) "active observer updated" 1
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose timer_observer);
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_stream_bridge_interrupted_publish_does_not_duplicate () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
@@ -7357,6 +7397,10 @@ let () =
             test_stream_observe_timer_initialization_race;
           Alcotest.test_case "observe invalidated before return fails" `Quick
             test_observe_invalidated_before_return_fails;
+          Alcotest.test_case
+            "registering timer demand does not restart active pure closures"
+            `Quick
+            test_registering_timer_demand_does_not_restart_active_pure_closures;
           Alcotest.test_case "stream bridge interrupted publish does not duplicate"
             `Quick test_stream_bridge_interrupted_publish_does_not_duplicate;
           Alcotest.test_case

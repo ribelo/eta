@@ -242,6 +242,11 @@ module Make (Observer_error : Observer_error) () : sig
       equality. Freshly allocated but structurally equal values are therefore
       treated as changes unless a structural [?equal] is supplied.
 
+      The mapping function must be pure and total. Eta may evaluate pure graph
+      closures during a stabilization that later rolls back because another
+      node fails; side effects in mapping functions are therefore outside the
+      signal contract.
+
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
 
@@ -253,7 +258,7 @@ module Make (Observer_error : Observer_error) () : sig
     'c signal
   (** Map two dependencies. Without [?equal], the derived-value cutoff is
       physical equality. The same default applies to [map3] through [map9] and
-      {!both}.
+      {!both}. Mapping functions must be pure and total; see {!map}.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -348,6 +353,11 @@ module Make (Observer_error : Observer_error) () : sig
       Nodes created by an inactive branch are invalidated when that branch is
       replaced; observing a captured inactive-branch node fails with
       [`Invalid_scope].
+
+      The selector function must be pure and total. Eta may evaluate pure graph
+      closures during a stabilization that later rolls back because another
+      node fails; side effects in selectors are therefore outside the signal
+      contract.
 
       Without [?equal], the selected output cutoff is physical equality.
 
