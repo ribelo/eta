@@ -419,9 +419,11 @@ module Make (Observer_error : Observer_error) () = struct
     mutable stream_bridge_drop_count : int;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
     mutable next_timer_refresh_token : int;
+    mutable active_timer_refresh_token : int option;
   }
 
   exception Graph_error of graph_error
+  exception Timer_refresh_needed of timer_node list
 
   let graph =
     {
@@ -457,6 +459,7 @@ module Make (Observer_error : Observer_error) () = struct
       stream_bridge_drop_count = 0;
       necessary_node_ids = Hashtbl.create 16;
       next_timer_refresh_token = 0;
+      active_timer_refresh_token = None;
     }
 
   let kind_name : type a. a kind -> string = function
@@ -1392,12 +1395,14 @@ module Make (Observer_error : Observer_error) () = struct
     let disposal_hooks = reset_staging () in
     List.iter mark_failed_without_current observers;
     List.iter requeue_if_needed pending_at_start;
+    graph.active_timer_refresh_token <- None;
     graph.phase <- Not_stabilizing;
     disposal_hooks
 
   let restart_pure pending_at_start =
     let disposal_hooks = reset_staging () in
     List.iter requeue_if_needed pending_at_start;
+    graph.active_timer_refresh_token <- None;
     graph.phase <- Not_stabilizing;
     disposal_hooks
 
@@ -1420,6 +1425,12 @@ module Make (Observer_error : Observer_error) () = struct
                      | Some refresh -> refresh timer now_ms))
                  timers))
 
+  let request_on_demand_timer_refresh signal =
+    match (graph.active_timer_refresh_token, signal.timer) with
+    | Some token, Some timer when timer_can_refresh_on_demand token timer ->
+        raise (Timer_refresh_needed [ timer ])
+    | None, _ | Some _, None | Some _, Some _ -> ()
+
   let stage_pending_var (V var) =
     if not (var.var_equal var.graph_value var.source_value) then (
       stage_var_graph_value var var.source_value;
@@ -1428,6 +1439,7 @@ module Make (Observer_error : Observer_error) () = struct
   let rec compute : type a. a signal -> a * bool =
    fun signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
+    request_on_demand_timer_refresh signal;
     let generation = current_generation () in
     if signal.seen_generation = generation then
       (effective_signal_value signal, signal.changed_seen)
@@ -2060,6 +2072,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_binds <- [];
       graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
+      graph.active_timer_refresh_token <- Some timer_refresh_token;
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
       List.iter (fun (V var) -> var.queued <- false) pending_at_start;
@@ -2081,9 +2094,13 @@ module Make (Observer_error : Observer_error) () = struct
             let hooks = commit_staging () in
             List.iter mark_event_pending events;
             update_necessity_counters_unlocked ();
+            graph.active_timer_refresh_token <- None;
             graph.phase <- Running_observers;
             Pure_ok (hooks, events)
       with
+      | Timer_refresh_needed timers ->
+          let hooks = restart_pure pending_at_start in
+          Pure_timer_refresh (hooks, timers)
       | Graph_error err ->
           let hooks = rollback_pure observers pending_at_start in
           Pure_graph_error (hooks, err)
@@ -2093,6 +2110,7 @@ module Make (Observer_error : Observer_error) () = struct
           Pure_defect (hooks, exn, backtrace))
 
   let finish_stabilize () =
+    graph.active_timer_refresh_token <- None;
     match graph.phase with
     | Running_observers | Pure -> graph.phase <- Not_stabilizing
     | Not_stabilizing -> ()

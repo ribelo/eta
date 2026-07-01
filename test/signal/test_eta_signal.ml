@@ -5563,6 +5563,40 @@ let test_time_after_bind_activation_refreshes_current_stabilization () =
         "dynamic activation refreshes elapsed deadline" true
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_after_bind_activation_does_not_compute_stale_deadline () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let use_timer = Signal.Var.create false in
+  let deadline =
+    run_ok rt
+      (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
+  in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
+        if use_timer then
+          Signal.map
+            (fun due ->
+              if due then "elapsed"
+              else failwith "stale deadline reached user code")
+            deadline
+        else Signal.const "inactive")
+  in
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  Eta_test.Async.yield ();
+  let observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      Alcotest.(check string) "inactive branch value" "inactive"
+        (run_ok rt (Signal.Observer.read observer));
+      run_ok rt (Signal.Var.set use_timer true);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check string)
+        "dynamic activation computes only refreshed deadline" "elapsed"
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_after_saturates_overflowing_deadline () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   Eta_test.Test_clock.set_time clock (max_int - 5);
@@ -6682,6 +6716,9 @@ let () =
             test_time_after_elapsed_before_observe;
           Alcotest.test_case "time after bind activation refreshes current"
             `Quick test_time_after_bind_activation_refreshes_current_stabilization;
+          Alcotest.test_case "time after bind activation skips stale compute"
+            `Quick
+            test_time_after_bind_activation_does_not_compute_stale_deadline;
           Alcotest.test_case "time after saturates overflowing deadline"
             `Quick test_time_after_saturates_overflowing_deadline;
           Alcotest.test_case "time absolute deadline" `Quick
