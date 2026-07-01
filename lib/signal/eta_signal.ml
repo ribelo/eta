@@ -1246,11 +1246,20 @@ module Make (Observer_error : Observer_error) () = struct
       disposal_hooks)
     else []
 
-  let collect_scope_invalidations_into seen collected scope =
+  let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
+    let excluded signal =
+      match exclude_signal_id with
+      | None -> false
+      | Some id -> signal_id_int signal.id = signal_id_int id
+    in
     let rec visit_scope scope =
       if scope.scope_valid then List.iter visit scope.scope_nodes
     and visit (P signal as packed) =
-      if signal.valid && not (Hashtbl.mem seen signal.id) then (
+      if
+        signal.valid
+        && not (excluded signal)
+        && not (Hashtbl.mem seen signal.id)
+      then (
         Hashtbl.add seen signal.id ();
         collected := packed :: !collected;
         List.iter visit signal.dependents;
@@ -1278,9 +1287,10 @@ module Make (Observer_error : Observer_error) () = struct
           bind.staged_inner,
           bind.staged_inner_scope )
       with
-      | Some _, Some _, Some _, Some _ ->
+      | Some owner, Some _, Some _, Some _ ->
           Option.iter
-            (collect_scope_invalidations_into seen collected)
+            (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
+               collected)
             bind.inner_scope
       | _ -> raise (Graph_error `Invalid_scope)
 
@@ -1294,15 +1304,21 @@ module Make (Observer_error : Observer_error) () = struct
       | None -> ()
       | Some _ -> ignore (checked_succ "signal version" signal.version : int)
 
-  let preflight_commit_staging () =
+  let collect_staged_bind_invalidations () =
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
     List.iter
       (preflight_staged_bind_commit invalidated_ids invalidated_nodes)
       graph.staged_binds;
+    (invalidated_ids, !invalidated_nodes)
+
+  let preflight_commit_staging () =
+    let invalidated_ids, invalidated_nodes =
+      collect_staged_bind_invalidations ()
+    in
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
-      !invalidated_nodes;
+      invalidated_nodes;
     List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes
 
   let clear_observer_staging observer =
@@ -1913,8 +1929,56 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivery_pending _ | Observer_delivery_running _ -> true
     | Observer_never_delivered | Observer_delivered _ -> false
 
+  let rec scope_depth = function
+    | None -> 0
+    | Some scope -> 1 + scope_depth scope.scope_parent
+
+  let compare_signal_scope_then_id (P left) (P right) =
+    match Int.compare (scope_depth left.scope) (scope_depth right.scope) with
+    | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
+    | order -> order
+
+  let collect_observed_bind_nodes observers =
+    let seen = Hashtbl.create 16 in
+    let binds = ref [] in
+    let rec visit (P signal as packed) =
+      if signal.valid && not (Hashtbl.mem seen signal.id) then (
+        Hashtbl.add seen signal.id ();
+        (match signal.kind with
+         | Bind _ -> binds := packed :: !binds
+         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+             ());
+        List.iter visit signal.dependencies)
+    in
+    List.iter
+      (fun (O observer) ->
+        if observer_active (O observer) then visit (P observer.obs_signal))
+      observers;
+    List.sort compare_signal_scope_then_id !binds
+
+  let signal_will_be_invalidated_by_staged_bind (P signal) =
+    let invalidated_ids, _ = collect_staged_bind_invalidations () in
+    Hashtbl.mem invalidated_ids signal.id
+
+  let plan_staged_bind_switches observers =
+    List.iter
+      (fun (P signal as packed) ->
+        if
+          signal.valid
+          && not (signal_will_be_invalidated_by_staged_bind packed)
+        then
+          match signal.kind with
+          | Bind _ -> ignore (compute signal : _ * bool)
+          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+              ())
+      (collect_observed_bind_nodes observers)
+
   let collect_observer_event (O observer) =
     if not (observer_active (O observer)) then None
+    else if signal_will_be_invalidated_by_staged_bind (P observer.obs_signal) then
+      None
     else (
       let value, changed = compute observer.obs_signal in
       let event =
@@ -2007,6 +2071,7 @@ module Make (Observer_error : Observer_error) () = struct
       in
       try
         List.iter stage_pending_var pending_at_start;
+        plan_staged_bind_switches observers;
         let events = List.filter_map collect_observer_event observers in
         match on_demand_timer_refreshes timer_refresh_token with
         | _ :: _ as refreshes ->
