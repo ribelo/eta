@@ -39,6 +39,8 @@ type ('a, 'err) t = {
   mutable waiting_receivers : int;
   mutable cancelled_senders : int;
   mutable cancelled_receivers : int;
+  mutable cancelled_sender_debt : int;
+  mutable cancelled_receiver_debt : int;
 }
 
 type ('a, 'err) wakeup =
@@ -89,6 +91,8 @@ let create ?(overflow = Unbounded) () =
     waiting_receivers = 0;
     cancelled_senders = 0;
     cancelled_receivers = 0;
+    cancelled_sender_debt = 0;
+    cancelled_receiver_debt = 0;
   }
 
 let unbounded () = create ~overflow:Unbounded ()
@@ -162,20 +166,28 @@ let capacity_available (t : ('a, 'err) t) =
   | Drop_new { capacity } | Backpressure { capacity } ->
       Stdlib.Queue.length t.values < capacity
 
-let rec take_active_receiver (receivers : receiver Stdlib.Queue.t) =
-  if Stdlib.Queue.is_empty receivers then None
+let rec take_active_receiver_locked t =
+  if Stdlib.Queue.is_empty t.receivers then None
   else
-    let receiver = Stdlib.Queue.take receivers in
-    if receiver.active then Some receiver else take_active_receiver receivers
+    let receiver = Stdlib.Queue.take t.receivers in
+    if receiver.active then Some receiver
+    else (
+      if t.cancelled_receiver_debt > 0 then
+        t.cancelled_receiver_debt <- t.cancelled_receiver_debt - 1;
+      take_active_receiver_locked t)
 
-let rec take_active_sender senders =
-  if Stdlib.Queue.is_empty senders then None
+let rec take_active_sender_locked t =
+  if Stdlib.Queue.is_empty t.senders then None
   else
-    let sender = Stdlib.Queue.take senders in
-    if sender.active then Some sender else take_active_sender senders
+    let sender = Stdlib.Queue.take t.senders in
+    if sender.active then Some sender
+    else (
+      if t.cancelled_sender_debt > 0 then
+        t.cancelled_sender_debt <- t.cancelled_sender_debt - 1;
+      take_active_sender_locked t)
 
 let take_sender_locked (t : ('a, 'err) t) =
-  match take_active_sender t.senders with
+  match take_active_sender_locked t with
   | None -> None
   | Some sender ->
       sender.active <- false;
@@ -183,7 +195,7 @@ let take_sender_locked (t : ('a, 'err) t) =
       Some sender
 
 let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
-  match take_active_receiver t.receivers with
+  match take_active_receiver_locked t with
   | None -> ()
   | Some receiver ->
       t.waiting_receivers <- t.waiting_receivers - 1;
@@ -209,7 +221,7 @@ let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
 
 let wake_all_receivers_locked wakeups (t : ('a, 'err) t) =
   let rec loop () =
-    match take_active_receiver t.receivers with
+    match take_active_receiver_locked t with
     | None -> ()
     | Some receiver ->
         t.waiting_receivers <- t.waiting_receivers - 1;
@@ -229,8 +241,17 @@ let wake_all_senders_locked wakeups (t : ('a, 'err) t) reason =
   in
   loop ()
 
+let should_compact_cancelled retained_cancelled queue_length =
+  if retained_cancelled <= 0 || queue_length <= 0 then false
+  else
+    let half_rounded_up = (queue_length / 2) + (queue_length mod 2) in
+    retained_cancelled >= max 1 half_rounded_up
+
 let compact_cancelled_senders_locked (t : ('a, 'err) t) =
-  if t.cancelled_senders > 0 then (
+  if
+    should_compact_cancelled t.cancelled_sender_debt
+      (Stdlib.Queue.length t.senders)
+  then (
     let live = Stdlib.Queue.create () in
     Stdlib.Queue.iter
       (fun (sender : ('a, 'err) sender) ->
@@ -239,10 +260,14 @@ let compact_cancelled_senders_locked (t : ('a, 'err) t) =
     Stdlib.Queue.clear t.senders;
     Stdlib.Queue.iter
       (fun sender -> Stdlib.Queue.push sender t.senders)
-      live)
+      live;
+    t.cancelled_sender_debt <- 0)
 
 let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
-  if t.cancelled_receivers > 0 then (
+  if
+    should_compact_cancelled t.cancelled_receiver_debt
+      (Stdlib.Queue.length t.receivers)
+  then (
     let live = Stdlib.Queue.create () in
     Stdlib.Queue.iter
       (fun (receiver : receiver) ->
@@ -251,13 +276,15 @@ let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
     Stdlib.Queue.clear t.receivers;
     Stdlib.Queue.iter
       (fun receiver -> Stdlib.Queue.push receiver t.receivers)
-      live)
+      live;
+    t.cancelled_receiver_debt <- 0)
 
 let cancel_receiver (t : ('a, 'err) t) (receiver : receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
     t.cancelled_receivers <- saturating_succ t.cancelled_receivers;
+    t.cancelled_receiver_debt <- saturating_succ t.cancelled_receiver_debt;
     compact_cancelled_receivers_locked t)
 
 let cancel_sender wakeups (t : ('a, 'err) t) sender =
@@ -265,6 +292,7 @@ let cancel_sender wakeups (t : ('a, 'err) t) sender =
     sender.active <- false;
     t.waiting_senders <- t.waiting_senders - 1;
     t.cancelled_senders <- saturating_succ t.cancelled_senders;
+    t.cancelled_sender_debt <- saturating_succ t.cancelled_sender_debt;
     compact_cancelled_senders_locked t;
     admit_waiting_senders_locked wakeups t)
 
