@@ -5059,6 +5059,7 @@ let with_timer_cancel_tracking_host f =
   let clock = Eta_test.Test_clock.create () in
   let graph_lifecycle_depth_key = Eio.Fiber.create_key () in
   let cancel_inside_local_binding = ref false in
+  let fail_next_cancel = ref false in
   let graph_lifecycle_depth () =
     try Option.value (Eio.Fiber.get graph_lifecycle_depth_key) ~default:0
     with Stdlib.Effect.Unhandled _ -> 0
@@ -5124,7 +5125,10 @@ let with_timer_cancel_tracking_host f =
       let cancel cancel_context exn =
         if graph_lifecycle_depth () > 0 then
           cancel_inside_local_binding := true;
-        Eio.Cancel.cancel cancel_context exn
+        Eio.Cancel.cancel cancel_context exn;
+        if !fail_next_cancel then (
+          fail_next_cancel := false;
+          failwith "timer cancel failure")
     end
   end in
   let host =
@@ -5132,11 +5136,11 @@ let with_timer_cancel_tracking_host f =
   in
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
     ~tracer:Tracer.noop @@ fun rt ->
-  f clock rt cancel_inside_local_binding
+  f clock rt cancel_inside_local_binding fail_next_cancel
 
 let test_time_timer_cancel_runs_outside_graph_lifecycle () =
   with_timer_cancel_tracking_host
-  @@ fun clock rt cancel_inside_local_binding ->
+  @@ fun clock rt cancel_inside_local_binding _fail_next_cancel ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -5149,7 +5153,7 @@ let test_time_timer_cancel_runs_outside_graph_lifecycle () =
 
 let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   with_timer_cancel_tracking_host
-  @@ fun clock rt cancel_inside_local_binding ->
+  @@ fun clock rt cancel_inside_local_binding _fail_next_cancel ->
   let use_timer = Signal.Var.create true in
   let selected =
     Signal.bind (Signal.Var.watch use_timer) (fun active ->
@@ -5166,6 +5170,43 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   Alcotest.(check bool)
     "invalidated timer cancel ran outside graph lifecycle local binding" false
     !cancel_inside_local_binding;
+  run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_timer_cancel_failure_preserves_committed_snapshot () =
+  with_timer_cancel_tracking_host
+  @@ fun clock rt _cancel_inside_local_binding fail_next_cancel ->
+  let use_timer = Signal.Var.create true in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun active ->
+        if active then run_ok rt (Signal.Time.interval (Duration.days 1))
+        else Signal.const 42)
+  in
+  let callback_values = ref [] in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe selected (function
+        | Signal.Initialized value | Changed { new_value = value; _ } ->
+            Effect.sync (fun () ->
+                callback_values := value :: !callback_values)))
+  in
+  run_ok rt Signal.stabilize;
+  wait_for_sleepers clock 1;
+  Alcotest.(check (list int))
+    "initial callback delivered" [ 0 ] (List.rev !callback_values);
+  fail_next_cancel := true;
+  run_ok rt (Signal.Var.set use_timer false);
+  expect_finalizer_die "timer cancel failure" "timer cancel failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int)
+    "snapshot committed before timer cancel failure" 42
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check (list int))
+    "timer cancel failure did not deliver callback" [ 0 ]
+    (List.rev !callback_values);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "retry delivers pending branch switch" [ 0; 42 ]
+    (List.rev !callback_values);
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_disposal_hooks_continue_after_failure () =
@@ -5188,6 +5229,55 @@ let test_disposal_hooks_continue_after_failure () =
   expect_finalizer_die "third dispose hook failure"
     "third dispose hook failure" exit;
   Alcotest.(check bool) "later hook still ran" true !later_hook_ran
+
+let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
+  with_runtime @@ fun rt ->
+  let use_branch = Signal.Var.create true in
+  let captured_branch = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch use_branch) (fun active ->
+        if active then (
+          let branch = Signal.const 1 in
+          captured_branch := Some branch;
+          branch)
+        else Signal.const 2)
+  in
+  let callback_values = ref [] in
+  let selected_observer =
+    run_ok rt
+      (Signal.Observer.observe selected (function
+        | Signal.Initialized value | Changed { new_value = value; _ } ->
+            Effect.sync (fun () ->
+                callback_values := value :: !callback_values)))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "initial callback delivered" [ 1 ] (List.rev !callback_values);
+  let branch =
+    match !captured_branch with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured dynamic branch"
+  in
+  let branch_observer =
+    run_ok rt (Signal.Observer.observe branch (fun _ -> Effect.unit))
+  in
+  set_observer_on_dispose branch_observer
+    [ (fun _ -> failwith "branch dispose hook failure") ];
+  run_ok rt (Signal.Var.set use_branch false);
+  expect_finalizer_die "branch dispose hook failure"
+    "branch dispose hook failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  Alcotest.(check int)
+    "snapshot committed before disposal hook failure" 2
+    (run_ok rt (Signal.Observer.read selected_observer));
+  Alcotest.(check (list int))
+    "disposal hook failure did not deliver callback" [ 1 ]
+    (List.rev !callback_values);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check (list int))
+    "retry delivers pending branch switch" [ 1; 2 ]
+    (List.rev !callback_values);
+  run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_observer_dispose_interruption_runs_finish_hooks () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -6819,8 +6909,13 @@ let () =
           Alcotest.test_case
             "time invalidated timer cancel outside graph lifecycle" `Quick
             test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle;
+          Alcotest.test_case "time timer cancel failure keeps snapshot" `Quick
+            test_time_timer_cancel_failure_preserves_committed_snapshot;
           Alcotest.test_case "disposal hooks continue after failure" `Quick
             test_disposal_hooks_continue_after_failure;
+          Alcotest.test_case "stabilize disposal hook failure keeps snapshot"
+            `Quick
+            test_stabilize_disposal_hook_failure_preserves_committed_snapshot;
           Alcotest.test_case "observer dispose interruption runs finish hooks"
             `Quick test_observer_dispose_interruption_runs_finish_hooks;
           Alcotest.test_case "stabilize interruption runs invalidation hooks"
