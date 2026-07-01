@@ -5,11 +5,13 @@ type runtime_id = Runtime_id of int
 module Erased_token = struct
   (* This is the only backend-token erasure boundary. The kind parameter keeps
      scopes, cancellation handles, promises, resolvers, and streams from being
-     interchanged in Eta's wrapper types. The concrete backend type cannot be
-     named here because [of_runtime] accepts an arbitrary [RUNTIME] module, so
-     unwrapping remains an unsafe result-polymorphic cast pinned at each
-     adapter call below. Do not add another erased mirror of backend values. *)
-  type 'kind t = {
+     interchanged in Eta's wrapper types. The payload parameter keeps
+     value-carrying tokens from collapsing to kind-only erased cells inside
+     this module. The concrete backend type cannot be named here because
+     [of_runtime] accepts an arbitrary [RUNTIME] module, so unwrapping remains
+     an unsafe result-polymorphic cast pinned at each adapter call below. Do not
+     add another erased mirror of backend values. *)
+  type ('kind, 'payload) t = {
     runtime_id : runtime_id;
     value : Obj.t;
   }
@@ -27,11 +29,13 @@ type promise_token
 type resolver_token
 type stream_token
 
-type scope = Scope of scope_token Erased_token.t
-type cancel_context = Cancel_context of cancel_context_token Erased_token.t
-type 'a promise = Promise of promise_token Erased_token.t
-type 'a resolver = Resolver of resolver_token Erased_token.t
-type 'a stream = Stream of stream_token Erased_token.t
+type scope = Scope of (scope_token, unit) Erased_token.t
+type cancel_context =
+  Cancel_context of (cancel_context_token, unit) Erased_token.t
+
+type 'a promise = Promise of (promise_token, 'a) Erased_token.t
+type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
+type 'a stream = Stream of (stream_token, 'a) Erased_token.t
 type 'a local = 'a Type.Id.t
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -153,13 +157,19 @@ let of_runtime (module R : RUNTIME) =
   let ensure_owner_domain () =
     if Domain.self () <> owner_domain then invalid_arg wrong_domain
   in
-  let scope value = Scope (Erased_token.make runtime_id value) in
-  let cancel_context value =
+  let scope (value : R.scope) = Scope (Erased_token.make runtime_id value) in
+  let cancel_context (value : R.cancel_context) =
     Cancel_context (Erased_token.make runtime_id value)
   in
-  let promise value = Promise (Erased_token.make runtime_id value) in
-  let resolver value = Resolver (Erased_token.make runtime_id value) in
-  let stream value = Stream (Erased_token.make runtime_id value) in
+  let promise : type a. a R.promise -> a promise =
+   fun value -> Promise (Erased_token.make runtime_id value)
+  in
+  let resolver : type a. a R.resolver -> a resolver =
+   fun value -> Resolver (Erased_token.make runtime_id value)
+  in
+  let stream : type a. a R.stream -> a stream =
+   fun value -> Stream (Erased_token.make runtime_id value)
+  in
   let scope_value (Scope token) =
     (Erased_token.unsafe_cast_backend_value runtime_id token : R.scope)
   in

@@ -69,9 +69,10 @@ type t = {
     backend packages author against the typed {!RUNTIME} module shape, and
     {!of_runtime} erases that implementation into this record for the root
     interpreter. Erased values are wrapped in distinct private token kinds for
-    scopes, cancellation handles, promises, resolvers, and streams. The [Obj.t]
-    representation is confined to those wrappers and the adapter; do not add
-    another mirror record of backend operations.
+    scopes, cancellation handles, promises, resolvers, and streams; promise,
+    resolver, and stream wrappers also carry their payload type through the
+    erased token. The [Obj.t] representation is confined to those wrappers and
+    the adapter; do not add another mirror record of backend operations.
 
     Erased runtime contracts are owner-domain values. Except for
     [with_worker_context], [in_worker_context], [cancellation_reason], and
