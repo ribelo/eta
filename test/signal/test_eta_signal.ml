@@ -198,6 +198,7 @@ let with_runtime_and_switch f =
   f sw rt
 
 exception Cleanup_interrupt
+exception Lane_grant_resolution_failed
 
 module Cleanup_interrupt_runtime = struct
   type scope = unit
@@ -3924,6 +3925,117 @@ let test_active_graph_operation_interruption_releases_lane () =
   Alcotest.(check int) "lane released for later set/stabilize" 2
     (run_ok rt (Signal.Observer.read observer))
 
+let test_lane_grant_resolution_failure_notifies_waiter () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eio.Stdenv.clock env in
+  let fail_next_grant_resolve = ref false in
+  let grant_resolve_failures = ref 0 in
+  let module Base =
+    (val Eta_eio.runtime ~sw ~clock : Runtime_contract.RUNTIME)
+  in
+  let module Hooked_runtime = struct
+    type scope = Base.scope
+    type cancel_context = Base.cancel_context
+    type 'a promise = 'a Base.promise
+    type 'a resolver = 'a Base.resolver
+    type 'a stream = 'a Base.stream
+
+    let root_scope = Base.root_scope
+    let now_ms = Base.now_ms
+    let sleep = Base.sleep
+    let protect = Base.protect
+    let run_scope = Base.run_scope
+    let fail_scope = Base.fail_scope
+    let fork = Base.fork
+    let fork_daemon = Base.fork_daemon
+    let await_cancel = Base.await_cancel
+    let yield = Base.yield
+    let check = Base.check
+    let create_promise = Base.create_promise
+
+    let resolve_promise resolver value =
+      if !fail_next_grant_resolve then (
+        fail_next_grant_resolve := false;
+        incr grant_resolve_failures;
+        raise Lane_grant_resolution_failed);
+      Base.resolve_promise resolver value
+
+    let await_promise = Base.await_promise
+    let create_stream = Base.create_stream
+    let stream_add = Base.stream_add
+    let stream_take = Base.stream_take
+    let stream_take_nonblocking = Base.stream_take_nonblocking
+    let with_worker_context = Base.with_worker_context
+    let in_worker_context = Base.in_worker_context
+    let cancellation_reason = Base.cancellation_reason
+    let multiple_exceptions = Base.multiple_exceptions
+    let cancel_sub = Base.cancel_sub
+    let cancel = Base.cancel
+    let local_get = Base.local_get
+    let local_with_binding = Base.local_with_binding
+  end in
+  let rt =
+    Runtime.create_with_runtime
+      (module Hooked_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let started, started_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let block_once = ref true in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun n ->
+           if !block_once then (
+             block_once := false;
+             Eio.Promise.resolve started_resolver ();
+             Eio.Promise.await release);
+           n)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt (widen Signal.stabilize))
+  in
+  Eio.Promise.await started;
+  let queued_cancel = ref None in
+  let queued_set =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eio.Cancel.sub @@ fun ctx ->
+        queued_cancel := Some ctx;
+        Runtime.run rt (widen (Signal.Var.set source 2)))
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool) "set waits behind graph lane" false
+    (Eio.Promise.is_resolved queued_set);
+  fail_next_grant_resolve := true;
+  Eio.Promise.resolve release_resolver ();
+  for _ = 1 to 20 do
+    Eta_test.Async.yield ()
+  done;
+  if not (Eio.Promise.is_resolved stabilizer) then
+    Alcotest.fail "stabilizer did not finish after lane release";
+  (match Eio.Promise.await_exn stabilizer with
+   | Exit.Ok () | Exit.Error _ -> ()
+   | exception Lane_grant_resolution_failed -> ());
+  for _ = 1 to 20 do
+    Eta_test.Async.yield ()
+  done;
+  if not (Eio.Promise.is_resolved queued_set) then (
+    Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !queued_cancel;
+    Alcotest.fail "queued set was stranded after committed lane grant");
+  let queued_exit = Eio.Promise.await_exn queued_set in
+  ignore (expect_exit_ok "queued set after grant retry" queued_exit : unit);
+  Alcotest.(check int) "grant resolver failed once" 1 !grant_resolve_failures;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "waiter ran after grant retry" 2
+    (run_ok rt (Signal.Observer.read observer))
+
 let test_observer_read_waits_for_graph_lane () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -7100,6 +7212,9 @@ let () =
             test_stats_report_lane_waiters;
           Alcotest.test_case "active graph interruption releases lane" `Quick
             test_active_graph_operation_interruption_releases_lane;
+          Alcotest.test_case
+            "lane grant resolution failure notifies waiter" `Quick
+            test_lane_grant_resolution_failure_notifies_waiter;
           Alcotest.test_case "observer read waits for graph lane" `Quick
             test_observer_read_waits_for_graph_lane;
           Alcotest.test_case "time interval construction waits for graph lane"

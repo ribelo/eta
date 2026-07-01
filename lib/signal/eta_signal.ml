@@ -387,6 +387,7 @@ module Make (Observer_error : Observer_error) () = struct
     lane_contract : Runtime_contract.t;
     lane_resolver : unit Runtime_contract.resolver;
     mutable lane_state : lane_waiter_state;
+    mutable lane_notified : bool;
   }
 
   type lane = {
@@ -525,7 +526,40 @@ module Make (Observer_error : Observer_error) () = struct
   let resolve_lane_waiter waiter =
     waiter.lane_contract.Runtime_contract.protect (fun () ->
         waiter.lane_contract.Runtime_contract.resolve_promise
-          waiter.lane_resolver ())
+          waiter.lane_resolver ();
+        waiter.lane_notified <- true)
+
+  let resolve_pending_lane_grants pending =
+    let rec loop () =
+      match !pending with
+      | [] -> ()
+      | waiter :: rest -> (
+          try
+            resolve_lane_waiter waiter;
+            pending := rest;
+            loop ()
+          with exn ->
+            if waiter.lane_notified then pending := rest;
+            raise exn)
+    in
+    loop ()
+
+  let with_committed_lane_grant lock f =
+    let pending_grants = ref [] in
+    Fun.protect
+      ~finally:(fun () -> resolve_pending_lane_grants pending_grants)
+      (fun () ->
+        let result =
+          lock (fun () ->
+              let result, grant = f () in
+              pending_grants :=
+                (match grant with
+                | None -> []
+                | Some waiter -> [ waiter ]);
+              result)
+        in
+        resolve_pending_lane_grants pending_grants;
+        result)
 
   let release_lane_locked lane =
     match take_waiting_waiter lane.lane_waiters with
@@ -563,7 +597,12 @@ module Make (Observer_error : Observer_error) () = struct
   let enqueue_lane_waiter contract lane =
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let waiter =
-      { lane_contract = contract; lane_resolver = resolver; lane_state = Lane_waiting }
+      {
+        lane_contract = contract;
+        lane_resolver = resolver;
+        lane_state = Lane_waiting;
+        lane_notified = false;
+      }
     in
     Stdlib.Queue.push waiter lane.lane_waiters;
     lane.lane_waiting <- saturating_succ lane.lane_waiting;
@@ -597,17 +636,18 @@ module Make (Observer_error : Observer_error) () = struct
         with exn
           when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
           (if !claimed then
-             with_lane_lock_during_cancel contract lane (fun () ->
-                 release_lane_locked lane)
+             with_committed_lane_grant
+               (fun f -> with_lane_lock_during_cancel contract lane f)
+               (fun () -> ((), release_lane_locked lane))
            else
-             with_lane_lock_during_cancel contract lane (fun () ->
-                 cancel_lane_waiter_locked lane waiter))
-          |> Option.iter resolve_lane_waiter;
+             with_committed_lane_grant
+               (fun f -> with_lane_lock_during_cancel contract lane f)
+               (fun () -> ((), cancel_lane_waiter_locked lane waiter)));
           raise exn)
 
   let leave_lane_sync lane =
-    with_lane_lock lane (fun () -> release_lane_locked lane)
-    |> Option.iter resolve_lane_waiter
+    with_committed_lane_grant (with_lane_lock lane) (fun () ->
+        ((), release_lane_locked lane))
 
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
