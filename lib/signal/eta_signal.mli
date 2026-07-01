@@ -3,6 +3,52 @@
     Each functor application owns one graph. Signals describe graph structure;
     observer handles are the public read surface for stabilized derived values.
 
+    Equality cutoffs default to physical equality [( == )] for source vars,
+    derived signals, observers, and stream bridges. That keeps the default
+    cheap, but callers that publish mutable values or allocate fresh structural
+    values should usually supply [?equal]. In the examples below, [S] is a
+    signal module produced by {!Make}.
+
+    Mutating a heap block in place and setting the same block is suppressed by
+    the default cutoff:
+
+    {[
+      let block = [| 1 |] in
+      let source = S.Var.create block in
+      let _value = S.Var.watch source |> S.map (fun block -> block.(0)) in
+
+      block.(0) <- 2;
+      S.Var.set source block
+      (* Same heap object: no source change is published. *)
+    ]}
+
+    Freshly allocated but structurally equal values are changes by default:
+
+    {[
+      let _parity =
+        S.Var.watch source |> S.map (fun value -> [| value mod 2 |])
+      in
+
+      S.Var.set source 2
+      (* If the previous source value was 0, [parity] emits a change because
+         the two arrays are different heap objects. *)
+    ]}
+
+    Provide a structural cutoff when structural equality is the desired
+    behavior:
+
+    {[
+      let array_equal left right =
+        Array.length left = Array.length right
+        && Array.for_all2 Int.equal left right
+      in
+      let parity =
+        S.Var.watch source
+        |> S.map ~equal:array_equal (fun value -> [| value mod 2 |])
+      in
+      parity
+    ]}
+
     A graph is single-domain: create and use all vars, signals, observers, and
     stabilization effects from the domain that applied the functor. Effectful
     graph operations acquire the graph lane to serialize Eta fibers on that

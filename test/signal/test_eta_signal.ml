@@ -1143,6 +1143,35 @@ let test_derived_default_cutoff_is_physical_equality () =
          "expected derived physical cutoff to emit structurally equal block");
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_structural_cutoff_suppresses_fresh_equal_derived_values () =
+  with_runtime @@ fun rt ->
+  let array_equal left right =
+    Array.length left = Array.length right
+    && Array.for_all2 Int.equal left right
+  in
+  let source = Signal.Var.create 0 in
+  let mapped =
+    Signal.Var.watch source
+    |> Signal.map ~equal:array_equal (fun value -> Array.make 1 (value mod 2))
+  in
+  let events = ref [] in
+  let observer =
+    run_ok rt (Signal.Observer.observe mapped (record_observer events))
+  in
+  run_ok rt Signal.stabilize;
+  run_ok rt (Signal.Var.set source 2);
+  run_ok rt Signal.stabilize;
+  (match List.rev !events with
+   | [ Signal.Initialized initialized ] ->
+       Alcotest.(check (list int)) "initialized derived value" [ 0 ]
+         (Array.to_list initialized)
+   | _ ->
+       Alcotest.fail
+         "expected structural cutoff to suppress fresh equal block");
+  Alcotest.(check (list int)) "observer current remains structural value" [ 0 ]
+    (Array.to_list (run_ok rt (Signal.Observer.read observer)));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_default_physical_cutoff_suppresses_in_place_mutation () =
   with_runtime @@ fun rt ->
   let block = Array.make 1 1 in
@@ -6297,6 +6326,9 @@ let () =
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "derived default cutoff is physical equality"
             `Quick test_derived_default_cutoff_is_physical_equality;
+          Alcotest.test_case
+            "structural cutoff suppresses fresh equal derived values" `Quick
+            test_structural_cutoff_suppresses_fresh_equal_derived_values;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "observer equality is observer-local" `Quick
