@@ -210,6 +210,7 @@
                 lib/otel \
                 drivers/eta_ladybug \
                 lib/schema \
+                lib/schema_test \
                 drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
@@ -222,9 +223,10 @@
                 test/ai/openrouter \
                 test/connectors \
                 test/otel \
-                test/schema \
+                test/schema_eio \
+                test/schema_test_eio \
                 test/stream \
-                test/ppx
+                test/ppx_eio
 
               dune runtest \
                 lib/redacted \
@@ -238,9 +240,13 @@
                 lib/otel \
                 drivers/eta_ladybug \
                 lib/schema \
+                lib/schema_test \
                 drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
+                test/schema_eio \
+                test/schema_test_eio \
+                test/ppx_eio \
                 test/connectors \
                 --force
             '';

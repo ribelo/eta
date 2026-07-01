@@ -1822,8 +1822,8 @@ module Make (Observer_error : Observer_error) () = struct
         |> Effect.on_exit (fun _exit ->
                Effect.sync (fun () -> hooks_ref := []))
 
-  let fail_with_pending_disposal_hooks hooks_ref effect =
-    effect
+  let fail_with_pending_disposal_hooks hooks_ref eff =
+    eff
     |> Effect.on_exit (fun _exit ->
            run_pending_disposal_hooks_as_finalizers hooks_ref)
 

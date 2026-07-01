@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-dune build lib/http/tls
-
-obj_dir="_build/default/lib/http/tls/.http_tls.objs/byte"
+obj_dir="_build/default/lib/http/.eta_http.objs/byte"
+out_dir="${TMPDIR:-/tmp}/eta-http-negative-compile-$$"
+mkdir -p "$out_dir"
+trap 'rm -rf "$out_dir"' EXIT
 
 run_negative() {
   local name="$1"
   local source="test/http/tls/${name}.ml"
   if ocamlfind ocamlc -package domain-name,ipaddr,cstruct,eio \
-    -I "$obj_dir" -c "$source" >/tmp/eta-http-${name}.out 2>&1
+    -I "$obj_dir" -c "$source" -o "$out_dir/${name}.cmo" \
+    >"$out_dir/${name}.out" 2>&1
   then
-    cat "/tmp/eta-http-${name}.out"
+    cat "$out_dir/${name}.out"
     echo "FAIL expected compile failure: ${name}"
     exit 1
   else

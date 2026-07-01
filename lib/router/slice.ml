@@ -30,15 +30,16 @@ let take t n =
   if n < 0 || n > t.len then invalid_arg "Slice.take";
   { t with len = n }
 
+let rec common_prefix_loop a_src a_off b_src b_off max_len i =
+  if
+    i < max_len
+    && String.unsafe_get a_src (a_off + i)
+       = String.unsafe_get b_src (b_off + i)
+  then common_prefix_loop a_src a_off b_src b_off max_len (i + 1)
+  else i
+
 let[@zero_alloc] common_prefix a b =
   if a.len = 0 || b.len = 0 then 0
   else
     let max_len = min a.len b.len in
-    let mutable i = 0 in
-    while i < max_len
-          && String.unsafe_get a.src (a.off + i)
-             = String.unsafe_get b.src (b.off + i)
-    do
-      i <- i + 1
-    done;
-    i
+    common_prefix_loop a.src a.off b.src b.off max_len 0

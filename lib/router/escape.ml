@@ -85,20 +85,24 @@ let slice_to_owned s =
   done;
   { bytes; escaped = Bytes.unsafe_to_string esc }
 
+let rec common_prefix_loop a_bytes a_escaped a_off b_bytes b_escaped b_off
+    max_len i =
+  if
+    i < max_len
+    && String.unsafe_get a_bytes (a_off + i)
+       = String.unsafe_get b_bytes (b_off + i)
+    && String.unsafe_get a_escaped (a_off + i)
+       = String.unsafe_get b_escaped (b_off + i)
+  then common_prefix_loop a_bytes a_escaped a_off b_bytes b_escaped b_off
+         max_len (i + 1)
+  else i
+
 let[@zero_alloc] common_prefix a b =
   if a.len = 0 || b.len = 0 then 0
   else
     let max_len = min a.len b.len in
-    let mutable i = 0 in
-    while i < max_len
-          && String.unsafe_get a.src.bytes (a.off + i)
-             = String.unsafe_get b.src.bytes (b.off + i)
-          && String.unsafe_get a.src.escaped (a.off + i)
-             = String.unsafe_get b.src.escaped (b.off + i)
-    do
-      i <- i + 1
-    done;
-    i
+    common_prefix_loop a.src.bytes a.src.escaped a.off b.src.bytes
+      b.src.escaped b.off max_len 0
 
 let append a b =
   let bytes = a.bytes ^ b.bytes in

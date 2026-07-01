@@ -10,47 +10,41 @@ let invalid_route msg = Error (Router_error.Invalid_route msg)
 let find_wildcard (path : Escape.slice) :
     (wildcard option, Router_error.insert) result =
   let len = Escape.slice_length path in
-  let mutable i = 0 in
-  let mutable start = -1 in
-  let mutable error = None in
-  while i < len && start < 0 && error = None do
-    let c = Escape.slice_unsafe_get path i in
-    if c = '}' && not (Escape.slice_is_escaped path i) then
-      error <- Some "unmatched closing brace"
-    else if c = '{' && not (Escape.slice_is_escaped path i) then
-      start <- i
+  let rec find_start i =
+    if i >= len then `No_start
     else
-      i <- i + 1
-  done;
-  match error with
-  | Some msg -> invalid_route msg
-  | None ->
-    if start < 0 then Ok None
-    else if start + 1 >= len then invalid_route "unterminated parameter"
+      let c = Escape.slice_unsafe_get path i in
+      if c = '}' && not (Escape.slice_is_escaped path i) then
+        `Error "unmatched closing brace"
+      else if c = '{' && not (Escape.slice_is_escaped path i) then
+        `Start i
+      else find_start (i + 1)
+  in
+  match find_start 0 with
+  | `Error msg -> invalid_route msg
+  | `No_start -> Ok None
+  | `Start start ->
+    if start + 1 >= len then invalid_route "unterminated parameter"
     else if Escape.slice_unsafe_get path (start + 1) = '}' then
       invalid_route "empty parameter name"
     else
-      let mutable i = start + 2 in
-      let mutable end_ = -1 in
-      let mutable error = None in
-      while i < len && end_ < 0 && error = None do
-        let c = Escape.slice_unsafe_get path i in
-        match c with
-        | '}' ->
-          if Escape.slice_is_escaped path i then
-            i <- i + 1
-          else if Escape.slice_unsafe_get path (i - 1) = '*' then
-            error <- Some "parameter name ends with *"
-          else
-            end_ <- i + 1
-        | '*' | '/' -> error <- Some "invalid character in parameter name"
-        | _ -> i <- i + 1
-      done;
-      match error with
-      | Some msg -> invalid_route msg
-      | None ->
-        if end_ < 0 then invalid_route "unterminated parameter"
-        else Ok (Some { start; end_ })
+      let rec find_end i =
+        if i >= len then `No_end
+        else
+          let c = Escape.slice_unsafe_get path i in
+          match c with
+          | '}' ->
+            if Escape.slice_is_escaped path i then find_end (i + 1)
+            else if Escape.slice_unsafe_get path (i - 1) = '*' then
+              `Error "parameter name ends with *"
+            else `End (i + 1)
+          | '*' | '/' -> `Error "invalid character in parameter name"
+          | _ -> find_end (i + 1)
+      in
+      match find_end (start + 2) with
+      | `Error msg -> invalid_route msg
+      | `No_end -> invalid_route "unterminated parameter"
+      | `End end_ -> Ok (Some { start; end_ })
 
 let is_catch_all bytes w =
   String.unsafe_get bytes (w.start + 1) = '*'

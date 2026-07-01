@@ -83,27 +83,26 @@ let[@zero_alloc opt] is_empty_or_slash s =
   let len = Escape.slice_length s in
   len = 0 || (len = 1 && Escape.slice_get s 0 = '/')
 
+let rec slice_index_from_loop s c len i =
+  if i < len && Escape.slice_get s i <> c then
+    slice_index_from_loop s c len (i + 1)
+  else i
+
 let[@zero_alloc opt] slice_index_from s c from =
   let len = Escape.slice_length s in
-  let mutable i = from in
-  while i < len && Escape.slice_get s i <> c do
-    i <- i + 1
-  done;
+  let i = slice_index_from_loop s c len from in
   if i = len then -1 else i
 
 let[@zero_alloc opt] prefix_ends_with_slash p =
   let len = Escape.length p in
   len > 0 && Escape.get p (len - 1) = '/'
 
+let rec prefix_contains_slash_loop p len i =
+  i < len && (Escape.get p i = '/' || prefix_contains_slash_loop p len (i + 1))
+
 let[@zero_alloc opt] prefix_contains_slash p =
   let len = Escape.length p in
-  let mutable i = 0 in
-  let mutable found = false in
-  while i < len && not found do
-    if Escape.get p i = '/' then found <- true;
-    i <- i + 1
-  done;
-  found
+  prefix_contains_slash_loop p len 0
 
 (* Conflict detection helpers -------------------------------------------- *)
 
@@ -593,6 +592,11 @@ let[@inline always] path_drop p n =
 
 let path_snapshot p = { src = p.src; off = p.off; len = p.len }
 
+let rec path_prefix_equal_loop p prefix len i =
+  i >= len
+  || (path_get p i = String.unsafe_get prefix i
+      && path_prefix_equal_loop p prefix len (i + 1))
+
 let[@inline always][@zero_alloc opt] path_prefix_equal p prefix len =
   if p.len < len then false
   else if len = 0 then true
@@ -600,47 +604,44 @@ let[@inline always][@zero_alloc opt] path_prefix_equal p prefix len =
   else if len = 2 then
     path_get p 0 = String.unsafe_get prefix 0
     && path_get p 1 = String.unsafe_get prefix 1
-  else
-    let mutable i = 0 in
-    let mutable ok = true in
-    while i < len && ok do
-      if path_get p i <> String.unsafe_get prefix i then ok <- false;
-      i <- i + 1
-    done;
-    ok
+  else path_prefix_equal_loop p prefix len 0
+
+let rec path_index_loop src off len c i =
+  if i < len && String.unsafe_get src (off + i) <> c then
+    path_index_loop src off len c (i + 1)
+  else i
 
 let[@inline always][@zero_alloc opt] path_index p c =
   let off = p.off in
   let src = p.src in
   let len = p.len in
-  let mutable i = 0 in
-  while i < len && String.unsafe_get src (off + i) <> c do
-    i <- i + 1
-  done;
+  let i = path_index_loop src off len c 0 in
   if i = len then -1 else i
+
+let rec path_sub_equal_escape_loop p off len prefix i =
+  i >= len
+  || (path_get p (off + i) = String.unsafe_get prefix i
+      && path_sub_equal_escape_loop p off len prefix (i + 1))
 
 let[@zero_alloc opt] path_sub_equal_escape p off len prefix prefix_len =
   if len <> prefix_len then false
-  else
-    let mutable i = 0 in
-    let mutable ok = true in
-    while i < len && ok do
-      if path_get p (off + i) <> String.unsafe_get prefix i then ok <- false;
-      i <- i + 1
-    done;
-    ok
+  else path_sub_equal_escape_loop p off len prefix 0
+
+let rec path_ends_with_loop a b off i =
+  i >= b.len
+  || (path_get a (off + i) = path_get b i
+      && path_ends_with_loop a b off (i + 1))
 
 let[@zero_alloc opt] path_ends_with a b =
   if a.len < b.len then false
   else
     let off = a.len - b.len in
-    let mutable i = 0 in
-    let mutable ok = true in
-    while i < b.len && ok do
-      if path_get a (off + i) <> path_get b i then ok <- false;
-      i <- i + 1
-    done;
-    ok
+    path_ends_with_loop a b off 0
+
+let rec find_static_child_loop s len next i =
+  if i >= len then -1
+  else if String.unsafe_get s i = next then i
+  else find_static_child_loop s len next (i + 1)
 
 let[@inline always][@zero_alloc opt] find_static_child node next =
   let s = node.indices in
@@ -657,15 +658,7 @@ let[@inline always][@zero_alloc opt] find_static_child node next =
     else if String.unsafe_get s 1 = next then 1
     else if String.unsafe_get s 2 = next then 2
     else -1
-  else begin
-    let mutable i = 0 in
-    let mutable result = -1 in
-    while i < len && result < 0 do
-      if String.unsafe_get s i = next then result <- i;
-      i <- i + 1
-    done;
-    result
-  end
+  else find_static_child_loop s len next 0
 
 let catch_all_key prefix_str prefix_len =
   if prefix_len < 3 then ""

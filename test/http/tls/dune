@@ -4,6 +4,7 @@
   run_negative_compile.sh
   negative_tls13_override.ml
   negative_dhe_cipher_override.ml
+  ../../../lib/http/eta_http.cma
   ../../../lib/http/tls/config.ml
   ../../../lib/http/tls/config.mli)
  (action
