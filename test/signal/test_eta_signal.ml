@@ -4574,10 +4574,10 @@ let test_time_step_catches_up_after_late_sleep () =
   run_ok rt (Signal.Observer.dispose observer);
   release ()
 
-let with_cooperative_timer_host ?(jump_ms = 10_000) f =
+let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  let now_ms = ref 0 in
+  let now_ms = ref initial_ms in
   let sleep_calls = ref 0 in
   let yield_calls = ref 0 in
   let logger = Logger.in_memory () in
@@ -4642,7 +4642,8 @@ let with_cooperative_timer_host ?(jump_ms = 10_000) f =
     Eta_eio.Host.make ~unix:(module Unix) ~eio:(module Eio_ops) ()
   in
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
-    ~logger:(Logger.as_capability logger) @@ fun rt ->
+    ~now_ms:(fun () -> !now_ms) ~logger:(Logger.as_capability logger)
+  @@ fun rt ->
   f rt sleep_calls yield_calls logger
 
 let test_time_catch_up_yields_between_batches () =
@@ -4679,6 +4680,23 @@ let test_time_large_catch_up_applies_beyond_old_cap () =
   run_ok rt (Signal.Observer.dispose observer);
   Alcotest.(check int) "dispose logs no daemon diagnostic" 0
     (List.length (Logger.dump logger))
+
+let test_time_deadline_saturated_catch_up_does_not_overflow () =
+  (* Start at -1 so the first 1ms cadence is due at 0, reproducing the
+     saturated successor edge through public timer APIs. *)
+  with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
+  @@ fun rt sleep_calls _yield_calls logger ->
+  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 1) 1) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "saturated deadline timer woke" (fun () -> !sleep_calls >= 1);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "saturated catch-up reaches deadline" true
+    (run_ok rt (Signal.Observer.read observer));
+  Alcotest.(check int) "saturated catch-up logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger));
+  run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_becomes_inert_after_dispose () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -6350,6 +6368,8 @@ let () =
             test_time_catch_up_yields_between_batches;
           Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
             test_time_large_catch_up_applies_beyond_old_cap;
+          Alcotest.test_case "time deadline saturated catch-up does not overflow"
+            `Quick test_time_deadline_saturated_catch_up_does_not_overflow;
           Alcotest.test_case "time timer inert after dispose" `Quick
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick

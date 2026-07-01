@@ -310,6 +310,10 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running of int * (unit -> unit)
     | Timer_finished of int
 
+  and timer_catch_up_policy =
+    | Catch_up_every_cadence
+    | Catch_up_once_per_wake
+
   and timer_node = {
     mutable timer_state : timer_state;
     mutable timer_on_demand_refresh_token : int;
@@ -323,6 +327,7 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   and timer_update = {
+    timer_catch_up_policy : timer_catch_up_policy;
     timer_update : 'err. timer_node -> int -> (unit, 'err) Effect.t;
   }
 
@@ -2823,10 +2828,15 @@ module Make (Observer_error : Observer_error) () = struct
       if now_ms < next_due_ms then 0
       else
         let elapsed = (now_ms - next_due_ms) / interval_ms in
-        checked_succ "timer catch-up" elapsed
+        saturating_succ elapsed
 
     let advance_due next_due_ms interval_ms missed =
       add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
+
+    let catch_up_update_count policy missed =
+      match policy with
+      | Catch_up_every_cadence -> missed
+      | Catch_up_once_per_wake -> if missed <= 0 then 0 else 1
 
     let timer_catch_up_batch_size = 64
 
@@ -2872,7 +2882,10 @@ module Make (Observer_error : Observer_error) () = struct
                     let next_due_ms =
                       advance_due next_due_ms interval_ms missed
                     in
-                    run_timer_updates timer generation missed update
+                    let updates =
+                      catch_up_update_count update.timer_catch_up_policy missed
+                    in
+                    run_timer_updates timer generation updates update
                     |> Effect.bind (fun () ->
                            timer_after_update_state timer generation
                            |> Effect.bind (function
@@ -2926,7 +2939,8 @@ module Make (Observer_error : Observer_error) () = struct
       signal.timer <- Some timer;
       signal
 
-    let make_timer_signal ?(update_on_start = false) ?equal ?refresh_on_demand
+    let make_timer_signal ?(update_on_start = false)
+        ?(catch_up_policy = Catch_up_every_cadence) ?equal ?refresh_on_demand
         initial interval update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
@@ -2937,6 +2951,7 @@ module Make (Observer_error : Observer_error) () = struct
       in
       attach_timer ~update_on_start ?refresh_on_demand signal interval
         {
+          timer_catch_up_policy = catch_up_policy;
           timer_update =
             (fun timer generation ->
               update.source_timer_update timer generation source);
@@ -2973,7 +2988,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let construct_deadline_signal every deadline_ms =
       construct_timer_signal (fun () ->
-          make_timer_signal ~update_on_start:true ~equal:Bool.equal false every
+          make_timer_signal ~update_on_start:true
+            ~catch_up_policy:Catch_up_once_per_wake ~equal:Bool.equal false every
             ~refresh_on_demand:(fun source timer now_ms ->
               if now_ms >= deadline_ms then (
                 Var.set_unlocked source true;
