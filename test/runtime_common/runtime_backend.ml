@@ -35,6 +35,9 @@ module type S = sig
   val with_meter_runtime :
     (ctx -> 'err Eta.Runtime.t -> Eta.Meter.in_memory -> 'a) -> 'a
 
+  val with_meter_test_clock :
+    (ctx -> clock -> 'err Eta.Runtime.t -> Eta.Meter.in_memory -> 'a) -> 'a
+
   val with_logger_runtime :
     (ctx -> 'err Eta.Runtime.t -> Eta.Logger.in_memory -> 'a) -> 'a
 

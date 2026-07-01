@@ -275,7 +275,7 @@ let wait_until ?(attempts = 200) pred =
     if pred () then ()
     else if n = 0 then Alcotest.fail "condition did not become true"
     else (
-      Eio_unix.sleep 0.001;
+      Eio.Fiber.yield ();
       loop (n - 1))
   in
   loop attempts

@@ -149,9 +149,7 @@ let test_effect_fiberless_frame_is_domain_local () =
   Alcotest.(check int) "runtime B sleep" 1 (Atomic.get sleep_b)
 
 let test_effect_finally_runs_on_eio_cancellation () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun sw _clock rt ->
   let finalized = ref false in
   let cancel_ctx = ref None in
   let never, _resolver = Eio.Promise.create () in
@@ -169,9 +167,7 @@ let test_effect_finally_runs_on_eio_cancellation () =
   Alcotest.(check bool) "cleanup ran" true !finalized
 
 let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun sw _clock rt ->
   let finalized = ref false in
   let cancel_ctx = ref None in
   let never, _resolver = Eio.Promise.create () in
@@ -203,9 +199,7 @@ let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic ()
   Alcotest.(check bool) "cleanup ran" true !finalized
 
 let test_runtime_run_propagates_eio_cancellation () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun _sw _clock rt ->
   let cancelled = Failure "runtime cancelled" in
   let raised_cancelled = ref false in
   Eio.Cancel.sub @@ fun ctx ->

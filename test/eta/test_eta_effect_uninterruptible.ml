@@ -4,8 +4,12 @@ open Test_eta_support
 let test_uninterruptible_race_loser_without_checkpoints_returns () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
   in
   let domain_mgr = Eio.Stdenv.domain_mgr stdenv in
   let completed = ref false in

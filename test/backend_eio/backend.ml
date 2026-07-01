@@ -103,6 +103,19 @@ let with_meter_runtime f =
   in
   f sw rt meter
 
+let with_meter_test_clock f =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let meter = Eta.Meter.in_memory () in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ~meter:(Eta.Meter.as_capability meter) ()
+  in
+  f sw clock rt meter
+
 let with_logger_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->

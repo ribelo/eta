@@ -3428,6 +3428,7 @@ let test_observer_callback_interruption_releases_phase () =
 let test_stream_observe_failure_during_timer_start_does_not_leak () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
   let now_calls = ref 0 in
   let now_ms () =
     incr now_calls;
@@ -3435,7 +3436,8 @@ let test_stream_observe_failure_during_timer_start_does_not_leak () =
     else failwith "timer start clock failure"
   in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~now_ms ()
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
   in
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
   let before = run_ok rt (Signal.stats ()) in

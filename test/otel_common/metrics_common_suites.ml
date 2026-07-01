@@ -135,10 +135,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | _ -> Alcotest.fail "expected summary aggregate"
 
   let test_timer_records_elapsed_histogram_on_failure () =
-    with_meter @@ fun rt meter ->
+    B.with_meter_test_clock @@ fun _ctx clock rt meter ->
     let program =
       Effect.metric_timer ~name:"operation.duration" ~boundaries:[ 10.0; 30.0 ]
-        (Effect.sleep (Duration.ms 25)
+        (Effect.sync (fun () -> B.adjust_clock clock (Duration.ms 25))
         |> Effect.bind (fun () -> Effect.fail `Boom))
     in
     (match B.run rt program with
@@ -152,8 +152,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match value with
     | Eta_otel.Histogram state ->
         Alcotest.(check int) "timer count" 1 state.count;
-        Alcotest.(check bool) "timer elapsed at least sleep" true
-          (state.sum >= 25.0)
+        Alcotest.(check (float 0.001)) "timer elapsed" 25.0 state.sum
     | _ -> Alcotest.fail "expected timer histogram"
 
   let metrics_json body =

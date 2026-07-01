@@ -48,7 +48,7 @@ let wait_for_sleepers clock expected =
       Eta_test.Async.yield ();
       loop (attempts - 1))
   in
-  loop 20
+  loop 200
 
 let wait_until label predicate =
   let rec loop attempts =
@@ -58,7 +58,7 @@ let wait_until label predicate =
       Eta_test.Async.yield ();
       loop (attempts - 1))
   in
-  loop 20
+  loop 200
 
 let fd_count () =
   try Array.length (Sys.readdir "/proc/self/fd") with Sys_error _ -> -1

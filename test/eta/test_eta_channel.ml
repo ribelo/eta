@@ -2,9 +2,7 @@ open Eta
 open Test_eta_support
 
 let test_channel_cancel_receiver_after_delivery_requeues_message () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun sw _clock rt ->
   let ch = Channel.create ~capacity:1 () in
   let cancel_ctx = ref None in
   let receiver =
@@ -23,9 +21,7 @@ let test_channel_cancel_receiver_after_delivery_requeues_message () =
   Alcotest.(check int) "next receiver gets value" 42 (run_ok rt (Channel.recv ch))
 
 let test_channel_parent_switch_teardown_does_not_hang () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun sw _clock rt ->
   let ch = Channel.create ~capacity:1 () in
   run_ok rt (Channel.send ch 1);
   let outcome =
@@ -44,9 +40,7 @@ let test_channel_parent_switch_teardown_does_not_hang () =
     "waiting senders" 0 (Channel.stats ch).Channel.waiting_senders
 
 let test_channel_cancel_receiver_overflow_does_not_corrupt () =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  with_test_clock @@ fun sw _clock rt ->
   let ch = Channel.create ~capacity:1 () in
   let cancel_ctx = ref None in
   let receiver =
