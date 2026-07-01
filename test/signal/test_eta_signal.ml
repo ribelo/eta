@@ -1610,7 +1610,61 @@ let test_observer_registration_skips_callbacks_until_returned () =
           : unit);
       Alcotest.(check int) "callback after observe returned" 1 !callback_count)
 
-let test_observer_observe_invalidated_after_activation_fails () =
+let test_observer_activation_waits_for_transfer_before_callbacks () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let observe_returned = ref false in
+  let callback_before_return = ref false in
+  let callback_count = ref 0 in
+  Cleanup_interrupt_runtime.after_local_binding_count :=
+    Some
+      ( 4,
+        fun () ->
+          ignore
+            (expect_exit_ok "stabilize during observer transfer"
+               (Runtime.run rt (widen Signal.stabilize))
+              : unit) );
+  let observer =
+    Fun.protect
+      ~finally:(fun () ->
+        Cleanup_interrupt_runtime.after_local_binding_count := None)
+      (fun () ->
+        expect_exit_ok "observer registration"
+          (Runtime.run rt
+             (widen
+                (Signal.Observer.observe signal (fun _ ->
+                     Effect.sync (fun () ->
+                         incr callback_count;
+                         if not !observe_returned then
+                           callback_before_return := true))))))
+  in
+  observe_returned := true;
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
+    (fun () ->
+      Alcotest.(check bool)
+        "transfer window did not run callback" false !callback_before_return;
+      Alcotest.(check int) "no callback before observe transfer" 0
+        !callback_count;
+      ignore
+        (expect_exit_ok "stabilize after observer transfer"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      Alcotest.(check int) "callback after observe transfer" 1 !callback_count)
+
+let test_observer_observe_invalidated_before_transfer_fails () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1649,10 +1703,10 @@ let test_observer_observe_invalidated_after_activation_fails () =
   Cleanup_interrupt_runtime.local_binding_count := 0;
   Cleanup_interrupt_runtime.after_local_binding_count :=
     Some
-      ( 4,
+      ( 3,
         fun () ->
           ignore
-            (expect_exit_ok "branch switch after observer activation"
+            (expect_exit_ok "branch switch before observer transfer"
                (Runtime.run rt
                   (widen
                      (Signal.Var.set use_branch false
@@ -6899,8 +6953,11 @@ let () =
           Alcotest.test_case "observer registration skips callbacks until returned"
             `Quick test_observer_registration_skips_callbacks_until_returned;
           Alcotest.test_case
-            "observer observe invalidated after activation fails" `Quick
-            test_observer_observe_invalidated_after_activation_fails;
+            "observer activation waits for transfer before callbacks" `Quick
+            test_observer_activation_waits_for_transfer_before_callbacks;
+          Alcotest.test_case
+            "observer observe invalidated before transfer fails" `Quick
+            test_observer_observe_invalidated_before_transfer_fails;
           Alcotest.test_case "bind detaches old dependency" `Quick
             test_bind_detaches_old_dependency;
           Alcotest.test_case

@@ -2355,16 +2355,6 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
-    let return_active_observer observer =
-      with_graph_lane_sync (fun () ->
-          match observer.obs_state with
-          | Observer_registering ->
-              observer.obs_state <- Observer_active;
-              Ok observer
-          | Observer_active -> Ok observer
-          | Observer_invalid_scope | Observer_disposed -> Error `Invalid_scope)
-      |> Effect.flatten_result
-
     let transfer_active_observer observer transferred =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
          the transfer check must not introduce a new lane-release callback
@@ -2372,10 +2362,14 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () ->
           ensure_graph_context ();
           match observer.obs_state with
+          | Observer_registering ->
+              observer.obs_state <- Observer_active;
+              transferred := true;
+              Ok observer
           | Observer_active ->
               transferred := true;
               Ok observer
-          | Observer_registering | Observer_invalid_scope | Observer_disposed ->
+          | Observer_invalid_scope | Observer_disposed ->
               Error `Invalid_scope)
       |> Effect.flatten_result
 
@@ -2406,8 +2400,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun observer ->
              let transferred = ref false in
              (refresh_timer_demand ()
-             |> Effect.bind (fun () -> return_active_observer observer)
-             |> Effect.bind (fun observer ->
+             |> Effect.bind (fun () ->
                     transfer_active_observer observer transferred))
              |> Effect.on_exit (fun _exit ->
                     if !transferred then Effect.unit
