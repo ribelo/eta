@@ -280,13 +280,13 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_current of 'a
     | Observer_failed_without_current
 
+  and observer_after_ack_action = After_ack_record_stream_bridge_drop
+
   and 'a observer_delivery_state =
     | Observer_never_delivered
     | Observer_delivered of 'a
-    | Observer_delivery_pending of int * 'a update
-    | Observer_delivery_running of int * 'a update
-
-  and observer_after_ack_action = After_ack_record_stream_bridge_drop
+    | Observer_delivery_pending of int * 'a update * observer_after_ack_action list
+    | Observer_delivery_running of int * 'a update * observer_after_ack_action list
 
   and 'a observer = {
     obs_id : observer_id;
@@ -299,7 +299,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_staged_delivery_state : 'a observer_delivery_state option;
     mutable obs_state : observer_state;
     mutable obs_staged_generation : int;
-    mutable obs_after_ack : (int * observer_after_ack_action) list;
     mutable obs_on_finish : (observer_state -> unit) list;
   }
 
@@ -810,8 +809,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let clear_observer_delivery observer =
     observer.obs_delivery_state <- Observer_never_delivered;
-    observer.obs_staged_delivery_state <- None;
-    observer.obs_after_ack <- []
+    observer.obs_staged_delivery_state <- None
 
   let finish_observer_unlocked observer state =
     match (observer.obs_state, state) with
@@ -1903,10 +1901,10 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_delivery_base = function
     | Observer_never_delivered -> None
     | Observer_delivered value -> Some value
-    | Observer_delivery_pending (_, Initialized _) -> None
-    | Observer_delivery_pending (_, Changed { old_value; _ }) -> Some old_value
-    | Observer_delivery_running (_, Initialized _) -> None
-    | Observer_delivery_running (_, Changed { old_value; _ }) -> Some old_value
+    | Observer_delivery_pending (_, Initialized _, _) -> None
+    | Observer_delivery_pending (_, Changed { old_value; _ }, _) -> Some old_value
+    | Observer_delivery_running (_, Initialized _, _) -> None
+    | Observer_delivery_running (_, Changed { old_value; _ }, _) -> Some old_value
 
   let observer_delivery_pending = function
     | Observer_delivery_pending _ | Observer_delivery_running _ -> true
@@ -1935,35 +1933,25 @@ module Make (Observer_error : Observer_error) () = struct
         event)
 
   let mark_event_pending (E (token, observer, update)) =
-    if observer_active (O observer) then (
-      observer.obs_after_ack <- [];
-      observer.obs_delivery_state <- Observer_delivery_pending (token, update)
-    )
+    if observer_active (O observer) then
+      observer.obs_delivery_state <- Observer_delivery_pending (token, update, [])
 
   let run_after_ack_action_unlocked = function
     | After_ack_record_stream_bridge_drop ->
         graph.stream_bridge_drop_count <-
           saturating_succ graph.stream_bridge_drop_count
 
-  let run_after_ack_actions_unlocked observer token =
-    let actions, remaining =
-      List.partition
-        (fun (action_token, _) -> action_token = token)
-        observer.obs_after_ack
-    in
-    observer.obs_after_ack <- remaining;
-    List.iter
-      (fun (_, action) -> run_after_ack_action_unlocked action)
-      actions
+  let run_after_ack_actions_unlocked actions =
+    List.iter run_after_ack_action_unlocked actions
 
   let acknowledge_event_delivery observer token update =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | ( Observer_delivery_pending (pending_token, _)
-          | Observer_delivery_running (pending_token, _) )
+        | ( Observer_delivery_pending (pending_token, _, after_ack)
+          | Observer_delivery_running (pending_token, _, after_ack) )
           when observer_active (O observer) && pending_token = token ->
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
-            run_after_ack_actions_unlocked observer pending_token
+            run_after_ack_actions_unlocked after_ack
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
@@ -1971,21 +1959,22 @@ module Make (Observer_error : Observer_error) () = struct
   let claim_event_delivery observer token =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | Observer_delivery_pending (pending_token, update)
+        | Observer_delivery_pending (pending_token, update, after_ack)
           when observer_active (O observer) && pending_token = token ->
             observer.obs_delivery_state <-
-              Observer_delivery_running (pending_token, update);
+              Observer_delivery_running (pending_token, update, after_ack);
             true
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             false)
 
-  let release_event_delivery_claim observer token update =
+  let release_event_delivery_claim observer token =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | Observer_delivery_running (running_token, _)
+        | Observer_delivery_running (running_token, update, after_ack)
           when observer_active (O observer) && running_token = token ->
-            observer.obs_delivery_state <- Observer_delivery_pending (token, update)
+            observer.obs_delivery_state <-
+              Observer_delivery_pending (token, update, after_ack)
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
@@ -2065,7 +2054,7 @@ module Make (Observer_error : Observer_error) () = struct
     let delivered = ref false in
     let finish_delivery_after_error () =
       if !delivered then acknowledge_event_delivery observer token update
-      else release_event_delivery_claim observer token update
+      else release_event_delivery_claim observer token
     in
     ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
       try
@@ -2115,8 +2104,7 @@ module Make (Observer_error : Observer_error) () = struct
                           |> Effect.on_exit (function
                                | Eta.Exit.Ok _ -> Effect.unit
                                | Eta.Exit.Error _ ->
-                                   release_event_delivery_claim observer token
-                                     update)
+                                   release_event_delivery_claim observer token)
                           |> Effect.bind (fun () -> run_events rest))))
 
   let begin_stabilize_with_pending_hooks timer_refresh_token hooks_ref
@@ -2283,7 +2271,6 @@ module Make (Observer_error : Observer_error) () = struct
                 obs_staged_delivery_state = None;
                 obs_state = Observer_registering;
                 obs_staged_generation = -1;
-                obs_after_ack = [];
                 obs_on_finish = on_finish;
               }
             in
@@ -2423,14 +2410,12 @@ module Make (Observer_error : Observer_error) () = struct
   let acknowledge_stream_drop_delivery observer update =
     with_graph_lane_sync (fun () ->
         match observer.obs_delivery_state with
-        | ( Observer_delivery_pending (pending_token, _)
-          | Observer_delivery_running (pending_token, _) )
+        | ( Observer_delivery_pending (pending_token, _, after_ack)
+          | Observer_delivery_running (pending_token, _, after_ack) )
           when observer_active (O observer) ->
-            observer.obs_after_ack <-
-              (pending_token, After_ack_record_stream_bridge_drop)
-              :: observer.obs_after_ack;
+            let after_ack = After_ack_record_stream_bridge_drop :: after_ack in
             observer.obs_delivery_state <- Observer_delivered (delivered_value update);
-            run_after_ack_actions_unlocked observer pending_token
+            run_after_ack_actions_unlocked after_ack
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ())
