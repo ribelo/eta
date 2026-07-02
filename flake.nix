@@ -2,9 +2,27 @@
   description = "Eta OCaml development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.opam-nix = {
+    url = "github:tweag/opam-nix";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+  inputs.opam-repository = {
+    url = "github:ocaml/opam-repository";
+    flake = false;
+  };
+  inputs.oxcaml = {
+    url = "github:oxcaml/oxcaml/5.2.0minus-31";
+    flake = false;
+  };
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      nixpkgs,
+      opam-nix,
+      opam-repository,
+      oxcaml,
+      ...
+    }:
     let
       systems = [
         "aarch64-darwin"
@@ -16,6 +34,100 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          cleanLocalSource =
+            src:
+            pkgs.lib.cleanSourceWith {
+              inherit src;
+              filter =
+                path: _type:
+                let
+                  base = baseNameOf path;
+                in
+                !(
+                  base == ".git"
+                  || base == "_build"
+                  || base == "_opam"
+                  || base == ".opam"
+                  || base == ".opam-oxcaml"
+                  || base == ".reference"
+                  || base == ".scratch"
+                  || base == ".motel-data"
+                  || base == ".nema"
+                  || base == ".pi"
+                  || base == ".hill-climbing"
+                  || base == "node_modules"
+                );
+          };
+          etaSrc = cleanLocalSource ./.;
+          patchedOxcaml = pkgs.runCommand "oxcaml-source-patched" { } ''
+            cp -R ${oxcaml} "$out"
+            chmod -R u+w "$out"
+            ${pkgs.perl}/bin/perl -0pi -e 's|new: old: \{\n        buildInputs = \[|new: old: rec {\n        version = "20231231";\n        src = pkgs.fetchFromGitLab {\n          domain = "gitlab.inria.fr";\n          owner = "fpottier";\n          repo = "menhir";\n          rev = version;\n          sha256 = "sha256-veB0ORHp6jdRwCyDDAfc7a7ov8sOeHUmiELdOFf/QYk=";\n        };\n        patches = [ ];\n        buildInputs = [|' "$out/default.nix"
+          '';
+          oxcamlCompiler = pkgs.callPackage "${patchedOxcaml}/default.nix" {
+            src = patchedOxcaml;
+            ocamltest = false;
+            warnError = false;
+          };
+          oxcamlSystemOverlay = final: prev: {
+            ocaml-system = prev.ocaml-system.overrideAttrs (_old: {
+              nativeBuildInputs = [ oxcamlCompiler ];
+            });
+          };
+          buildOpamProjectPrime = builtins.getAttr "buildOpamProject'" opam-nix.lib.${system};
+          etaScope = buildOpamProjectPrime
+            {
+              inherit pkgs;
+              overlays = [ oxcamlSystemOverlay ];
+              repos = [ opam-repository ];
+              resolveArgs.env.sys-ocaml-version = "5.2.0";
+            }
+            etaSrc
+            {
+              ocaml-system = "*";
+            };
+          etaPackageNames = [
+            "eta"
+            "eta_ai"
+            "eta_ai_openai_codec"
+            "eta_ai_openrouter"
+            "eta_blocking"
+            "eta_eio"
+            "eta_http"
+            "eta_http_eio"
+            "eta_http_h1"
+            "eta_http_h2"
+            "eta_http_service"
+            "eta_http_service_eio"
+            "eta_http_tls_openssl"
+            "eta_http_ws"
+            "eta_ladybug"
+            "eta_linux_input"
+            "eta_otel"
+            "eta_redacted"
+            "eta_router"
+            "eta_signal"
+            "eta_sql"
+            "eta_sql_driver"
+            "eta_sql_dsl"
+            "eta_stream"
+          ];
+          etaPackages = builtins.listToAttrs (
+            map (name: {
+              inherit name;
+              value = etaScope.${name};
+            }) etaPackageNames
+          );
+        in
+        etaPackages // {
+          default = etaPackages.eta;
+        }
+      );
+
       devShells = forAllSystems (
         system:
         let
@@ -112,8 +224,8 @@
               export OPAMSWITCH="$switch_name"
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
-              eta_url="git+file://$repo_root"
-              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
+              eta_url="git+file://$repo_root#master"
+              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
               if [ "$#" -gt 0 ]; then
                 packages="$*"
               fi
@@ -128,6 +240,23 @@
 
               echo "Eta packages installed into OPAM switch: $switch_name"
               echo "$packages"
+            '';
+          };
+          etaOpamInstallOx = pkgs.writeShellApplication {
+            name = "eta-opam-install-ox";
+            runtimeInputs = [ etaOpamInstall ];
+            text = ''
+              export ETA_OPAM_SWITCH="${oxCamlSwitch}"
+              exec eta-opam-install "$@"
+            '';
+          };
+          etaOpamInstallMainline = pkgs.writeShellApplication {
+            name = "eta-opam-install-mainline";
+            runtimeInputs = [ etaOpamInstall ];
+            text = ''
+              export ETA_OPAM_SWITCH="5.4.1"
+              export ETA_OPAM_PACKAGES="eta eta_http eta_jsoo eta_http_js"
+              exec eta-opam-install "$@"
             '';
           };
           oxCamlSetup = pkgs.writeShellApplication {
@@ -274,6 +403,8 @@
               pkgs.which
               tursoSqlite3
               etaOpamInstall
+              etaOpamInstallOx
+              etaOpamInstallMainline
               oxCamlSetup
               oxCamlShippedTests
               oxCamlToolchainCheck
