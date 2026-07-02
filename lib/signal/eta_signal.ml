@@ -420,11 +420,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Refresh_deadline_source of bool var * int
     | Refresh_interval_source of int var * int
 
-  and timer_refresh_transition =
-    | Timer_refresh_set_source : 'a var * 'a -> timer_refresh_transition
-    | Timer_refresh_advance_due of int
-    | Timer_refresh_finish
-    | Timer_refresh_cancel_after_commit of (unit -> unit)
+  and timer_transition =
+    | Set_source : 'a var * 'a -> timer_transition
+    | Advance_due of int
+    | Finish
+    | Cancel_after_commit of (unit -> unit)
 
   and timer_node = {
     mutable timer_state : timer_state;
@@ -1268,7 +1268,7 @@ module Make (Observer_error : Observer_error) () = struct
           let saturated_due =
             advanced_due_ms = max_int && now_ms >= advanced_due_ms
           in
-          (missed, saturated_due, [ Timer_refresh_advance_due advanced_due_ms ])
+          (missed, saturated_due, [ Advance_due advanced_due_ms ])
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
@@ -1759,34 +1759,32 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_finish_transitions state =
     match state with
-    | Timer_running (_, _, cancel) -> [ Timer_refresh_cancel_after_commit cancel ]
+    | Timer_running (_, _, cancel) -> [ Cancel_after_commit cancel ]
     | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
     | Timer_finished _ ->
         []
 
-  let rec stage_timer_refresh_transition timer = function
-    | Timer_refresh_set_source (source, value) ->
+  let rec stage_timer_transition timer = function
+    | Set_source (source, value) ->
         stage_timer_source_value source value
-    | Timer_refresh_advance_due next_due_ms ->
+    | Advance_due next_due_ms ->
         stage_timer_state_unlocked timer
           (timer_set_next_due_state (timer_effective_state timer)
              (Some next_due_ms))
-    | Timer_refresh_finish ->
+    | Finish ->
         let state = timer_effective_state timer in
         stage_timer_state_unlocked timer (timer_finish_state state);
-        List.iter
-          (stage_timer_refresh_transition timer)
-          (timer_finish_transitions state)
-    | Timer_refresh_cancel_after_commit cancel ->
+        List.iter (stage_timer_transition timer) (timer_finish_transitions state)
+    | Cancel_after_commit cancel ->
         remember_timer_refresh_disposal_hooks [ cancel ]
 
-  let timer_refresh_transitions timer now_ms = function
+  let timer_refresh_plan timer now_ms = function
     | Refresh_current_time_source source ->
-        [ Timer_refresh_set_source (source, now_ms) ]
+        [ Set_source (source, now_ms) ]
     | Refresh_deadline_source (source, deadline_ms) ->
         if now_ms >= deadline_ms then
-          [ Timer_refresh_set_source (source, true); Timer_refresh_finish ]
-        else [ Timer_refresh_set_source (source, false) ]
+          [ Set_source (source, true); Finish ]
+        else [ Set_source (source, false) ]
     | Refresh_interval_source (source, interval_ms) ->
         let missed, saturated_due, due_transitions =
           timer_due_refresh_transitions timer interval_ms now_ms
@@ -1795,17 +1793,17 @@ module Make (Observer_error : Observer_error) () = struct
           if missed <= 0 then []
           else
             [
-              Timer_refresh_set_source
+              Set_source
                 (source, add_int_capped (effective_var_value source) missed);
             ]
         in
         due_transitions @ source_transitions
-        @ (if saturated_due then [ Timer_refresh_finish ] else [])
+        @ (if saturated_due then [ Finish ] else [])
 
-  let apply_timer_refresh_operation timer now_ms operation =
+  let stage_timer_refresh_operation timer now_ms operation =
     List.iter
-      (stage_timer_refresh_transition timer)
-      (timer_refresh_transitions timer now_ms operation)
+      (stage_timer_transition timer)
+      (timer_refresh_plan timer now_ms operation)
 
   let clear_timer_refresh_timer_staging timer =
     timer.timer_staged_state <- None;
@@ -1923,7 +1921,7 @@ module Make (Observer_error : Observer_error) () = struct
         let now_ms = timer_refresh_sample_now_ms timer_refresh in
         (match timer.timer_refresh_operation with
          | None -> ()
-         | Some operation -> apply_timer_refresh_operation timer now_ms operation)
+         | Some operation -> stage_timer_refresh_operation timer now_ms operation)
     | None, _ | Some _, None | Some _, Some _ -> ()
 
   let rec compute : type a. a signal -> a * bool =
