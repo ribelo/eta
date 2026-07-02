@@ -135,6 +135,7 @@ module Make (Observer_error : Observer_error) () : sig
       | After_graph_lane_acquired
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
+      | After_timer_due_read_before_commit
 
     type action = { run : 'err. unit -> (unit, 'err) Eta.Effect.t }
 

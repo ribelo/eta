@@ -37,6 +37,7 @@ module Make (Observer_error : Observer_error) () = struct
       | After_graph_lane_acquired
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
+      | After_timer_due_read_before_commit
 
     type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
@@ -45,6 +46,7 @@ module Make (Observer_error : Observer_error) () = struct
     let after_graph_lane_acquired = ref noop
     let after_stream_try_send_before_ack = ref noop
     let after_stream_drop_before_ack = ref noop
+    let after_timer_due_read_before_commit = ref noop
 
     let set hook action =
       match hook with
@@ -53,12 +55,15 @@ module Make (Observer_error : Observer_error) () = struct
       | After_stream_try_send_before_ack ->
           after_stream_try_send_before_ack := action
       | After_stream_drop_before_ack -> after_stream_drop_before_ack := action
+      | After_timer_due_read_before_commit ->
+          after_timer_due_read_before_commit := action
 
     let clear () =
       after_observer_delivery_claim := noop;
       after_graph_lane_acquired := noop;
       after_stream_try_send_before_ack := noop;
-      after_stream_drop_before_ack := noop
+      after_stream_drop_before_ack := noop;
+      after_timer_due_read_before_commit := noop
 
     let run = function
       | After_observer_delivery_claim ->
@@ -68,6 +73,8 @@ module Make (Observer_error : Observer_error) () = struct
           (!after_stream_try_send_before_ack).run ()
       | After_stream_drop_before_ack ->
           (!after_stream_drop_before_ack).run ()
+      | After_timer_due_read_before_commit ->
+          (!after_timer_due_read_before_commit).run ()
   end
 
   type 'a update =
@@ -3096,6 +3103,16 @@ module Make (Observer_error : Observer_error) () = struct
             `Continue)
           else `Stop)
 
+    let timer_advance_next_due timer generation ~expected next_due_ms =
+      with_graph_lane_sync (fun () ->
+          if timer_running_current timer generation then
+            match timer.timer_next_due_ms with
+            | Some current when current = expected ->
+                timer.timer_next_due_ms <- Some next_due_ms;
+                `Advanced
+            | Some _ | None -> `Stale
+          else `Stop)
+
     let refresh_due_unlocked timer interval_ms now_ms =
       match timer.timer_next_due_ms with
       | None -> 0
@@ -3152,57 +3169,68 @@ module Make (Observer_error : Observer_error) () = struct
                       timer_read_next_due timer generation next_due_ms
                       |> Effect.bind (function
                            | None -> Effect.unit
-                           | Some next_due_ms ->
+                           | Some due_ms ->
                                Effect.now
                                |> Effect.bind (fun now_ms ->
                                       let missed =
-                                        missed_cadences ~interval_ms ~next_due_ms
-                                          ~now_ms
+                                        missed_cadences ~interval_ms
+                                          ~next_due_ms:due_ms ~now_ms
                                       in
-                                      let next_due_ms =
-                                        advance_due next_due_ms interval_ms
-                                          missed
+                                      let advanced_due_ms =
+                                        advance_due due_ms interval_ms missed
                                       in
                                       let saturated_due =
-                                        next_due_ms = max_int
-                                        && now_ms >= next_due_ms
+                                        advanced_due_ms = max_int
+                                        && now_ms >= advanced_due_ms
                                       in
                                       let updates =
                                         catch_up_update_count
                                           update.timer_catch_up_policy missed
                                       in
-                                      timer_set_next_due timer generation
-                                        next_due_ms
-                                      |> Effect.bind (function
-                                           | `Stop -> Effect.unit
-                                           | `Continue ->
-                                               run_timer_updates timer generation
-                                                 updates update ~missed
-                                               |> Effect.bind (fun () ->
-                                                      (if saturated_due then
-                                                         with_graph_lane_sync
-                                                           (fun () ->
-                                                             if
-                                                               timer_running_current
-                                                                 timer generation
-                                                             then
-                                                               timer_finish_unlocked
-                                                                 timer)
-                                                       else Effect.unit)
+                                      Private_test_hooks.run
+                                        After_timer_due_read_before_commit
+                                      |> Effect.bind (fun () ->
+                                             timer_advance_next_due timer
+                                               generation ~expected:due_ms
+                                               advanced_due_ms
+                                             |> Effect.bind (function
+                                                  | `Stop -> Effect.unit
+                                                  | `Stale ->
+                                                      timer_loop timer generation
+                                                        interval_ms
+                                                        advanced_due_ms update
+                                                  | `Advanced ->
+                                                      run_timer_updates timer
+                                                        generation updates update
+                                                        ~missed
                                                       |> Effect.bind (fun () ->
-                                                             timer_after_update_state
-                                                               timer generation
-                                                             |> Effect.bind
-                                                                  (function
-                                                                  | `Continue ->
-                                                                      timer_loop
+                                                             (if saturated_due then
+                                                                with_graph_lane_sync
+                                                                  (fun () ->
+                                                                    if
+                                                                      timer_running_current
                                                                         timer
                                                                         generation
-                                                                        interval_ms
-                                                                        next_due_ms
-                                                                        update
-                                                                  | `Stop ->
-                                                                      Effect.unit))))))))
+                                                                    then
+                                                                      timer_finish_unlocked
+                                                                        timer)
+                                                              else Effect.unit)
+                                                             |> Effect.bind
+                                                                  (fun () ->
+                                                                    timer_after_update_state
+                                                                      timer
+                                                                      generation
+                                                                    |> Effect.bind
+                                                                         (function
+                                                                         | `Continue ->
+                                                                             timer_loop
+                                                                               timer
+                                                                               generation
+                                                                               interval_ms
+                                                                               advanced_due_ms
+                                                                               update
+                                                                         | `Stop ->
+                                                                             Effect.unit)))))))))
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_on_demand signal interval update =

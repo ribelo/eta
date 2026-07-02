@@ -6315,6 +6315,58 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
       Alcotest.(check int) "5 missed cadences" 5
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      ignore
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
+          : _ Exit.t))
+    (fun () ->
+      wait_for_sleepers clock 1;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial interval" 0
+        (run_ok rt (Signal.Observer.read observer));
+      let daemon_read_due, daemon_read_due_resolver = Eio.Promise.create () in
+      let release_daemon, release_daemon_resolver = Eio.Promise.create () in
+      let release_once =
+        let released = ref false in
+        fun () ->
+          if not !released then (
+            released := true;
+            Eio.Promise.resolve release_daemon_resolver ())
+      in
+      let hook_ran = ref false in
+      Signal.Private_test_hooks.set
+        Signal.Private_test_hooks.After_timer_due_read_before_commit
+        {
+          run =
+            (fun () ->
+              Effect.sync (fun () ->
+                  if not !hook_ran then (
+                    hook_ran := true;
+                    Eio.Promise.resolve daemon_read_due_resolver ();
+                    Eio.Promise.await release_daemon)));
+        };
+      Fun.protect ~finally:release_once (fun () ->
+          Eta_test.Test_clock.adjust clock (Duration.ms 10);
+          Eio.Promise.await daemon_read_due;
+          run_ok rt Signal.stabilize;
+          Alcotest.(check int)
+            "stabilization applies the due cadence once" 1
+            (run_ok rt (Signal.Observer.read observer));
+          release_once ();
+          wait_for_sleepers clock 1;
+          run_ok rt Signal.stabilize;
+          Alcotest.(check int)
+            "daemon does not replay the same due cadence" 1
+            (run_ok rt (Signal.Observer.read observer))))
+
 let test_time_active_deadline_refreshes_before_daemon_runs () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
@@ -7938,6 +7990,10 @@ let () =
             "time interval catches up arithmetically without daemon yield"
             `Quick
             test_time_interval_catches_up_arithmetically_without_daemon_yield;
+          Alcotest.test_case
+            "time interval daemon/stabilization race does not double count"
+            `Quick
+            test_time_interval_daemon_and_stabilization_race_does_not_double_count;
           Alcotest.test_case "time active deadline refreshes before daemon"
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case
