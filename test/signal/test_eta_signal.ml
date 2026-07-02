@@ -6686,6 +6686,37 @@ let test_time_step_does_not_catch_up_without_daemon_progress () =
         "interval catches up but step waits for daemon progress" (4, 1)
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_step_coalesced_does_not_catch_up_without_daemon_progress () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
+  let step =
+    run_ok rt
+      (Signal.Time.step_coalesced ~every:(Duration.ms 5) ~initial:1
+         (fun ~missed value -> value + missed))
+  in
+  let signal =
+    Signal.map2 (fun interval step -> (interval, step)) interval step
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "active interval and coalesced step daemons are sleeping"
+        (fun () -> !sleep_calls >= 2);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check (pair int int))
+        "initial interval and coalesced step" (0, 1)
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 20;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check (pair int int))
+        "interval catches up but coalesced step waits for daemon progress"
+        (4, 1)
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_step_does_not_run_f_inside_stabilize () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let f_called = ref 0 in
@@ -8315,6 +8346,10 @@ let () =
           Alcotest.test_case
             "time step does not catch up without daemon progress" `Quick
             test_time_step_does_not_catch_up_without_daemon_progress;
+          Alcotest.test_case
+            "time coalesced step does not catch up without daemon progress"
+            `Quick
+            test_time_step_coalesced_does_not_catch_up_without_daemon_progress;
           Alcotest.test_case "time step does not run function in stabilize"
             `Quick test_time_step_does_not_run_f_inside_stabilize;
           Alcotest.test_case "time active timer refresh does not restart pure pass"

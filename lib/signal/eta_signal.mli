@@ -488,10 +488,11 @@ module Make (Observer_error : Observer_error) () : sig
         nodes advance the counter arithmetically to the final saturated value
         for the same sample.
 
-        [step] keeps user code out of stabilization: [f] runs only in the
-        demand-owned timer daemon. When that daemon wakes after a clock jump,
-        [step] replays one source update per awakened cadence; large catch-up
-        runs yield cooperatively between internal batches. *)
+        [step] and [step_coalesced] keep user code out of stabilization: [f]
+        runs only in the demand-owned timer daemon. A stabilization that runs
+        before the daemon resumes can therefore observe the last
+        daemon-published step value while [interval] has already caught up for
+        the same clock sample. *)
 
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
