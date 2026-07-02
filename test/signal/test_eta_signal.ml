@@ -4228,6 +4228,65 @@ let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
       Alcotest.(check int) "future stats calls do not hang" 0
         later_snapshot.Signal.lane_waiter_count)
 
+let test_graph_lane_acquisition_stays_on_owner_domain () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let owner = Domain.self () in
+  let acquired_domains = ref [] in
+  Fun.protect
+    ~finally:Signal.Private_test_hooks.clear
+    (fun () ->
+      Signal.Private_test_hooks.set
+        Signal.Private_test_hooks.After_graph_lane_acquired
+        {
+          run =
+            (fun () ->
+              Effect.sync (fun () ->
+                  acquired_domains := Domain.self () :: !acquired_domains));
+        };
+      let source = Signal.Var.create 1 in
+      let started, started_resolver = Eio.Promise.create () in
+      let release, release_resolver = Eio.Promise.create () in
+      let block_once = ref true in
+      let signal =
+        Signal.Var.watch source
+        |> Signal.map (fun value ->
+               if !block_once then (
+                 block_once := false;
+                 Eio.Promise.resolve started_resolver ();
+                 Eio.Promise.await release);
+               value)
+      in
+      let observer =
+        run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+      in
+      let stabilizer =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Eta_eio.Runtime.run rt (widen Signal.stabilize))
+      in
+      Eio.Promise.await started;
+      let queued_stats =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Eta_eio.Runtime.run rt (widen (Signal.stats ())))
+      in
+      for _ = 1 to 5 do
+        Eta_test.Async.yield ()
+      done;
+      Alcotest.(check bool) "stats waits behind graph lane" false
+        (Eio.Promise.is_resolved queued_stats);
+      Eio.Promise.resolve release_resolver ();
+      ignore
+        (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
+      ignore
+        (expect_exit_ok "queued stats" (Eio.Promise.await_exn queued_stats)
+          : Signal.stats);
+      run_ok rt (Signal.Observer.dispose observer);
+      Alcotest.(check bool)
+        "graph lane acquisitions stayed on owner domain" true
+        (List.for_all (fun domain -> domain = owner) !acquired_domains);
+      Alcotest.(check bool)
+        "immediate and queued graph lane acquisitions were observed" true
+        (List.length !acquired_domains >= 3))
+
 let test_observer_read_waits_for_graph_lane () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -8066,6 +8125,8 @@ let () =
           Alcotest.test_case
             "graph lane granted waiter survives resolver failure" `Quick
             test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises;
+          Alcotest.test_case "graph lane acquisitions stay on owner domain"
+            `Quick test_graph_lane_acquisition_stays_on_owner_domain;
           Alcotest.test_case "observer read waits for graph lane" `Quick
             test_observer_read_waits_for_graph_lane;
           Alcotest.test_case "time interval construction waits for graph lane"
