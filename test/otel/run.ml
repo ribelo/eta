@@ -137,8 +137,24 @@ let consume_request flow =
     Some { target; headers = List.rev !captured_headers }
   with _ -> None
 
-let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
-    response =
+let test_clock_capability clock =
+  object
+    method sleep duration = Eta_test.Test_clock.sleep clock duration
+  end
+
+let wait_for_test_clock_sleepers clock expected =
+  let rec loop attempts =
+    if Eta_test.Test_clock.sleeper_count clock >= expected then ()
+    else if attempts = 0 then
+      Alcotest.failf "expected %d test-clock sleepers, got %d" expected
+        (Eta_test.Test_clock.sleeper_count clock)
+    else (
+      Eio.Fiber.yield ();
+      loop (attempts - 1))
+  in
+  loop 50
+
+let start_response_server ~sw ~net ?(connections = 16) response =
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:16 net
       (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
@@ -150,7 +166,6 @@ let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
              Eio.Switch.run @@ fun conn_sw ->
              let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
              ignore (consume_request flow);
-             if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
              Eio.Flow.copy_string response flow;
              try Eio.Flow.shutdown flow `Send with _ -> ()
          done
@@ -158,8 +173,7 @@ let start_response_server ~sw ~net ~clock ?(delay_s = 0.0) ?(connections = 16)
       `Stop_daemon);
   port
 
-let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
-    ?(on_request = fun _ -> ())
+let start_response_sequence_server ~sw ~net ?(on_request = fun _ -> ())
     ?(on_request_headers = fun _ _ -> ())
     ?(connections = 16) responses =
   match responses with
@@ -184,13 +198,30 @@ let start_response_sequence_server ~sw ~net ~clock ?(delay_s = 0.0)
                    on_request target;
                    on_request_headers target headers
                | Some { target = None; _ } | None -> ());
-               if delay_s > 0.0 then Eio.Time.sleep clock delay_s;
                Eio.Flow.copy_string responses.(index) flow;
                try Eio.Flow.shutdown flow `Send with _ -> ()
              done
            with _ -> ());
           `Stop_daemon);
       (port, hits)
+
+let start_blocked_response_server ~sw ~net ~release response =
+  let socket =
+    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:16 net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port = tcp_port (Eio.Net.listening_addr socket) in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+      (try
+         Eio.Switch.run @@ fun conn_sw ->
+         let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
+         ignore (consume_request flow);
+         Eio.Promise.await release;
+         Eio.Flow.copy_string response flow;
+         try Eio.Flow.shutdown flow `Send with _ -> ()
+       with _ -> ());
+      `Stop_daemon);
+  port
 
 let emit_span contract (tracer : Capabilities.tracer) name =
   let span = tracer#begin_span contract ~name ~started_ms:0 () in
@@ -411,7 +442,7 @@ let test_malformed_response_reports_error () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port =
-    start_response_server ~sw ~net ~clock
+    start_response_server ~sw ~net
       "HTTP/1.1 500 Broken\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
@@ -431,7 +462,7 @@ let test_custom_otlp_headers_are_sent () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port, _hits =
-    start_response_sequence_server ~sw ~net ~clock
+    start_response_sequence_server ~sw ~net
       ~on_request_headers:(fun target headers ->
         if String.equal target "/v1/traces" then trace_headers := headers)
       [
@@ -537,7 +568,7 @@ let test_otlp_retry_excludes_408 () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port, _hits =
-    start_response_sequence_server ~sw ~net ~clock
+    start_response_sequence_server ~sw ~net
       ~on_request:(fun path -> paths := path :: !paths)
       [
         "HTTP/1.1 408 Request Timeout\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -567,7 +598,7 @@ let test_otlp_retry_includes_429 () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port, _hits =
-    start_response_sequence_server ~sw ~net ~clock
+    start_response_sequence_server ~sw ~net
       ~on_request:(fun path -> paths := path :: !paths)
       [
         "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -592,22 +623,43 @@ let test_slow_collector_flush_timeout () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net stdenv in
-  let clock = Eio.Stdenv.clock stdenv in
+  let host_clock = Eio.Stdenv.clock stdenv in
+  let test_clock = Eta_test.Test_clock.create () in
+  let release_response, release_response_resolver = Eio.Promise.create () in
   let port =
-    start_response_server ~sw ~net ~clock ~delay_s:1.0
+    start_blocked_response_server ~sw ~net ~release:release_response
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
+  let runtime_factory tracer =
+    Eta_eio.Runtime.create ~sw ~clock:host_clock
+      ~sleep:(Eta_test.Test_clock.sleep test_clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms test_clock)
+      ~tracer ()
+  in
+  let http_client = Eta_http_eio.Client.make_h1 ~sw ~net () in
   let exporter =
-    Support.create_exporter ~sw ~net ~clock ~host:"127.0.0.1" ~port
+    Eta_otel.create ~runtime_factory ~http_client
+      ~clock:(test_clock_capability test_clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms test_clock)
+      ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-slow-collector"
       ~on_error:(fun _ -> ())
       ()
   in
-  emit_span (runtime_contract ~sw ~clock) (Eta_otel.tracer exporter) "slow";
-  let started = Eio.Time.now clock in
-  Eta_otel.flush ~timeout_s:0.02 exporter;
-  let elapsed = Eio.Time.now clock -. started in
-  Alcotest.(check bool) "flush respects timeout" true (elapsed < 0.5)
+  emit_span (runtime_contract ~sw ~clock:host_clock) (Eta_otel.tracer exporter)
+    "slow";
+  Alcotest.(check bool)
+    "flush has pending telemetry" true
+    (Eta_otel.in_flight exporter > 0);
+  let flushed, flushed_resolver = Eio.Promise.create () in
+  Eio.Fiber.fork ~sw (fun () ->
+      Eta_otel.flush ~timeout_s:0.02 exporter;
+      Eio.Promise.resolve flushed_resolver ());
+  wait_for_test_clock_sleepers test_clock 1;
+  Eta_test.Test_clock.adjust test_clock (Duration.ms 20);
+  Eio.Promise.await flushed;
+  Eio.Promise.resolve release_response_resolver ();
+  Eio.Fiber.yield ()
 
 let test_backpressure_overflow_drops () =
   Eio_main.run @@ fun stdenv ->
@@ -725,7 +777,7 @@ let test_self_metrics_export_without_recursion () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port =
-    start_response_server ~sw ~net ~clock ~connections:4
+    start_response_server ~sw ~net ~connections:4
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
@@ -769,7 +821,7 @@ let test_self_metrics_can_be_disabled () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port =
-    start_response_server ~sw ~net ~clock ~connections:2
+    start_response_server ~sw ~net ~connections:2
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =
@@ -795,7 +847,7 @@ let test_self_metrics_path_is_separate () =
   let net = Eio.Stdenv.net stdenv in
   let clock = Eio.Stdenv.clock stdenv in
   let port =
-    start_response_server ~sw ~net ~clock ~connections:4
+    start_response_server ~sw ~net ~connections:4
       "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
   in
   let exporter =

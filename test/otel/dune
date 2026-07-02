@@ -1,7 +1,7 @@
 (test
  (name run)
  (modules run support test_tracer test_logger test_metrics test_terminal)
- (libraries eta_eio eta eta_http_eio eta_otel eio_main alcotest yojson)
+ (libraries eta_eio eta eta_http_eio eta_otel eta_test eio_main alcotest yojson)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
