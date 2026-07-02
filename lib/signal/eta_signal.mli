@@ -7,13 +7,18 @@
     derived signals, observers, and stream bridges. This is a cheap identity
     cutoff, not a structural-value cutoff.
 
-    Use the default only when object identity is the value semantics you want,
-    for example stable immutable tokens or values whose changes are always
-    represented by a new identity. Pass an explicit structural [?equal] for
-    arrays, mutable records, maps, sets, JSON-like trees, decoded rows, lists
-    rebuilt on every recomputation, and any derived value allocated fresh from
-    unchanged logical content. In the examples below, [S] is a signal module
-    produced by {!Make}.
+    Rule of thumb: if the value is heap-shaped, pass [?equal] and publish a
+    fresh value when the logical content changes. Use the physical default only
+    when object identity is the value semantics you want, for example stable
+    immutable tokens or values whose changes are always represented by a new
+    identity. Prefer explicit structural cutoffs for arrays, records, maps,
+    sets, JSON-like trees, decoded rows, lists rebuilt on every recomputation,
+    and any derived value allocated fresh from unchanged logical content.
+
+    Structural [?equal] cannot recover a previous snapshot after you mutate the
+    same heap object in place: the graph still holds that object as the old
+    value. Treat signal payloads as immutable once published, or publish a copy.
+    In the examples below, [S] is a signal module produced by {!Make}.
 
     Mutating a heap block in place and setting the same block is suppressed by
     the default cutoff:
@@ -25,7 +30,8 @@
 
       block.(0) <- 2;
       S.Var.set source block
-      (* Same heap object: no source change is published. *)
+      (* Same heap object, and the old snapshot was mutated too:
+         no source change is published. *)
     ]}
 
     Freshly allocated but structurally equal values are changes by default:
@@ -59,6 +65,7 @@
 
     {[
       let int_array_equal = Array.equal Int.equal
+      let string_list_equal = List.equal String.equal
 
       type user = {
         id : int;
@@ -70,7 +77,8 @@
 
       module IntMap = Map.Make (Int)
       let int_map_equal = IntMap.equal String.equal
-      let int_list_equal = List.equal Int.equal
+
+      let decoded_user_row_equal = user_equal
     ]}
 
     A graph is single-domain: create and use all vars, signals, observers, and
@@ -189,9 +197,13 @@ module Make (Observer_error : Observer_error) () : sig
 
     val create : ?equal:('a -> 'a -> bool) -> 'a -> 'a t
     (** Create a source variable. Without [?equal], source updates use
-        physical equality as their cutoff. For mutable containers, records, or
-        other structural values, pass [?equal]; setting the same heap object
-        after in-place mutation is suppressed by the default cutoff. *)
+        physical equality as their cutoff.
+
+        For arrays, records, maps, lists, decoded rows, JSON-like trees, and
+        other structural values, pass [?equal] and publish fresh values. Setting
+        the same heap object after in-place mutation is suppressed by the
+        default cutoff, and even a structural [?equal] cannot reconstruct the
+        pre-mutation snapshot if that snapshot aliases the same object. *)
 
     val value : 'a t -> 'a
     (** Synchronously read the current source value, including values set since
@@ -233,7 +245,9 @@ module Make (Observer_error : Observer_error) () : sig
 
         Without [?equal], observer callback emission uses physical equality as
         its cutoff. The observer's current value still advances to the latest
-        stabilized value when a callback is suppressed.
+        stabilized value when a callback is suppressed. Pass [?equal] for
+        structural observer values when callbacks should represent logical
+        content changes rather than heap identity changes.
 
         Callback typed failures must be returned by the effect, for example
         with [Eta.Effect.fail err]; those failures are reported by
@@ -268,7 +282,9 @@ module Make (Observer_error : Observer_error) () : sig
       equality. Freshly allocated but structurally equal values are therefore
       treated as changes unless a structural [?equal] is supplied.
       Pass [?equal] when [f] returns arrays, records, maps, lists, JSON-like
-      trees, or other freshly rebuilt structural values.
+      trees, decoded rows, or other freshly rebuilt structural values. Prefer
+      immutable/copy-on-write results; mutating a previously published result in
+      place mutates the cached old value too.
 
       The mapping function must be pure and total. Eta may evaluate pure graph
       closures during a stabilization that later rolls back because another
@@ -372,7 +388,8 @@ module Make (Observer_error : Observer_error) () : sig
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
   (** Collect a list of signals. Without [?equal], the list cutoff is physical
       equality. Pass [~equal:(List.equal element_equal)] when list contents
-      define the logical value.
+      define the logical value; otherwise each freshly allocated list is a
+      change by identity.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -390,7 +407,8 @@ module Make (Observer_error : Observer_error) () : sig
 
       Without [?equal], the selected output cutoff is physical equality.
       Pass [?equal] when selected branch outputs are structural values such as
-      arrays, records, maps, lists, or freshly rebuilt immutable trees.
+      arrays, records, maps, lists, decoded rows, JSON-like trees, or freshly
+      rebuilt immutable trees.
 
       Raises [Graph_error] on graph construction failures; see
       {!exception:Graph_error}. *)
@@ -503,7 +521,9 @@ module Make (Observer_error : Observer_error) () : sig
         updates. [capacity] defaults to [1024] and bounds the bridge queue.
         Without [?equal], stream update emission uses physical equality as its
         observer cutoff. Pass [?equal] when stream consumers should receive
-        updates only for structural value changes.
+        updates only for structural value changes. This is especially important
+        for streams of arrays, records, maps, lists, decoded rows, or JSON-like
+        trees, where allocating a fresh but equal value would otherwise emit.
 
         Publication from stabilization is nonblocking: when the bridge already
         has [capacity] buffered updates, the newest stream update is dropped
