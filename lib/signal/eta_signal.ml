@@ -1216,14 +1216,21 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_due_unlocked timer interval_ms now_ms =
     match timer_next_due_unlocked timer with
-    | None -> 0
+    | None -> (0, false)
     | Some next_due_ms ->
         let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
-        if missed > 0 then
-          stage_timer_state_unlocked timer
-            (timer_set_next_due_state (timer_effective_state timer)
-               (Some (advance_due next_due_ms interval_ms missed)));
-        missed
+        let saturated_due =
+          if missed <= 0 then false
+          else
+            let advanced_due_ms =
+              advance_due next_due_ms interval_ms missed
+            in
+            stage_timer_state_unlocked timer
+              (timer_set_next_due_state (timer_effective_state timer)
+                 (Some advanced_due_ms));
+            advanced_due_ms = max_int && now_ms >= advanced_due_ms
+        in
+        (missed, saturated_due)
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
@@ -1696,10 +1703,13 @@ module Make (Observer_error : Observer_error) () = struct
           timer_finish_from_graph_unlocked timer)
         else stage_timer_source_value source false
     | Refresh_interval_source (source, interval_ms) ->
-        let missed = refresh_due_unlocked timer interval_ms now_ms in
+        let missed, saturated_due =
+          refresh_due_unlocked timer interval_ms now_ms
+        in
         if missed > 0 then
           stage_timer_source_value source
-            (add_int_capped (effective_var_value source) missed)
+            (add_int_capped (effective_var_value source) missed);
+        if saturated_due then timer_finish_from_graph_unlocked timer
 
   let clear_timer_refresh_timer_staging timer =
     timer.timer_staged_state <- None;

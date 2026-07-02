@@ -5116,6 +5116,24 @@ let set_signal_timer_generation signal value =
   Obj.set_field updated_state 0 (Obj.repr value);
   Obj.set_field timer 0 updated_state
 
+let set_signal_timer_next_due signal next_due_ms =
+  (* Public APIs cannot drive the timer due cursor to [max_int] in a focused
+     test. *)
+  let signal_obj = Obj.repr signal in
+  let timer_opt = Obj.field signal_obj 19 in
+  if Obj.is_int timer_opt then Alcotest.fail "expected timer signal";
+  let timer = Obj.field timer_opt 0 in
+  let timer_state = Obj.field timer 0 in
+  if Obj.is_int timer_state then Alcotest.fail "expected active timer state";
+  if Obj.size timer_state < 2 then
+    Alcotest.fail "expected timer state with next due";
+  let updated_state = Obj.new_block (Obj.tag timer_state) (Obj.size timer_state) in
+  for index = 0 to Obj.size timer_state - 1 do
+    Obj.set_field updated_state index (Obj.field timer_state index)
+  done;
+  Obj.set_field updated_state 1 (Obj.repr (Some next_due_ms));
+  Obj.set_field timer 0 updated_state
+
 let set_observer_on_dispose observer hooks =
   (* Public APIs only install internal stream hooks; this keeps the regression
      focused on hook failure without widening the signal API. *)
@@ -6497,6 +6515,29 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
       now_ms := 55;
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "5 missed cadences" 5
+        (run_ok rt (Signal.Observer.read observer)))
+
+let test_time_interval_does_not_recount_saturated_due () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "interval daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial interval" 0
+        (run_ok rt (Signal.Observer.read observer));
+      set_signal_timer_next_due signal max_int;
+      now_ms := max_int;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "saturated due counted once" 1
+        (run_ok rt (Signal.Observer.read observer));
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "saturated due is not recounted" 1
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_deadline_refresh_retries_after_downstream_defect () =
@@ -8287,6 +8328,8 @@ let () =
             `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
           Alcotest.test_case "time interval catches up after late sleep" `Quick
             test_time_interval_catches_up_after_late_sleep;
+          Alcotest.test_case "time interval does not recount saturated due"
+            `Quick test_time_interval_does_not_recount_saturated_due;
           Alcotest.test_case "time step catches up after late sleep" `Quick
             test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time step catch-up yields between batches" `Quick
