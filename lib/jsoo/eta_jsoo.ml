@@ -622,10 +622,10 @@ let subscribe_or_raise promise ~on_result =
 module Runtime = struct
   type 'err t = 'err Eta.Runtime.t
 
-  let create ?sleep ?tracer ?sampler ?auto_instrument ?logger ?meter ?random
-      ?services
+  let create ?sleep ?now_ms ?tracer ?sampler ?auto_instrument ?logger ?meter
+      ?random ?services
       ?capture_backtrace () =
-    Eta.Runtime.create_with_runtime (runtime ()) ?sleep ?tracer ?sampler
+    Eta.Runtime.create_with_runtime (runtime ()) ?sleep ?now_ms ?tracer ?sampler
       ?auto_instrument ?logger ?meter ?random ?services ?capture_backtrace ()
 
   let run runtime eff ~on_result =

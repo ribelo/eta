@@ -884,9 +884,7 @@ let test_h2c_server_handler_timeout () =
   let handler_calls = ref 0 in
   let handler (_request : Eta_http.Server.Request.t) =
     incr handler_calls;
-    Eta.Effect.sync (fun () ->
-        Eio.Time.sleep clock 1.0;
-        Eta_http.Server.Response.text "late\n")
+    Eta.Effect.never
   in
   let server =
     Eta_http_eio.Server.start_h2c_on_socket ~sw ~clock ~config ~socket handler
@@ -946,10 +944,7 @@ let test_h2c_server_response_body_timeout_resets_stream () =
             ~release:(fun () ->
               Eta.Effect.sync (fun () ->
                   ignore (Eio.Promise.try_resolve resolve_released ())))
-            (fun () ->
-              Eta.Effect.sync (fun () ->
-                  Eio.Time.sleep clock 1.0;
-                  Some (Bytes.of_string "late")))
+            (fun () -> Eta.Effect.never)
         in
         Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
     | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
@@ -5353,8 +5348,7 @@ let test_h2c_server_handler_timeout_returns_503 () =
   let server_config = { Eta_http.Server.Config.default with timeouts } in
   let config = { Eta_http_eio.Server.Config.default with server = server_config } in
   let handler (_request : Eta_http.Server.Request.t) =
-    Eta.Effect.delay (Eta.Duration.seconds 1)
-      (Eta.Effect.pure (Eta_http.Server.Response.text "slow\n"))
+    Eta.Effect.never
   in
   let stop, resolve_stop = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () ->

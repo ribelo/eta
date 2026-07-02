@@ -2033,10 +2033,7 @@ let test_https_server_h2_timeout_does_not_poison_later_handshake () =
   in
   let handler (request : Eta_http.Server.Request.t) =
     match request.path with
-    | "/slow" ->
-        Eta.Effect.sync (fun () ->
-            Eio.Time.sleep clock 1.0;
-            Eta_http.Server.Response.text "late\n")
+    | "/slow" -> Eta.Effect.never
     | _ -> Eta.Effect.pure (Eta_http.Server.Response.text "ok\n")
   in
   let server, port =

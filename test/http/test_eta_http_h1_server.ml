@@ -573,17 +573,10 @@ let test_h1_server_connection_handler_timeout () =
   let config =
     { Eta_http_eio.Server.Config.default with server = server_config }
   in
-  let clock_ref = ref None in
   let handler (_request : Eta_http.Server.Request.t) =
-    match !clock_ref with
-    | None -> Alcotest.fail "handler clock not initialized"
-    | Some clock ->
-        Eta.Effect.sync (fun () ->
-            Eio.Time.sleep clock 1.0;
-            Eta_http.Server.Response.text "late\n")
+    Eta.Effect.never
   in
   with_h1_connection ~config handler @@ fun clock flow closed_stats ->
-  clock_ref := Some clock;
   Eio.Flow.copy_string
     "GET /slow-handler HTTP/1.1\r\nHost: example.test\r\n\r\n" flow;
   let response =
@@ -610,16 +603,12 @@ let test_h1_server_connection_handler_construction_timeout () =
   let config =
     { Eta_http_eio.Server.Config.default with server = server_config }
   in
-  let clock_ref = ref None in
+  let never, _resolve_never = Eio.Promise.create () in
   let handler (_request : Eta_http.Server.Request.t) =
-    match !clock_ref with
-    | None -> Alcotest.fail "handler clock not initialized"
-    | Some clock ->
-        Eio.Time.sleep clock 1.0;
-        Eta.Effect.pure (Eta_http.Server.Response.text "late\n")
+    Eio.Promise.await never;
+    Eta.Effect.pure (Eta_http.Server.Response.text "late\n")
   in
   with_h1_connection ~config handler @@ fun clock flow closed_stats ->
-  clock_ref := Some clock;
   Eio.Flow.copy_string
     ("GET /slow-handler HTTP/1.1\r\nHost: example.test\r\n\r\n"
    ^ "GET /after HTTP/1.1\r\nHost: example.test\r\n\r\n")
@@ -809,25 +798,17 @@ let test_h1_server_connection_response_body_timeout_releases_stream () =
     { Eta_http_eio.Server.Config.default with server = server_config }
   in
   let released = ref 0 in
-  let clock_ref = ref None in
   let handler (_request : Eta_http.Server.Request.t) =
     let body =
       Eta_http.Server.Response.Body.stream
         ~release:(fun () ->
           incr released;
           Eta.Effect.unit)
-        (fun () ->
-          match !clock_ref with
-          | None -> Alcotest.fail "handler clock not initialized"
-          | Some clock ->
-              Eta.Effect.sync (fun () ->
-                  Eio.Time.sleep clock 1.0;
-                  Some (Bytes.of_string "late")))
+        (fun () -> Eta.Effect.never)
     in
     Eta.Effect.pure (Eta_http.Server.Response.make ~status:200 ~body ())
   in
   with_h1_connection ~config handler @@ fun clock flow closed_stats ->
-  clock_ref := Some clock;
   Eio.Flow.copy_string
     ("GET /slow-response-body HTTP/1.1\r\nHost: example.test\r\n"
    ^ "Connection: close\r\n\r\n")

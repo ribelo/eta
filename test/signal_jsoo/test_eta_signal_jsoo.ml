@@ -54,8 +54,40 @@ let expect_die name = function
   | Eta.Exit.Error cause -> fail name ("expected defect, got " ^ pp_cause cause)
   | Eta.Exit.Ok _ -> fail name "expected defect, got Ok"
 
-let run_eta eff done_ check_result =
-  let runtime = Eta_jsoo.Runtime.create () in
+module Manual_clock = struct
+  type t = {
+    mutable now_ms : int;
+    mutable sleepers : (int * unit Eta_jsoo.Private.resolver) list;
+  }
+
+  let create () = { now_ms = 0; sleepers = [] }
+  let now_ms t () = t.now_ms
+
+  let sleep t duration =
+    let delay_ms = Eta.Duration.to_ms duration in
+    if delay_ms > 0 then
+      let due_ms = t.now_ms + delay_ms in
+      if due_ms > t.now_ms then (
+        let promise, resolver = Eta_jsoo.Private.create_promise () in
+        t.sleepers <- (due_ms, resolver) :: t.sleepers;
+        Eta_jsoo.Private.await promise)
+
+  let advance t duration =
+    let target_ms = t.now_ms + Eta.Duration.to_ms duration in
+    t.now_ms <- target_ms;
+    let due, pending =
+      List.partition (fun (due_ms, _) -> due_ms <= target_ms) t.sleepers
+    in
+    t.sleepers <- pending;
+    List.iter (fun (_, resolver) -> Eta_jsoo.Private.resolve resolver ()) due
+end
+
+let run_eta ?runtime eff done_ check_result =
+  let runtime =
+    match runtime with
+    | Some runtime -> runtime
+    | None -> Eta_jsoo.Runtime.create ()
+  in
   Eta_jsoo.Runtime.run runtime (widen eff) ~on_result:(fun result ->
       Eta_js_test.finish done_ (fun () -> check_result result))
 
@@ -151,6 +183,11 @@ let test_failure_and_defect_propagation done_ =
       expect_die "pure callback defect" defect_exit)
 
 let test_time_nodes_require_explicit_stabilization done_ =
+  let clock = Manual_clock.create () in
+  let runtime =
+    Eta_jsoo.Runtime.create ~sleep:(Manual_clock.sleep clock)
+      ~now_ms:(Manual_clock.now_ms clock) ()
+  in
   let eff =
     let* interval = Signal.Time.interval (Eta.Duration.ms 1) in
     let* now = Signal.Time.now ~every:(Eta.Duration.ms 1) () in
@@ -160,14 +197,14 @@ let test_time_nodes_require_explicit_stabilization done_ =
     let* observer = Signal.Observer.observe combined (fun _ -> E.unit) in
     let* () = Signal.stabilize in
     let* initial = Signal.Observer.read observer in
-    let* () = E.sleep (Eta.Duration.ms 10) in
+    let* () = E.sync (fun () -> Manual_clock.advance clock (Eta.Duration.ms 10)) in
     let* before = Signal.Observer.read observer in
     let* () = Signal.stabilize in
     let* after = Signal.Observer.read observer in
     let+ () = Signal.Observer.dispose observer in
     (initial, before, after)
   in
-  run_eta eff done_ (fun result ->
+  run_eta ~runtime eff done_ (fun result ->
       let (initial_interval, initial_now), before, (after_interval, after_now) =
         expect_ok "time explicit stabilization" result
       in
