@@ -394,6 +394,26 @@ The default cutoff is physical equality (`==`).
 Producing nodes may accept custom equality. Node equality controls downstream
 graph propagation.
 
+User-facing examples that produce structural data should pass explicit
+structural equality at the producer:
+
+```ocaml
+type view_model = {
+  title : string;
+  rows : string list;
+}
+
+let view_model_equal left right =
+  String.equal left.title right.title
+  && List.equal String.equal left.rows right.rows
+
+let view_model_signal =
+  Signal.map ~equal:view_model_equal derive_view_model model_signal
+```
+
+For pairs, prefer `map2 ~equal` over `both` when pair contents define the
+logical value, because `both` has no `?equal` shortcut.
+
 Observer registration may also accept custom equality. Observer equality
 controls callback emission for that observer only; it does not change the
 observed signal's propagation behavior for other consumers.

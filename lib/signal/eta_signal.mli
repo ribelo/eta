@@ -79,6 +79,19 @@
       let int_map_equal = IntMap.equal String.equal
 
       let decoded_user_row_equal = user_equal
+
+      type view_model = {
+        title : string;
+        rows : string list;
+      }
+
+      let view_model_equal left right =
+        String.equal left.title right.title
+        && List.equal String.equal left.rows right.rows
+
+      let view_model =
+        S.Var.watch model_source
+        |> S.map ~equal:view_model_equal derive_view_model
     ]}
 
     A graph is single-domain: create and use all vars, signals, observers, and
@@ -385,6 +398,24 @@ module Make (Observer_error : Observer_error) () : sig
     'j signal
 
   val both : 'a signal -> 'b signal -> ('a * 'b) signal
+  (** Pair two signals. The pair cutoff is physical equality because [both]
+      has no [?equal] argument. Use {!map2} with an explicit structural cutoff
+      when pair contents define the logical value:
+
+      {[
+        let pair_equal (left_count, left_name) (right_count, right_name) =
+          Int.equal left_count right_count
+          && String.equal left_name right_name
+
+        let paired =
+          S.map2 ~equal:pair_equal
+            (fun count name -> (count, name))
+            count_signal name_signal
+      ]}
+
+      Raises [Graph_error] on graph construction failures; see
+      {!exception:Graph_error}. *)
+
   val all : ?equal:('a list -> 'a list -> bool) -> 'a signal list -> 'a list signal
   (** Collect a list of signals. Without [?equal], the list cutoff is physical
       equality. Pass [~equal:(List.equal element_equal)] when list contents
@@ -544,6 +575,11 @@ module Make (Observer_error : Observer_error) () : sig
         updates only for structural value changes. This is especially important
         for streams of arrays, records, maps, lists, decoded rows, or JSON-like
         trees, where allocating a fresh but equal value would otherwise emit.
+        For example:
+
+        {[
+          S.Stream.observe ~equal:view_model_equal view_model_signal
+        ]}
 
         Publication from stabilization is nonblocking: when the bridge already
         has [capacity] buffered updates, the newest stream update is dropped
