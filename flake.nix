@@ -208,7 +208,7 @@
             ];
             text = ''
               switch_name="''${ETA_OPAM_SWITCH:-${oxCamlSwitch}}"
-              repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              repo_root="''${ETA_REPO_ROOT:-/home/ribelo/projects/ribelo/ocaml/Eta}"
               cd "$repo_root"
 
               export OPAMROOT="''${OPAMROOT:-${oxCamlOpamRoot}}"
