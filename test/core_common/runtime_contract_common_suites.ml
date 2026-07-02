@@ -161,6 +161,17 @@ let run_in_domain f =
   in
   Domain.join domain
 
+let expect_runtime_contract_domain_rejection label f =
+  match f () with
+  | () -> Alcotest.failf "%s: expected cross-domain contract rejection" label
+  | exception Invalid_argument message ->
+      Alcotest.(check string)
+        (label ^ " cross-domain runtime contract failure")
+        runtime_contract_domain_message message
+  | exception exn ->
+      Alcotest.failf "%s: expected Invalid_argument, got %s" label
+        (Printexc.to_string exn)
+
 let test_erased_tokens_reject_foreign_runtime_contract () =
   let first =
     Runtime_contract.of_runtime
@@ -208,6 +219,82 @@ let test_erased_runtime_contract_rejects_foreign_domain_use () =
         runtime_contract_domain_message message
   | Ok _ -> Alcotest.fail "expected cross-domain runtime contract use to fail"
 
+let test_erased_runtime_contract_rejects_foreign_domain_operations () =
+  let contract =
+    Runtime_contract.of_runtime
+      (module Direct_runtime : Runtime_contract.RUNTIME)
+  in
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let stream = contract.Runtime_contract.create_stream 1 in
+  let local = Runtime_contract.create_local () in
+  let check_foreign label f =
+    run_in_domain (fun () -> expect_runtime_contract_domain_rejection label f)
+  in
+  check_foreign "now_ms" (fun () ->
+      ignore (contract.Runtime_contract.now_ms () : int));
+  check_foreign "sleep" (fun () ->
+      contract.Runtime_contract.sleep Duration.zero);
+  check_foreign "yield" (fun () -> contract.Runtime_contract.yield ());
+  check_foreign "check" (fun () -> contract.Runtime_contract.check ());
+  check_foreign "create_promise" (fun () ->
+      ignore (contract.Runtime_contract.create_promise () : int
+                Runtime_contract.promise
+                * int Runtime_contract.resolver));
+  check_foreign "resolve_promise" (fun () ->
+      contract.Runtime_contract.resolve_promise resolver 1);
+  check_foreign "await_promise" (fun () ->
+      ignore (contract.Runtime_contract.await_promise promise : int));
+  check_foreign "create_stream" (fun () ->
+      ignore (contract.Runtime_contract.create_stream 1 : int Runtime_contract.stream));
+  check_foreign "stream_add" (fun () ->
+      contract.Runtime_contract.stream_add stream 1);
+  check_foreign "stream_take" (fun () ->
+      ignore (contract.Runtime_contract.stream_take stream : int));
+  check_foreign "stream_take_nonblocking" (fun () ->
+      ignore (contract.Runtime_contract.stream_take_nonblocking stream : int option));
+  check_foreign "cancel_sub" (fun () ->
+      contract.Runtime_contract.cancel_sub (fun _ -> ()));
+  check_foreign "local_get" (fun () ->
+      ignore (contract.Runtime_contract.local_get local : int option));
+  check_foreign "local_with_binding" (fun () ->
+      contract.Runtime_contract.local_with_binding local 1 (fun () -> ()))
+
+module Foreign_callback_runtime = struct
+  include Direct_runtime
+
+  let run_callback_on_foreign_domain f = run_in_domain f
+  let protect f = run_callback_on_foreign_domain f
+  let run_scope ?name:_ f = run_callback_on_foreign_domain (fun () -> f ())
+  let fork () f = run_callback_on_foreign_domain f
+
+  let fork_daemon () f =
+    ignore (run_callback_on_foreign_domain f : [ `Stop_daemon ])
+
+  let cancel_sub f = run_callback_on_foreign_domain (fun () -> f ())
+  let local_with_binding _ _ f = run_callback_on_foreign_domain f
+end
+
+let test_erased_runtime_contract_rejects_backend_foreign_domain_callbacks () =
+  let contract =
+    Runtime_contract.of_runtime
+      (module Foreign_callback_runtime : Runtime_contract.RUNTIME)
+  in
+  expect_runtime_contract_domain_rejection "protect callback" (fun () ->
+      contract.Runtime_contract.protect (fun () -> ()));
+  expect_runtime_contract_domain_rejection "run_scope callback" (fun () ->
+      contract.Runtime_contract.run_scope (fun _ -> ()));
+  expect_runtime_contract_domain_rejection "fork callback" (fun () ->
+      contract.Runtime_contract.fork contract.Runtime_contract.root_scope
+        (fun () -> ()));
+  expect_runtime_contract_domain_rejection "fork_daemon callback" (fun () ->
+      contract.Runtime_contract.fork_daemon contract.Runtime_contract.root_scope
+        (fun () -> `Stop_daemon));
+  expect_runtime_contract_domain_rejection "cancel_sub callback" (fun () ->
+      contract.Runtime_contract.cancel_sub (fun _ -> ()));
+  let local = Runtime_contract.create_local () in
+  expect_runtime_contract_domain_rejection "local callback" (fun () ->
+      contract.Runtime_contract.local_with_binding local 1 (fun () -> ()))
+
 let tests =
   [
     ( "Runtime contract",
@@ -226,5 +313,9 @@ let tests =
           test_erased_tokens_reject_foreign_runtime_contract;
         Alcotest.test_case "erased contract rejects cross-domain use" `Quick
           test_erased_runtime_contract_rejects_foreign_domain_use;
+        Alcotest.test_case "erased contract rejects cross-domain operations"
+          `Quick test_erased_runtime_contract_rejects_foreign_domain_operations;
+        Alcotest.test_case "erased contract rejects off-owner callbacks" `Quick
+          test_erased_runtime_contract_rejects_backend_foreign_domain_callbacks;
       ] );
   ]
