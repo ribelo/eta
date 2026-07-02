@@ -6597,11 +6597,16 @@ let test_time_interval_refresh_retries_after_downstream_defect () =
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "initial" 0
         (run_ok rt (Signal.Observer.read observer));
+      let before_failure_stats = run_ok rt (Signal.stats ()) in
       now_ms := 55;
       expect_die "interval refresh rollback"
         (Eta_eio.Runtime.run rt (widen Signal.stabilize));
       Alcotest.(check int) "rolled back interval snapshot" 0
         (run_ok rt (Signal.Observer.read observer));
+      Alcotest.(check int)
+        "rolled back interval refresh dirty flags"
+        before_failure_stats.Signal.live_dirty_node_count
+        (run_ok rt (Signal.stats ())).Signal.live_dirty_node_count;
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "interval refresh retried" 5
         (run_ok rt (Signal.Observer.read observer)))

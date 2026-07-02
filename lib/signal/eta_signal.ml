@@ -492,6 +492,7 @@ module Make (Observer_error : Observer_error) () = struct
     timer_refresh_token : int;
     timer_refresh_now_ms : unit -> int;
     mutable timer_refresh_sample_ms : int option;
+    mutable timer_refresh_dirty_nodes : (packed_signal * bool) list;
   }
 
   type graph = {
@@ -843,6 +844,21 @@ module Make (Observer_error : Observer_error) () = struct
     attach_dependency parent child
 
   let mark_self_dirty (P signal) = signal.dirty <- true
+
+  let mark_timer_refresh_dirty (P signal as packed) =
+    (match graph.active_timer_refresh with
+     | None -> ()
+     | Some context ->
+         if
+           not
+             (List.exists
+                (fun (P candidate, _) ->
+                  signal_id_int candidate.id = signal_id_int signal.id)
+                context.timer_refresh_dirty_nodes)
+         then
+           context.timer_refresh_dirty_nodes <-
+             (packed, signal.dirty) :: context.timer_refresh_dirty_nodes);
+    signal.dirty <- true
 
   let remove_var_watcher source signal =
     source.watchers <-
@@ -1659,7 +1675,7 @@ module Make (Observer_error : Observer_error) () = struct
     stage_var_source_value source value;
     if not (source.var_equal source.graph_value value) then (
       stage_var_graph_value source value;
-      List.iter mark_self_dirty source.watchers)
+      List.iter mark_timer_refresh_dirty source.watchers)
 
   let timer_finish_state state =
     let generation =
@@ -1715,6 +1731,15 @@ module Make (Observer_error : Observer_error) () = struct
     timer.timer_staged_state <- None;
     timer.timer_staged_refresh_token <- -1
 
+  let rollback_timer_refresh_dirty_nodes () =
+    match graph.active_timer_refresh with
+    | None -> ()
+    | Some context ->
+        List.iter
+          (fun (P signal, was_dirty) -> signal.dirty <- was_dirty)
+          context.timer_refresh_dirty_nodes;
+        context.timer_refresh_dirty_nodes <- []
+
   let commit_timer_refresh_staging timer =
     (match timer.timer_staged_state with
      | None -> ()
@@ -1723,6 +1748,7 @@ module Make (Observer_error : Observer_error) () = struct
     clear_timer_refresh_timer_staging timer
 
   let clear_timer_refresh_staging () =
+    rollback_timer_refresh_dirty_nodes ();
     List.iter clear_timer_refresh_timer_staging graph.timer_refresh_staged_timers;
     graph.timer_refresh_staged_timers <- [];
     graph.timer_refresh_disposal_hooks <- []
@@ -2623,6 +2649,7 @@ module Make (Observer_error : Observer_error) () = struct
                             timer_refresh_now_ms =
                               runtime_contract.Runtime_contract.now_ms;
                             timer_refresh_sample_ms = None;
+                            timer_refresh_dirty_nodes = [];
                           }
                       in
                       begin_stabilize_with_pending_hooks timer_refresh hooks_ref
