@@ -546,8 +546,10 @@ module Make (Observer_error : Observer_error) () : sig
 
         Clock-jump catch-up replays [f] once per awakened cadence after the
         timer daemon wakes, so very large jumps can perform correspondingly
-        large cooperative catch-up work. Unlike [now], [deadline], and
-        [interval], [step] does not run catch-up from stabilization; a
+        large cooperative catch-up work. Use {!step_coalesced} when catch-up
+        must be bounded or a clock can jump by an arbitrary number of cadences.
+        Unlike [now], [deadline], and [interval], [step] does not run catch-up
+        from stabilization; a
         stabilization that runs before the daemon resumes observes the last
         daemon-published step value.
 
@@ -567,7 +569,9 @@ module Make (Observer_error : Observer_error) () : sig
 
         This is the bounded catch-up variant of [step]. A large clock jump runs
         [f] once with a large [missed] value instead of replaying [f] once per
-        cadence. [missed] saturates at [max_int].
+        cadence. Prefer it for virtual-clock tests and production timers where
+        arbitrary per-cadence replay is not acceptable. [missed] saturates at
+        [max_int].
 
         Like [step], [f] runs in the demand-owned timer daemon, not during
         stabilization. If [f] raises, Eta reports the defect through daemon
