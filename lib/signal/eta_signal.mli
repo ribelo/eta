@@ -264,7 +264,12 @@ module Make (Observer_error : Observer_error) () : sig
         its cutoff. The observer's current value still advances to the latest
         stabilized value when a callback is suppressed. Pass [?equal] for
         structural observer values when callbacks should represent logical
-        content changes rather than heap identity changes.
+        content changes rather than heap identity changes:
+
+        {[
+          S.Observer.observe ~equal:view_model_equal view_model_signal
+            handle_view_model_update
+        ]}
 
         Callback typed failures must be returned by the effect, for example
         with [Eta.Effect.fail err]; those failures are reported by

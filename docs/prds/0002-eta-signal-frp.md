@@ -416,7 +416,18 @@ logical value, because `both` has no `?equal` shortcut.
 
 Observer registration may also accept custom equality. Observer equality
 controls callback emission for that observer only; it does not change the
-observed signal's propagation behavior for other consumers.
+observed signal's propagation behavior for other consumers. Stream observation
+uses the same observer cutoff; examples that bridge structural values should
+pass the same structural equality there too:
+
+```ocaml
+let* observer =
+  Signal.Observer.observe ~equal:view_model_equal view_model_signal
+    handle_view_model_update
+
+let* stream_observer, stream =
+  Signal.Stream.observe ~equal:view_model_equal view_model_signal
+```
 
 Custom equality functions are user callbacks. If they raise, the active
 operation fails as an Eta defect under the same no-partial-snapshot retry policy
