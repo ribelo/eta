@@ -3215,6 +3215,20 @@ let test_callback_construction_exception_is_defect_not_observer_error () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_observer_effect_typed_failure_is_observer_error () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let observed = Signal.Var.watch source in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe observed (fun _update ->
+           Effect.fail `Observer_failed))
+  in
+  expect_fail "observer effect typed failure"
+    (function `Observer_error `Observer_failed -> true | _ -> false)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_observer_typed_failure_retries_after_flag_fixed () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -7576,6 +7590,9 @@ let () =
           Alcotest.test_case
             "callback construction exception is defect not observer error" `Quick
             test_callback_construction_exception_is_defect_not_observer_error;
+          Alcotest.test_case
+            "observer effect typed failure is observer error" `Quick
+            test_observer_effect_typed_failure_is_observer_error;
           Alcotest.test_case "observer typed failure retries" `Quick
             test_observer_typed_failure_retries_after_flag_fixed;
           Alcotest.test_case "observer failed delivery coalesces reverted value"
