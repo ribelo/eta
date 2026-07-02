@@ -5065,7 +5065,7 @@ let seed_interval_source signal value =
   if Obj.tag kind <> 1 then Alcotest.fail "expected interval source signal";
   let source = Obj.field kind 0 in
   Obj.set_field source 2 (Obj.repr value);
-  Obj.set_field source 3 (Obj.repr value)
+  Obj.set_field source 4 (Obj.repr value)
 
 let set_signal_timer_generation signal value =
   (* Public APIs cannot drive timer generations to [max_int] in a focused test. *)

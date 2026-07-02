@@ -308,6 +308,7 @@ module Make (Observer_error : Observer_error) () = struct
     var_id : var_id;
     var_equal : 'a -> 'a -> bool;
     mutable source_value : 'a;
+    mutable staged_source_value : 'a option;
     mutable graph_value : 'a;
     mutable staged_graph_value : 'a option;
     mutable staged_var_generation : int;
@@ -396,15 +397,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_node = {
     mutable timer_state : timer_state;
+    mutable timer_staged_state : timer_state option;
+    mutable timer_staged_refresh_token : int;
     mutable timer_on_demand_refresh_token : int;
     timer_refresh_when_inactive : bool;
     timer_refresh_operation : timer_refresh_operation option;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
-
-  and timer_refresh_undo =
-    | Timer_refresh_var : 'a var * 'a * bool -> timer_refresh_undo
-    | Timer_refresh_timer of timer_node * timer_state * int
 
   and 'err timer_start_attempt = {
     start_timer : timer_node;
@@ -498,7 +497,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable staged_observers : packed_observer list;
     mutable pure_disposal_hooks : disposal_hook list;
     mutable timer_refresh_disposal_hooks : disposal_hook list;
-    mutable timer_refresh_undos : timer_refresh_undo list;
+    mutable timer_refresh_staged_timers : timer_node list;
     mutable observers : packed_observer list;
     mutable all_nodes : packed_signal list;
     mutable dead_nodes : dead_signal list;
@@ -539,7 +538,7 @@ module Make (Observer_error : Observer_error) () = struct
       staged_observers = [];
       pure_disposal_hooks = [];
       timer_refresh_disposal_hooks = [];
-      timer_refresh_undos = [];
+      timer_refresh_staged_timers = [];
       observers = [];
       all_nodes = [];
       dead_nodes = [];
@@ -850,6 +849,10 @@ module Make (Observer_error : Observer_error) () = struct
     remember_staged_var (V var);
     var.staged_graph_value <- Some value
 
+  let stage_var_source_value var value =
+    remember_staged_var (V var);
+    var.staged_source_value <- Some value
+
   let effective_var_value var =
     if var.staged_var_generation = current_generation () then
       match var.staged_graph_value with
@@ -1086,41 +1089,57 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running _ -> "running"
     | Timer_finished _ -> "finished"
 
-  let timer_active timer =
-    match timer.timer_state with
+  let timer_has_staged_refresh timer =
+    match graph.active_timer_refresh with
+    | Some { timer_refresh_token; _ } ->
+        timer.timer_staged_refresh_token = timer_refresh_token
+    | None -> false
+
+  let timer_effective_state timer =
+    if timer_has_staged_refresh timer then
+      match timer.timer_staged_state with
+      | Some state -> state
+      | None -> timer.timer_state
+    else timer.timer_state
+
+  let timer_active_state = function
     | Timer_starting _ | Timer_running_uncancellable _ | Timer_running _ ->
         true
     | Timer_inactive _ | Timer_finished _ -> false
 
-  let timer_finished timer =
-    match timer.timer_state with
+  let timer_active timer = timer_active_state (timer_effective_state timer)
+
+  let timer_finished_state = function
     | Timer_finished _ -> true
     | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
     | Timer_running _ ->
         false
 
+  let timer_finished timer = timer_finished_state (timer_effective_state timer)
+
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_operation
     && timer.timer_on_demand_refresh_token <> token
+    && timer.timer_staged_refresh_token <> token
     && (timer.timer_refresh_when_inactive || timer_active timer)
     && not (timer_finished timer)
 
   let timer_running_generation timer =
-    match timer.timer_state with
+    match timer_effective_state timer with
     | Timer_running_uncancellable (generation, _)
     | Timer_running (generation, _, _) ->
         Some generation
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
 
   let timer_has_cancel timer =
-    match timer.timer_state with
+    match timer_effective_state timer with
     | Timer_running (_, _, _) -> true
     | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
     | Timer_finished _ ->
         false
 
   let timer_running_current timer generation =
-    match timer.timer_state with
+    match timer_effective_state timer with
     | Timer_running_uncancellable (running_generation, _)
     | Timer_running (running_generation, _, _) ->
         running_generation = generation
@@ -1150,20 +1169,40 @@ module Make (Observer_error : Observer_error) () = struct
   let advance_due next_due_ms interval_ms missed =
     add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
 
-  let timer_next_due_unlocked timer =
-    match timer.timer_state with
+  let timer_next_due_state = function
     | Timer_running_uncancellable (_, next_due_ms)
     | Timer_running (_, next_due_ms, _) ->
         next_due_ms
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
 
-  let timer_set_next_due_unlocked timer next_due_ms =
-    match timer.timer_state with
+  let timer_next_due_unlocked timer =
+    timer_next_due_state (timer_effective_state timer)
+
+  let timer_set_next_due_state state next_due_ms =
+    match state with
     | Timer_running_uncancellable (generation, _) ->
-        timer.timer_state <- Timer_running_uncancellable (generation, next_due_ms)
+        Timer_running_uncancellable (generation, next_due_ms)
     | Timer_running (generation, _, cancel) ->
-        timer.timer_state <- Timer_running (generation, next_due_ms, cancel)
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> ()
+        Timer_running (generation, next_due_ms, cancel)
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
+
+  let timer_set_next_due_unlocked timer next_due_ms =
+    timer.timer_state <-
+      timer_set_next_due_state timer.timer_state next_due_ms
+
+  let remember_timer_refresh_timer timer =
+    match graph.active_timer_refresh with
+    | None -> ()
+    | Some { timer_refresh_token; _ } ->
+        if timer.timer_staged_refresh_token <> timer_refresh_token then (
+          timer.timer_staged_refresh_token <- timer_refresh_token;
+          timer.timer_staged_state <- None;
+          graph.timer_refresh_staged_timers <-
+            timer :: graph.timer_refresh_staged_timers)
+
+  let stage_timer_state_unlocked timer state =
+    remember_timer_refresh_timer timer;
+    timer.timer_staged_state <- Some state
 
   let refresh_due_unlocked timer interval_ms now_ms =
     match timer_next_due_unlocked timer with
@@ -1171,8 +1210,9 @@ module Make (Observer_error : Observer_error) () = struct
     | Some next_due_ms ->
         let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
         if missed > 0 then
-          timer_set_next_due_unlocked timer
-            (Some (advance_due next_due_ms interval_ms missed));
+          stage_timer_state_unlocked timer
+            (timer_set_next_due_state (timer_effective_state timer)
+               (Some (advance_due next_due_ms interval_ms missed)));
         missed
 
   let timer_invalidate_generation_unlocked timer =
@@ -1390,14 +1430,20 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_var (V var) =
     if var.staged_var_generation = current_generation () then (
+      (match var.staged_source_value with
+       | None -> ()
+       | Some value -> var.source_value <- value);
       (match var.staged_graph_value with
        | None -> ()
        | Some value -> var.graph_value <- value);
+      var.staged_source_value <- None;
       var.staged_graph_value <- None)
 
   let rollback_var (V var) =
-    if var.staged_var_generation = current_generation () then
+    if var.staged_var_generation = current_generation () then (
+      var.staged_source_value <- None;
       var.staged_graph_value <- None
+    )
 
   let remember_staged_bind (B bind as packed) =
     let generation = current_generation () in
@@ -1597,58 +1643,31 @@ module Make (Observer_error : Observer_error) () = struct
         hooks @ graph.timer_refresh_disposal_hooks
     else remember_pure_disposal_hooks hooks
 
-  let var_has_timer_refresh_undo (type a) (source : a var) =
-    List.exists
-      (function
-        | Timer_refresh_var (var, _, _) -> var.var_id = source.var_id
-        | Timer_refresh_timer _ -> false)
-      graph.timer_refresh_undos
-
-  let remember_timer_refresh_var_undo source =
-    if
-      Option.is_some graph.active_timer_refresh
-      && not (var_has_timer_refresh_undo source)
-    then
-      graph.timer_refresh_undos <-
-        Timer_refresh_var (source, source.source_value, source.queued)
-        :: graph.timer_refresh_undos
-
-  let timer_refresh_timer_undo_exists timer =
-    List.exists
-      (function
-        | Timer_refresh_timer (saved_timer, _, _) -> saved_timer == timer
-        | Timer_refresh_var _ -> false)
-      graph.timer_refresh_undos
-
-  let remember_timer_refresh_timer_undo timer =
-    if
-      Option.is_some graph.active_timer_refresh
-      && not (timer_refresh_timer_undo_exists timer)
-    then
-      graph.timer_refresh_undos <-
-        Timer_refresh_timer
-          ( timer,
-            timer.timer_state,
-            timer.timer_on_demand_refresh_token )
-        :: graph.timer_refresh_undos
-
-  let queue_var_unlocked source =
+  let queue_var_unlocked (type a) (source : a var) =
     if not source.queued then (
       source.queued <- true;
       graph.pending_vars <- V source :: graph.pending_vars)
 
-  let set_var_source_unlocked source value =
-    remember_timer_refresh_var_undo source;
+  let set_var_source_unlocked (type a) (source : a var) value =
     source.source_value <- value;
     queue_var_unlocked source
 
-  let timer_finish_unlocked timer =
+  let stage_timer_source_value (type a) (source : a var) value =
+    stage_var_source_value source value;
+    if not (source.var_equal source.graph_value value) then (
+      stage_var_graph_value source value;
+      List.iter mark_self_dirty source.watchers)
+
+  let timer_finish_state state =
     let generation =
-      if timer_active timer then
-        checked_succ "timer generation" (timer_generation timer)
-      else timer_generation timer
+      if timer_active_state state then
+        checked_succ "timer generation" (timer_state_generation state)
+      else timer_state_generation state
     in
-    timer.timer_state <- Timer_finished generation
+    Timer_finished generation
+
+  let timer_finish_unlocked timer =
+    timer.timer_state <- timer_finish_state timer.timer_state
 
   let timer_finish_cancel_hooks_unlocked timer =
     let cancel_hooks =
@@ -1662,43 +1681,44 @@ module Make (Observer_error : Observer_error) () = struct
     cancel_hooks
 
   let timer_finish_from_graph_unlocked timer =
-    remember_timer_refresh_disposal_hooks
-      (timer_finish_cancel_hooks_unlocked timer)
+    let state = timer_effective_state timer in
+    let cancel_hooks =
+      match state with
+      | Timer_running (_, _, cancel) -> [ cancel ]
+      | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+      | Timer_finished _ ->
+          []
+    in
+    stage_timer_state_unlocked timer (timer_finish_state state);
+    remember_timer_refresh_disposal_hooks cancel_hooks
 
   let apply_timer_refresh_operation timer now_ms = function
-    | Refresh_current_time_source source -> set_var_source_unlocked source now_ms
+    | Refresh_current_time_source source -> stage_timer_source_value source now_ms
     | Refresh_deadline_source (source, deadline_ms) ->
         if now_ms >= deadline_ms then (
-          set_var_source_unlocked source true;
+          stage_timer_source_value source true;
           timer_finish_from_graph_unlocked timer)
-        else set_var_source_unlocked source false
+        else stage_timer_source_value source false
     | Refresh_interval_source (source, interval_ms) ->
         let missed = refresh_due_unlocked timer interval_ms now_ms in
         if missed > 0 then
-          set_var_source_unlocked source
-            (add_int_capped source.source_value missed)
+          stage_timer_source_value source
+            (add_int_capped (effective_var_value source) missed)
 
-  let rollback_timer_refresh_undo = function
-    | Timer_refresh_var (source, source_value, queued) ->
-        source.source_value <- source_value;
-        source.queued <- queued
-    | Timer_refresh_timer (timer, timer_state, refresh_token) ->
-        timer.timer_state <- timer_state;
-        timer.timer_on_demand_refresh_token <- refresh_token
+  let clear_timer_refresh_timer_staging timer =
+    timer.timer_staged_state <- None;
+    timer.timer_staged_refresh_token <- -1
 
-  let restore_timer_refresh_pending_var = function
-    | Timer_refresh_var (source, _, true) ->
-        graph.pending_vars <- V source :: graph.pending_vars
-    | Timer_refresh_var (_, _, false) | Timer_refresh_timer _ -> ()
+  let commit_timer_refresh_staging timer =
+    (match timer.timer_staged_state with
+     | None -> ()
+     | Some state -> timer.timer_state <- state);
+    timer.timer_on_demand_refresh_token <- timer.timer_staged_refresh_token;
+    clear_timer_refresh_timer_staging timer
 
-  let rollback_timer_refresh_undos () =
-    graph.pending_vars <-
-      List.filter
-        (fun (V source) -> not (var_has_timer_refresh_undo source))
-        graph.pending_vars;
-    List.iter rollback_timer_refresh_undo graph.timer_refresh_undos;
-    List.iter restore_timer_refresh_pending_var graph.timer_refresh_undos;
-    graph.timer_refresh_undos <- [];
+  let clear_timer_refresh_staging () =
+    List.iter clear_timer_refresh_timer_staging graph.timer_refresh_staged_timers;
+    graph.timer_refresh_staged_timers <- [];
     graph.timer_refresh_disposal_hooks <- []
 
   let reset_staging () =
@@ -1713,12 +1733,13 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
-    rollback_timer_refresh_undos ();
+    clear_timer_refresh_staging ();
     disposal_hooks
 
   let commit_staging () =
     preflight_commit_staging ();
     List.iter commit_var graph.staged_vars;
+    List.iter commit_timer_refresh_staging graph.timer_refresh_staged_timers;
     let commit_hooks = List.concat_map commit_bind graph.staged_binds in
     remember_pure_disposal_hooks commit_hooks;
     List.iter commit_signal graph.computed_nodes;
@@ -1732,7 +1753,7 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
     graph.timer_refresh_disposal_hooks <- [];
-    graph.timer_refresh_undos <- [];
+    graph.timer_refresh_staged_timers <- [];
     graph.pure_snapshot_commit_count <-
       saturating_succ graph.pure_snapshot_commit_count;
     disposal_hooks
@@ -1774,17 +1795,6 @@ module Make (Observer_error : Observer_error) () = struct
       stage_var_graph_value var var.source_value;
       List.iter mark_self_dirty var.watchers)
 
-  let stage_timer_refresh_pending_vars () =
-    match graph.pending_vars with
-    | [] -> ()
-    | pending ->
-        graph.pending_vars <- [];
-        List.iter
-          (fun (V var as packed) ->
-            var.queued <- false;
-            stage_pending_var packed)
-          (List.rev pending)
-
   let timer_refresh_sample_now_ms context =
     match context.timer_refresh_sample_ms with
     | Some now_ms -> now_ms
@@ -1797,13 +1807,11 @@ module Make (Observer_error : Observer_error) () = struct
     match (graph.active_timer_refresh, signal.timer) with
     | Some ({ timer_refresh_token; _ } as timer_refresh), Some timer
       when timer_can_refresh_on_demand timer_refresh_token timer ->
-        remember_timer_refresh_timer_undo timer;
-        timer.timer_on_demand_refresh_token <- timer_refresh_token;
+        remember_timer_refresh_timer timer;
         let now_ms = timer_refresh_sample_now_ms timer_refresh in
         (match timer.timer_refresh_operation with
          | None -> ()
-         | Some operation -> apply_timer_refresh_operation timer now_ms operation);
-        stage_timer_refresh_pending_vars ()
+         | Some operation -> apply_timer_refresh_operation timer now_ms operation)
     | None, _ | Some _, None | Some _, Some _ -> ()
 
   let rec compute : type a. a signal -> a * bool =
@@ -2446,7 +2454,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
       graph.timer_refresh_disposal_hooks <- [];
-      graph.timer_refresh_undos <- [];
+      graph.timer_refresh_staged_timers <- [];
       graph.active_timer_refresh <- timer_refresh;
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
@@ -2636,6 +2644,7 @@ module Make (Observer_error : Observer_error) () = struct
         var_id = next_var_id ();
         var_equal = equal;
         source_value = value;
+        staged_source_value = None;
         graph_value = value;
         staged_graph_value = None;
         staged_var_generation = -1;
@@ -3465,6 +3474,8 @@ module Make (Observer_error : Observer_error) () = struct
       let timer =
         {
           timer_state = Timer_inactive 0;
+          timer_staged_state = None;
+          timer_staged_refresh_token = -1;
           timer_on_demand_refresh_token = -1;
           timer_refresh_when_inactive = refresh_when_inactive;
           timer_refresh_operation = refresh_operation;
