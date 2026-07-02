@@ -41,40 +41,56 @@ module Make (Observer_error : Observer_error) () = struct
 
     type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
+    type state = {
+      with_hook : 'a. hook -> action -> (unit -> 'a) -> 'a;
+      clear : unit -> unit;
+      run_hook : 'err. hook -> (unit, 'err) Effect.t;
+    }
+
     let noop = { run = (fun () -> Effect.unit) }
-    let after_observer_delivery_claim = ref noop
-    let after_graph_lane_acquired = ref noop
-    let after_stream_try_send_before_ack = ref noop
-    let after_stream_drop_before_ack = ref noop
-    let after_timer_due_read_before_commit = ref noop
 
-    let set hook action =
-      match hook with
-      | After_observer_delivery_claim -> after_observer_delivery_claim := action
-      | After_graph_lane_acquired -> after_graph_lane_acquired := action
-      | After_stream_try_send_before_ack ->
-          after_stream_try_send_before_ack := action
-      | After_stream_drop_before_ack -> after_stream_drop_before_ack := action
-      | After_timer_due_read_before_commit ->
-          after_timer_due_read_before_commit := action
+    let state =
+      let after_observer_delivery_claim = ref noop in
+      let after_graph_lane_acquired = ref noop in
+      let after_stream_try_send_before_ack = ref noop in
+      let after_stream_drop_before_ack = ref noop in
+      let after_timer_due_read_before_commit = ref noop in
+      let slot = function
+        | After_observer_delivery_claim -> after_observer_delivery_claim
+        | After_graph_lane_acquired -> after_graph_lane_acquired
+        | After_stream_try_send_before_ack -> after_stream_try_send_before_ack
+        | After_stream_drop_before_ack -> after_stream_drop_before_ack
+        | After_timer_due_read_before_commit ->
+            after_timer_due_read_before_commit
+      in
+      let with_hook hook action f =
+        let slot = slot hook in
+        let previous = !slot in
+        slot := action;
+        Fun.protect ~finally:(fun () -> slot := previous) f
+      in
+      let clear () =
+        List.iter
+          (fun hook ->
+            let slot = slot hook in
+            slot := noop)
+          [
+            After_observer_delivery_claim;
+            After_graph_lane_acquired;
+            After_stream_try_send_before_ack;
+            After_stream_drop_before_ack;
+            After_timer_due_read_before_commit;
+          ]
+      in
+      let run hook =
+        let slot = slot hook in
+        (!slot).run ()
+      in
+      { with_hook; clear; run_hook = run }
 
-    let clear () =
-      after_observer_delivery_claim := noop;
-      after_graph_lane_acquired := noop;
-      after_stream_try_send_before_ack := noop;
-      after_stream_drop_before_ack := noop;
-      after_timer_due_read_before_commit := noop
-
-    let run = function
-      | After_observer_delivery_claim ->
-          (!after_observer_delivery_claim).run ()
-      | After_graph_lane_acquired -> (!after_graph_lane_acquired).run ()
-      | After_stream_try_send_before_ack ->
-          (!after_stream_try_send_before_ack).run ()
-      | After_stream_drop_before_ack ->
-          (!after_stream_drop_before_ack).run ()
-      | After_timer_due_read_before_commit ->
-          (!after_timer_due_read_before_commit).run ()
+    let with_hook hook action f = state.with_hook hook action f
+    let clear () = state.clear ()
+    let run hook = state.run_hook hook
   end
 
   type 'a update =

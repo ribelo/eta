@@ -1510,6 +1510,28 @@ let test_observer_dispose_after_active_check_skips_callback () =
       expect_fail "target disposed by active-check hook" (( = ) `Disposed_observer)
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
+let test_private_test_hook_scope_restores_after_exception () =
+  with_runtime_and_switch @@ fun _sw rt ->
+  Signal.Private_test_hooks.clear ();
+  let ran = ref 0 in
+  let hook =
+    {
+      Signal.Private_test_hooks.run =
+        (fun () -> Effect.sync (fun () -> incr ran));
+    }
+  in
+  Fun.protect
+    ~finally:Signal.Private_test_hooks.clear
+    (fun () ->
+      let exception Scope_failure in
+      (try
+         Signal.Private_test_hooks.with_hook
+           Signal.Private_test_hooks.After_graph_lane_acquired hook
+           (fun () -> raise Scope_failure)
+       with Scope_failure -> ());
+      ignore (run_ok rt (Signal.stats ()) : Signal.stats);
+      Alcotest.(check int) "scoped hook was restored" 0 !ran)
+
 let test_observer_dispose_after_delivery_claim_skips_callback () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 0 in
@@ -1533,23 +1555,26 @@ let test_observer_dispose_after_delivery_claim_skips_callback () =
         released := true;
         Eio.Promise.resolve release_resolver ())
   in
-  Signal.Private_test_hooks.set
-    Signal.Private_test_hooks.After_observer_delivery_claim
+  let hook =
     {
-      run =
+      Signal.Private_test_hooks.run =
         (fun () ->
           Effect.sync (fun () ->
               if not !hook_ran then (
                 hook_ran := true;
                 Eio.Promise.resolve claimed_resolver ();
                 Eio.Promise.await release)));
-    };
+    }
+  in
   Fun.protect
     ~finally:(fun () ->
       Signal.Private_test_hooks.clear ();
       release_once ();
       ignore (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
     (fun () ->
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_observer_delivery_claim hook
+      @@ fun () ->
       let stabilizer =
         Eio.Fiber.fork_promise ~sw (fun () ->
             Runtime.run rt (widen Signal.stabilize))
@@ -2331,15 +2356,15 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
   run_ok rt (Signal.Var.set left 1);
   run_ok rt (Signal.Var.set choose_left false);
   let delivery_claimed = ref false in
-  Signal.Private_test_hooks.set
-    Signal.Private_test_hooks.After_observer_delivery_claim
+  let hook =
     {
-      run =
+      Signal.Private_test_hooks.run =
         (fun () ->
           Effect.sync (fun () ->
               delivery_claimed := true;
               Alcotest.fail "invalidated branch observer reached delivery claim"));
-    };
+    }
+  in
   Fun.protect
     ~finally:(fun () ->
       Signal.Private_test_hooks.clear ();
@@ -2350,6 +2375,9 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
         (Runtime.run rt (widen (Signal.Observer.dispose selected_observer))
           : _ Exit.t))
     (fun () ->
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_observer_delivery_claim hook
+      @@ fun () ->
       run_ok rt Signal.stabilize;
       Alcotest.(check int)
         "invalidated branch callback is skipped" 1 !branch_callbacks;
@@ -4176,17 +4204,20 @@ let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
       let started, started_resolver = Eio.Promise.create () in
       let release, release_resolver = Eio.Promise.create () in
       let hook_ran = ref false in
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_graph_lane_acquired
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   if not !hook_ran then (
                     hook_ran := true;
                     Eio.Promise.resolve started_resolver ();
                     Eio.Promise.await release)));
-        };
+        }
+      in
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_graph_lane_acquired hook
+      @@ fun () ->
       let first_stats =
         Eio.Fiber.fork_promise ~sw (fun () ->
             Runtime.run rt (widen (Signal.stats ())))
@@ -4235,14 +4266,17 @@ let test_graph_lane_acquisition_stays_on_owner_domain () =
   Fun.protect
     ~finally:Signal.Private_test_hooks.clear
     (fun () ->
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_graph_lane_acquired
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   acquired_domains := Domain.self () :: !acquired_domains));
-        };
+        }
+      in
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_graph_lane_acquired hook
+      @@ fun () ->
       let source = Signal.Var.create 1 in
       let started, started_resolver = Eio.Promise.create () in
       let release, release_resolver = Eio.Promise.create () in
@@ -6558,18 +6592,21 @@ let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
             Eio.Promise.resolve release_daemon_resolver ())
       in
       let hook_ran = ref false in
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_timer_due_read_before_commit
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   if not !hook_ran then (
                     hook_ran := true;
                     Eio.Promise.resolve daemon_read_due_resolver ();
                     Eio.Promise.await release_daemon)));
-        };
+        }
+      in
       Fun.protect ~finally:release_once (fun () ->
+          Signal.Private_test_hooks.with_hook
+            Signal.Private_test_hooks.After_timer_due_read_before_commit hook
+          @@ fun () ->
           Eta_test.Test_clock.adjust clock (Duration.ms 10);
           Eio.Promise.await daemon_read_due;
           run_ok rt Signal.stabilize;
@@ -7146,14 +7183,17 @@ let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
       let old_update = Signal.Changed { old_value = 0; new_value = 1 } in
       let new_update = Signal.Changed { old_value = 1; new_value = 2 } in
       set_observer_delivery_running observer ~token:11 old_update;
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_stream_try_send_before_ack
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   set_observer_delivery_pending observer ~token:12 new_update));
-        };
+        }
+      in
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_stream_try_send_before_ack hook
+      @@ fun () ->
       run_observer_callback_ok rt
         (int_stream_observer_callback observer old_update);
       check_observer_delivery_pending_token observer 12)
@@ -7267,22 +7307,25 @@ let test_stream_sent_update_is_acknowledged_on_cancellation () =
             Eio.Promise.resolve release_resolver ())
       in
       let hook_ran = ref false in
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_stream_try_send_before_ack
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   if not !hook_ran then (
                     hook_ran := true;
                     Eio.Promise.resolve sent_resolver ();
                     Eio.Promise.await release)));
-        };
+        }
+      in
       Fun.protect
         ~finally:(fun () ->
           Signal.Private_test_hooks.clear ();
           release_once ())
         (fun () ->
+          Signal.Private_test_hooks.with_hook
+            Signal.Private_test_hooks.After_stream_try_send_before_ack hook
+          @@ fun () ->
           let cancel_ctx = ref None in
           let stabilizer =
             Eio.Fiber.fork_promise ~sw (fun () ->
@@ -7676,22 +7719,25 @@ let test_stream_drop_update_is_acknowledged_on_cancellation () =
             Eio.Promise.resolve release_resolver ())
       in
       let hook_ran = ref false in
-      Signal.Private_test_hooks.set
-        Signal.Private_test_hooks.After_stream_drop_before_ack
+      let hook =
         {
-          run =
+          Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
                   if not !hook_ran then (
                     hook_ran := true;
                     Eio.Promise.resolve dropped_resolver ();
                     Eio.Promise.await release)));
-        };
+        }
+      in
       Fun.protect
         ~finally:(fun () ->
           Signal.Private_test_hooks.clear ();
           release_once ())
         (fun () ->
+          Signal.Private_test_hooks.with_hook
+            Signal.Private_test_hooks.After_stream_drop_before_ack hook
+          @@ fun () ->
           let cancel_ctx = ref None in
           let stabilizer =
             Eio.Fiber.fork_promise ~sw (fun () ->
@@ -8024,6 +8070,8 @@ let () =
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
             `Quick test_observer_dispose_after_active_check_skips_callback;
+          Alcotest.test_case "private test hook scope restores after exception"
+            `Quick test_private_test_hook_scope_restores_after_exception;
           Alcotest.test_case "observer dispose after claim skips callback" `Quick
             test_observer_dispose_after_delivery_claim_skips_callback;
           Alcotest.test_case "observer registration skips callbacks until returned"
