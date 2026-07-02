@@ -339,25 +339,20 @@ module Make (Observer_error : Observer_error) () = struct
 
   and 'a observer_staged_state = {
     observer_staged_generation : int;
-    observer_staged_current : 'a option;
-    observer_staged_delivery : 'a observer_delivery_state option;
+    observer_staged_snapshot : 'a observer_snapshot;
   }
 
   and 'a observer_live_state = {
     mutable obs_snapshot : 'a observer_snapshot;
     mutable obs_staged : 'a observer_staged_state option;
-    mutable obs_on_finish : (observer_finish_reason -> unit) list;
-  }
-
-  and 'a observer_finished_state = {
-    obs_finished_snapshot : 'a observer_snapshot;
+    obs_on_finish : (observer_finish_reason -> unit) list;
   }
 
   and 'a observer_state =
     | Observer_registering of 'a observer_live_state
     | Observer_active of 'a observer_live_state
-    | Observer_disposed of 'a observer_finished_state
-    | Observer_invalid_scope of 'a observer_finished_state
+    | Observer_disposed of 'a observer_snapshot
+    | Observer_invalid_scope of 'a observer_snapshot
 
   and observer_finish_reason =
     | Observer_finish_disposed
@@ -933,8 +928,7 @@ module Make (Observer_error : Observer_error) () = struct
         let staged =
           {
             observer_staged_generation = generation;
-            observer_staged_current = None;
-            observer_staged_delivery = None;
+            observer_staged_snapshot = live.obs_snapshot;
           }
         in
         live.obs_staged <- Some staged;
@@ -943,17 +937,22 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_observer_staging packed live f =
     let staged = observer_staging packed live in
-    live.obs_staged <- Some (f staged)
+    live.obs_staged <-
+      Some
+        {
+          staged with
+          observer_staged_snapshot = f staged.observer_staged_snapshot;
+        }
 
   let stage_observer_current observer value =
     let live = live_state_or_invalid_arg observer "stage" in
     update_observer_staging (O observer) live (fun staged ->
-        { staged with observer_staged_current = Some value })
+        { staged with observer_snapshot_value = Observer_current value })
 
   let stage_observer_delivery_state observer state =
     let live = live_state_or_invalid_arg observer "stage delivery for" in
     update_observer_staging (O observer) live (fun staged ->
-        { staged with observer_staged_delivery = Some state })
+        { staged with observer_snapshot_delivery = state })
 
   let observer_active (O observer) =
     match observer.obs_state with
@@ -972,38 +971,33 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
         graph.observers
 
-  let take_observer_finish_hooks live reason =
-    let hooks = live.obs_on_finish in
-    live.obs_on_finish <- [];
-    List.map (fun hook () -> hook reason) hooks
-
   let observer_finished_state live =
     {
-      obs_finished_snapshot =
-        {
-          live.obs_snapshot with
-          observer_snapshot_delivery = Observer_never_delivered;
-        };
+      live.obs_snapshot with
+      observer_snapshot_delivery = Observer_never_delivered;
     }
+
+  let observer_finish_hooks live reason =
+    List.map (fun hook () -> hook reason) live.obs_on_finish
 
   let finish_observer_unlocked observer reason =
     match (observer.obs_state, reason) with
     | Observer_registering live, Observer_finish_disposed ->
-        let hooks = take_observer_finish_hooks live reason in
+        let hooks = observer_finish_hooks live reason in
         observer.obs_state <- Observer_disposed (observer_finished_state live);
         remove_observer observer;
         hooks
     | Observer_registering live, Observer_finish_invalid_scope ->
-        let hooks = take_observer_finish_hooks live reason in
+        let hooks = observer_finish_hooks live reason in
         observer.obs_state <- Observer_invalid_scope (observer_finished_state live);
         hooks
     | Observer_active live, Observer_finish_disposed ->
-        let hooks = take_observer_finish_hooks live reason in
+        let hooks = observer_finish_hooks live reason in
         observer.obs_state <- Observer_disposed (observer_finished_state live);
         remove_observer observer;
         hooks
     | Observer_active live, Observer_finish_invalid_scope ->
-        let hooks = take_observer_finish_hooks live reason in
+        let hooks = observer_finish_hooks live reason in
         observer.obs_state <- Observer_invalid_scope (observer_finished_state live);
         hooks
     | Observer_invalid_scope finished, Observer_finish_disposed ->
@@ -1602,21 +1596,7 @@ module Make (Observer_error : Observer_error) () = struct
       match current_observer_staging live with
       | None -> ()
       | Some staged ->
-        let snapshot =
-          match staged.observer_staged_current with
-          | None -> live.obs_snapshot
-          | Some value ->
-              {
-                live.obs_snapshot with
-                observer_snapshot_value = Observer_current value;
-              }
-        in
-        let snapshot =
-          match staged.observer_staged_delivery with
-          | None -> snapshot
-          | Some state -> { snapshot with observer_snapshot_delivery = state }
-        in
-        live.obs_snapshot <- snapshot;
+        live.obs_snapshot <- staged.observer_staged_snapshot;
         clear_observer_staging live
       )
     | Observer_registering live -> (
@@ -3126,11 +3106,11 @@ module Make (Observer_error : Observer_error) () = struct
               live.obs_snapshot.observer_snapshot_value,
             observer_delivery_state_label
               live.obs_snapshot.observer_snapshot_delivery )
-      | Observer_disposed finished | Observer_invalid_scope finished ->
+      | Observer_disposed snapshot | Observer_invalid_scope snapshot ->
           ( observer_value_state_label
-              finished.obs_finished_snapshot.observer_snapshot_value,
+              snapshot.observer_snapshot_value,
             observer_delivery_state_label
-              finished.obs_finished_snapshot.observer_snapshot_delivery )
+              snapshot.observer_snapshot_delivery )
     in
     String.concat " "
       [
