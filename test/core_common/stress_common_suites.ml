@@ -71,7 +71,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "live resources" 0 !live
 
   let test_semaphore_stress_permit_accounting () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let max_permits = 5 in
     let sem = Semaphore.make ~permits:max_permits in
     let rng = Stdlib.Random.State.make [| 17 |] in
@@ -93,7 +93,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
               |> Effect.catch (fun (`Timeout : [ `Timeout ]) ->
                      Effect.unit))
     in
-    ignore (run_ok rt (Effect.all workers) : unit list);
+    let promise = B.fork_run ctx rt (Effect.all workers) in
+    for _ = 1 to 10 do
+      if not (B.is_resolved promise) then advance_clock clock (Duration.ms 1)
+    done;
+    (match B.await promise with
+    | Exit.Ok (_ : unit list) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause);
     Alcotest.(check int)
       "all permits returned" max_permits (Semaphore.available sem);
     Alcotest.(check int) "no waiters" 0 (Semaphore.waiting sem)

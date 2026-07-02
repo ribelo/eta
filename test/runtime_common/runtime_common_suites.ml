@@ -376,7 +376,7 @@ module Make (B : Runtime_backend.S) = struct
     check_ok Alcotest.string "delayed" "done" (B.await promise)
 
   let test_timeout_releases_resource () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let body =
       E.scoped
@@ -384,8 +384,12 @@ module Make (B : Runtime_backend.S) = struct
            ~release:(fun () -> E.sync (fun () -> released := true))
         |> E.bind (fun () -> E.delay (Duration.seconds 1) E.unit))
     in
-    B.run rt (E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout body)
-    |> expect_fail (( = ) `Timeout);
+    let promise =
+      B.fork_run ctx rt (E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout body)
+    in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 5);
+    B.await promise |> expect_fail (( = ) `Timeout);
     Alcotest.(check bool) "released" true !released
 
   let test_timeout_fast_success_and_nested_outer_timeout () =
@@ -509,7 +513,7 @@ module Make (B : Runtime_backend.S) = struct
     Alcotest.(check bool) "cancelled sibling released" true !released
 
   let test_race_cancels_loser_finalizer () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let slow =
       E.scoped
@@ -518,7 +522,10 @@ module Make (B : Runtime_backend.S) = struct
         |> E.bind (fun () -> E.delay (Duration.seconds 1) (E.pure 1)))
     in
     let fast = E.delay (Duration.ms 1) (E.pure 2) in
-    check_ok Alcotest.int "winner" 2 (B.run rt (E.race [ slow; fast ]));
+    let promise = B.fork_run ctx rt (E.race [ slow; fast ]) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 1);
+    check_ok Alcotest.int "winner" 2 (B.await promise);
     Alcotest.(check bool) "loser released" true !released
 
   let test_for_each_par_bounded_caps_concurrency () =
@@ -797,7 +804,7 @@ module Make (B : Runtime_backend.S) = struct
           (Cause.pp pp_hidden) cause
 
   let test_supervisor_await_and_cancel () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun _ctx _clock rt ->
     let await_program =
       Supervisor.scoped
         {

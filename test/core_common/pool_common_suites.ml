@@ -535,16 +535,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_cancel_during_health_check_closes_reserved () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let slow_health _ = E.delay (Duration.ms 20) E.unit in
     let pool =
       run_ok rt (create_test_pool ~max_size:1 ~health_check:slow_health factory)
     in
-    B.run rt
-      (Pool.with_resource pool (fun _ -> E.unit)
-      |> E.timeout (Duration.ms 2))
-    |> expect_fail "timeout during health check" (( = ) `Timeout);
+    let promise =
+      B.fork_run ctx rt
+        (Pool.with_resource pool (fun _ -> E.unit)
+        |> E.timeout (Duration.ms 2))
+    in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 2);
+    B.await promise |> expect_fail "timeout during health check" (( = ) `Timeout);
     wait_until (fun () ->
         let stats = Pool.stats pool in
         stats.Pool.active = 0 && stats.Pool.closed = 1);
@@ -552,7 +556,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_max_size_respected_under_concurrent_checkout () =
-    B.with_runtime @@ fun ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let pool = run_ok rt (create_test_pool ~max_size:2 factory) in
     let use_for ms =
@@ -567,15 +571,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until (fun () -> (Pool.stats pool).Pool.waiting = 1);
     Alcotest.(check int) "max live bounded" 2 !(factory.max_live);
     Alcotest.(check int) "opened bounded" 2 (Pool.stats pool).Pool.opened;
+    B.adjust_clock clock (Duration.ms 30);
     check_exit_ok Alcotest.unit "first" () (B.await first);
     check_exit_ok Alcotest.unit "second" () (B.await second);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 1);
     check_exit_ok Alcotest.unit "third" () (B.await third);
     Alcotest.(check int) "still only opened max_size" 2
       (Pool.stats pool).Pool.opened;
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_timeout_cleans_waiter_and_preserves_timeout_cause () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
     let holder =
@@ -587,7 +594,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Pool.with_resource pool (fun _ -> E.unit)
         |> E.timeout (Duration.ms 2))
     in
-    let outcomes = run_ok rt (E.all_settled [ holder; waiter ]) in
+    let promise = B.fork_run ctx rt (E.all_settled [ holder; waiter ]) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 1);
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 2);
+    B.adjust_clock clock (Duration.ms 17);
+    let outcomes =
+      match B.await promise with
+      | Exit.Ok outcomes -> outcomes
+      | Exit.Error cause ->
+          Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+    in
     let saw_timeout =
       List.exists
         (function Error (Cause.Fail `Timeout) -> true | _ -> false)
@@ -600,7 +618,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
 
   let test_pool_shutdown_wakes_waiters_and_drains () =
-    B.with_runtime @@ fun ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let pool = run_ok rt (create_test_pool ~max_size:1 factory) in
     let holder =
@@ -620,6 +638,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error (Cause.Fail `Pool_shutdown) -> ()
     | _ -> Alcotest.fail "expected waiter Pool_shutdown"
     end;
+    B.adjust_clock clock (Duration.ms 20);
     check_exit_ok Alcotest.unit "holder done" () (B.await holder);
     check_exit_ok Alcotest.unit "shutdown done" () (B.await shutdown);
     let stats = Pool.stats pool in
