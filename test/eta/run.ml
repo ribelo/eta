@@ -90,6 +90,10 @@ let () =
         [
           Alcotest.test_case "rejects cross-domain use" `Quick
             test_queue_rejects_cross_domain_use;
+          Alcotest.test_case "backpressure sender wakeup stays on owner domain"
+            `Quick test_queue_backpressure_sender_wakeup_stays_on_owner_domain;
+          Alcotest.test_case "receiver wakeup stays on owner domain" `Quick
+            test_queue_receiver_wakeup_stays_on_owner_domain;
           Alcotest.test_case "resolves sender outside lock" `Quick
             test_queue_resolves_sender_outside_lock;
           Alcotest.test_case

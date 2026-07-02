@@ -79,6 +79,12 @@ let run_ok rt eff =
   | Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+let expect_exit_ok label = function
+  | Exit.Ok value -> value
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected Ok, got %a" label
+        (Cause.pp pp_hidden) cause
+
 let expect_blocked = function
   | Exit.Error (Cause.Die { exn = Promise_blocked; _ }) -> ()
   | Exit.Error cause ->
@@ -122,6 +128,71 @@ let test_queue_rejects_cross_domain_use () =
         "Eta.Queue: queue APIs must be called on the domain that created the queue"
         message
   | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
+
+let yield_until label predicate =
+  let rec loop = function
+    | 0 -> Alcotest.failf "timed out waiting for %s" label
+    | attempts ->
+        if predicate () then ()
+        else (
+          Eio.Fiber.yield ();
+          loop (attempts - 1))
+  in
+  loop 20
+
+let test_queue_backpressure_sender_wakeup_stays_on_owner_domain () =
+  Test_eta_support.with_test_clock @@ fun sw _clock rt ->
+  let owner = Domain.self () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check unit)
+    "initial send" ()
+    (Test_eta_support.run_ok rt (Queue.send queue 1));
+  let started, started_resolver = Eio.Promise.create () in
+  let sender =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+          |> Effect.bind (fun () -> Queue.offer queue 2)
+          |> Effect.map (fun admitted -> (admitted, Domain.self ()))))
+  in
+  Eio.Promise.await started;
+  yield_until "backpressure sender waiter" (fun () ->
+      (Queue.stats queue).Queue.waiting_senders = 1);
+  Alcotest.(check int) "first value" 1
+    (Test_eta_support.run_ok rt (Queue.recv queue));
+  let admitted, resumed_domain =
+    expect_exit_ok "backpressure sender" (Eio.Promise.await_exn sender)
+  in
+  Alcotest.(check bool) "sender admitted" true admitted;
+  Alcotest.(check bool)
+    "sender continuation resumed on owner domain" true
+    (resumed_domain = owner);
+  Alcotest.(check int) "admitted value" 2
+    (Test_eta_support.run_ok rt (Queue.recv queue))
+
+let test_queue_receiver_wakeup_stays_on_owner_domain () =
+  Test_eta_support.with_test_clock @@ fun sw _clock rt ->
+  let owner = Domain.self () in
+  let queue = Queue.create () in
+  let started, started_resolver = Eio.Promise.create () in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+          |> Effect.bind (fun () -> Queue.recv queue)
+          |> Effect.map (fun value -> (value, Domain.self ()))))
+  in
+  Eio.Promise.await started;
+  yield_until "receiver waiter" (fun () ->
+      (Queue.stats queue).Queue.waiting_receivers = 1);
+  Test_eta_support.run_ok rt (Queue.send queue 7);
+  let value, resumed_domain =
+    expect_exit_ok "receiver wakeup" (Eio.Promise.await_exn receiver)
+  in
+  Alcotest.(check int) "received value" 7 value;
+  Alcotest.(check bool)
+    "receiver continuation resumed on owner domain" true
+    (resumed_domain = owner)
 
 let test_queue_resolves_sender_outside_lock () =
   let rt = Test_runtime.create () in
