@@ -49,11 +49,11 @@ let run_server_fiber ~sw f =
       ignore (Eio.Promise.try_resolve resolve_done outcome));
   done_
 
-let connect_retry ~sw ~net ~clock port =
+let connect_retry ~sw ~net port =
   let rec loop attempts =
     try Eio.Net.connect ~sw net (`Tcp (Eio.Net.Ipaddr.V4.loopback, port)) with
     | exn when attempts > 0 ->
-        Eio.Time.sleep clock 0.01;
+        Eio.Fiber.yield ();
         loop (attempts - 1)
     | exn -> raise exn
   in
@@ -119,7 +119,7 @@ let test_h1_serve_ready_and_external_stop () =
     run_server_fiber ~sw (fun () ->
         Serve.h1 ~sw ~net ~clock ~stop ~port handler)
   in
-  let flow = connect_retry ~sw ~net ~clock port in
+  let flow = connect_retry ~sw ~net port in
   Fun.protect
     ~finally:(fun () -> try Eio.Flow.shutdown flow `All with _ -> ())
     (fun () ->
@@ -164,7 +164,7 @@ let test_h2c_serve_ready_and_external_stop () =
     run_server_fiber ~sw (fun () ->
         Serve.h2c ~sw ~net ~clock ~stop ~port handler)
   in
-  let flow = connect_retry ~sw ~net ~clock port in
+  let flow = connect_retry ~sw ~net port in
   let connection =
     Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
       ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
