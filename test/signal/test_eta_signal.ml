@@ -5027,7 +5027,10 @@ let set_observer_on_dispose observer hooks =
   (* Public APIs only install internal stream hooks; this keeps the regression
      focused on hook failure without widening the signal API. *)
   let observer_obj = Obj.repr observer in
-  Obj.set_field observer_obj 5 (Obj.repr hooks)
+  let observer_state = Obj.field observer_obj 4 in
+  if Obj.is_int observer_state then Alcotest.fail "expected live observer state";
+  let live_state = Obj.field observer_state 0 in
+  Obj.set_field live_state 2 (Obj.repr hooks)
 
 let test_time_interval_overflow_saturates () =
   with_logger_test_clock @@ fun _sw clock rt logger ->
@@ -6862,7 +6865,12 @@ let active_observer_live_state_obj observer =
   Obj.field observer_state 0
 
 let set_observer_delivery_obj observer delivery =
-  Obj.set_field (active_observer_live_state_obj observer) 2 delivery
+  let live_state = active_observer_live_state_obj observer in
+  let snapshot = Obj.field live_state 0 in
+  let next_snapshot = Obj.new_block 0 2 in
+  Obj.set_field next_snapshot 0 (Obj.field snapshot 0);
+  Obj.set_field next_snapshot 1 delivery;
+  Obj.set_field live_state 0 next_snapshot
 
 let make_observer_delivery tag token update =
   let delivery = Obj.new_block tag 3 in
@@ -6878,7 +6886,8 @@ let set_observer_delivery_running observer ~token update =
   set_observer_delivery_obj observer (make_observer_delivery 2 token update)
 
 let check_observer_delivery_pending_token observer expected_token =
-  let delivery = Obj.field (active_observer_live_state_obj observer) 2 in
+  let snapshot = Obj.field (active_observer_live_state_obj observer) 0 in
+  let delivery = Obj.field snapshot 1 in
   if Obj.is_int delivery then Alcotest.fail "expected pending delivery";
   match Obj.tag delivery with
   | 1 ->
