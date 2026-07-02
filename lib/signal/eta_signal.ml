@@ -384,11 +384,21 @@ module Make (Observer_error : Observer_error) () = struct
     | Catch_up_once_per_wake
     | Catch_up_coalesced
 
+  and _ timer_refresh_spec =
+    | Refresh_current_time : int timer_refresh_spec
+    | Refresh_deadline : int -> bool timer_refresh_spec
+    | Refresh_interval : int -> int timer_refresh_spec
+
+  and timer_refresh_operation =
+    | Refresh_current_time_source of int var
+    | Refresh_deadline_source of bool var * int
+    | Refresh_interval_source of int var * int
+
   and timer_node = {
     mutable timer_state : timer_state;
     mutable timer_on_demand_refresh_token : int;
     timer_refresh_when_inactive : bool;
-    timer_refresh_on_demand : (timer_node -> int -> unit) option;
+    timer_refresh_operation : timer_refresh_operation option;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
@@ -1090,7 +1100,7 @@ module Make (Observer_error : Observer_error) () = struct
         false
 
   let timer_can_refresh_on_demand token timer =
-    Option.is_some timer.timer_refresh_on_demand
+    Option.is_some timer.timer_refresh_operation
     && timer.timer_on_demand_refresh_token <> token
     && (timer.timer_refresh_when_inactive || timer_active timer)
     && not (timer_finished timer)
@@ -1115,6 +1125,55 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running (running_generation, _, _) ->
         running_generation = generation
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
+
+  let add_ms_capped left right =
+    if right <= 0 then left
+    else if left > max_int - right then max_int
+    else left + right
+
+  let mul_ms_capped left right =
+    if left <= 0 || right <= 0 then 0
+    else if left > max_int / right then max_int
+    else left * right
+
+  let add_int_capped left right =
+    if right <= 0 then left
+    else if left > max_int - right then max_int
+    else left + right
+
+  let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
+    if now_ms < next_due_ms then 0
+    else
+      let elapsed = (now_ms - next_due_ms) / interval_ms in
+      saturating_succ elapsed
+
+  let advance_due next_due_ms interval_ms missed =
+    add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
+
+  let timer_next_due_unlocked timer =
+    match timer.timer_state with
+    | Timer_running_uncancellable (_, next_due_ms)
+    | Timer_running (_, next_due_ms, _) ->
+        next_due_ms
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+
+  let timer_set_next_due_unlocked timer next_due_ms =
+    match timer.timer_state with
+    | Timer_running_uncancellable (generation, _) ->
+        timer.timer_state <- Timer_running_uncancellable (generation, next_due_ms)
+    | Timer_running (generation, _, cancel) ->
+        timer.timer_state <- Timer_running (generation, next_due_ms, cancel)
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> ()
+
+  let refresh_due_unlocked timer interval_ms now_ms =
+    match timer_next_due_unlocked timer with
+    | None -> 0
+    | Some next_due_ms ->
+        let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
+        if missed > 0 then
+          timer_set_next_due_unlocked timer
+            (Some (advance_due next_due_ms interval_ms missed));
+        missed
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
@@ -1573,6 +1632,52 @@ module Make (Observer_error : Observer_error) () = struct
             timer.timer_on_demand_refresh_token )
         :: graph.timer_refresh_undos
 
+  let queue_var_unlocked source =
+    if not source.queued then (
+      source.queued <- true;
+      graph.pending_vars <- V source :: graph.pending_vars)
+
+  let set_var_source_unlocked source value =
+    remember_timer_refresh_var_undo source;
+    source.source_value <- value;
+    queue_var_unlocked source
+
+  let timer_finish_unlocked timer =
+    let generation =
+      if timer_active timer then
+        checked_succ "timer generation" (timer_generation timer)
+      else timer_generation timer
+    in
+    timer.timer_state <- Timer_finished generation
+
+  let timer_finish_cancel_hooks_unlocked timer =
+    let cancel_hooks =
+      match timer.timer_state with
+      | Timer_running (_, _, cancel) -> [ cancel ]
+      | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+      | Timer_finished _ ->
+          []
+    in
+    timer_finish_unlocked timer;
+    cancel_hooks
+
+  let timer_finish_from_graph_unlocked timer =
+    remember_timer_refresh_disposal_hooks
+      (timer_finish_cancel_hooks_unlocked timer)
+
+  let apply_timer_refresh_operation timer now_ms = function
+    | Refresh_current_time_source source -> set_var_source_unlocked source now_ms
+    | Refresh_deadline_source (source, deadline_ms) ->
+        if now_ms >= deadline_ms then (
+          set_var_source_unlocked source true;
+          timer_finish_from_graph_unlocked timer)
+        else set_var_source_unlocked source false
+    | Refresh_interval_source (source, interval_ms) ->
+        let missed = refresh_due_unlocked timer interval_ms now_ms in
+        if missed > 0 then
+          set_var_source_unlocked source
+            (add_int_capped source.source_value missed)
+
   let rollback_timer_refresh_undo = function
     | Timer_refresh_var (source, source_value, queued) ->
         source.source_value <- source_value;
@@ -1695,9 +1800,9 @@ module Make (Observer_error : Observer_error) () = struct
         remember_timer_refresh_timer_undo timer;
         timer.timer_on_demand_refresh_token <- timer_refresh_token;
         let now_ms = timer_refresh_sample_now_ms timer_refresh in
-        (match timer.timer_refresh_on_demand with
+        (match timer.timer_refresh_operation with
          | None -> ()
-         | Some refresh -> refresh timer now_ms);
+         | Some operation -> apply_timer_refresh_operation timer now_ms operation);
         stage_timer_refresh_pending_vars ()
     | None, _ | Some _, None | Some _, Some _ -> ()
 
@@ -1932,29 +2037,6 @@ module Make (Observer_error : Observer_error) () = struct
             || dependency_changed dependencies || not signal.initialized
           then recompute_with_dependencies dependencies inner_value
           else use_cached ()
-
-  let timer_finish_unlocked timer =
-    let generation =
-      if timer_active timer then
-        checked_succ "timer generation" (timer_generation timer)
-      else timer_generation timer
-    in
-    timer.timer_state <- Timer_finished generation
-
-  let timer_finish_cancel_hooks_unlocked timer =
-    let cancel_hooks =
-      match timer.timer_state with
-      | Timer_running (_, _, cancel) -> [ cancel ]
-      | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-      | Timer_finished _ ->
-          []
-    in
-    timer_finish_unlocked timer;
-    cancel_hooks
-
-  let timer_finish_from_graph_unlocked timer =
-    remember_timer_refresh_disposal_hooks
-      (timer_finish_cancel_hooks_unlocked timer)
 
   let timer_has_current_start timer =
     match timer.timer_state with
@@ -2571,15 +2653,10 @@ module Make (Observer_error : Observer_error) () = struct
       source.watchers <- P signal :: source.watchers;
       signal
 
-    let queue_var (source : 'a t) =
-      if not source.queued then (
-        source.queued <- true;
-        graph.pending_vars <- V source :: graph.pending_vars)
+    let queue_var (source : 'a t) = queue_var_unlocked source
 
     let set_unlocked (source : 'a t) value =
-      remember_timer_refresh_var_undo source;
-      source.source_value <- value;
-      queue_var source
+      set_var_source_unlocked source value
 
     let set (source : 'a t) value =
       with_graph_lane_sync (fun () ->
@@ -3233,34 +3310,10 @@ module Make (Observer_error : Observer_error) () = struct
             `Updated)
           else `Stopped)
 
-    let add_ms_capped left right =
-      if right <= 0 then left
-      else if left > max_int - right then max_int
-      else left + right
-
     let add_relative_deadline now_ms duration_ms =
       if duration_ms <= 0 then Error `Past_deadline
       else if now_ms > max_int - duration_ms then Error `Deadline_overflow
       else Ok (now_ms + duration_ms)
-
-    let mul_ms_capped left right =
-      if left <= 0 || right <= 0 then 0
-      else if left > max_int / right then max_int
-      else left * right
-
-    let add_int_capped left right =
-      if right <= 0 then left
-      else if left > max_int - right then max_int
-      else left + right
-
-    let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
-      if now_ms < next_due_ms then 0
-      else
-        let elapsed = (now_ms - next_due_ms) / interval_ms in
-        saturating_succ elapsed
-
-    let advance_due next_due_ms interval_ms missed =
-      add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
 
     let catch_up_update_count policy missed =
       match policy with
@@ -3274,22 +3327,6 @@ module Make (Observer_error : Observer_error) () = struct
       | Catch_up_coalesced -> missed
 
     let timer_catch_up_batch_size = 64
-
-    let timer_next_due_unlocked timer =
-      match timer.timer_state with
-      | Timer_running_uncancellable (_, next_due_ms)
-      | Timer_running (_, next_due_ms, _) ->
-          next_due_ms
-      | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
-
-    let timer_set_next_due_unlocked timer next_due_ms =
-      match timer.timer_state with
-      | Timer_running_uncancellable (generation, _) ->
-          timer.timer_state <-
-            Timer_running_uncancellable (generation, next_due_ms)
-      | Timer_running (generation, _, cancel) ->
-          timer.timer_state <- Timer_running (generation, next_due_ms, cancel)
-      | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> ()
 
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
@@ -3313,16 +3350,6 @@ module Make (Observer_error : Observer_error) () = struct
                 `Advanced
             | Some _ | None -> `Stale
           else `Stop)
-
-    let refresh_due_unlocked timer interval_ms now_ms =
-      match timer_next_due_unlocked timer with
-      | None -> 0
-      | Some next_due_ms ->
-          let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
-          if missed > 0 then
-            timer_set_next_due_unlocked timer
-              (Some (advance_due next_due_ms interval_ms missed));
-          missed
 
     let rec run_timer_update_batch timer generation remaining update ~missed =
       if remaining <= 0 then Effect.pure `Continue
@@ -3434,13 +3461,13 @@ module Make (Observer_error : Observer_error) () = struct
                                                                              Effect.unit)))))))))
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
-        ?refresh_on_demand signal interval update =
+        ?refresh_operation signal interval update =
       let timer =
         {
           timer_state = Timer_inactive 0;
           timer_on_demand_refresh_token = -1;
           timer_refresh_when_inactive = refresh_when_inactive;
-          timer_refresh_on_demand = refresh_on_demand;
+          timer_refresh_operation = refresh_operation;
           timer_start =
             (fun timer ->
               let generation = timer_generation timer in
@@ -3484,18 +3511,23 @@ module Make (Observer_error : Observer_error) () = struct
       signal.timer <- Some timer;
       signal
 
+    let timer_refresh_operation : type a.
+        a var -> a timer_refresh_spec -> timer_refresh_operation =
+     fun source -> function
+      | Refresh_current_time -> Refresh_current_time_source source
+      | Refresh_deadline deadline_ms -> Refresh_deadline_source (source, deadline_ms)
+      | Refresh_interval interval_ms -> Refresh_interval_source (source, interval_ms)
+
     let make_timer_signal ?(update_on_start = false)
         ?(catch_up_policy = Catch_up_every_cadence)
-        ?(refresh_when_inactive = true) ?equal ?refresh_on_demand initial
-        interval update =
+        ?(refresh_when_inactive = true) ?equal ?refresh_on_demand initial interval
+        update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
-      let refresh_on_demand =
-        Option.map
-          (fun refresh timer now_ms -> refresh source timer now_ms)
-          refresh_on_demand
+      let refresh_operation =
+        Option.map (timer_refresh_operation source) refresh_on_demand
       in
-      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_on_demand signal
+      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_operation signal
         interval
         {
           timer_catch_up_policy = catch_up_policy;
@@ -3521,8 +3553,7 @@ module Make (Observer_error : Observer_error) () = struct
                     construct_timer_signal (fun () ->
                         make_timer_signal ~update_on_start:true ~equal:Int.equal
                           ~catch_up_policy:Catch_up_once_per_wake
-                          ~refresh_on_demand:(fun source _timer now_ms ->
-                            Var.set_unlocked source now_ms)
+                          ~refresh_on_demand:Refresh_current_time
                           initial every
                           {
                             source_timer_update =
@@ -3538,11 +3569,7 @@ module Make (Observer_error : Observer_error) () = struct
       construct_timer_signal (fun () ->
           make_timer_signal ~update_on_start:true
             ~catch_up_policy:Catch_up_once_per_wake ~equal:Bool.equal false every
-            ~refresh_on_demand:(fun source timer now_ms ->
-              if now_ms >= deadline_ms then (
-                Var.set_unlocked source true;
-                timer_finish_from_graph_unlocked timer)
-              else Var.set_unlocked source false)
+            ~refresh_on_demand:(Refresh_deadline deadline_ms)
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
@@ -3592,13 +3619,7 @@ module Make (Observer_error : Observer_error) () = struct
                  let interval_ms = Duration.to_ms interval in
                  make_timer_signal ~equal:Int.equal 0 interval
                    ~refresh_when_inactive:false
-                   ~refresh_on_demand:(fun source timer now_ms ->
-                     let missed =
-                       refresh_due_unlocked timer interval_ms now_ms
-                     in
-                     if missed > 0 then
-                       Var.set_unlocked source
-                         (add_int_capped source.source_value missed))
+                   ~refresh_on_demand:(Refresh_interval interval_ms)
                    ~catch_up_policy:Catch_up_coalesced
                    {
                      source_timer_update =
