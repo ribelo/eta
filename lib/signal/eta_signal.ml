@@ -392,6 +392,10 @@ module Make (Observer_error : Observer_error) () = struct
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
+  and timer_refresh_undo =
+    | Timer_refresh_var : 'a var * 'a * bool -> timer_refresh_undo
+    | Timer_refresh_timer of timer_node * timer_state * int
+
   and 'err timer_start_attempt = {
     start_timer : timer_node;
     start_effect : (unit, 'err) Effect.t;
@@ -482,6 +486,8 @@ module Make (Observer_error : Observer_error) () = struct
     mutable computed_nodes : packed_signal list;
     mutable staged_observers : packed_observer list;
     mutable pure_disposal_hooks : disposal_hook list;
+    mutable timer_refresh_disposal_hooks : disposal_hook list;
+    mutable timer_refresh_undos : timer_refresh_undo list;
     mutable observers : packed_observer list;
     mutable all_nodes : packed_signal list;
     mutable dead_nodes : dead_signal list;
@@ -521,6 +527,8 @@ module Make (Observer_error : Observer_error) () = struct
       computed_nodes = [];
       staged_observers = [];
       pure_disposal_hooks = [];
+      timer_refresh_disposal_hooks = [];
+      timer_refresh_undos = [];
       observers = [];
       all_nodes = [];
       dead_nodes = [];
@@ -1529,6 +1537,70 @@ module Make (Observer_error : Observer_error) () = struct
   let remember_pure_disposal_hooks hooks =
     graph.pure_disposal_hooks <- hooks @ graph.pure_disposal_hooks
 
+  let remember_timer_refresh_disposal_hooks hooks =
+    if Option.is_some graph.active_timer_refresh then
+      graph.timer_refresh_disposal_hooks <-
+        hooks @ graph.timer_refresh_disposal_hooks
+    else remember_pure_disposal_hooks hooks
+
+  let var_has_timer_refresh_undo (type a) (source : a var) =
+    List.exists
+      (function
+        | Timer_refresh_var (var, _, _) -> var.var_id = source.var_id
+        | Timer_refresh_timer _ -> false)
+      graph.timer_refresh_undos
+
+  let remember_timer_refresh_var_undo source =
+    if
+      Option.is_some graph.active_timer_refresh
+      && not (var_has_timer_refresh_undo source)
+    then
+      graph.timer_refresh_undos <-
+        Timer_refresh_var (source, source.source_value, source.queued)
+        :: graph.timer_refresh_undos
+
+  let timer_refresh_timer_undo_exists timer =
+    List.exists
+      (function
+        | Timer_refresh_timer (saved_timer, _, _) -> saved_timer == timer
+        | Timer_refresh_var _ -> false)
+      graph.timer_refresh_undos
+
+  let remember_timer_refresh_timer_undo timer =
+    if
+      Option.is_some graph.active_timer_refresh
+      && not (timer_refresh_timer_undo_exists timer)
+    then
+      graph.timer_refresh_undos <-
+        Timer_refresh_timer
+          ( timer,
+            timer.timer_state,
+            timer.timer_on_demand_refresh_token )
+        :: graph.timer_refresh_undos
+
+  let rollback_timer_refresh_undo = function
+    | Timer_refresh_var (source, source_value, queued) ->
+        source.source_value <- source_value;
+        source.queued <- queued
+    | Timer_refresh_timer (timer, timer_state, refresh_token) ->
+        timer.timer_state <- timer_state;
+        timer.timer_on_demand_refresh_token <- refresh_token
+
+  let restore_timer_refresh_pending_var = function
+    | Timer_refresh_var (source, _, true) ->
+        graph.pending_vars <- V source :: graph.pending_vars
+    | Timer_refresh_var (_, _, false) | Timer_refresh_timer _ -> ()
+
+  let rollback_timer_refresh_undos () =
+    graph.pending_vars <-
+      List.filter
+        (fun (V source) -> not (var_has_timer_refresh_undo source))
+        graph.pending_vars;
+    List.iter rollback_timer_refresh_undo graph.timer_refresh_undos;
+    List.iter restore_timer_refresh_pending_var graph.timer_refresh_undos;
+    graph.timer_refresh_undos <- [];
+    graph.timer_refresh_disposal_hooks <- []
+
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
     List.iter rollback_var graph.staged_vars;
@@ -1541,6 +1613,7 @@ module Make (Observer_error : Observer_error) () = struct
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
+    rollback_timer_refresh_undos ();
     disposal_hooks
 
   let commit_staging () =
@@ -1550,12 +1623,16 @@ module Make (Observer_error : Observer_error) () = struct
     remember_pure_disposal_hooks commit_hooks;
     List.iter commit_signal graph.computed_nodes;
     List.iter commit_observer graph.staged_observers;
-    let disposal_hooks = graph.pure_disposal_hooks in
+    let disposal_hooks =
+      graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks
+    in
     graph.computed_nodes <- [];
     graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
+    graph.timer_refresh_disposal_hooks <- [];
+    graph.timer_refresh_undos <- [];
     graph.pure_snapshot_commit_count <-
       saturating_succ graph.pure_snapshot_commit_count;
     disposal_hooks
@@ -1612,6 +1689,7 @@ module Make (Observer_error : Observer_error) () = struct
     match (graph.active_timer_refresh, signal.timer) with
     | Some { timer_refresh_token; timer_refresh_now_ms }, Some timer
       when timer_can_refresh_on_demand timer_refresh_token timer ->
+        remember_timer_refresh_timer_undo timer;
         timer.timer_on_demand_refresh_token <- timer_refresh_token;
         let now_ms = timer_refresh_now_ms () in
         (match timer.timer_refresh_on_demand with
@@ -1872,7 +1950,8 @@ module Make (Observer_error : Observer_error) () = struct
     cancel_hooks
 
   let timer_finish_from_graph_unlocked timer =
-    remember_pure_disposal_hooks (timer_finish_cancel_hooks_unlocked timer)
+    remember_timer_refresh_disposal_hooks
+      (timer_finish_cancel_hooks_unlocked timer)
 
   let timer_has_current_start timer =
     match timer.timer_state with
@@ -2281,6 +2360,8 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_binds <- [];
       graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
+      graph.timer_refresh_disposal_hooks <- [];
+      graph.timer_refresh_undos <- [];
       graph.active_timer_refresh <- timer_refresh;
       let pending_at_start = List.rev graph.pending_vars in
       graph.pending_vars <- [];
@@ -2492,6 +2573,7 @@ module Make (Observer_error : Observer_error) () = struct
         graph.pending_vars <- V source :: graph.pending_vars)
 
     let set_unlocked (source : 'a t) value =
+      remember_timer_refresh_var_undo source;
       source.source_value <- value;
       queue_var source
 
@@ -3510,10 +3592,9 @@ module Make (Observer_error : Observer_error) () = struct
                      let missed =
                        refresh_due_unlocked timer interval_ms now_ms
                      in
-                     if missed > 0 then (
-                       source.source_value <-
-                         add_int_capped source.source_value missed;
-                       Var.queue_var source))
+                     if missed > 0 then
+                       Var.set_unlocked source
+                         (add_int_capped source.source_value missed))
                    ~catch_up_policy:Catch_up_coalesced
                    {
                      source_timer_update =

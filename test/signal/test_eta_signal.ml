@@ -6341,6 +6341,72 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
       Alcotest.(check int) "5 missed cadences" 5
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_deadline_refresh_retries_after_downstream_defect () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
+  let raised = ref false in
+  let checked =
+    Signal.map
+      (fun due ->
+        if due && not !raised then (
+          raised := true;
+          failwith "deadline refresh rollback");
+        due)
+      deadline
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe checked (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "deadline daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool) "before deadline" false
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 150;
+      expect_die "deadline refresh rollback"
+        (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+      Alcotest.(check bool) "rolled back deadline snapshot" false
+        (run_ok rt (Signal.Observer.read observer));
+      run_ok rt Signal.stabilize;
+      Alcotest.(check bool) "deadline refresh retried" true
+        (run_ok rt (Signal.Observer.read observer)))
+
+let test_time_interval_refresh_retries_after_downstream_defect () =
+  with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  let interval = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let raised = ref false in
+  let checked =
+    Signal.map
+      (fun count ->
+        if count > 0 && not !raised then (
+          raised := true;
+          failwith "interval refresh rollback");
+        count)
+      interval
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe checked (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
+    (fun () ->
+      wait_until "interval daemon is sleeping" (fun () -> !sleep_calls >= 1);
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial" 0
+        (run_ok rt (Signal.Observer.read observer));
+      now_ms := 55;
+      expect_die "interval refresh rollback"
+        (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+      Alcotest.(check int) "rolled back interval snapshot" 0
+        (run_ok rt (Signal.Observer.read observer));
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "interval refresh retried" 5
+        (run_ok rt (Signal.Observer.read observer)))
+
 let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -8094,6 +8160,12 @@ let () =
             "time interval catches up arithmetically without daemon yield"
             `Quick
             test_time_interval_catches_up_arithmetically_without_daemon_yield;
+          Alcotest.test_case
+            "time deadline refresh retries after downstream defect" `Quick
+            test_time_deadline_refresh_retries_after_downstream_defect;
+          Alcotest.test_case
+            "time interval refresh retries after downstream defect" `Quick
+            test_time_interval_refresh_retries_after_downstream_defect;
           Alcotest.test_case
             "time interval daemon/stabilization race does not double count"
             `Quick
