@@ -120,7 +120,7 @@ let close_result = function
   | Clean -> `Closed
   | Error error -> `Closed_with_error error
 
-let add_wakeup wakeups wakeup = wakeups := wakeup :: !wakeups
+let add_wakeup wakeups wakeup = Stdlib.Queue.add wakeup wakeups
 
 let resolve_sender
     (sender : ('a, 'err) sender)
@@ -146,27 +146,25 @@ let wakeup_notified = function
 
 let resolve_pending_wakeups pending =
   let rec loop () =
-    match !pending with
-    | [] -> ()
-    | wakeup :: rest -> (
-        try
-          resolve_wakeup wakeup;
-          pending := rest;
-          loop ()
-        with exn ->
-          if wakeup_notified wakeup then pending := rest;
-          raise exn)
+    if not (Stdlib.Queue.is_empty pending) then (
+      let wakeup = Stdlib.Queue.peek pending in
+      let remove_wakeup () = ignore (Stdlib.Queue.take pending) in
+      try
+        resolve_wakeup wakeup;
+        remove_wakeup ();
+        loop ()
+      with exn ->
+        if wakeup_notified wakeup then remove_wakeup ();
+        raise exn)
   in
   loop ()
 
 let with_committed_wakeups_locked lock f =
-  let pending_wakeups = ref [] in
+  let pending_wakeups = Stdlib.Queue.create () in
   Fun.protect
     ~finally:(fun () -> resolve_pending_wakeups pending_wakeups)
     (fun () ->
-      let wakeups = ref [] in
-      let result = lock (fun () -> f wakeups) in
-      pending_wakeups := List.rev !wakeups;
+      let result = lock (fun () -> f pending_wakeups) in
       resolve_pending_wakeups pending_wakeups;
       result)
 
