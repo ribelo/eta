@@ -1199,10 +1199,16 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
            Array.get value 0)
   in
   let events = ref [] in
+  let callbacks = ref 0 in
   let observer =
-    run_ok rt (Signal.Observer.observe mapped (record_observer events))
+    run_ok rt
+      (Signal.Observer.observe mapped (fun update ->
+           Effect.sync (fun () ->
+               incr callbacks;
+               events := update :: !events)))
   in
   run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial callback delivered" 1 !callbacks;
   Alcotest.(check int) "initial mapped value" 1
     (run_ok rt (Signal.Observer.read observer));
   Array.set block 0 2;
@@ -1211,6 +1217,8 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
     (Array.get (Signal.Var.value source) 0);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "physical cutoff suppresses recompute" 1 !mapped_calls;
+  Alcotest.(check int) "same-block mutation emits no second callback" 1
+    !callbacks;
   Alcotest.(check int) "observer keeps previous derived snapshot" 1
     (run_ok rt (Signal.Observer.read observer));
   (match List.rev !events with
