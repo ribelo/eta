@@ -449,10 +449,13 @@ module Make (Observer_error : Observer_error) () : sig
         stabilization.
 
         Signal time is measured by Eta's monotonic runtime clock, not by
-        wall/civil time. Before stabilization observes them, [now] and
-        [deadline] nodes coalesce to the final clock-derived value, and
-        [interval] nodes advance the counter arithmetically to the final
-        saturated value.
+        wall/civil time. Each stabilization samples that clock at most once for
+        timer-source coalescing, when the first timer source is pulled; the
+        same sample is shared by every timer source refreshed in that
+        stabilization. Before stabilization observes time nodes, [now] and
+        [deadline] nodes coalesce to that clock-derived value, and [interval]
+        nodes advance the counter arithmetically to the final saturated value
+        for the same sample.
 
         [step] keeps user code out of stabilization: [f] runs only in the
         demand-owned timer daemon. When that daemon wakes after a clock jump,

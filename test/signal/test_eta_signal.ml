@@ -6090,6 +6090,33 @@ let test_time_now_uses_runtime_clock () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_now_uses_single_clock_snapshot_per_stabilization () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let current_now_ms = ref 0 in
+  let now_ms () =
+    let current = !current_now_ms in
+    incr current_now_ms;
+    current
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let left = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let right = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let pair = Signal.map2 (fun left right -> (left, right)) left right in
+  let observer =
+    run_ok rt (Signal.Observer.observe pair (fun _ -> Effect.unit))
+  in
+  Fun.protect
+    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      let left, right = run_ok rt (Signal.Observer.read observer) in
+      Alcotest.(check int) "same stabilization clock snapshot" left right)
+
 let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
@@ -8135,6 +8162,8 @@ let () =
             test_time_now_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time now uses runtime clock" `Quick
             test_time_now_uses_runtime_clock;
+          Alcotest.test_case "time now uses one clock snapshot" `Quick
+            test_time_now_uses_single_clock_snapshot_per_stabilization;
           Alcotest.test_case "time now refreshes on quick reobserve" `Quick
             test_time_now_reobserve_refreshes_while_old_sleep_pending;
           Alcotest.test_case "time now refreshes after idle observe" `Quick

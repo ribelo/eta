@@ -471,6 +471,7 @@ module Make (Observer_error : Observer_error) () = struct
   type timer_refresh_context = {
     timer_refresh_token : int;
     timer_refresh_now_ms : unit -> int;
+    mutable timer_refresh_sample_ms : int option;
   }
 
   type graph = {
@@ -1685,13 +1686,21 @@ module Make (Observer_error : Observer_error) () = struct
             stage_pending_var packed)
           (List.rev pending)
 
+  let timer_refresh_sample_now_ms context =
+    match context.timer_refresh_sample_ms with
+    | Some now_ms -> now_ms
+    | None ->
+        let now_ms = context.timer_refresh_now_ms () in
+        context.timer_refresh_sample_ms <- Some now_ms;
+        now_ms
+
   let refresh_timer_source_for_compute signal =
     match (graph.active_timer_refresh, signal.timer) with
-    | Some { timer_refresh_token; timer_refresh_now_ms }, Some timer
+    | Some ({ timer_refresh_token; _ } as timer_refresh), Some timer
       when timer_can_refresh_on_demand timer_refresh_token timer ->
         remember_timer_refresh_timer_undo timer;
         timer.timer_on_demand_refresh_token <- timer_refresh_token;
-        let now_ms = timer_refresh_now_ms () in
+        let now_ms = timer_refresh_sample_now_ms timer_refresh in
         (match timer.timer_refresh_on_demand with
          | None -> ()
          | Some refresh -> refresh timer now_ms);
@@ -2523,6 +2532,7 @@ module Make (Observer_error : Observer_error) () = struct
                               next_timer_refresh_token_unlocked ();
                             timer_refresh_now_ms =
                               runtime_contract.Runtime_contract.now_ms;
+                            timer_refresh_sample_ms = None;
                           }
                       in
                       begin_stabilize_with_pending_hooks timer_refresh hooks_ref
