@@ -144,18 +144,22 @@ let wakeup_notified = function
   | Wake_sender (sender, _) -> sender.notified
   | Wake_receiver receiver -> receiver.notified
 
+(* Waiter wakeups are post-commit bookkeeping. Once queue state has changed,
+   a resolver failure must not replace the active operation's result. *)
+let rec resolve_wakeup_best_effort remaining wakeup =
+  try
+    resolve_wakeup wakeup;
+    true
+  with _exn ->
+    wakeup_notified wakeup
+    || (remaining > 0 && resolve_wakeup_best_effort (remaining - 1) wakeup)
+
 let resolve_pending_wakeups pending =
   let rec loop () =
     if not (Stdlib.Queue.is_empty pending) then (
-      let wakeup = Stdlib.Queue.peek pending in
-      let remove_wakeup () = ignore (Stdlib.Queue.take pending) in
-      try
-        resolve_wakeup wakeup;
-        remove_wakeup ();
-        loop ()
-      with exn ->
-        if wakeup_notified wakeup then remove_wakeup ();
-        raise exn)
+      let wakeup = Stdlib.Queue.take pending in
+      ignore (resolve_wakeup_best_effort 1 wakeup : bool);
+      loop ())
   in
   loop ()
 

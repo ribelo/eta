@@ -223,6 +223,25 @@ let reset_hooked_runtime () =
   Hooked_runtime.await_hook := (fun () -> ());
   Hooked_runtime.cancel_after_resolved_await := false
 
+let test_queue_recv_result_survives_sender_wakeup_failure () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
+  let resolve_attempts = ref 0 in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.resolve_hook :=
+        (fun () ->
+          incr resolve_attempts;
+          if !resolve_attempts = 1 then raise Await_cancelled);
+      Alcotest.(check int) "recv returns committed item" 1
+        (run_ok rt (Queue.recv queue)));
+  Alcotest.(check int) "wakeup retried" 2 !resolve_attempts;
+  Alcotest.(check int) "admitted sender value remains" 2
+    (run_ok rt (Queue.recv queue))
+
 let test_queue_backpressure_admission_wins_racing_cancellation () =
   let rt = Test_runtime.create () in
   let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
@@ -438,7 +457,7 @@ let check_admitted_sender_woken_after_resolver_failure operation =
       Alcotest.failf "unexpected operation failure: %a"
         (Cause.pp pp_hidden) cause
   | exception Await_cancelled -> ());
-  Alcotest.(check int) "resolver retried by finalizer" 2 !resolve_attempts;
+  Alcotest.(check int) "resolver retried" 2 !resolve_attempts;
   let stats = Queue.stats queue in
   Alcotest.(check int) "admitted value buffered" 1 stats.Queue.depth;
   Alcotest.(check int) "second sender still honestly waiting" 1
