@@ -6562,10 +6562,14 @@ let test_time_active_interval_refreshes_before_daemon_runs () =
         4
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_step_requires_daemon_progress_for_catch_up () =
+let test_time_step_does_not_catch_up_without_daemon_progress () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
-  let signal =
+  let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
+  let step =
     run_ok rt (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 succ)
+  in
+  let signal =
+    Signal.map2 (fun interval step -> (interval, step)) interval step
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -6574,15 +6578,15 @@ let test_time_step_requires_daemon_progress_for_catch_up () =
     ~finally:(fun () ->
       ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
     (fun () ->
-      wait_until "active step daemon is sleeping" (fun () ->
-          !sleep_calls >= 1);
+      wait_until "active interval and step daemons are sleeping" (fun () ->
+          !sleep_calls >= 2);
       run_ok rt Signal.stabilize;
-      Alcotest.(check int) "initial active step" 1
+      Alcotest.(check (pair int int)) "initial interval and step" (0, 1)
         (run_ok rt (Signal.Observer.read observer));
       now_ms := 20;
       run_ok rt Signal.stabilize;
-      Alcotest.(check int)
-        "step catch-up requires daemon-owned function replay" 1
+      Alcotest.(check (pair int int))
+        "interval catches up but step waits for daemon progress" (4, 1)
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_step_does_not_run_f_inside_stabilize () =
@@ -8207,8 +8211,8 @@ let () =
           Alcotest.test_case "time active interval refreshes before daemon"
             `Quick test_time_active_interval_refreshes_before_daemon_runs;
           Alcotest.test_case
-            "time step catch-up requires daemon progress" `Quick
-            test_time_step_requires_daemon_progress_for_catch_up;
+            "time step does not catch up without daemon progress" `Quick
+            test_time_step_does_not_catch_up_without_daemon_progress;
           Alcotest.test_case "time step does not run function in stabilize"
             `Quick test_time_step_does_not_run_f_inside_stabilize;
           Alcotest.test_case "time active timer refresh does not restart pure pass"
