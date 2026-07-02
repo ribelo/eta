@@ -7468,6 +7468,103 @@ let test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_d
   run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
     ~saturate_sent_counter:true ()
 
+let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let fail_next_resolve = ref false in
+  let resolve_failures = ref 0 in
+  let stream_consumer_waiting = ref false in
+  let waiting, waiting_resolver = Eio.Promise.create () in
+  let module Base =
+    (val Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock env)
+       : Runtime_contract.RUNTIME)
+  in
+  let module Hooked_runtime = struct
+    type scope = Base.scope
+    type cancel_context = Base.cancel_context
+    type 'a promise = 'a Base.promise
+    type 'a resolver = 'a Base.resolver
+    type 'a stream = 'a Base.stream
+
+    let root_scope = Base.root_scope
+    let now_ms () = Eta_test.Test_clock.now_ms clock
+    let sleep duration = Eta_test.Test_clock.sleep clock duration
+    let protect = Base.protect
+    let run_scope = Base.run_scope
+    let fail_scope = Base.fail_scope
+    let fork = Base.fork
+    let fork_daemon = Base.fork_daemon
+    let await_cancel = Base.await_cancel
+    let yield = Base.yield
+    let check = Base.check
+    let create_promise = Base.create_promise
+
+    let resolve_promise resolver value =
+      if !fail_next_resolve then (
+        fail_next_resolve := false;
+        incr resolve_failures;
+        raise Cleanup_interrupt);
+      Base.resolve_promise resolver value
+
+    let await_promise promise =
+      if not !stream_consumer_waiting then (
+        stream_consumer_waiting := true;
+        Eio.Promise.resolve waiting_resolver ());
+      Base.await_promise promise
+
+    let create_stream = Base.create_stream
+    let stream_add = Base.stream_add
+    let stream_take = Base.stream_take
+    let stream_take_nonblocking = Base.stream_take_nonblocking
+    let with_worker_context = Base.with_worker_context
+    let in_worker_context = Base.in_worker_context
+
+    let cancellation_reason = function
+      | Cleanup_interrupt -> Some Cleanup_interrupt
+      | exn -> Base.cancellation_reason exn
+
+    let multiple_exceptions = Base.multiple_exceptions
+    let cancel_sub = Base.cancel_sub
+    let cancel = Base.cancel
+    let local_get = Base.local_get
+    let local_with_binding = Base.local_with_binding
+  end in
+  let rt =
+    Runtime.create_with_runtime
+      (module Hooked_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    expect_exit_ok "stream observer registration"
+      (Runtime.run rt (widen (Signal.Stream.observe ~capacity:16 signal)))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
+    (fun () ->
+      let consumer =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Runtime.run rt
+              (widen
+                 (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)))
+      in
+      Eio.Promise.await waiting;
+      fail_next_resolve := true;
+      expect_exit_ok "stabilize after stream consumer wakeup failure"
+        (Runtime.run rt (widen Signal.stabilize));
+      Alcotest.(check int) "consumer wakeup failure injected" 1
+        !resolve_failures;
+      (match
+         expect_exit_ok "stream consumer received published update"
+           (Eio.Promise.await_exn consumer)
+       with
+       | [ Signal.Initialized 0 ] -> ()
+       | _ -> Alcotest.fail "expected initialized stream update"))
+
 let test_stream_sent_update_is_acknowledged_on_cancellation () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 0 in
@@ -8635,6 +8732,10 @@ let () =
             "stream bridge saturated sent counter interrupted sent wakeup does not duplicate"
             `Quick
             test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate;
+          Alcotest.test_case
+            "stream bridge consumer wakeup failure does not fail stabilize"
+            `Quick
+            test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize;
           Alcotest.test_case
             "stream finalizer cannot acknowledge newer delivery" `Quick
             test_stream_finalizer_cannot_acknowledge_newer_delivery;
