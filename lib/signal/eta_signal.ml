@@ -598,8 +598,11 @@ module Make (Observer_error : Observer_error) () = struct
         (fun waiter -> Stdlib.Queue.push waiter lane.lane_waiters)
         live)
 
-  let grant_lane_waiter_locked waiter =
+  let add_lane_grant pending waiter = Stdlib.Queue.push waiter pending
+
+  let grant_lane_waiter_locked pending waiter =
     waiter.lane_state <- Lane_granted;
+    add_lane_grant pending waiter;
     waiter
 
   let resolve_lane_waiter waiter =
@@ -610,58 +613,47 @@ module Make (Observer_error : Observer_error) () = struct
 
   let resolve_pending_lane_grants pending =
     let rec loop () =
-      match !pending with
-      | [] -> ()
-      | waiter :: rest -> (
-          try
-            resolve_lane_waiter waiter;
-            pending := rest;
-            loop ()
-          with exn ->
-            if waiter.lane_notified then pending := rest;
-            raise exn)
+      if not (Stdlib.Queue.is_empty pending) then (
+        let waiter = Stdlib.Queue.peek pending in
+        let remove_waiter () = ignore (Stdlib.Queue.take pending) in
+        try
+          resolve_lane_waiter waiter;
+          remove_waiter ();
+          loop ()
+        with exn ->
+          if waiter.lane_notified then remove_waiter ();
+          raise exn)
     in
     loop ()
 
   let with_committed_lane_grant lock f =
-    let pending_grants = ref [] in
+    let pending_grants = Stdlib.Queue.create () in
     Fun.protect
       ~finally:(fun () -> resolve_pending_lane_grants pending_grants)
       (fun () ->
-        let result =
-          lock (fun () ->
-              let result, grant = f () in
-              pending_grants :=
-                (match grant with
-                | None -> []
-                | Some waiter -> [ waiter ]);
-              result)
-        in
+        let result = lock (fun () -> f pending_grants) in
         resolve_pending_lane_grants pending_grants;
         result)
 
-  let release_lane_locked lane =
+  let release_lane_locked pending_grants lane =
     match take_waiting_waiter lane.lane_waiters with
     | Some waiter ->
         lane.lane_waiting <- lane.lane_waiting - 1;
-        Some (grant_lane_waiter_locked waiter)
-    | None ->
-        lane.lane_busy <- false;
-        None
+        ignore (grant_lane_waiter_locked pending_grants waiter)
+    | None -> lane.lane_busy <- false
 
-  let cancel_lane_waiter_locked lane waiter =
+  let cancel_lane_waiter_locked pending_grants lane waiter =
     match waiter.lane_state with
     | Lane_waiting ->
         waiter.lane_state <- Lane_cancelled;
         lane.lane_waiting <- lane.lane_waiting - 1;
         lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
-        compact_cancelled_lane_waiters_locked lane;
-        None
+        compact_cancelled_lane_waiters_locked lane
     | Lane_granted ->
         waiter.lane_state <- Lane_cancelled;
         lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
-        release_lane_locked lane
-    | Lane_cancelled -> None
+        release_lane_locked pending_grants lane
+    | Lane_cancelled -> ()
 
   let claim_lane_waiter_locked waiter =
     match waiter.lane_state with
@@ -717,16 +709,18 @@ module Make (Observer_error : Observer_error) () = struct
           (if !claimed then
              with_committed_lane_grant
                (fun f -> with_lane_lock_during_cancel contract lane f)
-               (fun () -> ((), release_lane_locked lane))
+               (fun pending_grants ->
+                 release_lane_locked pending_grants lane)
            else
              with_committed_lane_grant
                (fun f -> with_lane_lock_during_cancel contract lane f)
-               (fun () -> ((), cancel_lane_waiter_locked lane waiter)));
+               (fun pending_grants ->
+                 cancel_lane_waiter_locked pending_grants lane waiter));
           raise exn)
 
   let leave_lane_sync lane =
-    with_committed_lane_grant (with_lane_lock lane) (fun () ->
-        ((), release_lane_locked lane))
+    with_committed_lane_grant (with_lane_lock lane) (fun pending_grants ->
+        release_lane_locked pending_grants lane)
 
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
