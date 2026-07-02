@@ -363,6 +363,10 @@ module Make (Observer_error : Observer_error) () = struct
     observer_staged_snapshot : 'a observer_snapshot;
   }
 
+  and 'a observer_finished_state = {
+    observer_finished_value : 'a observer_value_state;
+  }
+
   and 'a observer_live_state = {
     mutable obs_snapshot : 'a observer_snapshot;
     mutable obs_staged : 'a observer_staged_state option;
@@ -372,8 +376,8 @@ module Make (Observer_error : Observer_error) () = struct
   and 'a observer_state =
     | Observer_registering of 'a observer_live_state
     | Observer_active of 'a observer_live_state
-    | Observer_disposed of 'a observer_snapshot
-    | Observer_invalid_scope of 'a observer_snapshot
+    | Observer_disposed of 'a observer_finished_state
+    | Observer_invalid_scope of 'a observer_finished_state
 
   and observer_finish_reason =
     | Observer_finish_disposed
@@ -1014,8 +1018,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let observer_finished_state live =
     {
-      live.obs_snapshot with
-      observer_snapshot_delivery = Observer_never_delivered;
+      observer_finished_value = live.obs_snapshot.observer_snapshot_value;
     }
 
   let observer_finish_hooks live reason =
@@ -3189,11 +3192,10 @@ module Make (Observer_error : Observer_error) () = struct
               live.obs_snapshot.observer_snapshot_value,
             observer_delivery_state_label
               live.obs_snapshot.observer_snapshot_delivery )
-      | Observer_disposed snapshot | Observer_invalid_scope snapshot ->
+      | Observer_disposed finished | Observer_invalid_scope finished ->
           ( observer_value_state_label
-              snapshot.observer_snapshot_value,
-            observer_delivery_state_label
-              snapshot.observer_snapshot_delivery )
+              finished.observer_finished_value,
+            "none" )
     in
     String.concat " "
       [
