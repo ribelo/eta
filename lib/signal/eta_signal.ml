@@ -3628,6 +3628,26 @@ module Make (Observer_error : Observer_error) () = struct
                               ~value:"step"
                          |> Effect.named "eta_signal.time.step"
                          |> Effect.bind (fun next ->
+                               timer_set_source timer generation source next
+                               |> Effect.map (fun _ -> ())));
+                   }))
+
+    let step_coalesced ~every ~initial f =
+      Effect.sync (fun () -> validate_interval every)
+      |> Effect.flatten_result
+      |> Effect.bind (fun () ->
+             construct_timer_signal (fun () ->
+                 make_timer_signal initial every
+                   ~refresh_when_inactive:false
+                   ~catch_up_policy:Catch_up_coalesced
+                   {
+                     source_timer_update =
+                       (fun timer generation ~missed source ->
+                         Effect.sync (fun () -> f ~missed (Var.value source))
+                         |> Effect.annotate ~key:"eta_signal.timer.kind"
+                              ~value:"step_coalesced"
+                         |> Effect.named "eta_signal.time.step_coalesced"
+                         |> Effect.bind (fun next ->
                                 timer_set_source timer generation source next
                                 |> Effect.map (fun _ -> ())));
                    }))

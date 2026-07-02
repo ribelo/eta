@@ -510,6 +510,23 @@ module Make (Observer_error : Observer_error) () : sig
         [eta_signal.time.step] context; it is not delivered as a [stabilize]
         failure. The failed daemon cleans up timer state so later demand can
         restart it. *)
+
+    val step_coalesced :
+      every:Eta.Duration.t ->
+      initial:'a ->
+      (missed:int -> 'a -> 'a) ->
+      ('a signal, time_error) Eta.Effect.t
+    (** Step a value once per timer-daemon wake, passing the number of elapsed
+        cadences as [missed].
+
+        This is the bounded catch-up variant of [step]. A large clock jump runs
+        [f] once with a large [missed] value instead of replaying [f] once per
+        cadence. [missed] saturates at [max_int].
+
+        Like [step], [f] runs in the demand-owned timer daemon, not during
+        stabilization. If [f] raises, Eta reports the defect through daemon
+        diagnostics with [eta_signal.time.step_coalesced] context; it is not
+        delivered as a [stabilize] failure. *)
   end
 
   module Stream : sig

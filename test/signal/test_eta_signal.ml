@@ -5364,6 +5364,44 @@ let test_time_step_saturated_catch_up_yields_without_completion () =
   Alcotest.(check int) "saturated step catch-up logs no daemon diagnostic" 0
     (List.length (Logger.dump logger))
 
+let test_time_step_coalesced_saturated_catch_up_runs_once () =
+  with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
+  @@ fun rt sleep_calls yield_calls logger ->
+  let applied = ref 0 in
+  let missed_seen = ref None in
+  let signal =
+    run_ok rt
+      (Signal.Time.step_coalesced ~every:(Duration.ms 1) ~initial:0
+         (fun ~missed value ->
+           incr applied;
+           missed_seen := Some missed;
+           if value > max_int - missed then max_int else value + missed))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "coalesced saturated step catch-up processed" (fun () ->
+      !applied >= 1);
+  Alcotest.(check int) "saturated coalesced step used one update" 1
+    !applied;
+  let missed =
+    match !missed_seen with
+    | Some missed -> missed
+    | None -> Alcotest.fail "coalesced step did not report missed cadences"
+  in
+  Alcotest.(check int) "saturated coalesced step missed count" max_int
+    missed;
+  Alcotest.(check int) "saturated coalesced catch-up used one sleep" 1
+    !sleep_calls;
+  Alcotest.(check int) "saturated coalesced step did not batch-yield" 0
+    !yield_calls;
+  Alcotest.(check int) "saturated coalesced step logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger));
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "saturated coalesced step reaches max_int" max_int
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_large_catch_up_applies_beyond_old_cap () =
   with_cooperative_timer_host ~jump_ms:10_250
   @@ fun rt sleep_calls yield_calls logger ->
@@ -8177,6 +8215,9 @@ let () =
           Alcotest.test_case
             "time saturated step catch-up yields without completion" `Quick
             test_time_step_saturated_catch_up_yields_without_completion;
+          Alcotest.test_case
+            "time coalesced step saturated catch-up runs once" `Quick
+            test_time_step_coalesced_saturated_catch_up_runs_once;
           Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
             test_time_large_catch_up_applies_beyond_old_cap;
           Alcotest.test_case "time interval saturated catch-up coalesces" `Quick
