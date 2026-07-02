@@ -375,8 +375,8 @@ module Make (Observer_error : Observer_error) () = struct
   and timer_state =
     | Timer_inactive of int
     | Timer_starting of int
-    | Timer_running_uncancellable of int
-    | Timer_running of int * (unit -> unit)
+    | Timer_running_uncancellable of int * int option
+    | Timer_running of int * int option * (unit -> unit)
     | Timer_finished of int
 
   and timer_catch_up_policy =
@@ -386,7 +386,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   and timer_node = {
     mutable timer_state : timer_state;
-    mutable timer_next_due_ms : int option;
     mutable timer_on_demand_refresh_token : int;
     timer_refresh_when_inactive : bool;
     timer_refresh_on_demand : (timer_node -> int -> unit) option;
@@ -1060,8 +1059,8 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_state_generation = function
     | Timer_inactive generation
     | Timer_starting generation
-    | Timer_running_uncancellable generation
-    | Timer_running (generation, _)
+    | Timer_running_uncancellable (generation, _)
+    | Timer_running (generation, _, _)
     | Timer_finished generation ->
         generation
 
@@ -1095,27 +1094,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_running_generation timer =
     match timer.timer_state with
-    | Timer_running_uncancellable generation | Timer_running (generation, _) ->
+    | Timer_running_uncancellable (generation, _)
+    | Timer_running (generation, _, _) ->
         Some generation
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
 
   let timer_has_cancel timer =
     match timer.timer_state with
-    | Timer_running (_, _) -> true
+    | Timer_running (_, _, _) -> true
     | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
     | Timer_finished _ ->
         false
 
   let timer_running_current timer generation =
     match timer.timer_state with
-    | Timer_running_uncancellable running_generation
-    | Timer_running (running_generation, _) ->
+    | Timer_running_uncancellable (running_generation, _)
+    | Timer_running (running_generation, _, _) ->
         running_generation = generation
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
-    timer.timer_next_due_ms <- None;
     timer.timer_state <- Timer_inactive generation
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
@@ -1124,7 +1123,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_starting _ | Timer_running_uncancellable _ ->
         timer_invalidate_generation_unlocked timer;
         []
-    | Timer_running (_, cancel) ->
+    | Timer_running (_, _, cancel) ->
         timer_invalidate_generation_unlocked timer;
         if cancel_running then [ cancel ] else []
 
@@ -1859,13 +1858,12 @@ module Make (Observer_error : Observer_error) () = struct
         checked_succ "timer generation" (timer_generation timer)
       else timer_generation timer
     in
-    timer.timer_next_due_ms <- None;
     timer.timer_state <- Timer_finished generation
 
   let timer_finish_cancel_hooks_unlocked timer =
     let cancel_hooks =
       match timer.timer_state with
-      | Timer_running (_, cancel) -> [ cancel ]
+      | Timer_running (_, _, cancel) -> [ cancel ]
       | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
       | Timer_finished _ ->
           []
@@ -1886,7 +1884,6 @@ module Make (Observer_error : Observer_error) () = struct
     then None
     else (
       let generation = checked_succ "timer generation" (timer_generation timer) in
-      timer.timer_next_due_ms <- None;
       timer.timer_state <- Timer_starting generation;
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
@@ -1895,7 +1892,7 @@ module Make (Observer_error : Observer_error) () = struct
         match timer.timer_state with
         | Timer_starting starting_generation
           when starting_generation = generation ->
-            timer.timer_state <- Timer_running_uncancellable generation;
+            timer.timer_state <- Timer_running_uncancellable (generation, None);
             `Continue
         | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
         | Timer_running _ | Timer_finished _ ->
@@ -3076,10 +3073,15 @@ module Make (Observer_error : Observer_error) () = struct
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
           match timer.timer_state with
-          | Timer_running_uncancellable running_generation
-          | Timer_running (running_generation, _)
+          | Timer_running_uncancellable (running_generation, next_due_ms)
             when running_generation = generation ->
-              timer.timer_state <- Timer_running (generation, cancel);
+              timer.timer_state <-
+                Timer_running (generation, next_due_ms, cancel);
+              `Continue
+          | Timer_running (running_generation, next_due_ms, _)
+            when running_generation = generation ->
+              timer.timer_state <-
+                Timer_running (generation, next_due_ms, cancel);
               `Continue
           | Timer_inactive _ | Timer_starting _
           | Timer_running_uncancellable _ | Timer_running _ | Timer_finished _
@@ -3115,7 +3117,6 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then (
-            timer.timer_next_due_ms <- None;
             timer.timer_state <- Timer_inactive generation)
           )
 
@@ -3188,37 +3189,53 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_catch_up_batch_size = 64
 
+    let timer_next_due_unlocked timer =
+      match timer.timer_state with
+      | Timer_running_uncancellable (_, next_due_ms)
+      | Timer_running (_, next_due_ms, _) ->
+          next_due_ms
+      | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+
+    let timer_set_next_due_unlocked timer next_due_ms =
+      match timer.timer_state with
+      | Timer_running_uncancellable (generation, _) ->
+          timer.timer_state <-
+            Timer_running_uncancellable (generation, next_due_ms)
+      | Timer_running (generation, _, cancel) ->
+          timer.timer_state <- Timer_running (generation, next_due_ms, cancel)
+      | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> ()
+
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then
-            Some (Option.value timer.timer_next_due_ms ~default:fallback)
+            Some (Option.value (timer_next_due_unlocked timer) ~default:fallback)
           else None)
 
     let timer_set_next_due timer generation next_due_ms =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then (
-            timer.timer_next_due_ms <- Some next_due_ms;
+            timer_set_next_due_unlocked timer (Some next_due_ms);
             `Continue)
           else `Stop)
 
     let timer_advance_next_due timer generation ~expected next_due_ms =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then
-            match timer.timer_next_due_ms with
+            match timer_next_due_unlocked timer with
             | Some current when current = expected ->
-                timer.timer_next_due_ms <- Some next_due_ms;
+                timer_set_next_due_unlocked timer (Some next_due_ms);
                 `Advanced
             | Some _ | None -> `Stale
           else `Stop)
 
     let refresh_due_unlocked timer interval_ms now_ms =
-      match timer.timer_next_due_ms with
+      match timer_next_due_unlocked timer with
       | None -> 0
       | Some next_due_ms ->
           let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
           if missed > 0 then
-            timer.timer_next_due_ms <-
-              Some (advance_due next_due_ms interval_ms missed);
+            timer_set_next_due_unlocked timer
+              (Some (advance_due next_due_ms interval_ms missed));
           missed
 
     let rec run_timer_update_batch timer generation remaining update ~missed =
@@ -3335,7 +3352,6 @@ module Make (Observer_error : Observer_error) () = struct
       let timer =
         {
           timer_state = Timer_inactive 0;
-          timer_next_due_ms = None;
           timer_on_demand_refresh_token = -1;
           timer_refresh_when_inactive = refresh_when_inactive;
           timer_refresh_on_demand = refresh_on_demand;
