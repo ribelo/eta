@@ -5272,6 +5272,31 @@ let test_time_timer_generation_overflow_fails_loudly () =
   expect_die "timer generation overflow"
     (Eta_eio.Runtime.run rt (widen (Overflow_signal.Observer.dispose observer)))
 
+let test_time_timer_start_generation_overflow_is_precommit_failure () =
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let use_timer = Overflow_signal.Var.create false in
+  let timer_signal =
+    run_ok rt (Overflow_signal.Time.interval (Duration.ms 10))
+  in
+  set_signal_timer_generation timer_signal max_int;
+  let selected =
+    Overflow_signal.bind (Overflow_signal.Var.watch use_timer) (fun active ->
+        if active then timer_signal else Overflow_signal.const (-1))
+  in
+  let observer =
+    run_ok rt (Overflow_signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Overflow_signal.stabilize;
+  Alcotest.(check int) "initial inactive branch" (-1)
+    (run_ok rt (Overflow_signal.Observer.read observer));
+  run_ok rt (Overflow_signal.Var.set use_timer true);
+  expect_fail "timer start generation overflow"
+    (counter_overflow "timer generation")
+    (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize));
+  Alcotest.(check int) "snapshot did not switch after overflow" (-1)
+    (run_ok rt (Overflow_signal.Observer.read observer))
+
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let check_timer_snapshot label
@@ -8419,6 +8444,9 @@ let () =
             test_time_inactive_timer_stop_is_idempotent;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
+          Alcotest.test_case
+            "time timer start overflow is precommit failure" `Quick
+            test_time_timer_start_generation_overflow_is_precommit_failure;
           Alcotest.test_case "time large clock jump catches up explicitly"
             `Quick test_time_large_clock_jump_catches_up_without_auto_stabilize;
           Alcotest.test_case "time interval catches up after late sleep" `Quick

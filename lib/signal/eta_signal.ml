@@ -1160,6 +1160,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_finished timer = timer_finished_state (timer_effective_state timer)
 
+  let timer_has_current_start timer =
+    match timer.timer_state with
+    | Timer_running_uncancellable _ | Timer_running _ -> true
+    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
+
+  let timer_needs_start timer =
+    not
+      (timer_finished timer
+      || (timer_active timer && timer_has_current_start timer))
+
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_operation
     && timer.timer_on_demand_refresh_token <> token
@@ -1589,6 +1599,10 @@ module Make (Observer_error : Observer_error) () = struct
        || timer_has_cancel timer
     then ignore (checked_succ "timer generation" (timer_generation timer) : int)
 
+  let preflight_timer_start timer =
+    if timer_needs_start timer then
+      ignore (checked_succ "timer generation" (timer_generation timer) : int)
+
   let preflight_staged_bind_commit seen collected (B bind) =
     if bind.staged_bind_generation = current_generation () then
       match
@@ -1622,6 +1636,37 @@ module Make (Observer_error : Observer_error) () = struct
       graph.staged_binds;
     (invalidated_ids, !invalidated_nodes)
 
+  let collect_post_commit_necessary_timers invalidated_ids =
+    let seen_nodes = Hashtbl.create 16 in
+    let timers = Hashtbl.create 8 in
+    let rec visit (P signal) =
+      if
+        signal.valid
+        && not (Hashtbl.mem invalidated_ids signal.id)
+        && not (Hashtbl.mem seen_nodes signal.id)
+      then (
+        Hashtbl.add seen_nodes signal.id ();
+        Option.iter
+          (fun timer -> Hashtbl.replace timers signal.id timer)
+          signal.timer;
+        match signal.kind with
+        | Bind bind ->
+            visit (P bind.source);
+            Option.iter (fun inner -> visit (P inner)) (bind_effective_inner bind)
+        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            List.iter visit signal.dependencies)
+    in
+    List.iter
+      (fun (O observer) ->
+        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
+      graph.observers;
+    timers
+
+  let preflight_post_commit_timer_starts invalidated_ids =
+    collect_post_commit_necessary_timers invalidated_ids
+    |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
+
   let preflight_commit_staging () =
     let invalidated_ids, invalidated_nodes =
       collect_staged_bind_invalidations ()
@@ -1629,7 +1674,8 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
-    List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes
+    List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes;
+    preflight_post_commit_timer_starts invalidated_ids
 
   let clear_observer_staging live =
     live.obs_staged <- None
@@ -2112,14 +2158,8 @@ module Make (Observer_error : Observer_error) () = struct
           then recompute_with_dependencies dependencies inner_value
           else use_cached ()
 
-  let timer_has_current_start timer =
-    match timer.timer_state with
-    | Timer_running_uncancellable _ | Timer_running _ -> true
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
-
   let timer_start_unlocked timer =
-    if timer_finished timer || (timer_active timer && timer_has_current_start timer)
-    then None
+    if not (timer_needs_start timer) then None
     else (
       let generation = checked_succ "timer generation" (timer_generation timer) in
       timer.timer_state <- Timer_starting generation;
