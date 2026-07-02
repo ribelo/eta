@@ -90,6 +90,10 @@ type t = {
     are one clock pair; mixing a wall-clock [now_ms] with a relative monotonic
     sleeper makes clock-jump behavior undefined. *)
 
+val same_runtime : t -> t -> bool
+(** [same_runtime left right] is [true] when both erased contracts wrap the same
+    backend runtime instance. *)
+
 module type RUNTIME = sig
   type scope
   type cancel_context

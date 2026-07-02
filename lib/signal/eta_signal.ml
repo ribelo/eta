@@ -19,6 +19,7 @@ module Make (Observer_error : Observer_error) () = struct
     | `Cycle
     | `Invalid_scope
     | `Reentrant_stabilization
+    | `Runtime_mismatch
     | `Reentrant_update ]
 
   exception Graph_error of graph_error
@@ -153,6 +154,8 @@ module Make (Observer_error : Observer_error) () = struct
     | `Invalid_scope -> Format.pp_print_string ppf "invalid dynamic scope"
     | `Reentrant_stabilization ->
         Format.pp_print_string ppf "reentrant stabilization"
+    | `Runtime_mismatch ->
+        Format.pp_print_string ppf "timer used from a different Eta runtime"
     | `Reentrant_update ->
         Format.pp_print_string ppf "same-variable effectful update reentry"
 
@@ -426,6 +429,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable timer_staged_state : timer_state option;
     mutable timer_staged_refresh_token : int;
     mutable timer_on_demand_refresh_token : int;
+    timer_runtime_contract : Runtime_contract.t;
     timer_refresh_when_inactive : bool;
     timer_refresh_operation : timer_refresh_operation option;
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
@@ -505,6 +509,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type timer_refresh_context = {
     timer_refresh_token : int;
+    timer_refresh_runtime_contract : Runtime_contract.t;
     timer_refresh_now_ms : unit -> int;
     mutable timer_refresh_sample_ms : int option;
     mutable timer_refresh_dirty_nodes : (packed_signal * bool) list;
@@ -1194,6 +1199,12 @@ module Make (Observer_error : Observer_error) () = struct
     not
       (timer_finished timer
       || (timer_active timer && timer_has_current_start timer))
+
+  let ensure_timer_runtime timer runtime_contract =
+    if
+      not
+        (Runtime_contract.same_runtime timer.timer_runtime_contract runtime_contract)
+    then raise (Graph_error `Runtime_mismatch)
 
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_operation
@@ -1939,14 +1950,18 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_timer_source_for_compute signal =
     match (graph.active_timer_refresh, signal.timer) with
-    | Some ({ timer_refresh_token; _ } as timer_refresh), Some timer
-      when timer_can_refresh_on_demand timer_refresh_token timer ->
-        remember_timer_refresh_timer timer;
-        let now_ms = timer_refresh_sample_now_ms timer_refresh in
-        (match timer.timer_refresh_operation with
-         | None -> ()
-         | Some operation -> stage_timer_refresh_operation timer now_ms operation)
-    | None, _ | Some _, None | Some _, Some _ -> ()
+    | Some
+        ( { timer_refresh_token; timer_refresh_runtime_contract; _ } as
+        timer_refresh ),
+      Some timer ->
+        ensure_timer_runtime timer timer_refresh_runtime_contract;
+        if timer_can_refresh_on_demand timer_refresh_token timer then (
+          remember_timer_refresh_timer timer;
+          let now_ms = timer_refresh_sample_now_ms timer_refresh in
+          match timer.timer_refresh_operation with
+          | None -> ()
+          | Some operation -> stage_timer_refresh_operation timer now_ms operation)
+    | None, _ | Some _, None -> ()
 
   let rec compute : type a. a signal -> a * bool =
    fun signal ->
@@ -2300,16 +2315,17 @@ module Make (Observer_error : Observer_error) () = struct
                 Effect.sync (fun () -> hooks_ref := [])))
         |> Effect.uninterruptible
 
-  let refresh_timer_demand_unlocked () =
+  let refresh_timer_demand_unlocked runtime_contract =
     let needed = necessary_timers () in
     let start_attempts = ref [] in
     let cancel_hooks = ref [] in
     List.iter
       (fun (id, timer) ->
-        if Hashtbl.mem needed id then
+        if Hashtbl.mem needed id then (
+          ensure_timer_runtime timer runtime_contract;
           Option.iter
             (fun attempt -> start_attempts := attempt :: !start_attempts)
-            (timer_start_unlocked timer)
+            (timer_start_unlocked timer))
         else
           cancel_hooks :=
             List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks)
@@ -2327,19 +2343,27 @@ module Make (Observer_error : Observer_error) () = struct
   let run_timer_start_attempts attempts =
     Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
 
+  let current_runtime_contract () =
+    Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
+      (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
+
   let refresh_timer_demand () =
-    Effect.acquire_use_release
-      ~acquire:
-        (with_graph_lane_sync (fun () ->
-             let start_attempts, cancel_hooks = refresh_timer_demand_unlocked () in
-             (start_attempts, ref cancel_hooks)))
-      ~release:(fun (start_attempts, cancel_hooks_ref) ->
-        rollback_unclaimed_timer_starts start_attempts
-        |> Effect.bind (fun () ->
-               run_pending_timer_cancel_hooks cancel_hooks_ref))
-      (fun (start_attempts, cancel_hooks_ref) ->
-        run_pending_timer_cancel_hooks cancel_hooks_ref
-        |> Effect.bind (fun () -> run_timer_start_attempts start_attempts))
+    current_runtime_contract ()
+    |> Effect.bind (fun runtime_contract ->
+           Effect.acquire_use_release
+             ~acquire:
+               (with_graph_lane_sync (fun () ->
+                    let start_attempts, cancel_hooks =
+                      refresh_timer_demand_unlocked runtime_contract
+                    in
+                    (start_attempts, ref cancel_hooks)))
+             ~release:(fun (start_attempts, cancel_hooks_ref) ->
+               rollback_unclaimed_timer_starts start_attempts
+               |> Effect.bind (fun () ->
+                      run_pending_timer_cancel_hooks cancel_hooks_ref))
+             (fun (start_attempts, cancel_hooks_ref) ->
+               run_pending_timer_cancel_hooks cancel_hooks_ref
+               |> Effect.bind (fun () -> run_timer_start_attempts start_attempts)))
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
     fail_with_pending_disposal_hooks hooks_ref
@@ -2745,15 +2769,11 @@ module Make (Observer_error : Observer_error) () = struct
            if !finish_needed then with_graph_lane_sync finish_stabilize
            else Effect.unit)
 
-  let current_runtime_contract =
-    Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
-      (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
-
   let stabilize =
     Effect.sync (fun () -> (ref [], ref false, ref false))
     |> Effect.bind
          (fun (hooks_ref, refresh_timers, finish_needed) ->
-           current_runtime_contract
+           current_runtime_contract ()
            |> Effect.bind (fun runtime_contract ->
                   with_graph_lane_sync (fun () ->
                       try
@@ -2762,6 +2782,8 @@ module Make (Observer_error : Observer_error) () = struct
                             {
                               timer_refresh_token =
                                 next_timer_refresh_token_unlocked ();
+                              timer_refresh_runtime_contract =
+                                runtime_contract;
                               timer_refresh_now_ms =
                                 runtime_contract.Runtime_contract.now_ms;
                               timer_refresh_sample_ms = None;
@@ -3611,13 +3633,14 @@ module Make (Observer_error : Observer_error) () = struct
                                                                              Effect.unit)))))))))
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
-        ?refresh_operation signal interval update =
+        ?refresh_operation ~runtime_contract signal interval update =
       let timer =
         {
           timer_state = Timer_inactive 0;
           timer_staged_state = None;
           timer_staged_refresh_token = -1;
           timer_on_demand_refresh_token = -1;
+          timer_runtime_contract = runtime_contract;
           timer_refresh_when_inactive = refresh_when_inactive;
           timer_refresh_operation = refresh_operation;
           timer_start =
@@ -3673,14 +3696,14 @@ module Make (Observer_error : Observer_error) () = struct
     let make_timer_signal ?(update_on_start = false)
         ?(catch_up_policy = Catch_up_every_cadence)
         ?(refresh_when_inactive = true) ?equal ?refresh_on_demand initial interval
-        update =
+        ~runtime_contract update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
       let refresh_operation =
         Option.map (timer_refresh_operation source) refresh_on_demand
       in
-      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_operation signal
-        interval
+      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_operation
+        ~runtime_contract signal interval
         {
           timer_catch_up_policy = catch_up_policy;
           timer_update =
@@ -3700,28 +3723,31 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             Effect.now
-             |> Effect.bind (fun initial ->
-                    construct_timer_signal (fun () ->
-                        make_timer_signal ~update_on_start:true ~equal:Int.equal
-                          ~catch_up_policy:Catch_up_once_per_wake
-                          ~refresh_on_demand:Refresh_current_time
-                          initial every
-                          {
-                            source_timer_update =
-                              (fun timer generation ~missed:_ source ->
-                                Effect.now
-                                |> Effect.bind (fun now_ms ->
-                                       timer_set_source timer generation source
-                                         now_ms
-                                       |> Effect.map (fun _ -> ())));
-                          })))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    Effect.now
+                    |> Effect.bind (fun initial ->
+                           construct_timer_signal (fun () ->
+                               make_timer_signal ~update_on_start:true
+                                 ~equal:Int.equal
+                                 ~catch_up_policy:Catch_up_once_per_wake
+                                 ~refresh_on_demand:Refresh_current_time initial
+                                 every ~runtime_contract
+                                 {
+                                   source_timer_update =
+                                     (fun timer generation ~missed:_ source ->
+                                       Effect.now
+                                       |> Effect.bind (fun now_ms ->
+                                              timer_set_source timer generation
+                                                source now_ms
+                                              |> Effect.map (fun _ -> ())));
+                                 }))))
 
-    let construct_deadline_signal every deadline_ms =
+    let construct_deadline_signal every deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
           make_timer_signal ~update_on_start:true
             ~catch_up_policy:Catch_up_once_per_wake ~equal:Bool.equal false every
-            ~refresh_on_demand:(Refresh_deadline deadline_ms)
+            ~refresh_on_demand:(Refresh_deadline deadline_ms) ~runtime_contract
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
@@ -3743,11 +3769,15 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             Effect.now
-             |> Effect.bind (fun now_ms ->
-                    Effect.from_result (validate_future now_ms deadline_ms)
-                    |> Effect.bind (fun () ->
-                           construct_deadline_signal every deadline_ms)))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    Effect.now
+                    |> Effect.bind (fun now_ms ->
+                           Effect.from_result
+                             (validate_future now_ms deadline_ms)
+                           |> Effect.bind (fun () ->
+                                  construct_deadline_signal every deadline_ms
+                                    ~runtime_contract))))
 
     let after ~every duration =
       Effect.sync (fun () ->
@@ -3756,74 +3786,88 @@ module Make (Observer_error : Observer_error) () = struct
           | Ok () -> validate_positive_duration duration)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             Effect.now
-             |> Effect.bind (fun now_ms ->
-                    Effect.from_result
-                      (add_relative_deadline now_ms (Duration.to_ms duration))
-                    |> Effect.bind (fun deadline_ms ->
-                           construct_deadline_signal every deadline_ms)))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    Effect.now
+                    |> Effect.bind (fun now_ms ->
+                           Effect.from_result
+                             (add_relative_deadline now_ms
+                                (Duration.to_ms duration))
+                           |> Effect.bind (fun deadline_ms ->
+                                  construct_deadline_signal every deadline_ms
+                                    ~runtime_contract))))
 
     let interval interval =
       Effect.sync (fun () -> validate_interval interval)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             construct_timer_signal (fun () ->
-                 let interval_ms = Duration.to_ms interval in
-                 make_timer_signal ~equal:Int.equal 0 interval
-                   ~refresh_when_inactive:false
-                   ~refresh_on_demand:(Refresh_interval interval_ms)
-                   ~catch_up_policy:Catch_up_coalesced
-                   {
-                     source_timer_update =
-                       (fun timer generation ~missed source ->
-                         Effect.sync (fun () ->
-                             add_int_capped (Var.value source) missed)
-                         |> Effect.annotate ~key:"eta_signal.timer.kind"
-                              ~value:"interval"
-                         |> Effect.named "eta_signal.time.interval"
-                         |> Effect.bind (fun next ->
-                                timer_set_source timer generation source next
-                                |> Effect.map (fun _ -> ())));
-                   }))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    construct_timer_signal (fun () ->
+                        let interval_ms = Duration.to_ms interval in
+                        make_timer_signal ~equal:Int.equal 0 interval
+                          ~refresh_when_inactive:false
+                          ~refresh_on_demand:(Refresh_interval interval_ms)
+                          ~catch_up_policy:Catch_up_coalesced
+                          ~runtime_contract
+                          {
+                            source_timer_update =
+                              (fun timer generation ~missed source ->
+                                Effect.sync (fun () ->
+                                    add_int_capped (Var.value source) missed)
+                                |> Effect.annotate ~key:"eta_signal.timer.kind"
+                                     ~value:"interval"
+                                |> Effect.named "eta_signal.time.interval"
+                                |> Effect.bind (fun next ->
+                                       timer_set_source timer generation source
+                                         next
+                                       |> Effect.map (fun _ -> ())));
+                          })))
 
     let step ~every ~initial f =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             construct_timer_signal (fun () ->
-                 make_timer_signal initial every
-                   ~refresh_when_inactive:false
-                   {
-                     source_timer_update =
-                       (fun timer generation ~missed:_ source ->
-                         Effect.sync (fun () -> f (Var.value source))
-                         |> Effect.annotate ~key:"eta_signal.timer.kind"
-                              ~value:"step"
-                         |> Effect.named "eta_signal.time.step"
-                         |> Effect.bind (fun next ->
-                               timer_set_source timer generation source next
-                               |> Effect.map (fun _ -> ())));
-                   }))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    construct_timer_signal (fun () ->
+                        make_timer_signal initial every ~refresh_when_inactive:false
+                          ~runtime_contract
+                          {
+                            source_timer_update =
+                              (fun timer generation ~missed:_ source ->
+                                Effect.sync (fun () -> f (Var.value source))
+                                |> Effect.annotate ~key:"eta_signal.timer.kind"
+                                     ~value:"step"
+                                |> Effect.named "eta_signal.time.step"
+                                |> Effect.bind (fun next ->
+                                       timer_set_source timer generation source
+                                         next
+                                       |> Effect.map (fun _ -> ())));
+                          })))
 
     let step_coalesced ~every ~initial f =
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->
-             construct_timer_signal (fun () ->
-                 make_timer_signal initial every
-                   ~refresh_when_inactive:false
-                   ~catch_up_policy:Catch_up_coalesced
-                   {
-                     source_timer_update =
-                       (fun timer generation ~missed source ->
-                         Effect.sync (fun () -> f ~missed (Var.value source))
-                         |> Effect.annotate ~key:"eta_signal.timer.kind"
-                              ~value:"step_coalesced"
-                         |> Effect.named "eta_signal.time.step_coalesced"
-                         |> Effect.bind (fun next ->
-                                timer_set_source timer generation source next
-                                |> Effect.map (fun _ -> ())));
-                   }))
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    construct_timer_signal (fun () ->
+                        make_timer_signal initial every ~refresh_when_inactive:false
+                          ~catch_up_policy:Catch_up_coalesced ~runtime_contract
+                          {
+                            source_timer_update =
+                              (fun timer generation ~missed source ->
+                                Effect.sync (fun () ->
+                                    f ~missed (Var.value source))
+                                |> Effect.annotate ~key:"eta_signal.timer.kind"
+                                     ~value:"step_coalesced"
+                                |> Effect.named "eta_signal.time.step_coalesced"
+                                |> Effect.bind (fun next ->
+                                       timer_set_source timer generation source
+                                         next
+                                       |> Effect.map (fun _ -> ())));
+                          })))
   end
 
   module Stream = struct

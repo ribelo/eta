@@ -119,6 +119,7 @@ module Make (Observer_error : Observer_error) () : sig
     | `Cycle
     | `Invalid_scope
     | `Reentrant_stabilization
+    | `Runtime_mismatch
     | `Reentrant_update ]
 
   exception Graph_error of graph_error
@@ -131,7 +132,9 @@ module Make (Observer_error : Observer_error) () : sig
       [map2] through [map9], {!both}, {!all}, and {!bind}. They raise
       [Graph_error `Ambiguous_scope] when a new node would be created in a phase
       without an unambiguous dynamic scope, and [Graph_error `Invalid_scope]
-      when wrapping an invalidated dynamic-scope node. They raise
+      when wrapping an invalidated dynamic-scope node. Timer-backed graph
+      operations fail with [`Runtime_mismatch] if a time node is used from a
+      different Eta runtime than the one that created it. They raise
       [Graph_error (`Counter_overflow name)] if an internal monotonically
       increasing graph counter reaches [max_int]; Eta signal counters do not
       wrap. *)

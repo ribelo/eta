@@ -70,6 +70,10 @@ type t = {
   local_with_binding : 'a 'b. 'a local -> 'a -> (unit -> 'b) -> 'b;
 }
 
+let scope_runtime_id (Scope token) = token.Erased_token.runtime_id
+let same_runtime left right =
+  scope_runtime_id left.root_scope = scope_runtime_id right.root_scope
+
 module type RUNTIME = sig
   type scope
   type cancel_context
