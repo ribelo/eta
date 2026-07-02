@@ -411,6 +411,12 @@ module Make (Observer_error : Observer_error) () = struct
     | Refresh_deadline_source of bool var * int
     | Refresh_interval_source of int var * int
 
+  and timer_refresh_transition =
+    | Timer_refresh_set_source : 'a var * 'a -> timer_refresh_transition
+    | Timer_refresh_advance_due of int
+    | Timer_refresh_finish
+    | Timer_refresh_cancel_after_commit of (unit -> unit)
+
   and timer_node = {
     mutable timer_state : timer_state;
     mutable timer_staged_state : timer_state option;
@@ -1233,23 +1239,18 @@ module Make (Observer_error : Observer_error) () = struct
     remember_timer_refresh_timer timer;
     timer.timer_staged_state <- Some state
 
-  let refresh_due_unlocked timer interval_ms now_ms =
+  let timer_due_refresh_transitions timer interval_ms now_ms =
     match timer_next_due_unlocked timer with
-    | None -> (0, false)
+    | None -> (0, false, [])
     | Some next_due_ms ->
         let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
-        let saturated_due =
-          if missed <= 0 then false
-          else
-            let advanced_due_ms =
-              advance_due next_due_ms interval_ms missed
-            in
-            stage_timer_state_unlocked timer
-              (timer_set_next_due_state (timer_effective_state timer)
-                 (Some advanced_due_ms));
+        if missed <= 0 then (0, false, [])
+        else
+          let advanced_due_ms = advance_due next_due_ms interval_ms missed in
+          let saturated_due =
             advanced_due_ms = max_int && now_ms >= advanced_due_ms
-        in
-        (missed, saturated_due)
+          in
+          (missed, saturated_due, [ Timer_refresh_advance_due advanced_due_ms ])
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
@@ -1702,33 +1703,55 @@ module Make (Observer_error : Observer_error) () = struct
     timer_finish_unlocked timer;
     cancel_hooks
 
-  let timer_finish_from_graph_unlocked timer =
-    let state = timer_effective_state timer in
-    let cancel_hooks =
-      match state with
-      | Timer_running (_, _, cancel) -> [ cancel ]
-      | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-      | Timer_finished _ ->
-          []
-    in
-    stage_timer_state_unlocked timer (timer_finish_state state);
-    remember_timer_refresh_disposal_hooks cancel_hooks
+  let timer_finish_transitions state =
+    match state with
+    | Timer_running (_, _, cancel) -> [ Timer_refresh_cancel_after_commit cancel ]
+    | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+    | Timer_finished _ ->
+        []
 
-  let apply_timer_refresh_operation timer now_ms = function
-    | Refresh_current_time_source source -> stage_timer_source_value source now_ms
+  let rec stage_timer_refresh_transition timer = function
+    | Timer_refresh_set_source (source, value) ->
+        stage_timer_source_value source value
+    | Timer_refresh_advance_due next_due_ms ->
+        stage_timer_state_unlocked timer
+          (timer_set_next_due_state (timer_effective_state timer)
+             (Some next_due_ms))
+    | Timer_refresh_finish ->
+        let state = timer_effective_state timer in
+        stage_timer_state_unlocked timer (timer_finish_state state);
+        List.iter
+          (stage_timer_refresh_transition timer)
+          (timer_finish_transitions state)
+    | Timer_refresh_cancel_after_commit cancel ->
+        remember_timer_refresh_disposal_hooks [ cancel ]
+
+  let timer_refresh_transitions timer now_ms = function
+    | Refresh_current_time_source source ->
+        [ Timer_refresh_set_source (source, now_ms) ]
     | Refresh_deadline_source (source, deadline_ms) ->
-        if now_ms >= deadline_ms then (
-          stage_timer_source_value source true;
-          timer_finish_from_graph_unlocked timer)
-        else stage_timer_source_value source false
+        if now_ms >= deadline_ms then
+          [ Timer_refresh_set_source (source, true); Timer_refresh_finish ]
+        else [ Timer_refresh_set_source (source, false) ]
     | Refresh_interval_source (source, interval_ms) ->
-        let missed, saturated_due =
-          refresh_due_unlocked timer interval_ms now_ms
+        let missed, saturated_due, due_transitions =
+          timer_due_refresh_transitions timer interval_ms now_ms
         in
-        if missed > 0 then
-          stage_timer_source_value source
-            (add_int_capped (effective_var_value source) missed);
-        if saturated_due then timer_finish_from_graph_unlocked timer
+        let source_transitions =
+          if missed <= 0 then []
+          else
+            [
+              Timer_refresh_set_source
+                (source, add_int_capped (effective_var_value source) missed);
+            ]
+        in
+        due_transitions @ source_transitions
+        @ (if saturated_due then [ Timer_refresh_finish ] else [])
+
+  let apply_timer_refresh_operation timer now_ms operation =
+    List.iter
+      (stage_timer_refresh_transition timer)
+      (timer_refresh_transitions timer now_ms operation)
 
   let clear_timer_refresh_timer_staging timer =
     timer.timer_staged_state <- None;
