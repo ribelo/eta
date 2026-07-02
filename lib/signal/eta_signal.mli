@@ -115,6 +115,7 @@ module Make (Observer_error : Observer_error) () : sig
 
   type graph_error =
     [ `Ambiguous_scope
+    | `Counter_overflow of string
     | `Cycle
     | `Invalid_scope
     | `Reentrant_stabilization
@@ -130,7 +131,10 @@ module Make (Observer_error : Observer_error) () : sig
       [map2] through [map9], {!both}, {!all}, and {!bind}. They raise
       [Graph_error `Ambiguous_scope] when a new node would be created in a phase
       without an unambiguous dynamic scope, and [Graph_error `Invalid_scope]
-      when wrapping an invalidated dynamic-scope node. *)
+      when wrapping an invalidated dynamic-scope node. They raise
+      [Graph_error (`Counter_overflow name)] if an internal monotonically
+      increasing graph counter reaches [max_int]; Eta signal counters do not
+      wrap. *)
 
   type observer_read_error =
     [ `Disposed_observer
@@ -452,6 +456,11 @@ module Make (Observer_error : Observer_error) () : sig
       updates retryable. Once a pure snapshot commits, observer current values
       and pending callback deliveries are published before timer lifecycle
       refresh, disposal cleanup, and observer callbacks run.
+
+      Fails with [`Counter_overflow name] if an internal stabilization,
+      generation, version, or timer token counter reaches [max_int]. These
+      counters are monotonic and do not wrap. Overflow is treated as a graph
+      failure before any partial snapshot is published.
 
       Failures after that commit point, including observer callback failures,
       timer start/stop lifecycle defects, disposal-hook failures, or

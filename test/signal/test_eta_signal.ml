@@ -53,6 +53,10 @@ let expect_die label = function
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
+let counter_overflow name = function
+  | `Counter_overflow actual -> String.equal actual name
+  | _ -> false
+
 let contains_substring haystack needle =
   let haystack_len = String.length haystack in
   let needle_len = String.length needle in
@@ -3071,7 +3075,7 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
   run_ok rt Overflow_signal.stabilize;
   set_signal_version signal max_int;
   run_ok rt (Overflow_signal.Var.set source 2);
-  expect_die "signal version overflow"
+  expect_fail "signal version overflow" (counter_overflow "signal version")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize));
   Alcotest.(check int) "old snapshot remains after version overflow" 1
     (run_ok rt (Overflow_signal.Observer.read observer));
@@ -3085,6 +3089,22 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
        ()
    | _ -> Alcotest.fail "expected retry to deliver changed event");
   run_ok rt (Overflow_signal.Observer.dispose observer)
+
+let test_stabilization_generation_overflow_is_typed_failure () =
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  Overflow_signal.graph.stabilization_id <- max_int;
+  expect_fail "stabilization generation overflow"
+    (counter_overflow "stabilization generation")
+    (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
+
+let test_timer_refresh_token_overflow_is_typed_failure () =
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  Overflow_signal.graph.next_timer_refresh_token <- max_int;
+  expect_fail "timer refresh token overflow"
+    (counter_overflow "timer refresh token")
+    (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
 
 let test_failed_initial_stabilization_leaves_no_current_value () =
   with_runtime @@ fun rt ->
@@ -8201,6 +8221,10 @@ let () =
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "version overflow does not publish snapshot" `Quick
             test_signal_version_overflow_does_not_publish_partial_snapshot;
+          Alcotest.test_case "stabilization generation overflow typed failure"
+            `Quick test_stabilization_generation_overflow_is_typed_failure;
+          Alcotest.test_case "timer refresh token overflow typed failure" `Quick
+            test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "failed initial stabilize has no current" `Quick
             test_failed_initial_stabilization_leaves_no_current_value;
           Alcotest.test_case "cutoff exception preserves snapshot" `Quick

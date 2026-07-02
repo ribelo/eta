@@ -15,10 +15,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   type graph_error =
     [ `Ambiguous_scope
+    | `Counter_overflow of string
     | `Cycle
     | `Invalid_scope
     | `Reentrant_stabilization
     | `Reentrant_update ]
+
+  exception Graph_error of graph_error
 
   type observer_read_error =
     [ `Disposed_observer
@@ -139,6 +142,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let pp_graph_error ppf = function
     | `Ambiguous_scope -> Format.pp_print_string ppf "ambiguous dynamic scope"
+    | `Counter_overflow name ->
+        Format.fprintf ppf "internal counter overflow: %s" name
     | `Cycle -> Format.pp_print_string ppf "cycle detected"
     | `Invalid_scope -> Format.pp_print_string ppf "invalid dynamic scope"
     | `Reentrant_stabilization ->
@@ -175,7 +180,7 @@ module Make (Observer_error : Observer_error) () = struct
   let saturating_succ value =
     if value = max_int then max_int else value + 1
 
-  let counter_overflow name = invalid_arg ("Eta_signal: " ^ name ^ " overflow")
+  let counter_overflow name = raise (Graph_error (`Counter_overflow name))
 
   let checked_succ name value =
     if value = max_int then counter_overflow name else value + 1
@@ -525,8 +530,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable next_timer_refresh_token : int;
     mutable active_timer_refresh : timer_refresh_context option;
   }
-
-  exception Graph_error of graph_error
 
   let graph =
     {
@@ -2641,19 +2644,21 @@ module Make (Observer_error : Observer_error) () = struct
            current_runtime_contract
            |> Effect.bind (fun runtime_contract ->
                   with_graph_lane_sync (fun () ->
-                      let timer_refresh =
-                        Some
-                          {
-                            timer_refresh_token =
-                              next_timer_refresh_token_unlocked ();
-                            timer_refresh_now_ms =
-                              runtime_contract.Runtime_contract.now_ms;
-                            timer_refresh_sample_ms = None;
-                            timer_refresh_dirty_nodes = [];
-                          }
-                      in
-                      begin_stabilize_with_pending_hooks timer_refresh hooks_ref
-                        finish_needed)
+                      try
+                        let timer_refresh =
+                          Some
+                            {
+                              timer_refresh_token =
+                                next_timer_refresh_token_unlocked ();
+                              timer_refresh_now_ms =
+                                runtime_contract.Runtime_contract.now_ms;
+                              timer_refresh_sample_ms = None;
+                              timer_refresh_dirty_nodes = [];
+                            }
+                        in
+                        begin_stabilize_with_pending_hooks timer_refresh
+                          hooks_ref finish_needed
+                      with Graph_error err -> Pure_graph_error ([], err))
                   |> Effect.bind (function
                        | Pure_graph_error (_, err) ->
                            graph_error_with_pending_disposal_hooks hooks_ref err
@@ -2763,31 +2768,33 @@ module Make (Observer_error : Observer_error) () = struct
     let observe_with_hooks_callback ?(equal = default_equal) ?(on_finish = [])
         signal callback =
       with_graph_lane_sync (fun () ->
-          if not signal.valid then Error `Invalid_scope
-          else
-            let live =
-              {
-                obs_snapshot =
-                  {
-                    observer_snapshot_value = Observer_uninitialized;
-                    observer_snapshot_delivery = Observer_never_delivered;
-                  };
-                obs_staged = None;
-                obs_on_finish = on_finish;
-              }
-            in
-            let rec observer =
-              {
-                obs_id = next_observer_id ();
-                obs_signal = signal;
-                obs_equal = equal;
-                obs_callback = (fun update -> callback observer update);
-                obs_state = Observer_registering live;
-              }
-            in
-            graph.observers <- O observer :: graph.observers;
-            update_necessity_counters_unlocked ();
-            Ok observer)
+          try
+            if not signal.valid then Error `Invalid_scope
+            else
+              let live =
+                {
+                  obs_snapshot =
+                    {
+                      observer_snapshot_value = Observer_uninitialized;
+                      observer_snapshot_delivery = Observer_never_delivered;
+                    };
+                  obs_staged = None;
+                  obs_on_finish = on_finish;
+                }
+              in
+              let rec observer =
+                {
+                  obs_id = next_observer_id ();
+                  obs_signal = signal;
+                  obs_equal = equal;
+                  obs_callback = (fun update -> callback observer update);
+                  obs_state = Observer_registering live;
+                }
+              in
+              graph.observers <- O observer :: graph.observers;
+              update_necessity_counters_unlocked ();
+              Ok observer
+          with Graph_error err -> Error err)
       |> Effect.flatten_result
       |> Effect.bind (fun observer ->
              let transferred = ref false in
