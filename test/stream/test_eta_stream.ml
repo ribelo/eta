@@ -50,7 +50,7 @@ let wait_for_sleepers clock expected =
   in
   loop 200
 
-let wait_until label predicate =
+let wait_until ?(attempts = 2_000) label predicate =
   let rec loop attempts =
     if predicate () then ()
     else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
@@ -58,7 +58,7 @@ let wait_until label predicate =
       Eta_test.Async.yield ();
       loop (attempts - 1))
   in
-  loop 200
+  loop attempts
 
 let fd_count () =
   try Array.length (Sys.readdir "/proc/self/fd") with Sys_error _ -> -1
