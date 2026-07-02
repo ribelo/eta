@@ -2370,6 +2370,46 @@ module Make (Observer_error : Observer_error) () = struct
     | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
     | order -> order
 
+  let observer_order_dependencies : type a. a signal -> packed_signal list =
+   fun signal ->
+    match signal.kind with
+    | Bind bind ->
+        let dependencies = [ P bind.source ] in
+        (match bind_effective_inner bind with
+         | None -> dependencies
+         | Some inner -> P inner :: dependencies)
+    | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+    | Map7 _ | Map8 _ | Map9 _ | All _ ->
+        signal.dependencies
+
+  let signal_depends_on signal dependency =
+    let seen = Hashtbl.create 16 in
+    let rec visit (P candidate) =
+      if Int.equal (signal_id_int candidate.id) (signal_id_int dependency.id)
+      then true
+      else if Hashtbl.mem seen candidate.id then false
+      else (
+        Hashtbl.add seen candidate.id ();
+        List.exists visit (observer_order_dependencies candidate))
+    in
+    List.exists visit (observer_order_dependencies signal)
+
+  let compare_observer_graph_order (O left) (O right) =
+    let signal_order =
+      if
+        Int.equal
+          (signal_id_int left.obs_signal.id)
+          (signal_id_int right.obs_signal.id)
+      then 0
+      else if signal_depends_on left.obs_signal right.obs_signal then 1
+      else if signal_depends_on right.obs_signal left.obs_signal then -1
+      else
+        Int.compare (signal_id_int left.obs_signal.id)
+          (signal_id_int right.obs_signal.id)
+    in
+    if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
+    else signal_order
+
   let collect_observed_bind_nodes observers =
     let seen = Hashtbl.create 16 in
     let binds = ref [] in
@@ -2527,8 +2567,7 @@ module Make (Observer_error : Observer_error) () = struct
       let observers =
         graph.observers
         |> List.filter observer_active
-        |> List.sort (fun (O a) (O b) ->
-               compare_observer_id a.obs_id b.obs_id)
+        |> List.sort compare_observer_graph_order
       in
       try
         List.iter stage_pending_var pending_at_start;

@@ -1338,6 +1338,49 @@ let test_observer_ordering_across_graph_branches_is_deterministic () =
   run_ok rt (Signal.Observer.dispose downstream_observer);
   run_ok rt (Signal.Observer.dispose independent_observer)
 
+let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let upstream =
+    Signal.Var.watch source |> Signal.map (fun value -> value + 1)
+  in
+  let downstream = Signal.map (fun value -> value * 10) upstream in
+  let upstream_events = ref [] in
+  let downstream_observer =
+    run_ok rt
+      (Signal.Observer.observe downstream (function
+        | Signal.Initialized _ -> Effect.unit
+        | Changed _ -> Effect.fail `Observer_failed))
+  in
+  let upstream_observer =
+    run_ok rt
+      (Signal.Observer.observe upstream (function
+        | Signal.Initialized _ -> Effect.unit
+        | Changed { new_value; _ } ->
+            Effect.sync (fun () ->
+                upstream_events := new_value :: !upstream_events)))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore
+        (Eta_eio.Runtime.run rt
+           (widen
+              (Signal.Observer.dispose downstream_observer
+               |> Effect.bind (fun () ->
+                      Signal.Observer.dispose upstream_observer)))
+          : _ Exit.t))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      run_ok rt (Signal.Var.set source 2);
+      expect_fail "downstream observer failure"
+        (function
+          | `Observer_error `Observer_failed -> true
+          | _ -> false)
+        (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+      Alcotest.(check (list int))
+        "upstream observer ran before downstream fail-fast" [ 3 ]
+        (List.rev !upstream_events))
+
 let test_observer_callbacks_read_consistent_published_snapshot () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -8213,6 +8256,10 @@ let () =
             test_observer_callbacks_run_in_registration_order;
           Alcotest.test_case "observer ordering across graph branches" `Quick
             test_observer_ordering_across_graph_branches_is_deterministic;
+          Alcotest.test_case
+            "observer graph order precedes reverse registration fail-fast"
+            `Quick
+            test_observer_graph_order_precedes_reverse_registration_fail_fast;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case "observer dispose skips collected event" `Quick
