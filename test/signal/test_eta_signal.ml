@@ -5279,6 +5279,29 @@ let test_time_catch_up_yields_between_batches () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_step_saturated_catch_up_yields_without_completion () =
+  with_cooperative_timer_host ~jump_ms:max_int
+  @@ fun rt sleep_calls yield_calls logger ->
+  let applied = ref 0 in
+  let signal =
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 1) ~initial:0 (fun value ->
+           incr applied;
+           value + 1))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_until "saturated step catch-up yielded" (fun () -> !yield_calls >= 3);
+  Alcotest.(check int) "saturated catch-up still in first wake" 1
+    !sleep_calls;
+  Alcotest.(check bool)
+    "saturated step catch-up made cooperative progress" true
+    (!applied >= 3 * 64);
+  run_ok rt (Signal.Observer.dispose observer);
+  Alcotest.(check int) "saturated step catch-up logs no daemon diagnostic" 0
+    (List.length (Logger.dump logger))
+
 let test_time_large_catch_up_applies_beyond_old_cap () =
   with_cooperative_timer_host ~jump_ms:10_250
   @@ fun rt sleep_calls yield_calls logger ->
@@ -7984,6 +8007,9 @@ let () =
             test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time step catch-up yields between batches" `Quick
             test_time_catch_up_yields_between_batches;
+          Alcotest.test_case
+            "time saturated step catch-up yields without completion" `Quick
+            test_time_step_saturated_catch_up_yields_without_completion;
           Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
             test_time_large_catch_up_applies_beyond_old_cap;
           Alcotest.test_case "time interval saturated catch-up coalesces" `Quick
