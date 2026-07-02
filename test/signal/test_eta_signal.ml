@@ -6832,6 +6832,75 @@ let set_stream_bridge_sent_counter stream value =
   let queue = Obj.field (Obj.repr stream) 0 in
   Obj.set_field queue 7 (Obj.repr value)
 
+let active_observer_live_state_obj observer =
+  let observer_state = Obj.field (Obj.repr observer) 4 in
+  if Obj.is_int observer_state || Obj.tag observer_state <> 1 then
+    Alcotest.fail "expected active observer";
+  Obj.field observer_state 0
+
+let set_observer_delivery_obj observer delivery =
+  Obj.set_field (active_observer_live_state_obj observer) 2 delivery
+
+let make_observer_delivery tag token update =
+  let delivery = Obj.new_block tag 3 in
+  Obj.set_field delivery 0 (Obj.repr token);
+  Obj.set_field delivery 1 (Obj.repr update);
+  Obj.set_field delivery 2 (Obj.repr []);
+  delivery
+
+let set_observer_delivery_pending observer ~token update =
+  set_observer_delivery_obj observer (make_observer_delivery 1 token update)
+
+let set_observer_delivery_running observer ~token update =
+  set_observer_delivery_obj observer (make_observer_delivery 2 token update)
+
+let check_observer_delivery_pending_token observer expected_token =
+  let delivery = Obj.field (active_observer_live_state_obj observer) 2 in
+  if Obj.is_int delivery then Alcotest.fail "expected pending delivery";
+  match Obj.tag delivery with
+  | 1 ->
+      let token = (Obj.obj (Obj.field delivery 0) : int) in
+      Alcotest.(check int) "pending delivery token" expected_token token
+  | 0 -> Alcotest.fail "stale stream finalizer acknowledged newer delivery"
+  | tag -> Alcotest.failf "expected pending delivery, got tag %d" tag
+
+let int_stream_observer_callback observer =
+  (Obj.obj (Obj.field (Obj.repr observer) 3)
+    : int Signal.update -> (unit, Observer_error.t) Effect.t)
+
+let run_observer_callback_ok rt eff =
+  run_ok rt (Effect.map_error (fun `Observer_failed -> `Update_failed) eff)
+
+let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
+  with_runtime_and_switch @@ fun _sw rt ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:16 signal)
+  in
+  ignore stream;
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      ignore
+        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
+          : _ Exit.t))
+    (fun () ->
+      let old_update = Signal.Changed { old_value = 0; new_value = 1 } in
+      let new_update = Signal.Changed { old_value = 1; new_value = 2 } in
+      set_observer_delivery_running observer ~token:11 old_update;
+      Signal.Private_test_hooks.set
+        Signal.Private_test_hooks.After_stream_try_send_before_ack
+        {
+          run =
+            (fun () ->
+              Effect.sync (fun () ->
+                  set_observer_delivery_pending observer ~token:12 new_update));
+        };
+      run_observer_callback_ok rt
+        (int_stream_observer_callback observer old_update);
+      check_observer_delivery_pending_token observer 12)
+
 let run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
     ~saturate_sent_counter () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -8033,6 +8102,9 @@ let () =
             "stream bridge saturated sent counter interrupted sent wakeup does not duplicate"
             `Quick
             test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate;
+          Alcotest.test_case
+            "stream finalizer cannot acknowledge newer delivery" `Quick
+            test_stream_finalizer_cannot_acknowledge_newer_delivery;
           Alcotest.test_case
             "stream sent update acknowledged on cancellation" `Quick
             test_stream_sent_update_is_acknowledged_on_cancellation;
