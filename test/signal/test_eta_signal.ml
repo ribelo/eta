@@ -6337,6 +6337,38 @@ let test_time_active_deadline_refreshes_before_daemon_runs () =
         true
         (run_ok rt (Signal.Observer.read observer)))
 
+let test_time_deadline_on_demand_finish_cancels_running_daemon () =
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.days 1) 5) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "initial deadline" false
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.adjust clock (Duration.ms 10);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check bool) "deadline finished by on-demand refresh" true
+    (run_ok rt (Signal.Observer.read observer));
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  let drained_without_clock_advance = Eio.Promise.is_resolved drained in
+  if not drained_without_clock_advance then (
+    Eta_test.Test_clock.adjust clock (Duration.days 1);
+    for _ = 1 to 5 do
+      Eta_test.Async.yield ()
+    done;
+    Eio.Promise.await_exn drained);
+  run_ok rt (Signal.Observer.dispose observer);
+  Alcotest.(check bool)
+    "on-demand deadline finish cancels sleeping daemon" true
+    drained_without_clock_advance
+
 let test_time_active_interval_refreshes_before_daemon_runs () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
@@ -7908,6 +7940,9 @@ let () =
             test_time_interval_catches_up_arithmetically_without_daemon_yield;
           Alcotest.test_case "time active deadline refreshes before daemon"
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
+          Alcotest.test_case
+            "time deadline on-demand finish cancels running daemon" `Quick
+            test_time_deadline_on_demand_finish_cancels_running_daemon;
           Alcotest.test_case "time active interval refreshes before daemon"
             `Quick test_time_active_interval_refreshes_before_daemon_runs;
           Alcotest.test_case

@@ -1803,6 +1803,20 @@ module Make (Observer_error : Observer_error) () = struct
     timer.timer_next_due_ms <- None;
     timer.timer_state <- Timer_finished generation
 
+  let timer_finish_cancel_hooks_unlocked timer =
+    let cancel_hooks =
+      match timer.timer_state with
+      | Timer_running (_, cancel) -> [ cancel ]
+      | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+      | Timer_finished _ ->
+          []
+    in
+    timer_finish_unlocked timer;
+    cancel_hooks
+
+  let timer_finish_from_graph_unlocked timer =
+    remember_pure_disposal_hooks (timer_finish_cancel_hooks_unlocked timer)
+
   let timer_has_current_start timer =
     match timer.timer_state with
     | Timer_running_uncancellable _ | Timer_running _ -> true
@@ -3299,7 +3313,7 @@ module Make (Observer_error : Observer_error) () = struct
             ~refresh_on_demand:(fun source timer now_ms ->
               if now_ms >= deadline_ms then (
                 Var.set_unlocked source true;
-                timer_finish_unlocked timer)
+                timer_finish_from_graph_unlocked timer)
               else Var.set_unlocked source false)
             {
               source_timer_update =
