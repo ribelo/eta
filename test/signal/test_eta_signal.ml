@@ -1704,6 +1704,69 @@ let test_observer_activation_waits_for_transfer_before_callbacks () =
           : unit);
       Alcotest.(check int) "callback after observe transfer" 1 !callback_count)
 
+let test_observer_activation_interruption_disposes_unowned_observer () =
+  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
+  Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.now := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+  Signal.Private_test_hooks.clear ();
+  let rt =
+    Runtime.create_with_runtime
+      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      ()
+  in
+  let before_stats =
+    expect_exit_ok "stats before interrupted observe"
+      (Runtime.run rt (widen (Signal.stats ())))
+  in
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let callbacks = ref 0 in
+  let hook =
+    {
+      Signal.Private_test_hooks.run =
+        (fun () -> Effect.sync (fun () -> raise Cleanup_interrupt));
+    }
+  in
+  Fun.protect
+    ~finally:Signal.Private_test_hooks.clear
+    (fun () ->
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_observer_activation_before_return hook
+      @@ fun () ->
+      (match
+         Runtime.run rt
+           (widen
+              (Signal.Observer.observe signal (fun _update ->
+                   Effect.sync (fun () -> incr callbacks))))
+       with
+      | exception Cleanup_interrupt -> ()
+      | Exit.Error cause when Cause.is_interrupt_only cause -> ()
+      | Exit.Error cause ->
+          Alcotest.failf "expected injected interruption, got %a"
+            (Cause.pp pp_hidden) cause
+      | Exit.Ok observer ->
+          ignore
+            (Runtime.run rt (widen (Signal.Observer.dispose observer))
+              : _ Exit.t);
+          Alcotest.fail "observer unexpectedly returned after interruption");
+      let stats =
+        expect_exit_ok "stats after interrupted observe"
+          (Runtime.run rt (widen (Signal.stats ())))
+      in
+      Alcotest.(check int)
+        "interrupted observer activation leaves no active observer" 0
+        (stats.Signal.active_observer_count
+        - before_stats.Signal.active_observer_count);
+      ignore
+        (expect_exit_ok "stabilize after interrupted observe"
+           (Runtime.run rt (widen Signal.stabilize))
+          : unit);
+      Alcotest.(check int)
+        "interrupted observer activation does not leak callback" 0 !callbacks)
+
 let test_observer_observe_invalidated_before_transfer_fails () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
@@ -8145,6 +8208,9 @@ let () =
           Alcotest.test_case
             "observer activation waits for transfer before callbacks" `Quick
             test_observer_activation_waits_for_transfer_before_callbacks;
+          Alcotest.test_case
+            "observer interrupted activation disposes unowned observer" `Quick
+            test_observer_activation_interruption_disposes_unowned_observer;
           Alcotest.test_case
             "observer observe invalidated before transfer fails" `Quick
             test_observer_observe_invalidated_before_transfer_fails;

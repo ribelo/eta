@@ -37,6 +37,7 @@ module Make (Observer_error : Observer_error) () = struct
   module Private_test_hooks = struct
     type hook =
       | After_observer_delivery_claim
+      | After_observer_activation_before_return
       | After_graph_lane_acquired
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
@@ -54,12 +55,15 @@ module Make (Observer_error : Observer_error) () = struct
 
     let state =
       let after_observer_delivery_claim = ref noop in
+      let after_observer_activation_before_return = ref noop in
       let after_graph_lane_acquired = ref noop in
       let after_stream_try_send_before_ack = ref noop in
       let after_stream_drop_before_ack = ref noop in
       let after_timer_due_read_before_commit = ref noop in
       let slot = function
         | After_observer_delivery_claim -> after_observer_delivery_claim
+        | After_observer_activation_before_return ->
+            after_observer_activation_before_return
         | After_graph_lane_acquired -> after_graph_lane_acquired
         | After_stream_try_send_before_ack -> after_stream_try_send_before_ack
         | After_stream_drop_before_ack -> after_stream_drop_before_ack
@@ -79,6 +83,7 @@ module Make (Observer_error : Observer_error) () = struct
             slot := noop)
           [
             After_observer_delivery_claim;
+            After_observer_activation_before_return;
             After_graph_lane_acquired;
             After_stream_try_send_before_ack;
             After_stream_drop_before_ack;
@@ -2773,7 +2778,7 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
-    let transfer_active_observer observer transferred =
+    let transfer_active_observer observer =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
          the transfer check must not introduce a new lane-release callback
          window between the final state check and returning the handle. *)
@@ -2782,10 +2787,8 @@ module Make (Observer_error : Observer_error) () = struct
           match observer.obs_state with
           | Observer_registering live ->
               observer.obs_state <- Observer_active live;
-              transferred := true;
               Ok observer
           | Observer_active _ ->
-              transferred := true;
               Ok observer
           | Observer_invalid_scope _ | Observer_disposed _ ->
               Error `Invalid_scope)
@@ -2823,13 +2826,15 @@ module Make (Observer_error : Observer_error) () = struct
           with Graph_error err -> Error err)
       |> Effect.flatten_result
       |> Effect.bind (fun observer ->
-             let transferred = ref false in
              (refresh_timer_demand ()
-             |> Effect.bind (fun () ->
-                    transfer_active_observer observer transferred))
-             |> Effect.on_exit (fun _exit ->
-                    if !transferred then Effect.unit
-                    else dispose_observer_effect observer))
+             |> Effect.bind (fun () -> transfer_active_observer observer)
+             |> Effect.bind (fun observer ->
+                    Private_test_hooks.run
+                      After_observer_activation_before_return
+                    |> Effect.map (fun () -> observer)))
+             |> Effect.on_exit (function
+                  | Eta.Exit.Ok _ -> Effect.unit
+                  | Eta.Exit.Error _ -> dispose_observer_effect observer))
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal
