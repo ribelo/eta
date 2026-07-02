@@ -528,6 +528,15 @@ interval ticks, and step functions. Their implementation must route through
 Eta's runtime clock/sleep and test-clock facilities so native and js_of_ocaml
 behavior remain portable and testable.
 
+Clock catch-up is intentionally split by API. `Time.now`, `Time.deadline`,
+`Time.after`, and `Time.interval` coalesce from stabilization using the shared
+clock sample for that stabilization. `Time.step` and `Time.step_coalesced` keep
+user code out of stabilization and may remain at the last daemon-published
+value until the timer daemon resumes. `Time.step_coalesced` is the bounded
+daemon catch-up alternative: after the daemon wakes, it calls the user function
+once with the elapsed `~missed` cadence count instead of replaying one call per
+cadence.
+
 `Time.step` step functions run from the timer daemon that advances the backing
 source. Their callback defects follow the timer-daemon diagnostic path described
 above, not the stabilization callback failure path.
@@ -621,6 +630,11 @@ invalidation, heights, scopes, or observer scheduling.
   and do not run observer callbacks outside explicit stabilization.
 - Eta runtime clock reads and sleeps share one monotonic time base; public time
   APIs do not interpret deadlines as wall-clock/civil timestamps.
+- `Time.now`, `Time.deadline`, `Time.after`, and `Time.interval` refresh from
+  stabilization using the shared clock sample; `Time.step` and
+  `Time.step_coalesced` remain daemon-published until daemon progress.
+- `Time.step_coalesced` is the bounded daemon catch-up alternative to
+  per-cadence `Time.step` replay.
 - Time/clock nodes mark sources stale but do not call stabilization from the
   kernel.
 - Time/clock nodes start work only while necessary and stop or become inert when
@@ -717,6 +731,7 @@ contract.
 | Signal-to-stream emits observer updates after stabilization; no stream-to-signal kernel policy | `test_stream_bridge_emits_after_stabilize`, `test_stream_bridge_closes_on_observer_dispose`, `test_stream_bridge_take_does_not_dispose_observer`, `test_stream_bridge_equal_suppresses_updates`, `test_stream_bridge_full_queue_does_not_block`, `test_stream_bridge_drop_callback_reports_loss`, `test_stream_bridge_full_queue_dispose_closes_without_waiting`, `test/signal/negative/stream_to_signal_negative.ml` | Covered |
 | No public expert/custom-node surface bypasses graph invariants | `test/signal/negative/public_expert_negative.ml`, `lib/signal/eta_signal.mli` | Covered |
 | Time/clock nodes use Eta runtime clock/sleep/schedule/test-clock primitives and do not run callbacks outside explicit stabilization | `lib/signal/eta_signal.ml`, `test_time_now_uses_runtime_clock`, `test_time_now_refreshes_after_idle_observe`, `test_time_interval_requires_explicit_stabilization` | Covered |
+| Time catch-up semantics distinguish stabilization-coalesced time nodes from daemon-published step nodes | `test_time_deadline_catches_up_without_daemon_yield`, `test_time_interval_catches_up_arithmetically_without_daemon_yield`, `test_time_step_does_not_catch_up_without_daemon_progress`, `test_time_step_coalesced_does_not_catch_up_without_daemon_progress`, `test_time_step_coalesced_saturated_catch_up_runs_once` | Covered |
 | Time/clock nodes mark sources stale but do not call stabilization from the kernel | `test_time_interval_requires_explicit_stabilization`, `test_time_after_deadline`, `test_time_after_elapsed_before_observe`, `test_time_absolute_deadline` | Covered |
 | Time/clock nodes start only while necessary and stop or become inert when unnecessary | `test_time_interval_starts_only_when_observed`, `test_time_now_refreshes_after_idle_observe`, `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_time_now_bind_activation_refreshes_next_stabilization`, `test_time_step_defect_logs_daemon_diagnostic_and_restarts` | Covered |
 | Timer work is owned by graph demand and does not keep unnecessary subgraphs alive | `test_time_timer_becomes_inert_after_dispose`, `test_time_interval_restarts_after_reobserve`, `test_time_timer_becomes_inert_after_bind_switch`, `test_stats_and_dot_are_read_only` | Covered |
@@ -745,8 +760,9 @@ PRD contract:
 - Timers made necessary by a `bind` branch switch during stabilization refresh
   after observer events for that snapshot, so the refreshed timer source appears
   on the next explicit stabilization.
-- `Time.step` callback defects are timer-daemon diagnostics, not `stabilize`
-  failures, and failed daemons clean up so later demand refresh can restart them.
+- `Time.step` and `Time.step_coalesced` callback defects are timer-daemon
+  diagnostics, not `stabilize` failures, and failed daemons clean up so later
+  demand refresh can restart them.
 - Node constructors stay synchronous so `bind` selectors can return signals
   directly; ambiguous construction is reported at the enclosing operation
   boundary.
