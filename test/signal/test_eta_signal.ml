@@ -458,6 +458,38 @@ let test_observe_after_stabilization_and_disposal_clears_graph () =
     (count_occurrences (run_ok rt (Signal.to_dot ())) "[label="
      <= before_dot_nodes)
 
+let force_signal_gc () =
+  Gc.full_major ();
+  Gc.compact ();
+  Gc.full_major ()
+
+let test_unnecessary_root_nodes_are_gc_reclaimable () =
+  with_runtime @@ fun rt ->
+  run_ok rt Signal.stabilize;
+  force_signal_gc ();
+  let before = run_ok rt (Signal.stats ()) in
+  let make_temporary_graph () =
+    let source = Signal.Var.create 0 in
+    let signal =
+      Signal.Var.watch source |> Signal.map (fun value -> value + 1)
+      |> Signal.map (fun value -> value * 2)
+    in
+    let observer =
+      run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    in
+    run_ok rt Signal.stabilize;
+    run_ok rt (Signal.Observer.dispose observer);
+    run_ok rt Signal.stabilize
+  in
+  make_temporary_graph ();
+  let after_dispose = run_ok rt (Signal.stats ()) in
+  Alcotest.(check bool) "temporary graph was indexed" true
+    (after_dispose.Signal.total_node_count > before.Signal.total_node_count);
+  force_signal_gc ();
+  let after_gc = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "temporary root nodes reclaimed"
+    before.Signal.total_node_count after_gc.Signal.total_node_count
+
 let test_observer_unsafe_read_exn_reports_invalid_state () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -8303,6 +8335,8 @@ let () =
             test_observer_initializes_on_stabilize;
           Alcotest.test_case "observe after stabilize and dispose clears graph"
             `Quick test_observe_after_stabilization_and_disposal_clears_graph;
+          Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
+            test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "observer unsafe read reports invalid state"
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "manual stabilization coalesces sets" `Quick

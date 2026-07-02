@@ -214,6 +214,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Pure
     | Running_observers
 
+  type weak_packed_signal = Obj.t Weak.t
+
   type scope = {
     scope_id : scope_id;
     scope_owner : signal_id;
@@ -340,7 +342,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable staged_var_generation : int;
     mutable queued : bool;
     mutable updating : bool;
-    mutable watchers : packed_signal list;
+    mutable watchers : weak_packed_signal list;
   }
 
   and packed_var = V : 'a var -> packed_var
@@ -524,7 +526,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable timer_refresh_disposal_hooks : disposal_hook list;
     mutable timer_refresh_staged_timers : timer_node list;
     mutable observers : packed_observer list;
-    mutable all_nodes : packed_signal list;
+    mutable all_nodes : weak_packed_signal list;
     mutable dead_nodes : dead_signal list;
     mutable current_scope : scope option;
     mutable pure_snapshot_commit_count : int;
@@ -577,6 +579,42 @@ module Make (Observer_error : Observer_error) () = struct
       next_timer_refresh_token = 0;
       active_timer_refresh = None;
     }
+
+  let weak_packed_signal (P signal) =
+    let cell = Weak.create 1 in
+    (* Store the signal record itself, not the short-lived existential wrapper. *)
+    Weak.set cell 0 (Some (Obj.repr signal));
+    cell
+
+  let weak_packed_signal_value cell =
+    match Weak.get cell 0 with
+    | None -> None
+    | Some signal -> Some (P (Obj.obj signal))
+
+  let collect_live_weak_signals keep cells =
+    let rec loop kept_cells kept_signals = function
+      | [] -> (List.rev kept_cells, List.rev kept_signals)
+      | cell :: rest -> (
+          match weak_packed_signal_value cell with
+          | None -> loop kept_cells kept_signals rest
+          | Some packed ->
+              if keep packed then
+                loop (cell :: kept_cells) (packed :: kept_signals) rest
+              else loop kept_cells kept_signals rest)
+    in
+    loop [] [] cells
+
+  let all_nodes_unlocked () =
+    let cells, nodes = collect_live_weak_signals (fun _ -> true) graph.all_nodes in
+    graph.all_nodes <- cells;
+    nodes
+
+  let source_watchers_unlocked source =
+    let cells, watchers =
+      collect_live_weak_signals (fun (P signal) -> signal.valid) source.watchers
+    in
+    source.watchers <- cells;
+    watchers
 
   let kind_name : type a. a kind -> string = function
     | Const _ -> "const"
@@ -874,7 +912,10 @@ module Make (Observer_error : Observer_error) () = struct
   let remove_var_watcher source signal =
     source.watchers <-
       List.filter
-        (fun (P candidate) -> candidate.id <> signal.id)
+        (fun cell ->
+          match weak_packed_signal_value cell with
+          | None -> false
+          | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
   let remember_staged_var (V var as packed) =
@@ -1305,7 +1346,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter (attach_packed_dependency signal) dependencies;
     add_to_scope scope signal;
-    graph.all_nodes <- P signal :: graph.all_nodes;
+    graph.all_nodes <- weak_packed_signal (P signal) :: graph.all_nodes;
     signal
 
   let new_const ?equal value =
@@ -1315,8 +1356,10 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let prune_invalid_nodes_unlocked () =
-    graph.all_nodes <-
-      List.filter (fun (P signal) -> signal.valid) graph.all_nodes
+    let cells, _ =
+      collect_live_weak_signals (fun (P signal) -> signal.valid) graph.all_nodes
+    in
+    graph.all_nodes <- cells
 
   let max_dead_signal_tombstones = 1024
 
@@ -1718,7 +1761,7 @@ module Make (Observer_error : Observer_error) () = struct
     stage_var_source_value source value;
     if not (source.var_equal source.graph_value value) then (
       stage_var_graph_value source value;
-      List.iter mark_timer_refresh_dirty source.watchers)
+      List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
 
   let timer_finish_state state =
     let generation =
@@ -1884,7 +1927,7 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_pending_var (V var) =
     if not (var.var_equal var.graph_value var.source_value) then (
       stage_var_graph_value var var.source_value;
-      List.iter mark_self_dirty var.watchers)
+      List.iter mark_self_dirty (source_watchers_unlocked var))
 
   let timer_refresh_sample_now_ms context =
     match context.timer_refresh_sample_ms with
@@ -2202,7 +2245,7 @@ module Make (Observer_error : Observer_error) () = struct
   let all_timers () =
     List.filter_map
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
-      graph.all_nodes
+      (all_nodes_unlocked ())
 
   let fail_disposal_hooks causes =
     let cause =
@@ -2766,7 +2809,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let watch (source : 'a t) =
       let signal = new_signal (Var source) [] in
-      source.watchers <- P signal :: source.watchers;
+      source.watchers <- weak_packed_signal (P signal) :: source.watchers;
       signal
 
     let queue_var (source : 'a t) = queue_var_unlocked source
@@ -2968,23 +3011,24 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dead_node_count () = List.length graph.dead_nodes
 
-  let live_dirty_node_count () =
+  let live_dirty_node_count all_nodes =
     List.fold_left
       (fun count (P signal) ->
         if signal.valid && signal.dirty then saturating_succ count else count)
-      0 graph.all_nodes
+      0 all_nodes
 
   let stats () =
     with_graph_lane_sync @@ fun () ->
+    let all_nodes = all_nodes_unlocked () in
     {
       pure_snapshot_commit_count = graph.pure_snapshot_commit_count;
       callback_delivery_count = graph.callback_delivery_count;
-      total_node_count = List.length graph.all_nodes;
+      total_node_count = List.length all_nodes;
       active_observer_count = active_observer_count ();
       invalid_observer_count = invalid_observer_count ();
       necessary_node_count = necessary_node_count ();
       dead_node_count = dead_node_count ();
-      live_dirty_node_count = live_dirty_node_count ();
+      live_dirty_node_count = live_dirty_node_count all_nodes;
       recompute_count = graph.recompute_count;
       dynamic_scope_invalidations = graph.dynamic_scope_invalidations;
       nodes_became_necessary = graph.nodes_became_necessary;
@@ -3247,6 +3291,7 @@ module Make (Observer_error : Observer_error) () = struct
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
     let necessary = collect_necessary_node_ids () in
+    let all_nodes = all_nodes_unlocked () in
     let selected signal = signal_selected options necessary signal in
     let include_dead_nodes =
       match options.dot_scope with
@@ -3258,7 +3303,7 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) ->
         if selected signal then Hashtbl.replace live_ids signal.id ())
-      graph.all_nodes;
+      all_nodes;
     if include_dead_nodes then
       List.iter
         (fun tombstone -> Hashtbl.replace dead_ids tombstone.dead_id ())
@@ -3289,7 +3334,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (signal_id_label dependency.id)
                   (signal_id_label signal.id)))
             signal.dependencies))
-      graph.all_nodes;
+      all_nodes;
     if include_dead_nodes then
       List.iter
         (fun tombstone ->
