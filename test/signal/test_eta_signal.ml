@@ -6419,17 +6419,23 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_validation_errors () =
+let test_time_invalid_intervals_fail_cleanly () =
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
-  expect_fail "invalid interval" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.interval Duration.zero)));
   expect_fail "invalid now cadence" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.now ~every:Duration.zero ())));
   expect_fail "invalid deadline cadence" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.deadline ~every:Duration.zero 1)));
+       (widen (Signal.Time.deadline ~every:Duration.zero 10)));
+  expect_fail "invalid interval" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.interval Duration.zero)));
+  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
+    (Eta_eio.Runtime.run rt
+       (widen (Signal.Time.step ~every:Duration.zero ~initial:0 succ)))
+
+let test_time_deadline_validation_errors () =
+  Eta_test.with_test_clock @@ fun _sw _clock rt ->
   expect_fail "invalid after interval" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.after ~every:Duration.zero (Duration.ms 1))));
@@ -6439,9 +6445,6 @@ let test_time_validation_errors () =
   expect_fail "clamped past after duration" (( = ) `Past_deadline)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms (-1)))));
-  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.step ~every:Duration.zero ~initial:0 succ)));
   expect_fail "past deadline" (( = ) `Past_deadline)
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.deadline ~every:(Duration.ms 1) 0)))
@@ -7751,8 +7754,10 @@ let () =
             test_time_step_function;
           Alcotest.test_case "time step defect logs diagnostic" `Quick
             test_time_step_defect_logs_daemon_diagnostic_and_restarts;
-          Alcotest.test_case "time validation errors" `Quick
-            test_time_validation_errors;
+          Alcotest.test_case "time invalid intervals fail cleanly" `Quick
+            test_time_invalid_intervals_fail_cleanly;
+          Alcotest.test_case "time deadline validation errors" `Quick
+            test_time_deadline_validation_errors;
           Alcotest.test_case "stream observe timer initialization race" `Quick
             test_stream_observe_timer_initialization_race;
           Alcotest.test_case "observe invalidated before return fails" `Quick
