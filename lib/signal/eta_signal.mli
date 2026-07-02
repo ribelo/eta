@@ -220,7 +220,17 @@ module Make (Observer_error : Observer_error) () : sig
         other structural values, pass [?equal] and publish fresh values. Setting
         the same heap object after in-place mutation is suppressed by the
         default cutoff, and even a structural [?equal] cannot reconstruct the
-        pre-mutation snapshot if that snapshot aliases the same object. *)
+        pre-mutation snapshot if that snapshot aliases the same object.
+
+        Prefer making the structural cutoff explicit at the source boundary:
+
+        {[
+          let source =
+            S.Var.create ~equal:view_model_equal initial_view_model
+          in
+          (* Later updates should publish a fresh [view_model] value. *)
+          S.Var.set source next_view_model
+        ]} *)
 
     val value : 'a t -> 'a
     (** Synchronously read the current source value, including values set since
@@ -307,6 +317,14 @@ module Make (Observer_error : Observer_error) () : sig
       trees, decoded rows, or other freshly rebuilt structural values. Prefer
       immutable/copy-on-write results; mutating a previously published result in
       place mutates the cached old value too.
+
+      For derived view/state values, bias toward an explicit structural cutoff:
+
+      {[
+        let view_model =
+          model_signal
+          |> S.map ~equal:view_model_equal derive_view_model
+      ]}
 
       The mapping function must be pure and total. Eta may evaluate pure graph
       closures during a stabilization that later rolls back because another
