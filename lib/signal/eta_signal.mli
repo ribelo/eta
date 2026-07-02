@@ -448,12 +448,15 @@ module Make (Observer_error : Observer_error) () : sig
         stabilization.
 
         Signal time is measured by Eta's monotonic runtime clock, not by
-        wall/civil time. When a runtime-clock jump wakes several elapsed
-        cadences, deadline and now nodes coalesce to the final clock-derived
-        value, and interval nodes advance the counter arithmetically to the
-        final saturated value before the next stabilization observes it.
-        [step] nodes replay one source update per awakened cadence; large
-        [step] catch-up runs yield cooperatively between internal batches. *)
+        wall/civil time. Before stabilization observes them, [now] and
+        [deadline] nodes coalesce to the final clock-derived value, and
+        [interval] nodes advance the counter arithmetically to the final
+        saturated value.
+
+        [step] keeps user code out of stabilization: [f] runs only in the
+        demand-owned timer daemon. When that daemon wakes after a clock jump,
+        [step] replays one source update per awakened cadence; large catch-up
+        runs yield cooperatively between internal batches. *)
 
     val now :
       every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
@@ -491,9 +494,12 @@ module Make (Observer_error : Observer_error) () : sig
     (** Step a value with a pure total function after each [every] interval
         while necessary.
 
-        Clock-jump catch-up replays [f] once per awakened cadence, so very
-        large jumps can perform correspondingly large cooperative catch-up
-        work.
+        Clock-jump catch-up replays [f] once per awakened cadence after the
+        timer daemon wakes, so very large jumps can perform correspondingly
+        large cooperative catch-up work. Unlike [now], [deadline], and
+        [interval], [step] does not run catch-up from stabilization; a
+        stabilization that runs before the daemon resumes observes the last
+        daemon-published step value.
 
         [f] runs in the demand-owned timer daemon, not during stabilization. If
         [f] raises, Eta reports the defect through daemon diagnostics with

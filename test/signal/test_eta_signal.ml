@@ -6359,7 +6359,7 @@ let test_time_active_interval_refreshes_before_daemon_runs () =
         4
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_active_step_waits_for_daemon_to_run () =
+let test_time_step_requires_daemon_progress_for_catch_up () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal =
     run_ok rt (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 succ)
@@ -6379,7 +6379,7 @@ let test_time_active_step_waits_for_daemon_to_run () =
       now_ms := 20;
       run_ok rt Signal.stabilize;
       Alcotest.(check int)
-        "active step waits for daemon-owned function replay" 1
+        "step catch-up requires daemon-owned function replay" 1
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_step_does_not_run_f_inside_stabilize () =
@@ -7910,8 +7910,9 @@ let () =
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case "time active interval refreshes before daemon"
             `Quick test_time_active_interval_refreshes_before_daemon_runs;
-          Alcotest.test_case "time active step waits for daemon" `Quick
-            test_time_active_step_waits_for_daemon_to_run;
+          Alcotest.test_case
+            "time step catch-up requires daemon progress" `Quick
+            test_time_step_requires_daemon_progress_for_catch_up;
           Alcotest.test_case "time step does not run function in stabilize"
             `Quick test_time_step_does_not_run_f_inside_stabilize;
           Alcotest.test_case "time active timer refresh does not restart pure pass"
