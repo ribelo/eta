@@ -39,6 +39,9 @@ for src in "$fixture_dir"/*_negative.ml; do
     public_expert_negative.ml)
       expected='Unbound module "?Signal\.Expert"?|Unbound value "?Signal\.Expert'
       ;;
+    private_test_hooks_negative.ml)
+      expected='Unbound module "?Signal\.Private_test_hooks"?|Unbound value "?Signal\.Private_test_hooks'
+      ;;
     public_scope_negative.ml)
       expected='Unbound module "?Signal\.Scope"?|Unbound value "?Signal\.Scope'
       ;;

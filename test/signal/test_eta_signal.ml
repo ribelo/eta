@@ -13,10 +13,10 @@ module Observer_error = struct
     | `Observer_failed -> Format.pp_print_string ppf "observer failed"
 end
 
-module Signal = Eta_signal.Make (Observer_error) ()
-module Other_signal = Eta_signal.Make (Observer_error) ()
-module Dot_signal = Eta_signal.Make (Observer_error) ()
-module Dependency_signal = Eta_signal.Make (Observer_error) ()
+module Signal = Eta_signal_testable.Make (Observer_error) ()
+module Other_signal = Eta_signal_testable.Make (Observer_error) ()
+module Dot_signal = Eta_signal_testable.Make (Observer_error) ()
+module Dependency_signal = Eta_signal_testable.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -3030,7 +3030,7 @@ let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_signal_version_overflow_does_not_publish_partial_snapshot () =
-  let module Overflow_signal = Eta_signal.Make (Observer_error) () in
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Overflow_signal.Var.create 1 in
   let signal = Overflow_signal.Var.watch source in
@@ -4350,7 +4350,7 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
 
 let test_stats_and_dot_are_read_only () =
   with_runtime @@ fun rt ->
-  let check_stats label expected actual =
+  let check_stats label (expected : Signal.stats) (actual : Signal.stats) =
     Alcotest.(check int)
       (label ^ " pure_snapshot_commit_count")
       expected.Signal.pure_snapshot_commit_count
@@ -4638,7 +4638,7 @@ let test_to_dot_debug_options_expose_hidden_state () =
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
 
 let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
-  let module Tombstone_signal = Eta_signal.Make (Observer_error) () in
+  let module Tombstone_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Tombstone_signal.Var.create true in
   let captured_left = ref None in
@@ -4699,7 +4699,7 @@ let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
   run_ok rt (Tombstone_signal.Observer.dispose observer)
 
 let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
-  let module Dead_count_signal = Eta_signal.Make (Observer_error) () in
+  let module Dead_count_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let retained = Dead_count_signal.const 1 in
   let before = run_ok rt (Dead_count_signal.stats ()) in
@@ -5054,7 +5054,7 @@ let test_time_interval_overflow_saturates () =
     (List.length (Logger.dump logger))
 
 let test_time_inactive_timer_stop_is_idempotent () =
-  let module Idempotent_signal = Eta_signal.Make (Observer_error) () in
+  let module Idempotent_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   let signal =
     run_ok rt (Idempotent_signal.Time.interval (Duration.ms 10))
@@ -5064,7 +5064,7 @@ let test_time_inactive_timer_stop_is_idempotent () =
   run_ok rt Idempotent_signal.stabilize
 
 let test_time_timer_generation_overflow_fails_loudly () =
-  let module Overflow_signal = Eta_signal.Make (Observer_error) () in
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Overflow_signal.Time.interval (Duration.ms 10)) in
   let observer =

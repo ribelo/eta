@@ -1,6 +1,18 @@
+(library
+ (name eta_signal_testable)
+ (modules eta_signal_testable)
+ (libraries eta eta_stream))
+
+(rule
+ (target eta_signal_testable.ml)
+ (deps ../../lib/signal/eta_signal.ml)
+ (action
+  (copy %{deps} %{target})))
+
 (test
  (name test_eta_signal)
- (libraries eta eta_signal eta_stream eta_eio eta_test alcotest eio_main unix)
+ (modules test_eta_signal)
+ (libraries eta eta_signal_testable eta_stream eta_eio eta_test alcotest eio_main unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
