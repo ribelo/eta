@@ -6270,6 +6270,75 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
+let check_time_step_dispose_after_update_construction_skips_f make_signal =
+  Eta_test.with_test_clock @@ fun sw clock rt ->
+  let f_calls = ref 0 in
+  let signal = run_ok rt (make_signal (fun () -> incr f_calls)) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  let constructed, constructed_resolver = Eio.Promise.create () in
+  let release, release_resolver = Eio.Promise.create () in
+  let hook_ran = ref false in
+  let release_once =
+    let released = ref false in
+    fun () ->
+      if not !released then (
+        released := true;
+        Eio.Promise.resolve release_resolver ())
+  in
+  let hook =
+    {
+      Signal.Private_test_hooks.run =
+        (fun () ->
+          Effect.sync (fun () ->
+              if not !hook_ran then (
+                hook_ran := true;
+                Eio.Promise.resolve constructed_resolver ();
+                Eio.Promise.await release)));
+    }
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.Private_test_hooks.clear ();
+      release_once ();
+      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
+                : _ Exit.t))
+    (fun () ->
+      wait_for_sleepers clock 1;
+      run_ok rt Signal.stabilize;
+      Alcotest.(check int) "initial step value" 0
+        (run_ok rt (Signal.Observer.read observer));
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_timer_update_constructed_before_run hook
+      @@ fun () ->
+      Eta_test.Test_clock.adjust clock (Duration.ms 10);
+      wait_until "timer update construction" (fun () ->
+          Eio.Promise.is_resolved constructed);
+      run_ok rt (Signal.Observer.dispose observer);
+      release_once ();
+      let drained =
+        Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
+      in
+      wait_until "timer daemon drain after dispose" (fun () ->
+          Eio.Promise.is_resolved drained);
+      Eio.Promise.await_exn drained;
+      Alcotest.(check int) "disposed timer did not run user step function" 0
+        !f_calls)
+
+let test_time_step_dispose_after_update_construction_skips_f () =
+  check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
+      Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun value ->
+          record_call ();
+          value + 1))
+
+let test_time_step_coalesced_dispose_after_update_construction_skips_f () =
+  check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
+      Signal.Time.step_coalesced ~every:(Duration.ms 10) ~initial:0
+        (fun ~missed:_ value ->
+          record_call ();
+          value + 1))
+
 let test_time_interval_restarts_after_reobserve () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -8710,6 +8779,12 @@ let () =
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
+          Alcotest.test_case
+            "time step dispose after update construction skips f" `Quick
+            test_time_step_dispose_after_update_construction_skips_f;
+          Alcotest.test_case
+            "time coalesced step dispose after update construction skips f" `Quick
+            test_time_step_coalesced_dispose_after_update_construction_skips_f;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time interval ignores stale sleep after reobserve"

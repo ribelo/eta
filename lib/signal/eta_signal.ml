@@ -43,6 +43,7 @@ module Make (Observer_error : Observer_error) () = struct
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
       | After_timer_due_read_before_commit
+      | After_timer_update_constructed_before_run
 
     type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
@@ -61,6 +62,7 @@ module Make (Observer_error : Observer_error) () = struct
       let after_stream_try_send_before_ack = ref noop in
       let after_stream_drop_before_ack = ref noop in
       let after_timer_due_read_before_commit = ref noop in
+      let after_timer_update_constructed_before_run = ref noop in
       let slot = function
         | After_observer_delivery_claim -> after_observer_delivery_claim
         | After_observer_activation_before_return ->
@@ -70,6 +72,8 @@ module Make (Observer_error : Observer_error) () = struct
         | After_stream_drop_before_ack -> after_stream_drop_before_ack
         | After_timer_due_read_before_commit ->
             after_timer_due_read_before_commit
+        | After_timer_update_constructed_before_run ->
+            after_timer_update_constructed_before_run
       in
       let with_hook hook action f =
         let slot = slot hook in
@@ -89,6 +93,7 @@ module Make (Observer_error : Observer_error) () = struct
             After_stream_try_send_before_ack;
             After_stream_drop_before_ack;
             After_timer_due_read_before_commit;
+            After_timer_update_constructed_before_run;
           ]
       in
       let run hook =
@@ -3532,7 +3537,10 @@ module Make (Observer_error : Observer_error) () = struct
              | `Continue ->
                  Effect.sync (fun () ->
                      update.timer_update timer generation ~missed)
-                 |> Effect.bind (fun update_eff -> update_eff)
+                 |> Effect.bind (fun update_eff ->
+                        Private_test_hooks.run
+                          After_timer_update_constructed_before_run
+                        |> Effect.bind (fun () -> update_eff))
                  |> Effect.bind (fun () ->
                         run_timer_update_batch timer generation (remaining - 1)
                           update ~missed))
@@ -3836,14 +3844,20 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed:_ source ->
-                                Effect.sync (fun () -> f (Var.value source))
-                                |> Effect.annotate ~key:"eta_signal.timer.kind"
-                                     ~value:"step"
-                                |> Effect.named "eta_signal.time.step"
-                                |> Effect.bind (fun next ->
-                                       timer_set_source timer generation source
-                                         next
-                                       |> Effect.map (fun _ -> ())));
+                                timer_after_update_state timer generation
+                                |> Effect.bind (function
+                                     | `Stop -> Effect.unit
+                                     | `Continue ->
+                                         Effect.sync (fun () ->
+                                             f (Var.value source))
+                                         |> Effect.annotate
+                                              ~key:"eta_signal.timer.kind"
+                                              ~value:"step"
+                                         |> Effect.named "eta_signal.time.step"
+                                         |> Effect.bind (fun next ->
+                                                timer_set_source timer generation
+                                                  source next
+                                                |> Effect.map (fun _ -> ()))));
                           })))
 
     let step_coalesced ~every ~initial f =
@@ -3858,15 +3872,21 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
-                                Effect.sync (fun () ->
-                                    f ~missed (Var.value source))
-                                |> Effect.annotate ~key:"eta_signal.timer.kind"
-                                     ~value:"step_coalesced"
-                                |> Effect.named "eta_signal.time.step_coalesced"
-                                |> Effect.bind (fun next ->
-                                       timer_set_source timer generation source
-                                         next
-                                       |> Effect.map (fun _ -> ())));
+                                timer_after_update_state timer generation
+                                |> Effect.bind (function
+                                     | `Stop -> Effect.unit
+                                     | `Continue ->
+                                         Effect.sync (fun () ->
+                                             f ~missed (Var.value source))
+                                         |> Effect.annotate
+                                              ~key:"eta_signal.timer.kind"
+                                              ~value:"step_coalesced"
+                                         |> Effect.named
+                                              "eta_signal.time.step_coalesced"
+                                         |> Effect.bind (fun next ->
+                                                timer_set_source timer generation
+                                                  source next
+                                                |> Effect.map (fun _ -> ()))));
                           })))
   end
 
