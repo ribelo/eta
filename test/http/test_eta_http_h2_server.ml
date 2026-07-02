@@ -3775,13 +3775,8 @@ let test_h2c_server_drain_up_to_discard_waits_for_body () =
       in
       Eio.Promise.await discard_started;
       let returned_before_body =
-        Eio.Fiber.first
-          (fun () ->
-            Eio.Promise.await discard_returned;
-            true)
-          (fun () ->
-            Eio.Time.sleep clock 0.01;
-            false)
+        Eio.Fiber.yield ();
+        Eio.Promise.is_resolved discard_returned
       in
       Alcotest.(check bool) "discard waited for body" false returned_before_body;
       ignore
@@ -3951,13 +3946,8 @@ let test_h2c_server_handle_graceful_shutdown_waits_for_stream () =
         stats.closed_connections;
       Eta_http_eio.Server.shutdown server (Graceful (Eta.Duration.ms 200));
       let closed_before_release =
-        Eio.Fiber.first
-          (fun () ->
-            ignore (Eio.Promise.await closed_stats);
-            true)
-          (fun () ->
-            Eio.Time.sleep clock 0.02;
-            false)
+        Eio.Fiber.yield ();
+        Eio.Promise.is_resolved closed_stats
       in
       Alcotest.(check bool) "graceful keeps active stream open" false
         closed_before_release;
@@ -4859,7 +4849,7 @@ let test_h2c_server_multiplexes_slow_uploads () =
               (Eta_http_h2.Body.Writer.write_string
                  opened.Eta_http_eio.H2.Multiplexer.request_body fragment))
           streams;
-        Eio.Time.sleep clock 0.005
+        Eio.Fiber.yield ()
       done;
       List.iter
         (fun (_, opened, _, _, _) ->

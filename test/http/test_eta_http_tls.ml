@@ -224,7 +224,7 @@ let wait_for_server_stats clock server predicate =
         let stats = Eta_http_eio.Server.stats server in
         if predicate stats then stats
         else (
-          Eio.Time.sleep clock 0.01;
+          Eio.Fiber.yield ();
           loop ())
       in
       loop ())
@@ -1531,7 +1531,7 @@ let test_https_server_h2_concurrent_large_echo () =
               (Eta_http_h2.Body.Writer.write_string
                  opened.Eta_http_eio.H2.Multiplexer.request_body chunk))
           streams;
-        Eio.Time.sleep clock 0.002
+        Eio.Fiber.yield ()
       done;
       List.iter
         (fun (_, opened, _, _, _) ->

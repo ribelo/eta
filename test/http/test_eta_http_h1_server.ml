@@ -1452,13 +1452,8 @@ let test_h1_server_handle_graceful_shutdown_waits_for_request () =
         stats.closed_connections;
       Eta_http_eio.Server.shutdown server (Graceful (Eta.Duration.ms 200));
       let closed_before_release =
-        Eio.Fiber.first
-          (fun () ->
-            ignore (Eio.Promise.await closed_stats);
-            true)
-          (fun () ->
-            Eio.Time.sleep clock 0.02;
-            false)
+        Eio.Fiber.yield ();
+        Eio.Promise.is_resolved closed_stats
       in
       Alcotest.(check bool) "graceful keeps active request open" false
         closed_before_release;

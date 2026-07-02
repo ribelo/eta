@@ -11,7 +11,7 @@ let wait_for_server_stats clock server predicate =
         let stats = Server.stats server in
         if predicate stats then stats
         else (
-          Eio.Time.sleep clock 0.01;
+          Eio.Fiber.yield ();
           loop ())
       in
       loop ())
