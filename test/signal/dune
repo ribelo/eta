@@ -17,6 +17,14 @@
   (setenv EIO_BACKEND posix
    (run %{test}))))
 
+(test
+ (name test_eta_signal_public)
+ (modules test_eta_signal_public)
+ (libraries eta eta_signal eta_stream eta_eio eta_test alcotest eio_main unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
+
 (rule
  (alias runtest)
  (deps
