@@ -691,18 +691,21 @@ module Make (Observer_error : Observer_error) () = struct
           waiter.lane_resolver ();
         waiter.lane_notified <- true)
 
+  let rec resolve_lane_waiter_best_effort remaining waiter =
+    try
+      resolve_lane_waiter waiter;
+      true
+    with _exn ->
+      waiter.lane_notified
+      || (remaining > 0
+         && resolve_lane_waiter_best_effort (remaining - 1) waiter)
+
   let resolve_pending_lane_grants pending =
     let rec loop () =
       if not (Stdlib.Queue.is_empty pending) then (
-        let waiter = Stdlib.Queue.peek pending in
-        let remove_waiter () = ignore (Stdlib.Queue.take pending) in
-        try
-          resolve_lane_waiter waiter;
-          remove_waiter ();
-          loop ()
-        with exn ->
-          if waiter.lane_notified then remove_waiter ();
-          raise exn)
+        let waiter = Stdlib.Queue.take pending in
+        ignore (resolve_lane_waiter_best_effort 1 waiter : bool);
+        loop ())
     in
     loop ()
 

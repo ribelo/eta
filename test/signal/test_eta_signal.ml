@@ -4397,9 +4397,10 @@ let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
       done;
       if not (Eio.Promise.is_resolved first_stats) then
         Alcotest.fail "first stats did not finish after lane release";
-      (match Eio.Promise.await_exn first_stats with
-       | Exit.Ok _ | Exit.Error _ -> ()
-       | exception Lane_grant_resolution_failed -> ());
+      ignore
+        (expect_exit_ok "releasing stats ignores grant resolver failure"
+           (Eio.Promise.await_exn first_stats)
+          : Signal.stats);
       for _ = 1 to 20 do
         Eta_test.Async.yield ()
       done;
