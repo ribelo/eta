@@ -7204,6 +7204,25 @@ let test_time_now_uses_single_clock_snapshot_per_stabilization () =
       let left, right = run_ok rt (Signal.Observer.read observer) in
       Alcotest.(check int) "same stabilization clock snapshot" left right)
 
+let test_time_now_backward_clock_refresh_overrides_pending_update () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "initial now" 0
+    (run_ok rt (Signal.Observer.read observer));
+  Eta_test.Test_clock.set_time clock 10;
+  wait_for_sleepers clock 1;
+  Eta_test.Test_clock.set_time clock 0;
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "backward refresh wins over pending update" 0
+    (run_ok rt (Signal.Observer.read observer));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -9486,6 +9505,9 @@ let () =
             test_time_timer_rejects_mismatched_runtime;
           Alcotest.test_case "time now uses one clock snapshot" `Quick
             test_time_now_uses_single_clock_snapshot_per_stabilization;
+          Alcotest.test_case "time now backward refresh overrides pending update"
+            `Quick
+            test_time_now_backward_clock_refresh_overrides_pending_update;
           Alcotest.test_case "time now refreshes on quick reobserve" `Quick
             test_time_now_reobserve_refreshes_while_old_sleep_pending;
           Alcotest.test_case "time now refreshes after idle observe" `Quick

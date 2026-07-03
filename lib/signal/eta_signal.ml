@@ -1899,8 +1899,9 @@ module Make (Observer_error : Observer_error) () = struct
     queue_var_unlocked source
 
   let stage_timer_source_value (type a) (source : a var) value =
+    let graph_value = effective_var_value source in
     stage_var_source_value source value;
-    if not (source.var_equal source.graph_value value) then (
+    if not (source.var_equal graph_value value) then (
       stage_var_graph_value source value;
       List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
 
