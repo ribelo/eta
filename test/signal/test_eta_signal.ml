@@ -2947,6 +2947,39 @@ let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
   run_ok rt (Signal.Observer.dispose a_observer);
   run_ok rt (Signal.Observer.dispose b_observer)
 
+let test_bind_can_select_initialized_external_bind () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let driver = Signal.Var.create 0 in
+  let leaf = Signal.Var.create 10 in
+  let external_signal =
+    Signal.bind (Signal.Var.watch driver) (fun offset ->
+        Signal.Var.watch leaf |> Signal.map (fun value -> value + offset + 1))
+  in
+  let external_observer =
+    run_ok rt (Signal.Observer.observe external_signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "external initialized" 11
+    (run_ok rt (Signal.Observer.read external_observer));
+  let selected = Signal.bind (Signal.const true) (fun _ -> external_signal) in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "selected external bind initialized" 11
+    (run_ok rt (Signal.Observer.read selected_observer));
+  run_ok rt (Signal.Var.set leaf 20);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "selected follows external leaf update" 21
+    (run_ok rt (Signal.Observer.read selected_observer));
+  run_ok rt (Signal.Var.set driver 5);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "selected follows external bind switch" 26
+    (run_ok rt (Signal.Observer.read selected_observer));
+  run_ok rt (Signal.Observer.dispose selected_observer);
+  run_ok rt (Signal.Observer.dispose external_observer)
+
 let test_dynamic_list_bind_switches_dependency_set () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9303,6 +9336,8 @@ let () =
             test_commit_skips_invalidated_staged_entries;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
+          Alcotest.test_case "bind can select initialized external bind" `Quick
+            test_bind_can_select_initialized_external_bind;
           Alcotest.test_case "dynamic list bind switches dependency set" `Quick
             test_dynamic_list_bind_switches_dependency_set;
           Alcotest.test_case "bind branch churn releases inactive scopes" `Quick

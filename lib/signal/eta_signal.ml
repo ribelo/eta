@@ -1295,7 +1295,11 @@ module Make (Observer_error : Observer_error) () = struct
                && scope_is_ancestor ~ancestor:signal_scope scope
              then ()
              else raise (Graph_error `Invalid_scope));
-        List.iter visit signal.dependencies)
+        (match signal.kind with
+         | Bind _ -> ()
+         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+             List.iter visit signal.dependencies))
     in
     visit (P inner)
 
