@@ -2984,12 +2984,13 @@ let test_bind_can_select_initialized_external_bind () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "external initialized" 11
     (run_ok rt (Signal.Observer.read external_observer));
+  run_ok rt (Signal.Observer.dispose external_observer);
   let selected = Signal.bind (Signal.const true) (fun _ -> external_signal) in
   let selected_observer =
     run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "selected external bind initialized" 11
+  Alcotest.(check int) "selected disposed external bind initialized" 11
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Var.set leaf 20);
   run_ok rt Signal.stabilize;
@@ -2999,8 +3000,7 @@ let test_bind_can_select_initialized_external_bind () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "selected follows external bind switch" 26
     (run_ok rt (Signal.Observer.read selected_observer));
-  run_ok rt (Signal.Observer.dispose selected_observer);
-  run_ok rt (Signal.Observer.dispose external_observer)
+  run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_dynamic_list_bind_switches_dependency_set () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
