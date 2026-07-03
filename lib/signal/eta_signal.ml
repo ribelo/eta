@@ -2473,10 +2473,13 @@ module Make (Observer_error : Observer_error) () = struct
            Effect.acquire_use_release
              ~acquire:
                (with_graph_lane_sync (fun () ->
-                    let start_attempts, cancel_hooks =
-                      refresh_timer_demand_unlocked runtime_contract
-                    in
-                    (start_attempts, ref cancel_hooks)))
+                    try
+                      let start_attempts, cancel_hooks =
+                        refresh_timer_demand_unlocked runtime_contract
+                      in
+                      Ok (start_attempts, ref cancel_hooks)
+                    with Graph_error err -> Error err)
+                |> Effect.flatten_result)
              ~release:(fun (start_attempts, cancel_hooks_ref) ->
                rollback_unclaimed_timer_starts start_attempts
                |> Effect.bind (fun () ->
@@ -2494,6 +2497,7 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.sync (fun () -> refresh_timers := false)
        |> Effect.bind (fun () ->
               refresh_timer_demand ()
+              |> Effect.map_error (fun err -> (err :> stabilize_error))
               |> Effect.bind (fun () ->
                      run_pending_disposal_hooks_as_finalizers hooks_ref)))
       |> Effect.uninterruptible
@@ -2508,7 +2512,9 @@ module Make (Observer_error : Observer_error) () = struct
     if !refresh_timers || pending_disposal_hooks hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
-          |> Effect.bind (fun () -> refresh_timer_demand ())
+          |> Effect.bind (fun () ->
+                 refresh_timer_demand ()
+                 |> Effect.or_die (fun err -> Graph_error err))
         else Effect.unit)
        |> Effect.bind (fun () ->
               run_pending_disposal_hooks_as_finalizers hooks_ref))

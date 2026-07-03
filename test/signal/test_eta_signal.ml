@@ -7018,11 +7018,19 @@ let test_time_timer_rejects_mismatched_runtime () =
           (function `Runtime_mismatch -> true | _ -> false)
           (Eta_eio.Runtime.run rt_b (widen Signal.stabilize)))
   in
+  let check_observe_mismatch label signal =
+    expect_fail label
+      (function `Runtime_mismatch -> true | _ -> false)
+      (Eta_eio.Runtime.run rt_b
+         (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))))
+  in
   let interval = run_ok rt_a (Signal.Time.interval (Duration.ms 10)) in
+  check_observe_mismatch "mismatched interval observe runtime" interval;
   check_mismatch "mismatched interval runtime" interval;
   let step =
     run_ok rt_a (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
   in
+  check_observe_mismatch "mismatched step observe runtime" step;
   check_mismatch "mismatched step runtime" step
 
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
