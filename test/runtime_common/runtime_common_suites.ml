@@ -1001,7 +1001,7 @@ module Make (B : Runtime_backend.S) = struct
     Alcotest.(check bool) "daemon completed" true !completed
 
   let test_runtime_fork_daemon_scope_does_not_join () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let daemon_scope =
       E.Expert.make @@ fun context ->
       let contract = E.Expert.contract context in
@@ -1011,10 +1011,14 @@ module Make (B : Runtime_backend.S) = struct
         Exit.Ok ()
       with exn -> E.Expert.exit_of_exn context exn
     in
-    match
-      B.run rt
+    let promise =
+      B.fork_run ctx rt
         (E.timeout_as (Eta.Duration.ms 50) ~on_timeout:`Timeout daemon_scope)
-    with
+    in
+    wait_until "daemon scope result or timeout sleeper" (fun () ->
+        B.is_resolved promise || B.sleeper_count clock >= 1);
+    if not (B.is_resolved promise) then B.adjust_clock clock (Duration.ms 50);
+    match B.await promise with
     | Exit.Ok () -> ()
     | Exit.Error (Cause.Fail `Timeout) ->
         Alcotest.fail "runtime joined a daemon child inside run_scope"

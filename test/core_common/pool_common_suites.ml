@@ -402,7 +402,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "factory live" 0 !(factory.live)
 
   let test_pool_release_defect_releases_capacity () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let release_attempts = ref 0 in
     let release conn =
@@ -431,9 +431,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Pool.with_resource pool pool_use
       |> E.timeout_as (Duration.ms 20) ~on_timeout:`Timeout
     in
+    let replacement_result = B.fork_run ctx rt replacement in
+    advance_clock_until_resolved clock replacement_result 20;
     Alcotest.(check int) "capacity reusable after release defect" 2
-      (run_ok rt replacement);
-    ignore (run_ok rt (Pool.shutdown ~deadline:(Duration.ms 100) pool) : unit)
+      (match B.await replacement_result with
+      | Exit.Ok value -> value
+      | Exit.Error cause ->
+          Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause);
+    shutdown_pool_with_test_clock clock rt pool
 
   let test_pool_shutdown_release_defect_removes_idle_entry () =
     B.with_runtime @@ fun _ctx rt ->
@@ -903,7 +908,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           holders)
 
   let test_pool_expired_idle_close_failure_releases_admission_permit () =
-    B.with_test_clock @@ fun _ctx clock rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let factory = make_pool_factory () in
     let release_calls = ref 0 in
     let release conn =
@@ -932,7 +937,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Pool.with_resource pool (fun _ -> E.unit)
       |> E.timeout_as (Duration.ms 20) ~on_timeout:`Timeout
     in
-    (match B.run rt checkout_after_failure with
+    let checkout_result = B.fork_run ctx rt checkout_after_failure in
+    advance_clock_until_resolved clock checkout_result 20;
+    (match B.await checkout_result with
     | Exit.Ok () -> ()
     | Exit.Error cause ->
         Alcotest.failf
