@@ -35,7 +35,7 @@ module Make (Observer_error : Observer_error) () = struct
     [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
-  module Private_test_hooks = struct
+  module Private_test_hook_state = struct
     type hook =
       | After_observer_delivery_claim
       | After_observer_activation_before_return
@@ -506,6 +506,46 @@ module Make (Observer_error : Observer_error) () = struct
     source_timer_update :
       'err. timer_node -> int -> missed:int -> 'a var -> (unit, 'err) Effect.t;
   }
+
+  module Private_test_hooks = struct
+    include Private_test_hook_state
+
+    type 'a observer_delivery_snapshot =
+      | Test_delivery_never_delivered
+      | Test_delivery_delivered of 'a
+      | Test_delivery_pending of int * 'a update
+      | Test_delivery_running of int * 'a update
+
+    let active_live_state observer =
+      match observer.obs_state with
+      | Observer_active live -> live
+      | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _
+        ->
+          invalid_arg "Eta_signal.Private_test_hooks: observer is not active"
+
+    let set_observer_delivery observer delivery =
+      let live = active_live_state observer in
+      live.obs_delivery <-
+        (match delivery with
+        | Test_delivery_never_delivered -> Observer_never_delivered
+        | Test_delivery_delivered value -> Observer_delivered value
+        | Test_delivery_pending (token, update) ->
+            Observer_delivery_pending (token, update, [])
+        | Test_delivery_running (token, update) ->
+            Observer_delivery_running (token, update, []))
+
+    let observer_delivery observer =
+      let live = active_live_state observer in
+      match live.obs_delivery with
+      | Observer_never_delivered -> Test_delivery_never_delivered
+      | Observer_delivered value -> Test_delivery_delivered value
+      | Observer_delivery_pending (token, update, _) ->
+          Test_delivery_pending (token, update)
+      | Observer_delivery_running (token, update, _) ->
+          Test_delivery_running (token, update)
+
+    let run_observer_callback observer update = observer.obs_callback update
+  end
 
   type disposal_hook = unit -> unit
 

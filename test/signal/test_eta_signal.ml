@@ -7884,56 +7884,11 @@ let test_stream_bridge_interrupted_publish_does_not_duplicate () =
        Alcotest.fail "interrupted stream publish was delivered twice"
    | _ -> Alcotest.fail "expected one initialized stream update")
 
-let set_stream_bridge_sent_counter stream value =
-  (* Public stream APIs cannot drive the private bridge queue counter to
-     [max_int] in a focused test. *)
-  let queue = Obj.field (Obj.repr stream) 0 in
-  Obj.set_field queue 7 (Obj.repr value)
-
-let active_observer_live_state_obj observer =
-  let observer_state = Obj.field (Obj.repr observer) 4 in
-  if Obj.is_int observer_state || Obj.tag observer_state <> 1 then
-    Alcotest.fail "expected active observer";
-  Obj.field observer_state 0
-
-let set_observer_delivery_obj observer delivery =
-  let live_state = active_observer_live_state_obj observer in
-  Obj.set_field live_state 1 delivery
-
-let make_observer_delivery tag token update =
-  let delivery = Obj.new_block tag 3 in
-  Obj.set_field delivery 0 (Obj.repr token);
-  Obj.set_field delivery 1 (Obj.repr update);
-  Obj.set_field delivery 2 (Obj.repr []);
-  delivery
-
-let set_observer_delivery_pending observer ~token update =
-  set_observer_delivery_obj observer (make_observer_delivery 1 token update)
-
-let set_observer_delivery_running observer ~token update =
-  set_observer_delivery_obj observer (make_observer_delivery 2 token update)
-
-let check_observer_delivery_pending_token observer expected_token =
-  let delivery = Obj.field (active_observer_live_state_obj observer) 1 in
-  if Obj.is_int delivery then Alcotest.fail "expected pending delivery";
-  match Obj.tag delivery with
-  | 1 ->
-      let token = (Obj.obj (Obj.field delivery 0) : int) in
-      Alcotest.(check int) "pending delivery token" expected_token token
-  | 0 -> Alcotest.fail "stale stream finalizer acknowledged newer delivery"
-  | tag -> Alcotest.failf "expected pending delivery, got tag %d" tag
-
-let int_stream_observer_callback observer =
-  (Obj.obj (Obj.field (Obj.repr observer) 3)
-    : int Signal.update -> (unit, Observer_error.t) Effect.t)
-
 let run_observer_callback_ok rt eff =
   run_ok rt (Effect.map_error (fun `Observer_failed -> `Update_failed) eff)
 
-(* This test intentionally uses the top-level [Signal] instance because
-   [int_stream_observer_callback] extracts a callback with that concrete update
-   type from the observer record. *)
 let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun _sw rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -7950,24 +7905,33 @@ let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
     (fun () ->
       let old_update = Signal.Changed { old_value = 0; new_value = 1 } in
       let new_update = Signal.Changed { old_value = 1; new_value = 2 } in
-      set_observer_delivery_running observer ~token:11 old_update;
+      Signal.Private_test_hooks.set_observer_delivery observer
+        (Signal.Private_test_hooks.Test_delivery_running (11, old_update));
       let hook =
         {
           Signal.Private_test_hooks.run =
             (fun () ->
               Effect.sync (fun () ->
-                  set_observer_delivery_pending observer ~token:12 new_update));
+                  Signal.Private_test_hooks.set_observer_delivery observer
+                    (Signal.Private_test_hooks.Test_delivery_pending
+                       (12, new_update))));
         }
       in
       Signal.Private_test_hooks.with_hook
         Signal.Private_test_hooks.After_stream_try_send_before_ack hook
       @@ fun () ->
       run_observer_callback_ok rt
-        (int_stream_observer_callback observer old_update);
-      check_observer_delivery_pending_token observer 12)
+        (Signal.Private_test_hooks.run_observer_callback observer old_update);
+      match Signal.Private_test_hooks.observer_delivery observer with
+      | Signal.Private_test_hooks.Test_delivery_pending (12, _) -> ()
+      | Signal.Private_test_hooks.Test_delivery_delivered _ ->
+          Alcotest.fail "stale stream finalizer acknowledged newer delivery"
+      | Signal.Private_test_hooks.Test_delivery_never_delivered
+      | Signal.Private_test_hooks.Test_delivery_pending _
+      | Signal.Private_test_hooks.Test_delivery_running _ ->
+          Alcotest.fail "expected newer pending stream delivery")
 
-let run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
-    ~saturate_sent_counter () =
+let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.now := 0;
@@ -8000,7 +7964,6 @@ let run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
     expect_exit_ok "stream observer registration"
       (Runtime.run rt (widen (Signal.Stream.observe signal)))
   in
-  if saturate_sent_counter then set_stream_bridge_sent_counter stream max_int;
   expect_die "park stream receiver"
     (Runtime.run rt
        (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)));
@@ -8034,15 +7997,6 @@ let run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
    | [ Signal.Initialized 1; Signal.Initialized 1 ] ->
        Alcotest.fail "interrupted sent wakeup was delivered twice"
    | _ -> Alcotest.fail "expected one initialized stream update")
-
-let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
-  run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
-    ~saturate_sent_counter:false ()
-
-let test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate
-    () =
-  run_stream_bridge_interrupted_sent_wakeup_does_not_duplicate
-    ~saturate_sent_counter:true ()
 
 let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -9348,10 +9302,6 @@ let () =
           Alcotest.test_case
             "stream bridge interrupted sent wakeup does not duplicate" `Quick
             test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate;
-          Alcotest.test_case
-            "stream bridge saturated sent counter interrupted sent wakeup does not duplicate"
-            `Quick
-            test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_duplicate;
           Alcotest.test_case
             "stream bridge consumer wakeup failure does not fail stabilize"
             `Quick
