@@ -26,12 +26,22 @@ let run_eio f =
       run_linux_eio ~fallback:(fun _ -> Eio_main.run f) f
   | _ -> Eio_main.run f
 
+let create_deterministic_runtime ?tracer ?sampler ?auto_instrument ?logger
+    ?meter ?random ?capture_backtrace stdenv sw =
+  let clock = Eta_test.Test_clock.create () in
+  let sleep duration =
+    Eta_test.Test_clock.adjust clock duration;
+    Eio.Fiber.yield ()
+  in
+  Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~sleep
+    ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+    ?tracer ?sampler ?auto_instrument ?logger ?meter ?random ?capture_backtrace
+    ()
+
 let with_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
-  in
+  let rt = create_deterministic_runtime stdenv sw in
   f sw rt
 
 let with_runtime_contract f =
@@ -48,17 +58,15 @@ let with_traced_runtime f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+      stdenv sw
   in
   f sw rt tracer
 
 let with_custom_tracer_runtime tracer f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ~tracer ()
-  in
+  let rt = create_deterministic_runtime ~tracer stdenv sw in
   f sw rt
 
 let with_sampled_traced_runtime sampler f =
@@ -66,8 +74,8 @@ let with_sampled_traced_runtime sampler f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Eta.Tracer.as_capability tracer) ~sampler ()
+    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+      ~sampler stdenv sw
   in
   f sw rt tracer
 
@@ -76,10 +84,8 @@ let with_seeded_sampled_traced_runtime ~seed sampler f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Eta.Tracer.as_capability tracer) ~sampler
-      ~random:(Eta.Capabilities.random_of_seed seed)
-      ()
+    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+      ~sampler ~random:(Eta.Capabilities.random_of_seed seed) stdenv sw
   in
   f sw rt tracer
 
@@ -88,8 +94,8 @@ let with_auto_traced_runtime auto_instrument f =
   Eio.Switch.run @@ fun sw ->
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Eta.Tracer.as_capability tracer) ~auto_instrument ()
+    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+      ~auto_instrument stdenv sw
   in
   f sw rt tracer
 
@@ -98,8 +104,8 @@ let with_meter_runtime f =
   Eio.Switch.run @@ fun sw ->
   let meter = Eta.Meter.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~meter:(Eta.Meter.as_capability meter) ()
+    create_deterministic_runtime ~meter:(Eta.Meter.as_capability meter) stdenv
+      sw
   in
   f sw rt meter
 
@@ -121,8 +127,8 @@ let with_logger_runtime f =
   Eio.Switch.run @@ fun sw ->
   let logger = Eta.Logger.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~logger:(Eta.Logger.as_capability logger) ()
+    create_deterministic_runtime ~logger:(Eta.Logger.as_capability logger)
+      stdenv sw
   in
   f sw rt logger
 
@@ -133,20 +139,16 @@ let with_observed_runtime f =
   let logger = Eta.Logger.in_memory () in
   let meter = Eta.Meter.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Eta.Tracer.as_capability tracer)
+    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
       ~logger:(Eta.Logger.as_capability logger)
-      ~meter:(Eta.Meter.as_capability meter) ()
+      ~meter:(Eta.Meter.as_capability meter) stdenv sw
   in
   f sw rt tracer logger meter
 
 let with_runtime_capture_backtrace capture_backtrace f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~capture_backtrace ()
-  in
+  let rt = create_deterministic_runtime ~capture_backtrace stdenv sw in
   f sw rt
 
 let with_test_clock f =
