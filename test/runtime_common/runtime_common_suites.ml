@@ -64,6 +64,10 @@ module Make (B : Runtime_backend.S) = struct
     in
     loop 200
 
+  let await_resolved label promise =
+    wait_until label (fun () -> B.is_resolved promise);
+    B.await promise
+
   let check_owner_domain owner label =
     Alcotest.(check bool) label true (Domain.self () = owner)
 
@@ -938,6 +942,27 @@ module Make (B : Runtime_backend.S) = struct
         Alcotest.(check (option int))
           "local binding" (Some 42) (contract.Rc.local_get local))
 
+  let test_runtime_contract_resolve_wakes_live_waiter () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let promise, resolver = contract.Rc.create_promise () in
+    let waiter_started, waiter_started_resolver = B.create_promise () in
+    let waiter_result, waiter_result_resolver = B.create_promise () in
+    contract.Rc.run_scope ~name:"live resolver conformance"
+      (fun child_scope ->
+        contract.Rc.fork child_scope (fun () ->
+            B.resolve waiter_started_resolver ();
+            let value = contract.Rc.await_promise promise in
+            B.resolve waiter_result_resolver value);
+        let () = await_resolved "live waiter start" waiter_started in
+        contract.Rc.yield ();
+        Alcotest.(check bool)
+          "waiter blocked before resolution" false
+          (B.is_resolved waiter_result);
+        contract.Rc.resolve_promise resolver 17;
+        Alcotest.(check int)
+          "live waiter observed resolved value" 17
+          (await_resolved "live waiter result" waiter_result))
+
   let test_runtime_contract_resolve_after_waiter_cancellation () =
     B.with_runtime_contract @@ fun _ctx contract ->
     let promise, resolver = contract.Rc.create_promise () in
@@ -956,9 +981,50 @@ module Make (B : Runtime_backend.S) = struct
         let cancel_ctx = contract.Rc.await_promise started in
         contract.Rc.cancel cancel_ctx (Failure "cancel promise waiter");
         contract.Rc.await_promise cancelled;
-        contract.Rc.resolve_promise resolver 42);
+        contract.Rc.resolve_promise resolver 42;
+        Alcotest.(check int)
+          "resolved promise remains observable" 42
+          (contract.Rc.await_promise promise));
     Alcotest.(check pass)
       "resolver tolerated canceled waiter" () ()
+
+  let test_runtime_contract_canceled_waiter_does_not_strand_live_waiter () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let promise, resolver = contract.Rc.create_promise () in
+    let canceled_started, canceled_started_resolver = B.create_promise () in
+    let canceled_done, canceled_done_resolver = B.create_promise () in
+    let live_started, live_started_resolver = B.create_promise () in
+    let live_result, live_result_resolver = B.create_promise () in
+    contract.Rc.run_scope ~name:"mixed waiter resolver conformance"
+      (fun child_scope ->
+        contract.Rc.fork child_scope (fun () ->
+            contract.Rc.cancel_sub @@ fun cancel_ctx ->
+            B.resolve canceled_started_resolver cancel_ctx;
+            try ignore (contract.Rc.await_promise promise : int) with
+            | exn -> (
+                match contract.Rc.cancellation_reason exn with
+                | Some _ -> B.resolve canceled_done_resolver ()
+                | None -> raise exn));
+        let cancel_ctx =
+          await_resolved "canceled waiter start" canceled_started
+        in
+        contract.Rc.cancel cancel_ctx (Failure "cancel one promise waiter");
+        let () =
+          await_resolved "canceled waiter observed cancel" canceled_done
+        in
+        contract.Rc.fork child_scope (fun () ->
+            B.resolve live_started_resolver ();
+            let value = contract.Rc.await_promise promise in
+            B.resolve live_result_resolver value);
+        let () = await_resolved "live waiter start" live_started in
+        contract.Rc.yield ();
+        Alcotest.(check bool)
+          "live waiter blocked before resolution" false
+          (B.is_resolved live_result);
+        contract.Rc.resolve_promise resolver 23;
+        Alcotest.(check int)
+          "live waiter observed value after peer cancel" 23
+          (await_resolved "live waiter result after peer cancel" live_result))
 
   let test_runtime_queue_wakeups_stay_on_owner_domain () =
     B.with_runtime @@ fun ctx rt ->
@@ -1163,8 +1229,13 @@ module Make (B : Runtime_backend.S) = struct
             test_runtime_contract_locals_and_stream;
           Alcotest.test_case "runtime contract callbacks stay on owner domain"
             `Quick test_runtime_contract_callbacks_stay_on_owner_domain;
+          Alcotest.test_case "runtime contract resolve wakes live waiter" `Quick
+            test_runtime_contract_resolve_wakes_live_waiter;
           Alcotest.test_case "runtime contract resolve after waiter cancel"
             `Quick test_runtime_contract_resolve_after_waiter_cancellation;
+          Alcotest.test_case
+            "runtime contract canceled waiter does not strand live waiter" `Quick
+            test_runtime_contract_canceled_waiter_does_not_strand_live_waiter;
           Alcotest.test_case "cancellation cleanup stays on owner domain" `Quick
             test_runtime_cancellation_cleanup_stays_on_owner_domain;
         ] );
