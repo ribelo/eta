@@ -49,6 +49,12 @@ let expect_fail name pred = function
       fail name ("expected typed failure, got " ^ pp_cause cause)
   | Eta.Exit.Ok _ -> fail name "expected typed failure, got Ok"
 
+let expect_exact_runtime_mismatch name = function
+  | Eta.Exit.Error (Eta.Cause.Fail `Runtime_mismatch) -> ()
+  | Eta.Exit.Error cause ->
+      fail name ("expected only Runtime_mismatch, got " ^ pp_cause cause)
+  | Eta.Exit.Ok _ -> fail name "expected Runtime_mismatch, got Ok"
+
 let expect_die name = function
   | Eta.Exit.Error (Eta.Cause.Die _) -> ()
   | Eta.Exit.Error cause -> fail name ("expected defect, got " ^ pp_cause cause)
@@ -159,6 +165,81 @@ let test_bind_branch_detaches_stale_dependency done_ =
   run_eta eff done_ (fun result ->
       check_equal_int "bind stale dependency detached" 21
         (expect_ok "bind detach" result))
+
+let test_bind_selects_initialized_external_bind done_ =
+  let driver = Signal.Var.create 0 in
+  let leaf = Signal.Var.create 10 in
+  let external_signal =
+    Signal.bind (Signal.Var.watch driver) (fun offset ->
+        Signal.Var.watch leaf |> Signal.map (fun value -> value + offset + 1))
+  in
+  let eff =
+    let* external_observer =
+      Signal.Observer.observe external_signal (fun _ -> E.unit)
+    in
+    let* () = Signal.stabilize in
+    let* external_initial = Signal.Observer.read external_observer in
+    let* () = Signal.Observer.dispose external_observer in
+    let selected = Signal.bind (Signal.const true) (fun _ -> external_signal) in
+    let* selected_observer =
+      Signal.Observer.observe selected (fun _ -> E.unit)
+    in
+    let* () = Signal.stabilize in
+    let* selected_initial = Signal.Observer.read selected_observer in
+    let* () = Signal.Var.set leaf 20 in
+    let* () = Signal.stabilize in
+    let* leaf_update = Signal.Observer.read selected_observer in
+    let* () = Signal.Var.set driver 5 in
+    let* () = Signal.stabilize in
+    let* driver_update = Signal.Observer.read selected_observer in
+    let+ () = Signal.Observer.dispose selected_observer in
+    (external_initial, selected_initial, leaf_update, driver_update)
+  in
+  run_eta eff done_ (fun result ->
+      let external_initial, selected_initial, leaf_update, driver_update =
+        expect_ok "bind selects initialized external bind" result
+      in
+      check_equal_int "external bind initialized" 11 external_initial;
+      check_equal_int "selected initialized external bind" 11 selected_initial;
+      check_equal_int "selected follows external leaf update" 21 leaf_update;
+      check_equal_int "selected follows external bind switch" 26 driver_update)
+
+let test_timer_runtime_mismatch_on_observe_with_owner_demand done_ =
+  let clock_a = Manual_clock.create () in
+  let clock_b = Manual_clock.create () in
+  let rt_a =
+    Eta_jsoo.Runtime.create ~sleep:(Manual_clock.sleep clock_a)
+      ~now_ms:(Manual_clock.now_ms clock_a) ()
+  in
+  let rt_b =
+    Eta_jsoo.Runtime.create ~sleep:(Manual_clock.sleep clock_b)
+      ~now_ms:(Manual_clock.now_ms clock_b) ()
+  in
+  let setup =
+    let* timer = Signal.Time.interval (Eta.Duration.ms 10) in
+    let* keep_alive = Signal.Observer.observe timer (fun _ -> E.unit) in
+    let+ () = Signal.stabilize in
+    (timer, keep_alive)
+  in
+  Eta_jsoo.Runtime.run rt_a (widen setup) ~on_result:(function
+    | Eta.Exit.Error cause ->
+        Eta_js_test.finish done_ (fun () ->
+            fail "timer runtime mismatch setup"
+              ("expected Ok, got " ^ pp_cause cause))
+    | Eta.Exit.Ok (timer, keep_alive) ->
+        Eta_jsoo.Runtime.run rt_b
+          (widen (Signal.Observer.observe timer (fun _ -> E.unit)))
+          ~on_result:(fun mismatch_result ->
+            Eta_jsoo.Runtime.run rt_a
+              (widen (Signal.Observer.dispose keep_alive))
+              ~on_result:(fun cleanup_result ->
+                Eta_js_test.finish done_ (fun () ->
+                    ignore
+                      (expect_ok "timer runtime mismatch cleanup"
+                         cleanup_result : unit);
+                    expect_exact_runtime_mismatch
+                      "observe active timer from another runtime"
+                      mismatch_result))))
 
 let test_failure_and_defect_propagation done_ =
   let observer_failure =
@@ -514,6 +595,10 @@ let tests =
   [
     ("basic_observe_stabilize_read", test_basic_observe_stabilize_read);
     ("bind_branch_detaches_stale_dependency", test_bind_branch_detaches_stale_dependency);
+    ( "bind_selects_initialized_external_bind",
+      test_bind_selects_initialized_external_bind );
+    ( "timer_runtime_mismatch_on_observe_with_owner_demand",
+      test_timer_runtime_mismatch_on_observe_with_owner_demand );
     ("failure_and_defect_propagation", test_failure_and_defect_propagation);
     ("time_nodes_require_explicit_stabilization", test_time_nodes_require_explicit_stabilization);
     ("stream_bridge_emits_and_closes", test_stream_bridge_emits_and_closes);
