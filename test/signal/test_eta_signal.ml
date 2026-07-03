@@ -3228,6 +3228,20 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
    | _ -> Alcotest.fail "expected retry to deliver changed event");
   run_ok rt (Overflow_signal.Observer.dispose observer)
 
+let test_var_create_counter_overflow_raises_graph_error () =
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
+  Overflow_signal.graph.next_id <- max_int;
+  match Overflow_signal.Var.create 1 with
+  | exception Overflow_signal.Graph_error (`Counter_overflow name)
+    when String.equal name "node id" ->
+      ()
+  | exception Overflow_signal.Graph_error _ ->
+      Alcotest.fail "var create counter overflow: unexpected graph error"
+  | exception exn ->
+      Alcotest.failf "var create counter overflow: unexpected exception %s"
+        (Printexc.to_string exn)
+  | _ -> Alcotest.fail "var create counter overflow: expected graph error"
+
 let test_stabilization_generation_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8756,6 +8770,8 @@ let () =
             test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "version overflow does not publish snapshot" `Quick
             test_signal_version_overflow_does_not_publish_partial_snapshot;
+          Alcotest.test_case "var create counter overflow raises graph error"
+            `Quick test_var_create_counter_overflow_raises_graph_error;
           Alcotest.test_case "stabilization generation overflow typed failure"
             `Quick test_stabilization_generation_overflow_is_typed_failure;
           Alcotest.test_case "timer refresh token overflow typed failure" `Quick

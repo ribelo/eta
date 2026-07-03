@@ -128,8 +128,9 @@ module Make (Observer_error : Observer_error) () : sig
       Effectful APIs such as {!Observer.observe}, {!stabilize}, and
       {!Stream.observe} convert graph failures into typed Eta failures instead.
 
-      Synchronous construction APIs include {!Var.watch}, {!const}, {!map},
-      [map2] through [map9], {!both}, {!all}, and {!bind}. They raise
+      Synchronous construction APIs include {!Var.create}, {!Var.watch},
+      {!const}, {!map}, [map2] through [map9], {!both}, {!all}, and {!bind}.
+      They raise
       [Graph_error `Ambiguous_scope] when a new node would be created in a phase
       without an unambiguous dynamic scope, and [Graph_error `Invalid_scope]
       when wrapping an invalidated dynamic-scope node. Timer-backed graph
@@ -237,7 +238,10 @@ module Make (Observer_error : Observer_error) () : sig
           in
           (* Later updates should publish a fresh [view_model] value. *)
           S.Var.set source next_view_model
-        ]} *)
+        ]}
+
+        Raises [Graph_error] if the shared graph construction counter
+        overflows; see {!exception:Graph_error}. *)
 
     val value : 'a t -> 'a
     (** Synchronously read the current source value, including values set since
