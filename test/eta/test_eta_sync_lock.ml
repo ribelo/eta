@@ -57,3 +57,27 @@ let test_sync_lock_rejects_runtime_operation () =
         "Eta.Sync_lock: runtime operation attempted while holding lock"
         message
   | `Returned -> Alcotest.fail "runtime operation under Sync_lock returned"
+
+let test_sync_lock_rejects_runtime_contract_operation () =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let contract =
+    Runtime_contract.of_runtime
+      (Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv))
+  in
+  let lock = Sync_lock.create () in
+  let result =
+    try
+      Sync_lock.use lock @@ fun () ->
+      contract.yield ();
+      `Returned
+    with Invalid_argument message -> `Invalid_argument message
+  in
+  match result with
+  | `Invalid_argument message ->
+      Alcotest.(check string)
+        "runtime contract operation under lock"
+        "Eta.Sync_lock: runtime operation attempted while holding lock"
+        message
+  | `Returned ->
+      Alcotest.fail "runtime contract operation under Sync_lock returned"

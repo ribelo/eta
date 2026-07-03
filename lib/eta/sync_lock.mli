@@ -1,8 +1,10 @@
-(** Tiny lock for Eta-owned in-memory state.
+(** Eta-internal tiny lock for Eta-owned in-memory state.
 
-    This is deliberately not a condition variable or scheduler primitive. Use
-    it only around short critical sections that do not perform effects, sleeps,
-    promise awaits, or user callbacks. Runtime-owned blocking waits belong in
+    This module is not an application synchronization API. It is exposed only
+    for Eta libraries that share root runtime and queue invariants. This is
+    deliberately not a condition variable or scheduler primitive. Use it only
+    around short critical sections that do not perform effects, sleeps, promise
+    awaits, or user callbacks. Runtime-owned blocking waits belong in
     [Runtime_contract].
 
     While the current domain is inside a [Sync_lock] critical section, Eta
