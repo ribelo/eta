@@ -2956,6 +2956,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let value (source : 'a t) =
       ensure_graph_context ();
+      if graph.phase = Pure then raise (Graph_error `Ambiguous_scope);
       source.source_value
 
     let watch (source : 'a t) =

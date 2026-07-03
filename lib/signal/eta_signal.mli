@@ -245,7 +245,11 @@ module Make (Observer_error : Observer_error) () : sig
 
     val value : 'a t -> 'a
     (** Synchronously read the current source value, including values set since
-        the last stabilization. *)
+        the last stabilization.
+
+        Raises [Graph_error `Ambiguous_scope] during pure graph recomputation.
+        Use {!watch} and explicit signal combinators to declare dependencies
+        instead of reading source variables from [map] or [bind] callbacks. *)
 
     val watch : 'a t -> 'a signal
     (** Synchronously create a signal for this source variable.
