@@ -1357,40 +1357,110 @@ let test_observer_callbacks_run_in_registration_order () =
 let test_observer_ordering_across_graph_branches_is_deterministic () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let upstream =
-    Signal.Var.watch source |> Signal.map (fun value -> value + 1)
+  let run_case label registration_order =
+    let source = Signal.Var.create 1 in
+    let upstream =
+      Signal.Var.watch source |> Signal.map (fun value -> value + 1)
+    in
+    let downstream = Signal.map (fun value -> value * 10) upstream in
+    let independent =
+      Signal.Var.watch source |> Signal.map (fun value -> -value)
+    in
+    let events = ref [] in
+    let record label _update =
+      Effect.sync (fun () -> events := label :: !events)
+    in
+    let observe = function
+      | "upstream" -> Signal.Observer.observe upstream (record "upstream")
+      | "downstream" ->
+          Signal.Observer.observe downstream (record "downstream")
+      | "independent" ->
+          Signal.Observer.observe independent (record "independent")
+      | unexpected ->
+          Alcotest.failf "unexpected observer label %S" unexpected
+    in
+    let observers =
+      List.map (fun name -> run_ok rt (observe name)) registration_order
+    in
+    let expected = [ "upstream"; "downstream"; "independent" ] in
+    Fun.protect
+      ~finally:(fun () ->
+        List.iter
+          (fun observer ->
+            ignore
+              (Eta_eio.Runtime.run rt
+                 (widen (Signal.Observer.dispose observer))
+                : _ Exit.t))
+          observers)
+      (fun () ->
+        run_ok rt Signal.stabilize;
+        Alcotest.(check (list string))
+          (label ^ " initial graph observer order") expected (List.rev !events);
+        events := [];
+        run_ok rt (Signal.Var.set source 2);
+        run_ok rt Signal.stabilize;
+        Alcotest.(check (list string))
+          (label ^ " changed graph observer order") expected
+          (List.rev !events))
   in
-  let downstream = Signal.map (fun value -> value * 10) upstream in
-  let independent = Signal.Var.watch source |> Signal.map (fun value -> -value) in
-  let events = ref [] in
-  let record label _update =
-    Effect.sync (fun () -> events := label :: !events)
+  run_case "creation registration"
+    [ "upstream"; "downstream"; "independent" ];
+  run_case "reverse dependency registration"
+    [ "downstream"; "upstream"; "independent" ];
+  run_case "reverse registration"
+    [ "independent"; "downstream"; "upstream" ]
+
+let test_observer_independent_branch_order_ignores_registration_permutation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let run_case label registration_order =
+    let source = Signal.Var.create 1 in
+    let left = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
+    let middle =
+      Signal.Var.watch source |> Signal.map (fun value -> value + 2)
+    in
+    let right =
+      Signal.Var.watch source |> Signal.map (fun value -> value + 3)
+    in
+    let events = ref [] in
+    let record label _update =
+      Effect.sync (fun () -> events := label :: !events)
+    in
+    let observe = function
+      | "left" -> Signal.Observer.observe left (record "left")
+      | "middle" -> Signal.Observer.observe middle (record "middle")
+      | "right" -> Signal.Observer.observe right (record "right")
+      | unexpected ->
+          Alcotest.failf "unexpected observer label %S" unexpected
+    in
+    let observers =
+      List.map (fun name -> run_ok rt (observe name)) registration_order
+    in
+    let expected = [ "left"; "middle"; "right" ] in
+    Fun.protect
+      ~finally:(fun () ->
+        List.iter
+          (fun observer ->
+            ignore
+              (Eta_eio.Runtime.run rt
+                 (widen (Signal.Observer.dispose observer))
+                : _ Exit.t))
+          observers)
+      (fun () ->
+        run_ok rt Signal.stabilize;
+        Alcotest.(check (list string))
+          (label ^ " initial independent observer order") expected
+          (List.rev !events);
+        events := [];
+        run_ok rt (Signal.Var.set source 2);
+        run_ok rt Signal.stabilize;
+        Alcotest.(check (list string))
+          (label ^ " changed independent observer order") expected
+          (List.rev !events))
   in
-  let upstream_observer =
-    run_ok rt (Signal.Observer.observe upstream (record "upstream"))
-  in
-  let downstream_observer =
-    run_ok rt (Signal.Observer.observe downstream (record "downstream"))
-  in
-  let independent_observer =
-    run_ok rt (Signal.Observer.observe independent (record "independent"))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "initial graph observer order"
-    [ "upstream"; "downstream"; "independent" ]
-    (List.rev !events);
-  events := [];
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "changed graph observer order"
-    [ "upstream"; "downstream"; "independent" ]
-    (List.rev !events);
-  run_ok rt (Signal.Observer.dispose upstream_observer);
-  run_ok rt (Signal.Observer.dispose downstream_observer);
-  run_ok rt (Signal.Observer.dispose independent_observer)
+  run_case "creation registration" [ "left"; "middle"; "right" ];
+  run_case "reverse registration" [ "right"; "middle"; "left" ];
+  run_case "mixed registration" [ "middle"; "right"; "left" ]
 
 let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -8882,6 +8952,9 @@ let () =
             test_observer_callbacks_run_in_registration_order;
           Alcotest.test_case "observer ordering across graph branches" `Quick
             test_observer_ordering_across_graph_branches_is_deterministic;
+          Alcotest.test_case
+            "observer independent branch order ignores registration" `Quick
+            test_observer_independent_branch_order_ignores_registration_permutation;
           Alcotest.test_case
             "observer graph order precedes reverse registration fail-fast"
             `Quick
