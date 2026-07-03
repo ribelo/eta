@@ -4133,9 +4133,26 @@ module Make (Observer_error : Observer_error) () = struct
         if !drop_published then acknowledge_stream_drop_delivery observer token update
         else Effect.unit
       in
+      let report_on_drop_failure exn =
+        Effect.log_error
+          ~attrs:[ ("exception.message", Printexc.to_string exn) ]
+          "eta_signal.stream.on_drop_failure"
+      in
       (Effect.sync (fun () ->
-           Option.iter (fun on_drop -> on_drop update) on_drop;
-           drop_published := true)
+           let on_drop_failure =
+             match on_drop with
+             | None -> None
+             | Some on_drop -> (
+                 try
+                   on_drop update;
+                   None
+                 with exn -> Some exn)
+           in
+           drop_published := true;
+           on_drop_failure)
+       |> Effect.bind (function
+            | None -> Effect.unit
+            | Some exn -> report_on_drop_failure exn)
        |> Effect.bind (fun () ->
               Private_test_hooks.run After_stream_drop_before_ack)
        |> Effect.bind (fun () -> acknowledge_published_drop ()))

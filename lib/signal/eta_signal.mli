@@ -642,9 +642,9 @@ module Make (Observer_error : Observer_error) () : sig
         report an [old_value] that was not itself delivered through the stream.
         Pass [?on_drop] to observe each dropped update; the hook runs
         synchronously during observer delivery and should be reserved for
-        counters, metrics, or lightweight logging. If the hook raises,
-        stabilization fails with that defect, and the update can be retried by
-        the next stabilization.
+        counters, metrics, or lightweight logging. If the hook raises, Eta logs
+        [eta_signal.stream.on_drop_failure], still acknowledges the drop, and
+        continues stabilization. The failed hook is not retried.
 
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers
