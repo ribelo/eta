@@ -2566,6 +2566,21 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.uninterruptible
     else Effect.unit
 
+  let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
+    let best_effort eff = Effect.exit eff |> Effect.map (fun _ -> ()) in
+    if !refresh_timers || pending_disposal_hooks hooks_ref then
+      ((if !refresh_timers then
+          Effect.sync (fun () -> refresh_timers := false)
+          |> Effect.bind (fun () -> refresh_timer_demand ())
+          |> Effect.ignore_errors
+          |> best_effort
+        else Effect.unit)
+       |> Effect.bind (fun () ->
+              run_pending_disposal_hooks_as_finalizers hooks_ref
+              |> best_effort))
+      |> Effect.uninterruptible
+    else Effect.unit
+
   let dispose_observer_effect observer =
     let hooks_ref = ref [] in
     let refresh_timers = ref false in
@@ -2585,26 +2600,25 @@ module Make (Observer_error : Observer_error) () = struct
 
   let abort_observer_registration_effect observer =
     let hooks_ref = ref [] in
-    let cleanup_needed = ref false in
+    let refresh_timers = ref false in
     let run_cleanup () =
-      run_pending_dispose_cleanup hooks_ref (ref false)
+      run_pending_registration_abort_cleanup hooks_ref refresh_timers
     in
     with_graph_lane_sync
       (fun () ->
         match observer.obs_state with
-        | Observer_registering _ ->
+        | Observer_registering _ | Observer_active _ | Observer_invalid_scope _ ->
             let hooks = dispose_observer_unlocked observer in
             hooks_ref := hooks;
-            cleanup_needed := true;
+            refresh_timers := true;
             update_necessity_counters_unlocked ();
             true
-        | Observer_active _ | Observer_invalid_scope _ | Observer_disposed _ ->
-            false)
+        | Observer_disposed _ -> false)
     |> Effect.bind (function
          | true -> run_cleanup ()
-         | false -> dispose_observer_effect observer)
+         | false -> Effect.unit)
     |> Effect.on_exit (fun _exit ->
-           if !cleanup_needed then run_cleanup () else Effect.unit)
+           run_cleanup ())
 
   let delivered_value = function
     | Initialized value -> value

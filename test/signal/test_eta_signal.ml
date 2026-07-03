@@ -2079,6 +2079,46 @@ let test_observer_activation_interruption_disposes_unowned_observer () =
       Alcotest.(check int)
         "interrupted observer activation does not leak callback" 0 !callbacks)
 
+let test_observer_activation_abort_cleanup_does_not_mask_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  Signal.Private_test_hooks.clear ();
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let hook =
+    {
+      Signal.Private_test_hooks.run =
+        (fun () -> Effect.sync (fun () -> failwith "activation failure"));
+    }
+  in
+  Fun.protect
+    ~finally:Signal.Private_test_hooks.clear
+    (fun () ->
+      Signal.Private_test_hooks.with_hook
+        Signal.Private_test_hooks.After_observer_activation_before_return hook
+      @@ fun () ->
+      match
+        Runtime.run rt
+          (widen
+             (Signal.Observer.observe_with_hooks_callback
+                ~on_finish:[ (fun _reason ->
+                  failwith "abort cleanup hook failure") ]
+                signal
+                (fun _observer _update -> Effect.unit)))
+      with
+      | Exit.Error cause ->
+          if
+            cause_has_finalizer_die_message "abort cleanup hook failure" cause
+          then
+            Alcotest.failf
+              "observer activation abort cleanup masked original failure: %a"
+              (Cause.pp pp_hidden) cause
+      | Exit.Ok observer ->
+          ignore
+            (Runtime.run rt (widen (Signal.Observer.dispose observer))
+              : _ Exit.t);
+          Alcotest.fail "observer unexpectedly returned after activation failure")
+
 let test_observer_observe_invalidated_before_transfer_fails () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -9293,6 +9333,10 @@ let () =
           Alcotest.test_case
             "observer interrupted activation disposes unowned observer" `Quick
             test_observer_activation_interruption_disposes_unowned_observer;
+          Alcotest.test_case
+            "observer activation abort cleanup preserves original failure"
+            `Quick
+            test_observer_activation_abort_cleanup_does_not_mask_failure;
           Alcotest.test_case
             "observer observe invalidated before transfer fails" `Quick
             test_observer_observe_invalidated_before_transfer_fails;

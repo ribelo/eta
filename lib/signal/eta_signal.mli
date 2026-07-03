@@ -316,6 +316,15 @@ module Make (Observer_error : Observer_error) () : sig
         disposed or not initialized; normal consumers should prefer {!read}. *)
 
     val dispose : 'a t -> (unit, 'err) Eta.Effect.t
+    (** Dispose an observer lifecycle handle. Disposal is idempotent. Pending
+        callbacks collected for the observer are skipped, and demand-owned
+        timer cleanup is refreshed before the effect returns.
+
+        [dispose] has no typed graph-error channel. Cleanup failures that can
+        only occur after the observer state has been changed, such as timer
+        lifecycle defects, timer runtime mismatch, counter overflow, or
+        disposal-hook defects, are therefore reported as Eta defects or
+        finalizer diagnostics rather than typed graph failures. *)
   end
 
   val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
