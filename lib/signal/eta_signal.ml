@@ -2730,14 +2730,15 @@ module Make (Observer_error : Observer_error) () = struct
       graph.pending_vars <- [];
       List.iter (fun (V var) -> var.queued <- false) pending_at_start;
       let observers =
-        graph.observers
-        |> List.filter observer_active
-        |> List.sort compare_observer_graph_order
+        graph.observers |> List.filter observer_active
       in
       try
         List.iter stage_pending_var pending_at_start;
         plan_staged_bind_switches observers;
-        let events = List.filter_map collect_observer_event observers in
+        let delivery_observers =
+          List.sort compare_observer_graph_order observers
+        in
+        let events = List.filter_map collect_observer_event delivery_observers in
         let hooks = commit_staging () in
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();

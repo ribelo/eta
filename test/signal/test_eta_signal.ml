@@ -1506,6 +1506,61 @@ let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
         "upstream observer ran before downstream fail-fast" [ 3 ]
         (List.rev !upstream_events))
 
+let test_observer_graph_order_after_bind_switch_uses_new_inner () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let selector = Signal.Var.create false in
+  let data = Signal.Var.create 1 in
+  let upstream_ref = ref None in
+  let dynamic =
+    Signal.bind (Signal.Var.watch selector) (fun use_upstream ->
+        if use_upstream then
+          match !upstream_ref with
+          | Some upstream -> upstream
+          | None -> Alcotest.fail "upstream not installed"
+        else Signal.const 0)
+  in
+  let upstream =
+    Signal.Var.watch data |> Signal.map (fun value -> value + 1)
+  in
+  upstream_ref := Some upstream;
+  let upstream_events = ref [] in
+  let dynamic_observer =
+    run_ok rt
+      (Signal.Observer.observe dynamic (function
+        | Signal.Initialized _ -> Effect.unit
+        | Changed _ -> Effect.fail `Observer_failed))
+  in
+  let upstream_observer =
+    run_ok rt
+      (Signal.Observer.observe upstream (function
+        | Signal.Initialized _ -> Effect.unit
+        | Changed { new_value; _ } ->
+            Effect.sync (fun () ->
+                upstream_events := new_value :: !upstream_events)))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      ignore
+        (Eta_eio.Runtime.run rt
+           (widen
+              (Signal.Observer.dispose dynamic_observer
+               |> Effect.bind (fun () ->
+                      Signal.Observer.dispose upstream_observer)))
+          : _ Exit.t))
+    (fun () ->
+      run_ok rt Signal.stabilize;
+      run_ok rt (Signal.Var.set data 2);
+      run_ok rt (Signal.Var.set selector true);
+      expect_fail "dynamic observer failure"
+        (function
+          | `Observer_error `Observer_failed -> true
+          | _ -> false)
+        (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+      Alcotest.(check (list int))
+        "new inner upstream observer ran before dynamic fail-fast" [ 3 ]
+        (List.rev !upstream_events))
+
 let test_observer_callbacks_read_consistent_published_snapshot () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8913,6 +8968,9 @@ let () =
             "observer graph order precedes reverse registration fail-fast"
             `Quick
             test_observer_graph_order_precedes_reverse_registration_fail_fast;
+          Alcotest.test_case
+            "observer graph order uses staged bind switch" `Quick
+            test_observer_graph_order_after_bind_switch_uses_new_inner;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case "observer dispose skips collected event" `Quick

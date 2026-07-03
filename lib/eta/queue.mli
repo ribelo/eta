@@ -5,6 +5,13 @@
     offers are rejected and already buffered values remain drainable before
     receivers observe the close reason.
 
+    Waiter wakeups are post-commit bookkeeping. Once a send, receive, drain,
+    or close transition has changed queue state, failure while resolving another
+    waiter's promise is treated as that waiter's cancellation/defect boundary;
+    it does not change the committed result of the active operation. Runtime
+    adapters are expected to make promise resolution either notify the waiter
+    or fail only when that waiter is no longer able to observe the notification.
+
     Create and use each queue on one domain. Queue APIs raise
     [Invalid_argument] when called from a different domain. *)
 
