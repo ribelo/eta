@@ -2543,6 +2543,44 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let test_bind_switch_invalidates_captured_observer_without_owner_demand () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let choose_left = Signal.Var.create true in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let captured_left = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
+        if use_left then (
+          let signal = Signal.Var.watch left in
+          captured_left := Some signal;
+          signal)
+        else Signal.Var.watch right)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let captured =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind RHS signal"
+  in
+  run_ok rt (Signal.Observer.dispose selected_observer);
+  let branch_observer =
+    run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "branch observer initialized" 10
+    (run_ok rt (Signal.Observer.read branch_observer));
+  run_ok rt (Signal.Var.set choose_left false);
+  run_ok rt Signal.stabilize;
+  expect_fail "captured branch invalidated without owner observer"
+    (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
+  run_ok rt (Signal.Observer.dispose branch_observer)
+
 let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9020,6 +9058,10 @@ let () =
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
           Alcotest.test_case "bind switch invalidates branch observers" `Quick
             test_bind_switch_invalidates_observers_of_invalidated_scope;
+          Alcotest.test_case
+            "bind switch invalidates captured observer without owner demand"
+            `Quick
+            test_bind_switch_invalidates_captured_observer_without_owner_demand;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
             test_bind_switch_skips_stale_branch_observer_before_invalidation;
           Alcotest.test_case

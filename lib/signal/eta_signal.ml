@@ -689,6 +689,22 @@ module Make (Observer_error : Observer_error) () = struct
     graph.all_nodes <- cells;
     nodes
 
+  let live_signal_index_unlocked () =
+    let index = Hashtbl.create 64 in
+    List.iter
+      (fun (P signal as packed) ->
+        if signal.valid then Hashtbl.replace index signal.id packed)
+      (all_nodes_unlocked ());
+    index
+
+  let visit_scope_owner_signal index visit signal =
+    match signal.scope with
+    | Some scope when scope.scope_valid -> (
+        match Hashtbl.find_opt index scope.scope_owner with
+        | Some owner -> visit owner
+        | None -> ())
+    | None | Some _ -> ()
+
   let source_watchers_unlocked source =
     let cells, watchers =
       collect_live_weak_signals (fun (P signal) -> signal.valid) source.watchers
@@ -1773,6 +1789,7 @@ module Make (Observer_error : Observer_error) () = struct
     (invalidated_ids, !invalidated_nodes)
 
   let collect_post_commit_necessary_timers invalidated_ids =
+    let signal_index = live_signal_index_unlocked () in
     let seen_nodes = Hashtbl.create 16 in
     let timers = Hashtbl.create 8 in
     let rec visit (P signal) =
@@ -1785,6 +1802,7 @@ module Make (Observer_error : Observer_error) () = struct
         Option.iter
           (fun timer -> Hashtbl.replace timers signal.id timer)
           signal.timer;
+        visit_scope_owner_signal signal_index visit signal;
         match signal.kind with
         | Bind bind ->
             visit (P bind.source);
@@ -2312,10 +2330,12 @@ module Make (Observer_error : Observer_error) () = struct
             `Stop)
 
   let collect_necessary_node_ids () =
+    let signal_index = live_signal_index_unlocked () in
     let seen = Hashtbl.create 16 in
     let rec visit (P signal) =
       if signal.valid && not (Hashtbl.mem seen signal.id) then (
         Hashtbl.add seen signal.id ();
+        visit_scope_owner_signal signal_index visit signal;
         List.iter visit signal.dependencies)
     in
     List.iter
@@ -2341,12 +2361,14 @@ module Make (Observer_error : Observer_error) () = struct
     graph.necessary_node_ids <- next
 
   let necessary_timers () =
+    let signal_index = live_signal_index_unlocked () in
     let seen_nodes = Hashtbl.create 16 in
     let timers = Hashtbl.create 8 in
     let rec visit (P signal) =
       if signal.valid && not (Hashtbl.mem seen_nodes signal.id) then (
         Hashtbl.add seen_nodes signal.id ();
         Option.iter (fun timer -> Hashtbl.replace timers signal.id timer) signal.timer;
+        visit_scope_owner_signal signal_index visit signal;
         List.iter visit signal.dependencies)
     in
     List.iter
@@ -2576,6 +2598,7 @@ module Make (Observer_error : Observer_error) () = struct
     else signal_order
 
   let collect_observed_bind_nodes observers =
+    let signal_index = live_signal_index_unlocked () in
     let seen = Hashtbl.create 16 in
     let binds = ref [] in
     let rec visit (P signal as packed) =
@@ -2586,6 +2609,7 @@ module Make (Observer_error : Observer_error) () = struct
          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
              ());
+        visit_scope_owner_signal signal_index visit signal;
         List.iter visit signal.dependencies)
     in
     List.iter
