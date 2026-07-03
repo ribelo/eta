@@ -23,6 +23,17 @@ compile_fixture() {
     -c "$src" -o "$obj" >"$log" 2>&1
 }
 
+log_contains_all() {
+  local log="$1"
+  shift
+
+  for expected in "$@"; do
+    if ! grep -Fqi "$expected" "$log"; then
+      return 1
+    fi
+  done
+}
+
 for src in "$fixture_dir"/*_positive.ml; do
   name="$(basename "$src")"
   log="$tmp_dir/$name.log"
@@ -41,49 +52,66 @@ for src in "$fixture_dir"/*_negative.ml; do
   obj="$tmp_dir/${name%.ml}.cmo"
   case "$name" in
     cross_graph_signal_negative.ml)
-      expected='type "?int A\.signal"?|expected of type "?int B\.signal"?'
+      expected_substrings=(
+        'This expression has type "int A.signal"'
+        'but an expression was expected of type "int B.signal"'
+      )
       ;;
     computed_negative.ml)
-      expected='Unbound value "?Signal\.computed"?'
+      expected_substrings=('Unbound value "Signal.computed"')
       ;;
     global_graph_negative.ml)
-      expected='Unbound module "?Eta_signal\.Var"?'
+      expected_substrings=('Unbound module "Eta_signal.Var"')
       ;;
     first_class_graph_negative.ml)
-      expected='Unbound module "?Signal\.Graph"?'
+      expected_substrings=('Unbound module "Signal.Graph"')
       ;;
     raw_signal_read_negative.ml)
-      expected='Unbound value "?Signal\.read"?'
+      expected_substrings=('Unbound value "Signal.read"')
       ;;
     derived_signal_delete_negative.ml)
-      expected='Unbound value "?Signal\.dispose"?'
+      expected_substrings=('Unbound value "Signal.dispose"')
       ;;
     public_batch_negative.ml)
-      expected='Unbound value "?Signal\.batch"?'
+      expected_substrings=('Unbound value "Signal.batch"')
       ;;
     public_expert_negative.ml)
-      expected='Unbound module "?Signal\.Expert"?'
+      expected_substrings=('Unbound module "Signal.Expert"')
       ;;
     private_test_hooks_negative.ml)
-      expected='Unbound module "?Signal\.Private_test_hooks"?'
+      expected_substrings=('Unbound module "Signal.Private_test_hooks"')
       ;;
     public_scope_negative.ml)
-      expected='Unbound module "?Signal\.Scope"?'
+      expected_substrings=('Unbound module "Signal.Scope"')
       ;;
     map10_negative.ml)
-      expected='Unbound value "?Signal\.map10"?'
+      expected_substrings=('Unbound value "Signal.map10"')
       ;;
     map_mutation_value_negative.ml)
-      expected='Eta\.Effect\.t Signal\.signal|expected of type "int Signal\.signal"'
+      expected_substrings=(
+        'This expression has type'
+        'Eta.Effect.t Signal.signal'
+        'but an expression was expected of type "int Signal.signal"'
+      )
       ;;
     observer_read_error_negative.ml)
-      expected='Signal\.observer_read_error|Signal\.graph_error|does not allow tag'
+      expected_substrings=(
+        '(int, Signal.observer_read_error) Eta.Effect.t'
+        '(int, Signal.graph_error) Eta.Effect.t'
+        'The second variant type does not allow tag(s)'
+        '`Disposed_observer'
+        '`No_current_value'
+        '`Uninitialized_observer'
+      )
       ;;
     stream_to_signal_negative.ml)
-      expected='Unbound value "?Signal\.Stream\.to_signal"?'
+      expected_substrings=('Unbound value "Signal.Stream.to_signal"')
       ;;
     time_constructor_effectful_negative.ml)
-      expected='Signal\.time_error.*Eta\.Effect\.t|expected of type "int Signal\.signal"'
+      expected_substrings=(
+        '(int Signal.signal, Signal.time_error) Eta.Effect.t'
+        'but an expression was expected of type "int Signal.signal"'
+      )
       ;;
     *)
       echo "no expected failure pattern configured for: $name"
@@ -95,8 +123,10 @@ for src in "$fixture_dir"/*_negative.ml; do
   if compile_fixture "$src" "$obj" "$log"; then
     echo "expected compile failure, but fixture compiled: $name"
     status=1
-  elif ! grep -Eiq "$expected" "$log"; then
+  elif ! log_contains_all "$log" "${expected_substrings[@]}"; then
     echo "fixture failed for the wrong reason: $name"
+    echo "required substrings:"
+    printf '  - %s\n' "${expected_substrings[@]}"
     sed -n '1,120p' "$log"
     status=1
   fi
