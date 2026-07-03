@@ -191,7 +191,11 @@ module Make (Observer_error : Observer_error) () : sig
       {!Stream.observe} bridge updates that were acknowledged as dropped.
       [lane_waiter_count] is the number of graph-lane waiters queued behind the
       running stats read; [lane_cancelled_waiter_count] is the cumulative count
-      of waiters cancelled while acquiring or owning the graph lane. *)
+      of waiters cancelled while acquiring or owning the graph lane.
+
+      {!stats} fails with [`Counter_overflow name] if a public diagnostic count
+      has reached [max_int] and would otherwise be indistinguishable from a
+      saturated approximation. *)
 
   type dot_scope = [ `Necessary | `All_valid | `All_including_invalid ]
 
@@ -498,7 +502,7 @@ module Make (Observer_error : Observer_error) () : sig
       acknowledged without running a callback. Disposal or dynamic-scope
       invalidation still skips pending callbacks. *)
 
-  val stats : unit -> (stats, 'err) Eta.Effect.t
+  val stats : unit -> (stats, graph_error) Eta.Effect.t
 
   val to_dot : ?options:dot_options -> unit -> (string, 'err) Eta.Effect.t
   (** Return a read-only DOT dump. The default is necessary-only for compact

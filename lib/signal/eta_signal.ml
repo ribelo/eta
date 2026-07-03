@@ -3097,26 +3097,55 @@ module Make (Observer_error : Observer_error) () = struct
         if signal.valid && signal.dirty then saturating_succ count else count)
       0 all_nodes
 
+  let stats_counter name value =
+    if value = max_int then counter_overflow name else value
+
   let stats () =
-    with_graph_lane_sync @@ fun () ->
-    let all_nodes = all_nodes_unlocked () in
-    {
-      pure_snapshot_commit_count = graph.pure_snapshot_commit_count;
-      callback_delivery_count = graph.callback_delivery_count;
-      total_node_count = List.length all_nodes;
-      active_observer_count = active_observer_count ();
-      invalid_observer_count = invalid_observer_count ();
-      necessary_node_count = necessary_node_count ();
-      dead_node_count = dead_node_count ();
-      live_dirty_node_count = live_dirty_node_count all_nodes;
-      recompute_count = graph.recompute_count;
-      dynamic_scope_invalidations = graph.dynamic_scope_invalidations;
-      nodes_became_necessary = graph.nodes_became_necessary;
-      nodes_became_unnecessary = graph.nodes_became_unnecessary;
-      stream_bridge_drop_count = graph.stream_bridge_drop_count;
-      lane_waiter_count = graph.lane.lane_waiting;
-      lane_cancelled_waiter_count = graph.lane.lane_cancelled;
-    }
+    with_graph_lane_sync (fun () ->
+        try
+          let all_nodes = all_nodes_unlocked () in
+          Ok
+            {
+              pure_snapshot_commit_count =
+                stats_counter "stats pure_snapshot_commit_count"
+                  graph.pure_snapshot_commit_count;
+              callback_delivery_count =
+                stats_counter "stats callback_delivery_count"
+                  graph.callback_delivery_count;
+              total_node_count = List.length all_nodes;
+              active_observer_count =
+                stats_counter "stats active_observer_count"
+                  (active_observer_count ());
+              invalid_observer_count =
+                stats_counter "stats invalid_observer_count"
+                  (invalid_observer_count ());
+              necessary_node_count = necessary_node_count ();
+              dead_node_count = dead_node_count ();
+              live_dirty_node_count =
+                stats_counter "stats live_dirty_node_count"
+                  (live_dirty_node_count all_nodes);
+              recompute_count =
+                stats_counter "stats recompute_count" graph.recompute_count;
+              dynamic_scope_invalidations =
+                stats_counter "stats dynamic_scope_invalidations"
+                  graph.dynamic_scope_invalidations;
+              nodes_became_necessary =
+                stats_counter "stats nodes_became_necessary"
+                  graph.nodes_became_necessary;
+              nodes_became_unnecessary =
+                stats_counter "stats nodes_became_unnecessary"
+                  graph.nodes_became_unnecessary;
+              stream_bridge_drop_count =
+                stats_counter "stats stream_bridge_drop_count"
+                  graph.stream_bridge_drop_count;
+              lane_waiter_count =
+                stats_counter "stats lane_waiter_count" graph.lane.lane_waiting;
+              lane_cancelled_waiter_count =
+                stats_counter "stats lane_cancelled_waiter_count"
+                  graph.lane.lane_cancelled;
+            }
+        with Graph_error err -> Error err)
+    |> Effect.flatten_result
 
   let acknowledge_stream_published_delivery observer token update
       after_ack_actions =

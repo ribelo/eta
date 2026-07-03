@@ -3244,6 +3244,32 @@ let test_timer_refresh_token_overflow_is_typed_failure () =
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
 
+let test_stats_counter_saturation_is_typed_failure () =
+  let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let check name set_counter =
+    set_counter max_int;
+    expect_fail (name ^ " saturation") (counter_overflow name)
+      (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ())));
+    set_counter 0
+  in
+  check "stats pure_snapshot_commit_count" (fun value ->
+      Overflow_signal.graph.pure_snapshot_commit_count <- value);
+  check "stats callback_delivery_count" (fun value ->
+      Overflow_signal.graph.callback_delivery_count <- value);
+  check "stats recompute_count" (fun value ->
+      Overflow_signal.graph.recompute_count <- value);
+  check "stats dynamic_scope_invalidations" (fun value ->
+      Overflow_signal.graph.dynamic_scope_invalidations <- value);
+  check "stats nodes_became_necessary" (fun value ->
+      Overflow_signal.graph.nodes_became_necessary <- value);
+  check "stats nodes_became_unnecessary" (fun value ->
+      Overflow_signal.graph.nodes_became_unnecessary <- value);
+  check "stats stream_bridge_drop_count" (fun value ->
+      Overflow_signal.graph.stream_bridge_drop_count <- value);
+  check "stats lane_cancelled_waiter_count" (fun value ->
+      Overflow_signal.graph.lane.lane_cancelled <- value)
+
 let test_failed_initial_stabilization_leaves_no_current_value () =
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
@@ -8686,6 +8712,8 @@ let () =
             `Quick test_stabilization_generation_overflow_is_typed_failure;
           Alcotest.test_case "timer refresh token overflow typed failure" `Quick
             test_timer_refresh_token_overflow_is_typed_failure;
+          Alcotest.test_case "stats counter saturation is typed failure" `Quick
+            test_stats_counter_saturation_is_typed_failure;
           Alcotest.test_case "failed initial stabilize has no current" `Quick
             test_failed_initial_stabilization_leaves_no_current_value;
           Alcotest.test_case "cutoff exception preserves snapshot" `Quick
