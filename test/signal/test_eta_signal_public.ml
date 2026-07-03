@@ -24,6 +24,16 @@ let widen (eff : ('a, [< test_error ]) E.t) : ('a, test_error) E.t =
 let run_ok runtime eff =
   Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen eff))
 
+let wait_until label predicate =
+  let rec loop attempts =
+    if predicate () then ()
+    else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
+    else (
+      Eio.Fiber.yield ();
+      loop (attempts - 1))
+  in
+  loop 200
+
 let expect_fail label pred = function
   | Eta.Exit.Error (Eta.Cause.Fail error) when pred error -> ()
   | Eta.Exit.Error cause ->
@@ -114,6 +124,54 @@ let test_interval_catches_up_with_test_clock () =
   Eta_test.Test_clock.set_time clock 55;
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "caught up interval" 5
+    (run_ok runtime (Signal.Observer.read observer));
+  run_ok runtime (Signal.Observer.dispose observer)
+
+let with_late_timer_wake ?(jump_ms = 1_000_000) f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let now_ms = ref 0 in
+  let sleep_calls = ref 0 in
+  let hold, hold_resolver = Eio.Promise.create () in
+  let released = ref false in
+  let sleep _duration =
+    incr sleep_calls;
+    if !sleep_calls = 1 then now_ms := jump_ms
+    else Eio.Promise.await hold
+  in
+  let release () =
+    if not !released then (
+      released := true;
+      Eio.Promise.resolve hold_resolver ())
+  in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~sleep
+      ~now_ms:(fun () -> !now_ms)
+      ()
+  in
+  Fun.protect ~finally:release (fun () -> f runtime sleep_calls)
+
+let test_step_coalesced_bounds_large_late_wake () =
+  with_late_timer_wake @@ fun runtime sleep_calls ->
+  let applied = ref 0 in
+  let missed_seen = ref None in
+  let step =
+    run_ok runtime
+      (Signal.Time.step_coalesced ~every:(Eta.Duration.ms 1) ~initial:0
+         (fun ~missed value ->
+           incr applied;
+           missed_seen := Some missed;
+           value + missed))
+  in
+  let observer =
+    run_ok runtime (Signal.Observer.observe step (fun _ -> E.unit))
+  in
+  wait_until "coalesced step late wake" (fun () -> !sleep_calls >= 2);
+  Alcotest.(check int) "coalesced update calls" 1 !applied;
+  Alcotest.(check (option int))
+    "coalesced missed count" (Some 1_000_000) !missed_seen;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check int) "coalesced step value" 1_000_000
     (run_ok runtime (Signal.Observer.read observer));
   run_ok runtime (Signal.Observer.dispose observer)
 
@@ -265,6 +323,8 @@ let () =
             test_stream_bridge_emits_and_closes;
           Alcotest.test_case "interval catches up with test clock" `Quick
             test_interval_catches_up_with_test_clock;
+          Alcotest.test_case "step_coalesced bounds large late wake" `Quick
+            test_step_coalesced_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
             test_timer_runtime_mismatch_on_observe;
           Alcotest.test_case "captured branch observer invalidates" `Quick
