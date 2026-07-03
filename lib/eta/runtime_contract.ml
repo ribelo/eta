@@ -68,6 +68,8 @@ type t = {
   cancel : cancel_context -> exn -> unit;
   local_get : 'a. 'a local -> 'a option;
   local_with_binding : 'a 'b. 'a local -> 'a -> (unit -> 'b) -> 'b;
+  current_fiber_id : unit -> int;
+  with_fiber_identity : 'a. (unit -> 'a) -> 'a;
 }
 
 let scope_runtime_id (Scope token) = token.Erased_token.runtime_id
@@ -107,6 +109,8 @@ module type RUNTIME = sig
   val cancel : cancel_context -> exn -> unit
   val local_get : 'a local -> 'a option
   val local_with_binding : 'a local -> 'a -> (unit -> 'b) -> 'b
+  val current_fiber_id : unit -> int
+  val with_fiber_identity : (unit -> 'a) -> 'a
 end
 
 let next_local = Atomic.make 0
@@ -298,4 +302,6 @@ let of_runtime (module R : RUNTIME) =
         R.local_with_binding local value (fun () ->
             ensure_owner_domain ();
             f ()));
+    current_fiber_id = (fun () -> R.current_fiber_id ());
+    with_fiber_identity = R.with_fiber_identity;
   }

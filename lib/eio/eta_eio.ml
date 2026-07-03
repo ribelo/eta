@@ -166,9 +166,17 @@ let local_context_key :
     (int, Eta.Runtime_contract.local_binding list) Hashtbl.t Eio.Fiber.key =
   Eio.Fiber.create_key ()
 
+let fiber_identity_key : int Eio.Fiber.key = Eio.Fiber.create_key ()
+
 let fiberless_local_context_key :
     (int, Eta.Runtime_contract.local_binding list) Hashtbl.t option Domain.DLS.key =
   dls_new_key (fun () -> None)
+
+let fiberless_identity_key : int option Domain.DLS.key =
+  dls_new_key (fun () -> None)
+
+let next_fiber_identity = Atomic.make 0
+let fresh_fiber_identity () = Atomic.fetch_and_add next_fiber_identity 1 + 1
 
 let has_eio_fiber_context () =
   try
@@ -181,6 +189,32 @@ let protect f = if has_eio_fiber_context () then Eio.Cancel.protect f else f ()
 let local_context (module Fiber : Host.FIBER) =
   try Fiber.get local_context_key with Stdlib.Effect.Unhandled _ ->
     dls_get fiberless_local_context_key
+
+let fiber_identity_context (module Fiber : Host.FIBER) =
+  try Fiber.get fiber_identity_key with Stdlib.Effect.Unhandled _ ->
+    dls_get fiberless_identity_key
+
+let with_fiberless_identity id f =
+  let previous = dls_get fiberless_identity_key in
+  dls_set fiberless_identity_key (Some id);
+  Fun.protect
+    ~finally:(fun () -> dls_set fiberless_identity_key previous)
+    f
+
+let with_new_fiber_identity_with (module Fiber : Host.FIBER) f =
+  let id = fresh_fiber_identity () in
+  try Fiber.with_binding fiber_identity_key id f
+  with Stdlib.Effect.Unhandled _ -> with_fiberless_identity id f
+
+let with_fiber_identity_with (module Fiber : Host.FIBER) f =
+  match fiber_identity_context (module Fiber) with
+  | Some _ -> f ()
+  | None -> with_new_fiber_identity_with (module Fiber) f
+
+let current_fiber_identity_with fiber =
+  match fiber_identity_context fiber with
+  | Some id -> id
+  | None -> invalid_arg "Eta_eio: missing runtime fiber identity"
 
 let with_fiberless_context context f =
   let previous = dls_get fiberless_local_context_key in
@@ -241,8 +275,13 @@ let runtime_with_host host ~sw ~clock:raw_clock =
     let protect = protect
     let run_scope = Switch.run
     let fail_scope = Switch.fail
-    let fork scope f = Fiber.fork ~sw:scope f
-    let fork_daemon scope f = Fiber.fork_daemon ~sw:scope f
+    let fork scope f =
+      Fiber.fork ~sw:scope (fun () -> with_new_fiber_identity_with fiber f)
+
+    let fork_daemon scope f =
+      Fiber.fork_daemon ~sw:scope (fun () ->
+          with_new_fiber_identity_with fiber f)
+
     let await_cancel () = Fiber.await_cancel ()
     let yield () = Fiber.yield ()
     let check () = Fiber.check ()
@@ -266,6 +305,8 @@ let runtime_with_host host ~sw ~clock:raw_clock =
     let local_get local = local_get_with fiber local
     let local_with_binding local value f =
       local_with_binding_with fiber local value f
+    let current_fiber_id () = current_fiber_identity_with fiber
+    let with_fiber_identity f = with_fiber_identity_with fiber f
   end : Eta.Runtime_contract.RUNTIME)
 
 let default_host =

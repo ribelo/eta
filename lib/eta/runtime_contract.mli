@@ -62,6 +62,8 @@ type t = {
   cancel : cancel_context -> exn -> unit;
   local_get : 'a. 'a local -> 'a option;
   local_with_binding : 'a 'b. 'a local -> 'a -> (unit -> 'b) -> 'b;
+  current_fiber_id : unit -> int;
+  with_fiber_identity : 'a. (unit -> 'a) -> 'a;
 }
 (** Erased backend runtime contract used by the current interpreter.
 
@@ -75,14 +77,15 @@ type t = {
     the adapter; do not add another mirror record of backend operations.
 
     Erased runtime contracts are owner-domain values. Except for
-    [with_worker_context], [in_worker_context], [cancellation_reason], and
-    [multiple_exceptions], contract operations must be called on the domain that
-    created the erased contract, and callbacks supplied to [run_scope], [fork],
-    [fork_daemon], [protect], [cancel_sub], and [local_with_binding] must resume
-    on that same domain. This is part of the backend contract: Eta-owned queues,
-    signal graph lanes, and in-memory wait queues use same-domain locks and
-    cannot be resumed from arbitrary worker domains. Cross-domain contract use
-    raises [Invalid_argument].
+    [with_worker_context], [in_worker_context], [cancellation_reason],
+    [multiple_exceptions], [current_fiber_id], and [with_fiber_identity],
+    contract operations must be called on the domain that created the erased
+    contract, and callbacks supplied to [run_scope], [fork], [fork_daemon],
+    [protect], [cancel_sub], and [local_with_binding] must resume on that same
+    domain. This is part of the backend contract: Eta-owned queues, signal graph
+    lanes, and in-memory wait queues use same-domain locks and cannot be resumed
+    from arbitrary worker domains. Cross-domain contract use raises
+    [Invalid_argument].
 
     [now_ms] is monotonic runtime time in milliseconds, not wall/civil time.
     [sleep] must suspend on the same monotonic time base. Eta timers,
@@ -152,6 +155,15 @@ module type RUNTIME = sig
   val cancel : cancel_context -> exn -> unit
   val local_get : 'a local -> 'a option
   val local_with_binding : 'a local -> 'a -> (unit -> 'b) -> 'b
+  val current_fiber_id : unit -> int
+  (** Stable identity for the current runtime fiber/task. The identity must be
+      shared by nested Eta runtimes running on the same host fiber, and distinct
+      for concurrently running host fibers. *)
+
+  val with_fiber_identity : (unit -> 'a) -> 'a
+  (** Establish a current fiber identity for a root {!Eta.Runtime.run} call when
+      the host fiber does not already have one. Nested runtime calls in the same
+      host fiber must preserve the existing identity. *)
 end
 (** Module-shaped runtime backend contract. Runtime packages should implement
     this shape. It is the typed authoring surface for backends; {!t} is the

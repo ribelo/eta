@@ -16,6 +16,7 @@ let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
   if runtime.Runtime_core.contract.Runtime_contract.in_worker_context () then
     invalid_arg
       "Eta.Runtime.run must not be called from inside a runtime worker callback";
+  runtime.Runtime_core.contract.Runtime_contract.with_fiber_identity @@ fun () ->
   runtime.Runtime_core.tracer#with_task_context runtime.Runtime_core.contract
   @@ fun () ->
   let finalizers = ref [] in

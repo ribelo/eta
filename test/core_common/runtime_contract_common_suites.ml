@@ -51,6 +51,8 @@ module Direct_runtime = struct
   let multiple_exceptions _ = None
   let cancel_sub f = f ()
   let cancel () exn = raise exn
+  let current_fiber_id () = 0
+  let with_fiber_identity f = f ()
 
   let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
     Hashtbl.create 8

@@ -277,6 +277,8 @@ module Cleanup_interrupt_runtime = struct
   let multiple_exceptions _ = None
   let cancel_sub f = f ()
   let cancel () exn = raise exn
+  let current_fiber_id () = 0
+  let with_fiber_identity f = f ()
 
   let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
     Hashtbl.create 8
@@ -318,6 +320,85 @@ module Cleanup_interrupt_runtime = struct
          hook ()
      | Some _ | None -> ());
     value
+end
+
+module Make_isolated_sync_runtime () = struct
+  type scope = unit
+  type cancel_context = unit
+  type 'a promise = 'a option ref
+  type 'a resolver = 'a option ref
+  type 'a stream = 'a Stdlib.Queue.t
+
+  let root_scope = ()
+  let now_ms () = 0
+  let sleep _duration = ()
+  let protect f = f ()
+  let run_scope ?name:_ f = f ()
+  let fail_scope ?bt:_ () exn = raise exn
+  let fork () f = f ()
+  let fork_daemon () f = ignore (f () : [ `Stop_daemon ])
+  let await_cancel () = failwith "Make_isolated_sync_runtime.await_cancel"
+  let yield () = ()
+  let check () = ()
+
+  let create_promise () =
+    let cell = ref None in
+    (cell, cell)
+
+  let resolve_promise resolver value =
+    match !resolver with
+    | Some _ ->
+        invalid_arg "Make_isolated_sync_runtime.resolve_promise: already resolved"
+    | None -> resolver := Some value
+
+  let await_promise promise =
+    match !promise with
+    | Some value -> value
+    | None -> failwith "Make_isolated_sync_runtime.await_promise: unresolved"
+
+  let create_stream _capacity = Stdlib.Queue.create ()
+  let stream_add stream value = Stdlib.Queue.add value stream
+
+  let stream_take stream =
+    if Stdlib.Queue.is_empty stream then
+      failwith "Make_isolated_sync_runtime.stream_take: empty"
+    else Stdlib.Queue.take stream
+
+  let stream_take_nonblocking stream =
+    if Stdlib.Queue.is_empty stream then None else Some (Stdlib.Queue.take stream)
+
+  let with_worker_context f = f ()
+  let in_worker_context () = false
+  let cancellation_reason _ = None
+  let multiple_exceptions _ = None
+  let cancel_sub f = f ()
+  let cancel () exn = raise exn
+  let current_fiber_id () = 0
+  let with_fiber_identity f = f ()
+
+  let locals : (int, Runtime_contract.local_binding list) Hashtbl.t =
+    Hashtbl.create 8
+
+  let local_get local =
+    match Hashtbl.find_opt locals (Runtime_contract.Backend.local_id local) with
+    | None -> None
+    | Some bindings ->
+        List.find_map
+          (Runtime_contract.Backend.local_binding_value local)
+          bindings
+
+  let local_with_binding local value f =
+    let id = Runtime_contract.Backend.local_id local in
+    let previous = Hashtbl.find_opt locals id in
+    let stack = Option.value previous ~default:[] in
+    Hashtbl.replace locals id
+      (Runtime_contract.Local_binding (local, value) :: stack);
+    Fun.protect
+      ~finally:(fun () ->
+        match previous with
+        | Some stack -> Hashtbl.replace locals id stack
+        | None -> Hashtbl.remove locals id)
+      f
 end
 
 let run_effect_in_foreign_domain eff =
@@ -4769,6 +4850,8 @@ let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
     let cancel = Base.cancel
     let local_get = Base.local_get
     let local_with_binding = Base.local_with_binding
+    let current_fiber_id = Base.current_fiber_id
+    let with_fiber_identity = Base.with_fiber_identity
   end in
   let rt =
     Runtime.create_with_runtime
@@ -4899,6 +4982,47 @@ let test_graph_lane_acquisition_stays_on_owner_domain () =
       Alcotest.(check bool)
         "immediate and queued graph lane acquisitions were observed" true
         (List.length !acquired_domains >= 3))
+
+let test_nested_runtime_graph_read_reenters_graph_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Runtime_a = Make_isolated_sync_runtime () in
+  let module Runtime_b = Make_isolated_sync_runtime () in
+  let rt_a =
+    Runtime.create_with_runtime
+      (module Runtime_a : Runtime_contract.RUNTIME)
+      ()
+  in
+  let rt_b =
+    Runtime.create_with_runtime
+      (module Runtime_b : Runtime_contract.RUNTIME)
+      ()
+  in
+  let source = Signal.Var.create 1 in
+  let nested_stats = ref None in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           nested_stats := Some (Runtime.run rt_b (widen (Signal.stats ())));
+           value)
+  in
+  let observer =
+    expect_exit_ok "observe"
+      (Runtime.run rt_a
+         (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))))
+  in
+  ignore
+    (expect_exit_ok "stabilize" (Runtime.run rt_a (widen Signal.stabilize))
+      : unit);
+  (match !nested_stats with
+  | Some (Exit.Ok _stats) -> ()
+  | Some (Exit.Error cause) ->
+      Alcotest.failf "nested graph read should reenter lane, got %a"
+        (Cause.pp pp_hidden) cause
+  | None -> Alcotest.fail "nested graph read did not run");
+  ignore
+    (expect_exit_ok "dispose"
+       (Runtime.run rt_a (widen (Signal.Observer.dispose observer)))
+      : unit)
 
 let test_observer_read_waits_for_graph_lane () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -6382,6 +6506,9 @@ let with_timer_cancel_tracking_host f =
         Obj.is_int value && (Obj.magic value : int) = 1
   in
   let context_has_graph_lifecycle_depth value =
+    let value = Obj.repr value in
+    (not (Obj.is_int value))
+    &&
     let context :
         (int, Runtime_contract.local_binding list) Hashtbl.t =
       Obj.magic value
@@ -8177,6 +8304,8 @@ let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
     let cancel = Base.cancel
     let local_get = Base.local_get
     let local_with_binding = Base.local_with_binding
+    let current_fiber_id = Base.current_fiber_id
+    let with_fiber_identity = Base.with_fiber_identity
   end in
   let rt =
     Runtime.create_with_runtime
@@ -9233,6 +9362,8 @@ let () =
             test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises;
           Alcotest.test_case "graph lane acquisitions stay on owner domain"
             `Quick test_graph_lane_acquisition_stays_on_owner_domain;
+          Alcotest.test_case "nested runtime graph read reenters graph lane"
+            `Quick test_nested_runtime_graph_read_reenters_graph_lane;
           Alcotest.test_case "observer read waits for graph lane" `Quick
             test_observer_read_waits_for_graph_lane;
           Alcotest.test_case "time interval construction waits for graph lane"

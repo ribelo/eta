@@ -456,6 +456,9 @@ let local_with_binding local value f =
   fiber.fiber_locals <- context;
   Fun.protect ~finally:(fun () -> fiber.fiber_locals <- previous) f
 
+let current_fiber_id () = (current ()).fiber_id
+let with_fiber_identity f = f ()
+
 module Worker_context = struct
   let run f = f ()
   let active () = false
@@ -594,6 +597,8 @@ let runtime () =
     let cancel = cancel
     let local_get = local_get
     let local_with_binding = local_with_binding
+    let current_fiber_id = current_fiber_id
+    let with_fiber_identity = with_fiber_identity
   end : Runtime_contract.RUNTIME)
 
 let run_eta_jsoo root body =

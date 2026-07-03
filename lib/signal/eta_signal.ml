@@ -579,6 +579,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable lane_waiting : int;
     mutable lane_cancelled : int;
     mutable lane_cancelled_debt : int;
+    mutable lane_owner_fiber_id : int option;
   }
 
   type timer_refresh_context = {
@@ -630,6 +631,7 @@ module Make (Observer_error : Observer_error) () = struct
           lane_waiting = 0;
           lane_cancelled = 0;
           lane_cancelled_debt = 0;
+          lane_owner_fiber_id = None;
         };
       owner_domain = Domain.self ();
       next_id = 0;
@@ -917,6 +919,7 @@ module Make (Observer_error : Observer_error) () = struct
   let release_graph_lane_sync owns_lane =
     if !owns_lane then (
       owns_lane := false;
+      graph.lane.lane_owner_fiber_id <- None;
       leave_lane_sync graph.lane)
 
   let with_graph_lane_sync f =
@@ -927,7 +930,13 @@ module Make (Observer_error : Observer_error) () = struct
             (contract.Runtime_contract.local_get graph_lane_depth_local)
             ~default:0
         in
-        if lane_depth > 0 then
+        let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
+        let owns_graph_lane =
+          match graph.lane.lane_owner_fiber_id with
+          | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
+          | None -> false
+        in
+        if lane_depth > 0 || owns_graph_lane then
           try
             ensure_graph_context ();
             Effect.Expert.eval context (Effect.sync f)
@@ -942,6 +951,7 @@ module Make (Observer_error : Observer_error) () = struct
             ensure_graph_context ();
             enter_lane_sync contract graph.lane;
             owns_lane := true;
+            graph.lane.lane_owner_fiber_id <- Some current_fiber_id;
             let release_graph_lane =
               Effect.sync (fun () -> release_graph_lane_sync owns_lane)
             in
