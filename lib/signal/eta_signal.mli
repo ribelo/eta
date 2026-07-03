@@ -511,7 +511,10 @@ module Make (Observer_error : Observer_error) () : sig
       include invalid-node tombstones and invalid observer handles still
       retained for diagnostics. The metadata flags add observer, timer,
       dirty/queued, dependency/dependent edge counts, typed graph identity
-      labels, and dynamic-scope state to the dump. *)
+      labels, and dynamic-scope state to the dump. If an invalid observer's
+      signal tombstone has been evicted from the bounded diagnostic index, the
+      observer label includes [missing_observed_signal_id] with the original
+      signal id. *)
 
   module Time : sig
     (** Time nodes are demand-owned source-updating effects. They never call

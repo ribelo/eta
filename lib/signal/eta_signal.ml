@@ -3372,7 +3372,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivery_pending _ -> "pending"
     | Observer_delivery_running _ -> "running"
 
-  let observer_label (O observer) =
+  let observer_label ?missing_observed_signal_id (O observer) =
     let value_state_label, delivery_state_label =
       match observer.obs_state with
       | Observer_registering live | Observer_active live ->
@@ -3381,7 +3381,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_disposed value | Observer_invalid_scope value ->
           (observer_value_state_label value, "none")
     in
-    String.concat " "
+    let fields =
       [
         "observer:" ^ observer_id_label observer.obs_id;
         "observer_id=" ^ observer_id_label observer.obs_id;
@@ -3389,6 +3389,12 @@ module Make (Observer_error : Observer_error) () = struct
         "value_state=" ^ value_state_label;
         "delivery_state=" ^ delivery_state_label;
       ]
+      @
+      match missing_observed_signal_id with
+      | None -> []
+      | Some id -> [ "missing_observed_signal_id=" ^ signal_id_label id ]
+    in
+    String.concat " " fields
 
   let observer_selected ~include_invalid (O observer as packed) =
     observer_active packed
@@ -3467,10 +3473,16 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter
         (fun (O observer as packed) ->
           if observer_selected ~include_invalid:include_dead_nodes packed then (
+            let observed_signal_selected = selected_id observer.obs_signal.id in
+            let missing_observed_signal_id =
+              if include_dead_nodes && not observed_signal_selected then
+                Some observer.obs_signal.id
+              else None
+            in
             Format.fprintf formatter "  %s [shape=box,label=%S];@."
               (observer_id_label observer.obs_id)
-              (observer_label packed);
-            if selected_id observer.obs_signal.id then
+              (observer_label ?missing_observed_signal_id packed);
+            if observed_signal_selected then
               Format.fprintf formatter
                 "  %s -> %s [style=dashed,label=\"observes\"];@."
                 (dot_signal_id observer.obs_signal.id)
