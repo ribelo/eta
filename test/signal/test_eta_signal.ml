@@ -56,6 +56,13 @@ let expect_die label = function
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
+let expect_exact_runtime_mismatch label = function
+  | Exit.Error (Cause.Fail `Runtime_mismatch) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected only Runtime_mismatch, got %a" label
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok _ -> Alcotest.failf "%s: expected Runtime_mismatch, got Ok" label
+
 let counter_overflow name = function
   | `Counter_overflow actual -> String.equal actual name
   | _ -> false
@@ -7203,8 +7210,8 @@ let test_time_timer_rejects_mismatched_runtime () =
       ~finally:(fun () -> run_ok rt_a (Signal.Observer.dispose observer))
       (fun () ->
         run_ok rt_a Signal.stabilize;
-        expect_fail (label ^ " observe while owner demand active")
-          (function `Runtime_mismatch -> true | _ -> false)
+        expect_exact_runtime_mismatch
+          (label ^ " observe while owner demand active")
           (Eta_eio.Runtime.run rt_b
              (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))));
         expect_fail label
@@ -7212,8 +7219,7 @@ let test_time_timer_rejects_mismatched_runtime () =
           (Eta_eio.Runtime.run rt_b (widen Signal.stabilize)))
   in
   let check_observe_mismatch label signal =
-    expect_fail label
-      (function `Runtime_mismatch -> true | _ -> false)
+    expect_exact_runtime_mismatch label
       (Eta_eio.Runtime.run rt_b
          (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))))
   in

@@ -41,6 +41,13 @@ let expect_fail label pred = function
         (Eta.Cause.pp pp_hidden) cause
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected typed failure, got Ok" label
 
+let expect_exact_runtime_mismatch label = function
+  | Eta.Exit.Error (Eta.Cause.Fail `Runtime_mismatch) -> ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected only Runtime_mismatch, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected Runtime_mismatch, got Ok" label
+
 let record updates update =
   E.sync (fun () -> updates := update :: !updates)
 
@@ -194,8 +201,7 @@ let test_timer_runtime_mismatch_on_observe () =
       ()
   in
   let timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
-  expect_fail "observe timer from another runtime"
-    (function `Runtime_mismatch -> true | _ -> false)
+  expect_exact_runtime_mismatch "observe timer from another runtime"
     (Eta.Runtime.run rt_b (widen (S.Observer.observe timer (fun _ -> E.unit))));
   let keep_alive =
     run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
@@ -204,8 +210,7 @@ let test_timer_runtime_mismatch_on_observe () =
     ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
     (fun () ->
       run_ok rt_a S.stabilize;
-      expect_fail "observe active timer from another runtime"
-        (function `Runtime_mismatch -> true | _ -> false)
+      expect_exact_runtime_mismatch "observe active timer from another runtime"
         (Eta.Runtime.run rt_b
            (widen (S.Observer.observe timer (fun _ -> E.unit)))))
 
