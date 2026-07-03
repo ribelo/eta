@@ -3540,14 +3540,21 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let live_ids = Hashtbl.create 16 in
     let dead_ids = Hashtbl.create 16 in
-    List.iter
-      (fun (P signal) ->
-        if selected signal then Hashtbl.replace live_ids signal.id ())
-      all_nodes;
     if include_dead_nodes then
       List.iter
         (fun tombstone -> Hashtbl.replace dead_ids tombstone.dead_id ())
         graph.dead_nodes;
+    let selected_live_signal signal =
+      selected signal
+      && not
+           (include_dead_nodes && (not signal.valid)
+          && Hashtbl.mem dead_ids signal.id)
+    in
+    List.iter
+      (fun (P signal) ->
+        if selected_live_signal signal then
+          Hashtbl.replace live_ids signal.id ())
+      all_nodes;
     let selected_id id = Hashtbl.mem live_ids id || Hashtbl.mem dead_ids id in
     let dot_signal_id id =
       if Hashtbl.mem live_ids id then signal_id_label id
@@ -3558,7 +3565,7 @@ module Make (Observer_error : Observer_error) () = struct
     Format.fprintf formatter "digraph eta_signal {@.";
     List.iter
       (fun (P signal) ->
-        if selected signal then (
+        if selected_live_signal signal then (
           Format.fprintf formatter "  %s [label=%S];@."
             (signal_id_label signal.id)
             (signal_label options signal);
@@ -3566,12 +3573,12 @@ module Make (Observer_error : Observer_error) () = struct
           List.iter
             (fun (P dependency) ->
               if
-                selected dependency
+                selected_id dependency.id
                 && not (Hashtbl.mem emitted_edges dependency.id)
               then (
                 Hashtbl.add emitted_edges dependency.id ();
                 Format.fprintf formatter "  %s -> %s;@."
-                  (signal_id_label dependency.id)
+                  (dot_signal_id dependency.id)
                   (signal_id_label signal.id)))
             signal.dependencies))
       all_nodes;

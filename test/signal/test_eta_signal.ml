@@ -5577,6 +5577,30 @@ let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
     before.Dead_count_signal.dead_node_count
     after.Dead_count_signal.dead_node_count
 
+let test_to_dot_prefers_tombstone_over_retained_invalid_node () =
+  let module Retained_dot_signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let retained = Retained_dot_signal.const 1 in
+  let signal_id = Retained_dot_signal.signal_id_label retained.id in
+  Retained_dot_signal.record_dead_node_unlocked (Retained_dot_signal.P retained);
+  set_signal_valid retained false;
+  let options : Retained_dot_signal.dot_options =
+    {
+      dot_scope = `All_including_invalid;
+      dot_observers = false;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok rt (Retained_dot_signal.to_dot ~options ()) in
+  Alcotest.(check int) "retained invalid live node is suppressed" 0
+    (count_occurrences dot ("  " ^ signal_id ^ " [label="));
+  Alcotest.(check int) "dead tombstone remains visible" 1
+    (count_occurrences dot ("  dead_" ^ signal_id ^ " [label="));
+  Alcotest.(check int) "logical node id appears once" 1
+    (count_occurrences dot ("signal_id=" ^ signal_id))
+
 let test_deterministic_model_matches_small_dynamic_graph () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9426,6 +9450,9 @@ let () =
           Alcotest.test_case
             "dead node count ignores retained invalid non-tombstones" `Quick
             test_dead_node_count_ignores_retained_invalid_non_tombstones;
+          Alcotest.test_case
+            "to_dot prefers tombstone over retained invalid node" `Quick
+            test_to_dot_prefers_tombstone_over_retained_invalid_node;
           Alcotest.test_case "deterministic model matches dynamic graph" `Quick
             test_deterministic_model_matches_small_dynamic_graph;
           Alcotest.test_case "randomized model matches dynamic graph" `Quick
