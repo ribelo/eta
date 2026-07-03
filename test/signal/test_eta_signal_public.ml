@@ -96,6 +96,39 @@ let test_bind_switch_detaches_stale_dependency () =
     (run_ok runtime (Signal.Observer.read observer));
   run_ok runtime (Signal.Observer.dispose observer)
 
+let test_bind_can_select_initialized_external_bind () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let driver = S.Var.create 0 in
+  let leaf = S.Var.create 10 in
+  let external_signal =
+    S.bind (S.Var.watch driver) (fun offset ->
+        S.Var.watch leaf |> S.map (fun value -> value + offset + 1))
+  in
+  let external_observer =
+    run_ok runtime (S.Observer.observe external_signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "external initialized" 11
+    (run_ok runtime (S.Observer.read external_observer));
+  run_ok runtime (S.Observer.dispose external_observer);
+  let selected = S.bind (S.const true) (fun _ -> external_signal) in
+  let selected_observer =
+    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "selected initialized external bind" 11
+    (run_ok runtime (S.Observer.read selected_observer));
+  run_ok runtime (S.Var.set leaf 20);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "selected follows external leaf update" 21
+    (run_ok runtime (S.Observer.read selected_observer));
+  run_ok runtime (S.Var.set driver 5);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "selected follows external bind switch" 26
+    (run_ok runtime (S.Observer.read selected_observer));
+  run_ok runtime (S.Observer.dispose selected_observer)
+
 let test_stream_bridge_emits_and_closes () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = Signal.Var.create 1 in
@@ -324,6 +357,8 @@ let () =
             test_basic_observe_stabilize_read;
           Alcotest.test_case "bind switch detaches stale dependency" `Quick
             test_bind_switch_detaches_stale_dependency;
+          Alcotest.test_case "bind selects initialized external bind" `Quick
+            test_bind_can_select_initialized_external_bind;
           Alcotest.test_case "stream bridge emits and closes" `Quick
             test_stream_bridge_emits_and_closes;
           Alcotest.test_case "interval catches up with test clock" `Quick
