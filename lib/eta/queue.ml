@@ -145,8 +145,10 @@ let wakeup_notified = function
   | Wake_sender (sender, _) -> sender.notified
   | Wake_receiver receiver -> receiver.notified
 
-(* Waiter wakeups are post-commit bookkeeping. Once queue state has changed,
-   a resolver failure must not replace the active operation's result. *)
+(* Waiter wakeups are post-commit bookkeeping. Runtime_contract requires
+   resolver notification to fail only for non-transient programmer/runtime
+   boundary errors. Once queue state has changed, such failures belong to the
+   waiter boundary and must not replace the active operation's result. *)
 let rec resolve_wakeup_best_effort remaining wakeup =
   try
     resolve_wakeup wakeup;

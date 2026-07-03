@@ -798,6 +798,10 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_notified <- true)
 
   let rec resolve_lane_waiter_best_effort remaining waiter =
+    (* Lane grants are already committed. Runtime_contract requires resolver
+       notification to fail only for non-transient programmer/runtime boundary
+       errors, so a grant-resolution failure must not poison the operation
+       that released the lane. *)
     try
       resolve_lane_waiter waiter;
       true

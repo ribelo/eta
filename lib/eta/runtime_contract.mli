@@ -91,7 +91,18 @@ type t = {
     [sleep] must suspend on the same monotonic time base. Eta timers,
     schedules, timeouts, and elapsed-time measurements assume these operations
     are one clock pair; mixing a wall-clock [now_ms] with a relative monotonic
-    sleeper makes clock-jump behavior undefined. *)
+    sleeper makes clock-jump behavior undefined.
+
+    Promise resolution is a commit point for Eta-owned wait queues. When
+    [resolve_promise] is called with an unsettled resolver, the backend must
+    settle the promise and make every still-observable waiter able to resume
+    before returning. Cancellation of an awaiting fiber must not make later
+    resolution fail; resolving after a waiter has been cancelled still succeeds
+    and leaves the promise settled. [resolve_promise] may raise for programmer
+    errors such as resolving the same resolver twice, but it must not raise for
+    transient notification or scheduler failures. Queue wakeups and signal
+    graph-lane grants rely on this contract after their mutable state has
+    committed. *)
 
 val same_runtime : t -> t -> bool
 (** [same_runtime left right] is [true] when both erased contracts wrap the same
@@ -142,6 +153,14 @@ module type RUNTIME = sig
   val check : unit -> unit
   val create_promise : unit -> 'a promise * 'a resolver
   val resolve_promise : 'a resolver -> 'a -> unit
+  (** Settle an unresolved promise and notify waiters.
+
+      This operation is a commit point. It must not fail because a waiter was
+      cancelled or because notification is temporarily unavailable. Once it
+      returns normally, every non-cancelled waiter must be able to observe the
+      value. It may raise only for programmer errors such as resolving an
+      already-settled resolver. *)
+
   val await_promise : 'a promise -> 'a
   val create_stream : int -> 'a stream
   val stream_add : 'a stream -> 'a -> unit

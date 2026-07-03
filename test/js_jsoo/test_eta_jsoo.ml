@@ -123,6 +123,52 @@ let test_runtime_stream_fifo done_ =
   in
   run eff ~on_result:(finish done_ (expect_ok_pair (1, 2)))
 
+let test_runtime_resolve_after_waiter_cancellation done_ =
+  let eff =
+    Eta.Effect.Expert.make @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    let promise, resolver = contract.Runtime_contract.create_promise () in
+    let started, started_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let cancelled, cancelled_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    contract.Runtime_contract.run_scope
+      ~name:"resolver cancellation conformance"
+      (fun child_scope ->
+        contract.Runtime_contract.fork child_scope (fun () ->
+            contract.Runtime_contract.cancel_sub @@ fun cancel_ctx ->
+            contract.Runtime_contract.resolve_promise started_resolver
+              cancel_ctx;
+            try
+              ignore
+                (contract.Runtime_contract.await_promise promise : int)
+            with exn -> (
+              match contract.Runtime_contract.cancellation_reason exn with
+              | Some _ ->
+                  contract.Runtime_contract.resolve_promise
+                    cancelled_resolver ()
+              | None -> raise exn));
+        let cancel_ctx =
+          contract.Runtime_contract.await_promise started
+        in
+        contract.Runtime_contract.cancel cancel_ctx
+          (Failure "cancel promise waiter");
+        contract.Runtime_contract.await_promise cancelled;
+        contract.Runtime_contract.resolve_promise resolver 42);
+    Eta.Exit.Ok ()
+  in
+  run eff
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok () -> ()
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf
+                 "expected resolve after waiter cancellation to succeed, got %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
 let test_daemon_drain done_ =
   let completed = ref false in
   let runtime = Eta_jsoo.Runtime.create () in
@@ -149,6 +195,8 @@ let tests =
     ("await cancel hook", test_await_cancel_hook);
     ("runtime locals cross fork", test_runtime_locals_cross_fork);
     ("runtime stream fifo", test_runtime_stream_fifo);
+    ( "runtime resolve after waiter cancellation",
+      test_runtime_resolve_after_waiter_cancellation );
     ("daemon drain", test_daemon_drain);
   ]
 

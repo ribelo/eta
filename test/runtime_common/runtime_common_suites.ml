@@ -938,6 +938,28 @@ module Make (B : Runtime_backend.S) = struct
         Alcotest.(check (option int))
           "local binding" (Some 42) (contract.Rc.local_get local))
 
+  let test_runtime_contract_resolve_after_waiter_cancellation () =
+    B.with_runtime_contract @@ fun _ctx contract ->
+    let promise, resolver = contract.Rc.create_promise () in
+    let started, started_resolver = contract.Rc.create_promise () in
+    let cancelled, cancelled_resolver = contract.Rc.create_promise () in
+    contract.Rc.run_scope ~name:"resolver cancellation conformance"
+      (fun child_scope ->
+        contract.Rc.fork child_scope (fun () ->
+            contract.Rc.cancel_sub @@ fun cancel_ctx ->
+            contract.Rc.resolve_promise started_resolver cancel_ctx;
+            try ignore (contract.Rc.await_promise promise : int) with
+            | exn -> (
+                match contract.Rc.cancellation_reason exn with
+                | Some _ -> contract.Rc.resolve_promise cancelled_resolver ()
+                | None -> raise exn));
+        let cancel_ctx = contract.Rc.await_promise started in
+        contract.Rc.cancel cancel_ctx (Failure "cancel promise waiter");
+        contract.Rc.await_promise cancelled;
+        contract.Rc.resolve_promise resolver 42);
+    Alcotest.(check pass)
+      "resolver tolerated canceled waiter" () ()
+
   let test_runtime_queue_wakeups_stay_on_owner_domain () =
     B.with_runtime @@ fun ctx rt ->
     let owner = Domain.self () in
@@ -1141,6 +1163,8 @@ module Make (B : Runtime_backend.S) = struct
             test_runtime_contract_locals_and_stream;
           Alcotest.test_case "runtime contract callbacks stay on owner domain"
             `Quick test_runtime_contract_callbacks_stay_on_owner_domain;
+          Alcotest.test_case "runtime contract resolve after waiter cancel"
+            `Quick test_runtime_contract_resolve_after_waiter_cancellation;
           Alcotest.test_case "cancellation cleanup stays on owner domain" `Quick
             test_runtime_cancellation_cleanup_stays_on_owner_domain;
         ] );
