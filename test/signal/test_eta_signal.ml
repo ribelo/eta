@@ -13,6 +13,9 @@ module Observer_error = struct
     | `Observer_failed -> Format.pp_print_string ppf "observer failed"
 end
 
+(* Most tests shadow [Signal] with a fresh functor instance so graph indexes do
+   not accumulate across cases. These top-level instances are kept for tests
+   that deliberately exercise cross-instance behavior or custom runtime hooks. *)
 module Signal = Eta_signal_testable.Make (Observer_error) ()
 module Other_signal = Eta_signal_testable.Make (Observer_error) ()
 module Dot_signal = Eta_signal_testable.Make (Observer_error) ()
@@ -100,14 +103,6 @@ let expect_finalizer_die label expected = function
       Alcotest.failf "%s: expected finalizer defect %S, got %a" label expected
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected finalizer defect, got Ok" label
-
-let expect_graph_error_exn label expected f =
-  match f () with
-  | exception Signal.Graph_error actual when actual = expected -> ()
-  | exception exn ->
-      Alcotest.failf "%s: expected graph error, got %s" label
-        (Printexc.to_string exn)
-  | _ -> Alcotest.failf "%s: expected graph error" label
 
 let signal_graph_context_message =
   "Eta_signal: signal graph APIs must be called on the domain that created "
@@ -368,6 +363,7 @@ let count_occurrences text needle =
   loop 0 0
 
 let test_error_pretty_printers_are_clear () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   check_render "ambiguous scope" Signal.pp_graph_error `Ambiguous_scope
     "ambiguous dynamic scope";
   check_render "cycle" Signal.pp_graph_error `Cycle "cycle detected";
@@ -401,6 +397,7 @@ let test_error_pretty_printers_are_clear () =
     `Invalid_capacity "stream bridge capacity must be positive"
 
 let test_observer_initializes_on_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let doubled = Signal.Var.watch source |> Signal.map (fun n -> n * 2) in
@@ -425,6 +422,7 @@ let test_observer_initializes_on_stabilize () =
        (List.rev !events))
 
 let test_observe_after_stabilization_and_disposal_clears_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   run_ok rt Signal.stabilize;
   let before = run_ok rt (Signal.stats ()) in
@@ -464,6 +462,7 @@ let force_signal_gc () =
   Gc.full_major ()
 
 let test_unnecessary_root_nodes_are_gc_reclaimable () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   run_ok rt Signal.stabilize;
   force_signal_gc ();
@@ -491,6 +490,7 @@ let test_unnecessary_root_nodes_are_gc_reclaimable () =
     before.Signal.total_node_count after_gc.Signal.total_node_count
 
 let test_observer_unsafe_read_exn_reports_invalid_state () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observer =
@@ -509,6 +509,7 @@ let test_observer_unsafe_read_exn_reports_invalid_state () =
     (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int))
 
 let test_manual_stabilization_coalesces_sets () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -529,6 +530,7 @@ let test_manual_stabilization_coalesces_sets () =
   Alcotest.(check int) "two events" 2 (List.length !events)
 
 let test_functor_instances_stabilize_independently () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let other_source = Other_signal.Var.create 10 in
@@ -583,6 +585,7 @@ let test_functor_instances_stabilize_independently () =
   run_ok rt (Other_signal.Observer.dispose other_observer)
 
 let test_graph_rejects_cross_domain_synchronous_apis () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   expect_cross_domain_signal_context_failure "cross-domain Var.create" (fun () ->
@@ -597,6 +600,7 @@ let test_graph_rejects_cross_domain_synchronous_apis () =
       ignore (Signal.map (fun value -> value + 1) signal : int Signal.signal))
 
 let test_graph_rejects_registered_worker_context () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   let source = Signal.Var.create 1 in
   with_signal_test_worker_context @@ fun () ->
   expect_signal_context_failure "worker-context Var.value" (fun () ->
@@ -605,6 +609,7 @@ let test_graph_rejects_registered_worker_context () =
       ignore (Signal.const 0 : int Signal.signal))
 
 let test_graph_rejects_cross_domain_effectful_apis () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -632,6 +637,7 @@ let test_graph_rejects_cross_domain_effectful_apis () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_diamond_recomputes_shared_node_once () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let calls = ref 0 in
@@ -658,6 +664,7 @@ let test_diamond_recomputes_shared_node_once () =
   Alcotest.(check int) "updated shared compute once" 2 !calls
 
 let test_diamond_observers_see_glitch_free_snapshots () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let shared = Signal.Var.watch source |> Signal.map (fun n -> n * 10) in
@@ -741,6 +748,7 @@ let test_diamond_observers_see_glitch_free_snapshots () =
   run_ok rt (Signal.Observer.dispose downstream_handle)
 
 let test_recompute_order_is_topological () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let order = ref [] in
@@ -793,6 +801,7 @@ let test_recompute_order_is_topological () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_n_ary_maps_both_and_all () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let v1 = Signal.Var.create 1 in
   let v2 = Signal.Var.create 2 in
@@ -863,6 +872,7 @@ let test_n_ary_maps_both_and_all () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_map_arity_matrix_initializes_and_coalesces () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let v1 = Signal.Var.create 1 in
   let v2 = Signal.Var.create 2 in
@@ -926,6 +936,7 @@ let test_map_arity_matrix_initializes_and_coalesces () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_map_invariants_repeated_children_cutoff_and_final_values () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let shared_calls = ref 0 in
@@ -991,6 +1002,7 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_cutoff_suppresses_downstream_recompute () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let parity =
@@ -1016,6 +1028,7 @@ let test_cutoff_suppresses_downstream_recompute () =
   Alcotest.(check int) "downstream not recomputed" 1 !downstream_calls
 
 let test_unnecessary_derived_recomputes_after_dependency_change () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -1054,6 +1067,7 @@ let test_unnecessary_derived_recomputes_after_dependency_change () =
   run_ok rt (Signal.Observer.dispose reobserved)
 
 let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -1103,6 +1117,7 @@ let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
   run_ok rt (Signal.Observer.dispose reobserved)
 
 let test_source_equality_suppresses_graph_propagation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source =
     Signal.Var.create ~equal:(fun old_value new_value ->
@@ -1142,6 +1157,7 @@ let test_source_equality_suppresses_graph_propagation () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_default_cutoff_is_physical_equality () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let initial = Array.make 1 1 in
   let next = Array.copy initial in
@@ -1169,6 +1185,7 @@ let test_default_cutoff_is_physical_equality () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_derived_default_cutoff_is_physical_equality () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let mapped = Signal.Var.watch source |> Signal.map (fun _ -> Array.make 1 1) in
@@ -1195,6 +1212,7 @@ let test_derived_default_cutoff_is_physical_equality () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_structural_equal_suppresses_fresh_equal_values () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let structural_array_equal left right =
     Array.length left = Array.length right
@@ -1233,6 +1251,7 @@ let test_structural_equal_suppresses_fresh_equal_values () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_default_physical_cutoff_suppresses_in_place_mutation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let block = Array.make 1 1 in
   let source = Signal.Var.create block in
@@ -1272,6 +1291,7 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_equality_suppresses_only_that_observer () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -1300,6 +1320,7 @@ let test_observer_equality_suppresses_only_that_observer () =
   run_ok rt (Signal.Observer.dispose normal_observer)
 
 let test_observer_callbacks_run_in_registration_order () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let left = Signal.Var.create 1 in
   let right = Signal.Var.create 2 in
@@ -1334,6 +1355,7 @@ let test_observer_callbacks_run_in_registration_order () =
   run_ok rt (Signal.Observer.dispose right_first)
 
 let test_observer_ordering_across_graph_branches_is_deterministic () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let upstream =
@@ -1371,6 +1393,7 @@ let test_observer_ordering_across_graph_branches_is_deterministic () =
   run_ok rt (Signal.Observer.dispose independent_observer)
 
 let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let upstream =
@@ -1414,6 +1437,7 @@ let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
         (List.rev !upstream_events))
 
 let test_observer_callbacks_read_consistent_published_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let left = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
@@ -1478,6 +1502,7 @@ let test_observer_callbacks_read_consistent_published_snapshot () =
   run_ok rt (Signal.Observer.dispose total_handle)
 
 let test_observer_dispose_during_callback_skips_collected_event () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -1513,6 +1538,7 @@ let test_observer_dispose_during_callback_skips_collected_event () =
   run_ok rt (Signal.Observer.dispose first_observer)
 
 let test_observer_dispose_after_active_check_skips_callback () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1590,6 +1616,7 @@ let test_observer_dispose_after_active_check_skips_callback () =
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
 let test_private_test_hook_scope_restores_after_exception () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun _sw rt ->
   Signal.Private_test_hooks.clear ();
   let ran = ref 0 in
@@ -1612,6 +1639,7 @@ let test_private_test_hook_scope_restores_after_exception () =
       Alcotest.(check int) "scoped hook was restored" 0 !ran)
 
 let test_observer_dispose_after_delivery_claim_skips_callback () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -1671,6 +1699,7 @@ let test_observer_dispose_after_delivery_claim_skips_callback () =
         (Runtime.run rt (widen (Signal.Observer.read observer))))
 
 let test_observer_registration_skips_callbacks_until_returned () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1726,6 +1755,7 @@ let test_observer_registration_skips_callbacks_until_returned () =
       Alcotest.(check int) "callback after observe returned" 1 !callback_count)
 
 let test_observer_activation_waits_for_transfer_before_callbacks () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1780,6 +1810,7 @@ let test_observer_activation_waits_for_transfer_before_callbacks () =
       Alcotest.(check int) "callback after observe transfer" 1 !callback_count)
 
 let test_observer_activation_interruption_disposes_unowned_observer () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1843,6 +1874,7 @@ let test_observer_activation_interruption_disposes_unowned_observer () =
         "interrupted observer activation does not leak callback" 0 !callbacks)
 
 let test_observer_observe_invalidated_before_transfer_fails () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
@@ -1912,6 +1944,7 @@ let test_observer_observe_invalidated_before_transfer_fails () =
           Alcotest.fail "observe returned an invalidated observer")
 
 let test_bind_detaches_old_dependency () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -1940,6 +1973,7 @@ let test_bind_detaches_old_dependency () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_bind_switches_after_unnecessary_source_change () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -1979,6 +2013,7 @@ let test_bind_switches_after_unnecessary_source_change () =
   run_ok rt (Signal.Observer.dispose reobserved)
 
 let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2032,6 +2067,7 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_invalidated_var_watchers_detach_from_sources () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2062,6 +2098,7 @@ let test_bind_invalidated_var_watchers_detach_from_sources () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_invalidated_bind_rhs_cannot_be_observed () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2100,6 +2137,7 @@ let test_invalidated_bind_rhs_cannot_be_observed () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_invalidated_bind_rhs_cannot_be_wrapped () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2126,9 +2164,16 @@ let test_invalidated_bind_rhs_cannot_be_wrapped () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "active branch switched" 20
     (run_ok rt (Signal.Observer.read observer));
-  expect_graph_error_exn "wrapped invalid scope construction" `Invalid_scope
-    (fun () ->
-      ignore (Signal.map (fun value -> value + 1) captured : int Signal.signal));
+  (match
+     ignore (Signal.map (fun value -> value + 1) captured : int Signal.signal)
+   with
+  | exception Signal.Graph_error `Invalid_scope -> ()
+  | exception exn ->
+      Alcotest.failf "wrapped invalid scope construction: expected graph error, got %s"
+        (Printexc.to_string exn)
+  | () ->
+      Alcotest.fail
+        "wrapped invalid scope construction: expected graph error");
   run_ok rt (Signal.Var.set right 21);
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "later stabilization remains healthy" 21
@@ -2136,6 +2181,7 @@ let test_invalidated_bind_rhs_cannot_be_wrapped () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_rejects_reused_dynamic_scope_inner () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -2171,6 +2217,7 @@ let test_bind_rejects_reused_dynamic_scope_inner () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -2213,6 +2260,7 @@ let test_bind_rejects_root_wrapper_over_reused_dynamic_scope_inner () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let watched = Signal.Var.watch source in
@@ -2250,6 +2298,7 @@ let test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_accepts_ancestor_dynamic_scope_inner () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let outer_source = Signal.Var.create true in
   let inner_source = Signal.Var.create 0 in
@@ -2272,6 +2321,7 @@ let test_bind_accepts_ancestor_dynamic_scope_inner () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_switch_invalidates_external_derived_branch_dependents () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2315,6 +2365,7 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_bind_switch_invalidates_observers_of_invalidated_scope () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2368,6 +2419,7 @@ let test_bind_switch_invalidates_observers_of_invalidated_scope () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2421,6 +2473,7 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_old_branch_observer_not_computed_on_switch () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let selector = Signal.Var.create true in
   let branch_var = Signal.Var.create 0 in
@@ -2466,6 +2519,7 @@ let test_old_branch_observer_not_computed_on_switch () =
   run_ok rt (Signal.Observer.dispose top_observer)
 
 let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 0 in
@@ -2550,6 +2604,7 @@ let set_signal_valid signal value =
   Obj.set_field signal_obj 18 (Obj.repr value)
 
 let test_commit_skips_invalidated_staged_entries () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2607,6 +2662,7 @@ let test_commit_skips_invalidated_staged_entries () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let a_target = Signal.Var.create (Signal.const 1) in
   let b_target = Signal.Var.create (Signal.const 10) in
@@ -2648,6 +2704,7 @@ let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
   run_ok rt (Signal.Observer.dispose b_observer)
 
 let test_dynamic_list_bind_switches_dependency_set () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let indices = Signal.Var.create [ 0; 2 ] in
   let values =
@@ -2716,6 +2773,7 @@ let test_dynamic_list_bind_switches_dependency_set () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_branch_churn_releases_inactive_scopes () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choice = Signal.Var.create `A in
   let sources =
@@ -2792,6 +2850,7 @@ let test_bind_branch_churn_releases_inactive_scopes () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let a = Signal.Var.create 1 in
   let b = Signal.Var.create 2 in
@@ -2840,6 +2899,7 @@ let test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_selector_failure_preserves_previous_branch () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 1 in
@@ -2892,6 +2952,7 @@ let test_bind_selector_failure_preserves_previous_branch () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 1 in
@@ -2939,6 +3000,7 @@ let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_bind_cycle_detection_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let trigger = Signal.Var.create () in
   let holder = ref None in
@@ -2957,6 +3019,7 @@ let test_bind_cycle_detection_is_typed_failure () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_unobserved_nodes_do_not_recompute () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let calls = ref 0 in
@@ -2972,6 +3035,7 @@ let test_unobserved_nodes_do_not_recompute () =
   Alcotest.(check int) "unobserved map never recomputed" 0 !calls
 
 let test_observer_mutation_is_delayed_to_next_stabilization () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -2991,6 +3055,7 @@ let test_observer_mutation_is_delayed_to_next_stabilization () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_observer_phase_multiple_sets_publish_final_next_value () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -3043,6 +3108,7 @@ let test_observer_phase_multiple_sets_publish_final_next_value () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_read_during_callback_sees_current_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -3067,6 +3133,7 @@ let test_observer_read_during_callback_sees_current_snapshot () =
     (List.rev !seen)
 
 let test_observer_read_does_not_force_recompute () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let calls = ref 0 in
@@ -3106,6 +3173,7 @@ let test_observer_read_does_not_force_recompute () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_dispose_removes_demand () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let calls = ref 0 in
@@ -3127,6 +3195,7 @@ let test_dispose_removes_demand () =
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
 let test_dispose_before_initialization_removes_demand () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let calls = ref 0 in
@@ -3152,6 +3221,7 @@ let test_dispose_before_initialization_removes_demand () =
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
 let test_dispose_unlinks_observer_from_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let finalized = ref false in
@@ -3177,6 +3247,7 @@ let test_dispose_unlinks_observer_from_graph () =
   force_collection 20
 
 let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal =
@@ -3285,6 +3356,7 @@ let test_stats_counter_saturation_is_typed_failure () =
       Overflow_signal.graph.lane.lane_cancelled <- value)
 
 let test_failed_initial_stabilization_leaves_no_current_value () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let fail = ref true in
@@ -3310,6 +3382,7 @@ let test_failed_initial_stabilization_leaves_no_current_value () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_cutoff_exception_is_defect_without_partial_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let defect = Failure "cutoff" in
@@ -3331,6 +3404,7 @@ let test_cutoff_exception_is_defect_without_partial_snapshot () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_source_equality_exception_is_defect_without_partial_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let fail_equal = ref true in
   let source =
@@ -3357,6 +3431,7 @@ let test_source_equality_exception_is_defect_without_partial_snapshot () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_equality_exception_is_defect_without_partial_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let fail_equal = ref true in
@@ -3387,6 +3462,7 @@ let test_observer_equality_exception_is_defect_without_partial_snapshot () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_ambiguous_node_creation_during_pure_recompute_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal =
@@ -3403,6 +3479,7 @@ let test_ambiguous_node_creation_during_pure_recompute_is_typed_failure () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_ambiguous_node_creation_during_observer_callback_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3417,6 +3494,7 @@ let test_ambiguous_node_creation_during_observer_callback_is_typed_failure () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_ambiguous_node_creation_during_observer_effect_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3431,6 +3509,7 @@ let test_ambiguous_node_creation_during_observer_effect_is_typed_failure () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_failure_fails_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3446,6 +3525,7 @@ let test_observer_failure_fails_stabilize () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_callback_construction_exception_is_defect_not_observer_error () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3459,6 +3539,7 @@ let test_callback_construction_exception_is_defect_not_observer_error () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_effect_typed_failure_is_observer_error () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3473,6 +3554,7 @@ let test_observer_effect_typed_failure_is_observer_error () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_typed_failure_retries_after_flag_fixed () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let fail = ref false in
@@ -3508,6 +3590,7 @@ let test_observer_typed_failure_retries_after_flag_fixed () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_failed_delivery_coalesces_reverted_value () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let fail = ref false in
@@ -3547,6 +3630,7 @@ let test_observer_failed_delivery_coalesces_reverted_value () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_pending_observer_delivery_coalesces_after_callback_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let fail = ref false in
@@ -3591,6 +3675,7 @@ let test_pending_observer_delivery_coalesces_after_callback_failure () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_failure_is_fail_fast () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3618,6 +3703,7 @@ let test_observer_failure_is_fail_fast () =
   run_ok rt (Signal.Observer.dispose later_observer)
 
 let test_observer_registration_and_self_disposal_inside_callback () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -3662,6 +3748,7 @@ let test_observer_registration_and_self_disposal_inside_callback () =
    | None -> Alcotest.fail "late observer was not registered")
 
 let test_observer_effects_before_later_failure_are_not_rolled_back () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3684,6 +3771,7 @@ let test_observer_effects_before_later_failure_are_not_rolled_back () =
   run_ok rt (Signal.Observer.dispose failing_observer)
 
 let test_observer_callback_construction_defect_does_not_poison_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3707,6 +3795,7 @@ let test_observer_callback_construction_defect_does_not_poison_graph () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observer_callback_interruption_releases_phase () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let block_callback = ref true in
@@ -3740,6 +3829,7 @@ let test_observer_callback_interruption_releases_phase () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_observe_failure_during_timer_start_does_not_leak () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -3765,6 +3855,7 @@ let test_stream_observe_failure_during_timer_start_does_not_leak () =
   run_ok rt Signal.stabilize
 
 let test_time_timer_start_failure_retries_necessary_timer () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -3807,6 +3898,7 @@ let test_time_timer_start_failure_retries_necessary_timer () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_start_failure_preserves_pending_observer_event () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -3861,6 +3953,7 @@ let test_time_timer_start_failure_preserves_pending_observer_event () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_start_failure_rolls_back_unstarted_timers () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -3917,6 +4010,7 @@ let test_time_timer_start_failure_rolls_back_unstarted_timers () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_reentrant_stabilization_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3937,6 +4031,7 @@ let test_reentrant_stabilization_is_typed_failure () =
    | None -> Alcotest.fail "nested stabilize did not run")
 
 let test_reentrant_stabilization_does_not_clear_outer_phase () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -3963,6 +4058,7 @@ let test_reentrant_stabilization_does_not_clear_outer_phase () =
     (List.for_all is_reentrant !nested)
 
 let test_effectful_update_reentry_fails_and_preserves_value () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   expect_fail "reentrant update" (( = ) `Reentrant_update)
@@ -3974,6 +4070,7 @@ let test_effectful_update_reentry_fails_and_preserves_value () =
   Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
 
 let test_concurrent_effectful_update_same_variable_fails_fast () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4005,6 +4102,7 @@ let test_concurrent_effectful_update_same_variable_fails_fast () =
             Effect.pure (current + 1))))
 
 let test_effectful_update_rejects_concurrent_set_same_variable () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4033,6 +4131,7 @@ let test_effectful_update_rejects_concurrent_set_same_variable () =
             Effect.pure (current + 1))))
 
 let test_effectful_update_success_publishes_once () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -4062,6 +4161,7 @@ let test_effectful_update_success_publishes_once () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_effectful_update_sees_pending_source_value () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observed = Signal.Var.watch source in
@@ -4093,6 +4193,7 @@ let test_effectful_update_sees_pending_source_value () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_effectful_update_allows_other_variable_mutation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let left = Signal.Var.create 1 in
   let right = Signal.Var.create 10 in
@@ -4120,6 +4221,7 @@ let test_effectful_update_allows_other_variable_mutation () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_effectful_update_failures_preserve_value_and_release_slot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   expect_fail "typed update failure" (( = ) `Update_failed)
@@ -4142,6 +4244,7 @@ let test_effectful_update_failures_preserve_value_and_release_slot () =
             Effect.pure (current + 1))))
 
 let test_effectful_update_interruption_preserves_value_and_releases_slot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4170,6 +4273,7 @@ let test_effectful_update_interruption_preserves_value_and_releases_slot () =
             Effect.pure (current + 1))))
 
 let test_effectful_update_acquire_interruption_releases_slot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
   Cleanup_interrupt_runtime.now := 0;
   Hashtbl.clear Cleanup_interrupt_runtime.locals;
@@ -4202,6 +4306,7 @@ let test_effectful_update_acquire_interruption_releases_slot () =
       Alcotest.failf "expected released slot, got %a" (Cause.pp pp_hidden) cause)
 
 let test_queued_graph_operation_cancellation_does_not_run () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let before_stats = run_ok rt (Signal.stats ()) in
@@ -4257,6 +4362,7 @@ let test_queued_graph_operation_cancellation_does_not_run () =
     after_stats.Signal.lane_waiter_count
 
 let test_lane_waiter_compaction_uses_retained_cancellation_debt () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let start_lane_holder () =
     let source = Signal.Var.create 1 in
@@ -4348,6 +4454,7 @@ let test_lane_waiter_compaction_uses_retained_cancellation_debt () =
         (run_ok rt (Signal.stats ())).Signal.lane_cancelled_waiter_count)
 
 let test_stats_report_lane_waiters () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4397,6 +4504,7 @@ let test_stats_report_lane_waiters () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_active_graph_operation_interruption_releases_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4433,6 +4541,7 @@ let test_active_graph_operation_interruption_releases_lane () =
     (run_ok rt (Signal.Observer.read observer))
 
 let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eio.Stdenv.clock env in
@@ -4550,6 +4659,7 @@ let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
         later_snapshot.Signal.lane_waiter_count)
 
 let test_graph_lane_acquisition_stays_on_owner_domain () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let owner = Domain.self () in
   let acquired_domains = ref [] in
@@ -4612,6 +4722,7 @@ let test_graph_lane_acquisition_stays_on_owner_domain () =
         (List.length !acquired_domains >= 3))
 
 let test_observer_read_waits_for_graph_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4652,6 +4763,7 @@ let test_observer_read_waits_for_graph_lane () =
     (expect_exit_ok "queued read" (Eio.Promise.await_exn read))
 
 let test_time_interval_construction_waits_for_graph_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let started, started_resolver = Eio.Promise.create () in
@@ -4691,6 +4803,7 @@ let test_time_interval_construction_waits_for_graph_lane () =
     (Eio.Promise.await_exn constructor)
 
 let test_observer_delivery_acknowledgement_uses_graph_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.now := 0;
   Cleanup_interrupt_runtime.local_binding_count := 0;
@@ -4732,6 +4845,7 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
       : unit)
 
 let test_stats_and_dot_are_read_only () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let check_stats label (expected : Signal.stats) (actual : Signal.stats) =
     Alcotest.(check int)
@@ -4866,6 +4980,7 @@ let test_stats_and_dot_are_read_only () =
      > after_stabilize.Signal.nodes_became_unnecessary)
 
 let test_stats_split_snapshot_commit_from_callback_delivery () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let fail_once = ref true in
@@ -4906,6 +5021,7 @@ let test_stats_split_snapshot_commit_from_callback_delivery () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_repeated_dependencies_are_stored_once () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Dependency_signal.Var.create 1 in
   let base = Dependency_signal.Var.watch source in
@@ -4938,6 +5054,7 @@ let test_repeated_dependencies_are_stored_once () =
   run_ok rt (Dependency_signal.Observer.dispose observer)
 
 let test_to_dot_deduplicates_repeated_dependency_edges () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Dot_signal.Var.create 1 in
   let base = Dot_signal.Var.watch source in
@@ -5142,6 +5259,7 @@ let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
     after.Dead_count_signal.dead_node_count
 
 let test_deterministic_model_matches_small_dynamic_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let left = Signal.Var.create 1 in
   let right = Signal.Var.create 10 in
@@ -5205,6 +5323,7 @@ let test_deterministic_model_matches_small_dynamic_graph () =
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)))
 
 let test_randomized_model_matches_small_signal_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let next rng bound =
     rng := ((!rng * 1103515245) + 12345) land 0x3fffffff;
@@ -5338,6 +5457,7 @@ let test_randomized_model_matches_small_signal_graph () =
   List.iter run_seed [ 7; 19; 101 ]
 
 let test_fanout_fanin_cutoff_and_partial_disposal () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let root_calls = ref 0 in
@@ -5392,6 +5512,7 @@ let test_fanout_fanin_cutoff_and_partial_disposal () =
      < after_partial_dispose.Signal.necessary_node_count)
 
 let test_time_interval_starts_only_when_observed () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   Eta_test.Async.yield ();
@@ -5407,6 +5528,7 @@ let test_time_interval_starts_only_when_observed () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_interval_requires_explicit_stabilization () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let events = ref [] in
@@ -5482,6 +5604,7 @@ let set_observer_on_dispose observer hooks =
   Obj.set_field live_state 3 (Obj.repr hooks)
 
 let test_time_interval_overflow_saturates () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_logger_test_clock @@ fun _sw clock rt logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   seed_interval_source signal max_int;
@@ -5553,6 +5676,7 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
     (run_ok rt (Overflow_signal.Observer.read observer))
 
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let check_timer_snapshot label
       ( expected_interval,
@@ -5640,6 +5764,7 @@ let with_late_timer_wake f =
   f rt sleep_calls release
 
 let test_time_interval_catches_up_after_late_sleep () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_late_timer_wake @@ fun rt sleep_calls release ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
@@ -5653,6 +5778,7 @@ let test_time_interval_catches_up_after_late_sleep () =
   release ()
 
 let test_time_step_catches_up_after_late_sleep () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_late_timer_wake @@ fun rt sleep_calls release ->
   let signal =
     run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
@@ -5740,6 +5866,7 @@ let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
   f rt sleep_calls yield_calls logger
 
 let test_time_catch_up_yields_between_batches () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host @@ fun rt sleep_calls yield_calls _logger ->
   let signal =
     run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
@@ -5757,6 +5884,7 @@ let test_time_catch_up_yields_between_batches () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_step_saturated_catch_up_yields_without_completion () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~jump_ms:max_int
   @@ fun rt sleep_calls yield_calls logger ->
   let applied = ref 0 in
@@ -5780,6 +5908,7 @@ let test_time_step_saturated_catch_up_yields_without_completion () =
     (List.length (Logger.dump logger))
 
 let test_time_step_coalesced_saturated_catch_up_runs_once () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
   @@ fun rt sleep_calls yield_calls logger ->
   let applied = ref 0 in
@@ -5818,6 +5947,7 @@ let test_time_step_coalesced_saturated_catch_up_runs_once () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_large_catch_up_applies_beyond_old_cap () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~jump_ms:10_250
   @@ fun rt sleep_calls yield_calls logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -5836,6 +5966,7 @@ let test_time_large_catch_up_applies_beyond_old_cap () =
     (List.length (Logger.dump logger))
 
 let test_time_interval_saturated_catch_up_coalesces () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
   @@ fun rt sleep_calls yield_calls logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
@@ -5854,6 +5985,7 @@ let test_time_interval_saturated_catch_up_coalesces () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_deadline_saturated_catch_up_does_not_overflow () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   (* Start at -1 so the first 1ms cadence is due at 0, reproducing the
      saturated successor edge through public timer APIs. *)
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
@@ -5927,6 +6059,7 @@ let with_delayed_first_daemon_start_host f =
   f sw clock rt daemon_started release_daemon
 
 let test_time_timer_dispose_before_cancel_install_exits_daemon () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_delayed_first_daemon_start_host
   @@ fun sw clock rt daemon_started release_daemon ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
@@ -5952,6 +6085,7 @@ let test_time_timer_dispose_before_cancel_install_exits_daemon () =
     (Eta_test.Test_clock.sleeper_count clock)
 
 let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -6013,6 +6147,7 @@ let test_time_now_update_on_start_demand_drop_does_not_queue_source () =
     (count_occurrences dot "timer_state=running_uncancellable")
 
 let test_time_timer_becomes_inert_after_dispose () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
@@ -6026,6 +6161,7 @@ let test_time_timer_becomes_inert_after_dispose () =
     (Eta_test.Test_clock.sleeper_count clock)
 
 let test_time_timer_dispose_cancels_sleeping_daemon () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
@@ -6135,6 +6271,7 @@ let with_timer_cancel_tracking_host f =
     fail_next_cancel
 
 let test_time_timer_cancel_runs_outside_graph_lifecycle () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
          _fail_next_cancel ->
@@ -6151,6 +6288,7 @@ let test_time_timer_cancel_runs_outside_graph_lifecycle () =
     "timer cancel ran on owner domain" false !cancel_outside_owner_domain
 
 let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
          _fail_next_cancel ->
@@ -6176,6 +6314,7 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_cancel_failure_preserves_committed_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt _cancel_inside_local_binding _cancel_outside_owner_domain
          fail_next_cancel ->
@@ -6214,6 +6353,7 @@ let test_time_timer_cancel_failure_preserves_committed_snapshot () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_disposal_hooks_continue_after_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let observer =
@@ -6235,6 +6375,7 @@ let test_disposal_hooks_continue_after_failure () =
   Alcotest.(check bool) "later hook still ran" true !later_hook_ran
 
 let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let use_branch = Signal.Var.create true in
   let captured_branch = ref None in
@@ -6284,6 +6425,7 @@ let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_observer_dispose_interruption_runs_finish_hooks () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.now := 0;
   Hashtbl.clear Cleanup_interrupt_runtime.locals;
@@ -6310,6 +6452,7 @@ let test_observer_dispose_interruption_runs_finish_hooks () =
     "interrupted dispose still runs finish hook" true !hook_ran
 
 let test_stabilize_interruption_runs_invalidation_hooks () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.now := 0;
   Hashtbl.clear Cleanup_interrupt_runtime.locals;
@@ -6365,6 +6508,7 @@ let test_stabilize_interruption_runs_invalidation_hooks () =
       : unit)
 
 let test_time_timer_dispose_hook_failure_still_cleans_graph () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
@@ -6387,6 +6531,7 @@ let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   Eio.Promise.await_exn drained
 
 let test_time_invalidated_timer_cancels_sleeping_daemon () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let use_timer = Signal.Var.create true in
   let created_timers = ref 0 in
@@ -6418,6 +6563,7 @@ let test_time_invalidated_timer_cancels_sleeping_daemon () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_dispose_during_step_prevents_update () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let observer_ref = ref None in
   let disposed_during_step = ref false in
@@ -6450,6 +6596,8 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
+(* This helper intentionally uses the top-level [Signal] instance because the
+   delayed timer-update hook and constructed signal type have to agree. *)
 let check_time_step_dispose_after_update_construction_skips_f make_signal =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let f_calls = ref 0 in
@@ -6520,6 +6668,7 @@ let test_time_step_coalesced_dispose_after_update_construction_skips_f () =
           value + 1))
 
 let test_time_interval_restarts_after_reobserve () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let first_observer =
@@ -6546,6 +6695,7 @@ let test_time_interval_restarts_after_reobserve () =
   run_ok rt (Signal.Observer.dispose second_observer)
 
 let test_time_interval_reobserve_ignores_stale_sleep () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let first_observer =
@@ -6575,6 +6725,7 @@ let test_time_interval_reobserve_ignores_stale_sleep () =
   run_ok rt (Signal.Observer.dispose second_observer)
 
 let test_time_timer_becomes_inert_after_bind_switch () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create true in
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -6598,6 +6749,7 @@ let test_time_timer_becomes_inert_after_bind_switch () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_branch_churn_keeps_single_active_sleeper () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create false in
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
@@ -6631,6 +6783,7 @@ let test_time_branch_churn_keeps_single_active_sleeper () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_now_bind_activation_refreshes_current_stabilization () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create false in
   let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ()) in
@@ -6655,6 +6808,7 @@ let test_time_now_bind_activation_refreshes_current_stabilization () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_now_uses_runtime_clock () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ()) in
   let observer =
@@ -6672,6 +6826,7 @@ let test_time_now_uses_runtime_clock () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_rejects_mismatched_runtime () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock_a = Eta_test.Test_clock.create () in
@@ -6708,6 +6863,7 @@ let test_time_timer_rejects_mismatched_runtime () =
   check_mismatch "mismatched step runtime" step
 
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -6735,6 +6891,7 @@ let test_time_now_uses_single_clock_snapshot_per_stabilization () =
       Alcotest.(check int) "same stabilization clock snapshot" left right)
 
 let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
   let first_observer =
@@ -6756,6 +6913,7 @@ let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
   run_ok rt (Signal.Observer.dispose second_observer)
 
 let test_time_now_refreshes_after_idle_observe () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ()) in
   Eta_test.Test_clock.adjust clock (Duration.ms 20);
@@ -6772,6 +6930,7 @@ let test_time_now_refreshes_after_idle_observe () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_after_deadline () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
     run_ok rt
@@ -6797,6 +6956,7 @@ let test_time_after_deadline () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_after_positive_duration_tolerates_advancing_clock () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let current_now_ms = ref 0 in
@@ -6813,6 +6973,7 @@ let test_time_after_positive_duration_tolerates_advancing_clock () =
        (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 1)))
 
 let test_time_after_elapsed_before_observe () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
     run_ok rt
@@ -6831,6 +6992,7 @@ let test_time_after_elapsed_before_observe () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_after_bind_activation_refreshes_current_stabilization () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create false in
   let deadline =
@@ -6859,6 +7021,7 @@ let test_time_after_bind_activation_refreshes_current_stabilization () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_after_bind_activation_does_not_compute_stale_deadline () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let use_timer = Signal.Var.create false in
   let deadline =
@@ -6893,6 +7056,7 @@ let test_time_after_bind_activation_does_not_compute_stale_deadline () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_after_overflow_fails_with_deadline_overflow () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   Eta_test.Test_clock.set_time clock (max_int - 1);
   expect_fail "overflowing relative deadline" (( = ) `Deadline_overflow)
@@ -6900,6 +7064,7 @@ let test_time_after_overflow_fails_with_deadline_overflow () =
        (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))))
 
 let test_time_absolute_deadline () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
   let observer =
@@ -6948,6 +7113,7 @@ let with_blocked_timer_daemon f =
   Fun.protect ~finally:release (fun () -> f rt now_ms sleep_calls)
 
 let test_time_deadline_catches_up_without_daemon_yield () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
   let observer =
@@ -6967,6 +7133,7 @@ let test_time_deadline_catches_up_without_daemon_yield () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
@@ -6986,6 +7153,7 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_interval_does_not_recount_saturated_due () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
   let observer =
@@ -7009,6 +7177,7 @@ let test_time_interval_does_not_recount_saturated_due () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_deadline_refresh_retries_after_downstream_defect () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
   let raised = ref false in
@@ -7042,6 +7211,7 @@ let test_time_deadline_refresh_retries_after_downstream_defect () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_interval_refresh_retries_after_downstream_defect () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let raised = ref false in
@@ -7080,6 +7250,7 @@ let test_time_interval_refresh_retries_after_downstream_defect () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let observer =
@@ -7135,6 +7306,7 @@ let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
             (run_ok rt (Signal.Observer.read observer))))
 
 let test_time_active_deadline_refreshes_before_daemon_runs () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
   let observer =
@@ -7157,6 +7329,7 @@ let test_time_active_deadline_refreshes_before_daemon_runs () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_deadline_on_demand_finish_cancels_running_daemon () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.days 1) 5) in
   let observer =
@@ -7189,6 +7362,7 @@ let test_time_deadline_on_demand_finish_cancels_running_daemon () =
     drained_without_clock_advance
 
 let test_time_active_interval_refreshes_before_daemon_runs () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let observer =
@@ -7211,6 +7385,7 @@ let test_time_active_interval_refreshes_before_daemon_runs () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_step_does_not_catch_up_without_daemon_progress () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let step =
@@ -7238,6 +7413,7 @@ let test_time_step_does_not_catch_up_without_daemon_progress () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_step_coalesced_does_not_catch_up_without_daemon_progress () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let step =
@@ -7269,6 +7445,7 @@ let test_time_step_coalesced_does_not_catch_up_without_daemon_progress () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_step_does_not_run_f_inside_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let f_called = ref 0 in
   let signal =
@@ -7292,6 +7469,7 @@ let test_time_step_does_not_run_f_inside_stabilize () =
       Alcotest.(check int) "f not called by stabilize" 0 !f_called)
 
 let test_time_active_timer_refresh_does_not_restart_pure_pass () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let source = Signal.Var.create 1 in
   let pure_runs = ref 0 in
@@ -7326,6 +7504,7 @@ let test_time_active_timer_refresh_does_not_restart_pure_pass () =
       Alcotest.(check int) "pre-timer pure closure ran once" 1 !pure_runs)
 
 let test_time_step_function () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
     run_ok rt
@@ -7346,6 +7525,7 @@ let test_time_step_function () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_logger_test_clock @@ fun _sw clock rt logger ->
   let fail = ref true in
   let signal =
@@ -7394,6 +7574,7 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_invalid_intervals_fail_cleanly () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   expect_fail "invalid now cadence" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
@@ -7409,6 +7590,7 @@ let test_time_invalid_intervals_fail_cleanly () =
        (widen (Signal.Time.step ~every:Duration.zero ~initial:0 succ)))
 
 let test_time_deadline_validation_errors () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   expect_fail "invalid after interval" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
@@ -7462,6 +7644,7 @@ let with_yield_after_daemon_fork_runtime f =
   f sw rt daemon_forked
 
 let test_stream_observe_timer_initialization_race () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let stabilize =
@@ -7488,6 +7671,7 @@ let test_stream_observe_timer_initialization_race () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_observe_invalidated_before_return_fails () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
   let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
   let use_branch = Signal.Var.create true in
@@ -7528,6 +7712,7 @@ let test_observe_invalidated_before_return_fails () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_registering_timer_demand_does_not_restart_active_pure_closures () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
   let timer = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let source = Signal.Var.create 0 in
@@ -7568,6 +7753,7 @@ let test_registering_timer_demand_does_not_restart_active_pure_closures () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_interrupted_publish_does_not_duplicate () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.now := 0;
@@ -7674,6 +7860,9 @@ let int_stream_observer_callback observer =
 let run_observer_callback_ok rt eff =
   run_ok rt (Effect.map_error (fun `Observer_failed -> `Update_failed) eff)
 
+(* This test intentionally uses the top-level [Signal] instance because
+   [int_stream_observer_callback] extracts a callback with that concrete update
+   type from the observer record. *)
 let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
   with_runtime_and_switch @@ fun _sw rt ->
   let source = Signal.Var.create 0 in
@@ -7786,6 +7975,7 @@ let test_stream_bridge_saturated_sent_counter_interrupted_sent_wakeup_does_not_d
     ~saturate_sent_counter:true ()
 
 let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -7883,6 +8073,7 @@ let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
        | _ -> Alcotest.fail "expected initialized stream update"))
 
 let test_stream_sent_update_is_acknowledged_on_cancellation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -7959,6 +8150,7 @@ let test_stream_sent_update_is_acknowledged_on_cancellation () =
        | _ -> Alcotest.fail "expected one changed stream update"))
 
 let test_stream_bridge_emits_after_stabilize () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -7973,6 +8165,7 @@ let test_stream_bridge_emits_after_stabilize () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_validates_capacity () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -7981,6 +8174,7 @@ let test_stream_bridge_validates_capacity () =
        (widen (Signal.Stream.observe ~capacity:0 signal)))
 
 let test_stream_bridge_rejects_cross_domain_consumer () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -7992,6 +8186,7 @@ let test_stream_bridge_rejects_cross_domain_consumer () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_closes_on_observer_dispose () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8003,6 +8198,7 @@ let test_stream_bridge_closes_on_observer_dispose () =
   | _ -> Alcotest.fail "expected stream to drain buffered update and close"
 
 let test_stream_dispose_closes_queue_after_buffered_updates () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -8023,6 +8219,7 @@ let test_stream_dispose_closes_queue_after_buffered_updates () =
   | _ -> Alcotest.fail "expected buffered stream updates before clean close"
 
 let test_stream_bridge_take_does_not_dispose_observer () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8047,6 +8244,7 @@ let test_stream_bridge_take_does_not_dispose_observer () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_multiple_bridges_dispose_independently () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8079,6 +8277,7 @@ let test_stream_bridge_multiple_bridges_dispose_independently () =
   run_ok rt (Signal.Observer.dispose second_observer)
 
 let test_stream_bridge_invalidated_scope_fails_stream () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let use_branch = Signal.Var.create true in
   let captured = ref None in
@@ -8117,6 +8316,7 @@ let test_stream_bridge_invalidated_scope_fails_stream () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let use_branch = Signal.Var.create true in
   let branch_source = Signal.Var.create 0 in
@@ -8166,6 +8366,7 @@ let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
   run_ok rt (Signal.Observer.dispose selected_observer)
 
 let test_stream_bridge_equal_suppresses_updates () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let fresh_a () = Bytes.to_string (Bytes.of_string "a") in
   let source = Signal.Var.create (fresh_a ()) in
@@ -8201,6 +8402,7 @@ let test_stream_bridge_equal_suppresses_updates () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_full_queue_does_not_block () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8250,6 +8452,7 @@ let test_stream_bridge_full_queue_does_not_block () =
   run_ok rt (Signal.Observer.dispose later_observer)
 
 let test_stream_bridge_drop_callback_reports_loss () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8295,6 +8498,7 @@ let test_stream_bridge_drop_callback_reports_loss () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_drop_update_is_acknowledged_on_cancellation () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 0 in
   let signal = Signal.Var.watch source in
@@ -8372,6 +8576,7 @@ let test_stream_drop_update_is_acknowledged_on_cancellation () =
         after_retry.Signal.stream_bridge_drop_count)
 
 let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.now := 0;
@@ -8444,6 +8649,7 @@ let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
    | _ -> Alcotest.fail "expected buffered initialized stream update")
 
 let test_stream_bridge_drop_callback_failure_does_not_count_retry () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8484,6 +8690,7 @@ let test_stream_bridge_drop_callback_failure_does_not_count_retry () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8501,6 +8708,7 @@ let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
    | _ -> Alcotest.fail "expected buffered update to drain after dispose")
 
 let test_stream_bridge_full_queue_failure_releases_phase () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8541,6 +8749,7 @@ let test_stream_bridge_full_queue_failure_releases_phase () =
   run_ok rt (Signal.Observer.dispose failing_observer)
 
 let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
@@ -8577,6 +8786,7 @@ let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
   run_ok rt (Signal.Observer.dispose disposer)
 
 let test_stream_bridge_repeated_full_queue_keeps_lane () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
