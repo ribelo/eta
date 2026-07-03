@@ -3582,10 +3582,22 @@ let test_stats_counter_saturation_is_typed_failure () =
       (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ())));
     set_counter 0
   in
+  let check_stats_count name count =
+    Fun.protect
+      ~finally:(fun () ->
+        Overflow_signal.Private_test_hooks.set_stats_count_override count None)
+      (fun () ->
+        Overflow_signal.Private_test_hooks.set_stats_count_override count
+          (Some max_int);
+        expect_fail (name ^ " saturation") (counter_overflow name)
+          (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ()))))
+  in
   check "stats pure_snapshot_commit_count" (fun value ->
       Overflow_signal.graph.pure_snapshot_commit_count <- value);
   check "stats callback_delivery_count" (fun value ->
       Overflow_signal.graph.callback_delivery_count <- value);
+  check_stats_count "stats total_node_count"
+    Overflow_signal.Private_test_hooks.Stats_total_node_count;
   check "stats recompute_count" (fun value ->
       Overflow_signal.graph.recompute_count <- value);
   check "stats dynamic_scope_invalidations" (fun value ->
@@ -3596,6 +3608,10 @@ let test_stats_counter_saturation_is_typed_failure () =
       Overflow_signal.graph.nodes_became_unnecessary <- value);
   check "stats stream_bridge_drop_count" (fun value ->
       Overflow_signal.graph.stream_bridge_drop_count <- value);
+  check_stats_count "stats necessary_node_count"
+    Overflow_signal.Private_test_hooks.Stats_necessary_node_count;
+  check_stats_count "stats dead_node_count"
+    Overflow_signal.Private_test_hooks.Stats_dead_node_count;
   check "stats lane_cancelled_waiter_count" (fun value ->
       Overflow_signal.graph.lane.lane_cancelled <- value)
 

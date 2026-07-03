@@ -45,6 +45,11 @@ module Make (Observer_error : Observer_error) () = struct
       | After_timer_due_read_before_commit
       | After_timer_update_constructed_before_run
 
+    type stats_count =
+      | Stats_total_node_count
+      | Stats_necessary_node_count
+      | Stats_dead_node_count
+
     type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
     type state = {
@@ -55,6 +60,8 @@ module Make (Observer_error : Observer_error) () = struct
       lane_waiter_enqueued_count : unit -> int;
       note_lane_waiter_compaction : unit -> unit;
       lane_waiter_compaction_count : unit -> int;
+      set_stats_count_override : stats_count -> int option -> unit;
+      stats_count_override : stats_count -> int option;
     }
 
     let noop = { run = (fun () -> Effect.unit) }
@@ -69,6 +76,9 @@ module Make (Observer_error : Observer_error) () = struct
       let after_timer_update_constructed_before_run = ref noop in
       let lane_waiter_enqueued_count = ref 0 in
       let lane_waiter_compaction_count = ref 0 in
+      let total_node_count_override = ref None in
+      let necessary_node_count_override = ref None in
+      let dead_node_count_override = ref None in
       let slot = function
         | After_observer_delivery_claim -> after_observer_delivery_claim
         | After_observer_activation_before_return ->
@@ -80,6 +90,11 @@ module Make (Observer_error : Observer_error) () = struct
             after_timer_due_read_before_commit
         | After_timer_update_constructed_before_run ->
             after_timer_update_constructed_before_run
+      in
+      let stats_count_slot = function
+        | Stats_total_node_count -> total_node_count_override
+        | Stats_necessary_node_count -> necessary_node_count_override
+        | Stats_dead_node_count -> dead_node_count_override
       in
       let with_hook hook action f =
         let slot = slot hook in
@@ -102,7 +117,10 @@ module Make (Observer_error : Observer_error) () = struct
             After_timer_update_constructed_before_run;
           ];
         lane_waiter_enqueued_count := 0;
-        lane_waiter_compaction_count := 0
+        lane_waiter_compaction_count := 0;
+        total_node_count_override := None;
+        necessary_node_count_override := None;
+        dead_node_count_override := None
       in
       let run hook =
         let slot = slot hook in
@@ -116,6 +134,10 @@ module Make (Observer_error : Observer_error) () = struct
         lane_waiter_compaction_count := !lane_waiter_compaction_count + 1
       in
       let lane_waiter_compaction_count () = !lane_waiter_compaction_count in
+      let set_stats_count_override count value =
+        stats_count_slot count := value
+      in
+      let stats_count_override count = !(stats_count_slot count) in
       {
         with_hook;
         clear;
@@ -124,6 +146,8 @@ module Make (Observer_error : Observer_error) () = struct
         lane_waiter_enqueued_count;
         note_lane_waiter_compaction;
         lane_waiter_compaction_count;
+        set_stats_count_override;
+        stats_count_override;
       }
 
     let with_hook hook action f = state.with_hook hook action f
@@ -133,6 +157,8 @@ module Make (Observer_error : Observer_error) () = struct
     let lane_waiter_enqueued_count () = state.lane_waiter_enqueued_count ()
     let note_lane_waiter_compaction () = state.note_lane_waiter_compaction ()
     let lane_waiter_compaction_count () = state.lane_waiter_compaction_count ()
+    let set_stats_count_override = state.set_stats_count_override
+    let stats_count_override = state.stats_count_override
   end
 
   type 'a update =
@@ -3187,6 +3213,9 @@ module Make (Observer_error : Observer_error) () = struct
   let stats_counter name value =
     if value = max_int then counter_overflow name else value
 
+  let stats_count count actual =
+    Option.value (Private_test_hooks.stats_count_override count) ~default:actual
+
   let stats () =
     with_graph_lane_sync (fun () ->
         try
@@ -3199,15 +3228,24 @@ module Make (Observer_error : Observer_error) () = struct
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
                   graph.callback_delivery_count;
-              total_node_count = List.length all_nodes;
+              total_node_count =
+                stats_counter "stats total_node_count"
+                  (stats_count Private_test_hooks.Stats_total_node_count
+                     (List.length all_nodes));
               active_observer_count =
                 stats_counter "stats active_observer_count"
                   (active_observer_count ());
               invalid_observer_count =
                 stats_counter "stats invalid_observer_count"
                   (invalid_observer_count ());
-              necessary_node_count = necessary_node_count ();
-              dead_node_count = dead_node_count ();
+              necessary_node_count =
+                stats_counter "stats necessary_node_count"
+                  (stats_count Private_test_hooks.Stats_necessary_node_count
+                     (necessary_node_count ()));
+              dead_node_count =
+                stats_counter "stats dead_node_count"
+                  (stats_count Private_test_hooks.Stats_dead_node_count
+                     (dead_node_count ()));
               live_dirty_node_count =
                 stats_counter "stats live_dirty_node_count"
                   (live_dirty_node_count all_nodes);
