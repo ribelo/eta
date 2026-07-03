@@ -13,6 +13,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
 let with_runtime f = B.with_runtime (fun _ctx rt -> f rt)
 
+let rec wait_until ?(attempts = 200_000) label pred =
+  if pred () then ()
+  else if attempts <= 0 then Alcotest.failf "timed out waiting for %s" label
+  else (
+    B.yield ();
+    Thread.yield ();
+    wait_until ~attempts:(attempts - 1) label pred)
+
 let pp_error ppf = function
   | `Driver err -> Format.fprintf ppf "Driver(%S)" err
   | `Invalid_blocking_pool message ->
@@ -44,6 +52,7 @@ let test_leased_blocking_rejects_detach_started_pool () =
   | Exit.Ok _ -> Alcotest.fail "expected detach-started rejection"
 
 let test_timed_leased_blocking_calls_on_cancel () =
+  let started = Atomic.make false in
   let interrupted = Atomic.make false in
   let mutex = Mutex.create () in
   let condition = Condition.create () in
@@ -62,16 +71,24 @@ let test_timed_leased_blocking_calls_on_cancel () =
           Condition.wait condition mutex
         done)
   in
-  with_runtime @@ fun rt ->
+  B.with_test_clock @@ fun ctx clock rt ->
   let eff =
     Helper.leased_blocking_result_timeout ~timeout:(Eta.Duration.ms 5)
       ~on_timeout:`Timeout
       ~on_cancel:mark_interrupted
       (fun () ->
+        Atomic.set started true;
         await_interrupted ();
         Error "interrupted")
   in
-  match B.run rt eff with
+  let result = B.fork_run ctx rt eff in
+  wait_until "blocking worker start" (fun () ->
+      Atomic.get started || B.is_resolved result);
+  Alcotest.(check bool) "blocking worker started" true (Atomic.get started);
+  wait_until "timeout sleeper" (fun () ->
+      B.sleeper_count clock > 0 || B.is_resolved result);
+  B.adjust_clock clock (Eta.Duration.ms 5);
+  match B.await result with
   | Exit.Error (Cause.Fail `Timeout) ->
       Alcotest.(check bool) "cancel hook called" true (Atomic.get interrupted)
   | Exit.Error cause ->
