@@ -4216,6 +4216,97 @@ let test_queued_graph_operation_cancellation_does_not_run () =
   Alcotest.(check int) "cancelled waiter not left waiting" 0
     after_stats.Signal.lane_waiter_count
 
+let test_lane_waiter_compaction_uses_retained_cancellation_debt () =
+  with_runtime_and_switch @@ fun sw rt ->
+  let start_lane_holder () =
+    let source = Signal.Var.create 1 in
+    let started, started_resolver = Eio.Promise.create () in
+    let release, release_resolver = Eio.Promise.create () in
+    let block_once = ref true in
+    let signal =
+      Signal.Var.watch source
+      |> Signal.map (fun value ->
+             if !block_once then (
+               block_once := false;
+               Eio.Promise.resolve started_resolver ();
+               Eio.Promise.await release);
+             value)
+    in
+    ignore
+      (run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+        : int Signal.observer);
+    let stabilizer =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Eta_eio.Runtime.run rt (widen Signal.stabilize))
+    in
+    Eio.Promise.await started;
+    (release_resolver, stabilizer)
+  in
+  let start_queued_stats label =
+    let cancel_ctx = ref None in
+    let fiber =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Eio.Cancel.sub @@ fun ctx ->
+          cancel_ctx := Some ctx;
+          Eta_eio.Runtime.run rt (widen (Signal.stats ())))
+    in
+    wait_until (label ^ " cancellation context") (fun () ->
+        Option.is_some !cancel_ctx);
+    (fiber, cancel_ctx)
+  in
+  let cancel_stats label (fiber, cancel_ctx) =
+    Option.iter (fun ctx -> Eio.Cancel.cancel ctx Exit) !cancel_ctx;
+    await_cancelled label fiber
+  in
+  let wait_for_enqueued_count label expected =
+    wait_until label (fun () ->
+        Signal.Private_test_hooks.lane_waiter_enqueued_count () >= expected)
+  in
+  Fun.protect
+    ~finally:Signal.Private_test_hooks.clear
+    (fun () ->
+      Signal.Private_test_hooks.clear ();
+      let release_first, first_stabilizer = start_lane_holder () in
+      let first_stats = start_queued_stats "first queued stats" in
+      wait_for_enqueued_count "first lane waiter enqueued" 1;
+      cancel_stats "first queued stats" first_stats;
+      Alcotest.(check int) "single retained waiter compacts" 1
+        (Signal.Private_test_hooks.lane_waiter_compaction_count ());
+      Eio.Promise.resolve release_first ();
+      ignore
+        (expect_exit_ok "first stabilizer" (Eio.Promise.await_exn first_stabilizer)
+          : unit);
+      let compactions_after_first =
+        Signal.Private_test_hooks.lane_waiter_compaction_count ()
+      in
+      let cancellations_after_first =
+        (run_ok rt (Signal.stats ())).Signal.lane_cancelled_waiter_count
+      in
+      let release_second, second_stabilizer = start_lane_holder () in
+      let queued_a = start_queued_stats "queued stats a" in
+      let queued_b = start_queued_stats "queued stats b" in
+      let queued_c = start_queued_stats "queued stats c" in
+      wait_for_enqueued_count "three more lane waiters enqueued" 4;
+      cancel_stats "queued stats a" queued_a;
+      Alcotest.(check int)
+        "one retained cancellation below threshold does not compact"
+        compactions_after_first
+        (Signal.Private_test_hooks.lane_waiter_compaction_count ());
+      Eio.Promise.resolve release_second ();
+      ignore
+        (expect_exit_ok "second stabilizer"
+           (Eio.Promise.await_exn second_stabilizer)
+          : unit);
+      ignore
+        (expect_exit_ok "queued stats b" (Eio.Promise.await_exn (fst queued_b))
+          : Signal.stats);
+      ignore
+        (expect_exit_ok "queued stats c" (Eio.Promise.await_exn (fst queued_c))
+          : Signal.stats);
+      Alcotest.(check int) "cumulative cancellation stat still advances"
+        (cancellations_after_first + 1)
+        (run_ok rt (Signal.stats ())).Signal.lane_cancelled_waiter_count)
+
 let test_stats_report_lane_waiters () =
   with_runtime_and_switch @@ fun sw rt ->
   let source = Signal.Var.create 1 in
@@ -8675,6 +8766,9 @@ let () =
             `Quick test_effectful_update_acquire_interruption_releases_slot;
           Alcotest.test_case "queued graph operation cancellation" `Quick
             test_queued_graph_operation_cancellation_does_not_run;
+          Alcotest.test_case
+            "lane compaction uses retained cancellation debt" `Quick
+            test_lane_waiter_compaction_uses_retained_cancellation_debt;
           Alcotest.test_case "stats report lane waiters" `Quick
             test_stats_report_lane_waiters;
           Alcotest.test_case "active graph interruption releases lane" `Quick

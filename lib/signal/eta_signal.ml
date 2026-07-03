@@ -51,6 +51,10 @@ module Make (Observer_error : Observer_error) () = struct
       with_hook : 'a. hook -> action -> (unit -> 'a) -> 'a;
       clear : unit -> unit;
       run_hook : 'err. hook -> (unit, 'err) Effect.t;
+      note_lane_waiter_enqueued : unit -> unit;
+      lane_waiter_enqueued_count : unit -> int;
+      note_lane_waiter_compaction : unit -> unit;
+      lane_waiter_compaction_count : unit -> int;
     }
 
     let noop = { run = (fun () -> Effect.unit) }
@@ -63,6 +67,8 @@ module Make (Observer_error : Observer_error) () = struct
       let after_stream_drop_before_ack = ref noop in
       let after_timer_due_read_before_commit = ref noop in
       let after_timer_update_constructed_before_run = ref noop in
+      let lane_waiter_enqueued_count = ref 0 in
+      let lane_waiter_compaction_count = ref 0 in
       let slot = function
         | After_observer_delivery_claim -> after_observer_delivery_claim
         | After_observer_activation_before_return ->
@@ -94,17 +100,39 @@ module Make (Observer_error : Observer_error) () = struct
             After_stream_drop_before_ack;
             After_timer_due_read_before_commit;
             After_timer_update_constructed_before_run;
-          ]
+          ];
+        lane_waiter_enqueued_count := 0;
+        lane_waiter_compaction_count := 0
       in
       let run hook =
         let slot = slot hook in
         (!slot).run ()
       in
-      { with_hook; clear; run_hook = run }
+      let note_lane_waiter_enqueued () =
+        lane_waiter_enqueued_count := !lane_waiter_enqueued_count + 1
+      in
+      let lane_waiter_enqueued_count () = !lane_waiter_enqueued_count in
+      let note_lane_waiter_compaction () =
+        lane_waiter_compaction_count := !lane_waiter_compaction_count + 1
+      in
+      let lane_waiter_compaction_count () = !lane_waiter_compaction_count in
+      {
+        with_hook;
+        clear;
+        run_hook = run;
+        note_lane_waiter_enqueued;
+        lane_waiter_enqueued_count;
+        note_lane_waiter_compaction;
+        lane_waiter_compaction_count;
+      }
 
     let with_hook hook action f = state.with_hook hook action f
     let clear () = state.clear ()
     let run hook = state.run_hook hook
+    let note_lane_waiter_enqueued () = state.note_lane_waiter_enqueued ()
+    let lane_waiter_enqueued_count () = state.lane_waiter_enqueued_count ()
+    let note_lane_waiter_compaction () = state.note_lane_waiter_compaction ()
+    let lane_waiter_compaction_count () = state.lane_waiter_compaction_count ()
   end
 
   type 'a update =
@@ -510,6 +538,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable lane_busy : bool;
     mutable lane_waiting : int;
     mutable lane_cancelled : int;
+    mutable lane_cancelled_debt : int;
   }
 
   type timer_refresh_context = {
@@ -560,6 +589,7 @@ module Make (Observer_error : Observer_error) () = struct
           lane_busy = false;
           lane_waiting = 0;
           lane_cancelled = 0;
+          lane_cancelled_debt = 0;
         };
       owner_domain = Domain.self ();
       next_id = 0;
@@ -656,16 +686,32 @@ module Make (Observer_error : Observer_error) () = struct
   let lane_invariant_failed message =
     invalid_arg ("Eta_signal invariant failed: " ^ message)
 
-  let rec take_waiting_waiter waiters =
-    if Stdlib.Queue.is_empty waiters then None
+  let decrement_lane_cancelled_debt lane =
+    if lane.lane_cancelled_debt > 0 then
+      lane.lane_cancelled_debt <- lane.lane_cancelled_debt - 1
+
+  let rec take_waiting_waiter_locked lane =
+    if Stdlib.Queue.is_empty lane.lane_waiters then None
     else
-      let waiter = Stdlib.Queue.take waiters in
+      let waiter = Stdlib.Queue.take lane.lane_waiters in
       match waiter.lane_state with
       | Lane_waiting -> Some waiter
-      | Lane_granted | Lane_cancelled -> take_waiting_waiter waiters
+      | Lane_granted -> take_waiting_waiter_locked lane
+      | Lane_cancelled ->
+          decrement_lane_cancelled_debt lane;
+          take_waiting_waiter_locked lane
+
+  let should_compact_cancelled retained_cancelled queue_length =
+    if retained_cancelled <= 0 || queue_length <= 0 then false
+    else
+      let half_rounded_up = (queue_length / 2) + (queue_length mod 2) in
+      retained_cancelled >= max 1 half_rounded_up
 
   let compact_cancelled_lane_waiters_locked lane =
-    if lane.lane_cancelled > 0 then (
+    if
+      should_compact_cancelled lane.lane_cancelled_debt
+        (Stdlib.Queue.length lane.lane_waiters)
+    then (
       let live = Stdlib.Queue.create () in
       Stdlib.Queue.iter
         (fun waiter ->
@@ -676,7 +722,9 @@ module Make (Observer_error : Observer_error) () = struct
       Stdlib.Queue.clear lane.lane_waiters;
       Stdlib.Queue.iter
         (fun waiter -> Stdlib.Queue.push waiter lane.lane_waiters)
-        live)
+        live;
+      lane.lane_cancelled_debt <- 0;
+      Private_test_hooks.note_lane_waiter_compaction ())
 
   let add_lane_grant pending waiter = Stdlib.Queue.push waiter pending
 
@@ -719,7 +767,7 @@ module Make (Observer_error : Observer_error) () = struct
         result)
 
   let release_lane_locked pending_grants lane =
-    match take_waiting_waiter lane.lane_waiters with
+    match take_waiting_waiter_locked lane with
     | Some waiter ->
         lane.lane_waiting <- lane.lane_waiting - 1;
         ignore (grant_lane_waiter_locked pending_grants waiter)
@@ -731,6 +779,7 @@ module Make (Observer_error : Observer_error) () = struct
         waiter.lane_state <- Lane_cancelled;
         lane.lane_waiting <- lane.lane_waiting - 1;
         lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
+        lane.lane_cancelled_debt <- saturating_succ lane.lane_cancelled_debt;
         compact_cancelled_lane_waiters_locked lane
     | Lane_granted ->
         waiter.lane_state <- Lane_cancelled;
@@ -759,6 +808,7 @@ module Make (Observer_error : Observer_error) () = struct
       }
     in
     Stdlib.Queue.push waiter lane.lane_waiters;
+    Private_test_hooks.note_lane_waiter_enqueued ();
     lane.lane_waiting <- saturating_succ lane.lane_waiting;
     (promise, waiter)
 
