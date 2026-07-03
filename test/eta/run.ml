@@ -94,6 +94,8 @@ let () =
             `Quick test_queue_backpressure_sender_wakeup_stays_on_owner_domain;
           Alcotest.test_case "receiver wakeup stays on owner domain" `Quick
             test_queue_receiver_wakeup_stays_on_owner_domain;
+          Alcotest.test_case "receiver wakeup reserves value" `Quick
+            test_queue_receiver_wakeup_reserves_value_for_waiter;
           Alcotest.test_case "resolves sender outside lock" `Quick
             test_queue_resolves_sender_outside_lock;
           Alcotest.test_case "recv committed result survives wakeup failure"

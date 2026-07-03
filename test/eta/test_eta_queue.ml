@@ -225,6 +225,33 @@ let reset_hooked_runtime () =
   Hooked_runtime.await_hook := (fun () -> ());
   Hooked_runtime.cancel_after_resolved_await := false
 
+let test_queue_receiver_wakeup_reserves_value_for_waiter () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.create () in
+  let late_recv = ref None in
+  Fun.protect
+    ~finally:reset_hooked_runtime
+    (fun () ->
+      Hooked_runtime.await_hook :=
+        (fun () ->
+          Hooked_runtime.await_hook := (fun () -> ());
+          Hooked_runtime.resolve_hook :=
+            (fun () ->
+              Hooked_runtime.resolve_hook := (fun () -> ());
+              late_recv := Some (run_ok rt (Queue.try_recv queue)));
+          run_ok rt (Queue.send queue 7));
+      Alcotest.(check int)
+        "parked receiver gets sent value" 7
+        (run_ok rt (Queue.recv queue)));
+  match !late_recv with
+  | Some `Empty -> ()
+  | Some (`Item value) ->
+      Alcotest.failf "late receiver stole reserved value %d" value
+  | Some `Closed -> Alcotest.fail "late receiver saw closed queue"
+  | Some (`Closed_with_error _) ->
+      Alcotest.fail "late receiver saw error-closed queue"
+  | None -> Alcotest.fail "late receiver did not run"
+
 let test_queue_recv_result_survives_sender_wakeup_failure () =
   let rt = Test_runtime.create () in
   let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in

@@ -8175,72 +8175,73 @@ let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
       | Signal.Private_test_hooks.Test_delivery_running _ ->
           Alcotest.fail "expected newer pending stream delivery")
 
-let test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate () =
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
-  Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
-  Cleanup_interrupt_runtime.now := 0;
-  Cleanup_interrupt_runtime.local_binding_count := 0;
-  Hashtbl.clear Cleanup_interrupt_runtime.locals;
+let test_stream_bridge_waiting_consumer_gets_reserved_sent_update_once () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let stream_consumer_waiting = ref false in
+  let waiting, waiting_resolver = Eio.Promise.create () in
+  let module Base =
+    (val Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock env)
+       : Runtime_contract.RUNTIME)
+  in
+  let module Hooked_runtime = struct
+    include Base
+
+    let now_ms () = Eta_test.Test_clock.now_ms clock
+    let sleep duration = Eta_test.Test_clock.sleep clock duration
+
+    let await_promise promise =
+      if not !stream_consumer_waiting then (
+        stream_consumer_waiting := true;
+        Eio.Promise.resolve waiting_resolver ());
+      Base.await_promise promise
+  end in
   let rt =
     Runtime.create_with_runtime
-      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+      (module Hooked_runtime : Runtime_contract.RUNTIME)
       ()
   in
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
-  let arm_interrupt = ref false in
-  let marker =
-    expect_exit_ok "marker observer registration"
-      (Runtime.run rt
-         (widen
-            (Signal.Observer.observe signal (fun _update ->
-                 Effect.sync (fun () ->
-                     if !arm_interrupt then
-                       Cleanup_interrupt_runtime.after_local_binding_count :=
-                         Some
-                           ( !Cleanup_interrupt_runtime.local_binding_count
-                             + 3,
-                             fun () ->
-                               Cleanup_interrupt_runtime
-                               .interrupt_next_protect_return := true ))))))
-  in
   let observer, stream =
     expect_exit_ok "stream observer registration"
       (Runtime.run rt (widen (Signal.Stream.observe signal)))
   in
-  expect_die "park stream receiver"
-    (Runtime.run rt
-       (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)));
-  Cleanup_interrupt_runtime.local_binding_count := 0;
-  arm_interrupt := true;
-  (match Runtime.run rt (widen Signal.stabilize) with
-  | exception Cleanup_interrupt -> ()
-  | Exit.Error _ -> ()
-  | Exit.Ok () -> Alcotest.fail "expected injected queue wakeup interrupt");
-  arm_interrupt := false;
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
-  Cleanup_interrupt_runtime.after_local_binding_count := None;
-  ignore
-    (expect_exit_ok "retry stabilize"
-       (Runtime.run rt (widen Signal.stabilize))
-      : unit);
-  ignore
-    (expect_exit_ok "stream observer dispose"
-       (Runtime.run rt (widen (Signal.Observer.dispose observer)))
-      : unit);
-  ignore
-    (expect_exit_ok "marker observer dispose"
-       (Runtime.run rt (widen (Signal.Observer.dispose marker)))
-      : unit);
-  (match
-     expect_exit_ok "stream collect after interrupted sent wakeup"
-       (Runtime.run rt
-          (widen (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)))
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | [ Signal.Initialized 1; Signal.Initialized 1 ] ->
-       Alcotest.fail "interrupted sent wakeup was delivered twice"
-   | _ -> Alcotest.fail "expected one initialized stream update")
+  Fun.protect
+    ~finally:(fun () ->
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
+    (fun () ->
+      let consumer =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Runtime.run rt
+              (widen
+                 (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)))
+      in
+      Eio.Promise.await waiting;
+      expect_exit_ok "stabilize reserved stream send"
+        (Runtime.run rt (widen Signal.stabilize));
+      (match
+         expect_exit_ok "waiting stream consumer"
+           (Eio.Promise.await_exn consumer)
+       with
+       | [ Signal.Initialized 1 ] -> ()
+       | _ -> Alcotest.fail "expected one initialized stream update");
+      expect_exit_ok "retry stabilize"
+        (Runtime.run rt (widen Signal.stabilize));
+      expect_exit_ok "stream observer dispose"
+        (Runtime.run rt (widen (Signal.Observer.dispose observer)));
+      match
+        expect_exit_ok "stream collect after reserved send"
+          (Runtime.run rt
+             (widen (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)))
+      with
+      | [] -> ()
+      | [ Signal.Initialized 1 ] ->
+          Alcotest.fail "reserved stream send was delivered twice"
+      | _ -> Alcotest.fail "expected no buffered duplicate stream update")
 
 let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -9557,8 +9558,8 @@ let () =
           Alcotest.test_case "stream bridge interrupted publish does not duplicate"
             `Quick test_stream_bridge_interrupted_publish_does_not_duplicate;
           Alcotest.test_case
-            "stream bridge interrupted sent wakeup does not duplicate" `Quick
-            test_stream_bridge_interrupted_sent_wakeup_does_not_duplicate;
+            "stream bridge waiting consumer gets reserved update once" `Quick
+            test_stream_bridge_waiting_consumer_gets_reserved_sent_update_once;
           Alcotest.test_case
             "stream bridge consumer wakeup failure does not fail stabilize"
             `Quick

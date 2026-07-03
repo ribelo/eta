@@ -10,11 +10,12 @@ type 'err send_result =
 
 type sent_token = unit ref
 
-type receiver = {
+type 'a receiver = {
   contract : Runtime_contract.t;
   resolver : unit Runtime_contract.resolver;
   mutable active : bool;
   mutable notified : bool;
+  mutable reserved : 'a option;
 }
 
 type ('a, 'err) sender = {
@@ -32,7 +33,7 @@ type ('a, 'err) t = {
   overflow : overflow;
   values : 'a Stdlib.Queue.t;
   senders : ('a, 'err) sender Stdlib.Queue.t;
-  receivers : receiver Stdlib.Queue.t;
+  receivers : 'a receiver Stdlib.Queue.t;
   mutable closed : 'err close_reason option;
   mutable sent : int;
   mutable received : int;
@@ -48,7 +49,7 @@ type ('a, 'err) t = {
 
 type ('a, 'err) wakeup =
   | Wake_sender of ('a, 'err) sender * 'err send_result
-  | Wake_receiver of receiver
+  | Wake_receiver of 'a receiver
 
 type stats = {
   depth : int;
@@ -130,7 +131,7 @@ let resolve_sender
         sender.contract.Runtime_contract.resolve_promise sender.resolver result;
         sender.notified <- true)
 
-let wake_receiver (receiver : receiver) =
+let wake_receiver (receiver : 'a receiver) =
   if not receiver.notified then
     receiver.contract.Runtime_contract.protect (fun () ->
         receiver.contract.Runtime_contract.resolve_promise receiver.resolver ();
@@ -191,7 +192,7 @@ let capacity_available (t : ('a, 'err) t) =
   | Drop_new { capacity } | Backpressure { capacity } ->
       Stdlib.Queue.length t.values < capacity
 
-let rec take_active_receiver_locked t =
+let rec take_active_receiver_locked (t : ('a, 'err) t) : 'a receiver option =
   if Stdlib.Queue.is_empty t.receivers then None
   else
     let receiver = Stdlib.Queue.take t.receivers in
@@ -219,6 +220,27 @@ let take_sender_locked (t : ('a, 'err) t) =
       t.waiting_senders <- t.waiting_senders - 1;
       Some sender
 
+let reserve_receiver_value_locked
+    wakeups
+    (t : ('a, 'err) t)
+    (receiver : 'a receiver)
+    value =
+  t.waiting_receivers <- t.waiting_receivers - 1;
+  receiver.active <- false;
+  receiver.reserved <- Some value;
+  t.sent <- saturating_succ t.sent;
+  t.received <- saturating_succ t.received;
+  t.sent_token <- new_sent_token ();
+  add_wakeup wakeups (Wake_receiver receiver)
+
+let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
+  match take_active_receiver_locked t with
+  | Some receiver -> reserve_receiver_value_locked wakeups t receiver value
+  | None ->
+      Stdlib.Queue.add value t.values;
+      t.sent <- saturating_succ t.sent;
+      t.sent_token <- new_sent_token ()
+
 let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
   match take_active_receiver_locked t with
   | None -> ()
@@ -226,12 +248,6 @@ let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
       t.waiting_receivers <- t.waiting_receivers - 1;
       receiver.active <- false;
       add_wakeup wakeups (Wake_receiver receiver)
-
-let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
-  Stdlib.Queue.add value t.values;
-  t.sent <- saturating_succ t.sent;
-  t.sent_token <- new_sent_token ();
-  wake_one_receiver_locked wakeups t
 
 let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
   match t.overflow with
@@ -296,7 +312,7 @@ let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
   then (
     let live = Stdlib.Queue.create () in
     Stdlib.Queue.iter
-      (fun (receiver : receiver) ->
+      (fun (receiver : 'a receiver) ->
         if receiver.active then Stdlib.Queue.push receiver live)
       t.receivers;
     Stdlib.Queue.clear t.receivers;
@@ -305,7 +321,7 @@ let compact_cancelled_receivers_locked (t : ('a, 'err) t) =
       live;
     t.cancelled_receiver_debt <- 0)
 
-let cancel_receiver (t : ('a, 'err) t) (receiver : receiver) =
+let cancel_receiver (t : ('a, 'err) t) (receiver : 'a receiver) =
   if receiver.active then (
     receiver.active <- false;
     t.waiting_receivers <- t.waiting_receivers - 1;
@@ -486,10 +502,19 @@ let take_batch t ~max =
 
 let enqueue_receiver contract t =
   let promise, resolver = contract.Runtime_contract.create_promise () in
-  let receiver = { contract; resolver; active = true; notified = false } in
+  let receiver =
+    { contract; resolver; active = true; notified = false; reserved = None }
+  in
   Stdlib.Queue.add receiver t.receivers;
   t.waiting_receivers <- t.waiting_receivers + 1;
   (promise, receiver)
+
+let take_receiver_reservation (receiver : 'a receiver) =
+  match receiver.reserved with
+  | None -> None
+  | Some value ->
+      receiver.reserved <- None;
+      Some value
 
 let recv_sync contract t =
   let rec loop () =
@@ -508,13 +533,18 @@ let recv_sync contract t =
     | `Wait (promise, receiver) -> (
         try
           contract.Runtime_contract.await_promise promise;
-          loop ()
+          match take_receiver_reservation receiver with
+          | Some value -> `Item value
+          | None -> loop ()
         with exn
           when Option.is_some
                  (contract.Runtime_contract.cancellation_reason exn) ->
-          with_lock_during_cancel contract t (fun () ->
-              cancel_receiver t receiver);
-          raise exn)
+          match take_receiver_reservation receiver with
+          | Some value -> `Item value
+          | None ->
+              with_lock_during_cancel contract t (fun () ->
+                  cancel_receiver t receiver);
+              raise exn)
   in
   loop ()
 

@@ -91,6 +91,9 @@ val recv :
   ('a, [> `Closed | `Closed_with_error of 'err ]) Effect.t
 (** Receive the next value, waiting while the queue is empty.
 
+    Values admitted while receivers are waiting are reserved for the oldest
+    waiting receiver; later receivers cannot overtake that waiter.
+
     Buffered values are delivered after close. Once the buffer is drained,
     [close] fails with [`Closed] and [close_with_error err] fails with
     [`Closed_with_error err]. *)
