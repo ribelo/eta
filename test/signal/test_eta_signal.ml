@@ -7230,6 +7230,10 @@ let test_time_timer_rejects_mismatched_runtime () =
       ~finally:(fun () -> run_ok rt_a (Signal.Observer.dispose observer))
       (fun () ->
         run_ok rt_a Signal.stabilize;
+        expect_fail (label ^ " observe while owner demand active")
+          (function `Runtime_mismatch -> true | _ -> false)
+          (Eta_eio.Runtime.run rt_b
+             (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))));
         expect_fail label
           (function `Runtime_mismatch -> true | _ -> false)
           (Eta_eio.Runtime.run rt_b (widen Signal.stabilize)))

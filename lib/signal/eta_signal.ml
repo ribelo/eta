@@ -2583,6 +2583,29 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.on_exit (fun _exit ->
            run_pending_dispose_cleanup hooks_ref refresh_timers)
 
+  let abort_observer_registration_effect observer =
+    let hooks_ref = ref [] in
+    let cleanup_needed = ref false in
+    let run_cleanup () =
+      run_pending_dispose_cleanup hooks_ref (ref false)
+    in
+    with_graph_lane_sync
+      (fun () ->
+        match observer.obs_state with
+        | Observer_registering _ ->
+            let hooks = dispose_observer_unlocked observer in
+            hooks_ref := hooks;
+            cleanup_needed := true;
+            update_necessity_counters_unlocked ();
+            true
+        | Observer_active _ | Observer_invalid_scope _ | Observer_disposed _ ->
+            false)
+    |> Effect.bind (function
+         | true -> run_cleanup ()
+         | false -> dispose_observer_effect observer)
+    |> Effect.on_exit (fun _exit ->
+           if !cleanup_needed then run_cleanup () else Effect.unit)
+
   let delivered_value = function
     | Initialized value -> value
     | Changed { new_value; _ } -> new_value
@@ -3109,7 +3132,8 @@ module Make (Observer_error : Observer_error) () = struct
                     |> Effect.map (fun () -> observer)))
              |> Effect.on_exit (function
                   | Eta.Exit.Ok _ -> Effect.unit
-                  | Eta.Exit.Error _ -> dispose_observer_effect observer))
+                  | Eta.Exit.Error _ ->
+                      abort_observer_registration_effect observer))
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal

@@ -138,7 +138,18 @@ let test_timer_runtime_mismatch_on_observe () =
   let timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
   expect_fail "observe timer from another runtime"
     (function `Runtime_mismatch -> true | _ -> false)
-    (Eta.Runtime.run rt_b (widen (S.Observer.observe timer (fun _ -> E.unit))))
+    (Eta.Runtime.run rt_b (widen (S.Observer.observe timer (fun _ -> E.unit))));
+  let keep_alive =
+    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+  in
+  Fun.protect
+    ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
+    (fun () ->
+      run_ok rt_a S.stabilize;
+      expect_fail "observe active timer from another runtime"
+        (function `Runtime_mismatch -> true | _ -> false)
+        (Eta.Runtime.run rt_b
+           (widen (S.Observer.observe timer (fun _ -> E.unit)))))
 
 let test_captured_branch_observer_invalidates_without_owner_observer () =
   let module S = Eta_signal.Make (Observer_error) () in
