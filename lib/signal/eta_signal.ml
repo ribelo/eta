@@ -432,7 +432,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable obs_value : 'a observer_value_state;
     mutable obs_delivery : 'a observer_delivery_state;
     mutable obs_staged : 'a observer_staged_state option;
-    obs_on_finish : (observer_finish_reason -> unit) list;
+    mutable obs_on_finish : (observer_finish_reason -> unit) list;
   }
 
   and 'a observer_state =
@@ -569,6 +569,62 @@ module Make (Observer_error : Observer_error) () = struct
           Test_delivery_pending (token, update)
       | Observer_delivery_running (token, update, _) ->
           Test_delivery_running (token, update)
+
+    let signal_version signal = signal.version
+    let set_signal_version signal value = signal.version <- value
+    let signal_valid signal = signal.valid
+    let set_signal_valid signal value = signal.valid <- value
+
+    let seed_var_source_value (type a) (signal : a signal) (value : a) =
+      match signal.kind with
+      | Var source ->
+          source.source_value <- value;
+          source.graph_value <- value
+      | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
+      | Map8 _ | Map9 _ | All _ | Bind _ ->
+          invalid_arg
+            "Eta_signal.Private_test_hooks: expected source-backed signal"
+
+    let set_timer_generation signal generation =
+      match signal.timer with
+      | None ->
+          invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
+      | Some timer ->
+          timer.timer_state <-
+            (match timer.timer_state with
+            | Timer_inactive _ -> Timer_inactive generation
+            | Timer_starting _ -> Timer_starting generation
+            | Timer_running_uncancellable (_, next_due_ms) ->
+                Timer_running_uncancellable (generation, next_due_ms)
+            | Timer_running (_, next_due_ms, cancel) ->
+                Timer_running (generation, next_due_ms, cancel)
+            | Timer_finished _ -> Timer_finished generation)
+
+    let set_timer_next_due signal next_due_ms =
+      match signal.timer with
+      | None ->
+          invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
+      | Some timer -> (
+          match timer.timer_state with
+          | Timer_running_uncancellable (generation, _) ->
+              timer.timer_state <-
+                Timer_running_uncancellable (generation, Some next_due_ms)
+          | Timer_running (generation, _, cancel) ->
+              timer.timer_state <-
+                Timer_running (generation, Some next_due_ms, cancel)
+          | Timer_inactive _ | Timer_starting _ | Timer_finished _ ->
+              invalid_arg
+                "Eta_signal.Private_test_hooks: expected active timer state")
+
+    let set_observer_on_finish observer hooks =
+      let live =
+        match observer.obs_state with
+        | Observer_registering live | Observer_active live -> live
+        | Observer_disposed _ | Observer_invalid_scope _ ->
+            invalid_arg
+              "Eta_signal.Private_test_hooks: expected live observer state"
+      in
+      live.obs_on_finish <- hooks
 
     let run_observer_callback observer update = observer.obs_callback update
   end

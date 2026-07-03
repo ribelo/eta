@@ -2868,25 +2868,6 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
       Alcotest.(check int) "selected value is unchanged" 0
         (run_ok rt (Signal.Observer.read selected_observer)))
 
-let signal_version signal =
-  let signal_obj = Obj.repr signal in
-  (Obj.obj (Obj.field signal_obj 6) : int)
-
-let set_signal_version signal value =
-  (* Public APIs cannot drive a signal version to [max_int] in a focused test. *)
-  let signal_obj = Obj.repr signal in
-  Obj.set_field signal_obj 6 (Obj.repr value)
-
-let signal_valid signal =
-  let signal_obj = Obj.repr signal in
-  (Obj.obj (Obj.field signal_obj 18) : bool)
-
-let set_signal_valid signal value =
-  (* Public invalidation normally prunes invalid nodes immediately; this
-     simulates a retained invalid node while checking the public stats contract. *)
-  let signal_obj = Obj.repr signal in
-  Obj.set_field signal_obj 18 (Obj.repr value)
-
 let test_commit_skips_invalidated_staged_entries () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -2911,7 +2892,7 @@ let test_commit_skips_invalidated_staged_entries () =
     | Some signal -> signal
     | None -> Alcotest.fail "expected captured bind RHS signal"
   in
-  let branch_version = signal_version captured in
+  let branch_version = Signal.Private_test_hooks.signal_version captured in
   let branch_observer =
     run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
   in
@@ -2921,9 +2902,10 @@ let test_commit_skips_invalidated_staged_entries () =
   Alcotest.(check int) "selected switched to right" 20
     (run_ok rt (Signal.Observer.read selected_observer));
   Alcotest.(check bool) "captured branch invalidated" false
-    (signal_valid captured);
+    (Signal.Private_test_hooks.signal_valid captured);
   Alcotest.(check int) "invalidated staged branch version unchanged"
-    branch_version (signal_version captured);
+    branch_version
+    (Signal.Private_test_hooks.signal_version captured);
   expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
   let options =
@@ -3599,13 +3581,13 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
            Effect.sync (fun () -> events := update :: !events)))
   in
   run_ok rt Overflow_signal.stabilize;
-  set_signal_version signal max_int;
+  Overflow_signal.Private_test_hooks.set_signal_version signal max_int;
   run_ok rt (Overflow_signal.Var.set source 2);
   expect_fail "signal version overflow" (counter_overflow "signal version")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize));
   Alcotest.(check int) "old snapshot remains after version overflow" 1
     (run_ok rt (Overflow_signal.Observer.read observer));
-  set_signal_version signal 0;
+  Overflow_signal.Private_test_hooks.set_signal_version signal 0;
   run_ok rt Overflow_signal.stabilize;
   Alcotest.(check int) "retry publishes pending source" 2
     (run_ok rt (Overflow_signal.Observer.read observer));
@@ -5643,7 +5625,7 @@ let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
   with_runtime @@ fun rt ->
   let retained = Dead_count_signal.const 1 in
   let before = run_ok rt (Dead_count_signal.stats ()) in
-  set_signal_valid retained false;
+  Dead_count_signal.Private_test_hooks.set_signal_valid retained false;
   let after = run_ok rt (Dead_count_signal.stats ()) in
   Alcotest.(check int)
     "retained invalid non-tombstone is not counted as dead"
@@ -5656,7 +5638,7 @@ let test_to_dot_prefers_tombstone_over_retained_invalid_node () =
   let retained = Retained_dot_signal.const 1 in
   let signal_id = Retained_dot_signal.signal_id_label retained.id in
   Retained_dot_signal.record_dead_node_unlocked (Retained_dot_signal.P retained);
-  set_signal_valid retained false;
+  Retained_dot_signal.Private_test_hooks.set_signal_valid retained false;
   let options : Retained_dot_signal.dot_options =
     {
       dot_scope = `All_including_invalid;
@@ -5968,62 +5950,11 @@ let test_time_interval_requires_explicit_stabilization () =
    | _ -> Alcotest.fail "expected timer update after explicit stabilize");
   run_ok rt (Signal.Observer.dispose observer)
 
-let seed_interval_source signal value =
-  (* Public APIs cannot drive an interval to [max_int] in a focused test. *)
-  let signal_obj = Obj.repr signal in
-  let kind = Obj.field signal_obj 2 in
-  if Obj.tag kind <> 1 then Alcotest.fail "expected interval source signal";
-  let source = Obj.field kind 0 in
-  Obj.set_field source 2 (Obj.repr value);
-  Obj.set_field source 4 (Obj.repr value)
-
-let set_signal_timer_generation signal value =
-  (* Public APIs cannot drive timer generations to [max_int] in a focused test. *)
-  let signal_obj = Obj.repr signal in
-  let timer_opt = Obj.field signal_obj 19 in
-  if Obj.is_int timer_opt then Alcotest.fail "expected timer signal";
-  let timer = Obj.field timer_opt 0 in
-  let timer_state = Obj.field timer 0 in
-  if Obj.is_int timer_state then Alcotest.fail "expected timer state";
-  let updated_state = Obj.new_block (Obj.tag timer_state) (Obj.size timer_state) in
-  for index = 0 to Obj.size timer_state - 1 do
-    Obj.set_field updated_state index (Obj.field timer_state index)
-  done;
-  Obj.set_field updated_state 0 (Obj.repr value);
-  Obj.set_field timer 0 updated_state
-
-let set_signal_timer_next_due signal next_due_ms =
-  (* Public APIs cannot drive the timer due cursor to [max_int] in a focused
-     test. *)
-  let signal_obj = Obj.repr signal in
-  let timer_opt = Obj.field signal_obj 19 in
-  if Obj.is_int timer_opt then Alcotest.fail "expected timer signal";
-  let timer = Obj.field timer_opt 0 in
-  let timer_state = Obj.field timer 0 in
-  if Obj.is_int timer_state then Alcotest.fail "expected active timer state";
-  if Obj.size timer_state < 2 then
-    Alcotest.fail "expected timer state with next due";
-  let updated_state = Obj.new_block (Obj.tag timer_state) (Obj.size timer_state) in
-  for index = 0 to Obj.size timer_state - 1 do
-    Obj.set_field updated_state index (Obj.field timer_state index)
-  done;
-  Obj.set_field updated_state 1 (Obj.repr (Some next_due_ms));
-  Obj.set_field timer 0 updated_state
-
-let set_observer_on_dispose observer hooks =
-  (* Public APIs only install internal stream hooks; this keeps the regression
-     focused on hook failure without widening the signal API. *)
-  let observer_obj = Obj.repr observer in
-  let observer_state = Obj.field observer_obj 4 in
-  if Obj.is_int observer_state then Alcotest.fail "expected live observer state";
-  let live_state = Obj.field observer_state 0 in
-  Obj.set_field live_state 3 (Obj.repr hooks)
-
 let test_time_interval_overflow_saturates () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_logger_test_clock @@ fun _sw clock rt logger ->
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  seed_interval_source signal max_int;
+  Signal.Private_test_hooks.seed_var_source_value signal max_int;
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -6050,7 +5981,7 @@ let test_time_inactive_timer_stop_is_idempotent () =
   let signal =
     run_ok rt (Idempotent_signal.Time.interval (Duration.ms 10))
   in
-  set_signal_timer_generation signal max_int;
+  Idempotent_signal.Private_test_hooks.set_timer_generation signal max_int;
   run_ok rt Idempotent_signal.stabilize;
   run_ok rt Idempotent_signal.stabilize
 
@@ -6062,7 +5993,7 @@ let test_time_timer_generation_overflow_fails_loudly () =
     run_ok rt (Overflow_signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
-  set_signal_timer_generation signal max_int;
+  Overflow_signal.Private_test_hooks.set_timer_generation signal max_int;
   expect_die "timer generation overflow"
     (Eta_eio.Runtime.run rt (widen (Overflow_signal.Observer.dispose observer)))
 
@@ -6073,7 +6004,7 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
   let timer_signal =
     run_ok rt (Overflow_signal.Time.interval (Duration.ms 10))
   in
-  set_signal_timer_generation timer_signal max_int;
+  Overflow_signal.Private_test_hooks.set_timer_generation timer_signal max_int;
   let selected =
     Overflow_signal.bind (Overflow_signal.Var.watch use_timer) (fun active ->
         if active then timer_signal else Overflow_signal.const (-1))
@@ -6780,7 +6711,7 @@ let test_disposal_hooks_continue_after_failure () =
         Effect.unit))
   in
   let later_hook_ran = ref false in
-  set_observer_on_dispose observer
+  Signal.Private_test_hooks.set_observer_on_finish observer
     [
       (fun _ -> failwith "first dispose hook failure");
       (fun _ -> later_hook_ran := true);
@@ -6825,7 +6756,7 @@ let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
   let branch_observer =
     run_ok rt (Signal.Observer.observe branch (fun _ -> Effect.unit))
   in
-  set_observer_on_dispose branch_observer
+  Signal.Private_test_hooks.set_observer_on_finish branch_observer
     [ (fun _ -> failwith "branch dispose hook failure") ];
   run_ok rt (Signal.Var.set use_branch false);
   expect_finalizer_die "branch dispose hook failure"
@@ -6862,7 +6793,8 @@ let test_observer_dispose_interruption_runs_finish_hooks () =
                  Effect.unit))))
   in
   let hook_ran = ref false in
-  set_observer_on_dispose observer [ (fun _ -> hook_ran := true) ];
+  Signal.Private_test_hooks.set_observer_on_finish observer
+    [ (fun _ -> hook_ran := true) ];
   Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
   (match Runtime.run rt (widen (Signal.Observer.dispose observer)) with
   | Exit.Error _ -> ()
@@ -6910,7 +6842,8 @@ let test_stabilize_interruption_runs_invalidation_hooks () =
          (widen (Signal.Observer.observe branch (fun _ -> Effect.unit))))
   in
   let hook_ran = ref false in
-  set_observer_on_dispose branch_observer [ (fun _ -> hook_ran := true) ];
+  Signal.Private_test_hooks.set_observer_on_finish branch_observer
+    [ (fun _ -> hook_ran := true) ];
   ignore
     (expect_exit_ok "switch branch"
        (Runtime.run rt (widen (Signal.Var.set use_branch false)))
@@ -6934,7 +6867,7 @@ let test_time_timer_dispose_hook_failure_still_cleans_graph () =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
-  set_observer_on_dispose observer
+  Signal.Private_test_hooks.set_observer_on_finish observer
     [ (fun _ -> failwith "dispose hook failure") ];
   expect_finalizer_die "dispose hook failure" "dispose hook failure"
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
@@ -7617,7 +7550,7 @@ let test_time_interval_does_not_recount_saturated_due () =
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "initial interval" 0
         (run_ok rt (Signal.Observer.read observer));
-      set_signal_timer_next_due signal max_int;
+      Signal.Private_test_hooks.set_timer_next_due signal max_int;
       now_ms := max_int;
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "saturated due counted once" 1
