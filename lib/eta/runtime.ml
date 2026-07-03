@@ -13,6 +13,7 @@ let create_with_runtime backend ?sleep ?now_ms ?tracer ?sampler ?auto_instrument
 
 let run_effect (runtime : 'err Runtime_core.t) (eff : ('a, 'err) Effect.t) :
     ('a, 'err) Exit.t =
+  Sync_lock.check_no_runtime_operation ();
   if runtime.Runtime_core.contract.Runtime_contract.in_worker_context () then
     invalid_arg
       "Eta.Runtime.run must not be called from inside a runtime worker callback";

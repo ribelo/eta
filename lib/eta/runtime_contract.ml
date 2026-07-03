@@ -178,6 +178,10 @@ let of_runtime (module R : RUNTIME) =
   let stream : type a. a R.stream -> a stream =
    fun value -> Stream (Erased_token.make runtime_id value)
   in
+  let ensure_runtime_operation () =
+    ensure_owner_domain ();
+    Sync_lock.check_no_runtime_operation ()
+  in
   let scope_value (Scope token) =
     (Erased_token.unsafe_cast_backend_value runtime_id token : R.scope)
   in
@@ -201,47 +205,47 @@ let of_runtime (module R : RUNTIME) =
         R.now_ms ());
     sleep =
       (fun duration ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.sleep duration);
     protect =
       (fun f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.protect @@ fun () ->
         ensure_owner_domain ();
         f ());
     run_scope =
       (fun ?name f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.run_scope ?name @@ fun child_scope ->
         ensure_owner_domain ();
         f (scope child_scope));
     fail_scope =
       (fun ?bt scope exn ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.fail_scope ?bt (scope_value scope) exn);
     fork =
       (fun scope f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.fork (scope_value scope) (fun () ->
             ensure_owner_domain ();
             f ()));
     fork_daemon =
       (fun scope f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.fork_daemon (scope_value scope) (fun () ->
             ensure_owner_domain ();
             f ()));
     await_cancel =
       (fun () ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.await_cancel ());
     yield =
       (fun () ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.yield ());
     check =
       (fun () ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.check ());
     create_promise =
       (fun (type a) () ->
@@ -250,11 +254,11 @@ let of_runtime (module R : RUNTIME) =
         (promise raw_promise, resolver raw_resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.resolve_promise (resolver_value resolver) value);
     await_promise =
       (fun (type a) (promise : a promise) ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         let value = R.await_promise (promise_value promise) in
         ensure_owner_domain ();
         value);
@@ -264,17 +268,17 @@ let of_runtime (module R : RUNTIME) =
         stream (R.create_stream capacity : a R.stream));
     stream_add =
       (fun (type a) (stream : a stream) (value : a) ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.stream_add (stream_value stream) value);
     stream_take =
       (fun (type a) (stream : a stream) ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         let value = R.stream_take (stream_value stream) in
         ensure_owner_domain ();
         value);
     stream_take_nonblocking =
       (fun (type a) (stream : a stream) ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         let value = R.stream_take_nonblocking (stream_value stream) in
         ensure_owner_domain ();
         value);
@@ -284,13 +288,13 @@ let of_runtime (module R : RUNTIME) =
     multiple_exceptions = R.multiple_exceptions;
     cancel_sub =
       (fun f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.cancel_sub @@ fun cancel ->
         ensure_owner_domain ();
         f (cancel_context cancel));
     cancel =
       (fun cancel_context exn ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.cancel (cancel_context_value cancel_context) exn);
     local_get =
       (fun local ->
@@ -298,7 +302,7 @@ let of_runtime (module R : RUNTIME) =
         R.local_get local);
     local_with_binding =
       (fun local value f ->
-        ensure_owner_domain ();
+        ensure_runtime_operation ();
         R.local_with_binding local value (fun () ->
             ensure_owner_domain ();
             f ()));

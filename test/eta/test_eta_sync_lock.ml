@@ -1,4 +1,5 @@
 open Eta
+open Test_eta_support
 
 exception Sync_lock_reentry_timeout
 
@@ -38,3 +39,21 @@ let test_sync_lock_reentrant_use_fails_fast () =
   | `Returned -> Alcotest.fail "reentrant lock acquisition returned");
   Alcotest.(check int) "lock remains usable" 1
     (Sync_lock.use lock (fun () -> 1))
+
+let test_sync_lock_rejects_runtime_operation () =
+  with_runtime @@ fun rt ->
+  let lock = Sync_lock.create () in
+  let result =
+    try
+      Sync_lock.use lock @@ fun () ->
+      ignore (Runtime.run rt Effect.yield : (unit, string) Exit.t);
+      `Returned
+    with Invalid_argument message -> `Invalid_argument message
+  in
+  match result with
+  | `Invalid_argument message ->
+      Alcotest.(check string)
+        "runtime operation under lock"
+        "Eta.Sync_lock: runtime operation attempted while holding lock"
+        message
+  | `Returned -> Alcotest.fail "runtime operation under Sync_lock returned"
