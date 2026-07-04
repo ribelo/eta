@@ -6,6 +6,13 @@ val create_queue :
   capacity:int ->
   (('update, 'queue_error) Eta.Queue.t, [> `Invalid_capacity ]) result
 
+val create_stream :
+  capacity:int ->
+  ( ('update, 'queue_error) Eta.Queue.t
+    * ('update, 'queue_error) Eta_stream.Stream.t,
+    [> `Invalid_capacity ] )
+  result
+
 type ('token, 'update, 'error) delivery = {
   current_token : unit -> ('token option, 'error) Eta.Effect.t;
   acknowledge_sent : 'token -> 'update -> (unit, 'error) Eta.Effect.t;

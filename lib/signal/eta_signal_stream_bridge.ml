@@ -7,6 +7,10 @@ let create_queue ~capacity =
   if capacity <= 0 then Error `Invalid_capacity
   else Ok (Queue.create ~overflow:(Queue.Drop_new { capacity }) ())
 
+let create_stream ~capacity =
+  create_queue ~capacity
+  |> Result.map (fun queue -> (queue, Eta_stream.Stream.from_queue queue))
+
 type ('token, 'update, 'error) delivery = {
   current_token : unit -> ('token option, 'error) Effect.t;
   acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;

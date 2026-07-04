@@ -26,6 +26,14 @@ let test_capacity_validation () =
   Alcotest.(check bool) "positive accepted" true
     (Result.is_ok (Stream_bridge.create_queue ~capacity:1))
 
+let test_create_stream () =
+  Alcotest.(check bool) "zero rejected" true
+    (Result.is_error (Stream_bridge.create_stream ~capacity:0));
+  match Stream_bridge.create_stream ~capacity:1 with
+  | Error _ -> Alcotest.fail "expected stream"
+  | Ok (queue, _stream) ->
+      Queue.close queue
+
 let delivery ~token ~sent ~dropped =
   {
     Stream_bridge.current_token = (fun () -> Effect.sync (fun () -> !token));
@@ -214,6 +222,7 @@ let () =
         [
           Alcotest.test_case "capacity validation" `Quick
             test_capacity_validation;
+          Alcotest.test_case "create stream" `Quick test_create_stream;
           Alcotest.test_case "finish hook closes queue" `Quick
             test_finish_hook_closes_queue;
           Alcotest.test_case "finish hook invalid scope closes with error"

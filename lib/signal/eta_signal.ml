@@ -4139,9 +4139,9 @@ module Make (Observer_error : Observer_error) () = struct
       Stream_bridge.offer ~queue ~delivery ~hooks ~on_drop update
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
-      Effect.sync (fun () -> Stream_bridge.create_queue ~capacity)
+      Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
       |> Effect.flatten_result
-      |> Effect.bind (fun queue ->
+      |> Effect.bind (fun (queue, stream) ->
              Observer.observe_with_hooks_callback ?equal
                ~on_finish:
                  [ Stream_bridge.finish_hook ~queue ~policy:finish_policy ]
@@ -4150,6 +4150,6 @@ module Make (Observer_error : Observer_error) () = struct
                  offer_bridge_update observer on_drop queue update)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
-                    (observer, Eta_stream.Stream.from_queue queue)))
+                    (observer, stream)))
   end
 end
