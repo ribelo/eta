@@ -418,7 +418,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_observer = O : 'a observer -> packed_observer
 
-  and timer_state =
+  and timer_state = Timer.state =
     | Timer_inactive of int
     | Timer_starting of int
     | Timer_running_uncancellable of int * int option
@@ -571,14 +571,7 @@ module Make (Observer_error : Observer_error) () = struct
             {
               snapshot with
               timer_state =
-                (match snapshot.timer_state with
-                 | Timer_inactive _ -> Timer_inactive generation
-                 | Timer_starting _ -> Timer_starting generation
-                 | Timer_running_uncancellable (_, next_due_ms) ->
-                     Timer_running_uncancellable (generation, next_due_ms)
-                 | Timer_running (_, next_due_ms, cancel) ->
-                     Timer_running (generation, next_due_ms, cancel)
-                 | Timer_finished _ -> Timer_finished generation);
+                Timer.state_with_generation snapshot.timer_state generation;
             }
 
     let set_timer_next_due signal next_due_ms =
@@ -610,13 +603,9 @@ module Make (Observer_error : Observer_error) () = struct
       match signal.timer with
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
-      | Some timer -> (
-          match (Transaction.current timer.timer_snapshot).timer_state with
-          | Timer_inactive _ -> "inactive"
-          | Timer_starting _ -> "starting"
-          | Timer_running_uncancellable _ -> "running_uncancellable"
-          | Timer_running _ -> "running"
-          | Timer_finished _ -> "finished")
+      | Some timer ->
+          Timer.state_label
+            ((Transaction.current timer.timer_snapshot).timer_state)
 
     let set_observer_on_finish observer hooks =
       let live =
@@ -1357,13 +1346,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     visit (P inner)
 
-  let timer_state_generation = function
-    | Timer_inactive generation
-    | Timer_starting generation
-    | Timer_running_uncancellable (generation, _)
-    | Timer_running (generation, _, _)
-    | Timer_finished generation ->
-        generation
+  let timer_state_generation = Timer.state_generation
 
   let timer_current_snapshot timer =
     Transaction.current timer.timer_snapshot
@@ -1391,12 +1374,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_generation timer =
     timer_state_generation (timer_current_state timer)
 
-  let timer_state_label = function
-    | Timer_inactive _ -> "inactive"
-    | Timer_starting _ -> "starting"
-    | Timer_running_uncancellable _ -> "running_uncancellable"
-    | Timer_running _ -> "running"
-    | Timer_finished _ -> "finished"
+  let timer_state_label = Timer.state_label
 
   let timer_has_staged_refresh timer =
     match graph.active_timer_refresh with
@@ -1409,25 +1387,16 @@ module Make (Observer_error : Observer_error) () = struct
       (timer_effective_snapshot timer).timer_state
     else timer_current_state timer
 
-  let timer_active_state = function
-    | Timer_starting _ | Timer_running_uncancellable _ | Timer_running _ ->
-        true
-    | Timer_inactive _ | Timer_finished _ -> false
+  let timer_active_state = Timer.state_active
 
   let timer_active timer = timer_active_state (timer_effective_state timer)
 
-  let timer_finished_state = function
-    | Timer_finished _ -> true
-    | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-    | Timer_running _ ->
-        false
+  let timer_finished_state = Timer.state_finished
 
   let timer_finished timer = timer_finished_state (timer_effective_state timer)
 
   let timer_has_current_start timer =
-    match timer_current_state timer with
-    | Timer_running_uncancellable _ | Timer_running _ -> true
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
+    Timer.state_has_current_start (timer_current_state timer)
 
   let timer_needs_start timer =
     not
@@ -1450,47 +1419,25 @@ module Make (Observer_error : Observer_error) () = struct
     && not (timer_finished timer)
 
   let timer_running_generation timer =
-    match timer_effective_state timer with
-    | Timer_running_uncancellable (generation, _)
-    | Timer_running (generation, _, _) ->
-        Some generation
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+    Timer.state_running_generation (timer_effective_state timer)
 
   let timer_has_cancel timer =
-    match timer_effective_state timer with
-    | Timer_running (_, _, _) -> true
-    | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-    | Timer_finished _ ->
-        false
+    Timer.state_has_cancel (timer_effective_state timer)
 
   let timer_running_current timer generation =
-    match timer_effective_state timer with
-    | Timer_running_uncancellable (running_generation, _)
-    | Timer_running (running_generation, _, _) ->
-        running_generation = generation
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
+    Timer.state_running_current (timer_effective_state timer) generation
 
   let add_ms_capped = Timer.add_ms_capped
   let add_int_capped = Timer.add_int_capped
   let missed_cadences = Timer.missed_cadences
   let advance_due = Timer.advance_due
 
-  let timer_next_due_state = function
-    | Timer_running_uncancellable (_, next_due_ms)
-    | Timer_running (_, next_due_ms, _) ->
-        next_due_ms
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+  let timer_next_due_state = Timer.state_next_due
 
   let timer_next_due_unlocked timer =
     timer_next_due_state (timer_effective_state timer)
 
-  let timer_set_next_due_state state next_due_ms =
-    match state with
-    | Timer_running_uncancellable (generation, _) ->
-        Timer_running_uncancellable (generation, next_due_ms)
-    | Timer_running (generation, _, cancel) ->
-        Timer_running (generation, next_due_ms, cancel)
-    | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
+  let timer_set_next_due_state = Timer.state_set_next_due
 
   let timer_set_next_due_unlocked timer next_due_ms =
     set_timer_current_state timer

@@ -44,6 +44,28 @@ let test_catch_up_policy () =
   Alcotest.(check int) "coalesced missed" 3
     (Timer.catch_up_update_missed Catch_up_coalesced 3)
 
+let noop () = ()
+
+let test_state_helpers () =
+  let running = Timer.Timer_running (7, Some 10, noop) in
+  Alcotest.(check int) "generation" 7 (Timer.state_generation running);
+  Alcotest.(check string) "label" "running" (Timer.state_label running);
+  Alcotest.(check bool) "active" true (Timer.state_active running);
+  Alcotest.(check bool) "finished" false (Timer.state_finished running);
+  Alcotest.(check bool) "has current start" true
+    (Timer.state_has_current_start running);
+  Alcotest.(check (option int)) "running generation" (Some 7)
+    (Timer.state_running_generation running);
+  Alcotest.(check bool) "has cancel" true (Timer.state_has_cancel running);
+  Alcotest.(check bool) "running current" true
+    (Timer.state_running_current running 7);
+  Alcotest.(check (option int)) "next due" (Some 10)
+    (Timer.state_next_due running);
+  Alcotest.(check (option int)) "updated next due" (Some 20)
+    (Timer.state_next_due (Timer.state_set_next_due running (Some 20)));
+  Alcotest.(check int) "with generation" 8
+    (Timer.state_generation (Timer.state_with_generation running 8))
+
 let () =
   Alcotest.run "eta_signal_timer"
     [
@@ -54,5 +76,6 @@ let () =
           Alcotest.test_case "deadline arithmetic" `Quick
             test_deadline_arithmetic;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
+          Alcotest.test_case "state helpers" `Quick test_state_helpers;
         ] );
     ]
