@@ -310,23 +310,24 @@ module Make (Observer_error : Observer_error) () = struct
     id : signal_id;
     equal : 'a -> 'a -> bool;
     mutable kind : 'a kind;
-    mutable value : 'a option;
-    mutable staged : 'a option;
-    mutable initialized : bool;
-    mutable version : int;
+    snapshot : 'a signal_snapshot Transaction.staged;
     mutable dirty : bool;
-    mutable dependency_versions : (signal_id * int) list;
-    mutable staged_dependency_versions : (signal_id * int) list option;
     mutable dependencies : packed_signal list;
     mutable dependents : packed_signal list;
     mutable computing : bool;
     mutable seen_generation : int;
     mutable changed_seen : bool;
-    mutable staged_generation : int;
     mutable computed_generation : int;
     scope : scope option;
     mutable valid : bool;
     mutable timer : timer_node option;
+  }
+
+  and 'a signal_snapshot = {
+    signal_value : 'a option;
+    signal_initialized : bool;
+    signal_version : int;
+    signal_dependency_versions : (signal_id * int) list;
   }
 
   and _ kind =
@@ -593,8 +594,13 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_delivery_running (token, update, _) ->
           Test_delivery_running (token, update)
 
-    let signal_version signal = signal.version
-    let set_signal_version signal value = signal.version <- value
+    let signal_version signal =
+      (Transaction.current signal.snapshot).signal_version
+
+    let set_signal_version signal value =
+      let snapshot = Transaction.current signal.snapshot in
+      Transaction.set_current signal.snapshot
+        { snapshot with signal_version = value }
     let signal_valid signal = signal.valid
     let set_signal_valid signal value = signal.valid <- value
 
@@ -1182,18 +1188,46 @@ module Make (Observer_error : Observer_error) () = struct
       signal.computed_generation <- generation;
       graph.computed_nodes <- packed :: graph.computed_nodes)
 
+  let signal_current_snapshot signal =
+    Transaction.current signal.snapshot
+
+  let signal_effective_snapshot signal =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.read transaction signal.snapshot
+    | None -> signal_current_snapshot signal
+
+  let update_signal_staging signal f =
+    let transaction = active_transaction () in
+    let snapshot = Transaction.read transaction signal.snapshot in
+    Transaction.stage transaction signal.snapshot (f snapshot)
+
+  let signal_staged_in_active_transaction signal =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.staged transaction signal.snapshot
+    | None -> false
+
+  let discard_signal_staging signal =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.discard transaction signal.snapshot
+    | None -> ()
+
   let stage_signal signal value =
-    let generation = current_generation () in
-    if signal.staged_generation <> generation then signal.staged <- None;
-    signal.staged_generation <- generation;
-    signal.staged <- Some value
+    update_signal_staging signal (fun snapshot ->
+        let current = signal_current_snapshot signal in
+        let signal_version =
+          if snapshot.signal_version = current.signal_version then
+            checked_succ "signal version" snapshot.signal_version
+          else snapshot.signal_version
+        in
+        {
+          snapshot with
+          signal_value = Some value;
+          signal_initialized = true;
+          signal_version;
+        })
 
   let effective_signal_version signal =
-    if signal.staged_generation = current_generation () then
-      match signal.staged with
-      | Some _ -> checked_succ "signal version" signal.version
-      | None -> signal.version
-    else signal.version
+    (signal_effective_snapshot signal).signal_version
 
   let dependency_versions dependencies =
     List.map
@@ -1201,26 +1235,20 @@ module Make (Observer_error : Observer_error) () = struct
       dependencies
 
   let dependencies_changed signal dependencies =
-    signal.dependency_versions <> dependency_versions dependencies
+    (signal_current_snapshot signal).signal_dependency_versions
+    <> dependency_versions dependencies
 
   let stage_dependency_versions signal dependencies =
-    let generation = current_generation () in
-    if signal.staged_generation <> generation then signal.staged <- None;
-    signal.staged_generation <- generation;
-    signal.staged_dependency_versions <- Some (dependency_versions dependencies)
+    update_signal_staging signal (fun snapshot ->
+        {
+          snapshot with
+          signal_dependency_versions = dependency_versions dependencies;
+        })
 
   let effective_signal_value signal =
-    if signal.staged_generation = current_generation () then
-      match signal.staged with
-      | Some value -> value
-      | None -> (
-          match signal.value with
-          | Some value -> value
-          | None -> raise (Graph_error `Invalid_scope))
-    else
-      match signal.value with
-      | Some value -> value
-      | None -> raise (Graph_error `Invalid_scope)
+    match (signal_effective_snapshot signal).signal_value with
+    | Some value -> value
+    | None -> raise (Graph_error `Invalid_scope)
 
   let observer_live_state observer =
     match observer.obs_state with
@@ -1578,19 +1606,20 @@ module Make (Observer_error : Observer_error) () = struct
         id = next_signal_id ();
         equal = Option.value equal ~default:default_equal;
         kind;
-        value = None;
-        staged = None;
-        initialized = false;
-        version = 0;
+        snapshot =
+          Transaction.create_staged
+            {
+              signal_value = None;
+              signal_initialized = false;
+              signal_version = 0;
+              signal_dependency_versions = [];
+            };
         dirty;
-        dependency_versions = [];
-        staged_dependency_versions = None;
         dependencies = [];
         dependents = [];
         computing = false;
         seen_generation = -1;
         changed_seen = false;
-        staged_generation = -1;
         computed_generation = -1;
         scope;
         valid = true;
@@ -1604,8 +1633,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in
-    signal.value <- Some value;
-    signal.initialized <- true;
+    Transaction.set_current signal.snapshot
+      {
+        signal_value = Some value;
+        signal_initialized = true;
+        signal_version = 0;
+        signal_dependency_versions = [];
+      };
     signal
 
   let prune_invalid_nodes_unlocked () =
@@ -1641,10 +1675,11 @@ module Make (Observer_error : Observer_error) () = struct
             Option.map (fun parent -> parent.scope_id) scope.scope_parent,
             Some scope.scope_valid )
     in
+    let snapshot = signal_current_snapshot signal in
     {
       dead_id = signal.id;
       dead_kind = kind_name signal.kind;
-      dead_initialized = signal.initialized;
+      dead_initialized = snapshot.signal_initialized;
       dead_dirty = signal.dirty;
       dead_computing = signal.computing;
       dead_dependency_ids =
@@ -1732,37 +1767,16 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let current_or_raise signal =
-    match signal.value with
+    match (signal_current_snapshot signal).signal_value with
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
-  let clear_signal_staging signal =
-    signal.staged <- None;
-    signal.staged_dependency_versions <- None
+  let prepare_signal_commit (P signal) =
+    if (not signal.valid) && signal_staged_in_active_transaction signal then
+      discard_signal_staging signal
 
   let commit_signal (P signal) =
-    if not signal.valid then (
-      if signal.staged_generation = current_generation () then
-        clear_signal_staging signal)
-    else (
-      if signal.staged_generation = current_generation () then (
-        (match signal.staged with
-         | None -> ()
-         | Some value ->
-             let next_version = checked_succ "signal version" signal.version in
-             signal.value <- Some value;
-             signal.initialized <- true;
-             signal.version <- next_version);
-        (match signal.staged_dependency_versions with
-         | None -> ()
-         | Some dependency_versions ->
-             signal.dependency_versions <- dependency_versions);
-        clear_signal_staging signal);
-      signal.dirty <- false)
-
-  let rollback_signal (P signal) =
-    if signal.staged_generation = current_generation () then (
-      clear_signal_staging signal)
+    if signal.valid then signal.dirty <- false
 
   let commit_transaction () =
     match graph.active_transaction with
@@ -1794,9 +1808,12 @@ module Make (Observer_error : Observer_error) () = struct
         bind_inner_scope = Some scope;
       }
 
-  let bind_current_snapshot bind = Transaction.current bind.snapshot
+  let bind_current_snapshot (type a b) (bind : (a, b) bind) :
+      (a, b) bind_snapshot =
+    Transaction.current bind.snapshot
 
-  let bind_effective_snapshot bind =
+  let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
+      (a, b) bind_snapshot =
     match graph.active_transaction with
     | Some transaction -> Transaction.read transaction bind.snapshot
     | None -> bind_current_snapshot bind
@@ -1909,11 +1926,12 @@ module Make (Observer_error : Observer_error) () = struct
     if
       signal.valid
       && not (Hashtbl.mem invalidated_ids signal.id)
-      && signal.staged_generation = current_generation ()
+      && signal_staged_in_active_transaction signal
     then
-      match signal.staged with
-      | None -> ()
-      | Some _ -> ignore (checked_succ "signal version" signal.version : int)
+      let current = signal_current_snapshot signal in
+      let staged = signal_effective_snapshot signal in
+      if staged.signal_version <> current.signal_version then
+        ignore (checked_succ "signal version" current.signal_version : int)
 
   let collect_staged_bind_invalidations () =
     let invalidated_ids = Hashtbl.create 16 in
@@ -2088,7 +2106,6 @@ module Make (Observer_error : Observer_error) () = struct
     graph.timer_refresh_disposal_hooks <- []
 
   let reset_staging () =
-    List.iter rollback_signal graph.computed_nodes;
     let disposal_hooks =
       List.concat_map rollback_bind graph.staged_binds @ graph.pure_disposal_hooks
     in
@@ -2103,6 +2120,7 @@ module Make (Observer_error : Observer_error) () = struct
     preflight_commit_staging ();
     let commit_hooks = List.concat_map commit_bind graph.staged_binds in
     remember_pure_disposal_hooks commit_hooks;
+    List.iter prepare_signal_commit graph.computed_nodes;
     commit_transaction ();
     List.iter commit_timer_refresh_staging graph.timer_refresh_staged_timers;
     List.iter commit_signal graph.computed_nodes;
@@ -2204,12 +2222,16 @@ module Make (Observer_error : Observer_error) () = struct
   and compute_uncached : type a. a signal -> a * bool =
    fun signal ->
     remember_computed (P signal);
+    let signal_initialized () =
+      (signal_effective_snapshot signal).signal_initialized
+    in
     let recompute value =
       graph.recompute_count <- saturating_succ graph.recompute_count;
+      let snapshot = signal_effective_snapshot signal in
       let changed =
-        (not signal.initialized)
+        (not snapshot.signal_initialized)
         ||
-        match signal.value with
+        match snapshot.signal_value with
         | None -> true
         | Some old_value -> not (signal.equal old_value value)
       in
@@ -2226,9 +2248,10 @@ module Make (Observer_error : Observer_error) () = struct
     in
     match signal.kind with
     | Const value ->
-        if signal.dirty || not signal.initialized then recompute value else use_cached ()
+        if signal.dirty || not (signal_initialized ()) then recompute value
+        else use_cached ()
     | Var var ->
-        if signal.dirty || not signal.initialized then
+        if signal.dirty || not (signal_initialized ()) then
           recompute (effective_var_value var)
         else use_cached ()
     | Map (a, f) ->
@@ -2236,7 +2259,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a ] in
         if
           signal.dirty || ac || dependency_changed dependencies
-          || not signal.initialized
+          || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av)
         else use_cached ()
     | Map2 (a, b, f) ->
@@ -2245,7 +2268,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a; P b ] in
         if
           signal.dirty || ac || bc || dependency_changed dependencies
-          || not signal.initialized
+          || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av bv)
         else use_cached ()
     | Map3 (a, b, c, f) ->
@@ -2255,7 +2278,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a; P b; P c ] in
         if
           signal.dirty || ac || bc || cc || dependency_changed dependencies
-          || not signal.initialized
+          || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av bv cv)
         else use_cached ()
     | Map4 (a, b, c, d, f) ->
@@ -2266,7 +2289,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a; P b; P c; P d ] in
         if
           signal.dirty || ac || bc || cc || dc || dependency_changed dependencies
-          || not signal.initialized
+          || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av bv cv dv)
         else use_cached ()
     | Map5 (a, b, c, d, e, f) ->
@@ -2277,8 +2300,8 @@ module Make (Observer_error : Observer_error) () = struct
         let ev, ec = compute e in
         let dependencies = [ P a; P b; P c; P d; P e ] in
         if
-          signal.dirty || ac || bc || cc || dc || ec || not signal.initialized
-          || dependency_changed dependencies
+          signal.dirty || ac || bc || cc || dc || ec
+          || not (signal_initialized ()) || dependency_changed dependencies
         then recompute_with_dependencies dependencies (f av bv cv dv ev)
         else use_cached ()
     | Map6 (a, b, c, d, e, f_signal, f) ->
@@ -2291,7 +2314,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a; P b; P c; P d; P e; P f_signal ] in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc
-          || dependency_changed dependencies || not signal.initialized
+          || dependency_changed dependencies || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av bv cv dv ev fv)
         else use_cached ()
     | Map7 (a, b, c, d, e, f_signal, g, f) ->
@@ -2305,7 +2328,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = [ P a; P b; P c; P d; P e; P f_signal; P g ] in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc
-          || dependency_changed dependencies || not signal.initialized
+          || dependency_changed dependencies || not (signal_initialized ())
         then recompute_with_dependencies dependencies (f av bv cv dv ev fv gv)
         else use_cached ()
     | Map8 (a, b, c, d, e, f_signal, g, h, f) ->
@@ -2322,7 +2345,7 @@ module Make (Observer_error : Observer_error) () = struct
         in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc
-          || dependency_changed dependencies || not signal.initialized
+          || dependency_changed dependencies || not (signal_initialized ())
         then
           recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv)
         else use_cached ()
@@ -2341,7 +2364,7 @@ module Make (Observer_error : Observer_error) () = struct
         in
         if
           signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc || ic
-          || dependency_changed dependencies || not signal.initialized
+          || dependency_changed dependencies || not (signal_initialized ())
         then
           recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv iv)
         else use_cached ()
@@ -2356,7 +2379,7 @@ module Make (Observer_error : Observer_error) () = struct
         let dependencies = List.map (fun signal -> P signal) signals in
         if
           signal.dirty || changed || dependency_changed dependencies
-          || not signal.initialized
+          || not (signal_initialized ())
         then recompute_with_dependencies dependencies values
         else use_cached ()
     | Bind bind ->
@@ -2381,10 +2404,11 @@ module Make (Observer_error : Observer_error) () = struct
               let inner_value, _inner_changed = compute inner in
               let dependencies = [ P bind.source; P inner ] in
               graph.recompute_count <- saturating_succ graph.recompute_count;
+              let snapshot = signal_effective_snapshot signal in
               let changed =
-                (not signal.initialized)
+                (not snapshot.signal_initialized)
                 ||
-                match signal.value with
+                match snapshot.signal_value with
                 | None -> true
                 | Some old_value -> not (signal.equal old_value inner_value)
               in
@@ -2409,7 +2433,7 @@ module Make (Observer_error : Observer_error) () = struct
           let dependencies = [ P bind.source; P inner ] in
           if
             signal.dirty || source_changed || inner_changed
-            || dependency_changed dependencies || not signal.initialized
+            || dependency_changed dependencies || not (signal_initialized ())
           then recompute_with_dependencies dependencies inner_value
           else use_cached ()
 
@@ -3461,10 +3485,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_state_fields : type a. a signal -> string list =
    fun signal ->
+    let snapshot = signal_current_snapshot signal in
     let base =
       [
         bool_field "valid" signal.valid;
-        bool_field "initialized" signal.initialized;
+        bool_field "initialized" snapshot.signal_initialized;
         bool_field "dirty" signal.dirty;
         bool_field "computing" signal.computing;
         "dependencies=" ^ string_of_int (List.length signal.dependencies);
