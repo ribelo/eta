@@ -66,6 +66,26 @@ let test_state_helpers () =
   Alcotest.(check int) "with generation" 8
     (Timer.state_generation (Timer.state_with_generation running 8))
 
+let test_daemon_status_policy () =
+  let running = Timer.Timer_running (7, Some 10, noop) in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (7, Some 10)
+  in
+  let inactive = Timer.Timer_inactive 7 in
+  (match Timer.daemon_status running ~generation:7 with
+  | Timer.Daemon_continue -> ()
+  | Timer.Daemon_stop -> Alcotest.fail "expected running daemon to continue");
+  (match Timer.daemon_status running_uncancellable ~generation:7 with
+  | Timer.Daemon_continue -> ()
+  | Timer.Daemon_stop ->
+      Alcotest.fail "expected uncancellable daemon to continue");
+  (match Timer.daemon_status running ~generation:8 with
+  | Timer.Daemon_stop -> ()
+  | Timer.Daemon_continue -> Alcotest.fail "expected stale daemon to stop");
+  match Timer.daemon_status inactive ~generation:7 with
+  | Timer.Daemon_stop -> ()
+  | Timer.Daemon_continue -> Alcotest.fail "expected inactive daemon to stop"
+
 let test_start_and_refresh_policy () =
   let inactive = Timer.Timer_inactive 0 in
   let running = Timer.Timer_running (1, Some 10, noop) in
@@ -454,6 +474,8 @@ let () =
             test_deadline_arithmetic;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
+          Alcotest.test_case "daemon status policy" `Quick
+            test_daemon_status_policy;
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;

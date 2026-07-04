@@ -32,6 +32,10 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type daemon_status =
+  | Daemon_continue
+  | Daemon_stop
+
 type stop_plan = {
   stop_state : state;
   stop_cancel_hooks : (unit -> unit) list;
@@ -161,6 +165,10 @@ let state_set_next_due state next_due_ms =
   | Timer_running (generation, _, cancel) ->
       Timer_running (generation, next_due_ms, cancel)
   | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
+
+let daemon_status state ~generation =
+  if state_running_current state generation then Daemon_continue
+  else Daemon_stop
 
 let needs_start ~effective_state ~current_state =
   not

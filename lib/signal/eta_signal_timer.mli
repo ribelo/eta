@@ -34,6 +34,10 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type daemon_status =
+  | Daemon_continue
+  | Daemon_stop
+
 type stop_plan = {
   stop_state : state;
   stop_cancel_hooks : (unit -> unit) list;
@@ -71,6 +75,8 @@ val state_has_cancel : state -> bool
 val state_running_current : state -> int -> bool
 val state_next_due : state -> int option
 val state_set_next_due : state -> int option -> state
+
+val daemon_status : state -> generation:int -> daemon_status
 
 val needs_start : effective_state:state -> current_state:state -> bool
 val needs_stop : effective_state:state -> bool

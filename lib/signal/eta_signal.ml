@@ -1511,9 +1511,6 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_has_cancel timer =
     Timer.state_has_cancel (timer_effective_state timer)
 
-  let timer_running_current timer generation =
-    Timer.state_running_current (timer_effective_state timer) generation
-
   let add_ms_capped = Timer.add_ms_capped
   let add_int_capped = Timer.add_int_capped
   let missed_cadences = Timer.missed_cadences
@@ -3680,15 +3677,18 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then `Continue else `Stop)
+          match Timer.daemon_status (timer_effective_state timer) ~generation with
+          | Timer.Daemon_continue -> `Continue
+          | Timer.Daemon_stop -> `Stop)
 
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then (
+          match Timer.daemon_status (timer_effective_state timer) ~generation with
+          | Timer.Daemon_continue ->
             Transaction.set_current source.source_value value;
             Var.queue_var source;
-            `Updated)
-          else `Stopped)
+            `Updated
+          | Timer.Daemon_stop -> `Stopped)
 
     let add_relative_deadline = Timer.add_relative_deadline
     let catch_up_update_count = Timer.catch_up_update_count
@@ -3814,13 +3814,21 @@ module Make (Observer_error : Observer_error) () = struct
                                                              (if saturated_due then
                                                                 with_graph_lane_sync
                                                                   (fun () ->
-                                                                    if
-                                                                      timer_running_current
-                                                                        timer
-                                                                        generation
-                                                                    then
-                                                                      timer_finish_unlocked
-                                                                        timer)
+                                                                    match
+                                                                      Timer.daemon_status
+                                                                        (timer_effective_state
+                                                                           timer)
+                                                                        ~generation
+                                                                    with
+                                                                    | Timer
+                                                                      .Daemon_continue
+                                                                      ->
+                                                                        timer_finish_unlocked
+                                                                          timer
+                                                                    | Timer
+                                                                      .Daemon_stop
+                                                                      ->
+                                                                        ())
                                                               else Effect.unit)
                                                              |> Effect.bind
                                                                   (fun () ->
