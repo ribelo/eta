@@ -1307,10 +1307,10 @@ module Make (Observer_error : Observer_error) () = struct
     let snapshot = observer_current_snapshot live in
     set_observer_current live { snapshot with observer_delivery }
 
-  let stage_observer_current observer value =
+  let stage_observer_value_state observer value =
     let live = live_state_or_invalid_arg observer "stage" in
     update_observer_staging live (fun snapshot ->
-        { snapshot with observer_value = Observer_core.Value.current value })
+        { snapshot with observer_value = value })
 
   let stage_observer_delivery_state observer state =
     let live = live_state_or_invalid_arg observer "stage delivery for" in
@@ -2633,24 +2633,17 @@ module Make (Observer_error : Observer_error) () = struct
     | Some live ->
       let value, changed = compute observer.obs_signal in
       let snapshot = observer_effective_snapshot live in
-      let event =
-        match Observer_core.Delivery.base snapshot.observer_delivery with
-        | None -> Some (Initialized value)
-        | Some old_value ->
-            if
-              changed || Observer_core.Delivery.pending snapshot.observer_delivery
-            then
-              if observer.obs_equal old_value value then (
-                stage_observer_delivery_state observer
-                  (Observer_delivered value);
-                None)
-              else Some (Changed { old_value; new_value = value })
-            else None
+      let event_plan =
+        Observer_core.Event.plan ~equal:observer.obs_equal ~changed ~value
+          snapshot.observer_delivery
       in
-      stage_observer_current observer value;
+      Option.iter
+        (stage_observer_delivery_state observer)
+        event_plan.delivery;
+      stage_observer_value_state observer event_plan.value;
       Option.map
         (fun update -> E (current_generation (), observer, update))
-        event
+        event_plan.update
 
   let mark_event_pending (E (token, observer, update)) =
     match observer_active_live_state observer with

@@ -87,3 +87,18 @@ module Delivery : sig
 
   val running_token : ('a, 'after_ack) t -> int option
 end
+
+module Event : sig
+  type ('a, 'after_ack) plan = {
+    value : 'a Value.t;
+    update : 'a Update.t option;
+    delivery : ('a, 'after_ack) Delivery.t option;
+  }
+
+  val plan :
+    equal:('a -> 'a -> bool) ->
+    changed:bool ->
+    value:'a ->
+    ('a, 'after_ack) Delivery.t ->
+    ('a, 'after_ack) plan
+end

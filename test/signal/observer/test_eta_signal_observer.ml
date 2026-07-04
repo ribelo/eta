@@ -14,6 +14,16 @@ let after_ack =
       | Extra -> Format.pp_print_string ppf "extra")
     ( = )
 
+let update =
+  Alcotest.testable
+    (fun ppf -> function
+      | Observer.Update.Initialized value ->
+          Format.fprintf ppf "Initialized %d" value
+      | Observer.Update.Changed { old_value; new_value } ->
+          Format.fprintf ppf "Changed { old_value = %d; new_value = %d }"
+            old_value new_value)
+    ( = )
+
 let delivery =
   Alcotest.testable
     (fun ppf _ -> Format.pp_print_string ppf "<delivery>")
@@ -188,6 +198,66 @@ let test_delivery_ignores_stale_token () =
     (Option.is_none
        (acknowledge ~token:8 ~update:update_changed ~after_ack:[] state))
 
+let check_event_plan label ~expected_value ~expected_update ~expected_delivery
+    plan =
+  Alcotest.(check (option update)) (label ^ " update") expected_update
+    plan.Observer.Event.update;
+  Alcotest.(check (option delivery))
+    (label ^ " delivery") expected_delivery plan.delivery;
+  Alcotest.(check int)
+    (label ^ " current value")
+    expected_value
+    (match plan.value with
+    | Observer.Value.Current value -> value
+    | Observer.Value.Uninitialized | Observer.Value.Failed_without_current ->
+        Alcotest.fail "expected current observer value")
+
+let test_event_plan_initializes_and_suppresses_unchanged () =
+  let open Observer.Delivery in
+  check_event_plan "initial"
+    ~expected_value:1
+    ~expected_update:(Some (Observer.Update.Initialized 1))
+    ~expected_delivery:None
+    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
+       Observer_never_delivered);
+  check_event_plan "unchanged"
+    ~expected_value:1
+    ~expected_update:None ~expected_delivery:None
+    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
+       (Observer_delivered 1))
+
+let test_event_plan_changed_and_cutoff () =
+  let open Observer.Delivery in
+  check_event_plan "changed"
+    ~expected_value:2
+    ~expected_update:
+      (Some (Observer.Update.Changed { old_value = 1; new_value = 2 }))
+    ~expected_delivery:None
+    (Observer.Event.plan ~equal:Int.equal ~changed:true ~value:2
+       (Observer_delivered 1));
+  check_event_plan "equal cutoff"
+    ~expected_value:1
+    ~expected_update:None
+    ~expected_delivery:(Some (Observer_delivered 1))
+    (Observer.Event.plan ~equal:Int.equal ~changed:true ~value:1
+       (Observer_delivered 1))
+
+let test_event_plan_pending_delivery () =
+  let open Observer.Delivery in
+  check_event_plan "pending changed"
+    ~expected_value:2
+    ~expected_update:
+      (Some (Observer.Update.Changed { old_value = 1; new_value = 2 }))
+    ~expected_delivery:None
+    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:2
+       (Observer_delivery_pending (7, update_changed, [])));
+  check_event_plan "pending reverted"
+    ~expected_value:1
+    ~expected_update:None
+    ~expected_delivery:(Some (Observer_delivered 1))
+    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
+       (Observer_delivery_pending (7, update_changed, [])))
+
 let () =
   Alcotest.run "eta_signal_observer"
     [
@@ -218,5 +288,14 @@ let () =
             test_delivery_claim_release_acknowledge;
           Alcotest.test_case "ignores stale token" `Quick
             test_delivery_ignores_stale_token;
+        ] );
+      ( "event",
+        [
+          Alcotest.test_case "initializes and suppresses unchanged" `Quick
+            test_event_plan_initializes_and_suppresses_unchanged;
+          Alcotest.test_case "changed and cutoff" `Quick
+            test_event_plan_changed_and_cutoff;
+          Alcotest.test_case "pending delivery" `Quick
+            test_event_plan_pending_delivery;
         ] );
     ]

@@ -162,3 +162,26 @@ module Delivery = struct
     | Observer_delivery_pending _ ->
         None
 end
+
+module Event = struct
+  type ('a, 'after_ack) plan = {
+    value : 'a Value.t;
+    update : 'a Update.t option;
+    delivery : ('a, 'after_ack) Delivery.t option;
+  }
+
+  let plan ~equal ~changed ~value delivery =
+    let update, delivery =
+      match Delivery.base delivery with
+      | None -> (Some (Update.Initialized value), None)
+      | Some old_value ->
+          if changed || Delivery.pending delivery then
+            if equal old_value value then
+              (None, Some (Delivery.Observer_delivered value))
+            else
+              ( Some (Update.Changed { old_value; new_value = value }),
+                None )
+          else (None, None)
+    in
+    { value = Value.current value; update; delivery }
+end
