@@ -1,19 +1,42 @@
-type ('start, 'hook) demand_effects = {
+type 'start demand_effects = {
   demand_start_attempts : 'start list;
-  demand_cancel_hooks : 'hook list;
+  demand_cancel_hooks : (unit -> unit) list;
 }
 
-type ('id, 'necessary, 'runtime, 'timer, 'start, 'hook, 'error) demand_port = {
+type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
   demand_is_necessary : 'necessary -> 'id -> bool;
   demand_validate_runtime : 'runtime -> 'timer -> (unit, 'error) result;
   demand_effective_state : 'timer -> Eta_signal_timer_policy.state;
   demand_current_state : 'timer -> Eta_signal_timer_policy.state;
-  demand_plan_start : 'timer -> Eta_signal_timer_policy.start_plan -> 'start;
-  demand_plan_stop :
-    'timer -> Eta_signal_timer_policy.stop_plan -> 'hook list;
+  demand_set_current_state : 'timer -> Eta_signal_timer_policy.state -> unit;
+  demand_start_attempt : 'timer -> 'start;
 }
+
+let apply_start_plan ~set_current_state ~start_attempt timer plan =
+  set_current_state timer plan.Eta_signal_timer_policy.start_state;
+  start_attempt timer
+
+let apply_stop_plan ~set_current_state timer plan =
+  set_current_state timer plan.Eta_signal_timer_policy.stop_state;
+  plan.Eta_signal_timer_policy.stop_cancel_hooks
+
+let mark_unneeded ~advance_generation ~cancel_running ~current_state
+    ~set_current_state timer =
+  match
+    Eta_signal_timer_policy.stop ~advance_generation ~cancel_running
+      (current_state timer)
+  with
+  | None -> []
+  | Some plan -> apply_stop_plan ~set_current_state timer plan
+
+let rollback_unclaimed_start ~advance_generation ~current_state
+    ~set_current_state timer =
+  if Eta_signal_timer_policy.state_starting (current_state timer) then
+    mark_unneeded ~advance_generation ~cancel_running:true ~current_state
+      ~set_current_state timer
+  else []
 
 let refresh_demand ~advance_generation ~cancel_running port runtime =
   let necessary = port.demand_collect_necessary () in
@@ -29,8 +52,11 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
       demand_resource_validate = port.demand_validate_runtime runtime;
       demand_resource_effective_state = port.demand_effective_state;
       demand_resource_current_state = port.demand_current_state;
-      demand_plan_start = port.demand_plan_start;
-      demand_plan_stop = port.demand_plan_stop;
+      demand_plan_start =
+        apply_start_plan ~set_current_state:port.demand_set_current_state
+          ~start_attempt:port.demand_start_attempt;
+      demand_plan_stop =
+        apply_stop_plan ~set_current_state:port.demand_set_current_state;
     }
   in
   match

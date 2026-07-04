@@ -1080,23 +1080,17 @@ module Make (Observer_error : Observer_error) () = struct
     update_timer_staging timer (fun snapshot ->
         Timer_policy.snapshot_with_state snapshot state)
 
-  let timer_apply_stop_plan_unlocked timer plan =
-    set_timer_current_state timer plan.Timer_policy.stop_state;
-    plan.Timer_policy.stop_cancel_hooks
-
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
-    match
-      Timer_policy.stop
-        ~advance_generation:(checked_succ "timer generation")
-        ~cancel_running (timer_current_state timer)
-    with
-    | None -> []
-    | Some plan -> timer_apply_stop_plan_unlocked timer plan
+    Timer.mark_unneeded
+      ~advance_generation:(checked_succ "timer generation")
+      ~cancel_running ~current_state:timer_current_state
+      ~set_current_state:set_timer_current_state timer
 
   let timer_rollback_unclaimed_start_unlocked timer =
-    if Timer_policy.state_starting (timer_current_state timer) then
-      timer_mark_unneeded_unlocked timer
-    else []
+    Timer.rollback_unclaimed_start
+      ~advance_generation:(checked_succ "timer generation")
+      ~current_state:timer_current_state
+      ~set_current_state:set_timer_current_state timer
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -1751,10 +1745,6 @@ module Make (Observer_error : Observer_error) () = struct
               dynamic_reuse_value
         | Ok Bind.Dynamic_reuse_cached -> use_cached ())
 
-  let timer_apply_start_plan_unlocked timer plan =
-    set_timer_current_state timer plan.Timer_policy.start_state;
-    { start_timer = timer; start_effect = timer.timer_start timer }
-
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
         match Timer_policy.begin_start (timer_current_state timer) ~generation with
@@ -1804,8 +1794,10 @@ module Make (Observer_error : Observer_error) () = struct
               validate_timer_runtime timer runtime_contract);
           demand_effective_state = timer_effective_state;
           demand_current_state = timer_current_state;
-          demand_plan_start = timer_apply_start_plan_unlocked;
-          demand_plan_stop = timer_apply_stop_plan_unlocked;
+          demand_set_current_state = set_timer_current_state;
+          demand_start_attempt =
+            (fun timer ->
+              { start_timer = timer; start_effect = timer.timer_start timer });
         }
         runtime_contract
     with
