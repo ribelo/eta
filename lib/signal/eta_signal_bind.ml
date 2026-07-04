@@ -39,6 +39,11 @@ let source_value snapshot = snapshot.source_value
 let inner snapshot = snapshot.inner
 let inner_scope snapshot = snapshot.inner_scope
 
+let dependencies ~source ~inner =
+  match inner with
+  | None -> [ source ]
+  | Some inner -> [ source; inner ]
+
 let needs_new_inner ~equal snapshot source_value =
   match snapshot.source_value with
   | None -> true
@@ -70,7 +75,9 @@ let eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
 let eval_reuse ~source_dependency ~inner_dependency ~source_changed
     ~compute_inner ~dirty ~initialized ~dependencies_changed =
   let value, inner_changed = compute_inner () in
-  let dependencies = [ source_dependency; inner_dependency ] in
+  let dependencies =
+    dependencies ~source:source_dependency ~inner:(Some inner_dependency)
+  in
   if
     dirty || source_changed || inner_changed || dependencies_changed dependencies
     || not initialized

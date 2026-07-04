@@ -36,6 +36,9 @@ val source_value : ('source, _, _) snapshot -> 'source option
 val inner : (_, 'inner, _) snapshot -> 'inner option
 val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 
+val dependencies :
+  source:'dependency -> inner:'dependency option -> 'dependency list
+
 val needs_new_inner :
   equal:('source -> 'source -> bool) ->
   ('source, _, _) snapshot ->

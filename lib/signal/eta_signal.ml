@@ -1446,11 +1446,10 @@ module Make (Observer_error : Observer_error) () = struct
         let signal_children =
           match signal.kind with
           | Bind bind ->
-              P bind.source
-              ::
-              (match bind_effective_inner bind with
-               | None -> []
-               | Some inner -> [ P inner ])
+              Bind.dependencies ~source:(P bind.source)
+                ~inner:
+                  (Option.map (fun inner -> P inner)
+                     (bind_effective_inner bind))
           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
               signal.dependencies
@@ -1824,7 +1823,9 @@ module Make (Observer_error : Observer_error) () = struct
           in
           let inner = eval.Bind.eval_inner in
           let inner_value = eval.Bind.eval_value in
-          let dependencies = [ P bind.source; P inner ] in
+          let dependencies =
+            Bind.dependencies ~source:(P bind.source) ~inner:(Some (P inner))
+          in
           graph.recompute_count <- saturating_succ graph.recompute_count;
           let snapshot = signal_effective_snapshot signal in
           let changed =
@@ -2146,10 +2147,8 @@ module Make (Observer_error : Observer_error) () = struct
    fun signal ->
     match signal.kind with
     | Bind bind ->
-        let dependencies = [ P bind.source ] in
-        (match bind_effective_inner bind with
-         | None -> dependencies
-         | Some inner -> P inner :: dependencies)
+        Bind.dependencies ~source:(P bind.source)
+          ~inner:(Option.map (fun inner -> P inner) (bind_effective_inner bind))
     | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
     | Map7 _ | Map8 _ | Map9 _ | All _ ->
         signal.dependencies

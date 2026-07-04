@@ -84,6 +84,14 @@ let test_switch_plans_reject_incomplete_staged_snapshot () =
   Alcotest.(check bool) "preflight rejected" true
     (Result.is_error (Bind.preflight_switch ~current ~staged:Bind.empty))
 
+let test_dependencies_include_source_and_current_inner () =
+  Alcotest.(check (list int))
+    "source only" [ 1 ]
+    (Bind.dependencies ~source:1 ~inner:None);
+  Alcotest.(check (list int))
+    "source then inner" [ 1; 2 ]
+    (Bind.dependencies ~source:1 ~inner:(Some 2))
+
 let test_eval_switch_runs_selector_in_scope_and_computes_inner () =
   let entered_scope = ref None in
   let validated = ref None in
@@ -212,6 +220,8 @@ let () =
             test_switch_rollback_and_preflight_plans;
           Alcotest.test_case "incomplete switch rejected" `Quick
             test_switch_plans_reject_incomplete_staged_snapshot;
+          Alcotest.test_case "dependencies include source and inner" `Quick
+            test_dependencies_include_source_and_current_inner;
           Alcotest.test_case "eval switch runs scoped selector" `Quick
             test_eval_switch_runs_selector_in_scope_and_computes_inner;
           Alcotest.test_case "eval switch validation cleanup" `Quick
