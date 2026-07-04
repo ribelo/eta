@@ -265,6 +265,14 @@ let test_delivery_ignores_stale_token () =
     (Option.is_none
        (release ~token:8
           (Observer_delivery_running (7, update_changed, []))));
+  Alcotest.(check bool) "running token matches" true
+    (running_token_matches ~token:7
+       (Observer_delivery_running (7, update_changed, [])));
+  Alcotest.(check bool) "running token mismatch" false
+    (running_token_matches ~token:8
+       (Observer_delivery_running (7, update_changed, [])));
+  Alcotest.(check bool) "pending token does not match" false
+    (running_token_matches ~token:7 state);
   Alcotest.(check bool) "acknowledge" true
     (Option.is_none
        (acknowledge ~token:8 ~update:update_changed ~after_ack:[] state))

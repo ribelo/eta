@@ -2611,12 +2611,8 @@ module Make (Observer_error : Observer_error) () = struct
   let claimed_event_delivery_active observer token =
     match Observer_lifecycle.active_live observer.obs_state with
     | Some live ->
-        (match
-           Observer_core.Delivery.running_token
-             (observer_current_snapshot live).observer_delivery
-         with
-         | Some running_token -> running_token = token
-         | None -> false)
+        Observer_core.Delivery.running_token_matches ~token
+          (observer_current_snapshot live).observer_delivery
     | None -> false
 
   let begin_stabilize timer_refresh =

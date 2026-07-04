@@ -108,6 +108,7 @@ module Delivery : sig
     ('a, 'after_ack) finish option
 
   val running_token : ('a, 'after_ack) t -> int option
+  val running_token_matches : token:int -> ('a, 'after_ack) t -> bool
   val label : ('a, 'after_ack) t -> string
 end
 

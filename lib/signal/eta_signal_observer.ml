@@ -191,6 +191,11 @@ module Delivery = struct
     | Observer_delivery_pending _ ->
         None
 
+  let running_token_matches ~token state =
+    match running_token state with
+    | Some running_token -> running_token = token
+    | None -> false
+
   let label = function
     | Observer_never_delivered -> "never_delivered"
     | Observer_delivered _ -> "delivered"
