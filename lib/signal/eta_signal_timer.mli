@@ -88,6 +88,13 @@ val mark_stopped : state -> generation:int -> state option
 
 val read_next_due : state -> generation:int -> fallback:int -> int option
 
+val set_next_due :
+  effective_state:state ->
+  current_state:state ->
+  generation:int ->
+  next_due_ms:int ->
+  state option
+
 val stop :
   advance_generation:(int -> int) ->
   cancel_running:bool ->

@@ -266,6 +266,30 @@ let test_read_next_due_policy () =
   Alcotest.(check (option int)) "inactive stops" None
     (Timer.read_next_due inactive ~generation:7 ~fallback:20)
 
+let test_set_next_due_policy () =
+  let running = Timer.Timer_running (7, Some 11, noop) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match
+     Timer.set_next_due ~effective_state:running ~current_state:running
+       ~generation:7 ~next_due_ms:20
+   with
+  | Some state ->
+      Alcotest.(check (option int)) "updated next due" (Some 20)
+        (Timer.state_next_due state)
+  | None -> Alcotest.fail "expected next due update");
+  Alcotest.(check bool) "stale running stops" true
+    (Option.is_none
+       (Timer.set_next_due ~effective_state:running ~current_state:running
+          ~generation:8 ~next_due_ms:20));
+  (match
+     Timer.set_next_due ~effective_state:running ~current_state:inactive
+       ~generation:7 ~next_due_ms:20
+   with
+  | Some state ->
+      Alcotest.(check string) "updates current state" "inactive"
+        (Timer.state_label state)
+  | None -> Alcotest.fail "expected current state update plan")
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -372,6 +396,8 @@ let () =
             test_mark_stopped_policy;
           Alcotest.test_case "read next due policy" `Quick
             test_read_next_due_policy;
+          Alcotest.test_case "set next due policy" `Quick
+            test_set_next_due_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;

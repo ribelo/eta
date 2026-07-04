@@ -213,6 +213,11 @@ let read_next_due state ~generation ~fallback =
     Some (Option.value (state_next_due state) ~default:fallback)
   else None
 
+let set_next_due ~effective_state ~current_state ~generation ~next_due_ms =
+  if state_running_current effective_state generation then
+    Some (state_set_next_due current_state (Some next_due_ms))
+  else None
+
 let stop ~advance_generation ~cancel_running state =
   match state with
   | Timer_inactive _ | Timer_finished _ -> None

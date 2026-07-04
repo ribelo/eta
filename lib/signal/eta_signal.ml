@@ -3711,10 +3711,15 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_set_next_due timer generation next_due_ms =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then (
-            timer_set_next_due_unlocked timer (Some next_due_ms);
-            `Continue)
-          else `Stop)
+          match
+            Timer.set_next_due ~effective_state:(timer_effective_state timer)
+              ~current_state:(timer_current_state timer) ~generation
+              ~next_due_ms
+          with
+          | Some state ->
+              set_timer_current_state timer state;
+              `Continue
+          | None -> `Stop)
 
     let timer_advance_next_due timer generation ~expected next_due_ms =
       with_graph_lane_sync (fun () ->
