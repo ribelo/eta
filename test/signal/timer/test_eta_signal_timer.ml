@@ -13,6 +13,12 @@ let pp_timer_error ppf = function
 let timer_error =
   Alcotest.testable pp_timer_error (fun left right -> left = right)
 
+let pp_runtime_error ppf = function
+  | `Runtime_mismatch -> Format.pp_print_string ppf "Runtime_mismatch"
+
+let runtime_error =
+  Alcotest.testable pp_runtime_error (fun left right -> left = right)
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer.add_ms_capped max_int 1);
@@ -75,6 +81,28 @@ let test_validation_policy () =
     "non-positive interval"
     (Error `Invalid_interval)
     (Timer.validate_interval_ms 0)
+
+let test_runtime_validation_policy () =
+  let calls = ref [] in
+  let same_runtime expected actual =
+    calls := (expected, actual) :: !calls;
+    expected = actual
+  in
+  Alcotest.(check (result unit runtime_error))
+    "matching runtime"
+    (Ok ())
+    (Timer.validate_runtime ~same_runtime ~expected:1 ~actual:1);
+  Alcotest.(check (list (pair int int)))
+    "matching call"
+    [ (1, 1) ] !calls;
+  calls := [];
+  Alcotest.(check (result unit runtime_error))
+    "mismatched runtime"
+    (Error `Runtime_mismatch)
+    (Timer.validate_runtime ~same_runtime ~expected:1 ~actual:2);
+  Alcotest.(check (list (pair int int)))
+    "mismatched call"
+    [ (1, 2) ] !calls
 
 let catch_up_policy_label = function
   | Timer.Catch_up_every_cadence -> "every"
@@ -1031,6 +1059,8 @@ let () =
             test_deadline_arithmetic;
           Alcotest.test_case "validation policy" `Quick
             test_validation_policy;
+          Alcotest.test_case "runtime validation policy" `Quick
+            test_runtime_validation_policy;
           Alcotest.test_case "source policy defaults" `Quick
             test_source_policy_defaults;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;

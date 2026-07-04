@@ -128,6 +128,12 @@ val validate_future_deadline :
 
 val validate_positive_duration_ms : int -> (unit, [> `Past_deadline ]) result
 
+val validate_runtime :
+  same_runtime:('runtime -> 'runtime -> bool) ->
+  expected:'runtime ->
+  actual:'runtime ->
+  (unit, [> `Runtime_mismatch ]) result
+
 val current_time_source_policy : unit -> int source_policy
 val deadline_source_policy : deadline_ms:int -> bool source_policy
 val interval_source_policy : interval_ms:int -> int source_policy

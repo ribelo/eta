@@ -1032,12 +1032,14 @@ module Make (Observer_error : Observer_error) () = struct
       ~current_state:(timer_current_state timer)
 
   let ensure_timer_runtime timer runtime_contract =
-    if
-      not
-        (Runtime_contract.same_runtime timer.timer_runtime_contract runtime_contract)
-    then (
-      Private_test_hooks.run_timer_runtime_mismatch_hook ();
-      raise (Graph_error `Runtime_mismatch))
+    match
+      Timer.validate_runtime ~same_runtime:Runtime_contract.same_runtime
+        ~expected:timer.timer_runtime_contract ~actual:runtime_contract
+    with
+    | Ok () -> ()
+    | Error `Runtime_mismatch ->
+        Private_test_hooks.run_timer_runtime_mismatch_hook ();
+        raise (Graph_error `Runtime_mismatch)
 
   let timer_can_refresh_on_demand token timer =
     Timer.can_refresh_on_demand

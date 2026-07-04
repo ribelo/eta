@@ -183,6 +183,9 @@ let validate_future_deadline ~now_ms ~deadline_ms =
 let validate_positive_duration_ms duration_ms =
   if duration_ms <= 0 then Error `Past_deadline else Ok ()
 
+let validate_runtime ~same_runtime ~expected ~actual =
+  if same_runtime expected actual then Ok () else Error `Runtime_mismatch
+
 let source_policy ~update_on_start ~catch_up_policy ~refresh_when_inactive
     ~refresh_on_demand =
   {
