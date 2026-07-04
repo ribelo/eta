@@ -3,6 +3,7 @@ module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
+module Id = Eta_signal_id
 module Stabilization = Eta_signal_stabilization
 module Transaction = Eta_signal_transaction
 
@@ -269,24 +270,22 @@ module Make (Observer_error : Observer_error) () = struct
   let checked_succ name value =
     if value = max_int then counter_overflow name else value + 1
 
-  type signal_id = Signal_id of int
-  type scope_id = Scope_id of int
-  type var_id = Var_id of int
-  type observer_id = Observer_id of int
+  type signal_id = Id.signal
+  type scope_id = Id.scope
+  type var_id = Id.var
+  type observer_id = Id.observer
 
-  let signal_id_int (Signal_id id) = id
-  let scope_id_int (Scope_id id) = id
-  let var_id_int (Var_id id) = id
-  let observer_id_int (Observer_id id) = id
+  let signal_id_int = Id.signal_int
+  let scope_id_int = Id.scope_int
+  let var_id_int = Id.var_int
+  let observer_id_int = Id.observer_int
 
-  let signal_id_label id = "s" ^ string_of_int (signal_id_int id)
-  let dead_signal_id_label id = "dead_" ^ signal_id_label id
-  let scope_id_label id = "sc" ^ string_of_int (scope_id_int id)
-  let var_id_label id = "v" ^ string_of_int (var_id_int id)
-  let observer_id_label id = "o" ^ string_of_int (observer_id_int id)
-
-  let compare_observer_id left right =
-    Int.compare (observer_id_int left) (observer_id_int right)
+  let signal_id_label = Id.signal_label
+  let dead_signal_id_label = Id.dead_signal_label
+  let scope_id_label = Id.scope_label
+  let var_id_label = Id.var_label
+  let observer_id_label = Id.observer_label
+  let compare_observer_id = Id.compare_observer
 
   type weak_packed_signal = Obj.t Weak.t
 
@@ -1107,15 +1106,15 @@ module Make (Observer_error : Observer_error) () = struct
     graph.next_id <- checked_succ "node id" id;
     id
 
-  let next_signal_id () = Signal_id (next_id ())
-  let next_var_id () = Var_id (next_id ())
-  let next_observer_id () = Observer_id (next_id ())
+  let next_signal_id () = Id.signal (next_id ())
+  let next_var_id () = Id.var (next_id ())
+  let next_observer_id () = Id.observer (next_id ())
 
   let new_scope owner =
     let id = graph.next_scope_id in
     graph.next_scope_id <- checked_succ "scope id" id;
     {
-      scope_id = Scope_id id;
+      scope_id = Id.scope id;
       scope_owner = P owner;
       scope_parent = owner.scope;
       scope_valid = true;
