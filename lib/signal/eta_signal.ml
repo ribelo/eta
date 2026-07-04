@@ -269,15 +269,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running of int * int option * (unit -> unit)
     | Timer_finished of int
 
-  and _ timer_refresh_spec =
-    | Refresh_current_time : int timer_refresh_spec
-    | Refresh_deadline : int -> bool timer_refresh_spec
-    | Refresh_interval : int -> int timer_refresh_spec
-
   and timer_refresh_operation =
-    | Refresh_current_time_source of int var
-    | Refresh_deadline_source of bool var * int
-    | Refresh_interval_source of int var * int
+    | Refresh_operation : 'a var * 'a Timer.refresh_spec -> timer_refresh_operation
 
   and timer_transition =
     | Set_source : 'a var * 'a -> timer_transition
@@ -1580,17 +1573,10 @@ module Make (Observer_error : Observer_error) () = struct
          | Timer.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
          | Timer.Refresh_finish -> Finish)
 
-  let timer_refresh_plan timer now_ms = function
-    | Refresh_current_time_source source ->
-        Timer.current_time_refresh_plan ~now_ms
-        |> timer_refresh_transitions source
-    | Refresh_deadline_source (source, deadline_ms) ->
-        Timer.deadline_refresh_plan ~now_ms ~deadline_ms
-        |> timer_refresh_transitions source
-    | Refresh_interval_source (source, interval_ms) ->
-        Timer.interval_refresh_plan ~state:(timer_effective_state timer)
-          ~interval_ms ~current_value:(effective_var_value source) ~now_ms
-        |> timer_refresh_transitions source
+  let timer_refresh_plan timer now_ms (Refresh_operation (source, spec)) =
+    Timer.refresh_plan_for_spec ~state:(timer_effective_state timer)
+      ~current_value:(effective_var_value source) ~now_ms spec
+    |> timer_refresh_transitions source
 
   let stage_timer_refresh_operation timer now_ms operation =
     List.iter
@@ -3464,12 +3450,8 @@ module Make (Observer_error : Observer_error) () = struct
       signal.timer <- Some timer;
       signal
 
-    let timer_refresh_operation : type a.
-        a var -> a timer_refresh_spec -> timer_refresh_operation =
-     fun source -> function
-      | Refresh_current_time -> Refresh_current_time_source source
-      | Refresh_deadline deadline_ms -> Refresh_deadline_source (source, deadline_ms)
-      | Refresh_interval interval_ms -> Refresh_interval_source (source, interval_ms)
+    let timer_refresh_operation source spec =
+      Refresh_operation (source, spec)
 
     let make_timer_signal ?(update_on_start = false)
         ?(catch_up_policy = Catch_up_every_cadence)
@@ -3509,8 +3491,8 @@ module Make (Observer_error : Observer_error) () = struct
                                make_timer_signal ~update_on_start:true
                                  ~equal:Int.equal
                                  ~catch_up_policy:Catch_up_once_per_wake
-                                 ~refresh_on_demand:Refresh_current_time initial
-                                 every ~runtime_contract
+                                 ~refresh_on_demand:Timer.Refresh_current_time
+                                 initial every ~runtime_contract
                                  {
                                    source_timer_update =
                                      (fun timer generation ~missed:_ source ->
@@ -3525,7 +3507,8 @@ module Make (Observer_error : Observer_error) () = struct
       construct_timer_signal (fun () ->
           make_timer_signal ~update_on_start:true
             ~catch_up_policy:Catch_up_once_per_wake ~equal:Bool.equal false every
-            ~refresh_on_demand:(Refresh_deadline deadline_ms) ~runtime_contract
+            ~refresh_on_demand:(Timer.Refresh_deadline deadline_ms)
+            ~runtime_contract
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
@@ -3585,7 +3568,7 @@ module Make (Observer_error : Observer_error) () = struct
                         let interval_ms = Duration.to_ms interval in
                         make_timer_signal ~equal:Int.equal 0 interval
                           ~refresh_when_inactive:false
-                          ~refresh_on_demand:(Refresh_interval interval_ms)
+                          ~refresh_on_demand:(Timer.Refresh_interval interval_ms)
                           ~catch_up_policy:Catch_up_coalesced
                           ~runtime_contract
                           {

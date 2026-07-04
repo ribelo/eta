@@ -73,6 +73,11 @@ type 'a refresh_transition =
   | Refresh_advance_due of int
   | Refresh_finish
 
+type _ refresh_spec =
+  | Refresh_current_time : int refresh_spec
+  | Refresh_deadline : int -> bool refresh_spec
+  | Refresh_interval : int -> int refresh_spec
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -543,3 +548,12 @@ let interval_refresh_plan ~state ~interval_ms ~current_value ~now_ms =
     refresh_next_due_ms = refresh.interval_next_due_ms;
     refresh_finish = refresh.interval_finish;
   }
+
+let refresh_plan_for_spec : type a.
+    state:state -> current_value:a -> now_ms:int -> a refresh_spec -> a refresh_plan =
+ fun ~state ~current_value ~now_ms -> function
+  | Refresh_current_time -> current_time_refresh_plan ~now_ms
+  | Refresh_deadline deadline_ms ->
+      deadline_refresh_plan ~now_ms ~deadline_ms
+  | Refresh_interval interval_ms ->
+      interval_refresh_plan ~state ~interval_ms ~current_value ~now_ms

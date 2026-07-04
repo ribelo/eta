@@ -683,8 +683,14 @@ let test_stop_policy () =
 let test_refresh_plans () =
   let running = Timer.Timer_running_uncancellable (1, Some 50) in
   let current = Timer.current_time_refresh_plan ~now_ms:85 in
+  let current_from_spec =
+    Timer.refresh_plan_for_spec ~state:running ~current_value:0
+      ~now_ms:85 Timer.Refresh_current_time
+  in
   Alcotest.(check (option int)) "current value" (Some 85)
     current.refresh_value;
+  Alcotest.(check (option int)) "current spec value" current.refresh_value
+    current_from_spec.refresh_value;
   Alcotest.(check (option int)) "current next due" None
     current.refresh_next_due_ms;
   Alcotest.(check bool) "current does not finish" false
@@ -698,6 +704,14 @@ let test_refresh_plans () =
   Alcotest.(check (option int)) "interval due" (Some 90)
     interval.refresh_next_due_ms;
   Alcotest.(check bool) "interval finish" false interval.refresh_finish;
+  let interval_from_spec =
+    Timer.refresh_plan_for_spec ~state:running ~current_value:3
+      ~now_ms:85 (Timer.Refresh_interval 10)
+  in
+  Alcotest.(check (option int)) "interval spec value"
+    interval.refresh_value interval_from_spec.refresh_value;
+  Alcotest.(check (option int)) "interval spec due"
+    interval.refresh_next_due_ms interval_from_spec.refresh_next_due_ms;
   let saturated =
     Timer.interval_refresh_plan
       ~state:(Timer.Timer_running_uncancellable (1, Some max_int))
@@ -708,7 +722,15 @@ let test_refresh_plans () =
   let deadline = Timer.deadline_refresh_plan ~now_ms:100 ~deadline_ms:99 in
   Alcotest.(check (option bool)) "deadline value" (Some true)
     deadline.refresh_value;
-  Alcotest.(check bool) "deadline finish" true deadline.refresh_finish
+  Alcotest.(check bool) "deadline finish" true deadline.refresh_finish;
+  let deadline_from_spec =
+    Timer.refresh_plan_for_spec ~state:running ~current_value:false
+      ~now_ms:100 (Timer.Refresh_deadline 99)
+  in
+  Alcotest.(check (option bool)) "deadline spec value"
+    deadline.refresh_value deadline_from_spec.refresh_value;
+  Alcotest.(check bool) "deadline spec finish" deadline.refresh_finish
+    deadline_from_spec.refresh_finish
 
 let test_refresh_transitions () =
   let transition_labels =

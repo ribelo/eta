@@ -36,6 +36,11 @@ type 'a refresh_transition =
   | Refresh_advance_due of int
   | Refresh_finish
 
+type _ refresh_spec =
+  | Refresh_current_time : int refresh_spec
+  | Refresh_deadline : int -> bool refresh_spec
+  | Refresh_interval : int -> int refresh_spec
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -238,6 +243,13 @@ val can_refresh_on_demand :
 val finish : advance_generation:(int -> int) -> state -> finish_plan
 val current_time_refresh_plan : now_ms:int -> int refresh_plan
 val refresh_transitions : 'a refresh_plan -> 'a refresh_transition list
+
+val refresh_plan_for_spec :
+  state:state ->
+  current_value:'a ->
+  now_ms:int ->
+  'a refresh_spec ->
+  'a refresh_plan
 
 val deadline_refresh_plan :
   now_ms:int -> deadline_ms:int -> bool refresh_plan
