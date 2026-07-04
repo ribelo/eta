@@ -114,6 +114,26 @@ module Delivery : sig
   val label : ('a, 'after_ack) t -> string
 end
 
+module Snapshot : sig
+  type ('a, 'after_ack) t
+
+  val initial : ('a, 'after_ack) t
+
+  val create :
+    value:'a Value.t ->
+    delivery:('a, 'after_ack) Delivery.t ->
+    ('a, 'after_ack) t
+
+  val value : ('a, 'after_ack) t -> 'a Value.t
+  val delivery : ('a, 'after_ack) t -> ('a, 'after_ack) Delivery.t
+  val with_value : ('a, 'after_ack) t -> 'a Value.t -> ('a, 'after_ack) t
+
+  val with_delivery :
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) Delivery.t ->
+    ('a, 'after_ack) t
+end
+
 module Event : sig
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

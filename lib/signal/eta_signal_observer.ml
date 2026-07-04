@@ -205,6 +205,24 @@ module Delivery = struct
     | Observer_delivery_running _ -> "running"
 end
 
+module Snapshot = struct
+  type ('a, 'after_ack) t = {
+    value : 'a Value.t;
+    delivery : ('a, 'after_ack) Delivery.t;
+  }
+
+  let create ~value ~delivery = { value; delivery }
+
+  let initial =
+    create ~value:Value.uninitialized
+      ~delivery:Delivery.Observer_never_delivered
+
+  let value snapshot = snapshot.value
+  let delivery snapshot = snapshot.delivery
+  let with_value snapshot value = { snapshot with value }
+  let with_delivery snapshot delivery = { snapshot with delivery }
+end
+
 module Event = struct
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

@@ -300,6 +300,32 @@ let test_delivery_labels () =
   Alcotest.(check string) "running" "running"
     (label (Observer_delivery_running (7, update_changed, [])))
 
+let test_snapshot_policy () =
+  let initial = Observer.Snapshot.initial in
+  Alcotest.(check string) "initial value" "uninitialized"
+    (Observer.Value.label (Observer.Snapshot.value initial));
+  Alcotest.(check string) "initial delivery" "never_delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery initial));
+  let current =
+    Observer.Snapshot.with_value initial (Observer.Value.current 1)
+  in
+  Alcotest.(check string) "current value" "current"
+    (Observer.Value.label (Observer.Snapshot.value current));
+  let pending =
+    Observer.Delivery.pending_state ~token:1 update_initialized
+  in
+  let snapshot = Observer.Snapshot.with_delivery current pending in
+  Alcotest.(check string) "pending delivery" "pending"
+    (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
+  let explicit =
+    Observer.Snapshot.create ~value:(Observer.Value.current 2)
+      ~delivery:(Observer.Delivery.Observer_delivered 2)
+  in
+  Alcotest.(check string) "explicit value" "current"
+    (Observer.Value.label (Observer.Snapshot.value explicit));
+  Alcotest.(check string) "explicit delivery" "delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery explicit))
+
 let check_event_plan label ~expected_value ~expected_update ~expected_delivery
     plan =
   Alcotest.(check (option update)) (label ^ " update") expected_update
@@ -399,6 +425,8 @@ let () =
             test_delivery_finish_ignores_stale_token;
           Alcotest.test_case "labels" `Quick test_delivery_labels;
         ] );
+      ( "snapshot",
+        [ Alcotest.test_case "policy" `Quick test_snapshot_policy ] );
       ( "event",
         [
           Alcotest.test_case "initializes and suppresses unchanged" `Quick
