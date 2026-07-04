@@ -2,31 +2,30 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
-  | Dynamic_switch of {
-      dynamic_source_value : 'source;
-      dynamic_inner : 'inner;
-      dynamic_scope : 'scope;
-      dynamic_switch_dependencies : 'dependency list;
-      dynamic_switch_value : 'value;
-    }
-  | Dynamic_reuse_cached
-  | Dynamic_reuse_recompute of {
-      dynamic_reuse_dependencies : 'dependency list;
-      dynamic_reuse_value : 'value;
-    }
-
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
-  dynamic_mark_recomputed : unit -> unit;
-  dynamic_switch_changed : 'value -> bool;
-  dynamic_stage_switch :
+type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
+  context_equal : 'source -> 'source -> bool;
+  context_source_dependency : 'dependency;
+  context_pack_inner : 'inner -> 'dependency;
+  context_new_scope : unit -> 'scope;
+  context_selector : 'source -> 'inner;
+  context_with_scope : 'scope -> (unit -> 'inner) -> 'inner;
+  context_validate_inner :
+    'scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result;
+  context_compute_inner : 'inner -> 'value * bool;
+  context_on_switch_failure : 'scope -> unit;
+  context_dirty : bool;
+  context_initialized : bool;
+  context_dependencies_changed : 'dependency list -> bool;
+  context_mark_recomputed : unit -> unit;
+  context_switch_changed : 'value -> bool;
+  context_stage_switch :
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  dynamic_stage_dependencies : 'dependency list -> unit;
-  dynamic_stage_value : 'value -> unit;
-  dynamic_current_value : unit -> 'value;
-  dynamic_recompute_with_dependencies :
+  context_stage_dependencies : 'dependency list -> unit;
+  context_stage_value : 'value -> unit;
+  context_current_value : unit -> 'value;
+  context_recompute_with_dependencies :
     'dependency list -> 'value -> 'value * bool;
-  dynamic_use_cached : unit -> 'value * bool;
+  context_use_cached : unit -> 'value * bool;
 }
 
 val empty : ('source, 'inner, 'scope) snapshot
@@ -43,29 +42,12 @@ val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 val dependencies :
   source:'dependency -> inner:'dependency option -> 'dependency list
 
-val eval_dynamic :
-  equal:('source -> 'source -> bool) ->
+val compute_dynamic :
+  ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context ->
   ('source, 'inner, 'scope) snapshot ->
-  source_dependency:'dependency ->
-  pack_inner:('inner -> 'dependency) ->
   source_value:'source ->
   source_changed:bool ->
-  new_scope:(unit -> 'scope) ->
-  selector:('source -> 'inner) ->
-  with_scope:('scope -> (unit -> 'inner) -> 'inner) ->
-  validate_inner:
-    ('scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result) ->
-  compute_inner:('inner -> 'value * bool) ->
-  on_switch_failure:('scope -> unit) ->
-  dirty:bool ->
-  initialized:bool ->
-  dependencies_changed:('dependency list -> bool) ->
-  (('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval, 'error) result
-
-val apply_dynamic_eval :
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply ->
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval ->
-  'value * bool
+  ('value * bool, 'error) result
 
 val stage_transaction_switch :
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->

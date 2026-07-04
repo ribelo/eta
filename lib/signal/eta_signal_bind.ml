@@ -47,6 +47,32 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
   dynamic_use_cached : unit -> 'value * bool;
 }
 
+type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
+  context_equal : 'source -> 'source -> bool;
+  context_source_dependency : 'dependency;
+  context_pack_inner : 'inner -> 'dependency;
+  context_new_scope : unit -> 'scope;
+  context_selector : 'source -> 'inner;
+  context_with_scope : 'scope -> (unit -> 'inner) -> 'inner;
+  context_validate_inner :
+    'scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result;
+  context_compute_inner : 'inner -> 'value * bool;
+  context_on_switch_failure : 'scope -> unit;
+  context_dirty : bool;
+  context_initialized : bool;
+  context_dependencies_changed : 'dependency list -> bool;
+  context_mark_recomputed : unit -> unit;
+  context_switch_changed : 'value -> bool;
+  context_stage_switch :
+    source_value:'source -> inner:'inner -> scope:'scope -> unit;
+  context_stage_dependencies : 'dependency list -> unit;
+  context_stage_value : 'value -> unit;
+  context_current_value : unit -> 'value;
+  context_recompute_with_dependencies :
+    'dependency list -> 'value -> 'value * bool;
+  context_use_cached : unit -> 'value * bool;
+}
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -168,6 +194,39 @@ let apply_dynamic_eval callbacks = function
       callbacks.dynamic_recompute_with_dependencies
         dynamic_reuse_dependencies dynamic_reuse_value
   | Dynamic_reuse_cached -> callbacks.dynamic_use_cached ()
+
+let compute_dynamic context snapshot ~source_value ~source_changed =
+  match
+    eval_dynamic ~equal:context.context_equal snapshot ~source_value
+      ~source_dependency:context.context_source_dependency
+      ~pack_inner:context.context_pack_inner
+      ~source_changed
+      ~new_scope:context.context_new_scope
+      ~selector:context.context_selector
+      ~with_scope:context.context_with_scope
+      ~validate_inner:context.context_validate_inner
+      ~compute_inner:context.context_compute_inner
+      ~on_switch_failure:context.context_on_switch_failure
+      ~dirty:context.context_dirty
+      ~initialized:context.context_initialized
+      ~dependencies_changed:context.context_dependencies_changed
+  with
+  | Error _ as error -> error
+  | Ok eval ->
+      Ok
+        (apply_dynamic_eval
+           {
+             dynamic_mark_recomputed = context.context_mark_recomputed;
+             dynamic_switch_changed = context.context_switch_changed;
+             dynamic_stage_switch = context.context_stage_switch;
+             dynamic_stage_dependencies = context.context_stage_dependencies;
+             dynamic_stage_value = context.context_stage_value;
+             dynamic_current_value = context.context_current_value;
+             dynamic_recompute_with_dependencies =
+               context.context_recompute_with_dependencies;
+             dynamic_use_cached = context.context_use_cached;
+           }
+           eval)
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
