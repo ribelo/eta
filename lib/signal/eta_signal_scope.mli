@@ -20,3 +20,22 @@ val is_ancestor :
   ancestor:('id, 'owner, 'node) t -> ('id, 'owner, 'node) t -> bool
 
 val depth : ('id, 'owner, 'node) t option -> int
+
+module type VALIDATION_NODE = sig
+  type node_id
+  type scope_id
+  type owner
+  type node
+
+  val node_id : node -> node_id
+  val valid : node -> bool
+  val scope : node -> (scope_id, owner, node) t option
+  val children : node -> node list
+end
+
+module Make_validation (Node : VALIDATION_NODE) : sig
+  val validate_inner :
+    scope:(Node.scope_id, Node.owner, Node.node) t ->
+    Node.node ->
+    (unit, [> `Invalid_scope ]) result
+end

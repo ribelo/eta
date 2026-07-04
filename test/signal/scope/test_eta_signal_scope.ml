@@ -41,6 +41,63 @@ let test_ancestor_and_depth () =
   Alcotest.(check int) "none depth" 0 (Scope.depth None);
   Alcotest.(check int) "grandchild depth" 3 (Scope.depth (Some grandchild))
 
+type node = {
+  node_id : int;
+  mutable node_valid : bool;
+  mutable node_scope : (int, string, node) Scope.t option;
+  mutable node_children : node list;
+}
+
+module Validation = Scope.Make_validation (struct
+  type node_id = int
+  type scope_id = int
+  type owner = string
+  type nonrec node = node
+
+  let node_id node = node.node_id
+  let valid node = node.node_valid
+  let scope node = node.node_scope
+  let children node = node.node_children
+end)
+
+let node ?(valid = true) ?scope ?(children = []) id =
+  { node_id = id; node_valid = valid; node_scope = scope; node_children = children }
+
+let check_valid name scope node =
+  match Validation.validate_inner ~scope node with
+  | Ok () -> ()
+  | Error `Invalid_scope -> Alcotest.fail (name ^ ": expected valid")
+
+let check_invalid name scope node =
+  match Validation.validate_inner ~scope node with
+  | Ok () -> Alcotest.fail (name ^ ": expected invalid")
+  | Error `Invalid_scope -> ()
+
+let test_validate_inner_accepts_unscoped_and_ancestor_scoped_nodes () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let child = Scope.create ~id:2 ~owner:"child" ~parent:(Some root) in
+  check_valid "unscoped" child (node 1);
+  check_valid "ancestor scoped" child (node ~scope:root 2);
+  check_valid "same scoped" child (node ~scope:child 3)
+
+let test_validate_inner_rejects_invalid_nodes_and_scopes () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let child = Scope.create ~id:2 ~owner:"child" ~parent:(Some root) in
+  let unrelated = Scope.create ~id:3 ~owner:"other" ~parent:None in
+  check_invalid "invalid node" child (node ~valid:false 1);
+  check_invalid "unrelated scope" child (node ~scope:unrelated 2);
+  ignore (Scope.invalidate root : node list option);
+  check_invalid "invalid ancestor scope" child (node ~scope:root 3)
+
+let test_validate_inner_traverses_children_and_deduplicates () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let invalid = node ~valid:false 2 in
+  let child = node 1 in
+  child.node_children <- [ invalid; invalid ];
+  check_invalid "invalid child" root child;
+  child.node_children <- [ child ];
+  check_valid "cycle deduplicated" root child
+
 let () =
   Alcotest.run "eta_signal_scope"
     [
@@ -52,5 +109,11 @@ let () =
             test_add_and_invalidate_nodes;
           Alcotest.test_case "ancestor and depth" `Quick
             test_ancestor_and_depth;
+          Alcotest.test_case "validate accepts scoped nodes" `Quick
+            test_validate_inner_accepts_unscoped_and_ancestor_scoped_nodes;
+          Alcotest.test_case "validate rejects invalid nodes" `Quick
+            test_validate_inner_rejects_invalid_nodes_and_scopes;
+          Alcotest.test_case "validate traverses children" `Quick
+            test_validate_inner_traverses_children_and_deduplicates;
         ] );
     ]

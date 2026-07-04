@@ -498,6 +498,24 @@ module Make (Observer_error : Observer_error) () = struct
   let packed_signal_id (P signal) = signal.id
   let scope_owner_id scope = packed_signal_id (Scope.owner scope)
 
+  module Scope_validation = Scope.Make_validation (struct
+    type node_id = signal_id
+    type nonrec scope_id = scope_id
+    type owner = packed_signal
+    type node = packed_signal
+
+    let node_id (P signal) = signal.id
+    let valid (P signal) = signal.valid
+    let scope (P signal) = signal.scope
+
+    let children (P signal) =
+      match signal.kind with
+      | Bind _ -> []
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+      | Map7 _ | Map8 _ | Map9 _ | All _ ->
+          signal.dependencies
+  end)
+
   module Kernel_edge_node = struct
     type id = signal_id
     type nonrec packed = packed_signal
@@ -1413,26 +1431,9 @@ module Make (Observer_error : Observer_error) () = struct
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
   let validate_bind_inner_scope scope inner =
-    let seen = Hashtbl.create 16 in
-    let rec visit (P signal) =
-      if not signal.valid then raise (Graph_error `Invalid_scope);
-      if not (Hashtbl.mem seen signal.id) then (
-        Hashtbl.add seen signal.id ();
-        (match signal.scope with
-         | None -> ()
-         | Some signal_scope ->
-             if
-               Scope.valid signal_scope
-               && Scope.is_ancestor ~ancestor:signal_scope scope
-             then ()
-             else raise (Graph_error `Invalid_scope));
-        (match signal.kind with
-         | Bind _ -> ()
-         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-             List.iter visit signal.dependencies))
-    in
-    visit (P inner)
+    match Scope_validation.validate_inner ~scope (P inner) with
+    | Ok () -> ()
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let timer_state_generation = Timer.state_generation
 
