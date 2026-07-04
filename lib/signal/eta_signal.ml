@@ -1819,16 +1819,6 @@ module Make (Observer_error : Observer_error) () = struct
             saturating_succ graph.nodes_became_unnecessary);
     graph.necessary_node_ids <- next
 
-  let necessary_timers () =
-    prune_all_nodes_unlocked ();
-    Kernel_reachable_static.fold
-      ~roots:(observer_demand_roots graph.observers)
-      ~init:(Hashtbl.create 8)
-      ~f:(fun timers (P signal) ->
-        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer)
-          signal.timer;
-        timers)
-
   let all_timers () =
     List.filter_map
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
@@ -1845,7 +1835,7 @@ module Make (Observer_error : Observer_error) () = struct
     Cleanup.run_pending hooks_ref |> Effect.uninterruptible
 
   let refresh_timer_demand_unlocked runtime_contract =
-    let needed = necessary_timers () in
+    let needed = collect_necessary_node_ids () in
     let demand_items =
       all_timers ()
       |> List.map (fun (id, timer) -> Kernel.Demand.resource ~id timer)
@@ -1868,21 +1858,12 @@ module Make (Observer_error : Observer_error) () = struct
         ~advance_generation:(checked_succ "timer generation")
         ~cancel_running:true demand_items
     in
-    let start_attempts = ref [] in
-    let cancel_hooks = ref [] in
-    List.iter
-      (function
-        | Timer.Demand_plan_start (timer, plan) ->
-            start_attempts :=
-              timer_apply_start_plan_unlocked timer plan :: !start_attempts
-        | Timer.Demand_plan_stop (timer, Some plan) ->
-            cancel_hooks :=
-              List.rev_append
-                (timer_apply_stop_plan_unlocked timer plan)
-                !cancel_hooks
-        | Timer.Demand_plan_stop (_, None) -> ())
-      timer_plans;
-    (List.rev !start_attempts, List.rev !cancel_hooks)
+    let demand_effects =
+      Timer.apply_demand_plans ~start:timer_apply_start_plan_unlocked
+        ~stop:timer_apply_stop_plan_unlocked timer_plans
+    in
+    ( demand_effects.Timer.demand_start_attempts,
+      demand_effects.Timer.demand_cancel_hooks )
 
   let rollback_unclaimed_timer_starts attempts =
     with_graph_lane_sync (fun () ->

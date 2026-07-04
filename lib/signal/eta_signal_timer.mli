@@ -90,6 +90,11 @@ type 'a demand_plan =
   | Demand_plan_start of 'a * start_plan
   | Demand_plan_stop of 'a * stop_plan option
 
+type ('start, 'hook) demand_effects = {
+  demand_start_attempts : 'start list;
+  demand_cancel_hooks : 'hook list;
+}
+
 type finish_plan = {
   finish_state : state;
   finish_cancel_hooks : (unit -> unit) list;
@@ -213,6 +218,12 @@ val demand_plans :
   cancel_running:bool ->
   'a demand_item list ->
   'a demand_plan list
+
+val apply_demand_plans :
+  start:('timer -> start_plan -> 'start) ->
+  stop:('timer -> stop_plan -> 'hook list) ->
+  'timer demand_plan list ->
+  ('start, 'hook) demand_effects
 
 val begin_start : state -> generation:int -> state option
 

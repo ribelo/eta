@@ -114,6 +114,11 @@ type 'a demand_plan =
   | Demand_plan_start of 'a * start_plan
   | Demand_plan_stop of 'a * stop_plan option
 
+type ('start, 'hook) demand_effects = {
+  demand_start_attempts : 'start list;
+  demand_cancel_hooks : 'hook list;
+}
+
 type finish_plan = {
   finish_state : state;
   finish_cancel_hooks : (unit -> unit) list;
@@ -505,6 +510,22 @@ let demand_plans ~advance_generation ~cancel_running items =
                  stop ~advance_generation ~cancel_running
                    item.demand_current_state )))
     items
+
+let apply_demand_plans ~start ~stop plans =
+  let start_attempts = ref [] in
+  let cancel_hooks = ref [] in
+  List.iter
+    (function
+      | Demand_plan_start (timer, plan) ->
+          start_attempts := start timer plan :: !start_attempts
+      | Demand_plan_stop (timer, Some plan) ->
+          cancel_hooks := List.rev_append (stop timer plan) !cancel_hooks
+      | Demand_plan_stop (_, None) -> ())
+    plans;
+  {
+    demand_start_attempts = List.rev !start_attempts;
+    demand_cancel_hooks = List.rev !cancel_hooks;
+  }
 
 let mark_failed ~advance_generation ~effective_state ~current_state ~generation
     =

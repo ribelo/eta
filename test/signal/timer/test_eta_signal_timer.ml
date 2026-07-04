@@ -463,6 +463,48 @@ let test_demand_plans_policy () =
     ]
     plans
 
+let test_apply_demand_plans_preserves_effect_order () =
+  let start_plan generation =
+    {
+      Timer.start_state = Timer.Timer_starting generation;
+      start_generation = generation;
+    }
+  in
+  let stop_plan generation =
+    { Timer.stop_state = Timer.Timer_inactive generation; stop_cancel_hooks = [] }
+  in
+  let effects =
+    Timer.apply_demand_plans
+      ~start:(fun item plan ->
+        item ^ ":start:" ^ string_of_int plan.Timer.start_generation)
+      ~stop:(fun item plan ->
+        let generation = Timer.state_generation plan.Timer.stop_state in
+        [
+          item ^ ":stop:" ^ string_of_int generation ^ ":first";
+          item ^ ":stop:" ^ string_of_int generation ^ ":second";
+        ])
+      [
+        Timer.Demand_plan_start ("a", start_plan 1);
+        Timer.Demand_plan_stop ("b", Some (stop_plan 2));
+        Timer.Demand_plan_stop ("ignored", None);
+        Timer.Demand_plan_start ("c", start_plan 3);
+        Timer.Demand_plan_stop ("d", Some (stop_plan 4));
+      ]
+  in
+  Alcotest.(check (list string))
+    "start attempts"
+    [ "a:start:1"; "c:start:3" ]
+    effects.Timer.demand_start_attempts;
+  Alcotest.(check (list string))
+    "cancel hooks"
+    [
+      "b:stop:2:first";
+      "b:stop:2:second";
+      "d:stop:4:first";
+      "d:stop:4:second";
+    ]
+    effects.Timer.demand_cancel_hooks
+
 let test_start_policy () =
   let inactive = Timer.Timer_inactive 0 in
   let running = Timer.Timer_running (1, Some 10, noop) in
@@ -1007,6 +1049,8 @@ let () =
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
           Alcotest.test_case "demand plans policy" `Quick
             test_demand_plans_policy;
+          Alcotest.test_case "apply demand plans preserves effect order" `Quick
+            test_apply_demand_plans_preserves_effect_order;
           Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "preflight policy" `Quick
             test_preflight_policy;
