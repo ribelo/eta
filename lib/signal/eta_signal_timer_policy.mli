@@ -1,4 +1,7 @@
-(** Pure timer policy helpers for Eta_signal internals. *)
+(** Pure timer policy helpers for Eta_signal internals.
+
+    This module deliberately does not own timer graph nodes, runtime checks, or
+    daemon wiring. Those remain adapter responsibilities. *)
 
 type catch_up_policy =
   | Catch_up_every_cadence

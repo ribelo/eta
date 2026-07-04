@@ -1,16 +1,16 @@
 (rule
- (target eta_signal_timer.ml)
- (deps ../../../lib/signal/eta_signal_timer.ml)
+ (target eta_signal_timer_policy.ml)
+ (deps ../../../lib/signal/eta_signal_timer_policy.ml)
  (action
   (copy %{deps} %{target})))
 
 (rule
- (target eta_signal_timer.mli)
- (deps ../../../lib/signal/eta_signal_timer.mli)
+ (target eta_signal_timer_policy.mli)
+ (deps ../../../lib/signal/eta_signal_timer_policy.mli)
  (action
   (copy %{deps} %{target})))
 
 (test
- (name test_eta_signal_timer)
- (modules test_eta_signal_timer eta_signal_timer)
+ (name test_eta_signal_timer_policy)
+ (modules test_eta_signal_timer_policy eta_signal_timer_policy)
  (libraries alcotest))

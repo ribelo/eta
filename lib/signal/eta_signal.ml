@@ -17,7 +17,7 @@ module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
-module Timer = Eta_signal_timer
+module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
 module type Observer_error = sig
@@ -120,7 +120,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   type weak_packed_signal = Kernel.Weak_cell.t
 
-  type timer_catch_up_policy = Timer.catch_up_policy =
+  type timer_catch_up_policy = Timer_policy.catch_up_policy =
     | Catch_up_every_cadence
     | Catch_up_once_per_wake
     | Catch_up_coalesced
@@ -263,7 +263,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_observer = O : 'a observer -> packed_observer
 
-  and timer_state = Timer.state =
+  and timer_state = Timer_policy.state =
     | Timer_inactive of int
     | Timer_starting of int
     | Timer_running_uncancellable of int * int option
@@ -271,15 +271,15 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_finished of int
 
   and timer_refresh_operation =
-    | Refresh_operation : 'a var * 'a Timer.refresh_spec -> timer_refresh_operation
+    | Refresh_operation : 'a var * 'a Timer_policy.refresh_spec -> timer_refresh_operation
 
   and timer_transition =
     | Set_source : 'a var * 'a -> timer_transition
     | Advance_due of int
-    | Finish of Timer.finish_plan
+    | Finish of Timer_policy.finish_plan
 
   and timer_node = {
-    timer_snapshot : Timer.snapshot Transaction.staged;
+    timer_snapshot : Timer_policy.snapshot Transaction.staged;
     mutable timer_staged_refresh_token : int;
     timer_runtime_contract : Runtime_contract.t;
     timer_refresh_when_inactive : bool;
@@ -310,7 +310,7 @@ module Make (Observer_error : Observer_error) () = struct
     dead_scope_owner : signal_id option;
     dead_scope_parent : scope_id option;
     dead_scope_valid : bool option;
-    dead_timer : Timer.debug_snapshot option;
+    dead_timer : Timer_policy.debug_snapshot option;
   }
 
   and 'a source_timer_update = {
@@ -514,7 +514,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Some timer ->
           let snapshot = Transaction.current timer.timer_snapshot in
           Transaction.replace_current timer.timer_snapshot
-            (Timer.snapshot_with_generation snapshot generation)
+            (Timer_policy.snapshot_with_generation snapshot generation)
 
     let set_timer_next_due signal next_due_ms =
       match signal.timer with
@@ -522,7 +522,7 @@ module Make (Observer_error : Observer_error) () = struct
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer -> (
           let snapshot = Transaction.current timer.timer_snapshot in
-          match Timer.snapshot_with_next_due snapshot next_due_ms with
+          match Timer_policy.snapshot_with_next_due snapshot next_due_ms with
           | Some snapshot ->
               Transaction.replace_current timer.timer_snapshot
                 snapshot
@@ -535,8 +535,8 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
-          Timer.state_label
-            (Timer.snapshot_state
+          Timer_policy.state_label
+            (Timer_policy.snapshot_state
                (Transaction.current timer.timer_snapshot))
 
     let set_observer_on_finish observer hooks =
@@ -579,7 +579,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
   type timer_refresh_context =
-    (Runtime_contract.t, packed_signal * bool) Timer.refresh_context
+    (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
 
   type graph = {
     lane : Lane.t;
@@ -772,9 +772,9 @@ module Make (Observer_error : Observer_error) () = struct
     match graph.active_timer_refresh with
     | None -> Kernel_dirty.mark packed
     | Some context ->
-        Timer.set_refresh_dirty_items context
+        Timer_policy.set_refresh_dirty_items context
           (Kernel_dirty.mark_recording_previous
-             (Timer.refresh_dirty_items context)
+             (Timer_policy.refresh_dirty_items context)
              packed)
 
   let remove_var_watcher source signal =
@@ -977,7 +977,7 @@ module Make (Observer_error : Observer_error) () = struct
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
-  let timer_state_generation = Timer.state_generation
+  let timer_state_generation = Timer_policy.state_generation
 
   let timer_current_snapshot timer =
     Transaction.current timer.timer_snapshot
@@ -993,7 +993,7 @@ module Make (Observer_error : Observer_error) () = struct
   let set_timer_current_state timer timer_state =
     let snapshot = timer_current_snapshot timer in
     set_timer_current_snapshot timer
-      (Timer.snapshot_with_state snapshot timer_state)
+      (Timer_policy.snapshot_with_state snapshot timer_state)
 
   let update_timer_staging timer f =
     let transaction = active_transaction () in
@@ -1001,39 +1001,39 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage transaction timer.timer_snapshot (f snapshot)
 
   let timer_current_state timer =
-    Timer.snapshot_state (timer_current_snapshot timer)
+    Timer_policy.snapshot_state (timer_current_snapshot timer)
 
   let timer_generation timer =
     timer_state_generation (timer_current_state timer)
 
-  let timer_state_label = Timer.state_label
+  let timer_state_label = Timer_policy.state_label
 
   let timer_has_staged_refresh timer =
     match graph.active_timer_refresh with
     | Some context ->
-        timer.timer_staged_refresh_token = Timer.refresh_token context
+        timer.timer_staged_refresh_token = Timer_policy.refresh_token context
     | None -> false
 
   let timer_effective_state timer =
     if timer_has_staged_refresh timer then
-      Timer.snapshot_state (timer_effective_snapshot timer)
+      Timer_policy.snapshot_state (timer_effective_snapshot timer)
     else timer_current_state timer
 
-  let timer_active_state = Timer.state_active
+  let timer_active_state = Timer_policy.state_active
 
   let timer_active timer = timer_active_state (timer_effective_state timer)
 
-  let timer_finished_state = Timer.state_finished
+  let timer_finished_state = Timer_policy.state_finished
 
   let timer_finished timer = timer_finished_state (timer_effective_state timer)
 
   let timer_needs_start timer =
-    Timer.needs_start ~effective_state:(timer_effective_state timer)
+    Timer_policy.needs_start ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
 
   let ensure_timer_runtime timer runtime_contract =
     match
-      Timer.validate_runtime ~same_runtime:Runtime_contract.same_runtime
+      Timer_policy.validate_runtime ~same_runtime:Runtime_contract.same_runtime
         ~expected:timer.timer_runtime_contract ~actual:runtime_contract
     with
     | Ok () -> ()
@@ -1042,34 +1042,34 @@ module Make (Observer_error : Observer_error) () = struct
         raise (Graph_error `Runtime_mismatch)
 
   let timer_can_refresh_on_demand token timer =
-    Timer.can_refresh_on_demand
+    Timer_policy.can_refresh_on_demand
       ~refresh_operation:(Option.is_some timer.timer_refresh_operation)
       ~current_token:
-        (Timer.snapshot_on_demand_refresh_token
+        (Timer_policy.snapshot_on_demand_refresh_token
            (timer_current_snapshot timer))
       ~staged_token:timer.timer_staged_refresh_token ~token
       ~refresh_when_inactive:timer.timer_refresh_when_inactive
       ~active:(timer_active timer) ~finished:(timer_finished timer)
 
   let timer_running_generation timer =
-    Timer.state_running_generation (timer_effective_state timer)
+    Timer_policy.state_running_generation (timer_effective_state timer)
 
   let timer_has_cancel timer =
-    Timer.state_has_cancel (timer_effective_state timer)
+    Timer_policy.state_has_cancel (timer_effective_state timer)
 
-  let add_int_capped = Timer.add_int_capped
+  let add_int_capped = Timer_policy.add_int_capped
 
-  let timer_set_next_due_state = Timer.state_set_next_due
+  let timer_set_next_due_state = Timer_policy.state_set_next_due
 
   let remember_timer_refresh_timer timer =
     match graph.active_timer_refresh with
     | None -> ()
     | Some context ->
-        let timer_refresh_token = Timer.refresh_token context in
+        let timer_refresh_token = Timer_policy.refresh_token context in
         if timer.timer_staged_refresh_token <> timer_refresh_token then (
           timer.timer_staged_refresh_token <- timer_refresh_token;
           update_timer_staging timer (fun snapshot ->
-              Timer.snapshot_with_on_demand_refresh_token snapshot
+              Timer_policy.snapshot_with_on_demand_refresh_token snapshot
                 timer_refresh_token);
           graph.timer_refresh_staged_timers <-
             timer :: graph.timer_refresh_staged_timers)
@@ -1077,15 +1077,15 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
     update_timer_staging timer (fun snapshot ->
-        Timer.snapshot_with_state snapshot state)
+        Timer_policy.snapshot_with_state snapshot state)
 
   let timer_apply_stop_plan_unlocked timer plan =
-    set_timer_current_state timer plan.Timer.stop_state;
-    plan.Timer.stop_cancel_hooks
+    set_timer_current_state timer plan.Timer_policy.stop_state;
+    plan.Timer_policy.stop_cancel_hooks
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
     match
-      Timer.stop
+      Timer_policy.stop
         ~advance_generation:(checked_succ "timer generation")
         ~cancel_running (timer_current_state timer)
     with
@@ -1142,7 +1142,7 @@ module Make (Observer_error : Observer_error) () = struct
   let max_dead_signal_tombstones = 1024
 
   let timer_debug_snapshot timer =
-    let snapshot = Timer.debug_snapshot (timer_effective_state timer) in
+    let snapshot = Timer_policy.debug_snapshot (timer_effective_state timer) in
     { snapshot with debug_generation = timer_generation timer }
 
   let timer_tombstone timer = timer_debug_snapshot timer
@@ -1337,13 +1337,13 @@ module Make (Observer_error : Observer_error) () = struct
       collected scope
 
   let preflight_timer_invalidation timer =
-    Timer.preflight_stop
+    Timer_policy.preflight_stop
       ~advance_generation:(checked_succ "timer generation")
       ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
 
   let preflight_timer_start timer =
-    Timer.preflight_start
+    Timer_policy.preflight_start
       ~advance_generation:(checked_succ "timer generation")
       ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
@@ -1455,7 +1455,7 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
 
   let timer_finish_plan state =
-    Timer.finish
+    Timer_policy.finish
       ~advance_generation:(checked_succ "timer generation")
       state
 
@@ -1480,12 +1480,12 @@ module Make (Observer_error : Observer_error) () = struct
         remember_timer_refresh_disposal_hooks plan.finish_cancel_hooks
 
   let timer_refresh_action source = function
-    | Timer.Refresh_set value -> Set_source (source, value)
-    | Timer.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
-    | Timer.Refresh_finish plan -> Finish plan
+    | Timer_policy.Refresh_set value -> Set_source (source, value)
+    | Timer_policy.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
+    | Timer_policy.Refresh_finish plan -> Finish plan
 
   let timer_refresh_plan timer now_ms (Refresh_operation (source, spec)) =
-    Timer.refresh_actions_for_spec
+    Timer_policy.refresh_actions_for_spec
       ~advance_generation:(checked_succ "timer generation")
       ~state:(timer_effective_state timer)
       ~current_value:(effective_var_value source) ~now_ms spec
@@ -1503,8 +1503,8 @@ module Make (Observer_error : Observer_error) () = struct
     match graph.active_timer_refresh with
     | None -> ()
     | Some context ->
-        Kernel_dirty.restore (Timer.refresh_dirty_items context);
-        Timer.clear_refresh_dirty_items context
+        Kernel_dirty.restore (Timer_policy.refresh_dirty_items context);
+        Timer_policy.clear_refresh_dirty_items context
 
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
@@ -1587,12 +1587,12 @@ module Make (Observer_error : Observer_error) () = struct
   let refresh_timer_source_for_compute signal =
     match (graph.active_timer_refresh, signal.timer) with
     | Some timer_refresh, Some timer ->
-        let timer_refresh_token = Timer.refresh_token timer_refresh in
+        let timer_refresh_token = Timer_policy.refresh_token timer_refresh in
         ensure_timer_runtime timer
-          (Timer.refresh_runtime_contract timer_refresh);
+          (Timer_policy.refresh_runtime_contract timer_refresh);
         if timer_can_refresh_on_demand timer_refresh_token timer then (
           remember_timer_refresh_timer timer;
-          let now_ms = Timer.refresh_sample_now_ms timer_refresh in
+          let now_ms = Timer_policy.refresh_sample_now_ms timer_refresh in
           match timer.timer_refresh_operation with
           | None -> ()
           | Some operation -> stage_timer_refresh_operation timer now_ms operation)
@@ -1794,12 +1794,12 @@ module Make (Observer_error : Observer_error) () = struct
           | Bind.Reuse_cached -> use_cached ()))
 
   let timer_apply_start_plan_unlocked timer plan =
-    set_timer_current_state timer plan.Timer.start_state;
+    set_timer_current_state timer plan.Timer_policy.start_state;
     { start_timer = timer; start_effect = timer.timer_start timer }
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
-        match Timer.begin_start (timer_current_state timer) ~generation with
+        match Timer_policy.begin_start (timer_current_state timer) ~generation with
         | Some state ->
             set_timer_current_state timer state;
             `Continue
@@ -1848,23 +1848,23 @@ module Make (Observer_error : Observer_error) () = struct
              in
              if necessary then ensure_timer_runtime timer runtime_contract;
              {
-               Timer.demand_item = timer;
+               Timer_policy.demand_item = timer;
                demand_necessary = necessary;
                demand_effective_state = timer_effective_state timer;
                demand_current_state = timer_current_state timer;
              })
     in
     let timer_plans =
-      Timer.demand_plans
+      Timer_policy.demand_plans
         ~advance_generation:(checked_succ "timer generation")
         ~cancel_running:true demand_items
     in
     let demand_effects =
-      Timer.apply_demand_plans ~start:timer_apply_start_plan_unlocked
+      Timer_policy.apply_demand_plans ~start:timer_apply_start_plan_unlocked
         ~stop:timer_apply_stop_plan_unlocked timer_plans
     in
-    ( demand_effects.Timer.demand_start_attempts,
-      demand_effects.Timer.demand_cancel_hooks )
+    ( demand_effects.Timer_policy.demand_start_attempts,
+      demand_effects.Timer_policy.demand_cancel_hooks )
 
   let rollback_unclaimed_timer_starts attempts =
     with_graph_lane_sync (fun () ->
@@ -2350,7 +2350,7 @@ module Make (Observer_error : Observer_error) () = struct
                       try
                         let timer_refresh =
                           Some
-                            (Timer.create_refresh_context
+                            (Timer_policy.create_refresh_context
                                ~token:(next_timer_refresh_token_unlocked ())
                                ~runtime_contract
                                ~now_ms:runtime_contract.Runtime_contract.now_ms)
@@ -2726,7 +2726,7 @@ module Make (Observer_error : Observer_error) () = struct
             signal_scope_parent_label = parent;
           }
 
-  let debug_timer_snapshot (timer : Timer.debug_snapshot) =
+  let debug_timer_snapshot (timer : Timer_policy.debug_snapshot) =
     {
       Debug.timer_active = timer.debug_active;
       timer_running_generation = timer.debug_running_generation;
@@ -2943,18 +2943,18 @@ module Make (Observer_error : Observer_error) () = struct
     exception Timer_cancelled
 
     let validate_interval duration =
-      Timer.validate_interval_ms (Duration.to_ms duration)
+      Timer_policy.validate_interval_ms (Duration.to_ms duration)
 
     let validate_future now deadline_ms =
-      Timer.validate_future_deadline ~now_ms:now ~deadline_ms
+      Timer_policy.validate_future_deadline ~now_ms:now ~deadline_ms
 
     let validate_positive_duration duration =
-      Timer.validate_positive_duration_ms (Duration.to_ms duration)
+      Timer_policy.validate_positive_duration_ms (Duration.to_ms duration)
 
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
           match
-            Timer.install_cancel (timer_current_state timer) ~generation
+            Timer_policy.install_cancel (timer_current_state timer) ~generation
               ~cancel
           with
           | Some state ->
@@ -2989,8 +2989,8 @@ module Make (Observer_error : Observer_error) () = struct
         else Effect.Expert.exit_of_exn context exn
 
     let timer_daemon_exit = function
-      | Eta.Exit.Ok _ -> Timer.Daemon_ok
-      | Eta.Exit.Error _ -> Timer.Daemon_error
+      | Eta.Exit.Ok _ -> Timer_policy.Daemon_ok
+      | Eta.Exit.Error _ -> Timer_policy.Daemon_error
 
     let apply_timer_cleanup timer generation cleanup exit =
       let daemon_exit = timer_daemon_exit exit in
@@ -3003,37 +3003,37 @@ module Make (Observer_error : Observer_error) () = struct
                daemon_exit))
 
     let timer_cleanup_after_exit timer generation exit =
-      apply_timer_cleanup timer generation Timer.cleanup_after_exit exit
+      apply_timer_cleanup timer generation Timer_policy.cleanup_after_exit exit
 
     let timer_cleanup_failed_start timer generation exit =
-      apply_timer_cleanup timer generation Timer.cleanup_failed_start exit
+      apply_timer_cleanup timer generation Timer_policy.cleanup_failed_start exit
 
     let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
-          match Timer.daemon_status (timer_effective_state timer) ~generation with
-          | Timer.Daemon_continue -> `Continue
-          | Timer.Daemon_stop -> `Stop)
+          match Timer_policy.daemon_status (timer_effective_state timer) ~generation with
+          | Timer_policy.Daemon_continue -> `Continue
+          | Timer_policy.Daemon_stop -> `Stop)
 
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_sync (fun () ->
-          match Timer.daemon_status (timer_effective_state timer) ~generation with
-          | Timer.Daemon_continue ->
+          match Timer_policy.daemon_status (timer_effective_state timer) ~generation with
+          | Timer_policy.Daemon_continue ->
             Transaction.replace_current source.source_value value;
             Var.queue_var source;
             `Updated
-          | Timer.Daemon_stop -> `Stopped)
+          | Timer_policy.Daemon_stop -> `Stopped)
 
-    let add_relative_deadline = Timer.add_relative_deadline
+    let add_relative_deadline = Timer_policy.add_relative_deadline
 
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
-          Timer.read_next_due (timer_effective_state timer) ~generation
+          Timer_policy.read_next_due (timer_effective_state timer) ~generation
             ~fallback)
 
     let timer_set_next_due timer generation next_due_ms =
       with_graph_lane_sync (fun () ->
           match
-            Timer.set_next_due ~effective_state:(timer_effective_state timer)
+            Timer_policy.set_next_due ~effective_state:(timer_effective_state timer)
               ~current_state:(timer_current_state timer) ~generation
               ~next_due_ms
           with
@@ -3045,16 +3045,16 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_advance_next_due timer generation ~expected next_due_ms =
       with_graph_lane_sync (fun () ->
           match
-            Timer.advance_next_due
+            Timer_policy.advance_next_due
               ~effective_state:(timer_effective_state timer)
               ~current_state:(timer_current_state timer) ~generation
               ~expected ~next_due_ms
           with
-          | Timer.Advance_next_due_update state ->
+          | Timer_policy.Advance_next_due_update state ->
               set_timer_current_state timer state;
               `Advanced
-          | Timer.Advance_next_due_stale -> `Stale
-          | Timer.Advance_next_due_stop -> `Stop)
+          | Timer_policy.Advance_next_due_stale -> `Stale
+          | Timer_policy.Advance_next_due_stop -> `Stop)
 
     let rec run_timer_update_batch timer generation remaining update ~missed =
       if remaining <= 0 then Effect.pure `Continue
@@ -3074,7 +3074,7 @@ module Make (Observer_error : Observer_error) () = struct
                           update ~missed))
 
     let rec run_timer_updates timer generation remaining update ~missed =
-      match Timer.update_batch ~remaining with
+      match Timer_policy.update_batch ~remaining with
       | None -> Effect.unit
       | Some batch ->
         run_timer_update_batch timer generation batch.update_batch_count update
@@ -3097,7 +3097,7 @@ module Make (Observer_error : Observer_error) () = struct
                Effect.now
                |> Effect.bind (fun now_ms ->
                       let delay_ms =
-                        Timer.sleep_delay_ms ~now_ms ~next_due_ms
+                        Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms
                       in
                       Effect.sleep (Duration.ms delay_ms))
                |> Effect.bind (fun () ->
@@ -3108,7 +3108,7 @@ module Make (Observer_error : Observer_error) () = struct
                                Effect.now
                                |> Effect.bind (fun now_ms ->
                                       let wake =
-                                        Timer.daemon_wake_plan
+                                        Timer_policy.daemon_wake_plan
                                           ~catch_up_policy:
                                             update.timer_catch_up_policy
                                           ~interval_ms ~next_due_ms:due_ms
@@ -3116,6 +3116,10 @@ module Make (Observer_error : Observer_error) () = struct
                                       in
                                       let next_due_ms =
                                         wake.wake_next_due_ms
+                                      in
+                                      let continue () =
+                                        timer_loop timer generation interval_ms
+                                          next_due_ms update
                                       in
                                       let update_count =
                                         wake.wake_update_count
@@ -3134,10 +3138,7 @@ module Make (Observer_error : Observer_error) () = struct
                                                next_due_ms
                                              |> Effect.bind (function
                                                   | `Stop -> Effect.unit
-                                                  | `Stale ->
-                                                      timer_loop timer generation
-                                                        interval_ms next_due_ms
-                                                        update
+                                                  | `Stale -> continue ()
                                                   | `Advanced ->
                                                       run_timer_updates timer
                                                         generation update_count
@@ -3145,21 +3146,27 @@ module Make (Observer_error : Observer_error) () = struct
                                                       |> Effect.bind (fun () ->
                                                              (if saturated_due then
                                                                 with_graph_lane_sync
-                                                                  (fun () ->
+                                                                 (fun () ->
+                                                                    let module P =
+                                                                      Timer_policy
+                                                                    in
+                                                                    let state =
+                                                                      P.finish_current_daemon
+                                                                        ~advance_generation:
+                                                                          (checked_succ
+                                                                             "timer generation")
+                                                                        ~effective_state:
+                                                                          (timer_effective_state
+                                                                             timer)
+                                                                        ~current_state:
+                                                                          (timer_current_state
+                                                                             timer)
+                                                                        ~generation
+                                                                    in
                                                                     Option.iter
                                                                       (set_timer_current_state
                                                                          timer)
-                                                                      (Timer.finish_current_daemon
-                                                                         ~advance_generation:
-                                                                           (checked_succ
-                                                                              "timer generation")
-                                                                         ~effective_state:
-                                                                           (timer_effective_state
-                                                                              timer)
-                                                                         ~current_state:
-                                                                           (timer_current_state
-                                                                              timer)
-                                                                         ~generation))
+                                                                      state)
                                                               else Effect.unit)
                                                              |> Effect.bind
                                                                   (fun () ->
@@ -3168,12 +3175,7 @@ module Make (Observer_error : Observer_error) () = struct
                                                                       generation
                                                                     |> Effect.bind
                                                                          (function
-                                                                         | `Continue ->
-                                                                             timer_loop
-                                                                               timer
-                                                                               generation
-                                                                               interval_ms next_due_ms
-                                                                               update
+                                                                         | `Continue -> continue ()
                                                                          | `Stop ->
                                                                              Effect.unit)))))))))
 
@@ -3182,7 +3184,7 @@ module Make (Observer_error : Observer_error) () = struct
       let timer =
         {
           timer_snapshot =
-            Transaction.create_staged Timer.initial_snapshot;
+            Transaction.create_staged Timer_policy.initial_snapshot;
           timer_staged_refresh_token = -1;
           timer_runtime_contract = runtime_contract;
           timer_refresh_when_inactive = refresh_when_inactive;
@@ -3195,7 +3197,7 @@ module Make (Observer_error : Observer_error) () = struct
                 Effect.now
                 |> Effect.bind (fun now_ms ->
                        let next_due_ms =
-                         Timer.initial_next_due_ms ~now_ms ~interval_ms
+                         Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
                        in
                        timer_set_next_due timer generation next_due_ms
                        |> Effect.bind (function
@@ -3241,16 +3243,16 @@ module Make (Observer_error : Observer_error) () = struct
       let signal = Var.watch source in
       let refresh_operation =
         Option.map (timer_refresh_operation source)
-          source_policy.Timer.source_refresh_on_demand
+          source_policy.Timer_policy.source_refresh_on_demand
       in
       attach_timer
-        ~update_on_start:source_policy.Timer.source_update_on_start
+        ~update_on_start:source_policy.Timer_policy.source_update_on_start
         ~refresh_when_inactive:
-          source_policy.Timer.source_refresh_when_inactive
+          source_policy.Timer_policy.source_refresh_when_inactive
         ?refresh_operation ~runtime_contract signal interval
         {
           timer_catch_up_policy =
-            source_policy.Timer.source_catch_up_policy;
+            source_policy.Timer_policy.source_catch_up_policy;
           timer_update =
             (fun timer generation ~missed ->
               update.source_timer_update timer generation ~missed source);
@@ -3275,7 +3277,7 @@ module Make (Observer_error : Observer_error) () = struct
                            construct_timer_signal (fun () ->
                                make_timer_signal ~equal:Int.equal initial
                                  every ~runtime_contract
-                                 (Timer.current_time_source_policy ())
+                                 (Timer_policy.current_time_source_policy ())
                                  {
                                    source_timer_update =
                                      (fun timer generation ~missed:_ source ->
@@ -3289,7 +3291,7 @@ module Make (Observer_error : Observer_error) () = struct
     let construct_deadline_signal every deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
           make_timer_signal ~equal:Bool.equal false every ~runtime_contract
-            (Timer.deadline_source_policy ~deadline_ms)
+            (Timer_policy.deadline_source_policy ~deadline_ms)
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
@@ -3349,7 +3351,7 @@ module Make (Observer_error : Observer_error) () = struct
                         let interval_ms = Duration.to_ms interval in
                         make_timer_signal ~equal:Int.equal 0 interval
                           ~runtime_contract
-                          (Timer.interval_source_policy ~interval_ms)
+                          (Timer_policy.interval_source_policy ~interval_ms)
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
@@ -3372,7 +3374,7 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
                         make_timer_signal initial every ~runtime_contract
-                          (Timer.step_source_policy ())
+                          (Timer_policy.step_source_policy ())
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
@@ -3400,7 +3402,7 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
                         make_timer_signal initial every ~runtime_contract
-                          (Timer.step_replay_source_policy ())
+                          (Timer_policy.step_replay_source_policy ())
                           {
                             source_timer_update =
                               (fun timer generation ~missed:_ source ->

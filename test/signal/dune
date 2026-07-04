@@ -13,7 +13,7 @@
   eta_signal_scope
   eta_signal_stream_bridge
   eta_signal_test_hooks
-  eta_signal_timer
+  eta_signal_timer_policy
   eta_signal_transaction
   eta_signal_stabilization)
  (libraries eta eta_stream))
@@ -181,14 +181,14 @@
   (copy %{deps} %{target})))
 
 (rule
- (target eta_signal_timer.ml)
- (deps ../../lib/signal/eta_signal_timer.ml)
+ (target eta_signal_timer_policy.ml)
+ (deps ../../lib/signal/eta_signal_timer_policy.ml)
  (action
   (copy %{deps} %{target})))
 
 (rule
- (target eta_signal_timer.mli)
- (deps ../../lib/signal/eta_signal_timer.mli)
+ (target eta_signal_timer_policy.mli)
+ (deps ../../lib/signal/eta_signal_timer_policy.mli)
  (action
   (copy %{deps} %{target})))
 
