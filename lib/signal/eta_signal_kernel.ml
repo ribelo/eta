@@ -80,6 +80,11 @@ module Demand = struct
 
   type 'id t = 'id transition list
 
+  type summary = {
+    became_necessary : int;
+    became_unnecessary : int;
+  }
+
   type ('id, 'resource) resource = {
     resource_id : 'id;
     resource_value : 'resource;
@@ -104,19 +109,21 @@ module Demand = struct
       previous;
     !transitions
 
-  let count_became_necessary transitions =
+  let summarize transitions =
     List.fold_left
-      (fun count -> function
-        | Became_necessary _ -> count + 1
-        | Became_unnecessary _ -> count)
-      0 transitions
-
-  let count_became_unnecessary transitions =
-    List.fold_left
-      (fun count -> function
-        | Became_unnecessary _ -> count + 1
-        | Became_necessary _ -> count)
-      0 transitions
+      (fun summary -> function
+        | Became_necessary _ ->
+            {
+              summary with
+              became_necessary = summary.became_necessary + 1;
+            }
+        | Became_unnecessary _ ->
+            {
+              summary with
+              became_unnecessary = summary.became_unnecessary + 1;
+            })
+      { became_necessary = 0; became_unnecessary = 0 }
+      transitions
 
   let resource ~id value =
     { resource_id = id; resource_value = value }

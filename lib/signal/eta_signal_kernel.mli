@@ -49,6 +49,12 @@ module Demand : sig
     | Became_unnecessary of 'id
 
   type 'id t = 'id transition list
+
+  type summary = {
+    became_necessary : int;
+    became_unnecessary : int;
+  }
+
   type ('id, 'resource) resource
   type 'resource resource_state
 
@@ -57,8 +63,7 @@ module Demand : sig
     next:('id, unit) Hashtbl.t ->
     'id t
 
-  val count_became_necessary : _ t -> int
-  val count_became_unnecessary : _ t -> int
+  val summarize : _ t -> summary
 
   val resource : id:'id -> 'resource -> ('id, 'resource) resource
 

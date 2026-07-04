@@ -1811,14 +1811,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
-    Kernel.Demand.diff ~previous:graph.necessary_node_ids ~next
-    |> List.iter (function
-         | Kernel.Demand.Became_necessary _ ->
-          graph.nodes_became_necessary <-
-            saturating_succ graph.nodes_became_necessary
-         | Kernel.Demand.Became_unnecessary _ ->
-          graph.nodes_became_unnecessary <-
-            saturating_succ graph.nodes_became_unnecessary);
+    let summary =
+      Kernel.Demand.diff ~previous:graph.necessary_node_ids ~next
+      |> Kernel.Demand.summarize
+    in
+    graph.nodes_became_necessary <-
+      add_int_capped graph.nodes_became_necessary summary.became_necessary;
+    graph.nodes_became_unnecessary <-
+      add_int_capped graph.nodes_became_unnecessary summary.became_unnecessary;
     graph.necessary_node_ids <- next
 
   let all_timers () =

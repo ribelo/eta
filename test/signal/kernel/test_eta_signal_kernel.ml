@@ -125,6 +125,10 @@ let demand_resource_states states =
          ( Kernel.Demand.resource_state_value state,
            Kernel.Demand.resource_state_necessary state ))
 
+let demand_summary transitions =
+  let summary = Kernel.Demand.summarize transitions in
+  (summary.became_necessary, summary.became_unnecessary)
+
 let test_attach_is_bidirectional_and_idempotent () =
   let parent = node 1 in
   let child = node 2 in
@@ -189,10 +193,8 @@ let test_demand_diff_reports_necessary_changes () =
     "transitions"
     [ ("necessary", 3); ("unnecessary", 1) ]
     (demand_transitions transitions);
-  Alcotest.(check int) "became necessary count" 1
-    (Kernel.Demand.count_became_necessary transitions);
-  Alcotest.(check int) "became unnecessary count" 1
-    (Kernel.Demand.count_became_unnecessary transitions)
+  Alcotest.(check (pair int int)) "summary" (1, 1)
+    (demand_summary transitions)
 
 let test_demand_diff_ignores_stable_nodes () =
   let transitions =
@@ -200,10 +202,8 @@ let test_demand_diff_ignores_stable_nodes () =
   in
   Alcotest.(check (list (pair string int))) "transitions" []
     (demand_transitions transitions);
-  Alcotest.(check int) "became necessary count" 0
-    (Kernel.Demand.count_became_necessary transitions);
-  Alcotest.(check int) "became unnecessary count" 0
-    (Kernel.Demand.count_became_unnecessary transitions)
+  Alcotest.(check (pair int int)) "summary" (0, 0)
+    (demand_summary transitions)
 
 let test_demand_classifies_resources () =
   let resources =
