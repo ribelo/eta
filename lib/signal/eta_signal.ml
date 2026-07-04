@@ -8,6 +8,7 @@ module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
+module Signal_snapshot = Kernel.Snapshot
 module Observer_core = Eta_signal_observer
 module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
@@ -130,7 +131,7 @@ module Make (Observer_error : Observer_error) () = struct
     id : signal_id;
     equal : 'a -> 'a -> bool;
     mutable kind : 'a kind;
-    snapshot : 'a signal_snapshot Transaction.staged;
+    snapshot : (signal_id, 'a) Signal_snapshot.t Transaction.staged;
     mutable dirty : bool;
     mutable dependencies : packed_signal list;
     mutable dependents : packed_signal list;
@@ -141,13 +142,6 @@ module Make (Observer_error : Observer_error) () = struct
     scope : scope option;
     mutable valid : bool;
     mutable timer : timer_node option;
-  }
-
-  and 'a signal_snapshot = {
-    signal_value : 'a option;
-    signal_initialized : bool;
-    signal_version : int;
-    signal_dependency_versions : (signal_id * int) list;
   }
 
   and _ kind =
@@ -510,12 +504,12 @@ module Make (Observer_error : Observer_error) () = struct
           Test_delivery_running (token, update)
 
     let signal_version signal =
-      (Transaction.current signal.snapshot).signal_version
+      Signal_snapshot.version (Transaction.current signal.snapshot)
 
     let set_signal_version signal value =
       let snapshot = Transaction.current signal.snapshot in
       Transaction.set_current signal.snapshot
-        { snapshot with signal_version = value }
+        (Signal_snapshot.with_version snapshot value)
     let signal_valid signal = signal.valid
     let set_signal_valid signal value = signal.valid <- value
 
@@ -1133,20 +1127,12 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_signal signal value =
     update_signal_staging signal (fun snapshot ->
         let current = signal_current_snapshot signal in
-        let signal_version =
-          if snapshot.signal_version = current.signal_version then
-            checked_succ "signal version" snapshot.signal_version
-          else snapshot.signal_version
-        in
-        {
-          snapshot with
-          signal_value = Some value;
-          signal_initialized = true;
-          signal_version;
-        })
+        Signal_snapshot.publish
+          ~advance_version:(checked_succ "signal version")
+          ~current snapshot value)
 
   let effective_signal_version signal =
-    (signal_effective_snapshot signal).signal_version
+    Signal_snapshot.version (signal_effective_snapshot signal)
 
   module Kernel_versions = Kernel.Make_versions (struct
     type id = signal_id
@@ -1162,18 +1148,18 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dependencies_changed signal dependencies =
     Kernel_versions.changed
-      ~current:(signal_current_snapshot signal).signal_dependency_versions
+      ~current:
+        (Signal_snapshot.dependency_versions
+           (signal_current_snapshot signal))
       dependencies
 
   let stage_dependency_versions signal dependencies =
     update_signal_staging signal (fun snapshot ->
-        {
-          snapshot with
-          signal_dependency_versions = dependency_versions dependencies;
-        })
+        Signal_snapshot.with_dependency_versions snapshot
+          (dependency_versions dependencies))
 
   let effective_signal_value signal =
-    match (signal_effective_snapshot signal).signal_value with
+    match Signal_snapshot.value (signal_effective_snapshot signal) with
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
@@ -1423,13 +1409,7 @@ module Make (Observer_error : Observer_error) () = struct
         equal = Option.value equal ~default:default_equal;
         kind;
         snapshot =
-          Transaction.create_staged
-            {
-              signal_value = None;
-              signal_initialized = false;
-              signal_version = 0;
-              signal_dependency_versions = [];
-            };
+          Transaction.create_staged Signal_snapshot.empty;
         dirty;
         dependencies = [];
         dependents = [];
@@ -1450,12 +1430,7 @@ module Make (Observer_error : Observer_error) () = struct
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in
     Transaction.set_current signal.snapshot
-      {
-        signal_value = Some value;
-        signal_initialized = true;
-        signal_version = 0;
-        signal_dependency_versions = [];
-      };
+      (Signal_snapshot.initialized value);
     signal
 
   let prune_invalid_nodes_unlocked () =
@@ -1495,7 +1470,7 @@ module Make (Observer_error : Observer_error) () = struct
     {
       dead_id = signal.id;
       dead_kind = kind_name signal.kind;
-      dead_initialized = snapshot.signal_initialized;
+      dead_initialized = Signal_snapshot.is_initialized snapshot;
       dead_dirty = signal.dirty;
       dead_computing = signal.computing;
       dead_dependency_ids =
@@ -1575,7 +1550,7 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let current_or_raise signal =
-    match (signal_current_snapshot signal).signal_value with
+    match Signal_snapshot.value (signal_current_snapshot signal) with
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
@@ -1708,8 +1683,9 @@ module Make (Observer_error : Observer_error) () = struct
     then
       let current = signal_current_snapshot signal in
       let staged = signal_effective_snapshot signal in
-      if staged.signal_version <> current.signal_version then
-        ignore (checked_succ "signal version" current.signal_version : int)
+      Signal_snapshot.preflight_commit_version
+        ~advance_version:(checked_succ "signal version")
+        ~current ~staged
 
   let collect_staged_bind_invalidations () =
     let invalidated_ids = Hashtbl.create 16 in
@@ -1979,15 +1955,15 @@ module Make (Observer_error : Observer_error) () = struct
    fun signal ->
     remember_computed (P signal);
     let signal_initialized () =
-      (signal_effective_snapshot signal).signal_initialized
+      Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let recompute value =
       graph.recompute_count <- saturating_succ graph.recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Kernel.Value_cutoff.changed ~equal:signal.equal
-          ~initialized:snapshot.signal_initialized
-          ~current:snapshot.signal_value ~next:value
+          ~initialized:(Signal_snapshot.is_initialized snapshot)
+          ~current:(Signal_snapshot.value snapshot) ~next:value
       in
       if changed then stage_signal signal value;
       (if changed then value else current_or_raise signal), changed
@@ -2137,8 +2113,8 @@ module Make (Observer_error : Observer_error) () = struct
           let snapshot = signal_effective_snapshot signal in
           let changed =
             Kernel.Value_cutoff.changed ~equal:signal.equal
-              ~initialized:snapshot.signal_initialized
-              ~current:snapshot.signal_value ~next:inner_value
+              ~initialized:(Signal_snapshot.is_initialized snapshot)
+              ~current:(Signal_snapshot.value snapshot) ~next:inner_value
           in
           stage_bind_switch bind source_value inner scope;
           stage_dependency_versions signal dependencies;
@@ -3165,7 +3141,7 @@ module Make (Observer_error : Observer_error) () = struct
     let base =
       [
         bool_field "valid" signal.valid;
-        bool_field "initialized" snapshot.signal_initialized;
+        bool_field "initialized" (Signal_snapshot.is_initialized snapshot);
         bool_field "dirty" signal.dirty;
         bool_field "computing" signal.computing;
         "dependencies=" ^ string_of_int (List.length signal.dependencies);

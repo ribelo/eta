@@ -134,6 +134,52 @@ module Make_versions (Node : VERSION_NODE) = struct
     not (same_snapshot current (snapshot nodes))
 end
 
+module Snapshot = struct
+  type ('id, 'a) t = {
+    value : 'a option;
+    initialized : bool;
+    version : int;
+    dependency_versions : ('id * int) list;
+  }
+
+  let empty =
+    {
+      value = None;
+      initialized = false;
+      version = 0;
+      dependency_versions = [];
+    }
+
+  let initialized value =
+    {
+      value = Some value;
+      initialized = true;
+      version = 0;
+      dependency_versions = [];
+    }
+
+  let value snapshot = snapshot.value
+  let is_initialized snapshot = snapshot.initialized
+  let version snapshot = snapshot.version
+  let dependency_versions snapshot = snapshot.dependency_versions
+  let with_version snapshot version = { snapshot with version }
+
+  let publish ~advance_version ~current snapshot value =
+    let version =
+      if snapshot.version = current.version then
+        advance_version snapshot.version
+      else snapshot.version
+    in
+    { snapshot with value = Some value; initialized = true; version }
+
+  let with_dependency_versions snapshot dependency_versions =
+    { snapshot with dependency_versions }
+
+  let preflight_commit_version ~advance_version ~current ~staged =
+    if staged.version <> current.version then
+      ignore (advance_version current.version : int)
+end
+
 module type DIRTY_NODE = sig
   type id
   type packed

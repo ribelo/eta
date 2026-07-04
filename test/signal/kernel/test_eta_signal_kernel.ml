@@ -213,6 +213,51 @@ let test_versions_changed_detects_dependency_set_update () =
   Alcotest.(check bool) "changed" true
     (Versions.changed ~current [ P left; P right ])
 
+let test_snapshot_publish_and_dependencies () =
+  let empty = Kernel.Snapshot.empty in
+  Alcotest.(check bool) "empty uninitialized" false
+    (Kernel.Snapshot.is_initialized empty);
+  Alcotest.(check (option int)) "empty value" None
+    (Kernel.Snapshot.value empty);
+  let first =
+    Kernel.Snapshot.publish ~advance_version:succ ~current:empty empty 10
+  in
+  Alcotest.(check bool) "published initialized" true
+    (Kernel.Snapshot.is_initialized first);
+  Alcotest.(check (option int)) "published value" (Some 10)
+    (Kernel.Snapshot.value first);
+  Alcotest.(check int) "published version" 1
+    (Kernel.Snapshot.version first);
+  let staged = Kernel.Snapshot.with_version first 3 in
+  let republished =
+    Kernel.Snapshot.publish ~advance_version:succ ~current:first staged 20
+  in
+  Alcotest.(check int) "keeps advanced staged version" 3
+    (Kernel.Snapshot.version republished);
+  let dependencies =
+    Kernel.Snapshot.with_dependency_versions republished [ (1, 5) ]
+  in
+  Alcotest.(check (list (pair int int))) "dependencies" [ (1, 5) ]
+    (Kernel.Snapshot.dependency_versions dependencies)
+
+let test_snapshot_preflight_commit_version () =
+  let current = Kernel.Snapshot.initialized 1 in
+  let staged = Kernel.Snapshot.with_version current 1 in
+  let checked = ref [] in
+  Kernel.Snapshot.preflight_commit_version
+    ~advance_version:(fun version ->
+      checked := version :: !checked;
+      version + 1)
+    ~current ~staged;
+  Alcotest.(check (list int)) "checked current version" [ 0 ] !checked;
+  checked := [];
+  Kernel.Snapshot.preflight_commit_version
+    ~advance_version:(fun version ->
+      checked := version :: !checked;
+      version + 1)
+    ~current ~staged:current;
+  Alcotest.(check (list int)) "unchanged skips" [] !checked
+
 let test_dirty_mark_sets_dirty () =
   let target = node 1 in
   Dirty.mark (P target);
@@ -414,6 +459,13 @@ let () =
             test_versions_changed_detects_version_update;
           Alcotest.test_case "changed detects dependency set update" `Quick
             test_versions_changed_detects_dependency_set_update;
+        ] );
+      ( "snapshot",
+        [
+          Alcotest.test_case "publish and dependencies" `Quick
+            test_snapshot_publish_and_dependencies;
+          Alcotest.test_case "preflight commit version" `Quick
+            test_snapshot_preflight_commit_version;
         ] );
       ( "dirty",
         [

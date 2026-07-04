@@ -72,6 +72,34 @@ module Make_versions (Node : VERSION_NODE) : sig
   val changed : current:(Node.id * int) list -> Node.packed list -> bool
 end
 
+module Snapshot : sig
+  type ('id, 'a) t
+
+  val empty : ('id, 'a) t
+  val initialized : 'a -> ('id, 'a) t
+  val value : ('id, 'a) t -> 'a option
+  val is_initialized : ('id, 'a) t -> bool
+  val version : ('id, 'a) t -> int
+  val dependency_versions : ('id, 'a) t -> ('id * int) list
+  val with_version : ('id, 'a) t -> int -> ('id, 'a) t
+
+  val publish :
+    advance_version:(int -> int) ->
+    current:('id, 'a) t ->
+    ('id, 'a) t ->
+    'a ->
+    ('id, 'a) t
+
+  val with_dependency_versions :
+    ('id, 'a) t -> ('id * int) list -> ('id, 'a) t
+
+  val preflight_commit_version :
+    advance_version:(int -> int) ->
+    current:('id, 'a) t ->
+    staged:('id, 'a) t ->
+    unit
+end
+
 module type DIRTY_NODE = sig
   type id
   type packed
