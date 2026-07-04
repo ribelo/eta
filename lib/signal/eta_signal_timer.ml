@@ -33,6 +33,11 @@ type 'a refresh_plan = {
   refresh_finish : bool;
 }
 
+type 'a refresh_transition =
+  | Refresh_set of 'a
+  | Refresh_advance_due of int
+  | Refresh_finish
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -343,6 +348,20 @@ let current_time_refresh_plan ~now_ms =
     refresh_next_due_ms = None;
     refresh_finish = false;
   }
+
+let refresh_transitions refresh =
+  let due_transitions =
+    match refresh.refresh_next_due_ms with
+    | None -> []
+    | Some next_due_ms -> [ Refresh_advance_due next_due_ms ]
+  in
+  let source_transitions =
+    match refresh.refresh_value with
+    | None -> []
+    | Some value -> [ Refresh_set value ]
+  in
+  due_transitions @ source_transitions
+  @ (if refresh.refresh_finish then [ Refresh_finish ] else [])
 
 let deadline_refresh_plan ~now_ms ~deadline_ms =
   let refresh = deadline_refresh ~now_ms ~deadline_ms in

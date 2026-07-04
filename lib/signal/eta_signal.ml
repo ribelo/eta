@@ -1904,20 +1904,6 @@ module Make (Observer_error : Observer_error) () = struct
     set_timer_current_state timer plan.finish_state;
     plan.finish_cancel_hooks
 
-  let timer_source_refresh_plan source refresh =
-    let due_transitions =
-      match refresh.Timer.refresh_next_due_ms with
-      | None -> []
-      | Some next_due_ms -> [ Advance_due next_due_ms ]
-    in
-    let source_transitions =
-      match refresh.refresh_value with
-      | None -> []
-      | Some value -> [ Set_source (source, value) ]
-    in
-    due_transitions @ source_transitions
-    @ (if refresh.refresh_finish then [ Finish ] else [])
-
   let rec stage_timer_transition timer = function
     | Set_source (source, value) ->
         stage_timer_source_value source value
@@ -1936,18 +1922,24 @@ module Make (Observer_error : Observer_error) () = struct
     | Cancel_after_commit cancel ->
         remember_timer_refresh_disposal_hooks [ cancel ]
 
+  let timer_refresh_transitions source refresh =
+    Timer.refresh_transitions refresh
+    |> List.map (function
+         | Timer.Refresh_set value -> Set_source (source, value)
+         | Timer.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
+         | Timer.Refresh_finish -> Finish)
+
   let timer_refresh_plan timer now_ms = function
     | Refresh_current_time_source source ->
-        timer_source_refresh_plan source
-          (Timer.current_time_refresh_plan ~now_ms)
+        Timer.current_time_refresh_plan ~now_ms
+        |> timer_refresh_transitions source
     | Refresh_deadline_source (source, deadline_ms) ->
-        timer_source_refresh_plan source
-          (Timer.deadline_refresh_plan ~now_ms ~deadline_ms)
+        Timer.deadline_refresh_plan ~now_ms ~deadline_ms
+        |> timer_refresh_transitions source
     | Refresh_interval_source (source, interval_ms) ->
-        timer_source_refresh_plan source
-          (Timer.interval_refresh_plan ~state:(timer_effective_state timer)
-            ~interval_ms ~current_value:(effective_var_value source) ~now_ms
-          )
+        Timer.interval_refresh_plan ~state:(timer_effective_state timer)
+          ~interval_ms ~current_value:(effective_var_value source) ~now_ms
+        |> timer_refresh_transitions source
 
   let stage_timer_refresh_operation timer now_ms operation =
     List.iter

@@ -488,6 +488,41 @@ let test_refresh_plans () =
     deadline.refresh_value;
   Alcotest.(check bool) "deadline finish" true deadline.refresh_finish
 
+let test_refresh_transitions () =
+  let transition_labels =
+    List.map (function
+      | Timer.Refresh_advance_due next_due_ms ->
+          "advance:" ^ string_of_int next_due_ms
+      | Timer.Refresh_set value -> "set:" ^ string_of_int value
+      | Timer.Refresh_finish -> "finish")
+  in
+  Alcotest.(check (list string))
+    "set only"
+    [ "set:85" ]
+    (transition_labels
+       (Timer.refresh_transitions
+          (Timer.current_time_refresh_plan ~now_ms:85)));
+  Alcotest.(check (list string))
+    "advance set finish order"
+    [ "advance:90"; "set:7"; "finish" ]
+    (transition_labels
+       (Timer.refresh_transitions
+          {
+            Timer.refresh_value = Some 7;
+            refresh_next_due_ms = Some 90;
+            refresh_finish = true;
+          }));
+  Alcotest.(check (list string))
+    "empty"
+    []
+    (transition_labels
+       (Timer.refresh_transitions
+          {
+            Timer.refresh_value = None;
+            refresh_next_due_ms = None;
+            refresh_finish = false;
+          }))
+
 let test_finish_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -539,6 +574,8 @@ let () =
             test_advance_next_due_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
+          Alcotest.test_case "refresh transitions" `Quick
+            test_refresh_transitions;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
         ] );
     ]

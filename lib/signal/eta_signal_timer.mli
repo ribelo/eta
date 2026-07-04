@@ -18,6 +18,11 @@ type 'a refresh_plan = {
   refresh_finish : bool;
 }
 
+type 'a refresh_transition =
+  | Refresh_set of 'a
+  | Refresh_advance_due of int
+  | Refresh_finish
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -140,6 +145,7 @@ val can_refresh_on_demand :
 
 val finish : advance_generation:(int -> int) -> state -> finish_plan
 val current_time_refresh_plan : now_ms:int -> int refresh_plan
+val refresh_transitions : 'a refresh_plan -> 'a refresh_transition list
 
 val deadline_refresh_plan :
   now_ms:int -> deadline_ms:int -> bool refresh_plan
