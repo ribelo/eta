@@ -325,6 +325,16 @@ module Make (Observer_error : Observer_error) () : sig
         lifecycle defects, timer runtime mismatch, counter overflow, or
         disposal-hook defects, are therefore reported as Eta defects or
         finalizer diagnostics rather than typed graph failures. *)
+
+    val dispose_checked : 'a t -> (unit, graph_error) Eta.Effect.t
+    (** Dispose an observer lifecycle handle like {!dispose}, but preserve
+        timer demand-cleanup graph failures in the typed error channel.
+
+        This is intended for test harnesses and hosts that need to distinguish
+        recoverable timer graph failures such as [`Runtime_mismatch] from Eta
+        defects. The observer lifecycle state is still changed before timer
+        cleanup runs. Disposal-hook defects remain Eta defects or finalizer
+        diagnostics. *)
   end
 
   val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal

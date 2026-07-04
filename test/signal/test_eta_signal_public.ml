@@ -246,6 +246,45 @@ let test_timer_runtime_mismatch_on_observe () =
         (Eta.Runtime.run rt_b
            (widen (S.Observer.observe timer (fun _ -> E.unit)))))
 
+let test_dispose_checked_reports_timer_runtime_mismatch () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock_a = Eta_test.Test_clock.create () in
+  let clock_b = Eta_test.Test_clock.create () in
+  let rt_a =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_a)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
+      ()
+  in
+  let rt_b =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_b)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
+      ()
+  in
+  let timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
+  let keep_alive =
+    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+  in
+  let disposed_from_wrong_runtime =
+    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      run_ok rt_a (S.Observer.dispose disposed_from_wrong_runtime);
+      run_ok rt_a (S.Observer.dispose keep_alive))
+    (fun () ->
+      run_ok rt_a S.stabilize;
+      expect_exact_runtime_mismatch "checked dispose from another runtime"
+        (Eta.Runtime.run rt_b
+           (widen (S.Observer.dispose_checked disposed_from_wrong_runtime)));
+      expect_fail "checked dispose still finished observer"
+        (function `Disposed_observer -> true | _ -> false)
+        (Eta.Runtime.run rt_a
+           (widen (S.Observer.read disposed_from_wrong_runtime))))
+
 let test_captured_branch_observer_invalidates_without_owner_observer () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -366,6 +405,8 @@ let () =
             test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
             test_timer_runtime_mismatch_on_observe;
+          Alcotest.test_case "dispose_checked reports timer runtime mismatch"
+            `Quick test_dispose_checked_reports_timer_runtime_mismatch;
           Alcotest.test_case "captured branch observer invalidates" `Quick
             test_captured_branch_observer_invalidates_without_owner_observer;
           Alcotest.test_case "observer failure retries pending delivery" `Quick

@@ -2666,6 +2666,17 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.uninterruptible
     else Effect.unit
 
+  let run_pending_dispose_checked_cleanup hooks_ref refresh_timers =
+    if !refresh_timers || pending_disposal_hooks hooks_ref then
+      ((if !refresh_timers then
+          Effect.sync (fun () -> refresh_timers := false)
+          |> Effect.bind (fun () -> refresh_timer_demand ())
+        else Effect.unit)
+       |> Effect.bind (fun () ->
+              run_pending_disposal_hooks_as_finalizers hooks_ref))
+      |> Effect.uninterruptible
+    else Effect.unit
+
   let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
     let best_effort eff = Effect.exit eff |> Effect.map (fun _ -> ()) in
     if !refresh_timers || pending_disposal_hooks hooks_ref then
@@ -2681,7 +2692,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.uninterruptible
     else Effect.unit
 
-  let dispose_observer_effect observer =
+  let dispose_observer_with_cleanup cleanup observer =
     let hooks_ref = ref [] in
     let refresh_timers = ref false in
     with_graph_lane_sync
@@ -2694,9 +2705,15 @@ module Make (Observer_error : Observer_error) () = struct
           refresh_timers := true;
           update_necessity_counters_unlocked ()))
     |> Effect.bind (fun () ->
-           run_pending_dispose_cleanup hooks_ref refresh_timers)
+           cleanup hooks_ref refresh_timers)
     |> Effect.on_exit (fun _exit ->
-           run_pending_dispose_cleanup hooks_ref refresh_timers)
+           cleanup hooks_ref refresh_timers)
+
+  let dispose_observer_effect observer =
+    dispose_observer_with_cleanup run_pending_dispose_cleanup observer
+
+  let dispose_observer_checked_effect observer =
+    dispose_observer_with_cleanup run_pending_dispose_checked_cleanup observer
 
   let abort_observer_registration_effect observer =
     let hooks_ref = ref [] in
@@ -3283,6 +3300,7 @@ module Make (Observer_error : Observer_error) () = struct
               invalid_arg "Eta_signal observer is not initialized")
 
     let dispose observer = dispose_observer_effect observer
+    let dispose_checked observer = dispose_observer_checked_effect observer
   end
 
   let const ?equal value = new_const ?equal value
