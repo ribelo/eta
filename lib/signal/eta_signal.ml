@@ -2881,6 +2881,11 @@ module Make (Observer_error : Observer_error) () = struct
   module Observer = struct
     type 'a t = 'a observer
 
+    type 'a delivery = {
+      delivery_token : int;
+      delivery_update : 'a update;
+    }
+
     let transfer_active_observer observer =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
          the transfer check must not introduce a new lane-release callback
@@ -2941,6 +2946,12 @@ module Make (Observer_error : Observer_error) () = struct
     let observe_with_hooks_callback ?equal ?on_finish signal callback =
       observe_with_hooks_delivery_callback ?equal ?on_finish signal
         (fun observer _token update -> callback observer update)
+
+    let observe_with_hooks_delivery ?equal ?on_finish signal callback =
+      observe_with_hooks_delivery_callback ?equal ?on_finish signal
+        (fun observer token update ->
+          callback observer
+            { delivery_token = token; delivery_update = update })
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal
@@ -3956,12 +3967,13 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun (queue, stream) ->
-             Observer.observe_with_hooks_delivery_callback ?equal
+             Observer.observe_with_hooks_delivery ?equal
                ~on_finish:
                  [ Stream_bridge.observer_finish_hook ~queue ]
                signal
-               (fun observer token update ->
-                 offer_bridge_update observer token on_drop queue update)
+               (fun observer delivery ->
+                 offer_bridge_update observer delivery.delivery_token on_drop
+                   queue delivery.delivery_update)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, stream)))
