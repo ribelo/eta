@@ -3,6 +3,7 @@ module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
+module Transaction = Eta_signal_transaction
 
 module type Observer_error = sig
   type t
@@ -34,6 +35,8 @@ module Make (Observer_error : Observer_error) () = struct
   type time_error =
     [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
+
+  type pure_transaction = (Transaction.pure, graph_error) Transaction.t
 
   module Private_test_hook_state = struct
     type hook =
@@ -412,11 +415,8 @@ module Make (Observer_error : Observer_error) () = struct
   and 'a var = {
     var_id : var_id;
     var_equal : 'a -> 'a -> bool;
-    mutable source_value : 'a;
-    mutable staged_source_value : 'a option;
-    mutable graph_value : 'a;
-    mutable staged_graph_value : 'a option;
-    mutable staged_var_generation : int;
+    source_value : 'a Transaction.staged;
+    graph_value : 'a Transaction.staged;
     mutable queued : bool;
     mutable updating : bool;
     mutable watchers : weak_packed_signal list;
@@ -596,8 +596,8 @@ module Make (Observer_error : Observer_error) () = struct
     let seed_var_source_value (type a) (signal : a signal) (value : a) =
       match signal.kind with
       | Var source ->
-          source.source_value <- value;
-          source.graph_value <- value
+          Transaction.set_current source.source_value value;
+          Transaction.set_current source.graph_value value
       | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
       | Map8 _ | Map9 _ | All _ | Bind _ ->
           invalid_arg
@@ -710,7 +710,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable phase : phase;
     mutable stabilization_id : int;
     mutable pending_vars : packed_var list;
-    mutable staged_vars : packed_var list;
     mutable staged_binds : packed_bind list;
     mutable computed_nodes : packed_signal list;
     mutable staged_observers : packed_observer list;
@@ -731,6 +730,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
     mutable next_timer_refresh_token : int;
     mutable active_timer_refresh : timer_refresh_context option;
+    mutable active_transaction : pure_transaction option;
   }
 
   let graph =
@@ -751,7 +751,6 @@ module Make (Observer_error : Observer_error) () = struct
       phase = Not_stabilizing;
       stabilization_id = 0;
       pending_vars = [];
-      staged_vars = [];
       staged_binds = [];
       computed_nodes = [];
       staged_observers = [];
@@ -772,6 +771,7 @@ module Make (Observer_error : Observer_error) () = struct
       necessary_node_ids = Hashtbl.create 16;
       next_timer_refresh_token = 0;
       active_timer_refresh = None;
+      active_transaction = None;
     }
 
   let weak_packed_signal (P signal) =
@@ -1157,26 +1157,21 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
-  let remember_staged_var (V var as packed) =
-    let generation = current_generation () in
-    if var.staged_var_generation <> generation then (
-      var.staged_var_generation <- generation;
-      graph.staged_vars <- packed :: graph.staged_vars)
+  let active_transaction () =
+    match graph.active_transaction with
+    | Some transaction -> transaction
+    | None -> invalid_arg "Eta_signal: no active transaction"
 
-  let stage_var_graph_value var value =
-    remember_staged_var (V var);
-    var.staged_graph_value <- Some value
+  let stage_var_graph_value (type a) (var : a var) value =
+    Transaction.stage (active_transaction ()) var.graph_value value
 
-  let stage_var_source_value var value =
-    remember_staged_var (V var);
-    var.staged_source_value <- Some value
+  let stage_var_source_value (type a) (var : a var) value =
+    Transaction.stage (active_transaction ()) var.source_value value
 
-  let effective_var_value var =
-    if var.staged_var_generation = current_generation () then
-      match var.staged_graph_value with
-      | Some value -> value
-      | None -> var.graph_value
-    else var.graph_value
+  let effective_var_value (type a) (var : a var) =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.read transaction var.graph_value
+    | None -> Transaction.current var.graph_value
 
   let remember_computed (P signal as packed) =
     let generation = current_generation () in
@@ -1761,22 +1756,20 @@ module Make (Observer_error : Observer_error) () = struct
     if signal.staged_generation = current_generation () then (
       clear_signal_staging signal)
 
-  let commit_var (V var) =
-    if var.staged_var_generation = current_generation () then (
-      (match var.staged_source_value with
-       | None -> ()
-       | Some value -> var.source_value <- value);
-      (match var.staged_graph_value with
-       | None -> ()
-       | Some value -> var.graph_value <- value);
-      var.staged_source_value <- None;
-      var.staged_graph_value <- None)
+  let commit_transaction () =
+    match graph.active_transaction with
+    | None -> ()
+    | Some transaction -> (
+        match Transaction.commit transaction with
+        | Ok _ -> graph.active_transaction <- None
+        | Error err -> raise (Graph_error err))
 
-  let rollback_var (V var) =
-    if var.staged_var_generation = current_generation () then (
-      var.staged_source_value <- None;
-      var.staged_graph_value <- None
-    )
+  let rollback_transaction () =
+    match graph.active_transaction with
+    | None -> ()
+    | Some transaction ->
+        Transaction.rollback transaction;
+        graph.active_transaction <- None
 
   let remember_staged_bind (B bind as packed) =
     let generation = current_generation () in
@@ -2007,7 +2000,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.pending_vars <- V source :: graph.pending_vars)
 
   let set_var_source_unlocked (type a) (source : a var) value =
-    source.source_value <- value;
+    Transaction.set_current source.source_value value;
     queue_var_unlocked source
 
   let stage_timer_source_value (type a) (source : a var) value =
@@ -2115,13 +2108,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let reset_staging () =
     List.iter rollback_signal graph.computed_nodes;
-    List.iter rollback_var graph.staged_vars;
+    rollback_transaction ();
     let disposal_hooks =
       List.concat_map rollback_bind graph.staged_binds @ graph.pure_disposal_hooks
     in
     List.iter rollback_observer graph.staged_observers;
     graph.computed_nodes <- [];
-    graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
@@ -2130,7 +2122,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_staging () =
     preflight_commit_staging ();
-    List.iter commit_var graph.staged_vars;
+    commit_transaction ();
     List.iter commit_timer_refresh_staging graph.timer_refresh_staged_timers;
     let commit_hooks = List.concat_map commit_bind graph.staged_binds in
     remember_pure_disposal_hooks commit_hooks;
@@ -2140,7 +2132,6 @@ module Make (Observer_error : Observer_error) () = struct
       graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks
     in
     graph.computed_nodes <- [];
-    graph.staged_vars <- [];
     graph.staged_binds <- [];
     graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
@@ -2179,8 +2170,10 @@ module Make (Observer_error : Observer_error) () = struct
     token
 
   let stage_pending_var (V var) =
-    if not (var.var_equal var.graph_value var.source_value) then (
-      stage_var_graph_value var var.source_value;
+    let graph_value = Transaction.current var.graph_value in
+    let source_value = Transaction.current var.source_value in
+    if not (var.var_equal graph_value source_value) then (
+      stage_var_graph_value var source_value;
       List.iter mark_self_dirty (source_watchers_unlocked var))
 
   let timer_refresh_sample_now_ms context =
@@ -2947,8 +2940,8 @@ module Make (Observer_error : Observer_error) () = struct
       in
       graph.phase <- Pure;
       graph.stabilization_id <- generation;
+      graph.active_transaction <- Some (Transaction.begin_pure ());
       graph.computed_nodes <- [];
-      graph.staged_vars <- [];
       graph.staged_binds <- [];
       graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
@@ -3143,11 +3136,8 @@ module Make (Observer_error : Observer_error) () = struct
       {
         var_id = next_var_id ();
         var_equal = equal;
-        source_value = value;
-        staged_source_value = None;
-        graph_value = value;
-        staged_graph_value = None;
-        staged_var_generation = -1;
+        source_value = Transaction.create_staged value;
+        graph_value = Transaction.create_staged value;
         queued = false;
         updating = false;
         watchers = [];
@@ -3156,7 +3146,7 @@ module Make (Observer_error : Observer_error) () = struct
     let value (source : 'a t) =
       ensure_graph_context ();
       if graph.phase = Pure then raise (Graph_error `Ambiguous_scope);
-      source.source_value
+      Transaction.current source.source_value
 
     let watch (source : 'a t) =
       let signal = new_signal (Var source) [] in
@@ -3192,7 +3182,7 @@ module Make (Observer_error : Observer_error) () = struct
             else (
               source.updating <- true;
               acquired := true;
-              Ok source.source_value))
+              Ok (Transaction.current source.source_value)))
         |> Effect.flatten_result
       in
       let release_if_acquired () =
@@ -3868,7 +3858,7 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then (
-            source.source_value <- value;
+            Transaction.set_current source.source_value value;
             Var.queue_var source;
             `Updated)
           else `Stopped)

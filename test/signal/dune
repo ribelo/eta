@@ -1,11 +1,23 @@
 (library
  (name eta_signal_testable)
- (modules eta_signal_testable)
+ (modules eta_signal_testable eta_signal_transaction)
  (libraries eta eta_stream))
 
 (rule
  (target eta_signal_testable.ml)
  (deps ../../lib/signal/eta_signal.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_transaction.ml)
+ (deps ../../lib/signal/eta_signal_transaction.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_transaction.mli)
+ (deps ../../lib/signal/eta_signal_transaction.mli)
  (action
   (copy %{deps} %{target})))
 
