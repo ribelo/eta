@@ -18,6 +18,17 @@ type ('queue_error, 'error) hooks = {
   on_closed_with_error : 'queue_error -> (unit, 'error) Eta.Effect.t;
 }
 
+type ('finish_reason, 'queue_error) finish_policy = {
+  is_invalid_scope : 'finish_reason -> bool;
+  invalid_scope_error : 'queue_error;
+}
+
+val finish_hook :
+  queue:('update, 'queue_error) Eta.Queue.t ->
+  policy:('finish_reason, 'queue_error) finish_policy ->
+  'finish_reason ->
+  unit
+
 val offer :
   queue:('update, 'queue_error) Eta.Queue.t ->
   delivery:('token, 'update, 'error) delivery ->

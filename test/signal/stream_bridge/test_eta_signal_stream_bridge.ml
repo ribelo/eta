@@ -45,6 +45,45 @@ let hooks ?(after_send = fun () -> Effect.unit)
     on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
   }
 
+type finish_reason =
+  | Finish_disposed
+  | Finish_invalid_scope
+
+let finish_policy =
+  {
+    Stream_bridge.is_invalid_scope =
+      (function
+      | Finish_disposed -> false
+      | Finish_invalid_scope -> true);
+    invalid_scope_error = `Invalid_scope;
+  }
+
+let test_finish_hook_closes_queue () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  Stream_bridge.finish_hook ~queue ~policy:finish_policy Finish_disposed;
+  match run_ok runtime (Queue.try_recv queue) with
+  | `Closed -> ()
+  | `Empty | `Item _ | `Closed_with_error _ ->
+      Alcotest.fail "expected clean close"
+
+let test_finish_hook_invalid_scope_closes_with_error () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  Stream_bridge.finish_hook ~queue ~policy:finish_policy Finish_invalid_scope;
+  match run_ok runtime (Queue.try_recv queue) with
+  | `Closed_with_error `Invalid_scope -> ()
+  | `Empty | `Item _ | `Closed ->
+      Alcotest.fail "expected invalid-scope close"
+
 let test_offer_sends_and_drops () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let queue =
@@ -175,6 +214,10 @@ let () =
         [
           Alcotest.test_case "capacity validation" `Quick
             test_capacity_validation;
+          Alcotest.test_case "finish hook closes queue" `Quick
+            test_finish_hook_closes_queue;
+          Alcotest.test_case "finish hook invalid scope closes with error"
+            `Quick test_finish_hook_invalid_scope_closes_with_error;
           Alcotest.test_case "offer sends and drops" `Quick
             test_offer_sends_and_drops;
           Alcotest.test_case "offer without token noops" `Quick

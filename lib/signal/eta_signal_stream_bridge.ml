@@ -19,6 +19,16 @@ type ('queue_error, 'error) hooks = {
   on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
 }
 
+type ('finish_reason, 'queue_error) finish_policy = {
+  is_invalid_scope : 'finish_reason -> bool;
+  invalid_scope_error : 'queue_error;
+}
+
+let finish_hook ~queue ~policy reason =
+  if policy.is_invalid_scope reason then
+    Queue.close_with_error queue policy.invalid_scope_error
+  else Queue.close queue
+
 let report_dropped_update ~on_drop ~after_drop_before_ack ~acknowledge_drop
     update =
   let drop_published = ref false in
