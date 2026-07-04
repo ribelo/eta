@@ -47,6 +47,14 @@ let run_ok runtime eff =
   | Eta.Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
 
+let expect_observer_failed label runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Fail (`Observer_error `Observer_failed)) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected observer failure, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected observer failure, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
 let pp_observed_update formatter = function
   | Initialized value -> Format.fprintf formatter "Initialized %d" value
   | Changed (old_value, new_value) ->
@@ -55,6 +63,10 @@ let pp_observed_update formatter = function
 
 let observed_update =
   Alcotest.testable pp_observed_update (fun left right -> left = right)
+
+let observed_of_signal_update = function
+  | Signal.Initialized value -> Initialized value
+  | Signal.Changed { old_value; new_value } -> Changed (old_value, new_value)
 
 let pp_op formatter = function
   | Set_a value -> Format.fprintf formatter "Set_a %d" value
@@ -148,13 +160,7 @@ let run_trace name ops =
   let actual_updates = ref [] in
   let record update =
     E.sync (fun () ->
-        let observed =
-          match update with
-          | Signal.Initialized value -> Initialized value
-          | Signal.Changed { old_value; new_value } ->
-              Changed (old_value, new_value)
-        in
-        actual_updates := observed :: !actual_updates)
+        actual_updates := observed_of_signal_update update :: !actual_updates)
   in
   let observer = run_ok runtime (Signal.Observer.observe output record) in
   let model = create_model () in
@@ -206,6 +212,122 @@ let test_randomized_trace_matches_model () =
       run_trace (Format.asprintf "seed-%d" seed) (generate_trace ~seed ~steps:80))
     [ 11; 29; 47; 83 ]
 
+let test_observer_phase_mutation_matches_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 1 in
+  let signal = Signal.Var.watch source in
+  let actual_updates = ref [] in
+  let callback update =
+    let observed = observed_of_signal_update update in
+    E.sync (fun () -> actual_updates := observed :: !actual_updates)
+    |> E.bind (fun () ->
+           match observed with
+           | Initialized 1 ->
+               Signal.Var.set source 2
+               |> E.map_error (fun _ -> `Observer_failed)
+           | Changed (_, 2) ->
+               Signal.Var.set source 3
+               |> E.map_error (fun _ -> `Observer_failed)
+           | Initialized _ | Changed _ -> E.unit)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe signal callback) in
+  let model_pending = ref 1 in
+  let model_current = ref None in
+  let model_updates = ref [] in
+  let stabilize_model () =
+    let next = !model_pending in
+    let update =
+      match !model_current with
+      | None -> Some (Initialized next)
+      | Some current ->
+          if current = next then None else Some (Changed (current, next))
+    in
+    model_current := Some next;
+    match update with
+    | None -> ()
+    | Some update ->
+        model_updates := update :: !model_updates;
+        (match update with
+         | Initialized 1 -> model_pending := 2
+         | Changed (_, 2) -> model_pending := 3
+         | Initialized _ | Changed _ -> ())
+  in
+  let check_step label =
+    stabilize_model ();
+    run_ok runtime Signal.stabilize;
+    Alcotest.(check (list observed_update))
+      (label ^ " updates") (List.rev !model_updates) (List.rev !actual_updates);
+    match !model_current with
+    | None -> ()
+    | Some expected ->
+        Alcotest.(check int) (label ^ " read") expected
+          (run_ok runtime (Signal.Observer.read observer))
+  in
+  check_step "initial";
+  check_step "observer mutation";
+  check_step "second observer mutation";
+  run_ok runtime (Signal.Observer.dispose observer)
+
+let test_observer_failure_retry_matches_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let delivered_updates = ref [] in
+  let fail_next_change = ref false in
+  let callback update =
+    match update with
+    | Signal.Changed _ when !fail_next_change ->
+        fail_next_change := false;
+        E.fail `Observer_failed
+    | Signal.Initialized _ | Signal.Changed _ ->
+        E.sync (fun () ->
+            delivered_updates :=
+              observed_of_signal_update update :: !delivered_updates)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe signal callback) in
+  let model_current = ref None in
+  let delivered_model = ref [] in
+  let pending_delivery = ref None in
+  let commit_model value =
+    let update =
+      match !model_current with
+      | None -> Initialized value
+      | Some current -> Changed (current, value)
+    in
+    model_current := Some value;
+    pending_delivery := Some update
+  in
+  let deliver_model () =
+    match !pending_delivery with
+    | None -> ()
+    | Some update ->
+        delivered_model := update :: !delivered_model;
+        pending_delivery := None
+  in
+  commit_model 0;
+  deliver_model ();
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check (list observed_update))
+    "initial delivery" (List.rev !delivered_model)
+    (List.rev !delivered_updates);
+  fail_next_change := true;
+  run_ok runtime (Signal.Var.set source 1);
+  commit_model 1;
+  expect_observer_failed "failed delivery" runtime Signal.stabilize;
+  Alcotest.(check int) "failed delivery still commits current snapshot" 1
+    (run_ok runtime (Signal.Observer.read observer));
+  Alcotest.(check (list observed_update))
+    "failed delivery is still pending" (List.rev !delivered_model)
+    (List.rev !delivered_updates);
+  deliver_model ();
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check (list observed_update))
+    "retry delivery" (List.rev !delivered_model)
+    (List.rev !delivered_updates);
+  Alcotest.(check int) "retry keeps committed snapshot" 1
+    (run_ok runtime (Signal.Observer.read observer));
+  run_ok runtime (Signal.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -215,5 +337,9 @@ let () =
             test_scripted_trace_matches_model;
           Alcotest.test_case "randomized trace matches model" `Quick
             test_randomized_trace_matches_model;
+          Alcotest.test_case "observer-phase mutation matches model" `Quick
+            test_observer_phase_mutation_matches_model;
+          Alcotest.test_case "observer failure retry matches model" `Quick
+            test_observer_failure_retry_matches_model;
         ] );
     ]
