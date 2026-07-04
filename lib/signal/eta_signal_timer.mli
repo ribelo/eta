@@ -32,6 +32,13 @@ type daemon_status =
   | Daemon_continue
   | Daemon_stop
 
+type wake_plan = {
+  wake_next_due_ms : int;
+  wake_saturated_due : bool;
+  wake_update_count : int;
+  wake_update_missed : int;
+}
+
 type stop_plan = {
   stop_state : state;
   stop_cancel_hooks : (unit -> unit) list;
@@ -70,6 +77,14 @@ val validate_positive_duration_ms : int -> (unit, [> `Past_deadline ]) result
 
 val catch_up_update_count : catch_up_policy -> int -> int
 val catch_up_update_missed : catch_up_policy -> int -> int
+
+val daemon_wake_plan :
+  catch_up_policy:catch_up_policy ->
+  interval_ms:int ->
+  next_due_ms:int ->
+  now_ms:int ->
+  wake_plan
+
 val state_generation : state -> int
 val state_with_generation : state -> int -> state
 val state_label : state -> string

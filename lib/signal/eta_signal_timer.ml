@@ -16,6 +16,13 @@ type due_refresh = {
   next_due_ms : int option;
 }
 
+type wake_plan = {
+  wake_next_due_ms : int;
+  wake_saturated_due : bool;
+  wake_update_count : int;
+  wake_update_missed : int;
+}
+
 type deadline_refresh = {
   deadline_value : bool;
   deadline_finish : bool;
@@ -118,6 +125,20 @@ let catch_up_update_missed policy missed =
   match policy with
   | Catch_up_every_cadence | Catch_up_once_per_wake -> 1
   | Catch_up_coalesced -> missed
+
+let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
+  let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
+  let wake_next_due_ms = advance_due next_due_ms interval_ms missed in
+  let wake_update_count = catch_up_update_count catch_up_policy missed in
+  {
+    wake_next_due_ms;
+    wake_saturated_due =
+      wake_next_due_ms = max_int && now_ms >= wake_next_due_ms;
+    wake_update_count;
+    wake_update_missed =
+      (if wake_update_count <= 0 then 0
+       else catch_up_update_missed catch_up_policy missed);
+  }
 
 let state_generation = function
   | Timer_inactive generation

@@ -1392,8 +1392,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let add_ms_capped = Timer.add_ms_capped
   let add_int_capped = Timer.add_int_capped
-  let missed_cadences = Timer.missed_cadences
-  let advance_due = Timer.advance_due
 
   let timer_set_next_due_state = Timer.state_set_next_due
 
@@ -3560,9 +3558,6 @@ module Make (Observer_error : Observer_error) () = struct
           | Timer.Daemon_stop -> `Stopped)
 
     let add_relative_deadline = Timer.add_relative_deadline
-    let catch_up_update_count = Timer.catch_up_update_count
-    let catch_up_update_missed = Timer.catch_up_update_missed
-
     let timer_catch_up_batch_size = 64
 
     let timer_read_next_due timer generation fallback =
@@ -3617,9 +3612,6 @@ module Make (Observer_error : Observer_error) () = struct
       if remaining <= 0 then Effect.unit
       else
         let batch = min remaining timer_catch_up_batch_size in
-        let missed =
-          catch_up_update_missed update.timer_catch_up_policy missed
-        in
         run_timer_update_batch timer generation batch update ~missed
         |> Effect.bind (function
              | `Stop -> Effect.unit
@@ -3648,37 +3640,41 @@ module Make (Observer_error : Observer_error) () = struct
                            | Some due_ms ->
                                Effect.now
                                |> Effect.bind (fun now_ms ->
-                                      let missed =
-                                        missed_cadences ~interval_ms
-                                          ~next_due_ms:due_ms ~now_ms
+                                      let wake =
+                                        Timer.daemon_wake_plan
+                                          ~catch_up_policy:
+                                            update.timer_catch_up_policy
+                                          ~interval_ms ~next_due_ms:due_ms
+                                          ~now_ms
                                       in
-                                      let advanced_due_ms =
-                                        advance_due due_ms interval_ms missed
+                                      let next_due_ms =
+                                        wake.wake_next_due_ms
+                                      in
+                                      let update_count =
+                                        wake.wake_update_count
+                                      in
+                                      let update_missed =
+                                        wake.wake_update_missed
                                       in
                                       let saturated_due =
-                                        advanced_due_ms = max_int
-                                        && now_ms >= advanced_due_ms
-                                      in
-                                      let updates =
-                                        catch_up_update_count
-                                          update.timer_catch_up_policy missed
+                                        wake.wake_saturated_due
                                       in
                                       Private_test_hooks.run
                                         After_timer_due_read_before_commit
                                       |> Effect.bind (fun () ->
                                              timer_advance_next_due timer
                                                generation ~expected:due_ms
-                                               advanced_due_ms
+                                               next_due_ms
                                              |> Effect.bind (function
                                                   | `Stop -> Effect.unit
                                                   | `Stale ->
                                                       timer_loop timer generation
-                                                        interval_ms
-                                                        advanced_due_ms update
+                                                        interval_ms next_due_ms
+                                                        update
                                                   | `Advanced ->
                                                       run_timer_updates timer
-                                                        generation updates update
-                                                        ~missed
+                                                        generation update_count
+                                                        update ~missed:update_missed
                                                       |> Effect.bind (fun () ->
                                                              (if saturated_due then
                                                                 with_graph_lane_sync
@@ -3709,8 +3705,7 @@ module Make (Observer_error : Observer_error) () = struct
                                                                              timer_loop
                                                                                timer
                                                                                generation
-                                                                               interval_ms
-                                                                               advanced_due_ms
+                                                                               interval_ms next_due_ms
                                                                                update
                                                                          | `Stop ->
                                                                              Effect.unit)))))))))

@@ -76,6 +76,40 @@ let test_catch_up_policy () =
   Alcotest.(check int) "coalesced missed" 3
     (Timer.catch_up_update_missed Catch_up_coalesced 3)
 
+let test_daemon_wake_plan () =
+  let every =
+    Timer.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
+      ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
+  in
+  Alcotest.(check int) "every next due" 90 every.wake_next_due_ms;
+  Alcotest.(check bool) "every not saturated" false
+    every.wake_saturated_due;
+  Alcotest.(check int) "every update count" 4 every.wake_update_count;
+  Alcotest.(check int) "every update missed" 1 every.wake_update_missed;
+  let coalesced =
+    Timer.daemon_wake_plan ~catch_up_policy:Catch_up_coalesced
+      ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
+  in
+  Alcotest.(check int) "coalesced update count" 1
+    coalesced.wake_update_count;
+  Alcotest.(check int) "coalesced update missed" 4
+    coalesced.wake_update_missed;
+  let not_due =
+    Timer.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
+      ~interval_ms:10 ~next_due_ms:50 ~now_ms:49
+  in
+  Alcotest.(check int) "not due unchanged" 50 not_due.wake_next_due_ms;
+  Alcotest.(check int) "not due no updates" 0 not_due.wake_update_count;
+  Alcotest.(check int) "not due missed unused" 0 not_due.wake_update_missed;
+  let saturated =
+    Timer.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
+      ~interval_ms:10 ~next_due_ms:max_int ~now_ms:max_int
+  in
+  Alcotest.(check int) "saturated due" max_int
+    saturated.wake_next_due_ms;
+  Alcotest.(check bool) "saturated finishes" true
+    saturated.wake_saturated_due
+
 let noop () = ()
 
 let test_state_helpers () =
@@ -583,6 +617,8 @@ let () =
           Alcotest.test_case "validation policy" `Quick
             test_validation_policy;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
+          Alcotest.test_case "daemon wake plan" `Quick
+            test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
           Alcotest.test_case "daemon status policy" `Quick
             test_daemon_status_policy;
