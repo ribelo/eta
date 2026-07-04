@@ -20,6 +20,47 @@ let test_bool_field () =
   Alcotest.(check string) "false field" "dirty=false"
     (Debug.bool_field "dirty" false)
 
+let test_timer_fields () =
+  let running =
+    {
+      Debug.timer_active = true;
+      timer_running_generation = Some 7;
+      timer_has_cancel = true;
+      timer_finished = false;
+      timer_generation = 7;
+    }
+  in
+  Alcotest.(check (list string))
+    "running fields"
+    [
+      "timer_state=running";
+      "timer_active=true";
+      "timer_running=7";
+      "timer_cancel=true";
+      "timer_finished=false";
+      "timer_generation=7";
+    ]
+    (Debug.timer_fields ~state_label:"running" running);
+  let finished =
+    {
+      Debug.timer_active = false;
+      timer_running_generation = None;
+      timer_has_cancel = false;
+      timer_finished = true;
+      timer_generation = 8;
+    }
+  in
+  Alcotest.(check (list string))
+    "finished fields"
+    [
+      "timer_active=false";
+      "timer_running=none";
+      "timer_cancel=false";
+      "timer_finished=true";
+      "timer_generation=8";
+    ]
+    (Debug.timer_fields finished)
+
 let test_render_dot () =
   let dot =
     Debug.render_dot
@@ -64,6 +105,7 @@ let () =
         [
           Alcotest.test_case "stats counter" `Quick test_stats_counter;
           Alcotest.test_case "bool field" `Quick test_bool_field;
+          Alcotest.test_case "timer fields" `Quick test_timer_fields;
           Alcotest.test_case "render dot" `Quick test_render_dot;
         ] );
     ]

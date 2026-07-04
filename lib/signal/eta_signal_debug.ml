@@ -3,6 +3,30 @@ let stats_counter ~name value =
 
 let bool_field name value = name ^ "=" ^ string_of_bool value
 
+type timer_snapshot = {
+  timer_active : bool;
+  timer_running_generation : int option;
+  timer_has_cancel : bool;
+  timer_finished : bool;
+  timer_generation : int;
+}
+
+let timer_fields ?state_label timer =
+  let running =
+    match timer.timer_running_generation with
+    | None -> "none"
+    | Some generation -> string_of_int generation
+  in
+  Option.fold ~none:[] ~some:(fun label -> [ "timer_state=" ^ label ])
+    state_label
+  @ [
+      bool_field "timer_active" timer.timer_active;
+      "timer_running=" ^ running;
+      bool_field "timer_cancel" timer.timer_has_cancel;
+      bool_field "timer_finished" timer.timer_finished;
+      "timer_generation=" ^ string_of_int timer.timer_generation;
+    ]
+
 type dot_node = {
   dot_node_id : string;
   dot_node_label : string;

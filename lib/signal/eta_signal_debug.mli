@@ -5,6 +5,16 @@ val stats_counter :
 
 val bool_field : string -> bool -> string
 
+type timer_snapshot = {
+  timer_active : bool;
+  timer_running_generation : int option;
+  timer_has_cancel : bool;
+  timer_finished : bool;
+  timer_generation : int;
+}
+
+val timer_fields : ?state_label:string -> timer_snapshot -> string list
+
 type dot_node = {
   dot_node_id : string;
   dot_node_label : string;

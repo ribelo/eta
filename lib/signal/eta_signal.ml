@@ -2923,30 +2923,23 @@ module Make (Observer_error : Observer_error) () = struct
           "scope_parent=" ^ parent;
         ]
 
-  let timer_debug_fields ?state_label (timer : Timer.debug_snapshot) =
-    let running =
-      match timer.debug_running_generation with
-      | None -> "none"
-      | Some generation -> string_of_int generation
-    in
-    Option.fold ~none:[] ~some:(fun label -> [ "timer_state=" ^ label ])
-      state_label
-    @ [
-        bool_field "timer_active" timer.debug_active;
-        "timer_running=" ^ running;
-        bool_field "timer_cancel" timer.debug_has_cancel;
-        bool_field "timer_finished" timer.debug_finished;
-        "timer_generation=" ^ string_of_int timer.debug_generation;
-      ]
+  let debug_timer_snapshot (timer : Timer.debug_snapshot) =
+    {
+      Debug.timer_active = timer.debug_active;
+      timer_running_generation = timer.debug_running_generation;
+      timer_has_cancel = timer.debug_has_cancel;
+      timer_finished = timer.debug_finished;
+      timer_generation = timer.debug_generation;
+    }
 
   let signal_timer_fields : type a. a signal -> string list =
    fun signal ->
     match signal.timer with
     | None -> []
     | Some timer ->
-        timer_debug_fields
+        Debug.timer_fields
           ~state_label:(timer_state_label (timer_current_state timer))
-          (timer_debug_snapshot timer)
+          (debug_timer_snapshot (timer_debug_snapshot timer))
 
   let dead_signal_state_fields dead =
     [
@@ -2989,7 +2982,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dead_timer_fields = function
     | None -> []
-    | Some timer -> timer_debug_fields timer
+    | Some timer -> Debug.timer_fields (debug_timer_snapshot timer)
 
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->
