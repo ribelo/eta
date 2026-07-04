@@ -229,6 +229,68 @@ let test_randomized_trace_matches_model () =
       run_trace (Format.asprintf "seed-%d" seed) (generate_trace ~seed ~steps:80))
     [ 11; 29; 47; 83 ]
 
+let test_coalesced_sets_match_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let recomputes = ref 0 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr recomputes;
+           value * 2)
+  in
+  let updates = ref [] in
+  let record update =
+    E.sync (fun () ->
+        updates := observed_of_signal_update update :: !updates)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe signal record) in
+  let model_pending = ref 0 in
+  let model_current = ref None in
+  let model_recomputes = ref 0 in
+  let model_updates = ref [] in
+  let stabilize_model () =
+    incr model_recomputes;
+    let next = !model_pending * 2 in
+    let update =
+      match !model_current with
+      | None -> Some (Initialized next)
+      | Some current ->
+          if current = next then None else Some (Changed (current, next))
+    in
+    model_current := Some next;
+    Option.iter (fun update -> model_updates := update :: !model_updates) update
+  in
+  let set value =
+    model_pending := value;
+    run_ok runtime (Signal.Var.set source value)
+  in
+  let check label =
+    Alcotest.(check int)
+      (label ^ " recomputes") !model_recomputes !recomputes;
+    Alcotest.(check (list observed_update))
+      (label ^ " updates") (List.rev !model_updates) (List.rev !updates);
+    match !model_current with
+    | None -> ()
+    | Some expected ->
+        Alcotest.(check int) (label ^ " read") expected
+          (run_ok runtime (Signal.Observer.read observer))
+  in
+  set 1;
+  set 2;
+  set 3;
+  check "before initial stabilize";
+  stabilize_model ();
+  run_ok runtime Signal.stabilize;
+  check "initial stabilize";
+  set 4;
+  set 5;
+  set 6;
+  stabilize_model ();
+  run_ok runtime Signal.stabilize;
+  check "second stabilize";
+  run_ok runtime (Signal.Observer.dispose observer)
+
 let test_observer_phase_mutation_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = Signal.Var.create 1 in
@@ -1050,6 +1112,8 @@ let () =
             test_scripted_trace_matches_model;
           Alcotest.test_case "randomized trace matches model" `Quick
             test_randomized_trace_matches_model;
+          Alcotest.test_case "coalesced sets match model" `Quick
+            test_coalesced_sets_match_model;
           Alcotest.test_case "observer-phase mutation matches model" `Quick
             test_observer_phase_mutation_matches_model;
           Alcotest.test_case "observer failure retry matches model" `Quick
