@@ -160,6 +160,38 @@ let test_snapshot_policy () =
   Alcotest.(check bool) "inactive next due rejected" true
     (Option.is_none (Timer.snapshot_with_next_due initial 20))
 
+let test_refresh_context () =
+  let calls = ref 0 in
+  let current = ref 41 in
+  let now_ms () =
+    incr calls;
+    !current
+  in
+  let context =
+    Timer.create_refresh_context ~token:7 ~runtime_contract:"runtime"
+      ~now_ms
+  in
+  Alcotest.(check int) "token" 7 (Timer.refresh_token context);
+  Alcotest.(check string)
+    "runtime"
+    "runtime"
+    (Timer.refresh_runtime_contract context);
+  current := 42;
+  Alcotest.(check int) "first sample" 42
+    (Timer.refresh_sample_now_ms context);
+  current := 100;
+  Alcotest.(check int) "cached sample" 42
+    (Timer.refresh_sample_now_ms context);
+  Alcotest.(check int) "sample calls" 1 !calls;
+  Alcotest.(check (list int)) "initial dirty items" []
+    (Timer.refresh_dirty_items context);
+  Timer.set_refresh_dirty_items context [ 1; 2 ];
+  Alcotest.(check (list int)) "set dirty items" [ 1; 2 ]
+    (Timer.refresh_dirty_items context);
+  Timer.clear_refresh_dirty_items context;
+  Alcotest.(check (list int)) "cleared dirty items" []
+    (Timer.refresh_dirty_items context)
+
 let test_daemon_status_policy () =
   let running = Timer.Timer_running (7, Some 10, noop) in
   let running_uncancellable =
@@ -688,6 +720,7 @@ let () =
             test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
           Alcotest.test_case "snapshot policy" `Quick test_snapshot_policy;
+          Alcotest.test_case "refresh context" `Quick test_refresh_context;
           Alcotest.test_case "daemon status policy" `Quick
             test_daemon_status_policy;
           Alcotest.test_case "start and refresh policy" `Quick

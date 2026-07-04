@@ -14,6 +14,8 @@ type state =
 
 type snapshot
 
+type ('runtime, 'dirty) refresh_context
+
 type 'a refresh_plan = {
   refresh_value : 'a option;
   refresh_next_due_ms : int option;
@@ -104,6 +106,22 @@ val snapshot_with_state : snapshot -> state -> snapshot
 val snapshot_with_generation : snapshot -> int -> snapshot
 val snapshot_with_on_demand_refresh_token : snapshot -> int -> snapshot
 val snapshot_with_next_due : snapshot -> int -> snapshot option
+
+val create_refresh_context :
+  token:int ->
+  runtime_contract:'runtime ->
+  now_ms:(unit -> int) ->
+  ('runtime, 'dirty) refresh_context
+
+val refresh_token : ('runtime, 'dirty) refresh_context -> int
+
+val refresh_runtime_contract :
+  ('runtime, 'dirty) refresh_context -> 'runtime
+
+val refresh_sample_now_ms : ('runtime, 'dirty) refresh_context -> int
+val refresh_dirty_items : (_, 'dirty) refresh_context -> 'dirty list
+val set_refresh_dirty_items : (_, 'dirty) refresh_context -> 'dirty list -> unit
+val clear_refresh_dirty_items : (_, 'dirty) refresh_context -> unit
 
 val state_label : state -> string
 val state_active : state -> bool

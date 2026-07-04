@@ -593,13 +593,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Pure_graph_error of disposal_hook list * graph_error
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
-  type timer_refresh_context = {
-    timer_refresh_token : int;
-    timer_refresh_runtime_contract : Runtime_contract.t;
-    timer_refresh_now_ms : unit -> int;
-    mutable timer_refresh_sample_ms : int option;
-    mutable timer_refresh_dirty_nodes : (packed_signal * bool) list;
-  }
+  type timer_refresh_context =
+    (Runtime_contract.t, packed_signal * bool) Timer.refresh_context
 
   type graph = {
     lane : Lane.t;
@@ -863,10 +858,11 @@ module Make (Observer_error : Observer_error) () = struct
   let mark_timer_refresh_dirty packed =
     match graph.active_timer_refresh with
     | None -> Kernel_dirty.mark packed
-     | Some context ->
-         context.timer_refresh_dirty_nodes <-
-           Kernel_dirty.mark_recording_previous
-             context.timer_refresh_dirty_nodes packed
+    | Some context ->
+        Timer.set_refresh_dirty_items context
+          (Kernel_dirty.mark_recording_previous
+             (Timer.refresh_dirty_items context)
+             packed)
 
   let remove_var_watcher source signal =
     source.watchers <-
@@ -1101,8 +1097,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_has_staged_refresh timer =
     match graph.active_timer_refresh with
-    | Some { timer_refresh_token; _ } ->
-        timer.timer_staged_refresh_token = timer_refresh_token
+    | Some context ->
+        timer.timer_staged_refresh_token = Timer.refresh_token context
     | None -> false
 
   let timer_effective_state timer =
@@ -1154,7 +1150,8 @@ module Make (Observer_error : Observer_error) () = struct
   let remember_timer_refresh_timer timer =
     match graph.active_timer_refresh with
     | None -> ()
-    | Some { timer_refresh_token; _ } ->
+    | Some context ->
+        let timer_refresh_token = Timer.refresh_token context in
         if timer.timer_staged_refresh_token <> timer_refresh_token then (
           timer.timer_staged_refresh_token <- timer_refresh_token;
           update_timer_staging timer (fun snapshot ->
@@ -1618,8 +1615,8 @@ module Make (Observer_error : Observer_error) () = struct
     match graph.active_timer_refresh with
     | None -> ()
     | Some context ->
-        Kernel_dirty.restore context.timer_refresh_dirty_nodes;
-        context.timer_refresh_dirty_nodes <- []
+        Kernel_dirty.restore (Timer.refresh_dirty_items context);
+        Timer.clear_refresh_dirty_items context
 
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
@@ -1699,24 +1696,15 @@ module Make (Observer_error : Observer_error) () = struct
       stage_var_graph_value var source_value;
       List.iter mark_self_dirty (source_watchers_unlocked var))
 
-  let timer_refresh_sample_now_ms context =
-    match context.timer_refresh_sample_ms with
-    | Some now_ms -> now_ms
-    | None ->
-        let now_ms = context.timer_refresh_now_ms () in
-        context.timer_refresh_sample_ms <- Some now_ms;
-        now_ms
-
   let refresh_timer_source_for_compute signal =
     match (graph.active_timer_refresh, signal.timer) with
-    | Some
-        ( { timer_refresh_token; timer_refresh_runtime_contract; _ } as
-        timer_refresh ),
-      Some timer ->
-        ensure_timer_runtime timer timer_refresh_runtime_contract;
+    | Some timer_refresh, Some timer ->
+        let timer_refresh_token = Timer.refresh_token timer_refresh in
+        ensure_timer_runtime timer
+          (Timer.refresh_runtime_contract timer_refresh);
         if timer_can_refresh_on_demand timer_refresh_token timer then (
           remember_timer_refresh_timer timer;
-          let now_ms = timer_refresh_sample_now_ms timer_refresh in
+          let now_ms = Timer.refresh_sample_now_ms timer_refresh in
           match timer.timer_refresh_operation with
           | None -> ()
           | Some operation -> stage_timer_refresh_operation timer now_ms operation)
@@ -2556,16 +2544,10 @@ module Make (Observer_error : Observer_error) () = struct
                       try
                         let timer_refresh =
                           Some
-                            {
-                              timer_refresh_token =
-                                next_timer_refresh_token_unlocked ();
-                              timer_refresh_runtime_contract =
-                                runtime_contract;
-                              timer_refresh_now_ms =
-                                runtime_contract.Runtime_contract.now_ms;
-                              timer_refresh_sample_ms = None;
-                              timer_refresh_dirty_nodes = [];
-                            }
+                            (Timer.create_refresh_context
+                               ~token:(next_timer_refresh_token_unlocked ())
+                               ~runtime_contract
+                               ~now_ms:runtime_contract.Runtime_contract.now_ms)
                         in
                         begin_stabilize_with_pending_hooks timer_refresh
                           hooks_ref finish_token_ref

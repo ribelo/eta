@@ -15,6 +15,14 @@ type snapshot = {
   on_demand_refresh_token : int;
 }
 
+type ('runtime, 'dirty) refresh_context = {
+  refresh_token : int;
+  refresh_runtime_contract : 'runtime;
+  refresh_now_ms : unit -> int;
+  mutable refresh_sample_ms : int option;
+  mutable refresh_dirty_items : 'dirty list;
+}
+
 type due_refresh = {
   missed : int;
   saturated_due : bool;
@@ -202,6 +210,35 @@ let snapshot_with_next_due snapshot next_due_ms =
           state = Timer_running (generation, Some next_due_ms, cancel);
         }
   | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
+
+let create_refresh_context ~token ~runtime_contract ~now_ms =
+  {
+    refresh_token = token;
+    refresh_runtime_contract = runtime_contract;
+    refresh_now_ms = now_ms;
+    refresh_sample_ms = None;
+    refresh_dirty_items = [];
+  }
+
+let refresh_token context = context.refresh_token
+
+let refresh_runtime_contract context = context.refresh_runtime_contract
+
+let refresh_sample_now_ms context =
+  match context.refresh_sample_ms with
+  | Some now_ms -> now_ms
+  | None ->
+      let now_ms = context.refresh_now_ms () in
+      context.refresh_sample_ms <- Some now_ms;
+      now_ms
+
+let refresh_dirty_items context = context.refresh_dirty_items
+
+let set_refresh_dirty_items context items =
+  context.refresh_dirty_items <- items
+
+let clear_refresh_dirty_items context =
+  context.refresh_dirty_items <- []
 
 let state_label = function
   | Timer_inactive _ -> "inactive"
