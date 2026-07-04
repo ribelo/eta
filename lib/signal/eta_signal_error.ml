@@ -46,6 +46,32 @@ let pp_stabilize_error pp_observer_error ppf = function
   | `Observer_error err ->
       Format.fprintf ppf "observer callback failed: %a" pp_observer_error err
 
+let rec observer_cause_to_stabilize :
+    type observer_error.
+    graph_error_of_die:(Eta.Cause.die -> graph_error option) ->
+    observer_error Eta.Cause.t ->
+    observer_error stabilize_error Eta.Cause.t =
+ fun ~graph_error_of_die -> function
+  | Eta.Cause.Fail err -> Eta.Cause.Fail (`Observer_error err)
+  | Eta.Cause.Die die -> (
+      match graph_error_of_die die with
+      | Some err -> Eta.Cause.Fail (err :> observer_error stabilize_error)
+      | None -> Eta.Cause.Die die)
+  | Eta.Cause.Interrupt id -> Eta.Cause.Interrupt id
+  | Eta.Cause.Sequential causes ->
+      Eta.Cause.Sequential
+        (List.map (observer_cause_to_stabilize ~graph_error_of_die) causes)
+  | Eta.Cause.Concurrent causes ->
+      Eta.Cause.Concurrent
+        (List.map (observer_cause_to_stabilize ~graph_error_of_die) causes)
+  | Eta.Cause.Finalizer cause -> Eta.Cause.Finalizer cause
+  | Eta.Cause.Suppressed { primary; finalizer } ->
+      Eta.Cause.Suppressed
+        {
+          primary = observer_cause_to_stabilize ~graph_error_of_die primary;
+          finalizer;
+        }
+
 let pp_time_error ppf = function
   | #graph_error as err -> pp_graph_error ppf err
   | `Deadline_overflow ->

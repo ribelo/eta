@@ -2664,22 +2664,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Graph_error err -> Some err
     | _ -> None
 
-  let rec observer_cause_to_stabilize = function
-    | Eta.Cause.Fail err -> Eta.Cause.Fail (`Observer_error err)
-    | Eta.Cause.Die die -> (
-        match graph_error_of_die die with
-        | Some err -> Eta.Cause.Fail (err :> stabilize_error)
-        | None -> Eta.Cause.Die die)
-    | Eta.Cause.Interrupt id -> Eta.Cause.Interrupt id
-    | Eta.Cause.Sequential causes ->
-        Eta.Cause.Sequential (List.map observer_cause_to_stabilize causes)
-    | Eta.Cause.Concurrent causes ->
-        Eta.Cause.Concurrent (List.map observer_cause_to_stabilize causes)
-    | Eta.Cause.Finalizer cause -> Eta.Cause.Finalizer cause
-    | Eta.Cause.Suppressed { primary; finalizer } ->
-        Eta.Cause.Suppressed
-          { primary = observer_cause_to_stabilize primary; finalizer }
-
   let run_observer_effect observer token update observer_eff =
     let delivered = ref false in
     let finish_delivery_after_error () =
@@ -2695,7 +2679,8 @@ module Make (Observer_error : Observer_error) () = struct
               delivered := true;
               Eta.Exit.Ok ()
           | Eta.Exit.Error cause ->
-              Eta.Exit.Error (observer_cause_to_stabilize cause)
+              Eta.Exit.Error
+                (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
       with
       | Graph_error err ->
           Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))

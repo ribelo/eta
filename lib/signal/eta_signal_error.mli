@@ -32,5 +32,10 @@ val pp_stabilize_error :
   'observer_error stabilize_error ->
   unit
 
+val observer_cause_to_stabilize :
+  graph_error_of_die:(Eta.Cause.die -> graph_error option) ->
+  'observer_error Eta.Cause.t ->
+  'observer_error stabilize_error Eta.Cause.t
+
 val pp_time_error : Format.formatter -> time_error -> unit
 val pp_stream_error : Format.formatter -> stream_error -> unit
