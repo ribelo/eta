@@ -139,6 +139,54 @@ let test_demand_policy () =
   Alcotest.(check bool) "inactive does not need stop" false
     (Timer.needs_stop ~effective_state:inactive)
 
+let test_stop_policy () =
+  let cancelled = ref false in
+  let cancel () = cancelled := true in
+  let starting = Timer.Timer_starting 7 in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (8, Some 10)
+  in
+  let running = Timer.Timer_running (8, Some 10, cancel) in
+  let inactive = Timer.Timer_inactive 3 in
+  (match
+     Timer.stop ~advance_generation:succ ~cancel_running:true starting
+   with
+  | Some plan ->
+      Alcotest.(check int) "starting stop generation" 8
+        (Timer.state_generation plan.stop_state);
+      Alcotest.(check int) "starting no cancel" 0
+        (List.length plan.stop_cancel_hooks)
+  | None -> Alcotest.fail "expected starting stop plan");
+  (match
+     Timer.stop ~advance_generation:succ ~cancel_running:true
+       running_uncancellable
+   with
+  | Some plan ->
+      Alcotest.(check int) "uncancellable stop generation" 9
+        (Timer.state_generation plan.stop_state);
+      Alcotest.(check int) "uncancellable no cancel" 0
+        (List.length plan.stop_cancel_hooks)
+  | None -> Alcotest.fail "expected uncancellable stop plan");
+  (match Timer.stop ~advance_generation:succ ~cancel_running:true running with
+  | Some plan ->
+      Alcotest.(check int) "running stop generation" 9
+        (Timer.state_generation plan.stop_state);
+      Alcotest.(check int) "running cancel" 1
+        (List.length plan.stop_cancel_hooks);
+      List.iter (fun hook -> hook ()) plan.stop_cancel_hooks;
+      Alcotest.(check bool) "cancelled" true !cancelled
+  | None -> Alcotest.fail "expected running stop plan");
+  cancelled := false;
+  (match Timer.stop ~advance_generation:succ ~cancel_running:false running with
+  | Some plan ->
+      Alcotest.(check int) "suppressed cancel" 0
+        (List.length plan.stop_cancel_hooks);
+      Alcotest.(check bool) "not cancelled" false !cancelled
+  | None -> Alcotest.fail "expected running stop plan");
+  Alcotest.(check bool) "inactive no plan" true
+    (Option.is_none
+       (Timer.stop ~advance_generation:succ ~cancel_running:true inactive))
+
 let test_refresh_plans () =
   let running = Timer.Timer_running_uncancellable (1, Some 50) in
   let due = Timer.due_refresh running ~interval_ms:10 ~now_ms:85 in
@@ -188,6 +236,7 @@ let () =
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
+          Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
         ] );

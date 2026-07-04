@@ -34,6 +34,11 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type stop_plan = {
+  stop_state : state;
+  stop_cancel_hooks : (unit -> unit) list;
+}
+
 val add_ms_capped : int -> int -> int
 val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
@@ -62,6 +67,12 @@ val needs_stop : effective_state:state -> bool
 
 val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
+
+val stop :
+  advance_generation:(int -> int) ->
+  cancel_running:bool ->
+  state ->
+  stop_plan option
 
 val can_refresh_on_demand :
   refresh_operation:bool ->

@@ -32,6 +32,11 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type stop_plan = {
+  stop_state : state;
+  stop_cancel_hooks : (unit -> unit) list;
+}
+
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
@@ -163,6 +168,24 @@ let demand_action ~necessary ~effective_state ~current_state =
     else Demand_none
   else if needs_stop ~effective_state then Demand_stop
   else Demand_none
+
+let stop ~advance_generation ~cancel_running state =
+  match state with
+  | Timer_inactive _ | Timer_finished _ -> None
+  | Timer_starting _ | Timer_running_uncancellable _ ->
+      Some
+        {
+          stop_state =
+            Timer_inactive (advance_generation (state_generation state));
+          stop_cancel_hooks = [];
+        }
+  | Timer_running (_, _, cancel) ->
+      Some
+        {
+          stop_state =
+            Timer_inactive (advance_generation (state_generation state));
+          stop_cancel_hooks = (if cancel_running then [ cancel ] else []);
+        }
 
 let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
     ~refresh_when_inactive ~active ~finished =

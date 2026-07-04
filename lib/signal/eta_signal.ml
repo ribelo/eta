@@ -1549,19 +1549,16 @@ module Make (Observer_error : Observer_error) () = struct
     update_timer_staging timer (fun snapshot ->
         { snapshot with timer_state = state })
 
-  let timer_invalidate_generation_unlocked timer =
-    let generation = checked_succ "timer generation" (timer_generation timer) in
-    set_timer_current_state timer (Timer_inactive generation)
-
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
-    match timer_current_state timer with
-    | Timer_inactive _ | Timer_finished _ -> []
-    | Timer_starting _ | Timer_running_uncancellable _ ->
-        timer_invalidate_generation_unlocked timer;
-        []
-    | Timer_running (_, _, cancel) ->
-        timer_invalidate_generation_unlocked timer;
-        if cancel_running then [ cancel ] else []
+    match
+      Timer.stop
+        ~advance_generation:(checked_succ "timer generation")
+        ~cancel_running (timer_current_state timer)
+    with
+    | None -> []
+    | Some plan ->
+        set_timer_current_state timer plan.stop_state;
+        plan.stop_cancel_hooks
 
   let timer_rollback_unclaimed_start_unlocked timer =
     match timer_current_state timer with
