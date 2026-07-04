@@ -3957,12 +3957,16 @@ module Make (Observer_error : Observer_error) () = struct
     let default_capacity = Stream_bridge.default_capacity
 
     let offer_bridge_update observer_delivery on_drop queue =
-      let delivery =
+      let observer_delivery =
         {
-          Stream_bridge.current_token =
+          Stream_bridge.observer_update =
+            observer_delivery.Observer.update;
+          observer_current_token =
             observer_delivery.Observer.current_token;
-          acknowledge_sent = observer_delivery.Observer.acknowledge_sent;
-          acknowledge_drop = observer_delivery.Observer.acknowledge_drop;
+          observer_acknowledge_sent =
+            observer_delivery.Observer.acknowledge_sent;
+          observer_acknowledge_drop =
+            observer_delivery.Observer.acknowledge_drop;
         }
       in
       let hooks =
@@ -3976,8 +3980,8 @@ module Make (Observer_error : Observer_error) () = struct
             (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
         }
       in
-      Stream_bridge.offer ~queue ~delivery ~hooks ~on_drop
-        observer_delivery.Observer.update
+      Stream_bridge.offer_observer_delivery ~queue ~observer_delivery ~hooks
+        ~on_drop
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)

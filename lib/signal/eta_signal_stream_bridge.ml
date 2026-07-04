@@ -18,6 +18,13 @@ type ('token, 'update, 'error) delivery = {
   acknowledge_drop : 'token -> 'update -> (unit, 'error) Effect.t;
 }
 
+type ('token, 'update, 'error) observer_delivery = {
+  observer_update : 'update;
+  observer_current_token : unit -> ('token option, 'error) Effect.t;
+  observer_acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
+  observer_acknowledge_drop : 'token -> 'update -> (unit, 'error) Effect.t;
+}
+
 type ('queue_error, 'error) hooks = {
   after_try_send_before_ack : unit -> (unit, 'error) Effect.t;
   after_drop_before_ack : unit -> (unit, 'error) Effect.t;
@@ -132,3 +139,13 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
                         | `Closed_with_error err ->
                             hooks.on_closed_with_error err))
                   |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())))
+
+let offer_observer_delivery ~queue ~observer_delivery ~hooks ~on_drop =
+  let delivery =
+    {
+      current_token = observer_delivery.observer_current_token;
+      acknowledge_sent = observer_delivery.observer_acknowledge_sent;
+      acknowledge_drop = observer_delivery.observer_acknowledge_drop;
+    }
+  in
+  offer ~queue ~delivery ~hooks ~on_drop observer_delivery.observer_update

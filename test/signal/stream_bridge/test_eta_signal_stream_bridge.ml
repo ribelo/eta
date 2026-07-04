@@ -46,6 +46,18 @@ let delivery ~token ~sent ~dropped =
         Effect.sync (fun () -> dropped := (token, value) :: !dropped));
   }
 
+let observer_delivery ~token ~sent ~dropped value =
+  {
+    Stream_bridge.observer_update = value;
+    observer_current_token = (fun () -> Effect.sync (fun () -> !token));
+    observer_acknowledge_sent =
+      (fun token value ->
+        Effect.sync (fun () -> sent := (token, value) :: !sent));
+    observer_acknowledge_drop =
+      (fun token value ->
+        Effect.sync (fun () -> dropped := (token, value) :: !dropped));
+  }
+
 let hooks ?(after_send = fun () -> Effect.unit)
     ?(after_drop = fun () -> Effect.unit) () =
   {
@@ -99,6 +111,33 @@ let test_offer_sends_and_drops () =
       ~hooks:(hooks ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
       value
+  in
+  run_ok runtime (offer 1);
+  run_ok runtime (offer 2);
+  Alcotest.(check (list (pair int int))) "sent ack" [ (1, 1) ] !sent;
+  Alcotest.(check (list (pair int int))) "drop ack" [ (1, 2) ] !dropped;
+  Alcotest.(check (list int)) "on_drop" [ 2 ] !on_drop_seen;
+  match run_ok runtime (Queue.try_recv queue) with
+  | `Item value -> Alcotest.(check int) "queued value" 1 value
+  | `Empty | `Closed | `Closed_with_error _ ->
+      Alcotest.fail "expected queued item"
+
+let test_offer_observer_delivery_sends_and_drops () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  let sent = ref [] in
+  let dropped = ref [] in
+  let on_drop_seen = ref [] in
+  let token = ref (Some 1) in
+  let offer value =
+    Stream_bridge.offer_observer_delivery ~queue
+      ~observer_delivery:(observer_delivery ~token ~sent ~dropped value)
+      ~hooks:(hooks ())
+      ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
   in
   run_ok runtime (offer 1);
   run_ok runtime (offer 2);
@@ -219,6 +258,8 @@ let () =
             `Quick test_finish_hook_invalid_scope_closes_with_error;
           Alcotest.test_case "offer sends and drops" `Quick
             test_offer_sends_and_drops;
+          Alcotest.test_case "offer observer delivery sends and drops" `Quick
+            test_offer_observer_delivery_sends_and_drops;
           Alcotest.test_case "offer without token noops" `Quick
             test_offer_without_token_noops;
           Alcotest.test_case "drop ack runs once after failure" `Quick
