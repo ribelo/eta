@@ -225,6 +225,53 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
+let test_stream_bridge_full_queue_drops_newest () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  let drops = ref [] in
+  let observer, stream =
+    run_ok runtime
+      (S.Stream.observe ~capacity:1
+         ~on_drop:(fun update ->
+           drops := update :: !drops;
+           failwith "contract drop hook failure")
+         signal)
+  in
+  run_ok runtime S.stabilize;
+  let before_drop = run_ok runtime (S.stats ()) in
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  let after_drop = run_ok runtime (S.stats ()) in
+  Alcotest.(check int)
+    "drop counted after acknowledgement"
+    (before_drop.S.stream_bridge_drop_count + 1)
+    after_drop.S.stream_bridge_drop_count;
+  Alcotest.(check int)
+    "observer snapshot still commits"
+    2
+    (run_ok runtime (S.Observer.read observer));
+  (match !drops with
+   | [ S.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "expected newest stream update to be dropped");
+  let update_value = function
+    | S.Initialized value -> value
+    | S.Changed { new_value; _ } -> new_value
+  in
+  Alcotest.(check (list int))
+    "full queue keeps original item"
+    [ 1 ]
+    (List.map update_value
+       (run_ok runtime
+          (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)));
+  run_ok runtime (S.Observer.dispose observer);
+  Alcotest.(check (list int))
+    "disposed bridge closes after buffered items"
+    []
+    (List.map update_value
+       (run_ok runtime (Eta_stream.run_collect stream)))
+
 let () =
   Alcotest.run "eta_signal_contract"
     [
@@ -243,5 +290,7 @@ let () =
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
+          Alcotest.test_case "stream bridge full queue drops newest" `Quick
+            test_stream_bridge_full_queue_drops_newest;
         ] );
     ]
