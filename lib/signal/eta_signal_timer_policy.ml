@@ -294,6 +294,17 @@ let state_with_generation state generation =
       Timer_running (generation, next_due_ms, cancel)
   | Timer_finished _ -> Timer_finished generation
 
+let inactive_state ~generation = Timer_inactive generation
+let starting_state ~generation = Timer_starting generation
+
+let running_uncancellable_state ~generation ~next_due_ms =
+  Timer_running_uncancellable (generation, next_due_ms)
+
+let running_state ~generation ~next_due_ms ~cancel =
+  Timer_running (generation, next_due_ms, cancel)
+
+let finished_state ~generation = Timer_finished generation
+
 let state_starting = function
   | Timer_starting _ -> true
   | Timer_inactive _ | Timer_running_uncancellable _ | Timer_running _

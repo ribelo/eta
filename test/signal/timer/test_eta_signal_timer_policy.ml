@@ -214,13 +214,24 @@ let test_daemon_wake_plan () =
 
 let noop () = ()
 
+let timer_inactive generation = Timer_policy.inactive_state ~generation
+let timer_starting generation = Timer_policy.starting_state ~generation
+
+let timer_running_uncancellable generation next_due_ms =
+  Timer_policy.running_uncancellable_state ~generation ~next_due_ms
+
+let timer_running generation next_due_ms cancel =
+  Timer_policy.running_state ~generation ~next_due_ms ~cancel
+
+let timer_finished generation = Timer_policy.finished_state ~generation
+
 let test_state_helpers () =
-  let running = Timer_policy.Timer_running (7, Some 10, noop) in
+  let running = timer_running 7 (Some 10) noop in
   Alcotest.(check int) "generation" 7 (Timer_policy.state_generation running);
   Alcotest.(check string) "label" "running" (Timer_policy.state_label running);
   Alcotest.(check bool) "starting" false (Timer_policy.state_starting running);
   Alcotest.(check bool) "starting state" true
-    (Timer_policy.state_starting (Timer_policy.Timer_starting 7));
+    (Timer_policy.state_starting (timer_starting 7));
   Alcotest.(check bool) "active" true (Timer_policy.state_active running);
   Alcotest.(check bool) "finished" false (Timer_policy.state_finished running);
   Alcotest.(check bool) "has current start" true
@@ -238,7 +249,7 @@ let test_state_helpers () =
     (Timer_policy.state_generation (Timer_policy.state_with_generation running 8))
 
 let test_debug_snapshot () =
-  let running = Timer_policy.Timer_running (7, Some 10, noop) in
+  let running = timer_running 7 (Some 10) noop in
   let running_snapshot = Timer_policy.debug_snapshot running in
   Alcotest.(check string)
     "running label"
@@ -255,7 +266,7 @@ let test_debug_snapshot () =
   Alcotest.(check int) "running state generation" 7
     running_snapshot.debug_generation;
   let finished_snapshot =
-    Timer_policy.debug_snapshot (Timer_policy.Timer_finished 8)
+    Timer_policy.debug_snapshot (timer_finished 8)
   in
   Alcotest.(check string)
     "finished label"
@@ -282,7 +293,7 @@ let test_snapshot_policy () =
     (Timer_policy.snapshot_on_demand_refresh_token initial);
   let running =
     Timer_policy.snapshot
-      ~state:(Timer_policy.Timer_running (7, Some 10, noop))
+      ~state:(timer_running 7 (Some 10) noop)
       ~on_demand_refresh_token:3
   in
   Alcotest.(check int) "snapshot generation" 9
@@ -333,11 +344,11 @@ let test_refresh_context () =
     (Timer_policy.refresh_dirty_items context)
 
 let test_daemon_status_policy () =
-  let running = Timer_policy.Timer_running (7, Some 10, noop) in
+  let running = timer_running 7 (Some 10) noop in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (7, Some 10)
+    timer_running_uncancellable 7 (Some 10)
   in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let inactive = timer_inactive 7 in
   (match Timer_policy.daemon_status running ~generation:7 with
   | Timer_policy.Daemon_continue -> ()
   | Timer_policy.Daemon_stop -> Alcotest.fail "expected running daemon to continue");
@@ -353,12 +364,12 @@ let test_daemon_status_policy () =
   | Timer_policy.Daemon_continue -> Alcotest.fail "expected inactive daemon to stop"
 
 let test_start_and_refresh_policy () =
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let running = timer_running 1 (Some 10) noop in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (1, Some 10)
+    timer_running_uncancellable 1 (Some 10)
   in
-  let finished = Timer_policy.Timer_finished 1 in
+  let finished = timer_finished 1 in
   Alcotest.(check bool) "inactive needs start" true
     (Timer_policy.needs_start ~effective_state:inactive ~current_state:inactive);
   Alcotest.(check bool) "running with current start does not need start" false
@@ -395,12 +406,12 @@ let demand_action =
   Alcotest.testable pp_demand_action (fun left right -> left = right)
 
 let test_demand_policy () =
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let running = timer_running 1 (Some 10) noop in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (1, Some 10)
+    timer_running_uncancellable 1 (Some 10)
   in
-  let finished = Timer_policy.Timer_finished 1 in
+  let finished = timer_finished 1 in
   Alcotest.(check demand_action) "necessary inactive starts" Timer_policy.Demand_start
     (Timer_policy.demand_action ~necessary:true ~effective_state:inactive
        ~current_state:inactive);
@@ -443,12 +454,12 @@ let demand_plan_values plans =
     plans
 
 let test_demand_plans_policy () =
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let running = timer_running 1 (Some 10) noop in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (1, Some 10)
+    timer_running_uncancellable 1 (Some 10)
   in
-  let finished = Timer_policy.Timer_finished 1 in
+  let finished = timer_finished 1 in
   let plans =
     Timer_policy.demand_plans ~advance_generation:succ ~cancel_running:true
       [
@@ -497,12 +508,12 @@ let test_demand_plans_policy () =
 let test_apply_demand_plans_preserves_effect_order () =
   let start_plan generation =
     {
-      Timer_policy.start_state = Timer_policy.Timer_starting generation;
+      Timer_policy.start_state = timer_starting generation;
       start_generation = generation;
     }
   in
   let stop_plan generation =
-    { Timer_policy.stop_state = Timer_policy.Timer_inactive generation; stop_cancel_hooks = [] }
+    { Timer_policy.stop_state = timer_inactive generation; stop_cancel_hooks = [] }
   in
   let effects =
     Timer_policy.apply_demand_plans
@@ -537,8 +548,8 @@ let test_apply_demand_plans_preserves_effect_order () =
     effects.Timer_policy.demand_cancel_hooks
 
 let test_demand_effects_classifies_resources () =
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let running = timer_running 1 (Some 10) noop in
   let state = function
     | "start" -> inactive
     | "stop" -> running
@@ -591,7 +602,7 @@ let test_demand_effects_validation_failure_short_circuits () =
   let started = ref false in
   let stopped = ref false in
   let validated = ref [] in
-  let inactive = Timer_policy.Timer_inactive 0 in
+  let inactive = timer_inactive 0 in
   let context =
     {
       Timer_policy.demand_resource_necessary = (fun _id -> true);
@@ -627,12 +638,12 @@ let test_demand_effects_validation_failure_short_circuits () =
   Alcotest.(check bool) "no stop effects" false !stopped
 
 let test_start_policy () =
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let running = timer_running 1 (Some 10) noop in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (1, Some 10)
+    timer_running_uncancellable 1 (Some 10)
   in
-  let finished = Timer_policy.Timer_finished 1 in
+  let finished = timer_finished 1 in
   (match
      Timer_policy.start ~advance_generation:succ ~effective_state:inactive
        ~current_state:inactive
@@ -670,11 +681,11 @@ let record_generation calls generation =
 
 let test_preflight_policy () =
   let calls = ref [] in
-  let inactive = Timer_policy.Timer_inactive 0 in
-  let inactive_current = Timer_policy.Timer_inactive 5 in
-  let running = Timer_policy.Timer_running (3, Some 10, noop) in
+  let inactive = timer_inactive 0 in
+  let inactive_current = timer_inactive 5 in
+  let running = timer_running 3 (Some 10) noop in
   let staged_running =
-    Timer_policy.Timer_running_uncancellable (9, Some 10)
+    timer_running_uncancellable 9 (Some 10)
   in
   Timer_policy.preflight_start ~advance_generation:(record_generation calls)
     ~effective_state:inactive ~current_state:inactive;
@@ -700,8 +711,8 @@ let test_preflight_policy () =
   Alcotest.(check (list int)) "inactive stop noops" [] !calls
 
 let test_begin_start_policy () =
-  let starting = Timer_policy.Timer_starting 7 in
-  let running = Timer_policy.Timer_running (7, Some 10, noop) in
+  let starting = timer_starting 7 in
+  let running = timer_running 7 (Some 10) noop in
   (match Timer_policy.begin_start starting ~generation:7 with
   | Some state ->
       Alcotest.(check string) "state" "running_uncancellable"
@@ -720,9 +731,9 @@ let test_install_cancel_policy () =
   let new_cancelled = ref false in
   let old_cancel () = old_cancelled := true in
   let new_cancel () = new_cancelled := true in
-  let uncancellable = Timer_policy.Timer_running_uncancellable (7, Some 10) in
-  let running = Timer_policy.Timer_running (7, Some 11, old_cancel) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let uncancellable = timer_running_uncancellable 7 (Some 10) in
+  let running = timer_running 7 (Some 11) old_cancel in
+  let inactive = timer_inactive 7 in
   (match
      Timer_policy.install_cancel uncancellable ~generation:7 ~cancel:new_cancel
    with
@@ -756,10 +767,10 @@ let test_install_cancel_policy () =
 
 let test_mark_stopped_policy () =
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (7, Some 10)
+    timer_running_uncancellable 7 (Some 10)
   in
-  let running = Timer_policy.Timer_running (7, Some 11, noop) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running = timer_running 7 (Some 11) noop in
+  let inactive = timer_inactive 7 in
   (match Timer_policy.mark_stopped running_uncancellable ~generation:7 with
   | Some state ->
       Alcotest.(check string) "uncancellable stopped" "inactive"
@@ -782,8 +793,8 @@ let test_mark_stopped_policy () =
 let test_mark_failed_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
-  let running = Timer_policy.Timer_running (7, Some 11, cancel) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running = timer_running 7 (Some 11) cancel in
+  let inactive = timer_inactive 7 in
   (match
      Timer_policy.mark_failed ~advance_generation:succ ~effective_state:running
        ~current_state:running ~generation:7
@@ -807,7 +818,7 @@ let test_mark_failed_policy () =
 let test_daemon_cleanup_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
-  let running = Timer_policy.Timer_running (7, Some 11, cancel) in
+  let running = timer_running 7 (Some 11) cancel in
   (match
      Timer_policy.cleanup_after_exit ~advance_generation:succ
        ~effective_state:running ~current_state:running ~generation:7
@@ -844,8 +855,8 @@ let test_daemon_cleanup_policy () =
           Timer_policy.Daemon_error))
 
 let test_finish_current_daemon_policy () =
-  let running = Timer_policy.Timer_running (7, Some 11, noop) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running = timer_running 7 (Some 11) noop in
+  let inactive = timer_inactive 7 in
   (match
      Timer_policy.finish_current_daemon ~advance_generation:succ
        ~effective_state:running ~current_state:running ~generation:7
@@ -870,9 +881,9 @@ let test_finish_current_daemon_policy () =
   | None -> Alcotest.fail "expected inactive current finish")
 
 let test_read_next_due_policy () =
-  let running_with_due = Timer_policy.Timer_running (7, Some 11, noop) in
-  let running_without_due = Timer_policy.Timer_running_uncancellable (7, None) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running_with_due = timer_running 7 (Some 11) noop in
+  let running_without_due = timer_running_uncancellable 7 None in
+  let inactive = timer_inactive 7 in
   Alcotest.(check (option int)) "current due" (Some 11)
     (Timer_policy.read_next_due running_with_due ~generation:7 ~fallback:20);
   Alcotest.(check (option int)) "current fallback" (Some 20)
@@ -883,8 +894,8 @@ let test_read_next_due_policy () =
     (Timer_policy.read_next_due inactive ~generation:7 ~fallback:20)
 
 let test_set_next_due_policy () =
-  let running = Timer_policy.Timer_running (7, Some 11, noop) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running = timer_running 7 (Some 11) noop in
+  let inactive = timer_inactive 7 in
   (match
      Timer_policy.set_next_due ~effective_state:running ~current_state:running
        ~generation:7 ~next_due_ms:20
@@ -907,9 +918,9 @@ let test_set_next_due_policy () =
   | None -> Alcotest.fail "expected current state update plan")
 
 let test_advance_next_due_policy () =
-  let running = Timer_policy.Timer_running (7, Some 11, noop) in
-  let running_without_due = Timer_policy.Timer_running_uncancellable (7, None) in
-  let inactive = Timer_policy.Timer_inactive 7 in
+  let running = timer_running 7 (Some 11) noop in
+  let running_without_due = timer_running_uncancellable 7 None in
+  let inactive = timer_inactive 7 in
   (match
      Timer_policy.advance_next_due ~effective_state:running ~current_state:running
        ~generation:7 ~expected:11 ~next_due_ms:20
@@ -954,12 +965,12 @@ let test_advance_next_due_policy () =
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
-  let starting = Timer_policy.Timer_starting 7 in
+  let starting = timer_starting 7 in
   let running_uncancellable =
-    Timer_policy.Timer_running_uncancellable (8, Some 10)
+    timer_running_uncancellable 8 (Some 10)
   in
-  let running = Timer_policy.Timer_running (8, Some 10, cancel) in
-  let inactive = Timer_policy.Timer_inactive 3 in
+  let running = timer_running 8 (Some 10) cancel in
+  let inactive = timer_inactive 3 in
   (match
      Timer_policy.stop ~advance_generation:succ ~cancel_running:true starting
    with
@@ -1000,7 +1011,7 @@ let test_stop_policy () =
        (Timer_policy.stop ~advance_generation:succ ~cancel_running:true inactive))
 
 let test_refresh_plans () =
-  let running = Timer_policy.Timer_running_uncancellable (1, Some 50) in
+  let running = timer_running_uncancellable 1 (Some 50) in
   let current = Timer_policy.current_time_refresh_plan ~now_ms:85 in
   let current_from_spec =
     Timer_policy.refresh_plan_for_spec ~state:running ~current_value:0
@@ -1033,7 +1044,7 @@ let test_refresh_plans () =
     interval.refresh_next_due_ms interval_from_spec.refresh_next_due_ms;
   let saturated =
     Timer_policy.interval_refresh_plan
-      ~state:(Timer_policy.Timer_running_uncancellable (1, Some max_int))
+      ~state:(timer_running_uncancellable 1 (Some max_int))
       ~interval_ms:10 ~current_value:3 ~now_ms:max_int
   in
   Alcotest.(check bool) "saturated interval finishes" true
@@ -1070,11 +1081,11 @@ let test_refresh_actions () =
     [ "set:85" ]
     (action_labels
        (Timer_policy.refresh_actions ~advance_generation:succ
-          ~state:(Timer_policy.Timer_inactive 0)
+          ~state:(timer_inactive 0)
           (Timer_policy.current_time_refresh_plan ~now_ms:85)));
   let cancelled = ref false in
   let running =
-    Timer_policy.Timer_running (7, Some 80, fun () -> cancelled := true)
+    timer_running 7 (Some 80) (fun () -> cancelled := true)
   in
   let finish_actions =
     Timer_policy.refresh_actions ~advance_generation:succ ~state:running
@@ -1118,7 +1129,7 @@ let test_refresh_actions () =
     []
     (action_labels
        (Timer_policy.refresh_actions ~advance_generation:succ
-          ~state:(Timer_policy.Timer_inactive 0)
+          ~state:(timer_inactive 0)
           {
             Timer_policy.refresh_value = None;
             refresh_next_due_ms = None;
@@ -1128,8 +1139,8 @@ let test_refresh_actions () =
 let test_finish_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
-  let running = Timer_policy.Timer_running (7, Some 10, cancel) in
-  let inactive = Timer_policy.Timer_inactive 3 in
+  let running = timer_running 7 (Some 10) cancel in
+  let inactive = timer_inactive 3 in
   let running_plan = Timer_policy.finish ~advance_generation:succ running in
   let inactive_plan = Timer_policy.finish ~advance_generation:succ inactive in
   Alcotest.(check int) "active advances generation" 8

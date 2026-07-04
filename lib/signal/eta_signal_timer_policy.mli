@@ -8,12 +8,7 @@ type catch_up_policy =
   | Catch_up_once_per_wake
   | Catch_up_coalesced
 
-type state =
-  | Timer_inactive of int
-  | Timer_starting of int
-  | Timer_running_uncancellable of int * int option
-  | Timer_running of int * int option * (unit -> unit)
-  | Timer_finished of int
+type state
 
 type snapshot
 
@@ -168,6 +163,13 @@ val daemon_wake_plan :
 
 val state_generation : state -> int
 val state_with_generation : state -> int -> state
+val inactive_state : generation:int -> state
+val starting_state : generation:int -> state
+val running_uncancellable_state : generation:int -> next_due_ms:int option -> state
+val running_state :
+  generation:int -> next_due_ms:int option -> cancel:(unit -> unit) -> state
+
+val finished_state : generation:int -> state
 
 val snapshot :
   state:state -> on_demand_refresh_token:int -> snapshot
