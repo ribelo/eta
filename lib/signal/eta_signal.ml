@@ -1519,16 +1519,7 @@ module Make (Observer_error : Observer_error) () = struct
   let missed_cadences = Timer.missed_cadences
   let advance_due = Timer.advance_due
 
-  let timer_next_due_state = Timer.state_next_due
-
-  let timer_next_due_unlocked timer =
-    timer_next_due_state (timer_effective_state timer)
-
   let timer_set_next_due_state = Timer.state_set_next_due
-
-  let timer_set_next_due_unlocked timer next_due_ms =
-    set_timer_current_state timer
-      (timer_set_next_due_state (timer_current_state timer) next_due_ms)
 
   let remember_timer_refresh_timer timer =
     match graph.active_timer_refresh with
@@ -3723,13 +3714,17 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_advance_next_due timer generation ~expected next_due_ms =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then
-            match timer_next_due_unlocked timer with
-            | Some current when current = expected ->
-                timer_set_next_due_unlocked timer (Some next_due_ms);
-                `Advanced
-            | Some _ | None -> `Stale
-          else `Stop)
+          match
+            Timer.advance_next_due
+              ~effective_state:(timer_effective_state timer)
+              ~current_state:(timer_current_state timer) ~generation
+              ~expected ~next_due_ms
+          with
+          | Timer.Advance_next_due_update state ->
+              set_timer_current_state timer state;
+              `Advanced
+          | Timer.Advance_next_due_stale -> `Stale
+          | Timer.Advance_next_due_stop -> `Stop)
 
     let rec run_timer_update_batch timer generation remaining update ~missed =
       if remaining <= 0 then Effect.pure `Continue

@@ -290,6 +290,51 @@ let test_set_next_due_policy () =
         (Timer.state_label state)
   | None -> Alcotest.fail "expected current state update plan")
 
+let test_advance_next_due_policy () =
+  let running = Timer.Timer_running (7, Some 11, noop) in
+  let running_without_due = Timer.Timer_running_uncancellable (7, None) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match
+     Timer.advance_next_due ~effective_state:running ~current_state:running
+       ~generation:7 ~expected:11 ~next_due_ms:20
+   with
+  | Timer.Advance_next_due_update state ->
+      Alcotest.(check (option int)) "advanced next due" (Some 20)
+        (Timer.state_next_due state)
+  | Timer.Advance_next_due_stop | Timer.Advance_next_due_stale ->
+      Alcotest.fail "expected next due advance");
+  (match
+     Timer.advance_next_due ~effective_state:running ~current_state:running
+       ~generation:7 ~expected:12 ~next_due_ms:20
+   with
+  | Timer.Advance_next_due_stale -> ()
+  | Timer.Advance_next_due_stop | Timer.Advance_next_due_update _ ->
+      Alcotest.fail "expected stale next due");
+  (match
+     Timer.advance_next_due ~effective_state:running_without_due
+       ~current_state:running_without_due ~generation:7 ~expected:11
+       ~next_due_ms:20
+   with
+  | Timer.Advance_next_due_stale -> ()
+  | Timer.Advance_next_due_stop | Timer.Advance_next_due_update _ ->
+      Alcotest.fail "expected missing due to be stale");
+  (match
+     Timer.advance_next_due ~effective_state:running ~current_state:running
+       ~generation:8 ~expected:11 ~next_due_ms:20
+   with
+  | Timer.Advance_next_due_stop -> ()
+  | Timer.Advance_next_due_stale | Timer.Advance_next_due_update _ ->
+      Alcotest.fail "expected stale generation to stop");
+  match
+    Timer.advance_next_due ~effective_state:running ~current_state:inactive
+      ~generation:7 ~expected:11 ~next_due_ms:20
+  with
+  | Timer.Advance_next_due_update state ->
+      Alcotest.(check string) "updates current state" "inactive"
+        (Timer.state_label state)
+  | Timer.Advance_next_due_stop | Timer.Advance_next_due_stale ->
+      Alcotest.fail "expected current state update action"
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -398,6 +443,8 @@ let () =
             test_read_next_due_policy;
           Alcotest.test_case "set next due policy" `Quick
             test_set_next_due_policy;
+          Alcotest.test_case "advance next due policy" `Quick
+            test_advance_next_due_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;

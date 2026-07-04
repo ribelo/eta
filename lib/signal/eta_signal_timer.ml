@@ -42,6 +42,11 @@ type start_plan = {
   start_generation : int;
 }
 
+type advance_next_due_action =
+  | Advance_next_due_stop
+  | Advance_next_due_stale
+  | Advance_next_due_update of state
+
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
@@ -217,6 +222,16 @@ let set_next_due ~effective_state ~current_state ~generation ~next_due_ms =
   if state_running_current effective_state generation then
     Some (state_set_next_due current_state (Some next_due_ms))
   else None
+
+let advance_next_due ~effective_state ~current_state ~generation ~expected
+    ~next_due_ms =
+  if state_running_current effective_state generation then
+    match state_next_due effective_state with
+    | Some current when current = expected ->
+        Advance_next_due_update
+          (state_set_next_due current_state (Some next_due_ms))
+    | Some _ | None -> Advance_next_due_stale
+  else Advance_next_due_stop
 
 let stop ~advance_generation ~cancel_running state =
   match state with

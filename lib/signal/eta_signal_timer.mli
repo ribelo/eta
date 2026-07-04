@@ -44,6 +44,11 @@ type start_plan = {
   start_generation : int;
 }
 
+type advance_next_due_action =
+  | Advance_next_due_stop
+  | Advance_next_due_stale
+  | Advance_next_due_update of state
+
 val add_ms_capped : int -> int -> int
 val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
@@ -94,6 +99,14 @@ val set_next_due :
   generation:int ->
   next_due_ms:int ->
   state option
+
+val advance_next_due :
+  effective_state:state ->
+  current_state:state ->
+  generation:int ->
+  expected:int ->
+  next_due_ms:int ->
+  advance_next_due_action
 
 val stop :
   advance_generation:(int -> int) ->
