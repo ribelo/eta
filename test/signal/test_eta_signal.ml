@@ -3716,7 +3716,9 @@ let test_stats_counter_saturation_is_typed_failure () =
   check "stats nodes_became_unnecessary" (fun value ->
       Overflow_signal.graph.nodes_became_unnecessary <- value);
   check "stats stream_bridge_drop_count" (fun value ->
-      Overflow_signal.graph.stream_bridge_drop_count <- value);
+      Overflow_signal.graph.stream_bridge_metrics <-
+        Eta_signal_testable.Stream_bridge.create_metrics
+          ~drop_count:value ());
   check_stats_count "stats necessary_node_count"
     Overflow_signal.Private_test_hooks.Stats_necessary_node_count;
   check_stats_count "stats dead_node_count"

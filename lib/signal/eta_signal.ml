@@ -611,7 +611,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable dynamic_scope_invalidations : int;
     mutable nodes_became_necessary : int;
     mutable nodes_became_unnecessary : int;
-    mutable stream_bridge_drop_count : int;
+    mutable stream_bridge_metrics : Stream_bridge.metrics;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
     mutable next_timer_refresh_token : int;
     mutable active_timer_refresh : timer_refresh_context option;
@@ -642,7 +642,7 @@ module Make (Observer_error : Observer_error) () = struct
       dynamic_scope_invalidations = 0;
       nodes_became_necessary = 0;
       nodes_became_unnecessary = 0;
-      stream_bridge_drop_count = 0;
+      stream_bridge_metrics = Stream_bridge.create_metrics ();
       necessary_node_ids = Hashtbl.create 16;
       next_timer_refresh_token = 0;
       active_timer_refresh = None;
@@ -2274,8 +2274,7 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
 
   let record_stream_bridge_drop_unlocked () =
-    graph.stream_bridge_drop_count <-
-      saturating_succ graph.stream_bridge_drop_count
+    Stream_bridge.record_drop graph.stream_bridge_metrics
 
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
@@ -2861,7 +2860,7 @@ module Make (Observer_error : Observer_error) () = struct
                   graph.nodes_became_unnecessary;
               stream_bridge_drop_count =
                 stats_counter "stats stream_bridge_drop_count"
-                  graph.stream_bridge_drop_count;
+                  (Stream_bridge.drop_count graph.stream_bridge_metrics);
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
                   (Lane.waiting_count graph.lane);

@@ -2,6 +2,12 @@
 
 val default_capacity : int
 
+type metrics
+
+val create_metrics : ?drop_count:int -> unit -> metrics
+val drop_count : metrics -> int
+val record_drop : metrics -> unit
+
 val create_queue :
   capacity:int ->
   (('update, 'queue_error) Eta.Queue.t, [> `Invalid_capacity ]) result

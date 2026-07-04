@@ -43,6 +43,18 @@ let test_create_stream () =
   | Ok (queue, _stream) ->
       Queue.close queue
 
+let test_metrics () =
+  let metrics = Stream_bridge.create_metrics () in
+  Alcotest.(check int) "initial count" 0
+    (Stream_bridge.drop_count metrics);
+  Stream_bridge.record_drop metrics;
+  Alcotest.(check int) "recorded drop" 1
+    (Stream_bridge.drop_count metrics);
+  let saturated = Stream_bridge.create_metrics ~drop_count:max_int () in
+  Stream_bridge.record_drop saturated;
+  Alcotest.(check int) "saturated count" max_int
+    (Stream_bridge.drop_count saturated)
+
 let delivery ~token ~sent ~dropped =
   {
     Stream_bridge.current_token = (fun () -> Effect.sync (fun () -> !token));
@@ -314,6 +326,7 @@ let () =
           Alcotest.test_case "capacity validation" `Quick
             test_capacity_validation;
           Alcotest.test_case "create stream" `Quick test_create_stream;
+          Alcotest.test_case "metrics" `Quick test_metrics;
           Alcotest.test_case "finish hook closes queue" `Quick
             test_finish_hook_closes_queue;
           Alcotest.test_case "finish hook invalid scope closes with error"

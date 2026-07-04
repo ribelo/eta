@@ -4,6 +4,16 @@ module Observer_lifecycle = Eta_signal_observer.Lifecycle
 
 let default_capacity = 1024
 
+type metrics = { mutable drop_count : int }
+
+let create_metrics ?(drop_count = 0) () = { drop_count }
+
+let drop_count metrics = metrics.drop_count
+
+let record_drop metrics =
+  if metrics.drop_count < max_int then
+    metrics.drop_count <- metrics.drop_count + 1
+
 let create_queue ~capacity =
   if capacity <= 0 then Error `Invalid_capacity
   else Ok (Queue.create ~overflow:(Queue.Drop_new { capacity }) ())
