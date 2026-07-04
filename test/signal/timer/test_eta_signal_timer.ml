@@ -66,6 +66,75 @@ let test_state_helpers () =
   Alcotest.(check int) "with generation" 8
     (Timer.state_generation (Timer.state_with_generation running 8))
 
+let test_start_and_refresh_policy () =
+  let inactive = Timer.Timer_inactive 0 in
+  let running = Timer.Timer_running (1, Some 10, noop) in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (1, Some 10)
+  in
+  let finished = Timer.Timer_finished 1 in
+  Alcotest.(check bool) "inactive needs start" true
+    (Timer.needs_start ~effective_state:inactive ~current_state:inactive);
+  Alcotest.(check bool) "running with current start does not need start" false
+    (Timer.needs_start ~effective_state:running ~current_state:running);
+  Alcotest.(check bool) "uncancellable effective with inactive current needs start"
+    true
+    (Timer.needs_start ~effective_state:running_uncancellable
+       ~current_state:inactive);
+  Alcotest.(check bool) "finished does not need start" false
+    (Timer.needs_start ~effective_state:finished ~current_state:finished);
+  Alcotest.(check bool) "eligible refresh" true
+    (Timer.can_refresh_on_demand ~refresh_operation:true ~current_token:0
+       ~staged_token:(-1) ~token:1 ~refresh_when_inactive:false ~active:true
+       ~finished:false);
+  Alcotest.(check bool) "no operation" false
+    (Timer.can_refresh_on_demand ~refresh_operation:false ~current_token:0
+       ~staged_token:(-1) ~token:1 ~refresh_when_inactive:true ~active:true
+       ~finished:false);
+  Alcotest.(check bool) "already refreshed" false
+    (Timer.can_refresh_on_demand ~refresh_operation:true ~current_token:1
+       ~staged_token:(-1) ~token:1 ~refresh_when_inactive:true ~active:true
+       ~finished:false);
+  Alcotest.(check bool) "inactive without refresh permission" false
+    (Timer.can_refresh_on_demand ~refresh_operation:true ~current_token:0
+       ~staged_token:(-1) ~token:1 ~refresh_when_inactive:false ~active:false
+       ~finished:false)
+
+let test_refresh_plans () =
+  let running = Timer.Timer_running_uncancellable (1, Some 50) in
+  let due = Timer.due_refresh running ~interval_ms:10 ~now_ms:85 in
+  Alcotest.(check int) "missed" 4 due.missed;
+  Alcotest.(check (option int)) "next due" (Some 90) due.next_due_ms;
+  Alcotest.(check bool) "not saturated" false due.saturated_due;
+  let interval =
+    Timer.interval_refresh ~state:running ~interval_ms:10 ~current_value:3
+      ~now_ms:85
+  in
+  Alcotest.(check (option int)) "interval value" (Some 7)
+    interval.interval_value;
+  Alcotest.(check (option int)) "interval due" (Some 90)
+    interval.interval_next_due_ms;
+  Alcotest.(check bool) "interval finish" false interval.interval_finish;
+  let deadline = Timer.deadline_refresh ~now_ms:100 ~deadline_ms:99 in
+  Alcotest.(check bool) "deadline value" true deadline.deadline_value;
+  Alcotest.(check bool) "deadline finish" true deadline.deadline_finish
+
+let test_finish_policy () =
+  let cancelled = ref false in
+  let cancel () = cancelled := true in
+  let running = Timer.Timer_running (7, Some 10, cancel) in
+  let inactive = Timer.Timer_inactive 3 in
+  Alcotest.(check int) "active advances generation" 8
+    (Timer.state_generation
+       (Timer.finish_state ~advance_generation:succ running));
+  Alcotest.(check int) "inactive keeps generation" 3
+    (Timer.state_generation
+       (Timer.finish_state ~advance_generation:succ inactive));
+  let hooks = Timer.finish_cancel_hooks running in
+  Alcotest.(check int) "hook count" 1 (List.length hooks);
+  List.iter (fun hook -> hook ()) hooks;
+  Alcotest.(check bool) "cancelled" true !cancelled
+
 let () =
   Alcotest.run "eta_signal_timer"
     [
@@ -77,5 +146,9 @@ let () =
             test_deadline_arithmetic;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
+          Alcotest.test_case "start and refresh policy" `Quick
+            test_start_and_refresh_policy;
+          Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
+          Alcotest.test_case "finish policy" `Quick test_finish_policy;
         ] );
     ]

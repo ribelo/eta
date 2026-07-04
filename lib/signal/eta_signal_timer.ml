@@ -10,6 +10,23 @@ type state =
   | Timer_running of int * int option * (unit -> unit)
   | Timer_finished of int
 
+type due_refresh = {
+  missed : int;
+  saturated_due : bool;
+  next_due_ms : int option;
+}
+
+type deadline_refresh = {
+  deadline_value : bool;
+  deadline_finish : bool;
+}
+
+type interval_refresh = {
+  interval_value : int option;
+  interval_next_due_ms : int option;
+  interval_finish : bool;
+}
+
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
@@ -124,3 +141,55 @@ let state_set_next_due state next_due_ms =
   | Timer_running (generation, _, cancel) ->
       Timer_running (generation, next_due_ms, cancel)
   | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
+
+let needs_start ~effective_state ~current_state =
+  not
+    (state_finished effective_state
+    || (state_active effective_state && state_has_current_start current_state))
+
+let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
+    ~refresh_when_inactive ~active ~finished =
+  refresh_operation && current_token <> token && staged_token <> token
+  && (refresh_when_inactive || active)
+  && not finished
+
+let finish_state ~advance_generation state =
+  let generation =
+    if state_active state then advance_generation (state_generation state)
+    else state_generation state
+  in
+  Timer_finished generation
+
+let finish_cancel_hooks = function
+  | Timer_running (_, _, cancel) -> [ cancel ]
+  | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+  | Timer_finished _ ->
+      []
+
+let due_refresh state ~interval_ms ~now_ms =
+  match state_next_due state with
+  | None -> { missed = 0; saturated_due = false; next_due_ms = None }
+  | Some next_due_ms ->
+      let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
+      if missed <= 0 then
+        { missed = 0; saturated_due = false; next_due_ms = None }
+      else
+        let advanced_due_ms = advance_due next_due_ms interval_ms missed in
+        let saturated_due =
+          advanced_due_ms = max_int && now_ms >= advanced_due_ms
+        in
+        { missed; saturated_due; next_due_ms = Some advanced_due_ms }
+
+let deadline_refresh ~now_ms ~deadline_ms =
+  let reached = now_ms >= deadline_ms in
+  { deadline_value = reached; deadline_finish = reached }
+
+let interval_refresh ~state ~interval_ms ~current_value ~now_ms =
+  let due = due_refresh state ~interval_ms ~now_ms in
+  {
+    interval_value =
+      (if due.missed <= 0 then None
+       else Some (add_int_capped current_value due.missed));
+    interval_next_due_ms = due.next_due_ms;
+    interval_finish = due.saturated_due;
+  }
