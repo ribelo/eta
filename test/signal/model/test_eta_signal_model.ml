@@ -401,6 +401,76 @@ let test_pure_failure_matches_model () =
   check_model "after recovery";
   run_ok runtime (Signal.Observer.dispose observer)
 
+let test_dispose_demand_matches_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let recomputes = ref 0 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr recomputes;
+           value)
+  in
+  let first_updates = ref [] in
+  let second_updates = ref [] in
+  let record updates update =
+    E.sync (fun () ->
+        updates := observed_of_signal_update update :: !updates)
+  in
+  let first_observer =
+    run_ok runtime (Signal.Observer.observe signal (record first_updates))
+  in
+  let model_pending = ref 0 in
+  let model_recomputes = ref 0 in
+  let first_model_current = ref None in
+  let second_model_current = ref None in
+  let first_model_updates = ref [] in
+  let second_model_updates = ref [] in
+  let stabilize_model ~demanded observer_current updates =
+    if demanded then (
+      incr model_recomputes;
+      let value = !model_pending in
+      let update =
+        match !observer_current with
+        | None -> Some (Initialized value)
+        | Some current ->
+            if current = value then None else Some (Changed (current, value))
+      in
+      observer_current := Some value;
+      Option.iter (fun update -> updates := update :: !updates) update)
+  in
+  let check_updates label model actual =
+    Alcotest.(check (list observed_update))
+      label (List.rev !model) (List.rev !actual)
+  in
+  stabilize_model ~demanded:true first_model_current first_model_updates;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check int) "initial recompute" !model_recomputes !recomputes;
+  check_updates "first observer initialized" first_model_updates first_updates;
+  Alcotest.(check int) "first read" 0
+    (run_ok runtime (Signal.Observer.read first_observer));
+  run_ok runtime (Signal.Observer.dispose first_observer);
+  model_pending := 1;
+  run_ok runtime (Signal.Var.set source 1);
+  stabilize_model ~demanded:false first_model_current first_model_updates;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check int) "disposed demand does not recompute" !model_recomputes
+    !recomputes;
+  check_updates "disposed observer receives no update" first_model_updates
+    first_updates;
+  let second_observer =
+    run_ok runtime (Signal.Observer.observe signal (record second_updates))
+  in
+  stabilize_model ~demanded:true second_model_current second_model_updates;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check int) "reobserve recomputes latest pending value"
+    !model_recomputes !recomputes;
+  check_updates "second observer initialized with latest value"
+    second_model_updates second_updates;
+  Alcotest.(check int) "second read" 1
+    (run_ok runtime (Signal.Observer.read second_observer));
+  run_ok runtime (Signal.Observer.dispose second_observer)
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -416,5 +486,7 @@ let () =
             test_observer_failure_retry_matches_model;
           Alcotest.test_case "pure failure matches model" `Quick
             test_pure_failure_matches_model;
+          Alcotest.test_case "dispose demand matches model" `Quick
+            test_dispose_demand_matches_model;
         ] );
     ]
