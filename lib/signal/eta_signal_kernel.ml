@@ -125,6 +125,8 @@ module Demand = struct
       { became_necessary = 0; became_unnecessary = 0 }
       transitions
 
+  let summarize_diff ~previous ~next = diff ~previous ~next |> summarize
+
   let resource ~id value =
     { resource_id = id; resource_value = value }
 

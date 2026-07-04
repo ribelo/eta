@@ -65,6 +65,11 @@ module Demand : sig
 
   val summarize : _ t -> summary
 
+  val summarize_diff :
+    previous:('id, unit) Hashtbl.t ->
+    next:('id, unit) Hashtbl.t ->
+    summary
+
   val resource : id:'id -> 'resource -> ('id, 'resource) resource
 
   val classify_resources :

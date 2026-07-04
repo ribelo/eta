@@ -1812,8 +1812,7 @@ module Make (Observer_error : Observer_error) () = struct
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
     let summary =
-      Kernel.Demand.diff ~previous:graph.necessary_node_ids ~next
-      |> Kernel.Demand.summarize
+      Kernel.Demand.summarize_diff ~previous:graph.necessary_node_ids ~next
     in
     graph.nodes_became_necessary <-
       add_int_capped graph.nodes_became_necessary summary.became_necessary;

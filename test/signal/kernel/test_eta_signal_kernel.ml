@@ -129,6 +129,10 @@ let demand_summary transitions =
   let summary = Kernel.Demand.summarize transitions in
   (summary.became_necessary, summary.became_unnecessary)
 
+let demand_diff_summary ~previous ~next =
+  let summary = Kernel.Demand.summarize_diff ~previous ~next in
+  (summary.became_necessary, summary.became_unnecessary)
+
 let test_attach_is_bidirectional_and_idempotent () =
   let parent = node 1 in
   let child = node 2 in
@@ -185,25 +189,28 @@ let test_reachable_fold_visits_multiple_roots () =
   Alcotest.(check (list int)) "visited" [ 1; 2; 3 ] visited
 
 let test_demand_diff_reports_necessary_changes () =
-  let transitions =
-    Kernel.Demand.diff ~previous:(id_table [ 1; 2; 4 ])
-      ~next:(id_table [ 2; 3; 4 ])
-  in
+  let previous = id_table [ 1; 2; 4 ] in
+  let next = id_table [ 2; 3; 4 ] in
+  let transitions = Kernel.Demand.diff ~previous ~next in
   Alcotest.(check (list (pair string int)))
     "transitions"
     [ ("necessary", 3); ("unnecessary", 1) ]
     (demand_transitions transitions);
   Alcotest.(check (pair int int)) "summary" (1, 1)
-    (demand_summary transitions)
+    (demand_summary transitions);
+  Alcotest.(check (pair int int)) "diff summary" (1, 1)
+    (demand_diff_summary ~previous ~next)
 
 let test_demand_diff_ignores_stable_nodes () =
-  let transitions =
-    Kernel.Demand.diff ~previous:(id_table [ 1; 2 ]) ~next:(id_table [ 1; 2 ])
-  in
+  let previous = id_table [ 1; 2 ] in
+  let next = id_table [ 1; 2 ] in
+  let transitions = Kernel.Demand.diff ~previous ~next in
   Alcotest.(check (list (pair string int))) "transitions" []
     (demand_transitions transitions);
   Alcotest.(check (pair int int)) "summary" (0, 0)
-    (demand_summary transitions)
+    (demand_summary transitions);
+  Alcotest.(check (pair int int)) "diff summary" (0, 0)
+    (demand_diff_summary ~previous ~next)
 
 let test_demand_classifies_resources () =
   let resources =
