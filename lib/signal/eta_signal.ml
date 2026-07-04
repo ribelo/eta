@@ -3400,19 +3400,13 @@ module Make (Observer_error : Observer_error) () = struct
     in
     String.concat " " fields
 
-  let observer_delivery_state_label = function
-    | Observer_never_delivered -> "never_delivered"
-    | Observer_delivered _ -> "delivered"
-    | Observer_delivery_pending _ -> "pending"
-    | Observer_delivery_running _ -> "running"
-
   let observer_label ?missing_observed_signal_id (O observer) =
     let value_state_label, delivery_state_label =
       match observer.obs_state with
       | Observer_lifecycle.Registering live | Observer_lifecycle.Active live ->
           let snapshot = observer_current_snapshot live in
           ( Observer_core.Value.label snapshot.observer_value,
-            observer_delivery_state_label snapshot.observer_delivery )
+            Observer_core.Delivery.label snapshot.observer_delivery )
       | Observer_lifecycle.Disposed value | Observer_lifecycle.Invalid_scope value
         ->
           (Observer_core.Value.label value, "none")

@@ -161,6 +161,12 @@ module Delivery = struct
     | Observer_never_delivered | Observer_delivered _
     | Observer_delivery_pending _ ->
         None
+
+  let label = function
+    | Observer_never_delivered -> "never_delivered"
+    | Observer_delivered _ -> "delivered"
+    | Observer_delivery_pending _ -> "pending"
+    | Observer_delivery_running _ -> "running"
 end
 
 module Event = struct

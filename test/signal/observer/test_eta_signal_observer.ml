@@ -198,6 +198,17 @@ let test_delivery_ignores_stale_token () =
     (Option.is_none
        (acknowledge ~token:8 ~update:update_changed ~after_ack:[] state))
 
+let test_delivery_labels () =
+  let open Observer.Delivery in
+  Alcotest.(check string) "never" "never_delivered"
+    (label Observer_never_delivered);
+  Alcotest.(check string) "delivered" "delivered"
+    (label (Observer_delivered 1));
+  Alcotest.(check string) "pending" "pending"
+    (label (Observer_delivery_pending (7, update_changed, [])));
+  Alcotest.(check string) "running" "running"
+    (label (Observer_delivery_running (7, update_changed, [])))
+
 let check_event_plan label ~expected_value ~expected_update ~expected_delivery
     plan =
   Alcotest.(check (option update)) (label ^ " update") expected_update
@@ -288,6 +299,7 @@ let () =
             test_delivery_claim_release_acknowledge;
           Alcotest.test_case "ignores stale token" `Quick
             test_delivery_ignores_stale_token;
+          Alcotest.test_case "labels" `Quick test_delivery_labels;
         ] );
       ( "event",
         [

@@ -86,6 +86,7 @@ module Delivery : sig
     token:int -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
 
   val running_token : ('a, 'after_ack) t -> int option
+  val label : ('a, 'after_ack) t -> string
 end
 
 module Event : sig
