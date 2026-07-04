@@ -23,7 +23,7 @@ val with_sync :
   hooks:hooks ->
   after_acquired:(unit -> (unit, 'err) Eta.Effect.t) ->
   t ->
-  (unit -> 'a) ->
+  (access -> 'a) ->
   ('a, 'err) Eta.Effect.t
 
 val waiting_count : t -> int

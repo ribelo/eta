@@ -78,6 +78,11 @@ let validate_access lane access =
   | Some _ -> invariant_failed "lane access token is not active"
   | None -> invariant_failed "lane access token is stale"
 
+let active_access lane =
+  match lane.active_access with
+  | Some access -> access
+  | None -> invariant_failed "lane access token is stale"
+
 let decrement_cancelled_debt lane =
   if lane.cancelled_debt > 0 then
     lane.cancelled_debt <- lane.cancelled_debt - 1
@@ -269,7 +274,8 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
   then
     try
       ensure_context ();
-      Effect.Expert.eval context (Effect.sync f)
+      let access = active_access lane in
+      Effect.Expert.eval context (Effect.sync (fun () -> f access))
     with exn -> Effect.Expert.exit_of_exn context exn
   else
     let access_ref = ref None in
@@ -288,7 +294,7 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
       contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
           Effect.Expert.eval context
             (after_acquired ()
-            |> Effect.bind (fun () -> Effect.sync f)
+            |> Effect.bind (fun () -> Effect.sync (fun () -> f access))
             |> Effect.on_exit (fun _exit -> release_lane)))
     with
     | exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn)

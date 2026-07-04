@@ -705,7 +705,9 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
 
-  let with_graph_lane_sync f =
+  type graph_lane = Lane.access
+
+  let with_graph_lane_access f =
     Lane.with_sync ~leaf_name:"Eta_signal.with_graph_lane_sync"
       ~depth_local:graph_lane_depth_local ~ensure_context:ensure_graph_context
       ~hooks:
@@ -717,6 +719,9 @@ module Make (Observer_error : Observer_error) () = struct
       ~after_acquired:(fun () ->
         Private_test_hooks.run After_graph_lane_acquired)
       graph.lane f
+
+  let with_graph_lane_sync f =
+    with_graph_lane_access (fun _lane -> f ())
 
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
@@ -2049,51 +2054,62 @@ module Make (Observer_error : Observer_error) () = struct
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
 
-  let acknowledge_event_delivery observer token update =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> ()
-        | Some live -> (
+  let acknowledge_event_delivery_unlocked (_lane : graph_lane) observer token
+      update ~after_ack =
+    match observer_active_live_state observer with
+    | None -> ()
+    | Some live -> (
         let snapshot = observer_current_snapshot live in
         match
           Observer_snapshot.acknowledge_delivery ~token ~update
-            ~after_ack:[] snapshot
+            ~after_ack snapshot
         with
         | Some (snapshot, after_ack) ->
             set_observer_current live snapshot;
             run_after_ack_actions_unlocked after_ack
-        | None -> ()))
+        | None -> ())
 
-  let claim_event_delivery observer token =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> false
-        | Some live -> (
+  let acknowledge_event_delivery observer token update =
+    with_graph_lane_access (fun lane ->
+        acknowledge_event_delivery_unlocked lane observer token update
+          ~after_ack:[])
+
+  let claim_event_delivery_unlocked (_lane : graph_lane) observer token =
+    match observer_active_live_state observer with
+    | None -> false
+    | Some live -> (
         let snapshot = observer_current_snapshot live in
         match Observer_snapshot.claim_delivery ~token snapshot with
         | Some snapshot ->
             set_observer_current live snapshot;
             true
-        | None -> false))
+        | None -> false)
+
+  let claim_event_delivery observer token =
+    with_graph_lane_access (fun lane ->
+        claim_event_delivery_unlocked lane observer token)
+
+  let finish_event_delivery_after_error_unlocked (_lane : graph_lane) observer
+      token update ~delivered =
+    match observer_active_live_state observer with
+    | None -> ()
+    | Some live -> (
+        let snapshot = observer_current_snapshot live in
+        match
+          Observer_snapshot.finish_running_delivery ~token ~update ~delivered
+            ~after_ack:[] snapshot
+        with
+        | Some (Observer_snapshot.Finish_acknowledged (snapshot, after_ack)) ->
+            set_observer_current live snapshot;
+            run_after_ack_actions_unlocked after_ack
+        | Some (Observer_snapshot.Finish_released snapshot) ->
+            set_observer_current live snapshot
+        | None -> ())
 
   let finish_event_delivery_after_error observer token update ~delivered =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> ()
-        | Some live -> (
-            let snapshot = observer_current_snapshot live in
-            match
-              Observer_snapshot.finish_running_delivery ~token ~update
-                ~delivered ~after_ack:[] snapshot
-            with
-            | Some
-                (Observer_snapshot.Finish_acknowledged
-                  (snapshot, after_ack)) ->
-                set_observer_current live snapshot;
-                run_after_ack_actions_unlocked after_ack
-            | Some (Observer_snapshot.Finish_released snapshot) ->
-                set_observer_current live snapshot
-            | None -> ()))
+    with_graph_lane_access (fun lane ->
+        finish_event_delivery_after_error_unlocked lane observer token update
+          ~delivered)
 
   let claimed_event_delivery_active observer token =
     match Observer_lifecycle.active_live observer.obs_state with
@@ -2103,19 +2119,9 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> false
 
   let acknowledge_stream_published_delivery observer token update ~after_ack =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> ()
-        | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match
-          Observer_snapshot.acknowledge_delivery ~token ~update
-            ~after_ack snapshot
-        with
-        | Some (snapshot, after_ack) ->
-            set_observer_current live snapshot;
-            run_after_ack_actions_unlocked after_ack
-        | None -> ()))
+    with_graph_lane_access (fun lane ->
+        acknowledge_event_delivery_unlocked lane observer token update
+          ~after_ack)
 
   let acknowledge_stream_sent_delivery observer token update =
     acknowledge_stream_published_delivery observer token update ~after_ack:[]
