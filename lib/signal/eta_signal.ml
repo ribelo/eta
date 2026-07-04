@@ -16,6 +16,7 @@ module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
 module Staging = Eta_signal_staging
 module Stabilization = Eta_signal_stabilization
+module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
 module Timer_policy = Eta_signal_timer_policy
@@ -570,14 +571,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   type event =
     | E : Observer_core.Delivery.token * 'a observer * 'a update -> event
-
-  type pure_stabilize_result =
-    | Pure_ok of
-        disposal_hook list
-        * event list
-        * Stabilization.delivering Stabilization.token
-    | Pure_graph_error of disposal_hook list * graph_error
-    | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
   type timer_refresh_context =
     (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
@@ -1580,16 +1573,6 @@ module Make (Observer_error : Observer_error) () = struct
                 (Observer_snapshot.value snapshot)))
     | None -> ()
 
-  let rollback_pure pure_token observers pending_at_start =
-    let disposal_hooks = reset_staging () in
-    List.iter mark_failed_without_current observers;
-    List.iter requeue_if_needed pending_at_start;
-    graph.active_timer_refresh <- None;
-    ignore
-      (Stabilization.rollback_to_idle graph.stabilization pure_token
-        : Stabilization.idle Stabilization.token);
-    disposal_hooks
-
   let next_timer_refresh_token_unlocked () =
     let token = graph.next_timer_refresh_token in
     graph.next_timer_refresh_token <-
@@ -2209,50 +2192,55 @@ module Make (Observer_error : Observer_error) () = struct
         else None)
 
   let begin_stabilize timer_refresh =
-    match Stabilization.begin_pure graph.stabilization with
-    | Error `Reentrant_stabilization ->
-        Pure_graph_error ([], `Reentrant_stabilization)
-    | Ok pure_token ->
-      let generation =
-        checked_succ "stabilization generation" graph.stabilization_id
-      in
-      graph.stabilization_id <- generation;
-      graph.computed_nodes <- [];
-      graph.staged_binds <- [];
-      graph.pure_disposal_hooks <- [];
-      graph.timer_refresh_disposal_hooks <- [];
-      graph.timer_refresh_staged_timers <- [];
-      graph.active_timer_refresh <- timer_refresh;
-      let pending_at_start = List.rev graph.pending_vars in
-      graph.pending_vars <- [];
-      List.iter (fun (V var) -> var.queued <- false) pending_at_start;
-      let observers =
-        graph.observers |> List.filter observer_active
-      in
-      try
-        List.iter stage_pending_var pending_at_start;
-        plan_staged_bind_switches observers;
-        let delivery_observers =
-          List.sort compare_observer_graph_order observers
-        in
-        let events = List.filter_map collect_observer_event delivery_observers in
-        let hooks = commit_staging () in
-        List.iter mark_event_pending events;
-        update_necessity_counters_unlocked ();
-        graph.active_timer_refresh <- None;
-        let delivering_token =
-          Stabilization.commit_to_delivering graph.stabilization
-            pure_token
-        in
-        Pure_ok (hooks, events, delivering_token)
-      with
-      | Graph_error err ->
-          let hooks = rollback_pure pure_token observers pending_at_start in
-          Pure_graph_error (hooks, err)
-      | exn ->
-          let backtrace = Printexc.get_raw_backtrace () in
-          let hooks = rollback_pure pure_token observers pending_at_start in
-          Pure_defect (hooks, exn, backtrace)
+    Stabilization_pass.run graph.stabilization
+      {
+        reentrant_error = `Reentrant_stabilization;
+        advance_generation =
+          (fun () ->
+            let generation =
+              checked_succ "stabilization generation" graph.stabilization_id
+            in
+            graph.stabilization_id <- generation);
+        begin_staging =
+          (fun () ->
+            graph.computed_nodes <- [];
+            graph.staged_binds <- [];
+            graph.pure_disposal_hooks <- [];
+            graph.timer_refresh_disposal_hooks <- [];
+            graph.timer_refresh_staged_timers <- [];
+            graph.active_timer_refresh <- timer_refresh);
+        drain_pending =
+          (fun () ->
+            let pending_at_start = List.rev graph.pending_vars in
+            graph.pending_vars <- [];
+            pending_at_start);
+        release_pending_marks =
+          (fun pending ->
+            List.iter (fun (V var) -> var.queued <- false) pending);
+        active_observers =
+          (fun () -> graph.observers |> List.filter observer_active);
+        stage_pending = (fun pending -> List.iter stage_pending_var pending);
+        plan_staged_binds = plan_staged_bind_switches;
+        sort_delivery_observers =
+          (fun observers -> List.sort compare_observer_graph_order observers);
+        collect_events =
+          (fun observers -> List.filter_map collect_observer_event observers);
+        commit_staging;
+        mark_events_pending =
+          (fun events -> List.iter mark_event_pending events);
+        update_necessity = update_necessity_counters_unlocked;
+        clear_timer_refresh = (fun () -> graph.active_timer_refresh <- None);
+        rollback_staging = reset_staging;
+        mark_observers_failed_without_current =
+          (fun observers ->
+            List.iter mark_failed_without_current observers);
+        requeue_pending =
+          (fun pending -> List.iter requeue_if_needed pending);
+        classify_graph_error =
+          (function
+          | Graph_error err -> Some err
+          | _ -> None);
+      }
 
   let finish_stabilize delivering_token =
     graph.active_timer_refresh <- None;
@@ -2338,15 +2326,17 @@ module Make (Observer_error : Observer_error) () = struct
     let result = begin_stabilize timer_refresh in
     let hooks =
       match result with
-      | Pure_ok (hooks, _, _) | Pure_graph_error (hooks, _)
-      | Pure_defect (hooks, _, _) ->
+      | Stabilization_pass.Pure_ok (hooks, _, _)
+      | Stabilization_pass.Pure_graph_error (hooks, _)
+      | Stabilization_pass.Pure_defect (hooks, _, _) ->
           hooks
     in
     hooks_ref := hooks;
     (match result with
-     | Pure_ok (_, _, delivering_token) ->
+     | Stabilization_pass.Pure_ok (_, _, delivering_token) ->
          finish_token_ref := Some delivering_token
-     | Pure_graph_error _ | Pure_defect _ -> ());
+     | Stabilization_pass.Pure_graph_error _
+     | Stabilization_pass.Pure_defect _ -> ());
     result
 
   let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
@@ -2376,14 +2366,15 @@ module Make (Observer_error : Observer_error) () = struct
                         in
                         begin_stabilize_with_pending_hooks timer_refresh
                           hooks_ref finish_token_ref
-                      with Graph_error err -> Pure_graph_error ([], err))
+                      with Graph_error err ->
+                        Stabilization_pass.Pure_graph_error ([], err))
                   |> Effect.bind (function
-                       | Pure_graph_error (_, err) ->
+                       | Stabilization_pass.Pure_graph_error (_, err) ->
                            graph_error_with_pending_disposal_hooks hooks_ref err
-                       | Pure_defect (_, exn, backtrace) ->
+                       | Stabilization_pass.Pure_defect (_, exn, backtrace) ->
                            defect_with_pending_disposal_hooks hooks_ref exn
                              backtrace
-                       | Pure_ok (_, events, _) ->
+                       | Stabilization_pass.Pure_ok (_, events, _) ->
                            refresh_timers := true;
                            run_pending_stabilize_cleanup hooks_ref refresh_timers
                            |> Effect.bind (fun () -> run_events events)

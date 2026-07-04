@@ -1,0 +1,208 @@
+module S = Eta_signal_stabilization
+module Pass = Eta_signal_stabilization_pass
+
+type test_error = [ `Graph | `Reentrant_stabilization ]
+
+exception Graph_failure
+
+let record events event = events := !events @ [ event ]
+
+let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
+    state events =
+  {
+    Pass.reentrant_error = `Reentrant_stabilization;
+    advance_generation = (fun () -> record events "advance_generation");
+    begin_staging = (fun () -> record events "begin_staging");
+    drain_pending =
+      (fun () ->
+        record events "drain_pending";
+        [ "pending" ]);
+    release_pending_marks =
+      (fun pending ->
+        record events ("release_pending_marks:" ^ String.concat "," pending));
+    active_observers =
+      (fun () ->
+        record events "active_observers";
+        [ "observer" ]);
+    stage_pending =
+      (fun pending ->
+        record events ("stage_pending:" ^ String.concat "," pending);
+        stage_pending pending);
+    plan_staged_binds =
+      (fun observers ->
+        record events ("plan_staged_binds:" ^ String.concat "," observers));
+    sort_delivery_observers =
+      (fun observers ->
+        record events ("sort_delivery_observers:" ^ String.concat "," observers);
+        observers);
+    collect_events =
+      (fun observers ->
+        record events ("collect_events:" ^ String.concat "," observers);
+        [ "event" ]);
+    commit_staging =
+      (fun () ->
+        record events "commit_staging";
+        let hooks = commit_staging () in
+        (match S.commit_transaction state with
+        | Ok () -> ()
+        | Error _ -> Alcotest.fail "unexpected transaction commit failure");
+        hooks);
+    mark_events_pending =
+      (fun events_to_mark ->
+        record events ("mark_events_pending:" ^ String.concat "," events_to_mark));
+    update_necessity = (fun () -> record events "update_necessity");
+    clear_timer_refresh = (fun () -> record events "clear_timer_refresh");
+    rollback_staging =
+      (fun () ->
+        record events "rollback_staging";
+        S.rollback_transaction state;
+        [ "rollback-hook" ]);
+    mark_observers_failed_without_current =
+      (fun observers ->
+        record events
+          ("mark_observers_failed_without_current:" ^ String.concat ","
+             observers));
+    requeue_pending =
+      (fun pending ->
+        record events ("requeue_pending:" ^ String.concat "," pending));
+    classify_graph_error =
+      (function
+      | Graph_failure -> Some `Graph
+      | _ -> None);
+  }
+
+let test_success_runs_pure_pass_in_order () =
+  let events = ref [] in
+  let state : test_error S.t = S.create () in
+  match Pass.run state (ops state events) with
+  | Pass.Pure_ok (hooks, pass_events, delivering) ->
+      Alcotest.(check (list string))
+        "callback order"
+        [
+          "advance_generation";
+          "begin_staging";
+          "drain_pending";
+          "release_pending_marks:pending";
+          "active_observers";
+          "stage_pending:pending";
+          "plan_staged_binds:observer";
+          "sort_delivery_observers:observer";
+          "collect_events:observer";
+          "commit_staging";
+          "mark_events_pending:event";
+          "update_necessity";
+          "clear_timer_refresh";
+        ]
+        !events;
+      Alcotest.(check (list string)) "hooks" [ "hook" ] hooks;
+      Alcotest.(check (list string)) "events" [ "event" ] pass_events;
+      Alcotest.(check bool) "delivering" true
+        (match S.state state with
+        | S.Delivering -> true
+        | S.Idle | S.Pure | S.Committed -> false);
+      ignore (S.finish_delivering state delivering : S.idle S.token)
+  | Pass.Pure_graph_error _ -> Alcotest.fail "unexpected graph error"
+  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect"
+
+let test_graph_error_rolls_back_in_order () =
+  let events = ref [] in
+  let state : test_error S.t = S.create () in
+  match
+    Pass.run state
+      (ops state events ~stage_pending:(fun _ -> raise Graph_failure))
+  with
+  | Pass.Pure_graph_error (hooks, `Graph) ->
+      Alcotest.(check (list string))
+        "callback order"
+        [
+          "advance_generation";
+          "begin_staging";
+          "drain_pending";
+          "release_pending_marks:pending";
+          "active_observers";
+          "stage_pending:pending";
+          "rollback_staging";
+          "mark_observers_failed_without_current:observer";
+          "requeue_pending:pending";
+          "clear_timer_refresh";
+        ]
+        !events;
+      Alcotest.(check (list string)) "hooks" [ "rollback-hook" ] hooks;
+      Alcotest.(check bool) "idle" true
+        (match S.state state with
+        | S.Idle -> true
+        | S.Pure | S.Committed | S.Delivering -> false)
+  | Pass.Pure_graph_error (_, `Reentrant_stabilization) ->
+      Alcotest.fail "unexpected reentrant error"
+  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
+  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect"
+
+let test_defect_rolls_back_in_order () =
+  let events = ref [] in
+  let state : test_error S.t = S.create () in
+  match
+    Pass.run state
+      (ops state events ~commit_staging:(fun () -> failwith "boom"))
+  with
+  | Pass.Pure_defect (hooks, _, _) ->
+      Alcotest.(check (list string))
+        "callback order"
+        [
+          "advance_generation";
+          "begin_staging";
+          "drain_pending";
+          "release_pending_marks:pending";
+          "active_observers";
+          "stage_pending:pending";
+          "plan_staged_binds:observer";
+          "sort_delivery_observers:observer";
+          "collect_events:observer";
+          "commit_staging";
+          "rollback_staging";
+          "mark_observers_failed_without_current:observer";
+          "requeue_pending:pending";
+          "clear_timer_refresh";
+        ]
+        !events;
+      Alcotest.(check (list string)) "hooks" [ "rollback-hook" ] hooks;
+      Alcotest.(check bool) "idle" true
+        (match S.state state with
+        | S.Idle -> true
+        | S.Pure | S.Committed | S.Delivering -> false)
+  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
+  | Pass.Pure_graph_error _ -> Alcotest.fail "unexpected graph error"
+
+let test_reentrant_begin_is_graph_error_without_callbacks () =
+  let events = ref [] in
+  let state : test_error S.t = S.create () in
+  let pure =
+    match S.begin_pure state with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization -> Alcotest.fail "expected first begin"
+  in
+  (match Pass.run state (ops state events) with
+  | Pass.Pure_graph_error (hooks, `Reentrant_stabilization) ->
+      Alcotest.(check (list string)) "no hooks" [] hooks;
+      Alcotest.(check (list string)) "no callbacks" [] !events
+  | Pass.Pure_graph_error (_, `Graph) ->
+      Alcotest.fail "unexpected graph error"
+  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
+  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect");
+  S.rollback_transaction state;
+  ignore (S.rollback_to_idle state pure : S.idle S.token)
+
+let () =
+  Alcotest.run "eta_signal_stabilization_pass"
+    [
+      ( "stabilization_pass",
+        [
+          Alcotest.test_case "success callback order" `Quick
+            test_success_runs_pure_pass_in_order;
+          Alcotest.test_case "graph error rollback order" `Quick
+            test_graph_error_rolls_back_in_order;
+          Alcotest.test_case "defect rollback order" `Quick
+            test_defect_rolls_back_in_order;
+          Alcotest.test_case "reentrant begin" `Quick
+            test_reentrant_begin_is_graph_error_without_callbacks;
+        ] );
+    ]

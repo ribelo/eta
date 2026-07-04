@@ -1,0 +1,44 @@
+(rule
+ (target eta_signal_stabilization_pass.ml)
+ (deps ../../../lib/signal/eta_signal_stabilization_pass.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_stabilization_pass.mli)
+ (deps ../../../lib/signal/eta_signal_stabilization_pass.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_stabilization.ml)
+ (deps ../../../lib/signal/eta_signal_stabilization.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_stabilization.mli)
+ (deps ../../../lib/signal/eta_signal_stabilization.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_transaction.ml)
+ (deps ../../../lib/signal/eta_signal_transaction.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_transaction.mli)
+ (deps ../../../lib/signal/eta_signal_transaction.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(test
+ (name test_eta_signal_stabilization_pass)
+ (modules
+  test_eta_signal_stabilization_pass
+  eta_signal_stabilization_pass
+  eta_signal_stabilization
+  eta_signal_transaction)
+ (libraries alcotest))
