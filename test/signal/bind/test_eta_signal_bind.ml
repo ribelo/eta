@@ -106,8 +106,7 @@ let test_eval_switch_runs_selector_in_scope_and_computes_inner () =
       Alcotest.(check (option (pair int string)))
         "validated inner" (Some (7, "inner-3")) !validated;
       Alcotest.(check string) "inner" "inner-3" eval.Bind.eval_inner;
-      Alcotest.(check int) "value" 7 eval.Bind.eval_value;
-      Alcotest.(check bool) "inner changed" true eval.Bind.eval_inner_changed
+      Alcotest.(check int) "value" 7 eval.Bind.eval_value
   | Error `Invalid_scope -> Alcotest.fail "expected successful switch eval"
 
 let test_eval_switch_validation_failure_runs_cleanup () =
@@ -150,6 +149,52 @@ let test_eval_switch_compute_exception_runs_cleanup () =
           : ((int, int) Bind.switch_eval, [> `Invalid_scope ]) result));
   Alcotest.(check (list int)) "cleaned scope" [ 17 ] !cleaned
 
+let check_reuse_recompute label ~expected_dependencies ~expected_value = function
+  | Bind.Reuse_recompute { reuse_dependencies; reuse_value } ->
+      Alcotest.(check (list int))
+        (label ^ " dependencies")
+        expected_dependencies reuse_dependencies;
+      Alcotest.(check int) (label ^ " value") expected_value reuse_value
+  | Bind.Reuse_cached -> Alcotest.fail (label ^ ": expected recompute")
+
+let check_reuse_cached label = function
+  | Bind.Reuse_cached -> ()
+  | Bind.Reuse_recompute _ -> Alcotest.fail (label ^ ": expected cached")
+
+let eval_reuse ?(source_changed = false) ?(dirty = false) ?(initialized = true)
+    ?(inner_changed = false) ?(dependencies_changed = false) () =
+  let computed = ref false in
+  let plan =
+    Bind.eval_reuse ~source_dependency:1 ~inner_dependency:2 ~source_changed
+      ~compute_inner:(fun () ->
+        computed := true;
+        (42, inner_changed))
+      ~dirty ~initialized
+      ~dependencies_changed:(fun dependencies ->
+        Alcotest.(check (list int)) "dependency predicate input" [ 1; 2 ]
+          dependencies;
+        dependencies_changed)
+  in
+  Alcotest.(check bool) "inner computed" true !computed;
+  plan
+
+let test_eval_reuse_uses_cached_when_unchanged () =
+  check_reuse_cached "cached" (eval_reuse ())
+
+let test_eval_reuse_recomputes_for_dirty_source_or_inner_change () =
+  check_reuse_recompute "dirty" ~expected_dependencies:[ 1; 2 ]
+    ~expected_value:42 (eval_reuse ~dirty:true ());
+  check_reuse_recompute "source changed" ~expected_dependencies:[ 1; 2 ]
+    ~expected_value:42 (eval_reuse ~source_changed:true ());
+  check_reuse_recompute "inner changed" ~expected_dependencies:[ 1; 2 ]
+    ~expected_value:42 (eval_reuse ~inner_changed:true ())
+
+let test_eval_reuse_recomputes_for_uninitialized_or_dependency_change () =
+  check_reuse_recompute "uninitialized" ~expected_dependencies:[ 1; 2 ]
+    ~expected_value:42 (eval_reuse ~initialized:false ());
+  check_reuse_recompute "dependency changed" ~expected_dependencies:[ 1; 2 ]
+    ~expected_value:42 (eval_reuse ~dependencies_changed:true ())
+
 let () =
   Alcotest.run "eta_signal_bind"
     [
@@ -175,5 +220,11 @@ let () =
             test_eval_switch_selector_exception_runs_cleanup;
           Alcotest.test_case "eval switch compute cleanup" `Quick
             test_eval_switch_compute_exception_runs_cleanup;
+          Alcotest.test_case "eval reuse cached" `Quick
+            test_eval_reuse_uses_cached_when_unchanged;
+          Alcotest.test_case "eval reuse recompute changes" `Quick
+            test_eval_reuse_recomputes_for_dirty_source_or_inner_change;
+          Alcotest.test_case "eval reuse recompute initialization" `Quick
+            test_eval_reuse_recomputes_for_uninitialized_or_dependency_change;
         ] );
     ]

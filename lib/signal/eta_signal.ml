@@ -2251,13 +2251,16 @@ module Make (Observer_error : Observer_error) () = struct
           if changed then stage_signal signal inner_value;
           (if changed then inner_value else current_or_raise signal), changed)
         | Ok (Bind.Reuse inner) ->
-          let inner_value, inner_changed = compute inner in
-          let dependencies = [ P bind.source; P inner ] in
-          if
-            signal.dirty || source_changed || inner_changed
-            || dependency_changed dependencies || not (signal_initialized ())
-          then recompute_with_dependencies dependencies inner_value
-          else use_cached ())
+          (match
+             Bind.eval_reuse ~source_dependency:(P bind.source)
+               ~inner_dependency:(P inner) ~source_changed
+               ~compute_inner:(fun () -> compute inner) ~dirty:signal.dirty
+               ~initialized:(signal_initialized ())
+               ~dependencies_changed:dependency_changed
+           with
+          | Bind.Reuse_recompute { reuse_dependencies; reuse_value } ->
+              recompute_with_dependencies reuse_dependencies reuse_value
+          | Bind.Reuse_cached -> use_cached ()))
 
   let timer_start_unlocked timer =
     match

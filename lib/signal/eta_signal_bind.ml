@@ -17,8 +17,14 @@ type 'inner eval_plan =
 type ('inner, 'value) switch_eval = {
   eval_inner : 'inner;
   eval_value : 'value;
-  eval_inner_changed : bool;
 }
+
+type ('dependency, 'value) reuse_eval =
+  | Reuse_cached
+  | Reuse_recompute of {
+      reuse_dependencies : 'dependency list;
+      reuse_value : 'value;
+    }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
 
@@ -54,17 +60,22 @@ let eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
         on_failure scope;
         error
     | Ok () ->
-        let value, inner_changed = compute_inner inner in
-        Ok
-          {
-            eval_inner = inner;
-            eval_value = value;
-            eval_inner_changed = inner_changed;
-          }
+        let value, _inner_changed = compute_inner inner in
+        Ok { eval_inner = inner; eval_value = value }
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
     on_failure scope;
     Printexc.raise_with_backtrace exn backtrace
+
+let eval_reuse ~source_dependency ~inner_dependency ~source_changed
+    ~compute_inner ~dirty ~initialized ~dependencies_changed =
+  let value, inner_changed = compute_inner () in
+  let dependencies = [ source_dependency; inner_dependency ] in
+  if
+    dirty || source_changed || inner_changed || dependencies_changed dependencies
+    || not initialized
+  then Reuse_recompute { reuse_dependencies = dependencies; reuse_value = value }
+  else Reuse_cached
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

@@ -15,8 +15,14 @@ type 'inner eval_plan =
 type ('inner, 'value) switch_eval = {
   eval_inner : 'inner;
   eval_value : 'value;
-  eval_inner_changed : bool;
 }
+
+type ('dependency, 'value) reuse_eval =
+  | Reuse_cached
+  | Reuse_recompute of {
+      reuse_dependencies : 'dependency list;
+      reuse_value : 'value;
+    }
 
 val empty : ('source, 'inner, 'scope) snapshot
 
@@ -52,6 +58,16 @@ val eval_switch :
   compute_inner:('inner -> 'value * bool) ->
   on_failure:('scope -> unit) ->
   (('inner, 'value) switch_eval, 'error) result
+
+val eval_reuse :
+  source_dependency:'dependency ->
+  inner_dependency:'dependency ->
+  source_changed:bool ->
+  compute_inner:(unit -> 'value * bool) ->
+  dirty:bool ->
+  initialized:bool ->
+  dependencies_changed:('dependency list -> bool) ->
+  ('dependency, 'value) reuse_eval
 
 val switch_parts :
   ('source, 'inner, 'scope) snapshot ->
