@@ -7,6 +7,7 @@ module Bind = Eta_signal_bind
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
+module Observer_core = Eta_signal_observer
 module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
@@ -173,7 +174,7 @@ module Make (Observer_error : Observer_error) () = struct
       state.run_timer_runtime_mismatch_hook ()
   end
 
-  type 'a update =
+  type 'a update = 'a Observer_core.Update.t =
     | Initialized of 'a
     | Changed of {
         old_value : 'a;
@@ -384,10 +385,7 @@ module Make (Observer_error : Observer_error) () = struct
   and observer_after_ack_action = After_ack_record_stream_bridge_drop
 
   and 'a observer_delivery_state =
-    | Observer_never_delivered
-    | Observer_delivered of 'a
-    | Observer_delivery_pending of int * 'a update * observer_after_ack_action list
-    | Observer_delivery_running of int * 'a update * observer_after_ack_action list
+    ('a, observer_after_ack_action) Observer_core.Delivery.t
 
   and 'a observer_snapshot = {
     observer_value : 'a observer_value_state;
@@ -494,6 +492,8 @@ module Make (Observer_error : Observer_error) () = struct
     source_timer_update :
       'err. timer_node -> int -> missed:int -> 'a var -> (unit, 'err) Effect.t;
   }
+
+  open Observer_core.Delivery
 
   let packed_signal_id (P signal) = signal.id
   let scope_owner_id scope = packed_signal_id (Scope.owner scope)
@@ -2632,22 +2632,6 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.on_exit (fun _exit ->
            run_cleanup ())
 
-  let delivered_value = function
-    | Initialized value -> value
-    | Changed { new_value; _ } -> new_value
-
-  let observer_delivery_base = function
-    | Observer_never_delivered -> None
-    | Observer_delivered value -> Some value
-    | Observer_delivery_pending (_, Initialized _, _) -> None
-    | Observer_delivery_pending (_, Changed { old_value; _ }, _) -> Some old_value
-    | Observer_delivery_running (_, Initialized _, _) -> None
-    | Observer_delivery_running (_, Changed { old_value; _ }, _) -> Some old_value
-
-  let observer_delivery_pending = function
-    | Observer_delivery_pending _ | Observer_delivery_running _ -> true
-    | Observer_never_delivered | Observer_delivered _ -> false
-
   let compare_signal_scope_then_id (P left) (P right) =
     match Int.compare (Scope.depth left.scope) (Scope.depth right.scope) with
     | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
@@ -2732,11 +2716,11 @@ module Make (Observer_error : Observer_error) () = struct
       let value, changed = compute observer.obs_signal in
       let snapshot = observer_effective_snapshot live in
       let event =
-        match observer_delivery_base snapshot.observer_delivery with
+        match Observer_core.Delivery.base snapshot.observer_delivery with
         | None -> Some (Initialized value)
         | Some old_value ->
             if
-              changed || observer_delivery_pending snapshot.observer_delivery
+              changed || Observer_core.Delivery.pending snapshot.observer_delivery
             then
               if observer.obs_equal old_value value then (
                 stage_observer_delivery_state observer
@@ -2754,7 +2738,7 @@ module Make (Observer_error : Observer_error) () = struct
     match observer_active_live_state observer with
     | Some live ->
         set_observer_current_delivery live
-          (Observer_delivery_pending (token, update, []))
+          (Observer_core.Delivery.pending_state ~token update)
     | None -> ()
 
   let run_after_ack_action_unlocked = function
@@ -2771,16 +2755,14 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> ()
         | Some live -> (
         let snapshot = observer_current_snapshot live in
-        match snapshot.observer_delivery with
-        | ( Observer_delivery_pending (pending_token, _, after_ack)
-          | Observer_delivery_running (pending_token, _, after_ack) )
-          when pending_token = token ->
-            set_observer_current_delivery live
-              (Observer_delivered (delivered_value update));
+        match
+          Observer_core.Delivery.acknowledge ~token ~update ~after_ack:[]
+            snapshot.observer_delivery
+        with
+        | Some (observer_delivery, after_ack) ->
+            set_observer_current_delivery live observer_delivery;
             run_after_ack_actions_unlocked after_ack
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ | Observer_delivery_running _ ->
-            ()))
+        | None -> ()))
 
   let claim_event_delivery observer token =
     with_graph_lane_sync (fun () ->
@@ -2788,15 +2770,13 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> false
         | Some live -> (
         let snapshot = observer_current_snapshot live in
-        match snapshot.observer_delivery with
-        | Observer_delivery_pending (pending_token, update, after_ack)
-          when pending_token = token ->
-            set_observer_current_delivery live
-              (Observer_delivery_running (pending_token, update, after_ack));
+        match
+          Observer_core.Delivery.claim ~token snapshot.observer_delivery
+        with
+        | Some observer_delivery ->
+            set_observer_current_delivery live observer_delivery;
             true
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ | Observer_delivery_running _ ->
-            false))
+        | None -> false))
 
   let release_event_delivery_claim observer token =
     with_graph_lane_sync (fun () ->
@@ -2804,24 +2784,22 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> ()
         | Some live -> (
         let snapshot = observer_current_snapshot live in
-        match snapshot.observer_delivery with
-        | Observer_delivery_running (running_token, update, after_ack)
-          when running_token = token ->
-            set_observer_current_delivery live
-              (Observer_delivery_pending (token, update, after_ack))
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ | Observer_delivery_running _ ->
-            ()))
+        match
+          Observer_core.Delivery.release ~token snapshot.observer_delivery
+        with
+        | Some observer_delivery ->
+            set_observer_current_delivery live observer_delivery
+        | None -> ()))
 
   let claimed_event_delivery_active observer token =
     match observer.obs_state with
-    | Observer_active live -> (
-        match (observer_current_snapshot live).observer_delivery with
-        | Observer_delivery_running (running_token, _, _) ->
-            running_token = token
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ ->
-            false)
+    | Observer_active live ->
+        (match
+           Observer_core.Delivery.running_token
+             (observer_current_snapshot live).observer_delivery
+         with
+         | Some running_token -> running_token = token
+         | None -> false)
     | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _ ->
         false
 
@@ -3329,17 +3307,14 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> ()
         | Some live -> (
         let snapshot = observer_current_snapshot live in
-        match snapshot.observer_delivery with
-        | ( Observer_delivery_pending (pending_token, _, after_ack)
-          | Observer_delivery_running (pending_token, _, after_ack) )
-          when pending_token = token ->
-            let after_ack = List.rev_append after_ack_actions after_ack in
-            set_observer_current_delivery live
-              (Observer_delivered (delivered_value update));
+        match
+          Observer_core.Delivery.acknowledge ~token ~update
+            ~after_ack:after_ack_actions snapshot.observer_delivery
+        with
+        | Some (observer_delivery, after_ack) ->
+            set_observer_current_delivery live observer_delivery;
             run_after_ack_actions_unlocked after_ack
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ | Observer_delivery_running _ ->
-            ()))
+        | None -> ()))
 
   let acknowledge_stream_sent_delivery observer token update =
     acknowledge_stream_published_delivery observer token update []
@@ -3352,12 +3327,9 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync (fun () ->
         match observer_active_live_state observer with
         | None -> None
-        | Some live -> (
-        match (observer_current_snapshot live).observer_delivery with
-        | Observer_delivery_running (token, _, _) -> Some token
-        | Observer_never_delivered | Observer_delivered _
-        | Observer_delivery_pending _ ->
-            None))
+        | Some live ->
+            Observer_core.Delivery.running_token
+              (observer_current_snapshot live).observer_delivery)
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
