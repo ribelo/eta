@@ -3863,6 +3863,24 @@ let test_var_value_during_pure_recompute_is_typed_failure () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_var_watch_after_create_during_pure_recompute_is_typed_failure () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let source = Signal.Var.create 1 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           let created = Signal.Var.create value in
+           ignore (Signal.Var.watch created : int Signal.signal);
+           value)
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  expect_fail "pure Var.watch after Var.create" (( = ) `Ambiguous_scope)
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_ambiguous_node_creation_during_observer_callback_is_typed_failure () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9490,6 +9508,9 @@ let () =
             test_ambiguous_node_creation_during_pure_recompute_is_typed_failure;
           Alcotest.test_case "pure Var.value typed failure" `Quick
             test_var_value_during_pure_recompute_is_typed_failure;
+          Alcotest.test_case "pure Var.watch after Var.create typed failure"
+            `Quick
+            test_var_watch_after_create_during_pure_recompute_is_typed_failure;
           Alcotest.test_case "observer ambiguous node creation typed failure"
             `Quick
             test_ambiguous_node_creation_during_observer_callback_is_typed_failure;
