@@ -14,34 +14,37 @@ type 'error errors = {
   classify_graph_error : exn -> 'error option;
 }
 
-type ('pending, 'observer, 'event, 'hook, 'staging) pure = {
-  advance_generation : unit -> unit;
-  begin_staging : unit -> 'staging;
-  drain_pending : unit -> 'pending list;
-  release_pending_marks : 'pending list -> unit;
-  active_observers : unit -> 'observer list;
-  stage_pending : 'pending list -> unit;
-  plan_staged_binds : 'observer list -> unit;
-  sort_delivery_observers : 'observer list -> 'observer list;
-  collect_events : 'observer list -> 'event list;
-  commit_staging : 'staging -> 'hook list;
-  mark_events_pending : 'event list -> unit;
-  update_necessity : unit -> unit;
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
+  advance_generation : 'capability -> unit;
+  begin_staging : 'capability -> 'staging;
+  drain_pending : 'capability -> 'pending list;
+  release_pending_marks : 'capability -> 'pending list -> unit;
+  active_observers : 'capability -> 'observer list;
+  stage_pending : 'capability -> 'pending list -> unit;
+  plan_staged_binds : 'capability -> 'observer list -> unit;
+  sort_delivery_observers : 'capability -> 'observer list -> 'observer list;
+  collect_events : 'capability -> 'observer list -> 'event list;
+  commit_staging : 'capability -> 'staging -> 'hook list;
+  mark_events_pending : 'capability -> 'event list -> unit;
+  update_necessity : 'capability -> unit;
 }
 
-type ('pending, 'observer, 'hook, 'staging) rollback = {
-  rollback_staging : 'staging -> 'hook list;
-  mark_observers_failed_without_current : 'observer list -> unit;
-  requeue_pending : 'pending list -> unit;
+type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
+  rollback_staging : 'capability -> 'staging -> 'hook list;
+  mark_observers_failed_without_current : 'capability -> 'observer list -> unit;
+  requeue_pending : 'capability -> 'pending list -> unit;
 }
 
-type timer_refresh = { clear_active_timer_refresh : unit -> unit }
+type 'capability timer_refresh = {
+  clear_active_timer_refresh : 'capability -> unit;
+}
 
-type ('pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
+type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   errors : 'error errors;
-  pure : ('pending, 'observer, 'event, 'hook, 'staging) pure;
-  rollback : ('pending, 'observer, 'hook, 'staging) rollback;
-  timer_refresh : timer_refresh;
+  pure :
+    ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure;
+  rollback : ('capability, 'pending, 'observer, 'hook, 'staging) rollback;
+  timer_refresh : 'capability timer_refresh;
 }
 (** Capability surface for graph-specific work performed in a pure
     stabilization pass. The module owns callback ordering, phase transitions,
@@ -49,7 +52,8 @@ type ('pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
 
 val run :
   ('owner, 'error) Eta_signal_stabilization.t ->
-  ('pending, 'observer, 'event, 'hook, 'error, 'staging) t ->
+  'capability ->
+  ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t ->
   ('owner, 'hook, 'event, 'error) result
 
 type ('event, 'error) delivery = {

@@ -9,7 +9,11 @@ type test_error = [ `Delivery_failed | `Graph | `Reentrant_stabilization ]
 
 exception Graph_failure
 
+let capability = "graph-lane"
 let record events event = events := !events @ [ event ]
+
+let check_cap cap =
+  Alcotest.(check string) "capability" capability cap
 
 let run_effect eff =
   Eio_main.run @@ fun env ->
@@ -46,41 +50,53 @@ let ops ?(stage_pending = fun _ -> ())
       };
     pure =
       {
-        advance_generation = (fun () -> record events "advance_generation");
+        advance_generation =
+          (fun cap ->
+            check_cap cap;
+            record events "advance_generation");
         begin_staging =
-          (fun () ->
+          (fun cap ->
+            check_cap cap;
             record events "begin_staging";
             "staging");
         drain_pending =
-          (fun () ->
+          (fun cap ->
+            check_cap cap;
             record events "drain_pending";
             [ "pending" ]);
         release_pending_marks =
-          (fun pending ->
+          (fun cap pending ->
+            check_cap cap;
             record events
               ("release_pending_marks:" ^ String.concat "," pending));
         active_observers =
-          (fun () ->
+          (fun cap ->
+            check_cap cap;
             record events "active_observers";
             [ "observer" ]);
         stage_pending =
-          (fun pending ->
+          (fun cap pending ->
+            check_cap cap;
             record events ("stage_pending:" ^ String.concat "," pending);
             stage_pending pending);
         plan_staged_binds =
-          (fun observers ->
+          (fun cap observers ->
+            check_cap cap;
             record events ("plan_staged_binds:" ^ String.concat "," observers));
         sort_delivery_observers =
-          (fun observers ->
+          (fun cap observers ->
+            check_cap cap;
             record events
               ("sort_delivery_observers:" ^ String.concat "," observers);
             observers);
         collect_events =
-          (fun observers ->
+          (fun cap observers ->
+            check_cap cap;
             record events ("collect_events:" ^ String.concat "," observers);
             [ "event" ]);
         commit_staging =
-          (fun staging ->
+          (fun cap staging ->
+            check_cap cap;
             check_staging staging;
             record events "commit_staging";
             let hooks = commit_staging staging in
@@ -89,39 +105,48 @@ let ops ?(stage_pending = fun _ -> ())
             | Error _ -> Alcotest.fail "unexpected transaction commit failure");
             hooks);
         mark_events_pending =
-          (fun events_to_mark ->
+          (fun cap events_to_mark ->
+            check_cap cap;
             record events
               ("mark_events_pending:" ^ String.concat "," events_to_mark));
-        update_necessity = (fun () -> record events "update_necessity");
+        update_necessity =
+          (fun cap ->
+            check_cap cap;
+            record events "update_necessity");
       };
     rollback =
       {
         rollback_staging =
-          (fun staging ->
+          (fun cap staging ->
+            check_cap cap;
             check_staging staging;
             record events "rollback_staging";
             S.rollback_transaction state;
             [ "rollback-hook" ]);
         mark_observers_failed_without_current =
-          (fun observers ->
+          (fun cap observers ->
+            check_cap cap;
             record events
               ("mark_observers_failed_without_current:" ^ String.concat ","
                  observers));
         requeue_pending =
-          (fun pending ->
+          (fun cap pending ->
+            check_cap cap;
             record events ("requeue_pending:" ^ String.concat "," pending));
       };
     timer_refresh =
       {
         clear_active_timer_refresh =
-          (fun () -> record events "clear_timer_refresh");
+          (fun cap ->
+            check_cap cap;
+            record events "clear_timer_refresh");
       };
   }
 
 let test_success_runs_pure_pass_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
-  match Pass.run state (ops state events) with
+  match Pass.run state capability (ops state events) with
   | Pass.Pure_ok (hooks, pass_events, delivering) ->
       Alcotest.(check (list string))
         "callback order"
@@ -155,7 +180,7 @@ let test_graph_error_rolls_back_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
   match
-    Pass.run state
+    Pass.run state capability
       (ops state events ~stage_pending:(fun _ -> raise Graph_failure))
   with
   | Pass.Pure_graph_error (hooks, `Graph) ->
@@ -190,7 +215,7 @@ let test_defect_rolls_back_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
   match
-    Pass.run state
+    Pass.run state capability
       (ops state events ~commit_staging:(fun _ -> failwith "boom"))
   with
   | Pass.Pure_defect (hooks, _, _) ->
@@ -229,7 +254,7 @@ let test_reentrant_begin_is_graph_error_without_callbacks () =
     | Ok pure -> pure
     | Error `Reentrant_stabilization -> Alcotest.fail "expected first begin"
   in
-  (match Pass.run state (ops state events) with
+  (match Pass.run state capability (ops state events) with
   | Pass.Pure_graph_error (hooks, `Reentrant_stabilization) ->
       Alcotest.(check (list string)) "no hooks" [] hooks;
       Alcotest.(check (list string)) "no callbacks" [] !events

@@ -2134,8 +2134,8 @@ module Make (Observer_error : Observer_error) () = struct
         if claimed_event_delivery_active observer token then Some token
         else None)
 
-  let begin_stabilize timer_refresh =
-    Stabilization_pass.run graph.stabilization
+  let begin_stabilize lane timer_refresh =
+    Stabilization_pass.run graph.stabilization lane
       {
         errors =
           {
@@ -2148,49 +2148,64 @@ module Make (Observer_error : Observer_error) () = struct
         pure =
           {
             advance_generation =
-              (fun () ->
+              (fun (_lane : graph_lane) ->
                 Graph_state.advance_generation graph.state
                   ~advance:(fun value ->
                     checked_succ "stabilization generation" value));
             begin_staging =
-              (fun () ->
+              (fun (_lane : graph_lane) ->
                 Graph_state.begin_staging graph.state ~timer_refresh);
-            drain_pending = (fun () -> Graph_state.drain_pending graph.state);
+            drain_pending =
+              (fun (_lane : graph_lane) ->
+                Graph_state.drain_pending graph.state);
             release_pending_marks =
-              (fun pending ->
+              (fun (_lane : graph_lane) pending ->
                 List.iter (fun (V var) -> var.queued <- false) pending);
             active_observers =
-              (fun () -> graph.observers |> List.filter observer_active);
+              (fun (_lane : graph_lane) ->
+                graph.observers |> List.filter observer_active);
             stage_pending =
-              (fun pending -> List.iter stage_pending_var pending);
-            plan_staged_binds = plan_staged_bind_switches;
+              (fun (_lane : graph_lane) pending ->
+                List.iter stage_pending_var pending);
+            plan_staged_binds =
+              (fun (_lane : graph_lane) observers ->
+                plan_staged_bind_switches observers);
             sort_delivery_observers =
-              (fun observers -> List.sort compare_observer_graph_order observers);
+              (fun (_lane : graph_lane) observers ->
+                List.sort compare_observer_graph_order observers);
             collect_events =
-              (fun observers ->
+              (fun (_lane : graph_lane) observers ->
                 List.filter_map collect_observer_event observers);
-            commit_staging;
+            commit_staging =
+              (fun (_lane : graph_lane) staging ->
+                commit_staging staging);
             mark_events_pending =
-              (fun events -> List.iter mark_event_pending events);
-            update_necessity = update_necessity_counters_unlocked;
+              (fun (_lane : graph_lane) events ->
+                List.iter mark_event_pending events);
+            update_necessity =
+              (fun (_lane : graph_lane) ->
+                update_necessity_counters_unlocked ());
           };
         rollback =
           {
-            rollback_staging = reset_staging;
+            rollback_staging =
+              (fun (_lane : graph_lane) staging -> reset_staging staging);
             mark_observers_failed_without_current =
-              (fun observers ->
+              (fun (_lane : graph_lane) observers ->
                 List.iter mark_failed_without_current observers);
             requeue_pending =
-              (fun pending -> List.iter requeue_if_needed pending);
+              (fun (_lane : graph_lane) pending ->
+                List.iter requeue_if_needed pending);
           };
         timer_refresh =
           {
             clear_active_timer_refresh =
-              (fun () -> Graph_state.clear_active_timer_refresh graph.state);
+              (fun (_lane : graph_lane) ->
+                Graph_state.clear_active_timer_refresh graph.state);
           };
       }
 
-  let finish_stabilize delivering_token =
+  let finish_stabilize (_lane : graph_lane) delivering_token =
     Graph_state.clear_active_timer_refresh graph.state;
     ignore
       (Stabilization.finish_delivering graph.stabilization
@@ -2254,9 +2269,9 @@ module Make (Observer_error : Observer_error) () = struct
       )
       events
 
-  let begin_stabilize_with_pending_hooks timer_refresh hooks_ref
+  let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       finish_token_ref =
-    let result = begin_stabilize timer_refresh in
+    let result = begin_stabilize lane timer_refresh in
     let hooks =
       match result with
       | Stabilization_pass.Pure_ok (hooks, _, _)
@@ -2276,7 +2291,8 @@ module Make (Observer_error : Observer_error) () = struct
     match !finish_token_ref with
     | None -> Effect.unit
     | Some delivering_token ->
-        with_graph_lane_sync (fun () -> finish_stabilize delivering_token)
+        with_graph_lane_access (fun lane ->
+            finish_stabilize lane delivering_token)
         |> Effect.on_exit (fun _exit ->
                Effect.sync (fun () -> finish_token_ref := None))
 
@@ -2299,7 +2315,7 @@ module Make (Observer_error : Observer_error) () = struct
            in
            (current_runtime_contract ()
             |> Effect.bind (fun runtime_contract ->
-                   with_graph_lane_sync (fun () ->
+                   with_graph_lane_access (fun lane ->
                        try
                          let timer_refresh =
                            Some
@@ -2308,7 +2324,7 @@ module Make (Observer_error : Observer_error) () = struct
                                 ~runtime_contract
                                 ~now_ms:runtime_contract.Runtime_contract.now_ms)
                          in
-                         begin_stabilize_with_pending_hooks timer_refresh
+                         begin_stabilize_with_pending_hooks lane timer_refresh
                            hooks_ref finish_token_ref
                        with Graph_error err ->
                          Stabilization_pass.Pure_graph_error ([], err))

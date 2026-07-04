@@ -12,34 +12,37 @@ type 'error errors = {
   classify_graph_error : exn -> 'error option;
 }
 
-type ('pending, 'observer, 'event, 'hook, 'staging) pure = {
-  advance_generation : unit -> unit;
-  begin_staging : unit -> 'staging;
-  drain_pending : unit -> 'pending list;
-  release_pending_marks : 'pending list -> unit;
-  active_observers : unit -> 'observer list;
-  stage_pending : 'pending list -> unit;
-  plan_staged_binds : 'observer list -> unit;
-  sort_delivery_observers : 'observer list -> 'observer list;
-  collect_events : 'observer list -> 'event list;
-  commit_staging : 'staging -> 'hook list;
-  mark_events_pending : 'event list -> unit;
-  update_necessity : unit -> unit;
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
+  advance_generation : 'capability -> unit;
+  begin_staging : 'capability -> 'staging;
+  drain_pending : 'capability -> 'pending list;
+  release_pending_marks : 'capability -> 'pending list -> unit;
+  active_observers : 'capability -> 'observer list;
+  stage_pending : 'capability -> 'pending list -> unit;
+  plan_staged_binds : 'capability -> 'observer list -> unit;
+  sort_delivery_observers : 'capability -> 'observer list -> 'observer list;
+  collect_events : 'capability -> 'observer list -> 'event list;
+  commit_staging : 'capability -> 'staging -> 'hook list;
+  mark_events_pending : 'capability -> 'event list -> unit;
+  update_necessity : 'capability -> unit;
 }
 
-type ('pending, 'observer, 'hook, 'staging) rollback = {
-  rollback_staging : 'staging -> 'hook list;
-  mark_observers_failed_without_current : 'observer list -> unit;
-  requeue_pending : 'pending list -> unit;
+type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
+  rollback_staging : 'capability -> 'staging -> 'hook list;
+  mark_observers_failed_without_current : 'capability -> 'observer list -> unit;
+  requeue_pending : 'capability -> 'pending list -> unit;
 }
 
-type timer_refresh = { clear_active_timer_refresh : unit -> unit }
+type 'capability timer_refresh = {
+  clear_active_timer_refresh : 'capability -> unit;
+}
 
-type ('pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
+type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   errors : 'error errors;
-  pure : ('pending, 'observer, 'event, 'hook, 'staging) pure;
-  rollback : ('pending, 'observer, 'hook, 'staging) rollback;
-  timer_refresh : timer_refresh;
+  pure :
+    ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure;
+  rollback : ('capability, 'pending, 'observer, 'hook, 'staging) rollback;
+  timer_refresh : 'capability timer_refresh;
 }
 
 type ('event, 'error) delivery = {
@@ -49,42 +52,46 @@ type ('event, 'error) delivery = {
   finish : unit -> (unit, 'error) Eta.Effect.t;
 }
 
-let rollback state pure_token ops observers pending staging =
-  let hooks = ops.rollback.rollback_staging staging in
-  ops.rollback.mark_observers_failed_without_current observers;
-  ops.rollback.requeue_pending pending;
-  ops.timer_refresh.clear_active_timer_refresh ();
+let rollback state pure_token capability ops observers pending staging =
+  let hooks = ops.rollback.rollback_staging capability staging in
+  ops.rollback.mark_observers_failed_without_current capability observers;
+  ops.rollback.requeue_pending capability pending;
+  ops.timer_refresh.clear_active_timer_refresh capability;
   ignore
     (Eta_signal_stabilization.rollback_to_idle state pure_token
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token);
   hooks
 
-let run state ops =
+let run state capability ops =
   match Eta_signal_stabilization.begin_pure state with
   | Error `Reentrant_stabilization ->
       Pure_graph_error ([], ops.errors.reentrant_stabilization)
   | Ok pure_token ->
-      ops.pure.advance_generation ();
-      let staging = ops.pure.begin_staging () in
-      let pending = ops.pure.drain_pending () in
-      ops.pure.release_pending_marks pending;
-      let observers = ops.pure.active_observers () in
+      ops.pure.advance_generation capability;
+      let staging = ops.pure.begin_staging capability in
+      let pending = ops.pure.drain_pending capability in
+      ops.pure.release_pending_marks capability pending;
+      let observers = ops.pure.active_observers capability in
       try
-        ops.pure.stage_pending pending;
-        ops.pure.plan_staged_binds observers;
-        let delivery_observers = ops.pure.sort_delivery_observers observers in
-        let events = ops.pure.collect_events delivery_observers in
-        let hooks = ops.pure.commit_staging staging in
-        ops.pure.mark_events_pending events;
-        ops.pure.update_necessity ();
-        ops.timer_refresh.clear_active_timer_refresh ();
+        ops.pure.stage_pending capability pending;
+        ops.pure.plan_staged_binds capability observers;
+        let delivery_observers =
+          ops.pure.sort_delivery_observers capability observers
+        in
+        let events = ops.pure.collect_events capability delivery_observers in
+        let hooks = ops.pure.commit_staging capability staging in
+        ops.pure.mark_events_pending capability events;
+        ops.pure.update_necessity capability;
+        ops.timer_refresh.clear_active_timer_refresh capability;
         let delivering_token =
           Eta_signal_stabilization.commit_to_delivering state pure_token
         in
         Pure_ok (hooks, events, delivering_token)
       with exn -> (
         let backtrace = Printexc.get_raw_backtrace () in
-        let hooks = rollback state pure_token ops observers pending staging in
+        let hooks =
+          rollback state pure_token capability ops observers pending staging
+        in
         match ops.errors.classify_graph_error exn with
         | Some err -> Pure_graph_error (hooks, err)
         | None -> Pure_defect (hooks, exn, backtrace))
