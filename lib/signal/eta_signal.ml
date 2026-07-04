@@ -3126,69 +3126,72 @@ module Make (Observer_error : Observer_error) () = struct
       if Hashtbl.mem live_ids id then signal_id_label id
       else dead_signal_id_label id
     in
-    let buffer = Buffer.create 256 in
-    let formatter = Format.formatter_of_buffer buffer in
-    Format.fprintf formatter "digraph eta_signal {@.";
-    List.iter
-      (fun (P signal) ->
-        if selected_live_signal signal then (
-          Format.fprintf formatter "  %s [label=%S];@."
-            (signal_id_label signal.id)
-            (signal_label options signal);
-          let emitted_edges = Hashtbl.create 8 in
-          List.iter
-            (fun (P dependency) ->
-              if
-                selected_id dependency.id
-                && not (Hashtbl.mem emitted_edges dependency.id)
-              then (
-                Hashtbl.add emitted_edges dependency.id ();
-                Format.fprintf formatter "  %s -> %s;@."
-                  (dot_signal_id dependency.id)
-                  (signal_id_label signal.id)))
-            signal.dependencies))
-      all_nodes;
-    if include_dead_nodes then
-      List.iter
-        (fun tombstone ->
-          Format.fprintf formatter "  %s [label=%S];@."
-            (dead_signal_id_label tombstone.dead_id)
-            (dead_signal_label options tombstone);
-          let emitted_edges = Hashtbl.create 8 in
-          List.iter
-            (fun dependency_id ->
-              if
-                selected_id dependency_id
-                && not (Hashtbl.mem emitted_edges dependency_id)
-              then (
-                Hashtbl.add emitted_edges dependency_id ();
-                Format.fprintf formatter "  %s -> %s;@."
-                  (dot_signal_id dependency_id)
-                  (dead_signal_id_label tombstone.dead_id)))
-            tombstone.dead_dependency_ids)
-        graph.dead_nodes;
-    if options.dot_observers then
-      List.iter
-        (fun (O observer as packed) ->
-          if observer_selected ~include_invalid:include_dead_nodes packed then (
-            let observed_signal_selected = selected_id observer.obs_signal.id in
-            let missing_observed_signal_id =
-              if include_dead_nodes && not observed_signal_selected then
-                Some observer.obs_signal.id
-              else None
-            in
-            Format.fprintf formatter "  %s [shape=box,label=%S];@."
-              (observer_id_label observer.obs_id)
-              (observer_label ?missing_observed_signal_id packed);
-            if observed_signal_selected then
-              Format.fprintf formatter
-                "  %s -> %s [style=dashed,label=\"observes\"];@."
-                (dot_signal_id observer.obs_signal.id)
-                (observer_id_label observer.obs_id)))
-        graph.observers;
-    Format.fprintf formatter "}@.";
-    Format.pp_print_flush formatter ();
-    Buffer.contents buffer
+    let live_dot_nodes =
+      all_nodes
+      |> List.filter_map (fun (P signal) ->
+             if selected_live_signal signal then
+               Some
+                 {
+                   Debug.dot_node_id = signal_id_label signal.id;
+                   dot_node_label = signal_label options signal;
+                   dot_node_dependency_ids =
+                     List.filter_map
+                       (fun (P dependency) ->
+                         if selected_id dependency.id then
+                           Some (dot_signal_id dependency.id)
+                         else None)
+                       signal.dependencies;
+                 }
+             else None)
+    in
+    let dead_dot_nodes =
+      if include_dead_nodes then
+        List.map
+          (fun tombstone ->
+            {
+              Debug.dot_node_id = dead_signal_id_label tombstone.dead_id;
+              dot_node_label = dead_signal_label options tombstone;
+              dot_node_dependency_ids =
+                List.filter_map
+                  (fun dependency_id ->
+                    if selected_id dependency_id then
+                      Some (dot_signal_id dependency_id)
+                    else None)
+                  tombstone.dead_dependency_ids;
+            })
+          graph.dead_nodes
+      else []
+    in
+    let dot_observers =
+      if options.dot_observers then
+        graph.observers
+        |> List.filter_map (fun (O observer as packed) ->
+               if observer_selected ~include_invalid:include_dead_nodes packed
+               then
+                 let observed_signal_selected =
+                   selected_id observer.obs_signal.id
+                 in
+                 let missing_observed_signal_id =
+                   if include_dead_nodes && not observed_signal_selected then
+                     Some observer.obs_signal.id
+                   else None
+                 in
+                 Some
+                   {
+                     Debug.dot_observer_id =
+                       observer_id_label observer.obs_id;
+                     dot_observer_label =
+                       observer_label ?missing_observed_signal_id packed;
+                     dot_observed_signal_id =
+                       (if observed_signal_selected then
+                          Some (dot_signal_id observer.obs_signal.id)
+                        else None);
+                   }
+               else None)
+      else []
+    in
+    Debug.render_dot ~nodes:(live_dot_nodes @ dead_dot_nodes)
+      ~observers:dot_observers
 
   module Time = struct
     exception Timer_cancelled

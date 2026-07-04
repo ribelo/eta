@@ -20,6 +20,43 @@ let test_bool_field () =
   Alcotest.(check string) "false field" "dirty=false"
     (Debug.bool_field "dirty" false)
 
+let test_render_dot () =
+  let dot =
+    Debug.render_dot
+      ~nodes:
+        [
+          {
+            Debug.dot_node_id = "s1";
+            dot_node_label = "kind=map signal_id=s1";
+            dot_node_dependency_ids = [ "s0"; "s0"; "dead_s2" ];
+          };
+        ]
+      ~observers:
+        [
+          {
+            Debug.dot_observer_id = "o1";
+            dot_observer_label = "observer:o1";
+            dot_observed_signal_id = Some "s1";
+          };
+          {
+            Debug.dot_observer_id = "o2";
+            dot_observer_label = "observer:o2 missing_observed_signal_id=s3";
+            dot_observed_signal_id = None;
+          };
+        ]
+  in
+  Alcotest.(check string)
+    "dot"
+    "digraph eta_signal {\n\
+    \  s1 [label=\"kind=map signal_id=s1\"];\n\
+    \  s0 -> s1;\n\
+    \  dead_s2 -> s1;\n\
+    \  o1 [shape=box,label=\"observer:o1\"];\n\
+    \  s1 -> o1 [style=dashed,label=\"observes\"];\n\
+    \  o2 [shape=box,label=\"observer:o2 missing_observed_signal_id=s3\"];\n\
+     }\n"
+    dot
+
 let () =
   Alcotest.run "eta_signal_debug"
     [
@@ -27,5 +64,6 @@ let () =
         [
           Alcotest.test_case "stats counter" `Quick test_stats_counter;
           Alcotest.test_case "bool field" `Quick test_bool_field;
+          Alcotest.test_case "render dot" `Quick test_render_dot;
         ] );
     ]
