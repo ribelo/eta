@@ -30,6 +30,21 @@ type 'error callbacks = {
   after_update_constructed_before_run : unit -> (unit, 'error) Effect.t;
 }
 
+type 'error start_callbacks = {
+  begin_start : generation:int -> (continue, 'error) Effect.t;
+  set_next_due :
+    generation:int -> next_due_ms:int -> (continue, 'error) Effect.t;
+  after_start_update : generation:int -> (continue, 'error) Effect.t;
+  construct_start_update :
+    generation:int -> missed:int -> (unit, 'error) Effect.t;
+  install_cancel :
+    generation:int -> cancel:(unit -> unit) -> (continue, 'error) Effect.t;
+  cleanup_after_exit :
+    generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
+  cleanup_failed_start :
+    generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
+}
+
 let run_cancellable ~install_cancel ~loop =
   Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
   let contract = Effect.Expert.contract context in
@@ -148,3 +163,44 @@ let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
                                                                      | `Stop ->
                                                                          Effect
                                                                            .unit)))))))))
+
+let start start_callbacks loop_callbacks ~generation ~interval_ms
+    ~update_on_start ~catch_up_policy =
+  let start_loop () =
+    Effect.now
+    |> Effect.bind (fun now_ms ->
+           let next_due_ms =
+             Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
+           in
+           start_callbacks.set_next_due ~generation ~next_due_ms
+           |> Effect.bind (function
+                | `Stop -> Effect.unit
+                | `Continue ->
+                    Effect.daemon
+                      (run_cancellable
+                         ~install_cancel:(fun ~cancel ->
+                           start_callbacks.install_cancel ~generation ~cancel)
+                         ~loop:
+                           (run_loop loop_callbacks ~generation ~interval_ms
+                              ~next_due_ms ~catch_up_policy
+                           |> Effect.on_exit
+                                (start_callbacks.cleanup_after_exit
+                                   ~generation)))))
+  in
+  let start () =
+    if update_on_start then
+      start_callbacks.construct_start_update ~generation ~missed:1
+      |> Effect.bind (fun () ->
+             start_callbacks.after_start_update ~generation
+             |> Effect.bind (function
+                  | `Continue -> start_loop ()
+                  | `Stop -> Effect.unit))
+    else start_loop ()
+  in
+  start_callbacks.begin_start ~generation
+  |> Effect.bind (function
+       | `Stop -> Effect.unit
+       | `Continue ->
+           start ()
+           |> Effect.on_exit
+                (start_callbacks.cleanup_failed_start ~generation))

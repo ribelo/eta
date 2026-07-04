@@ -3005,6 +3005,29 @@ module Make (Observer_error : Observer_error) () = struct
             Private_test_hooks.run After_timer_update_constructed_before_run);
       }
 
+    let timer_start_callbacks timer update =
+      {
+        Timer_adapter.begin_start =
+          (fun ~generation -> timer_begin_start timer generation);
+        set_next_due =
+          (fun ~generation ~next_due_ms ->
+            timer_set_next_due timer generation next_due_ms);
+        after_start_update =
+          (fun ~generation -> timer_after_update_state timer generation);
+        construct_start_update =
+          (fun ~generation ~missed ->
+            update.timer_update timer generation ~missed);
+        install_cancel =
+          (fun ~generation ~cancel ->
+            install_timer_cancel timer generation cancel);
+        cleanup_after_exit =
+          (fun ~generation exit ->
+            timer_cleanup_after_exit timer generation exit);
+        cleanup_failed_start =
+          (fun ~generation exit ->
+            timer_cleanup_failed_start timer generation exit);
+      }
+
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
       let timer =
@@ -3019,51 +3042,11 @@ module Make (Observer_error : Observer_error) () = struct
             (fun timer ->
               let generation = timer_generation timer in
               let interval_ms = Duration.to_ms interval in
-              let start_loop () =
-                Effect.now
-                |> Effect.bind (fun now_ms ->
-                       let next_due_ms =
-                         Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
-                       in
-                       timer_set_next_due timer generation next_due_ms
-                       |> Effect.bind (function
-                            | `Stop -> Effect.unit
-                            | `Continue ->
-                                let callbacks =
-                                  timer_loop_callbacks timer update
-                                in
-                                Effect.daemon
-                                  (Timer_adapter.run_cancellable
-                                     ~install_cancel:(fun ~cancel ->
-                                       install_timer_cancel timer generation
-                                         cancel)
-                                     ~loop:
-                                       (Timer_adapter.run_loop callbacks
-                                          ~generation ~interval_ms ~next_due_ms
-                                          ~catch_up_policy:
-                                            update.timer_catch_up_policy
-                                       |> Effect.on_exit
-                                            (timer_cleanup_after_exit timer
-                                               generation)))))
-              in
-              let start =
-                if update_on_start then
-                  update.timer_update timer generation ~missed:1
-                  |> Effect.bind (fun () ->
-                         timer_after_update_state timer generation
-                         |> Effect.bind (function
-                              | `Continue -> start_loop ()
-                              | `Stop -> Effect.unit))
-                else start_loop ()
-              in
-              timer_begin_start timer generation
-              |> Effect.bind (function
-                   | `Stop -> Effect.unit
-                   | `Continue ->
-                       start
-                       |> Effect.on_exit
-                            (timer_cleanup_failed_start timer generation));
-            );
+              Timer_adapter.start
+                (timer_start_callbacks timer update)
+                (timer_loop_callbacks timer update)
+                ~generation ~interval_ms ~update_on_start
+                ~catch_up_policy:update.timer_catch_up_policy);
         }
       in
       signal.timer <- Some timer;

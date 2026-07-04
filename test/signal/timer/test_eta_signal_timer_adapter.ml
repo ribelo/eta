@@ -99,6 +99,80 @@ let test_loop_orders_due_advance_and_update () =
     ]
     !events
 
+let test_start_runs_update_before_initial_due () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let fail_effect label = Effect.sync (fun () -> Alcotest.fail label) in
+  let loop_callbacks =
+    {
+      Adapter.read_next_due =
+        (fun ~generation:_ ~fallback:_ -> fail_effect "read_next_due");
+      advance_next_due =
+        (fun ~generation:_ ~expected:_ ~next_due_ms:_ ->
+          fail_effect "advance_next_due");
+      after_update_state =
+        (fun ~generation:_ -> fail_effect "after_update_state");
+      finish_saturated =
+        (fun ~generation:_ -> fail_effect "finish_saturated");
+      construct_update =
+        (fun ~generation:_ ~missed:_ -> fail_effect "construct_update");
+      after_due_read_before_commit =
+        (fun () -> fail_effect "after_due_read_before_commit");
+      after_update_constructed_before_run =
+        (fun () -> fail_effect "after_update_constructed_before_run");
+    }
+  in
+  let start_callbacks =
+    {
+      Adapter.begin_start =
+        (fun ~generation ->
+          Effect.sync (fun () ->
+              record events ("begin:" ^ string_of_int generation);
+              `Continue));
+      set_next_due =
+        (fun ~generation ~next_due_ms ->
+          Effect.sync (fun () ->
+              record events
+                ("set_due:" ^ string_of_int generation ^ ":"
+               ^ string_of_int next_due_ms);
+              `Stop));
+      after_start_update =
+        (fun ~generation ->
+          Effect.sync (fun () ->
+              record events ("after_update:" ^ string_of_int generation);
+              `Continue));
+      construct_start_update =
+        (fun ~generation ~missed ->
+          record events
+            ("construct_start:" ^ string_of_int generation ^ ":"
+           ^ string_of_int missed);
+          Effect.sync (fun () -> record events "run_start"));
+      install_cancel =
+        (fun ~generation:_ ~cancel:_ -> fail_effect "install_cancel");
+      cleanup_after_exit =
+        (fun ~generation:_ _exit -> fail_effect "cleanup_after_exit");
+      cleanup_failed_start =
+        (fun ~generation _exit ->
+          Effect.sync (fun () ->
+              record events ("cleanup_failed:" ^ string_of_int generation)));
+    }
+  in
+  run_ok runtime
+    (Adapter.start start_callbacks loop_callbacks ~generation:3 ~interval_ms:10
+       ~update_on_start:true
+       ~catch_up_policy:Timer_policy.Catch_up_coalesced);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "begin:3";
+      "construct_start:3:1";
+      "run_start";
+      "after_update:3";
+      "set_due:3:10";
+      "cleanup_failed:3";
+    ]
+    !events
+
 let () =
   Alcotest.run "eta_signal_timer_adapter"
     [
@@ -108,5 +182,7 @@ let () =
             test_cancellable_stop_skips_loop;
           Alcotest.test_case "loop callback order" `Quick
             test_loop_orders_due_advance_and_update;
+          Alcotest.test_case "start update before initial due" `Quick
+            test_start_runs_update_before_initial_due;
         ] );
     ]
