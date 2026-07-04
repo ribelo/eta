@@ -63,6 +63,15 @@ let expect_die label runtime eff =
       Alcotest.failf "%s: expected die, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
+let expect_uninitialized_observer label runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Fail `Uninitialized_observer) -> ()
+  | Eta.Exit.Ok _ ->
+      Alcotest.failf "%s: expected uninitialized observer, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected uninitialized observer, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
 let pp_observed_update formatter = function
   | Initialized value -> Format.fprintf formatter "Initialized %d" value
   | Changed (old_value, new_value) ->
@@ -471,6 +480,182 @@ let test_dispose_demand_matches_model () =
     (run_ok runtime (Signal.Observer.read second_observer));
   run_ok runtime (Signal.Observer.dispose second_observer)
 
+type observer_slot =
+  | First_observer
+  | Second_observer
+
+type lifecycle_op =
+  | Lifecycle_set of int
+  | Lifecycle_observe of observer_slot
+  | Lifecycle_dispose of observer_slot
+  | Lifecycle_stabilize
+  | Lifecycle_read of observer_slot
+
+type lifecycle_slot = {
+  mutable actual_observer : int Signal.Observer.t option;
+  mutable actual_updates : observed_update list;
+  mutable model_active : bool;
+  mutable model_current : int option;
+  mutable model_updates : observed_update list;
+}
+
+let pp_observer_slot formatter = function
+  | First_observer -> Format.pp_print_string formatter "first"
+  | Second_observer -> Format.pp_print_string formatter "second"
+
+let pp_lifecycle_op formatter = function
+  | Lifecycle_set value -> Format.fprintf formatter "Set %d" value
+  | Lifecycle_observe slot ->
+      Format.fprintf formatter "Observe %a" pp_observer_slot slot
+  | Lifecycle_dispose slot ->
+      Format.fprintf formatter "Dispose %a" pp_observer_slot slot
+  | Lifecycle_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Lifecycle_read slot ->
+      Format.fprintf formatter "Read %a" pp_observer_slot slot
+
+let create_lifecycle_slot () =
+  {
+    actual_observer = None;
+    actual_updates = [];
+    model_active = false;
+    model_current = None;
+    model_updates = [];
+  }
+
+let lifecycle_slot first second = function
+  | First_observer -> first
+  | Second_observer -> second
+
+let lifecycle_observer_slots first second = [ first; second ]
+
+let lifecycle_signal_value source_value = source_value * 2
+
+let lifecycle_record slot update =
+  E.sync (fun () ->
+      slot.actual_updates <-
+        observed_of_signal_update update :: slot.actual_updates)
+
+let lifecycle_observe runtime signal slot =
+  match slot.actual_observer with
+  | Some _ -> ()
+  | None ->
+      let observer =
+        run_ok runtime
+          (Signal.Observer.observe signal (lifecycle_record slot))
+      in
+      slot.actual_observer <- Some observer;
+      slot.model_active <- true;
+      slot.model_current <- None
+
+let lifecycle_dispose runtime slot =
+  match slot.actual_observer with
+  | None -> ()
+  | Some observer ->
+      run_ok runtime (Signal.Observer.dispose observer);
+      slot.actual_observer <- None;
+      slot.model_active <- false;
+      slot.model_current <- None
+
+let lifecycle_model_stabilize pending slots =
+  let next = lifecycle_signal_value !pending in
+  List.iter
+    (fun slot ->
+      if slot.model_active then (
+        let update =
+          match slot.model_current with
+          | None -> Some (Initialized next)
+          | Some current ->
+              if current = next then None else Some (Changed (current, next))
+        in
+        slot.model_current <- Some next;
+        Option.iter
+          (fun update -> slot.model_updates <- update :: slot.model_updates)
+          update))
+    slots
+
+let lifecycle_check_slot label slot =
+  Alcotest.(check (list observed_update))
+    (label ^ " updates") (List.rev slot.model_updates)
+    (List.rev slot.actual_updates)
+
+let lifecycle_read label runtime slot =
+  match slot.actual_observer with
+  | None -> ()
+  | Some observer -> (
+      match slot.model_current with
+      | None ->
+          expect_uninitialized_observer label runtime
+            (Signal.Observer.read observer)
+      | Some expected ->
+          Alcotest.(check int) label expected
+            (run_ok runtime (Signal.Observer.read observer)))
+
+let generate_lifecycle_trace ~seed ~steps =
+  let random = Random.State.make [| seed |] in
+  let next_slot () =
+    if Random.State.bool random then First_observer else Second_observer
+  in
+  let next_value () = Random.State.int random 11 - 5 in
+  let next_op index =
+    if index mod 8 = 0 then Lifecycle_stabilize
+    else
+      match Random.State.int random 12 with
+      | 0 | 1 | 2 -> Lifecycle_set (next_value ())
+      | 3 | 4 -> Lifecycle_observe (next_slot ())
+      | 5 | 6 -> Lifecycle_dispose (next_slot ())
+      | 7 | 8 -> Lifecycle_read (next_slot ())
+      | _ -> Lifecycle_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Lifecycle_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  [
+    Lifecycle_observe First_observer;
+    Lifecycle_read First_observer;
+    Lifecycle_set 1;
+    Lifecycle_stabilize;
+  ]
+  @ loop 1 []
+
+let run_lifecycle_trace name ops =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source |> Signal.map lifecycle_signal_value in
+  let pending = ref 0 in
+  let first = create_lifecycle_slot () in
+  let second = create_lifecycle_slot () in
+  let slots = lifecycle_observer_slots first second in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_lifecycle_op op
+      in
+      match op with
+      | Lifecycle_set value ->
+          pending := value;
+          run_ok runtime (Signal.Var.set source value)
+      | Lifecycle_observe slot ->
+          lifecycle_observe runtime signal (lifecycle_slot first second slot)
+      | Lifecycle_dispose slot ->
+          lifecycle_dispose runtime (lifecycle_slot first second slot)
+      | Lifecycle_stabilize ->
+          lifecycle_model_stabilize pending slots;
+          run_ok runtime Signal.stabilize;
+          List.iter (lifecycle_check_slot label) slots
+      | Lifecycle_read slot ->
+          lifecycle_read label runtime (lifecycle_slot first second slot))
+    ops;
+  List.iter (lifecycle_dispose runtime) slots
+
+let test_observer_lifecycle_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_lifecycle_trace
+        (Format.asprintf "observer-lifecycle-seed-%d" seed)
+        (generate_lifecycle_trace ~seed ~steps:90))
+    [ 3; 17; 41; 79 ]
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -488,5 +673,7 @@ let () =
             test_pure_failure_matches_model;
           Alcotest.test_case "dispose demand matches model" `Quick
             test_dispose_demand_matches_model;
+          Alcotest.test_case "observer lifecycle trace matches model" `Quick
+            test_observer_lifecycle_trace_matches_model;
         ] );
     ]
