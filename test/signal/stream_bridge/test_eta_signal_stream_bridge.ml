@@ -52,6 +52,41 @@ let test_offer_sends_and_drops () =
   | `Empty | `Closed | `Closed_with_error _ ->
       Alcotest.fail "expected queued item"
 
+let test_offer_without_token_noops () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  let sent = ref [] in
+  let dropped = ref [] in
+  let after_send = ref false in
+  let after_drop = ref false in
+  let offer =
+    Stream_bridge.offer ~queue
+      ~current_token:(fun () -> Effect.sync (fun () -> None))
+      ~acknowledge_sent:(fun token value ->
+        Effect.sync (fun () -> sent := (token, value) :: !sent))
+      ~acknowledge_drop:(fun token value ->
+        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
+      ~after_try_send_before_ack:(fun () ->
+        Effect.sync (fun () -> after_send := true))
+      ~after_drop_before_ack:(fun () ->
+        Effect.sync (fun () -> after_drop := true))
+      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~on_drop:None 1
+  in
+  run_ok runtime offer;
+  Alcotest.(check (list (pair int int))) "sent ack" [] !sent;
+  Alcotest.(check (list (pair int int))) "drop ack" [] !dropped;
+  Alcotest.(check bool) "after send skipped" false !after_send;
+  Alcotest.(check bool) "after drop skipped" false !after_drop;
+  match run_ok runtime (Queue.try_recv queue) with
+  | `Empty -> ()
+  | `Item _ | `Closed | `Closed_with_error _ ->
+      Alcotest.fail "expected empty queue"
+
 let () =
   Alcotest.run "eta_signal_stream_bridge"
     [
@@ -61,5 +96,7 @@ let () =
             test_capacity_validation;
           Alcotest.test_case "offer sends and drops" `Quick
             test_offer_sends_and_drops;
+          Alcotest.test_case "offer without token noops" `Quick
+            test_offer_without_token_noops;
         ] );
     ]
