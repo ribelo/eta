@@ -460,6 +460,119 @@ let test_delivery_runner_finishes_acknowledged_failure_as_delivered () =
     ]
     !events
 
+let delivery_event ?(active = fun _ -> true) ?(claim = fun _ -> true)
+    ?(construct = fun event -> Some ("callback:" ^ event))
+    ?(run_callback = fun _event _callback -> Ok ())
+    ?(acknowledge = fun _event -> Ok ()) events name =
+  let effect value = Eta.Effect.sync (fun () -> value) in
+  Observer.Delivery_event.create
+    ~mark_pending:(fun () -> record events ("mark:" ^ name))
+    ~active:(fun () ->
+      effect
+        (record events ("active:" ^ name);
+         active name))
+    ~claim:(fun () ->
+      effect
+        (record events ("claim:" ^ name);
+         claim name))
+    ~construct:(fun () ->
+      effect
+        (record events ("construct:" ^ name);
+         construct name))
+    ~run_callback:(fun callback ->
+      match run_callback name callback with
+      | Ok () -> effect (record events ("run:" ^ name ^ ":" ^ callback))
+      | Error `Delivery_failed ->
+          Eta.Effect.sync (fun () ->
+              record events ("run:" ^ name ^ ":" ^ callback))
+          |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed))
+    ~acknowledge:(fun () ->
+      match acknowledge name with
+      | Ok () -> effect (record events ("ack:" ^ name))
+      | Error `Delivery_failed ->
+          Eta.Effect.sync (fun () -> record events ("ack:" ^ name))
+          |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed))
+    ~finish_error:(fun ~delivered ->
+      effect
+        (record events
+           ("finish_error:" ^ name ^ ":" ^ string_of_bool delivered)))
+
+let test_delivery_event_marks_and_runs_claimed_events () =
+  let events = ref [] in
+  let first = delivery_event events "first" in
+  let inactive =
+    delivery_event ~active:(fun event -> event <> "inactive") events
+      "inactive"
+  in
+  let unclaimed =
+    delivery_event ~claim:(fun event -> event <> "unclaimed") events
+      "unclaimed"
+  in
+  let no_callback =
+    delivery_event
+      ~construct:(fun event ->
+        if event = "no-callback" then None else Some ("callback:" ^ event))
+      events "no-callback"
+  in
+  let second = delivery_event events "second" in
+  Observer.Delivery_event.mark_pending first;
+  expect_effect_ok "delivery events"
+    (Observer.Delivery_event.run
+       ~after_claim:(fun () ->
+         Eta.Effect.sync (fun () -> record events "after_claim"))
+       [ first; inactive; unclaimed; no_callback; second ]);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "mark:first";
+      "active:first";
+      "claim:first";
+      "after_claim";
+      "construct:first";
+      "run:first:callback:first";
+      "ack:first";
+      "active:inactive";
+      "active:unclaimed";
+      "claim:unclaimed";
+      "active:no-callback";
+      "claim:no-callback";
+      "after_claim";
+      "construct:no-callback";
+      "active:second";
+      "claim:second";
+      "after_claim";
+      "construct:second";
+      "run:second:callback:second";
+      "ack:second";
+    ]
+    !events
+
+let test_delivery_event_finishes_error () =
+  let events = ref [] in
+  let first =
+    delivery_event
+      ~run_callback:(fun event _callback ->
+        if event = "first" then Error `Delivery_failed else Ok ())
+      events "first"
+  in
+  let second = delivery_event events "second" in
+  expect_delivery_failed "delivery event failure"
+    (Observer.Delivery_event.run
+       ~after_claim:(fun () ->
+         Eta.Effect.sync (fun () -> record events "after_claim"))
+       [ first; second ]);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "active:first";
+      "claim:first";
+      "after_claim";
+      "construct:first";
+      "run:first:callback:first";
+      "finish_error:first:false";
+    ]
+    !events
+
 let test_delivery_handle_accessors () =
   let handle =
     Observer.Delivery_handle.create ~token:7 ~update:update_changed
@@ -806,6 +919,10 @@ let () =
             test_delivery_runner_releases_claim_on_failure;
           Alcotest.test_case "runner delivered ack failure" `Quick
             test_delivery_runner_finishes_acknowledged_failure_as_delivered;
+          Alcotest.test_case "event order" `Quick
+            test_delivery_event_marks_and_runs_claimed_events;
+          Alcotest.test_case "event finish error" `Quick
+            test_delivery_event_finishes_error;
           Alcotest.test_case "handle accessors" `Quick
             test_delivery_handle_accessors;
           Alcotest.test_case "port claim acknowledge finish" `Quick

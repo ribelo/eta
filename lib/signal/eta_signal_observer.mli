@@ -180,6 +180,29 @@ module Delivery_runner : sig
     (unit, 'error) Eta.Effect.t
 end
 
+module Delivery_event : sig
+  type ('callback, 'error) t
+  (** Sealed observer delivery event. The event hides the concrete observer
+      value/update pair while this module owns the delivery ordering. *)
+
+  val create :
+    mark_pending:(unit -> unit) ->
+    active:(unit -> (bool, 'error) Eta.Effect.t) ->
+    claim:(unit -> (bool, 'error) Eta.Effect.t) ->
+    construct:(unit -> ('callback option, 'error) Eta.Effect.t) ->
+    run_callback:('callback -> (unit, 'error) Eta.Effect.t) ->
+    acknowledge:(unit -> (unit, 'error) Eta.Effect.t) ->
+    finish_error:(delivered:bool -> (unit, 'error) Eta.Effect.t) ->
+    ('callback, 'error) t
+
+  val mark_pending : ('callback, 'error) t -> unit
+
+  val run :
+    after_claim:(unit -> (unit, 'error) Eta.Effect.t) ->
+    ('callback, 'error) t list ->
+    (unit, 'error) Eta.Effect.t
+end
+
 module Snapshot : sig
   type ('a, 'after_ack) t
 

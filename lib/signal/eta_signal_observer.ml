@@ -310,6 +310,45 @@ module Delivery_runner = struct
                           |> Effect.bind (fun () -> run ops rest))))
 end
 
+module Delivery_event = struct
+  type ('callback, 'error) t = {
+    mark_pending : unit -> unit;
+    active : unit -> (bool, 'error) Eta.Effect.t;
+    claim : unit -> (bool, 'error) Eta.Effect.t;
+    construct : unit -> ('callback option, 'error) Eta.Effect.t;
+    run_callback : 'callback -> (unit, 'error) Eta.Effect.t;
+    acknowledge : unit -> (unit, 'error) Eta.Effect.t;
+    finish_error : delivered:bool -> (unit, 'error) Eta.Effect.t;
+  }
+
+  let create ~mark_pending ~active ~claim ~construct ~run_callback
+      ~acknowledge ~finish_error =
+    {
+      mark_pending;
+      active;
+      claim;
+      construct;
+      run_callback;
+      acknowledge;
+      finish_error;
+    }
+
+  let mark_pending event = event.mark_pending ()
+
+  let run ~after_claim events =
+    Delivery_runner.run
+      (Delivery_runner.create
+         ~active:(fun event -> event.active ())
+         ~claim:(fun event -> event.claim ())
+         ~after_claim
+         ~construct:(fun event -> event.construct ())
+         ~run_callback:(fun event callback -> event.run_callback callback)
+         ~acknowledge:(fun event -> event.acknowledge ())
+         ~finish_error:(fun event ~delivered ->
+           event.finish_error ~delivered))
+      events
+end
+
 let plan_event_parts ~equal ~changed ~value delivery =
   let update, delivery =
     match Delivery.base delivery with

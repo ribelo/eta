@@ -577,7 +577,8 @@ module Make (Observer_error : Observer_error) () = struct
   type disposal_hook = Cleanup.hook
 
   type event =
-    | E : Observer_core.Delivery.token * 'a observer * 'a update -> event
+    ((unit, observer_error) Effect.t, stabilize_error)
+    Observer_core.Delivery_event.t
 
   type timer_refresh_context =
     (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
@@ -2016,33 +2017,6 @@ module Make (Observer_error : Observer_error) () = struct
               ())
       (collect_observed_bind_nodes observers)
 
-  let collect_observer_event (O observer) =
-    match observer_active_live_state observer with
-    | None -> None
-    | Some live
-      when signal_will_be_invalidated_by_staged_bind (P observer.obs_signal) ->
-        None
-    | Some live ->
-      let value, changed = compute observer.obs_signal in
-      let snapshot = observer_effective_snapshot live in
-      let event_plan =
-        Observer_snapshot.plan_event ~equal:observer.obs_equal ~changed
-          ~value snapshot
-      in
-      Transaction.stage (active_transaction ()) live.observer_snapshot
-        event_plan.snapshot;
-      Option.map
-        (fun update -> E (current_generation (), observer, update))
-        event_plan.update
-
-  let mark_event_pending (E (token, observer, update)) =
-    match observer_active_live_state observer with
-    | Some live ->
-        set_observer_current live
-          (Observer_snapshot.with_pending_delivery ~token update
-             (observer_current_snapshot live))
-    | None -> ()
-
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
 
@@ -2101,6 +2075,81 @@ module Make (Observer_error : Observer_error) () = struct
         if claimed_event_delivery_active observer token then Some token
         else None)
 
+  let graph_error_of_die die =
+    match die.Eta.Cause.exn with
+    | Graph_error err -> Some err
+    | _ -> None
+
+  let run_observer_effect observer token observer_eff =
+    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+    try
+      if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
+      else
+        match Effect.Expert.eval context observer_eff with
+        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
+        | Eta.Exit.Error cause ->
+            Eta.Exit.Error
+              (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
+    with
+    | Graph_error err ->
+        Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
+
+  let event_observer_active observer =
+    with_graph_lane_sync (fun () -> observer_active (O observer))
+
+  let construct_observer_effect observer token update =
+    Effect.sync (fun () ->
+        try
+          if claimed_event_delivery_active observer token then
+            Ok (Some (observer.obs_callback token update))
+          else Ok None
+        with Graph_error err -> Error (err :> stabilize_error))
+    |> Effect.flatten_result
+
+  let make_observer_event ~token observer update =
+    Observer_core.Delivery_event.create
+      ~mark_pending:(fun () ->
+        match observer_active_live_state observer with
+        | Some live ->
+            set_observer_current live
+              (Observer_snapshot.with_pending_delivery ~token update
+                 (observer_current_snapshot live))
+        | None -> ())
+      ~active:(fun () -> event_observer_active observer)
+      ~claim:(fun () -> claim_event_delivery observer token)
+      ~construct:(fun () -> construct_observer_effect observer token update)
+      ~run_callback:(fun observer_eff ->
+        run_observer_effect observer token observer_eff)
+      ~acknowledge:(fun () -> acknowledge_event_delivery observer token update)
+      ~finish_error:(fun ~delivered ->
+        finish_event_delivery_after_error observer token update ~delivered)
+
+  let collect_observer_event (O observer) =
+    match observer_active_live_state observer with
+    | None -> None
+    | Some live
+      when signal_will_be_invalidated_by_staged_bind (P observer.obs_signal) ->
+        None
+    | Some live ->
+      let value, changed = compute observer.obs_signal in
+      let snapshot = observer_effective_snapshot live in
+      let event_plan =
+        Observer_snapshot.plan_event ~equal:observer.obs_equal ~changed
+          ~value snapshot
+      in
+      Transaction.stage (active_transaction ()) live.observer_snapshot
+        event_plan.snapshot;
+      Option.map
+        (fun update ->
+          make_observer_event ~token:(current_generation ()) observer update)
+        event_plan.update
+
+  let run_events events =
+    Observer_core.Delivery_event.run
+      ~after_claim:(fun () ->
+        Private_test_hooks.run After_observer_delivery_claim)
+      events
+
   let begin_stabilize lane timer_refresh =
     Stabilization_pass.run graph.stabilization lane
       {
@@ -2148,7 +2197,7 @@ module Make (Observer_error : Observer_error) () = struct
                 commit_staging staging);
             mark_events_pending =
               (fun (_lane : graph_lane) events ->
-                List.iter mark_event_pending events);
+                List.iter Observer_core.Delivery_event.mark_pending events);
             update_necessity =
               (fun (_lane : graph_lane) ->
                 update_necessity_counters_unlocked ());
@@ -2179,62 +2228,10 @@ module Make (Observer_error : Observer_error) () = struct
          delivering_token
         : (graph, Stabilization.idle) Stabilization.token)
 
-  let graph_error_of_die die =
-    match die.Eta.Cause.exn with
-    | Graph_error err -> Some err
-    | _ -> None
-
-  let run_observer_effect observer token observer_eff =
-    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
-    try
-      if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
-      else
-        match Effect.Expert.eval context observer_eff with
-        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
-        | Eta.Exit.Error cause ->
-            Eta.Exit.Error
-              (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
-    with
-    | Graph_error err ->
-        Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
-
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
         graph.callback_delivery_count <-
           saturating_succ graph.callback_delivery_count)
-
-  let event_observer_active observer =
-    with_graph_lane_sync (fun () -> observer_active (O observer))
-
-  let construct_observer_effect observer token update =
-    Effect.sync (fun () ->
-        try
-          if claimed_event_delivery_active observer token then
-            Ok (Some (observer.obs_callback token update))
-          else Ok None
-        with Graph_error err -> Error (err :> stabilize_error))
-    |> Effect.flatten_result
-
-  let run_event_observer_effect (E (token, observer, _)) observer_eff =
-    run_observer_effect observer token observer_eff
-
-  let run_events events =
-    Observer_core.Delivery_runner.run
-      (Observer_core.Delivery_runner.create
-         ~active:(fun (E (_, observer, _)) -> event_observer_active observer)
-         ~claim:(fun (E (token, observer, _)) ->
-           claim_event_delivery observer token)
-         ~after_claim:(fun () ->
-           Private_test_hooks.run After_observer_delivery_claim)
-         ~construct:(fun (E (token, observer, update)) ->
-           construct_observer_effect observer token update)
-         ~run_callback:run_event_observer_effect
-         ~acknowledge:(fun (E (token, observer, update)) ->
-           acknowledge_event_delivery observer token update)
-         ~finish_error:(fun (E (token, observer, update)) ~delivered ->
-           finish_event_delivery_after_error observer token update ~delivered)
-      )
-      events
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       finish_token_ref =
