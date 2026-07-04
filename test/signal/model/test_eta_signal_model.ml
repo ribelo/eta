@@ -836,6 +836,211 @@ let test_bind_branch_demand_trace_matches_model () =
         (generate_branch_demand_trace ~seed ~steps:100))
     [ 5; 23; 61; 97 ]
 
+type diamond_op =
+  | Diamond_set of int
+  | Diamond_stabilize
+  | Diamond_read
+
+type diamond_model = {
+  mutable diamond_pending : int;
+  mutable diamond_committed : int;
+  mutable diamond_initialized : bool;
+  mutable diamond_recomputes : int;
+  mutable diamond_left : int option;
+  mutable diamond_right : int option;
+  mutable diamond_output : int option;
+}
+
+let pp_diamond_op formatter = function
+  | Diamond_set value -> Format.fprintf formatter "Set %d" value
+  | Diamond_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Diamond_read -> Format.pp_print_string formatter "Read"
+
+let create_diamond_model () =
+  {
+    diamond_pending = 0;
+    diamond_committed = 0;
+    diamond_initialized = false;
+    diamond_recomputes = 0;
+    diamond_left = None;
+    diamond_right = None;
+    diamond_output = None;
+  }
+
+let diamond_values source =
+  let shared = source + 1 in
+  let left = shared + 10 in
+  let right = shared + 20 in
+  (left, right, (left * 1_000) + right)
+
+let stabilize_diamond_model model =
+  if (not model.diamond_initialized)
+     || model.diamond_pending <> model.diamond_committed
+  then (
+    model.diamond_committed <- model.diamond_pending;
+    model.diamond_initialized <- true;
+    model.diamond_recomputes <- model.diamond_recomputes + 1;
+    let left, right, output = diamond_values model.diamond_committed in
+    model.diamond_left <- Some left;
+    model.diamond_right <- Some right;
+    model.diamond_output <- Some output;
+    Some (left, right, output))
+  else None
+
+let diamond_current model =
+  match (model.diamond_left, model.diamond_right, model.diamond_output) with
+  | Some left, Some right, Some output -> Some (left, right, output)
+  | None, None, None -> None
+  | Some _, _, _ | None, Some _, _ | None, None, Some _ ->
+      Alcotest.fail "inconsistent diamond model state"
+
+let diamond_snapshot_label label left right output =
+  Format.asprintf "%s:%d:%d:%d" label left right output
+
+let take count list =
+  let rec loop count list acc =
+    if count <= 0 then List.rev acc
+    else
+      match list with
+      | [] -> List.rev acc
+      | head :: rest -> loop (count - 1) rest (head :: acc)
+  in
+  loop count list []
+
+let check_diamond_snapshot_batch label snapshots before expected =
+  let after = List.length !snapshots in
+  let added = after - before in
+  match expected with
+  | None ->
+      Alcotest.(check int) (label ^ " callback count") 0 added
+  | Some (left, right, output) ->
+      Alcotest.(check int) (label ^ " callback count") 3 added;
+      let actual = take added !snapshots |> List.sort String.compare in
+      let expected =
+        [
+          diamond_snapshot_label "left" left right output;
+          diamond_snapshot_label "output" left right output;
+          diamond_snapshot_label "right" left right output;
+        ]
+        |> List.sort String.compare
+      in
+      Alcotest.(check (list string)) (label ^ " callback snapshots")
+        expected actual
+
+let generate_diamond_trace ~seed ~steps =
+  let random = Random.State.make [| seed |] in
+  let next_value () = Random.State.int random 11 - 5 in
+  let next_op index =
+    if index mod 5 = 0 then Diamond_stabilize
+    else
+      match Random.State.int random 8 with
+      | 0 | 1 | 2 | 3 -> Diamond_set (next_value ())
+      | 4 -> Diamond_read
+      | _ -> Diamond_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Diamond_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Diamond_stabilize :: Diamond_read :: loop 1 []
+
+let run_diamond_trace name ops =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let shared_recomputes = ref 0 in
+  let shared =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           incr shared_recomputes;
+           value + 1)
+  in
+  let left = Signal.map (fun value -> value + 10) shared in
+  let right = Signal.map (fun value -> value + 20) shared in
+  let output =
+    Signal.map2 (fun left right -> (left * 1_000) + right) left right
+  in
+  let left_observer = ref None in
+  let right_observer = ref None in
+  let output_observer = ref None in
+  let callback_snapshots = ref [] in
+  let observer ref_ =
+    match !ref_ with
+    | Some observer -> observer
+    | None -> Alcotest.fail "observer callback ran before registration"
+  in
+  let read_callback_snapshot label _update =
+    Signal.Observer.read (observer left_observer)
+    |> E.map_error (fun _ -> `Observer_failed)
+    |> E.bind (fun left_value ->
+           Signal.Observer.read (observer right_observer)
+           |> E.map_error (fun _ -> `Observer_failed)
+           |> E.bind (fun right_value ->
+                  Signal.Observer.read (observer output_observer)
+                  |> E.map_error (fun _ -> `Observer_failed)
+                  |> E.bind (fun output_value ->
+                         E.sync (fun () ->
+                             callback_snapshots :=
+                               diamond_snapshot_label label left_value
+                                 right_value output_value
+                               :: !callback_snapshots))))
+  in
+  left_observer :=
+    Some
+      (run_ok runtime
+         (Signal.Observer.observe left (read_callback_snapshot "left")));
+  right_observer :=
+    Some
+      (run_ok runtime
+         (Signal.Observer.observe right (read_callback_snapshot "right")));
+  output_observer :=
+    Some
+      (run_ok runtime
+         (Signal.Observer.observe output (read_callback_snapshot "output")));
+  let model = create_diamond_model () in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_diamond_op op
+      in
+      match op with
+      | Diamond_set value ->
+          model.diamond_pending <- value;
+          run_ok runtime (Signal.Var.set source value)
+      | Diamond_stabilize ->
+          let before_callbacks = List.length !callback_snapshots in
+          let expected_callbacks = stabilize_diamond_model model in
+          run_ok runtime Signal.stabilize;
+          Alcotest.(check int)
+            (label ^ " shared recomputes")
+            model.diamond_recomputes !shared_recomputes;
+          check_diamond_snapshot_batch label callback_snapshots
+            before_callbacks expected_callbacks
+      | Diamond_read -> (
+          match diamond_current model with
+          | None -> ()
+          | Some (expected_left, expected_right, expected_output) ->
+              Alcotest.(check int) (label ^ " left read") expected_left
+                (run_ok runtime
+                   (Signal.Observer.read (observer left_observer)));
+              Alcotest.(check int) (label ^ " right read") expected_right
+                (run_ok runtime
+                   (Signal.Observer.read (observer right_observer)));
+              Alcotest.(check int) (label ^ " output read") expected_output
+                (run_ok runtime
+                   (Signal.Observer.read (observer output_observer)))))
+    ops;
+  run_ok runtime (Signal.Observer.dispose (observer left_observer));
+  run_ok runtime (Signal.Observer.dispose (observer right_observer));
+  run_ok runtime (Signal.Observer.dispose (observer output_observer))
+
+let test_diamond_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_diamond_trace
+        (Format.asprintf "diamond-seed-%d" seed)
+        (generate_diamond_trace ~seed ~steps:80))
+    [ 7; 19; 43; 89 ]
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -857,5 +1062,7 @@ let () =
             test_observer_lifecycle_trace_matches_model;
           Alcotest.test_case "bind branch demand trace matches model" `Quick
             test_bind_branch_demand_trace_matches_model;
+          Alcotest.test_case "diamond trace matches model" `Quick
+            test_diamond_trace_matches_model;
         ] );
     ]
