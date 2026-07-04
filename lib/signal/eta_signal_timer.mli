@@ -34,6 +34,10 @@ type daemon_status =
   | Daemon_continue
   | Daemon_stop
 
+type daemon_exit =
+  | Daemon_ok
+  | Daemon_error
+
 type wake_plan = {
   wake_next_due_ms : int;
   wake_saturated_due : bool;
@@ -137,6 +141,22 @@ val mark_failed :
   effective_state:state ->
   current_state:state ->
   generation:int ->
+  state option
+
+val cleanup_after_exit :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  generation:int ->
+  daemon_exit ->
+  state option
+
+val cleanup_failed_start :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  generation:int ->
+  daemon_exit ->
   state option
 
 val finish_current_daemon :

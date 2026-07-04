@@ -59,6 +59,10 @@ type daemon_status =
   | Daemon_continue
   | Daemon_stop
 
+type daemon_exit =
+  | Daemon_ok
+  | Daemon_error
+
 type stop_plan = {
   stop_state : state;
   stop_cancel_hooks : (unit -> unit) list;
@@ -333,6 +337,20 @@ let mark_failed ~advance_generation ~effective_state ~current_state ~generation
     | Some plan -> Some plan.stop_state
     | None -> None
   else None
+
+let cleanup_after_exit ~advance_generation ~effective_state ~current_state
+    ~generation = function
+  | Daemon_ok -> mark_stopped effective_state ~generation
+  | Daemon_error ->
+      mark_failed ~advance_generation ~effective_state ~current_state
+        ~generation
+
+let cleanup_failed_start ~advance_generation ~effective_state ~current_state
+    ~generation = function
+  | Daemon_ok -> None
+  | Daemon_error ->
+      mark_failed ~advance_generation ~effective_state ~current_state
+        ~generation
 
 let finish_state ~advance_generation state =
   let generation =

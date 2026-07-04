@@ -396,6 +396,45 @@ let test_mark_failed_policy () =
        (Timer.mark_failed ~advance_generation:succ ~effective_state:running
           ~current_state:inactive ~generation:7))
 
+let test_daemon_cleanup_policy () =
+  let cancelled = ref false in
+  let cancel () = cancelled := true in
+  let running = Timer.Timer_running (7, Some 11, cancel) in
+  (match
+     Timer.cleanup_after_exit ~advance_generation:succ
+       ~effective_state:running ~current_state:running ~generation:7
+       Timer.Daemon_ok
+   with
+  | Some state ->
+      Alcotest.(check string) "ok stops" "inactive"
+        (Timer.state_label state);
+      Alcotest.(check int) "ok keeps generation" 7
+        (Timer.state_generation state)
+  | None -> Alcotest.fail "expected ok cleanup");
+  (match
+     Timer.cleanup_after_exit ~advance_generation:succ
+       ~effective_state:running ~current_state:running ~generation:7
+       Timer.Daemon_error
+   with
+  | Some state ->
+      Alcotest.(check string) "error stops" "inactive"
+        (Timer.state_label state);
+      Alcotest.(check int) "error advances generation" 8
+        (Timer.state_generation state);
+      Alcotest.(check bool) "error does not cancel running hook" false
+        !cancelled
+  | None -> Alcotest.fail "expected error cleanup");
+  Alcotest.(check bool) "successful failed-start noops" true
+    (Option.is_none
+       (Timer.cleanup_failed_start ~advance_generation:succ
+          ~effective_state:running ~current_state:running ~generation:7
+          Timer.Daemon_ok));
+  Alcotest.(check bool) "failed start records failure" true
+    (Option.is_some
+       (Timer.cleanup_failed_start ~advance_generation:succ
+          ~effective_state:running ~current_state:running ~generation:7
+          Timer.Daemon_error))
+
 let test_finish_current_daemon_policy () =
   let running = Timer.Timer_running (7, Some 11, noop) in
   let inactive = Timer.Timer_inactive 7 in
@@ -663,6 +702,8 @@ let () =
             test_mark_stopped_policy;
           Alcotest.test_case "mark failed policy" `Quick
             test_mark_failed_policy;
+          Alcotest.test_case "daemon cleanup policy" `Quick
+            test_daemon_cleanup_policy;
           Alcotest.test_case "finish current daemon policy" `Quick
             test_finish_current_daemon_policy;
           Alcotest.test_case "read next due policy" `Quick

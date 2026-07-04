@@ -3502,26 +3502,25 @@ module Make (Observer_error : Observer_error) () = struct
         then Eta.Exit.Ok ()
         else Effect.Expert.exit_of_exn context exn
 
-    let timer_mark_stopped timer generation =
-      with_graph_lane_sync (fun () ->
-          Option.iter (set_timer_current_state timer)
-            (Timer.mark_stopped (timer_effective_state timer) ~generation))
+    let timer_daemon_exit = function
+      | Eta.Exit.Ok _ -> Timer.Daemon_ok
+      | Eta.Exit.Error _ -> Timer.Daemon_error
 
-    let timer_mark_failed timer generation =
+    let apply_timer_cleanup timer generation cleanup exit =
+      let daemon_exit = timer_daemon_exit exit in
       with_graph_lane_sync (fun () ->
           Option.iter (set_timer_current_state timer)
-            (Timer.mark_failed
+            (cleanup
                ~advance_generation:(checked_succ "timer generation")
                ~effective_state:(timer_effective_state timer)
-               ~current_state:(timer_current_state timer) ~generation))
+               ~current_state:(timer_current_state timer) ~generation
+               daemon_exit))
 
-    let timer_cleanup_after_exit timer generation = function
-      | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
-      | Eta.Exit.Error _ -> timer_mark_failed timer generation
+    let timer_cleanup_after_exit timer generation exit =
+      apply_timer_cleanup timer generation Timer.cleanup_after_exit exit
 
-    let timer_cleanup_failed_start timer generation = function
-      | Eta.Exit.Ok _ -> Effect.unit
-      | Eta.Exit.Error _ -> timer_mark_failed timer generation
+    let timer_cleanup_failed_start timer generation exit =
+      apply_timer_cleanup timer generation Timer.cleanup_failed_start exit
 
     let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
