@@ -6099,7 +6099,9 @@ let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
   in
   let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 50) in
   let step =
-    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
+         (fun ~missed value -> value + missed))
   in
   let combined =
     Signal.map5
@@ -6182,7 +6184,9 @@ let test_time_step_catches_up_after_late_sleep () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_late_timer_wake @@ fun rt sleep_calls release ->
   let signal =
-    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
+         (fun ~missed value -> value + missed))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -6266,11 +6270,11 @@ let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
   @@ fun rt ->
   f rt sleep_calls yield_calls logger
 
-let test_time_catch_up_yields_between_batches () =
+let test_time_step_replay_catch_up_yields_between_batches () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host @@ fun rt sleep_calls yield_calls _logger ->
   let signal =
-    run_ok rt (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+    run_ok rt (Signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0 succ)
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -6280,35 +6284,36 @@ let test_time_catch_up_yields_between_batches () =
     "large catch-up yielded cooperatively" true
     (!yield_calls > 0);
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "step catch-up still applies every cadence" 1_000
+  Alcotest.(check int) "step_replay catch-up applies every cadence" 1_000
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_step_saturated_catch_up_yields_without_completion () =
+let test_time_step_replay_saturated_catch_up_yields_without_completion () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~jump_ms:max_int
   @@ fun rt sleep_calls yield_calls logger ->
   let applied = ref 0 in
   let signal =
     run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 1) ~initial:0 (fun value ->
+      (Signal.Time.step_replay ~every:(Duration.ms 1) ~initial:0 (fun value ->
            incr applied;
            value + 1))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
-  wait_until "saturated step catch-up yielded" (fun () -> !yield_calls >= 3);
+  wait_until "saturated step_replay catch-up yielded" (fun () ->
+      !yield_calls >= 3);
   Alcotest.(check int) "saturated catch-up still in first wake" 1
     !sleep_calls;
   Alcotest.(check bool)
-    "saturated step catch-up made cooperative progress" true
+    "saturated step_replay catch-up made cooperative progress" true
     (!applied >= 3 * 64);
   run_ok rt (Signal.Observer.dispose observer);
-  Alcotest.(check int) "saturated step catch-up logs no daemon diagnostic" 0
+  Alcotest.(check int) "saturated step_replay logs no daemon diagnostic" 0
     (List.length (Logger.dump logger))
 
-let test_time_step_coalesced_saturated_catch_up_runs_once () =
+let test_time_step_saturated_catch_up_runs_once () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
   @@ fun rt sleep_calls yield_calls logger ->
@@ -6316,8 +6321,7 @@ let test_time_step_coalesced_saturated_catch_up_runs_once () =
   let missed_seen = ref None in
   let signal =
     run_ok rt
-      (Signal.Time.step_coalesced ~every:(Duration.ms 1) ~initial:0
-         (fun ~missed value ->
+      (Signal.Time.step ~every:(Duration.ms 1) ~initial:0 (fun ~missed value ->
            incr applied;
            missed_seen := Some missed;
            if value > max_int - missed then max_int else value + missed))
@@ -6325,25 +6329,23 @@ let test_time_step_coalesced_saturated_catch_up_runs_once () =
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
-  wait_until "coalesced saturated step catch-up processed" (fun () ->
+  wait_until "saturated step catch-up processed" (fun () ->
       !applied >= 1);
-  Alcotest.(check int) "saturated coalesced step used one update" 1
+  Alcotest.(check int) "saturated step used one update" 1
     !applied;
   let missed =
     match !missed_seen with
     | Some missed -> missed
-    | None -> Alcotest.fail "coalesced step did not report missed cadences"
+    | None -> Alcotest.fail "step did not report missed cadences"
   in
-  Alcotest.(check int) "saturated coalesced step missed count" max_int
-    missed;
-  Alcotest.(check int) "saturated coalesced catch-up used one sleep" 1
-    !sleep_calls;
-  Alcotest.(check int) "saturated coalesced step did not batch-yield" 0
+  Alcotest.(check int) "saturated step missed count" max_int missed;
+  Alcotest.(check int) "saturated step catch-up used one sleep" 1 !sleep_calls;
+  Alcotest.(check int) "saturated step did not batch-yield" 0
     !yield_calls;
-  Alcotest.(check int) "saturated coalesced step logs no daemon diagnostic" 0
+  Alcotest.(check int) "saturated step logs no daemon diagnostic" 0
     (List.length (Logger.dump logger));
   run_ok rt Signal.stabilize;
-  Alcotest.(check int) "saturated coalesced step reaches max_int" max_int
+  Alcotest.(check int) "saturated step reaches max_int" max_int
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
@@ -6975,7 +6977,7 @@ let test_time_timer_dispose_during_step_prevents_update () =
   let disposed_during_step = ref false in
   let signal =
     run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun value ->
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun ~missed:_ value ->
            if not !disposed_during_step then (
              disposed_during_step := true;
              Option.iter
@@ -7062,14 +7064,14 @@ let check_time_step_dispose_after_update_construction_skips_f make_signal =
 
 let test_time_step_dispose_after_update_construction_skips_f () =
   check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
-      Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun value ->
+      Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun ~missed:_ value ->
           record_call ();
           value + 1))
 
-let test_time_step_coalesced_dispose_after_update_construction_skips_f () =
+let test_time_step_replay_dispose_after_update_construction_skips_f () =
   check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
-      Signal.Time.step_coalesced ~every:(Duration.ms 10) ~initial:0
-        (fun ~missed:_ value ->
+      Signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0
+        (fun value ->
           record_call ();
           value + 1))
 
@@ -7274,7 +7276,9 @@ let test_time_timer_rejects_mismatched_runtime () =
   check_observe_mismatch "mismatched interval observe runtime" interval;
   check_mismatch "mismatched interval runtime" interval;
   let step =
-    run_ok rt_a (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 succ)
+    run_ok rt_a
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
+         (fun ~missed:_ value -> value + 1))
   in
   check_observe_mismatch "mismatched step observe runtime" step;
   check_mismatch "mismatched step runtime" step
@@ -7878,7 +7882,9 @@ let test_time_step_does_not_catch_up_without_daemon_progress () =
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let step =
-    run_ok rt (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 succ)
+    run_ok rt
+      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1
+         (fun ~missed value -> value + missed))
   in
   let signal =
     Signal.map2 (fun interval step -> (interval, step)) interval step
@@ -7901,14 +7907,12 @@ let test_time_step_does_not_catch_up_without_daemon_progress () =
         "interval catches up but step waits for daemon progress" (4, 1)
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_step_coalesced_does_not_catch_up_without_daemon_progress () =
+let test_time_step_replay_does_not_catch_up_without_daemon_progress () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 5)) in
   let step =
-    run_ok rt
-      (Signal.Time.step_coalesced ~every:(Duration.ms 5) ~initial:1
-         (fun ~missed value -> value + missed))
+    run_ok rt (Signal.Time.step_replay ~every:(Duration.ms 5) ~initial:1 succ)
   in
   let signal =
     Signal.map2 (fun interval step -> (interval, step)) interval step
@@ -7920,16 +7924,16 @@ let test_time_step_coalesced_does_not_catch_up_without_daemon_progress () =
     ~finally:(fun () ->
       ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))))
     (fun () ->
-      wait_until "active interval and coalesced step daemons are sleeping"
+      wait_until "active interval and step_replay daemons are sleeping"
         (fun () -> !sleep_calls >= 2);
       run_ok rt Signal.stabilize;
       Alcotest.(check (pair int int))
-        "initial interval and coalesced step" (0, 1)
+        "initial interval and step_replay" (0, 1)
         (run_ok rt (Signal.Observer.read observer));
       now_ms := 20;
       run_ok rt Signal.stabilize;
       Alcotest.(check (pair int int))
-        "interval catches up but coalesced step waits for daemon progress"
+        "interval catches up but step_replay waits for daemon progress"
         (4, 1)
         (run_ok rt (Signal.Observer.read observer)))
 
@@ -7939,7 +7943,7 @@ let test_time_step_does_not_run_f_inside_stabilize () =
   let f_called = ref 0 in
   let signal =
     run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun x ->
+      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun ~missed:_ x ->
            incr f_called;
            if !f_called >= 0 then failwith "step f ran during stabilize"
            else x + 1))
@@ -7997,7 +8001,8 @@ let test_time_step_function () =
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal =
     run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 (fun n -> n * 2))
+      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1
+         (fun ~missed:_ n -> n * 2))
   in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -8019,7 +8024,7 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
   let fail = ref true in
   let signal =
     run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 (fun n ->
+      (Signal.Time.step ~every:(Duration.ms 5) ~initial:1 (fun ~missed:_ n ->
            if !fail then (
              fail := false;
              failwith "time step defect");
@@ -8076,7 +8081,9 @@ let test_time_invalid_intervals_fail_cleanly () =
        (widen (Signal.Time.interval Duration.zero)));
   expect_fail "invalid step cadence" (( = ) `Invalid_interval)
     (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.step ~every:Duration.zero ~initial:0 succ)))
+       (widen
+          (Signal.Time.step ~every:Duration.zero ~initial:0
+             (fun ~missed value -> value + missed))))
 
 let test_time_deadline_validation_errors () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -9621,14 +9628,16 @@ let () =
             `Quick test_time_interval_does_not_recount_saturated_due;
           Alcotest.test_case "time step catches up after late sleep" `Quick
             test_time_step_catches_up_after_late_sleep;
-          Alcotest.test_case "time step catch-up yields between batches" `Quick
-            test_time_catch_up_yields_between_batches;
+          Alcotest.test_case "time step_replay catch-up yields between batches"
+            `Quick
+            test_time_step_replay_catch_up_yields_between_batches;
           Alcotest.test_case
-            "time saturated step catch-up yields without completion" `Quick
-            test_time_step_saturated_catch_up_yields_without_completion;
+            "time saturated step_replay catch-up yields without completion"
+            `Quick
+            test_time_step_replay_saturated_catch_up_yields_without_completion;
           Alcotest.test_case
-            "time coalesced step saturated catch-up runs once" `Quick
-            test_time_step_coalesced_saturated_catch_up_runs_once;
+            "time step saturated catch-up runs once" `Quick
+            test_time_step_saturated_catch_up_runs_once;
           Alcotest.test_case "time large catch-up applies beyond old cap" `Quick
             test_time_large_catch_up_applies_beyond_old_cap;
           Alcotest.test_case "time interval saturated catch-up coalesces" `Quick
@@ -9671,8 +9680,8 @@ let () =
             "time step dispose after update construction skips f" `Quick
             test_time_step_dispose_after_update_construction_skips_f;
           Alcotest.test_case
-            "time coalesced step dispose after update construction skips f" `Quick
-            test_time_step_coalesced_dispose_after_update_construction_skips_f;
+            "time step_replay dispose after update construction skips f" `Quick
+            test_time_step_replay_dispose_after_update_construction_skips_f;
           Alcotest.test_case "time interval restarts after reobserve" `Quick
             test_time_interval_restarts_after_reobserve;
           Alcotest.test_case "time interval ignores stale sleep after reobserve"
@@ -9742,9 +9751,9 @@ let () =
             "time step does not catch up without daemon progress" `Quick
             test_time_step_does_not_catch_up_without_daemon_progress;
           Alcotest.test_case
-            "time coalesced step does not catch up without daemon progress"
+            "time step_replay does not catch up without daemon progress"
             `Quick
-            test_time_step_coalesced_does_not_catch_up_without_daemon_progress;
+            test_time_step_replay_does_not_catch_up_without_daemon_progress;
           Alcotest.test_case "time step does not run function in stabilize"
             `Quick test_time_step_does_not_run_f_inside_stabilize;
           Alcotest.test_case "time active timer refresh does not restart pure pass"

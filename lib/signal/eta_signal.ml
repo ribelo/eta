@@ -4208,6 +4208,34 @@ module Make (Observer_error : Observer_error) () = struct
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
                         make_timer_signal initial every ~refresh_when_inactive:false
+                          ~catch_up_policy:Catch_up_coalesced ~runtime_contract
+                          {
+                            source_timer_update =
+                              (fun timer generation ~missed source ->
+                                timer_after_update_state timer generation
+                                |> Effect.bind (function
+                                     | `Stop -> Effect.unit
+                                     | `Continue ->
+                                         Effect.sync (fun () ->
+                                             f ~missed (Var.value source))
+                                         |> Effect.annotate
+                                              ~key:"eta_signal.timer.kind"
+                                              ~value:"step"
+                                         |> Effect.named "eta_signal.time.step"
+                                         |> Effect.bind (fun next ->
+                                                timer_set_source timer generation
+                                                  source next
+                                                |> Effect.map (fun _ -> ()))));
+                          })))
+
+    let step_replay ~every ~initial f =
+      Effect.sync (fun () -> validate_interval every)
+      |> Effect.flatten_result
+      |> Effect.bind (fun () ->
+             current_runtime_contract ()
+             |> Effect.bind (fun runtime_contract ->
+                    construct_timer_signal (fun () ->
+                        make_timer_signal initial every ~refresh_when_inactive:false
                           ~runtime_contract
                           {
                             source_timer_update =
@@ -4221,36 +4249,8 @@ module Make (Observer_error : Observer_error) () = struct
                                          |> Effect.annotate
                                               ~key:"eta_signal.timer.kind"
                                               ~value:"step"
-                                         |> Effect.named "eta_signal.time.step"
-                                         |> Effect.bind (fun next ->
-                                                timer_set_source timer generation
-                                                  source next
-                                                |> Effect.map (fun _ -> ()))));
-                          })))
-
-    let step_coalesced ~every ~initial f =
-      Effect.sync (fun () -> validate_interval every)
-      |> Effect.flatten_result
-      |> Effect.bind (fun () ->
-             current_runtime_contract ()
-             |> Effect.bind (fun runtime_contract ->
-                    construct_timer_signal (fun () ->
-                        make_timer_signal initial every ~refresh_when_inactive:false
-                          ~catch_up_policy:Catch_up_coalesced ~runtime_contract
-                          {
-                            source_timer_update =
-                              (fun timer generation ~missed source ->
-                                timer_after_update_state timer generation
-                                |> Effect.bind (function
-                                     | `Stop -> Effect.unit
-                                     | `Continue ->
-                                         Effect.sync (fun () ->
-                                             f ~missed (Var.value source))
-                                         |> Effect.annotate
-                                              ~key:"eta_signal.timer.kind"
-                                              ~value:"step_coalesced"
                                          |> Effect.named
-                                              "eta_signal.time.step_coalesced"
+                                              "eta_signal.time.step_replay"
                                          |> Effect.bind (fun next ->
                                                 timer_set_source timer generation
                                                   source next

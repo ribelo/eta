@@ -191,14 +191,13 @@ let with_late_timer_wake ?(jump_ms = 1_000_000) f =
   in
   Fun.protect ~finally:release (fun () -> f runtime sleep_calls)
 
-let test_step_coalesced_bounds_large_late_wake () =
+let test_step_bounds_large_late_wake () =
   with_late_timer_wake @@ fun runtime sleep_calls ->
   let applied = ref 0 in
   let missed_seen = ref None in
   let step =
     run_ok runtime
-      (Signal.Time.step_coalesced ~every:(Eta.Duration.ms 1) ~initial:0
-         (fun ~missed value ->
+      (Signal.Time.step ~every:(Eta.Duration.ms 1) ~initial:0 (fun ~missed value ->
            incr applied;
            missed_seen := Some missed;
            value + missed))
@@ -206,12 +205,12 @@ let test_step_coalesced_bounds_large_late_wake () =
   let observer =
     run_ok runtime (Signal.Observer.observe step (fun _ -> E.unit))
   in
-  wait_until "coalesced step late wake" (fun () -> !sleep_calls >= 2);
-  Alcotest.(check int) "coalesced update calls" 1 !applied;
+  wait_until "step late wake" (fun () -> !sleep_calls >= 2);
+  Alcotest.(check int) "step update calls" 1 !applied;
   Alcotest.(check (option int))
-    "coalesced missed count" (Some 1_000_000) !missed_seen;
+    "step missed count" (Some 1_000_000) !missed_seen;
   run_ok runtime Signal.stabilize;
-  Alcotest.(check int) "coalesced step value" 1_000_000
+  Alcotest.(check int) "step value" 1_000_000
     (run_ok runtime (Signal.Observer.read observer));
   run_ok runtime (Signal.Observer.dispose observer)
 
@@ -363,8 +362,8 @@ let () =
             test_stream_bridge_emits_and_closes;
           Alcotest.test_case "interval catches up with test clock" `Quick
             test_interval_catches_up_with_test_clock;
-          Alcotest.test_case "step_coalesced bounds large late wake" `Quick
-            test_step_coalesced_bounds_large_late_wake;
+          Alcotest.test_case "step bounds large late wake" `Quick
+            test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
             test_timer_runtime_mismatch_on_observe;
           Alcotest.test_case "captured branch observer invalidates" `Quick
