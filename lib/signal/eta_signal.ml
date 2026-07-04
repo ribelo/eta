@@ -1127,7 +1127,6 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_has_cancel timer =
     Timer.state_has_cancel (timer_effective_state timer)
 
-  let add_ms_capped = Timer.add_ms_capped
   let add_int_capped = Timer.add_int_capped
 
   let timer_set_next_due_state = Timer.state_set_next_due
@@ -3318,7 +3317,9 @@ module Make (Observer_error : Observer_error) () = struct
            | Some next_due_ms ->
                Effect.now
                |> Effect.bind (fun now_ms ->
-                      let delay_ms = max 0 (next_due_ms - now_ms) in
+                      let delay_ms =
+                        Timer.sleep_delay_ms ~now_ms ~next_due_ms
+                      in
                       Effect.sleep (Duration.ms delay_ms))
                |> Effect.bind (fun () ->
                       timer_read_next_due timer generation next_due_ms
@@ -3414,7 +3415,9 @@ module Make (Observer_error : Observer_error) () = struct
               let start_loop () =
                 Effect.now
                 |> Effect.bind (fun now_ms ->
-                       let next_due_ms = add_ms_capped now_ms interval_ms in
+                       let next_due_ms =
+                         Timer.initial_next_due_ms ~now_ms ~interval_ms
+                       in
                        timer_set_next_due timer generation next_due_ms
                        |> Effect.bind (function
                             | `Stop -> Effect.unit

@@ -92,6 +92,8 @@ val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
 val missed_cadences : interval_ms:int -> next_due_ms:int -> now_ms:int -> int
 val advance_due : int -> int -> int -> int
+val initial_next_due_ms : now_ms:int -> interval_ms:int -> int
+val sleep_delay_ms : now_ms:int -> next_due_ms:int -> int
 
 val add_relative_deadline :
   int -> int -> (int, [> `Deadline_overflow | `Past_deadline ]) result

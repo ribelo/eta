@@ -138,6 +138,14 @@ let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
 let advance_due next_due_ms interval_ms missed =
   add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
 
+let initial_next_due_ms ~now_ms ~interval_ms =
+  add_ms_capped now_ms interval_ms
+
+let sleep_delay_ms ~now_ms ~next_due_ms =
+  if next_due_ms <= now_ms then 0
+  else if now_ms < 0 && next_due_ms > max_int + now_ms then max_int
+  else next_due_ms - now_ms
+
 let add_relative_deadline now_ms duration_ms =
   if duration_ms <= 0 then Error `Past_deadline
   else if now_ms > max_int - duration_ms then Error `Deadline_overflow

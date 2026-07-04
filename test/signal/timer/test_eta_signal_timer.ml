@@ -27,7 +27,19 @@ let test_due_arithmetic () =
     (Timer.missed_cadences ~interval_ms:10 ~next_due_ms:50 ~now_ms:50);
   Alcotest.(check int) "missed multiple" 4
     (Timer.missed_cadences ~interval_ms:10 ~next_due_ms:50 ~now_ms:85);
-  Alcotest.(check int) "advance" 90 (Timer.advance_due 50 10 4)
+  Alcotest.(check int) "advance" 90 (Timer.advance_due 50 10 4);
+  Alcotest.(check int) "initial next due" 60
+    (Timer.initial_next_due_ms ~now_ms:50 ~interval_ms:10);
+  Alcotest.(check int) "initial next due caps" max_int
+    (Timer.initial_next_due_ms ~now_ms:max_int ~interval_ms:10);
+  Alcotest.(check int) "future sleep delay" 10
+    (Timer.sleep_delay_ms ~now_ms:50 ~next_due_ms:60);
+  Alcotest.(check int) "due sleep delay" 0
+    (Timer.sleep_delay_ms ~now_ms:60 ~next_due_ms:60);
+  Alcotest.(check int) "past sleep delay" 0
+    (Timer.sleep_delay_ms ~now_ms:70 ~next_due_ms:60);
+  Alcotest.(check int) "sleep delay caps overflow" max_int
+    (Timer.sleep_delay_ms ~now_ms:min_int ~next_due_ms:0)
 
 let test_deadline_arithmetic () =
   Alcotest.(check (result int deadline_error)) "positive" (Ok 15)
