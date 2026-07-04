@@ -68,11 +68,6 @@ type 'a refresh_plan = {
   refresh_finish : bool;
 }
 
-type 'a refresh_transition =
-  | Refresh_set of 'a
-  | Refresh_advance_due of int
-  | Refresh_finish
-
 type _ refresh_spec =
   | Refresh_current_time : int refresh_spec
   | Refresh_deadline : int -> bool refresh_spec
@@ -116,6 +111,11 @@ type finish_plan = {
   finish_state : state;
   finish_cancel_hooks : (unit -> unit) list;
 }
+
+type 'a refresh_action =
+  | Refresh_set of 'a
+  | Refresh_advance_due of int
+  | Refresh_finish of finish_plan
 
 type advance_next_due_action =
   | Advance_next_due_stop
@@ -551,7 +551,7 @@ let current_time_refresh_plan ~now_ms =
     refresh_finish = false;
   }
 
-let refresh_transitions refresh =
+let refresh_actions ~advance_generation ~state refresh =
   let due_transitions =
     match refresh.refresh_next_due_ms with
     | None -> []
@@ -563,7 +563,10 @@ let refresh_transitions refresh =
     | Some value -> [ Refresh_set value ]
   in
   due_transitions @ source_transitions
-  @ (if refresh.refresh_finish then [ Refresh_finish ] else [])
+  @
+  (if refresh.refresh_finish then
+     [ Refresh_finish (finish ~advance_generation state) ]
+   else [])
 
 let deadline_refresh_plan ~now_ms ~deadline_ms =
   let refresh = deadline_refresh ~now_ms ~deadline_ms in
