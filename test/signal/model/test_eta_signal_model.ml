@@ -55,6 +55,14 @@ let expect_observer_failed label runtime eff =
       Alcotest.failf "%s: expected observer failure, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
+let expect_die label runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Die _) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected die, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected die, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
 let pp_observed_update formatter = function
   | Initialized value -> Format.fprintf formatter "Initialized %d" value
   | Changed (old_value, new_value) ->
@@ -328,6 +336,71 @@ let test_observer_failure_retry_matches_model () =
     (run_ok runtime (Signal.Observer.read observer));
   run_ok runtime (Signal.Observer.dispose observer)
 
+let test_pure_failure_matches_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 1 in
+  let signal =
+    Signal.Var.watch source
+    |> Signal.map (fun value ->
+           if value = 2 then failwith "model pure failure";
+           value)
+  in
+  let actual_updates = ref [] in
+  let record update =
+    E.sync (fun () ->
+        actual_updates := observed_of_signal_update update :: !actual_updates)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe signal record) in
+  let model_pending = ref 1 in
+  let model_current = ref None in
+  let model_updates = ref [] in
+  let stabilize_model () =
+    if !model_pending = 2 then `Pure_failure
+    else
+      let value = !model_pending in
+      let update =
+        match !model_current with
+        | None -> Some (Initialized value)
+        | Some current ->
+            if current = value then None else Some (Changed (current, value))
+      in
+      model_current := Some value;
+      Option.iter
+        (fun update -> model_updates := update :: !model_updates)
+        update;
+      `Committed
+  in
+  let check_model label =
+    Alcotest.(check (list observed_update))
+      (label ^ " updates") (List.rev !model_updates) (List.rev !actual_updates);
+    match !model_current with
+    | None -> ()
+    | Some expected ->
+        Alcotest.(check int) (label ^ " read") expected
+          (run_ok runtime (Signal.Observer.read observer))
+  in
+  Alcotest.(check bool) "initial model commits" true
+    (match stabilize_model () with `Committed -> true | `Pure_failure -> false);
+  run_ok runtime Signal.stabilize;
+  check_model "initial";
+  model_pending := 2;
+  run_ok runtime (Signal.Var.set source 2);
+  Alcotest.(check bool) "failing model does not commit" true
+    (match stabilize_model () with `Pure_failure -> true | `Committed -> false);
+  expect_die "pure failure" runtime Signal.stabilize;
+  check_model "after pure failure";
+  Alcotest.(check bool) "pending failure retries" true
+    (match stabilize_model () with `Pure_failure -> true | `Committed -> false);
+  expect_die "pure failure retry" runtime Signal.stabilize;
+  check_model "after pure failure retry";
+  model_pending := 3;
+  run_ok runtime (Signal.Var.set source 3);
+  Alcotest.(check bool) "recovered model commits" true
+    (match stabilize_model () with `Committed -> true | `Pure_failure -> false);
+  run_ok runtime Signal.stabilize;
+  check_model "after recovery";
+  run_ok runtime (Signal.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -341,5 +414,7 @@ let () =
             test_observer_phase_mutation_matches_model;
           Alcotest.test_case "observer failure retry matches model" `Quick
             test_observer_failure_retry_matches_model;
+          Alcotest.test_case "pure failure matches model" `Quick
+            test_pure_failure_matches_model;
         ] );
     ]
