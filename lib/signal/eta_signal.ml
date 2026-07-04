@@ -1711,6 +1711,25 @@ module Make (Observer_error : Observer_error) () = struct
       (a, b signal, scope) Bind.snapshot =
     Transaction.current bind.snapshot
 
+  module Scope_invalidation = Scope.Make_invalidation (struct
+    type nonrec node_id = signal_id
+    type nonrec scope_id = scope_id
+    type nonrec owner = packed_signal
+    type nonrec node = packed_signal
+
+    let node_id (P signal) = signal.id
+    let equal_node_id left right = signal_id_int left = signal_id_int right
+    let valid (P signal) = signal.valid
+    let dependents (P signal) = signal.dependents
+
+    let nested_scope (P signal) =
+      match signal.kind with
+      | Bind bind -> Bind.inner_scope (bind_current_snapshot bind)
+      | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+      | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+          None
+  end)
+
   let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =
     match Stabilization.transaction graph.stabilization with
@@ -1752,31 +1771,8 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> []
 
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
-    let excluded signal =
-      match exclude_signal_id with
-      | None -> false
-      | Some id -> signal_id_int signal.id = signal_id_int id
-    in
-    let rec visit_scope scope =
-      if Scope.valid scope then List.iter visit (Scope.nodes scope)
-    and visit (P signal as packed) =
-      if
-        signal.valid
-        && not (excluded signal)
-        && not (Hashtbl.mem seen signal.id)
-      then (
-        Hashtbl.add seen signal.id ();
-        collected := packed :: !collected;
-        List.iter visit signal.dependents;
-        match signal.kind with
-        | Bind bind ->
-            Option.iter visit_scope
-              (Bind.inner_scope (bind_current_snapshot bind))
-        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-            ())
-    in
-    visit_scope scope
+    Scope_invalidation.collect ?exclude_node_id:exclude_signal_id seen
+      collected scope
 
   let preflight_timer_invalidation timer =
     (* Scope invalidation stops active timers during commit. Check generation

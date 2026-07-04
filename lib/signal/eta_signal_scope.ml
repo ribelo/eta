@@ -87,3 +87,39 @@ module Make_validation (Node : VALIDATION_NODE) = struct
     in
     visit inner
 end
+
+module type INVALIDATION_NODE = sig
+  type node_id
+  type scope_id
+  type owner
+  type node
+
+  val node_id : node -> node_id
+  val equal_node_id : node_id -> node_id -> bool
+  val valid : node -> bool
+  val dependents : node -> node list
+  val nested_scope : node -> (scope_id, owner, node) t option
+end
+
+module Make_invalidation (Node : INVALIDATION_NODE) = struct
+  let collect ?exclude_node_id seen collected scope =
+    let excluded node =
+      match exclude_node_id with
+      | None -> false
+      | Some id -> Node.equal_node_id (Node.node_id node) id
+    in
+    let rec visit_scope scope =
+      if valid scope then List.iter visit (nodes scope)
+    and visit node =
+      if
+        Node.valid node
+        && not (excluded node)
+        && not (Hashtbl.mem seen (Node.node_id node))
+      then (
+        Hashtbl.add seen (Node.node_id node) ();
+        collected := node :: !collected;
+        List.iter visit (Node.dependents node);
+        Option.iter visit_scope (Node.nested_scope node))
+    in
+    visit_scope scope
+end

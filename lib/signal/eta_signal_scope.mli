@@ -54,3 +54,25 @@ module Make_validation (Node : VALIDATION_NODE) : sig
     Node.node ->
     (unit, [> `Invalid_scope ]) result
 end
+
+module type INVALIDATION_NODE = sig
+  type node_id
+  type scope_id
+  type owner
+  type node
+
+  val node_id : node -> node_id
+  val equal_node_id : node_id -> node_id -> bool
+  val valid : node -> bool
+  val dependents : node -> node list
+  val nested_scope : node -> (scope_id, owner, node) t option
+end
+
+module Make_invalidation (Node : INVALIDATION_NODE) : sig
+  val collect :
+    ?exclude_node_id:Node.node_id ->
+    (Node.node_id, unit) Hashtbl.t ->
+    Node.node list ref ->
+    (Node.scope_id, Node.owner, Node.node) t ->
+    unit
+end

@@ -94,6 +94,8 @@ type node = {
   mutable node_valid : bool;
   mutable node_scope : (int, string, node) Scope.t option;
   mutable node_children : node list;
+  mutable node_dependents : node list;
+  mutable node_nested_scope : (int, string, node) Scope.t option;
 }
 
 module Validation = Scope.Make_validation (struct
@@ -108,8 +110,16 @@ module Validation = Scope.Make_validation (struct
   let children node = node.node_children
 end)
 
-let node ?(valid = true) ?scope ?(children = []) id =
-  { node_id = id; node_valid = valid; node_scope = scope; node_children = children }
+let node ?(valid = true) ?scope ?(children = []) ?(dependents = [])
+    ?nested_scope id =
+  {
+    node_id = id;
+    node_valid = valid;
+    node_scope = scope;
+    node_children = children;
+    node_dependents = dependents;
+    node_nested_scope = nested_scope;
+  }
 
 let check_valid name scope node =
   match Validation.validate_inner ~scope node with
@@ -146,6 +156,62 @@ let test_validate_inner_traverses_children_and_deduplicates () =
   child.node_children <- [ child ];
   check_valid "cycle deduplicated" root child
 
+module Invalidation = Scope.Make_invalidation (struct
+  type node_id = int
+  type scope_id = int
+  type owner = string
+  type nonrec node = node
+
+  let node_id node = node.node_id
+  let equal_node_id = Int.equal
+  let valid node = node.node_valid
+  let dependents node = node.node_dependents
+  let nested_scope node = node.node_nested_scope
+end)
+
+let collected_ids ?exclude scope =
+  let seen = Hashtbl.create 8 in
+  let collected = ref [] in
+  Invalidation.collect ?exclude_node_id:exclude seen collected scope;
+  List.map (fun node -> node.node_id) !collected |> List.sort Int.compare
+
+let test_invalidation_collects_dependents_and_nested_scope_nodes () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let nested = Scope.create ~id:2 ~owner:"nested" ~parent:(Some root) in
+  let dependent = node 2 in
+  let source = node ~dependents:[ dependent ] 1 in
+  let inner = node 4 in
+  let dynamic = node ~nested_scope:nested 3 in
+  Scope.add_node nested inner;
+  Scope.add_node root source;
+  Scope.add_node root dynamic;
+  Alcotest.(check (list int))
+    "collected ids" [ 1; 2; 3; 4 ] (collected_ids root)
+
+let test_invalidation_excludes_node_and_skips_invalid_nested_scope () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let nested = Scope.create ~id:2 ~owner:"nested" ~parent:(Some root) in
+  let dependent = node 2 in
+  let source = node ~dependents:[ dependent ] 1 in
+  let inner = node 4 in
+  let dynamic = node ~nested_scope:nested 3 in
+  Scope.add_node nested inner;
+  ignore (Scope.invalidate nested : node list option);
+  Scope.add_node root source;
+  Scope.add_node root dynamic;
+  Alcotest.(check (list int))
+    "excluded source and invalid nested scope"
+    [ 3 ] (collected_ids ~exclude:1 root)
+
+let test_invalidation_deduplicates_reachable_nodes () =
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let shared = node 2 in
+  let source = node ~dependents:[ shared; shared ] 1 in
+  Scope.add_node root shared;
+  Scope.add_node root source;
+  Alcotest.(check (list int))
+    "deduplicated ids" [ 1; 2 ] (collected_ids root)
+
 let () =
   Alcotest.run "eta_signal_scope"
     [
@@ -169,5 +235,12 @@ let () =
             test_validate_inner_rejects_invalid_nodes_and_scopes;
           Alcotest.test_case "validate traverses children" `Quick
             test_validate_inner_traverses_children_and_deduplicates;
+          Alcotest.test_case "invalidation collects reachable nodes" `Quick
+            test_invalidation_collects_dependents_and_nested_scope_nodes;
+          Alcotest.test_case "invalidation excludes and skips invalid scope"
+            `Quick
+            test_invalidation_excludes_node_and_skips_invalid_nested_scope;
+          Alcotest.test_case "invalidation deduplicates nodes" `Quick
+            test_invalidation_deduplicates_reachable_nodes;
         ] );
     ]
