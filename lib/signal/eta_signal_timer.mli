@@ -48,10 +48,6 @@ type 'a demand_item = {
   demand_current_state : state;
 }
 
-type 'a demand_decision =
-  | Demand_decision_start of 'a
-  | Demand_decision_stop of 'a
-
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -82,6 +78,10 @@ type start_plan = {
   start_state : state;
   start_generation : int;
 }
+
+type 'a demand_plan =
+  | Demand_plan_start of 'a * start_plan
+  | Demand_plan_stop of 'a * stop_plan option
 
 type finish_plan = {
   finish_state : state;
@@ -177,13 +177,17 @@ val needs_stop : effective_state:state -> bool
 val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
 
-val demand_decisions : 'a demand_item list -> 'a demand_decision list
-
 val start :
   advance_generation:(int -> int) ->
   effective_state:state ->
   current_state:state ->
   start_plan option
+
+val demand_plans :
+  advance_generation:(int -> int) ->
+  cancel_running:bool ->
+  'a demand_item list ->
+  'a demand_plan list
 
 val begin_start : state -> generation:int -> state option
 

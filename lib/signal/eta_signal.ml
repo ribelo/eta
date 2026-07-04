@@ -1126,6 +1126,10 @@ module Make (Observer_error : Observer_error) () = struct
     update_timer_staging timer (fun snapshot ->
         Timer.snapshot_with_state snapshot state)
 
+  let timer_apply_stop_plan_unlocked timer plan =
+    set_timer_current_state timer plan.Timer.stop_state;
+    plan.Timer.stop_cancel_hooks
+
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
     match
       Timer.stop
@@ -1133,9 +1137,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~cancel_running (timer_current_state timer)
     with
     | None -> []
-    | Some plan ->
-        set_timer_current_state timer plan.stop_state;
-        plan.stop_cancel_hooks
+    | Some plan -> timer_apply_stop_plan_unlocked timer plan
 
   let timer_rollback_unclaimed_start_unlocked timer =
     match timer_current_state timer with
@@ -1841,17 +1843,9 @@ module Make (Observer_error : Observer_error) () = struct
               recompute_with_dependencies reuse_dependencies reuse_value
           | Bind.Reuse_cached -> use_cached ()))
 
-  let timer_start_unlocked timer =
-    match
-      Timer.start
-        ~advance_generation:(checked_succ "timer generation")
-        ~effective_state:(timer_effective_state timer)
-        ~current_state:(timer_current_state timer)
-    with
-    | None -> None
-    | Some plan ->
-        set_timer_current_state timer plan.start_state;
-        Some { start_timer = timer; start_effect = timer.timer_start timer }
+  let timer_apply_start_plan_unlocked timer plan =
+    set_timer_current_state timer plan.Timer.start_state;
+    { start_timer = timer; start_effect = timer.timer_start timer }
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
@@ -1963,29 +1957,25 @@ module Make (Observer_error : Observer_error) () = struct
                demand_current_state = timer_current_state timer;
              })
     in
-    let timer_actions =
-      Timer.demand_decisions demand_items
-      |> List.map (function
-           | Timer.Demand_decision_start timer ->
-               preflight_timer_start timer;
-               (timer, Timer.Demand_start)
-           | Timer.Demand_decision_stop timer ->
-               preflight_timer_invalidation timer;
-               (timer, Timer.Demand_stop))
+    let timer_plans =
+      Timer.demand_plans
+        ~advance_generation:(checked_succ "timer generation")
+        ~cancel_running:true demand_items
     in
     let start_attempts = ref [] in
     let cancel_hooks = ref [] in
     List.iter
       (function
-        | timer, Timer.Demand_start ->
-            Option.iter
-              (fun attempt -> start_attempts := attempt :: !start_attempts)
-              (timer_start_unlocked timer)
-        | timer, Timer.Demand_stop ->
+        | Timer.Demand_plan_start (timer, plan) ->
+            start_attempts :=
+              timer_apply_start_plan_unlocked timer plan :: !start_attempts
+        | Timer.Demand_plan_stop (timer, Some plan) ->
             cancel_hooks :=
-              List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks
-        | _, Timer.Demand_none -> ())
-      timer_actions;
+              List.rev_append
+                (timer_apply_stop_plan_unlocked timer plan)
+                !cancel_hooks
+        | Timer.Demand_plan_stop (_, None) -> ())
+      timer_plans;
     (List.rev !start_attempts, List.rev !cancel_hooks)
 
   let rollback_unclaimed_timer_starts attempts =

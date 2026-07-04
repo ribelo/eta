@@ -354,19 +354,32 @@ let test_demand_policy () =
   Alcotest.(check bool) "inactive does not need stop" false
     (Timer.needs_stop ~effective_state:inactive)
 
-let demand_decision_values decisions =
+let demand_plan_values plans =
   List.map
     (function
-      | Timer.Demand_decision_start item -> (item, Timer.Demand_start)
-      | Timer.Demand_decision_stop item -> (item, Timer.Demand_stop))
-    decisions
+      | Timer.Demand_plan_start (item, plan) ->
+          ( item,
+            "start:" ^ string_of_int plan.Timer.start_generation ^ ":"
+            ^ Timer.state_label plan.Timer.start_state )
+      | Timer.Demand_plan_stop (item, None) -> (item, "stop:none")
+      | Timer.Demand_plan_stop (item, Some plan) ->
+          ( item,
+            "stop:"
+            ^ string_of_int
+                (Timer.state_generation plan.Timer.stop_state)
+            ^ ":"
+            ^ string_of_int (List.length plan.Timer.stop_cancel_hooks) ))
+    plans
 
-let test_demand_decisions_policy () =
+let test_demand_plans_policy () =
   let inactive = Timer.Timer_inactive 0 in
   let running = Timer.Timer_running (1, Some 10, noop) in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (1, Some 10)
+  in
   let finished = Timer.Timer_finished 1 in
-  let decisions =
-    Timer.demand_decisions
+  let plans =
+    Timer.demand_plans ~advance_generation:succ ~cancel_running:true
       [
         {
           Timer.demand_item = "start";
@@ -387,18 +400,28 @@ let test_demand_decisions_policy () =
           demand_current_state = running;
         };
         {
+          Timer.demand_item = "staged-stop";
+          demand_necessary = false;
+          demand_effective_state = running_uncancellable;
+          demand_current_state = inactive;
+        };
+        {
           Timer.demand_item = "finished";
           demand_necessary = true;
           demand_effective_state = finished;
           demand_current_state = finished;
         };
       ]
-    |> demand_decision_values
+    |> demand_plan_values
   in
-  Alcotest.(check (list (pair string demand_action)))
-    "non-noop demand decisions"
-    [ ("start", Timer.Demand_start); ("stop", Timer.Demand_stop) ]
-    decisions
+  Alcotest.(check (list (pair string string)))
+    "non-noop demand plans"
+    [
+      ("start", "start:1:starting");
+      ("stop", "stop:2:1");
+      ("staged-stop", "stop:none");
+    ]
+    plans
 
 let test_start_policy () =
   let inactive = Timer.Timer_inactive 0 in
@@ -905,8 +928,8 @@ let () =
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
-          Alcotest.test_case "demand decisions policy" `Quick
-            test_demand_decisions_policy;
+          Alcotest.test_case "demand plans policy" `Quick
+            test_demand_plans_policy;
           Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "begin start policy" `Quick
             test_begin_start_policy;

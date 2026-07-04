@@ -85,10 +85,6 @@ type 'a demand_item = {
   demand_current_state : state;
 }
 
-type 'a demand_decision =
-  | Demand_decision_start of 'a
-  | Demand_decision_stop of 'a
-
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -106,6 +102,10 @@ type start_plan = {
   start_state : state;
   start_generation : int;
 }
+
+type 'a demand_plan =
+  | Demand_plan_start of 'a * start_plan
+  | Demand_plan_stop of 'a * stop_plan option
 
 type finish_plan = {
   finish_state : state;
@@ -378,19 +378,6 @@ let demand_action ~necessary ~effective_state ~current_state =
   else if needs_stop ~effective_state then Demand_stop
   else Demand_none
 
-let demand_decisions items =
-  List.filter_map
-    (fun item ->
-      match
-        demand_action ~necessary:item.demand_necessary
-          ~effective_state:item.demand_effective_state
-          ~current_state:item.demand_current_state
-      with
-      | Demand_none -> None
-      | Demand_start -> Some (Demand_decision_start item.demand_item)
-      | Demand_stop -> Some (Demand_decision_stop item.demand_item))
-    items
-
 let start ~advance_generation ~effective_state ~current_state =
   if needs_start ~effective_state ~current_state then
     let generation = advance_generation (state_generation current_state) in
@@ -442,6 +429,29 @@ let stop ~advance_generation ~cancel_running state =
             Timer_inactive (advance_generation (state_generation state));
           stop_cancel_hooks = (if cancel_running then [ cancel ] else []);
         }
+
+let demand_plans ~advance_generation ~cancel_running items =
+  List.filter_map
+    (fun item ->
+      match
+        demand_action ~necessary:item.demand_necessary
+          ~effective_state:item.demand_effective_state
+          ~current_state:item.demand_current_state
+      with
+      | Demand_none -> None
+      | Demand_start ->
+          start ~advance_generation
+            ~effective_state:item.demand_effective_state
+            ~current_state:item.demand_current_state
+          |> Option.map (fun plan ->
+                 Demand_plan_start (item.demand_item, plan))
+      | Demand_stop ->
+          Some
+            (Demand_plan_stop
+               ( item.demand_item,
+                 stop ~advance_generation ~cancel_running
+                   item.demand_current_state )))
+    items
 
 let mark_failed ~advance_generation ~effective_state ~current_state ~generation
     =
