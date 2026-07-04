@@ -70,19 +70,15 @@ let delivery ~token ~sent ~dropped =
   }
 
 let observer_delivery ~token ~sent ~dropped value =
-  {
-    Delivery_handle.token = Option.value !token ~default:(-1);
-    update = value;
-    current_token = (fun () -> Effect.sync (fun () -> !token));
-    acknowledge_sent =
-      (fun token value ->
-        Effect.sync (fun () -> sent := (token, value) :: !sent));
-    acknowledge_drop =
-      (fun ~after_ack token value ->
-        Effect.sync (fun () ->
-            dropped := (token, value) :: !dropped;
-            List.iter (fun action -> action ()) after_ack));
-  }
+  Delivery_handle.create ~token:(Option.value !token ~default:(-1))
+    ~update:value
+    ~current_token:(fun () -> Effect.sync (fun () -> !token))
+    ~acknowledge_sent:(fun token value ->
+      Effect.sync (fun () -> sent := (token, value) :: !sent))
+    ~acknowledge_drop:(fun ~after_ack token value ->
+      Effect.sync (fun () ->
+          dropped := (token, value) :: !dropped;
+          List.iter (fun action -> action ()) after_ack))
 
 let hooks ?(after_send = fun () -> Effect.unit)
     ?(after_drop = fun () -> Effect.unit)
@@ -222,17 +218,12 @@ let test_observe_adapter () =
   let observe_delivery ?equal:_ ~on_finish signal callback =
     finish_hooks := on_finish;
     callback
-      {
-        Delivery_handle.token = Option.value !token ~default:(-1);
-        update = signal;
-        current_token =
-          (fun () -> Effect.sync (fun () -> !token));
-        acknowledge_sent =
-          (fun token value ->
-            Effect.sync (fun () -> sent := (token, value) :: !sent));
-        acknowledge_drop =
-          (fun ~after_ack:_ _token _value -> Effect.unit);
-      }
+      (Delivery_handle.create ~token:(Option.value !token ~default:(-1))
+         ~update:signal
+         ~current_token:(fun () -> Effect.sync (fun () -> !token))
+         ~acknowledge_sent:(fun token value ->
+           Effect.sync (fun () -> sent := (token, value) :: !sent))
+         ~acknowledge_drop:(fun ~after_ack:_ _token _value -> Effect.unit))
     |> Effect.map (fun () -> "observer")
   in
   let observer, stream =

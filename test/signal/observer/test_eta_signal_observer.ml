@@ -317,6 +317,30 @@ let test_delivery_labels () =
   Alcotest.(check string) "running" "running"
     (label (Observer_delivery_running (7, update_changed, [])))
 
+let test_delivery_handle_accessors () =
+  let handle =
+    Observer.Delivery_handle.create ~token:7 ~update:update_changed
+      ~current_token:(fun () -> Eta.Effect.pure (Some 7))
+      ~acknowledge_sent:(fun _token _update -> Eta.Effect.unit)
+      ~acknowledge_drop:(fun ~after_ack:_ _token _update -> Eta.Effect.unit)
+  in
+  Alcotest.(check int) "token" 7
+    (Observer.Delivery_handle.token handle);
+  Alcotest.check update "update" update_changed
+    (Observer.Delivery_handle.update handle);
+  ignore
+    (Observer.Delivery_handle.current_token handle
+      : unit -> (int option, [ `Any ]) Eta.Effect.t);
+  ignore
+    (Observer.Delivery_handle.acknowledge_sent handle
+      : int -> int Observer.Update.t -> (unit, [ `Any ]) Eta.Effect.t);
+  ignore
+    (Observer.Delivery_handle.acknowledge_drop handle
+      : after_ack:after_ack list ->
+        int ->
+        int Observer.Update.t ->
+        (unit, [ `Any ]) Eta.Effect.t)
+
 let test_snapshot_policy () =
   let initial = Observer.Snapshot.initial in
   Alcotest.(check string) "initial value" "uninitialized"
@@ -536,6 +560,8 @@ let () =
           Alcotest.test_case "finish ignores stale token" `Quick
             test_delivery_finish_ignores_stale_token;
           Alcotest.test_case "labels" `Quick test_delivery_labels;
+          Alcotest.test_case "handle accessors" `Quick
+            test_delivery_handle_accessors;
         ] );
       ( "snapshot",
         [

@@ -12,20 +12,41 @@ module Update : sig
 end
 
 module Delivery_handle : sig
-  type ('token, 'update, 'after_ack) t = {
-    token : 'token;
-    update : 'update;
-    current_token :
-      'error. unit -> ('token option, 'error) Eta.Effect.t;
-    acknowledge_sent :
-      'error. 'token -> 'update -> (unit, 'error) Eta.Effect.t;
-    acknowledge_drop :
-      'error.
-      after_ack:'after_ack list ->
-      'token ->
-      'update ->
-      (unit, 'error) Eta.Effect.t;
-  }
+  type ('token, 'update, 'after_ack) t
+
+  val create :
+    token:'token ->
+    update:'update ->
+    current_token:
+      ('error. unit -> ('token option, 'error) Eta.Effect.t) ->
+    acknowledge_sent:
+      ('error. 'token -> 'update -> (unit, 'error) Eta.Effect.t) ->
+    acknowledge_drop:
+      ('error.
+       after_ack:'after_ack list ->
+       'token ->
+       'update ->
+       (unit, 'error) Eta.Effect.t) ->
+    ('token, 'update, 'after_ack) t
+
+  val token : ('token, _, _) t -> 'token
+  val update : (_, 'update, _) t -> 'update
+
+  val current_token :
+    ('token, _, _) t -> unit -> ('token option, 'error) Eta.Effect.t
+
+  val acknowledge_sent :
+    ('token, 'update, _) t ->
+    'token ->
+    'update ->
+    (unit, 'error) Eta.Effect.t
+
+  val acknowledge_drop :
+    ('token, 'update, 'after_ack) t ->
+    after_ack:'after_ack list ->
+    'token ->
+    'update ->
+    (unit, 'error) Eta.Effect.t
 end
 
 module Value : sig

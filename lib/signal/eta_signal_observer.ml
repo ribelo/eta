@@ -26,6 +26,30 @@ module Delivery_handle = struct
       'update ->
       (unit, 'error) Eta.Effect.t;
   }
+
+  let create :
+      type token update after_ack.
+      token:token ->
+      update:update ->
+      current_token:
+        ('error. unit -> (token option, 'error) Eta.Effect.t) ->
+      acknowledge_sent:
+        ('error. token -> update -> (unit, 'error) Eta.Effect.t) ->
+      acknowledge_drop:
+        ('error.
+         after_ack:after_ack list ->
+         token ->
+         update ->
+         (unit, 'error) Eta.Effect.t) ->
+      (token, update, after_ack) t =
+   fun ~token ~update ~current_token ~acknowledge_sent ~acknowledge_drop ->
+    { token; update; current_token; acknowledge_sent; acknowledge_drop }
+
+  let token handle = handle.token
+  let update handle = handle.update
+  let current_token handle = handle.current_token
+  let acknowledge_sent handle = handle.acknowledge_sent
+  let acknowledge_drop handle = handle.acknowledge_drop
 end
 
 module Value = struct

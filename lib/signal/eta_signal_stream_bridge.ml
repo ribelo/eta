@@ -168,13 +168,19 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
 let offer_observer_delivery ~queue ~observer_delivery ~hooks ~on_drop =
   let delivery =
     {
-      current_token = observer_delivery.Delivery_handle.current_token;
-      acknowledge_sent = observer_delivery.Delivery_handle.acknowledge_sent;
-      acknowledge_drop = observer_delivery.Delivery_handle.acknowledge_drop;
+      current_token =
+        (fun () -> Delivery_handle.current_token observer_delivery ());
+      acknowledge_sent =
+        (fun token update ->
+          Delivery_handle.acknowledge_sent observer_delivery token update);
+      acknowledge_drop =
+        (fun ~after_ack token update ->
+          Delivery_handle.acknowledge_drop observer_delivery ~after_ack token
+            update);
     }
   in
   offer ~queue ~delivery ~hooks ~on_drop
-    observer_delivery.Delivery_handle.update
+    (Delivery_handle.update observer_delivery)
 
 let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
     ~observe_delivery signal =

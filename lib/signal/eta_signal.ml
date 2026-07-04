@@ -2450,17 +2450,12 @@ module Make (Observer_error : Observer_error) () = struct
       Observer_core.Delivery_handle.t
 
     let delivery observer token update =
-      {
-        Observer_core.Delivery_handle.token;
-        update;
-        current_token = (fun () -> active_event_delivery_token observer token);
-        acknowledge_sent =
-          (fun token update ->
-            acknowledge_stream_sent_delivery observer token update);
-        acknowledge_drop =
-          (fun ~after_ack token update ->
-            acknowledge_stream_drop_delivery observer token update ~after_ack);
-      }
+      Observer_core.Delivery_handle.create ~token ~update
+        ~current_token:(fun () -> active_event_delivery_token observer token)
+        ~acknowledge_sent:(fun token update ->
+          acknowledge_stream_sent_delivery observer token update)
+        ~acknowledge_drop:(fun ~after_ack token update ->
+          acknowledge_stream_drop_delivery observer token update ~after_ack)
 
     let transfer_active_observer observer =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
