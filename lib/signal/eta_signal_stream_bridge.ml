@@ -23,16 +23,6 @@ let create_stream ~capacity =
   create_queue ~capacity
   |> Result.map (fun queue -> (queue, Eta_stream.Stream.from_queue queue))
 
-type ('token, 'update, 'error) delivery = {
-  current_token : unit -> ('token option, 'error) Effect.t;
-  acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
-  acknowledge_drop :
-    after_ack:(unit -> unit) list ->
-    'token ->
-    'update ->
-    (unit, 'error) Effect.t;
-}
-
 type ('token, 'update, 'error) observer_delivery =
   ('token, 'update, unit -> unit) Delivery_handle.t
 
@@ -111,11 +101,12 @@ let report_dropped_update ~on_drop ~after_drop_before_ack
    |> Effect.bind (fun () -> acknowledge_published_drop ()))
   |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
-let offer ~queue ~delivery ~hooks ~on_drop update =
-  delivery.current_token ()
+let offer ~queue ~observer_delivery ~hooks ~on_drop =
+  Delivery_handle.current_token observer_delivery ()
   |> Effect.bind (function
        | None -> Effect.unit
        | Some token ->
+           let update = Delivery_handle.update observer_delivery in
            Effect.sync (fun () -> Queue.sent_token queue)
            |> Effect.bind (fun sent_before ->
                   let sent_published = ref false in
@@ -123,7 +114,8 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
                   let acknowledge_sent_once () =
                     if !sent_acknowledged then Effect.unit
                     else
-                      delivery.acknowledge_sent token update
+                      Delivery_handle.acknowledge_sent observer_delivery token
+                        update
                       |> Effect.bind (fun () ->
                              Effect.sync (fun () -> sent_acknowledged := true))
                   in
@@ -159,28 +151,13 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
                               ~after_drop_acknowledged:
                                 hooks.after_drop_acknowledged
                               ~acknowledge_drop:
-                                (delivery.acknowledge_drop token)
+                                (fun ~after_ack update ->
+                                  Delivery_handle.acknowledge_drop
+                                    observer_delivery ~after_ack token update)
                               update
                         | `Closed_with_error err ->
                             hooks.on_closed_with_error err))
                   |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())))
-
-let offer_observer_delivery ~queue ~observer_delivery ~hooks ~on_drop =
-  let delivery =
-    {
-      current_token =
-        (fun () -> Delivery_handle.current_token observer_delivery ());
-      acknowledge_sent =
-        (fun token update ->
-          Delivery_handle.acknowledge_sent observer_delivery token update);
-      acknowledge_drop =
-        (fun ~after_ack token update ->
-          Delivery_handle.acknowledge_drop observer_delivery ~after_ack token
-            update);
-    }
-  in
-  offer ~queue ~delivery ~hooks ~on_drop
-    (Delivery_handle.update observer_delivery)
 
 let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
     ~observe_delivery signal =
@@ -191,7 +168,6 @@ let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
            ~on_finish:[ observer_finish_hook ~queue ]
            signal
            (fun observer_delivery ->
-             offer_observer_delivery ~queue ~observer_delivery ~hooks
-               ~on_drop)
+             offer ~queue ~observer_delivery ~hooks ~on_drop)
          |> Effect.map_error map_observe_error
          |> Effect.map (fun observer -> (observer, stream)))

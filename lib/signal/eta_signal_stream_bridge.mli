@@ -19,16 +19,6 @@ val create_stream :
     [> `Invalid_capacity ] )
   result
 
-type ('token, 'update, 'error) delivery = {
-  current_token : unit -> ('token option, 'error) Eta.Effect.t;
-  acknowledge_sent : 'token -> 'update -> (unit, 'error) Eta.Effect.t;
-  acknowledge_drop :
-    after_ack:(unit -> unit) list ->
-    'token ->
-    'update ->
-    (unit, 'error) Eta.Effect.t;
-}
-
 type ('token, 'update, 'error) observer_delivery =
   ('token, 'update, unit -> unit) Eta_signal_observer.Delivery_handle.t
 
@@ -64,14 +54,6 @@ val observer_finish_hook :
   unit
 
 val offer :
-  queue:('update, 'queue_error) Eta.Queue.t ->
-  delivery:('token, 'update, 'error) delivery ->
-  hooks:('queue_error, 'error) hooks ->
-  on_drop:('update -> unit) option ->
-  'update ->
-  (unit, 'error) Eta.Effect.t
-
-val offer_observer_delivery :
   queue:('update, 'queue_error) Eta.Queue.t ->
   observer_delivery:('token, 'update, 'error) observer_delivery ->
   hooks:('queue_error, 'error) hooks ->
