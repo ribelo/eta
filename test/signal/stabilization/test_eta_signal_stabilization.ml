@@ -66,6 +66,23 @@ let test_reentrant_begin_rejected () =
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected delivering begin to fail")
 
+let test_commit_to_delivering_combines_transitions () =
+  let state = S.create () in
+  let pure =
+    match S.begin_pure state with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected begin to succeed"
+  in
+  (match S.commit_transaction state with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  ignore (S.commit_to_delivering state pure : S.delivering S.token);
+  Alcotest.(check bool) "delivering" true
+    (match S.state state with
+    | Delivering -> true
+    | Idle | Pure | Committed -> false)
+
 let test_rollback_invalidates_pure_token () =
   let state = S.create () in
   let pure =
@@ -130,6 +147,8 @@ let () =
             test_begin_commit_finish;
           Alcotest.test_case "reentrant begin rejected" `Quick
             test_reentrant_begin_rejected;
+          Alcotest.test_case "commit to delivering" `Quick
+            test_commit_to_delivering_combines_transitions;
           Alcotest.test_case "rollback invalidates pure token" `Quick
             test_rollback_invalidates_pure_token;
           Alcotest.test_case "begin opens transaction" `Quick

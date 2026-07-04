@@ -2647,12 +2647,9 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.active_timer_refresh <- None;
-        let committed_token =
-          Stabilization.commit_to_committed graph.stabilization pure_token
-        in
         ignore
-          (Stabilization.collect_to_delivering graph.stabilization
-             committed_token
+          (Stabilization.commit_to_delivering graph.stabilization
+             pure_token
             : Stabilization.delivering Stabilization.token);
         Pure_ok (hooks, events)
       with

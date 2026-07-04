@@ -98,6 +98,10 @@ let collect_to_delivering t Token =
   t.state <- Delivering;
   Token
 
+let commit_to_delivering t token =
+  let committed = commit_to_committed t token in
+  collect_to_delivering t committed
+
 let rollback_to_idle t Token =
   require_state "rollback_to_idle" Pure t;
   require_no_transaction "rollback_to_idle" t;
