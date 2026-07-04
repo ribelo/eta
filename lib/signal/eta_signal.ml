@@ -3,6 +3,7 @@ module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Bind = Eta_signal_bind
+module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Id = Eta_signal_id
@@ -564,7 +565,7 @@ module Make (Observer_error : Observer_error) () = struct
       observer.obs_callback token update
   end
 
-  type disposal_hook = unit -> unit
+  type disposal_hook = Cleanup.hook
 
   type event =
     | E : Observer_core.Delivery.token * 'a observer * 'a update -> event
@@ -1837,58 +1838,15 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
       (all_nodes_unlocked ())
 
-  let fail_disposal_hooks causes =
-    let cause =
-      match causes with
-      | [] -> invalid_arg "Eta_signal.fail_disposal_hooks: empty causes"
-      | [ cause ] -> cause
-      | causes -> Eta.Cause.sequential causes
-    in
-    Effect.Expert.make ~leaf_name:"Eta_signal.run_disposal_hooks" (fun _ ->
-        Eta.Exit.Error cause)
-
-  let run_disposal_hooks hooks =
-    let rec loop failures = function
-      | [] -> (
-          match List.rev failures with
-          | [] -> Effect.unit
-          | causes -> fail_disposal_hooks causes)
-      | hook :: rest ->
-          Effect.exit (Effect.sync hook)
-          |> Effect.bind (function
-               | Eta.Exit.Ok () -> loop failures rest
-               | Eta.Exit.Error cause -> loop (cause :: failures) rest)
-    in
-    loop [] hooks
-
-  let run_disposal_hooks_as_finalizers hooks =
-    Effect.unit |> Effect.on_exit (fun _exit -> run_disposal_hooks hooks)
-
-  let run_pending_disposal_hooks_as_finalizers hooks_ref =
-    match !hooks_ref with
-    | [] -> Effect.unit
-    | hooks ->
-        run_disposal_hooks_as_finalizers hooks
-        |> Effect.on_exit (fun _exit ->
-               Effect.sync (fun () -> hooks_ref := []))
-
   let fail_with_pending_disposal_hooks hooks_ref eff =
-    eff
-    |> Effect.on_exit (fun _exit ->
-           run_pending_disposal_hooks_as_finalizers hooks_ref)
+    Cleanup.fail_with_pending hooks_ref eff
 
   let graph_error_with_pending_disposal_hooks hooks_ref err =
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
   let run_pending_timer_cancel_hooks hooks_ref =
-    match !hooks_ref with
-    | [] -> Effect.unit
-    | hooks ->
-        (run_disposal_hooks hooks
-         |> Effect.on_exit (fun _exit ->
-                Effect.sync (fun () -> hooks_ref := [])))
-        |> Effect.uninterruptible
+    Cleanup.run_pending hooks_ref |> Effect.uninterruptible
 
   let refresh_timer_demand_unlocked runtime_contract =
     let needed = necessary_timers () in
@@ -1931,7 +1889,7 @@ module Make (Observer_error : Observer_error) () = struct
           (fun attempt ->
             timer_rollback_unclaimed_start_unlocked attempt.start_timer)
           attempts)
-    |> Effect.bind run_disposal_hooks
+    |> Effect.bind Cleanup.run_hooks
 
   let run_timer_start_attempts attempts =
     Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
@@ -1972,17 +1930,12 @@ module Make (Observer_error : Observer_error) () = struct
               refresh_timer_demand ()
               |> Effect.map_error (fun err -> (err :> stabilize_error))
               |> Effect.bind (fun () ->
-                     run_pending_disposal_hooks_as_finalizers hooks_ref)))
+                     Cleanup.run_pending_as_finalizers hooks_ref)))
       |> Effect.uninterruptible
-    else run_pending_disposal_hooks_as_finalizers hooks_ref
-
-  let pending_disposal_hooks hooks_ref =
-    match !hooks_ref with
-    | [] -> false
-    | _ :: _ -> true
+    else Cleanup.run_pending_as_finalizers hooks_ref
 
   let run_pending_dispose_cleanup hooks_ref refresh_timers =
-    if !refresh_timers || pending_disposal_hooks hooks_ref then
+    if !refresh_timers || Cleanup.pending hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
           |> Effect.bind (fun () ->
@@ -1990,24 +1943,24 @@ module Make (Observer_error : Observer_error) () = struct
                  |> Effect.or_die (fun err -> Graph_error err))
         else Effect.unit)
        |> Effect.bind (fun () ->
-              run_pending_disposal_hooks_as_finalizers hooks_ref))
+              Cleanup.run_pending_as_finalizers hooks_ref))
       |> Effect.uninterruptible
     else Effect.unit
 
   let run_pending_dispose_checked_cleanup hooks_ref refresh_timers =
-    if !refresh_timers || pending_disposal_hooks hooks_ref then
+    if !refresh_timers || Cleanup.pending hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
           |> Effect.bind (fun () -> refresh_timer_demand ())
         else Effect.unit)
        |> Effect.bind (fun () ->
-              run_pending_disposal_hooks_as_finalizers hooks_ref))
+              Cleanup.run_pending_as_finalizers hooks_ref))
       |> Effect.uninterruptible
     else Effect.unit
 
   let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
     let best_effort eff = Effect.exit eff |> Effect.map (fun _ -> ()) in
-    if !refresh_timers || pending_disposal_hooks hooks_ref then
+    if !refresh_timers || Cleanup.pending hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
           |> Effect.bind (fun () -> refresh_timer_demand ())
@@ -2015,7 +1968,7 @@ module Make (Observer_error : Observer_error) () = struct
           |> best_effort
         else Effect.unit)
        |> Effect.bind (fun () ->
-              run_pending_disposal_hooks_as_finalizers hooks_ref
+              Cleanup.run_pending_as_finalizers hooks_ref
               |> best_effort))
       |> Effect.uninterruptible
     else Effect.unit

@@ -4,6 +4,7 @@
  (synopsis "Incremental-style reactive signals for Eta")
  (private_modules
   eta_signal_bind
+  eta_signal_cleanup
   eta_signal_debug
   eta_signal_error
   eta_signal_id
