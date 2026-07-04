@@ -1938,24 +1938,19 @@ module Make (Observer_error : Observer_error) () = struct
       stage_var_graph_value source value;
       List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
 
-  let timer_finish_state state =
-    Timer.finish_state
+  let timer_finish_plan state =
+    Timer.finish
       ~advance_generation:(checked_succ "timer generation")
       state
 
   let timer_finish_unlocked timer =
-    set_timer_current_state timer
-      (timer_finish_state (timer_current_state timer))
+    let plan = timer_finish_plan (timer_current_state timer) in
+    set_timer_current_state timer plan.finish_state
 
   let timer_finish_cancel_hooks_unlocked timer =
-    let cancel_hooks = Timer.finish_cancel_hooks (timer_current_state timer) in
-    timer_finish_unlocked timer;
-    cancel_hooks
-
-  let timer_finish_transitions state =
-    List.map
-      (fun cancel -> Cancel_after_commit cancel)
-      (Timer.finish_cancel_hooks state)
+    let plan = timer_finish_plan (timer_current_state timer) in
+    set_timer_current_state timer plan.finish_state;
+    plan.finish_cancel_hooks
 
   let timer_source_refresh_plan source refresh =
     let due_transitions =
@@ -1980,8 +1975,12 @@ module Make (Observer_error : Observer_error) () = struct
              (Some next_due_ms))
     | Finish ->
         let state = timer_effective_state timer in
-        stage_timer_state_unlocked timer (timer_finish_state state);
-        List.iter (stage_timer_transition timer) (timer_finish_transitions state)
+        let plan = timer_finish_plan state in
+        stage_timer_state_unlocked timer plan.finish_state;
+        List.iter
+          (fun cancel ->
+            stage_timer_transition timer (Cancel_after_commit cancel))
+          plan.finish_cancel_hooks
     | Cancel_after_commit cancel ->
         remember_timer_refresh_disposal_hooks [ cancel ]
 

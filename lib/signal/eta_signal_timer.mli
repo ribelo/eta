@@ -37,6 +37,11 @@ type start_plan = {
   start_generation : int;
 }
 
+type finish_plan = {
+  finish_state : state;
+  finish_cancel_hooks : (unit -> unit) list;
+}
+
 type advance_next_due_action =
   | Advance_next_due_stop
   | Advance_next_due_stale
@@ -133,8 +138,7 @@ val can_refresh_on_demand :
   finished:bool ->
   bool
 
-val finish_state : advance_generation:(int -> int) -> state -> state
-val finish_cancel_hooks : state -> (unit -> unit) list
+val finish : advance_generation:(int -> int) -> state -> finish_plan
 val current_time_refresh_plan : now_ms:int -> int refresh_plan
 
 val deadline_refresh_plan :

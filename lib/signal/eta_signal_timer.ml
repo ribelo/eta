@@ -52,6 +52,11 @@ type start_plan = {
   start_generation : int;
 }
 
+type finish_plan = {
+  finish_state : state;
+  finish_cancel_hooks : (unit -> unit) list;
+}
+
 type advance_next_due_action =
   | Advance_next_due_stop
   | Advance_next_due_stale
@@ -297,6 +302,12 @@ let finish_cancel_hooks = function
   | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
   | Timer_finished _ ->
       []
+
+let finish ~advance_generation state =
+  {
+    finish_state = finish_state ~advance_generation state;
+    finish_cancel_hooks = finish_cancel_hooks state;
+  }
 
 let due_refresh state ~interval_ms ~now_ms =
   match state_next_due state with
