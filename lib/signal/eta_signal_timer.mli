@@ -11,6 +11,12 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+type 'timer state_port = {
+  state_effective : 'timer -> Eta_signal_timer_policy.state;
+  state_current : 'timer -> Eta_signal_timer_policy.state;
+  state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
+}
+
 type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
@@ -25,15 +31,13 @@ type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
 val mark_unneeded :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
-  current_state:('timer -> Eta_signal_timer_policy.state) ->
-  set_current_state:('timer -> Eta_signal_timer_policy.state -> unit) ->
+  'timer state_port ->
   'timer ->
   (unit -> unit) list
 
 val rollback_unclaimed_start :
   advance_generation:(int -> int) ->
-  current_state:('timer -> Eta_signal_timer_policy.state) ->
-  set_current_state:('timer -> Eta_signal_timer_policy.state -> unit) ->
+  'timer state_port ->
   'timer ->
   (unit -> unit) list
 
@@ -43,3 +47,74 @@ val refresh_demand :
   ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port ->
   'runtime ->
   ('start demand_effects, 'error) result
+
+val begin_start :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  [ `Continue | `Stop ]
+
+val install_cancel :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  cancel:(unit -> unit) ->
+  [ `Continue | `Stop ]
+
+val cleanup_after_exit :
+  advance_generation:(int -> int) ->
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  Eta_signal_timer_policy.daemon_exit ->
+  unit
+
+val cleanup_failed_start :
+  advance_generation:(int -> int) ->
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  Eta_signal_timer_policy.daemon_exit ->
+  unit
+
+val after_update_state :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  [ `Continue | `Stop ]
+
+val publish_if_running :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  publish:(unit -> unit) ->
+  [ `Stopped | `Updated ]
+
+val read_next_due :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  fallback:int ->
+  int option
+
+val set_next_due :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  next_due_ms:int ->
+  [ `Continue | `Stop ]
+
+val advance_next_due :
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  expected:int ->
+  next_due_ms:int ->
+  [ `Advanced | `Stale | `Stop ]
+
+val finish_saturated :
+  advance_generation:(int -> int) ->
+  'timer state_port ->
+  'timer ->
+  generation:int ->
+  unit

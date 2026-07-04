@@ -6,7 +6,7 @@ let inactive generation = Timer_policy.inactive_state ~generation
 type timer = {
   name : string;
   mutable current : Timer_policy.state;
-  effective : Timer_policy.state;
+  mutable effective : Timer_policy.state;
 }
 
 let make_timer name ~current ~effective = { name; current; effective }
@@ -17,6 +17,17 @@ let state_label state =
   Timer_policy.state_label state
   ^ ":"
   ^ string_of_int (Timer_policy.state_generation state)
+
+let state_port ?(record = fun _ -> ()) () =
+  {
+    Timer.state_effective = (fun timer -> timer.effective);
+    state_current = (fun timer -> timer.current);
+    state_set_current =
+      (fun timer state ->
+        timer.current <- state;
+        timer.effective <- state;
+        record ("set:" ^ timer.name ^ ":" ^ state_label state));
+  }
 
 let test_refresh_demand_classifies_and_orders_effects () =
   let events = ref [] in
@@ -142,18 +153,13 @@ let test_rollback_unclaimed_start_marks_starting_unneeded () =
   let inactive_timer =
     make_timer "inactive" ~current:(inactive 9) ~effective:(inactive 9)
   in
-  let current_state timer = timer.current in
-  let set_current_state timer state =
-    timer.current <- state;
-    record ("set:" ^ timer.name ^ ":" ^ state_label state)
-  in
   let starting_hooks =
-    Timer.rollback_unclaimed_start ~advance_generation:succ ~current_state
-      ~set_current_state starting
+    Timer.rollback_unclaimed_start ~advance_generation:succ
+      (state_port ~record ()) starting
   in
   let inactive_hooks =
-    Timer.rollback_unclaimed_start ~advance_generation:succ ~current_state
-      ~set_current_state inactive_timer
+    Timer.rollback_unclaimed_start ~advance_generation:succ
+      (state_port ~record ()) inactive_timer
   in
   Alcotest.(check (list string))
     "events" [ "set:starting:inactive:5" ] !events;
@@ -163,6 +169,108 @@ let test_rollback_unclaimed_start_marks_starting_unneeded () =
     (state_label starting.current);
   Alcotest.(check string) "inactive state" "inactive:9"
     (state_label inactive_timer.current)
+
+let test_daemon_lifecycle_transitions () =
+  let events = ref [] in
+  let record event = events := !events @ [ event ] in
+  let cancelled = ref false in
+  let timer =
+    make_timer "daemon"
+      ~current:(Timer_policy.starting_state ~generation:4)
+      ~effective:(Timer_policy.starting_state ~generation:4)
+  in
+  let port = state_port ~record () in
+  Alcotest.(check bool) "begin starts" true
+    (match Timer.begin_start port timer ~generation:4 with
+    | `Continue -> true
+    | `Stop -> false);
+  Alcotest.(check string) "uncancellable" "running_uncancellable:4"
+    (state_label timer.current);
+  Alcotest.(check bool) "install cancel continues" true
+    (match
+       Timer.install_cancel port timer ~generation:4
+         ~cancel:(fun () -> cancelled := true)
+     with
+    | `Continue -> true
+    | `Stop -> false);
+  Alcotest.(check bool) "has cancel" true
+    (Timer_policy.state_has_cancel timer.current);
+  Alcotest.(check bool) "running continues" true
+    (match Timer.after_update_state port timer ~generation:4 with
+    | `Continue -> true
+    | `Stop -> false);
+  Alcotest.(check bool) "stale generation stops" true
+    (match Timer.after_update_state port timer ~generation:3 with
+    | `Stop -> true
+    | `Continue -> false);
+  Alcotest.(check bool) "cleanup advances failed daemon" true
+    (Timer.cleanup_after_exit ~advance_generation:succ port timer
+       ~generation:4 Timer_policy.Daemon_error;
+     Timer_policy.state_generation timer.current = 5);
+  Alcotest.(check bool) "cancel not run by cleanup" false !cancelled;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "set:daemon:running_uncancellable:4";
+      "set:daemon:running:4";
+      "set:daemon:inactive:5";
+    ]
+    !events
+
+let test_due_lifecycle_transitions () =
+  let events = ref [] in
+  let record event = events := !events @ [ event ] in
+  let timer =
+    make_timer "due"
+      ~current:
+        (Timer_policy.running_uncancellable_state ~generation:2
+           ~next_due_ms:(Some 10))
+      ~effective:
+        (Timer_policy.running_uncancellable_state ~generation:2
+           ~next_due_ms:(Some 10))
+  in
+  let port = state_port ~record () in
+  Alcotest.(check (option int))
+    "read due" (Some 10)
+    (Timer.read_next_due port timer ~generation:2 ~fallback:5);
+  Alcotest.(check bool) "set due" true
+    (match Timer.set_next_due port timer ~generation:2 ~next_due_ms:20 with
+    | `Continue -> true
+    | `Stop -> false);
+  Alcotest.(check bool) "advance due" true
+    (match
+       Timer.advance_next_due port timer ~generation:2 ~expected:20
+         ~next_due_ms:30
+     with
+    | `Advanced -> true
+    | `Stale | `Stop -> false);
+  let published = ref false in
+  Alcotest.(check bool) "publish running" true
+    (match
+       Timer.publish_if_running port timer ~generation:2 ~publish:(fun () ->
+           published := true)
+     with
+    | `Updated -> true
+    | `Stopped -> false);
+  Alcotest.(check bool) "published" true !published;
+  Timer.finish_saturated ~advance_generation:succ port timer ~generation:2;
+  Alcotest.(check string) "finished" "finished:3"
+    (state_label timer.current);
+  Alcotest.(check bool) "publish stopped" true
+    (match
+       Timer.publish_if_running port timer ~generation:2 ~publish:(fun () ->
+           Alcotest.fail "stopped timer published")
+     with
+    | `Stopped -> true
+    | `Updated -> false);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "set:due:running_uncancellable:2";
+      "set:due:running_uncancellable:2";
+      "set:due:finished:3";
+    ]
+    !events
 
 let () =
   Alcotest.run "eta_signal_timer"
@@ -175,5 +283,9 @@ let () =
             test_refresh_demand_validation_failure_short_circuits;
           Alcotest.test_case "rolls back unclaimed starts" `Quick
             test_rollback_unclaimed_start_marks_starting_unneeded;
+          Alcotest.test_case "daemon lifecycle transitions" `Quick
+            test_daemon_lifecycle_transitions;
+          Alcotest.test_case "due lifecycle transitions" `Quick
+            test_due_lifecycle_transitions;
         ] );
     ]

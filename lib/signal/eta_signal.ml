@@ -1019,6 +1019,13 @@ module Make (Observer_error : Observer_error) () = struct
       Timer_policy.snapshot_state (timer_effective_snapshot timer)
     else timer_current_state timer
 
+  let timer_state_port =
+    {
+      Timer.state_effective = timer_effective_state;
+      state_current = timer_current_state;
+      state_set_current = set_timer_current_state;
+    }
+
   let timer_active_state = Timer_policy.state_active
 
   let timer_active timer = timer_active_state (timer_effective_state timer)
@@ -1087,14 +1094,12 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
     Timer.mark_unneeded
       ~advance_generation:(checked_succ "timer generation")
-      ~cancel_running ~current_state:timer_current_state
-      ~set_current_state:set_timer_current_state timer
+      ~cancel_running timer_state_port timer
 
   let timer_rollback_unclaimed_start_unlocked timer =
     Timer.rollback_unclaimed_start
       ~advance_generation:(checked_succ "timer generation")
-      ~current_state:timer_current_state
-      ~set_current_state:set_timer_current_state timer
+      timer_state_port timer
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
@@ -1751,11 +1756,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
-        match Timer_policy.begin_start (timer_current_state timer) ~generation with
-        | Some state ->
-            set_timer_current_state timer state;
-            `Continue
-        | None -> `Stop)
+        Timer.begin_start timer_state_port timer ~generation)
 
   let collect_necessary_node_ids () =
     prune_all_nodes_unlocked ();
@@ -2884,93 +2885,55 @@ module Make (Observer_error : Observer_error) () = struct
 
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
-          match
-            Timer_policy.install_cancel (timer_current_state timer) ~generation
-              ~cancel
-          with
-          | Some state ->
-              set_timer_current_state timer state;
-              `Continue
-          | None -> `Stop)
+          Timer.install_cancel timer_state_port timer ~generation ~cancel)
 
     let timer_daemon_exit = function
       | Eta.Exit.Ok _ -> Timer_policy.Daemon_ok
       | Eta.Exit.Error _ -> Timer_policy.Daemon_error
 
-    let apply_timer_cleanup timer generation cleanup exit =
-      let daemon_exit = timer_daemon_exit exit in
-      with_graph_lane_sync (fun () ->
-          Option.iter (set_timer_current_state timer)
-            (cleanup
-               ~advance_generation:(checked_succ "timer generation")
-               ~effective_state:(timer_effective_state timer)
-               ~current_state:(timer_current_state timer) ~generation
-               daemon_exit))
-
     let timer_cleanup_after_exit timer generation exit =
-      apply_timer_cleanup timer generation Timer_policy.cleanup_after_exit exit
+      with_graph_lane_sync (fun () ->
+          Timer.cleanup_after_exit
+            ~advance_generation:(checked_succ "timer generation")
+            timer_state_port timer ~generation (timer_daemon_exit exit))
 
     let timer_cleanup_failed_start timer generation exit =
-      apply_timer_cleanup timer generation Timer_policy.cleanup_failed_start exit
+      with_graph_lane_sync (fun () ->
+          Timer.cleanup_failed_start
+            ~advance_generation:(checked_succ "timer generation")
+            timer_state_port timer ~generation (timer_daemon_exit exit))
 
     let timer_after_update_state timer generation =
       with_graph_lane_sync (fun () ->
-          match Timer_policy.daemon_status (timer_effective_state timer) ~generation with
-          | Timer_policy.Daemon_continue -> `Continue
-          | Timer_policy.Daemon_stop -> `Stop)
+          Timer.after_update_state timer_state_port timer ~generation)
 
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_sync (fun () ->
-          match Timer_policy.daemon_status (timer_effective_state timer) ~generation with
-          | Timer_policy.Daemon_continue ->
-            publish_source_current source.source_value value;
-            Var.queue_var source;
-            `Updated
-          | Timer_policy.Daemon_stop -> `Stopped)
+          Timer.publish_if_running timer_state_port timer ~generation
+            ~publish:(fun () ->
+              publish_source_current source.source_value value;
+              Var.queue_var source))
 
     let add_relative_deadline = Timer_policy.add_relative_deadline
 
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
-          Timer_policy.read_next_due (timer_effective_state timer) ~generation
-            ~fallback)
+          Timer.read_next_due timer_state_port timer ~generation ~fallback)
 
     let timer_set_next_due timer generation next_due_ms =
       with_graph_lane_sync (fun () ->
-          match
-            Timer_policy.set_next_due ~effective_state:(timer_effective_state timer)
-              ~current_state:(timer_current_state timer) ~generation
-              ~next_due_ms
-          with
-          | Some state ->
-              set_timer_current_state timer state;
-              `Continue
-          | None -> `Stop)
+          Timer.set_next_due timer_state_port timer ~generation ~next_due_ms)
 
     let timer_advance_next_due timer generation ~expected next_due_ms =
       with_graph_lane_sync (fun () ->
-          match
-            Timer_policy.advance_next_due
-              ~effective_state:(timer_effective_state timer)
-              ~current_state:(timer_current_state timer) ~generation
-              ~expected ~next_due_ms
-          with
-          | Timer_policy.Advance_next_due_update state ->
-              set_timer_current_state timer state;
-              `Advanced
-          | Timer_policy.Advance_next_due_stale -> `Stale
-          | Timer_policy.Advance_next_due_stop -> `Stop)
+          Timer.advance_next_due timer_state_port timer ~generation
+            ~expected ~next_due_ms)
 
     let timer_finish_saturated timer generation =
       with_graph_lane_sync (fun () ->
-          let module P = Timer_policy in
-          let state =
-            P.finish_current_daemon
-              ~advance_generation:(checked_succ "timer generation")
-              ~effective_state:(timer_effective_state timer)
-              ~current_state:(timer_current_state timer) ~generation
-          in
-          Option.iter (set_timer_current_state timer) state)
+          Timer.finish_saturated
+            ~advance_generation:(checked_succ "timer generation")
+            timer_state_port timer ~generation)
 
     let timer_loop_callbacks timer update =
       {
