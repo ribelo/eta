@@ -2627,6 +2627,34 @@ module Make (Observer_error : Observer_error) () = struct
           (observer_current_snapshot live).observer_delivery
     | None -> false
 
+  let acknowledge_stream_published_delivery observer token update
+      after_ack_actions =
+    with_graph_lane_sync (fun () ->
+        match observer_active_live_state observer with
+        | None -> ()
+        | Some live -> (
+        let snapshot = observer_current_snapshot live in
+        match
+          Observer_core.Delivery.acknowledge ~token ~update
+            ~after_ack:after_ack_actions snapshot.observer_delivery
+        with
+        | Some (observer_delivery, after_ack) ->
+            set_observer_current_delivery live observer_delivery;
+            run_after_ack_actions_unlocked after_ack
+        | None -> ()))
+
+  let acknowledge_stream_sent_delivery observer token update =
+    acknowledge_stream_published_delivery observer token update []
+
+  let acknowledge_stream_drop_delivery observer token update =
+    acknowledge_stream_published_delivery observer token update
+      [ record_stream_bridge_drop_unlocked ]
+
+  let active_event_delivery_token observer token =
+    with_graph_lane_sync (fun () ->
+        if claimed_event_delivery_active observer token then Some token
+        else None)
+
   let begin_stabilize timer_refresh =
     match Stabilization.begin_pure graph.stabilization with
     | Error `Reentrant_stabilization ->
@@ -2885,7 +2913,26 @@ module Make (Observer_error : Observer_error) () = struct
     type 'a delivery = {
       token : delivery_token;
       update : 'a update;
+      current_token :
+        'err. unit -> (delivery_token option, 'err) Effect.t;
+      acknowledge_sent :
+        'err. delivery_token -> 'a update -> (unit, 'err) Effect.t;
+      acknowledge_drop :
+        'err. delivery_token -> 'a update -> (unit, 'err) Effect.t;
     }
+
+    let delivery observer token update =
+      {
+        token;
+        update;
+        current_token = (fun () -> active_event_delivery_token observer token);
+        acknowledge_sent =
+          (fun token update ->
+            acknowledge_stream_sent_delivery observer token update);
+        acknowledge_drop =
+          (fun token update ->
+            acknowledge_stream_drop_delivery observer token update);
+      }
 
     let transfer_active_observer observer =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
@@ -2951,7 +2998,7 @@ module Make (Observer_error : Observer_error) () = struct
     let observe_delivery ?equal ?on_finish signal callback =
       observe_with_hooks_delivery_callback ?equal ?on_finish signal
         (fun observer token update ->
-          callback observer { token; update })
+          callback (delivery observer token update))
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal
@@ -3107,34 +3154,6 @@ module Make (Observer_error : Observer_error) () = struct
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
-
-  let acknowledge_stream_published_delivery observer token update
-      after_ack_actions =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> ()
-        | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match
-          Observer_core.Delivery.acknowledge ~token ~update
-            ~after_ack:after_ack_actions snapshot.observer_delivery
-        with
-        | Some (observer_delivery, after_ack) ->
-            set_observer_current_delivery live observer_delivery;
-            run_after_ack_actions_unlocked after_ack
-        | None -> ()))
-
-  let acknowledge_stream_sent_delivery observer token update =
-    acknowledge_stream_published_delivery observer token update []
-
-  let acknowledge_stream_drop_delivery observer token update =
-    acknowledge_stream_published_delivery observer token update
-      [ record_stream_bridge_drop_unlocked ]
-
-  let active_event_delivery_token observer token =
-    with_graph_lane_sync (fun () ->
-        if claimed_event_delivery_active observer token then Some token
-        else None)
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
@@ -3937,17 +3956,13 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let offer_bridge_update observer token on_drop queue update =
+    let offer_bridge_update observer_delivery on_drop queue =
       let delivery =
         {
           Stream_bridge.current_token =
-            (fun () -> active_event_delivery_token observer token);
-          acknowledge_sent =
-            (fun token update ->
-              acknowledge_stream_sent_delivery observer token update);
-          acknowledge_drop =
-            (fun token update ->
-              acknowledge_stream_drop_delivery observer token update);
+            observer_delivery.Observer.current_token;
+          acknowledge_sent = observer_delivery.Observer.acknowledge_sent;
+          acknowledge_drop = observer_delivery.Observer.acknowledge_drop;
         }
       in
       let hooks =
@@ -3961,7 +3976,8 @@ module Make (Observer_error : Observer_error) () = struct
             (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
         }
       in
-      Stream_bridge.offer ~queue ~delivery ~hooks ~on_drop update
+      Stream_bridge.offer ~queue ~delivery ~hooks ~on_drop
+        observer_delivery.Observer.update
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
@@ -3971,9 +3987,7 @@ module Make (Observer_error : Observer_error) () = struct
                ~on_finish:
                  [ Stream_bridge.observer_finish_hook ~queue ]
                signal
-               (fun observer delivery ->
-                 offer_bridge_update observer delivery.token on_drop queue
-                   delivery.update)
+               (fun delivery -> offer_bridge_update delivery on_drop queue)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, stream)))
