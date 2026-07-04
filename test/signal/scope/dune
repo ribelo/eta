@@ -1,0 +1,16 @@
+(rule
+ (target eta_signal_scope.ml)
+ (deps ../../../lib/signal/eta_signal_scope.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_scope.mli)
+ (deps ../../../lib/signal/eta_signal_scope.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(test
+ (name test_eta_signal_scope)
+ (modules test_eta_signal_scope eta_signal_scope)
+ (libraries alcotest))

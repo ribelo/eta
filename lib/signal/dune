@@ -5,6 +5,7 @@
  (private_modules
   eta_signal_error
   eta_signal_id
+  eta_signal_scope
   eta_signal_timer
   eta_signal_transaction
   eta_signal_stabilization)

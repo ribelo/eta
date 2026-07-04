@@ -5,6 +5,7 @@ module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
 module Error = Eta_signal_error
 module Id = Eta_signal_id
+module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Timer = Eta_signal_timer
 module Transaction = Eta_signal_transaction
@@ -255,13 +256,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Catch_up_once_per_wake
     | Catch_up_coalesced
 
-  type scope = {
-    scope_id : scope_id;
-    scope_owner : packed_signal;
-    scope_parent : scope option;
-    mutable scope_valid : bool;
-    mutable scope_nodes : packed_signal list;
-  }
+  type scope = (scope_id, packed_signal, packed_signal) Scope.t
 
   and packed_signal = P : 'a signal -> packed_signal
 
@@ -504,7 +499,7 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   let packed_signal_id (P signal) = signal.id
-  let scope_owner_id scope = packed_signal_id scope.scope_owner
+  let scope_owner_id scope = packed_signal_id (Scope.owner scope)
 
   module Private_test_hooks = struct
     include Private_test_hook_state
@@ -785,8 +780,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let visit_scope_owner_signal visit signal =
     match signal.scope with
-    | Some scope when scope.scope_valid ->
-        let (P owner as packed_owner) = scope.scope_owner in
+    | Some scope when Scope.valid scope ->
+        let (P owner as packed_owner) = Scope.owner scope in
         if owner.valid then visit packed_owner
     | None | Some _ -> ()
 
@@ -1074,13 +1069,7 @@ module Make (Observer_error : Observer_error) () = struct
   let new_scope owner =
     let id = graph.next_scope_id in
     graph.next_scope_id <- checked_succ "scope id" id;
-    {
-      scope_id = Id.scope id;
-      scope_owner = P owner;
-      scope_parent = owner.scope;
-      scope_valid = true;
-      scope_nodes = [];
-    }
+    Scope.create ~id:(Id.scope id) ~owner:(P owner) ~parent:owner.scope
 
   let current_generation () = graph.stabilization_id
 
@@ -1338,24 +1327,17 @@ module Make (Observer_error : Observer_error) () = struct
     | Idle -> graph.current_scope
     | Pure -> (
         match graph.current_scope with
-        | Some scope when scope.scope_valid -> Some scope
+        | Some scope when Scope.valid scope -> Some scope
         | _ -> raise (Graph_error `Ambiguous_scope))
     | Committed | Delivering -> raise (Graph_error `Ambiguous_scope)
 
   let add_to_scope scope signal =
     match scope with
     | None -> ()
-    | Some scope -> scope.scope_nodes <- P signal :: scope.scope_nodes
+    | Some scope -> Scope.add_node scope (P signal)
 
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
-
-  let rec scope_is_ancestor ~ancestor scope =
-    ancestor == scope
-    ||
-    match scope.scope_parent with
-    | None -> false
-    | Some parent -> scope_is_ancestor ~ancestor parent
 
   let validate_bind_inner_scope scope inner =
     let seen = Hashtbl.create 16 in
@@ -1367,8 +1349,8 @@ module Make (Observer_error : Observer_error) () = struct
          | None -> ()
          | Some signal_scope ->
              if
-               signal_scope.scope_valid
-               && scope_is_ancestor ~ancestor:signal_scope scope
+               Scope.valid signal_scope
+               && Scope.is_ancestor ~ancestor:signal_scope scope
              then ()
              else raise (Graph_error `Invalid_scope));
         (match signal.kind with
@@ -1644,10 +1626,10 @@ module Make (Observer_error : Observer_error) () = struct
       match signal.scope with
       | None -> (None, None, None, None)
       | Some scope ->
-          ( Some scope.scope_id,
+          ( Some (Scope.id scope),
             Some (scope_owner_id scope),
-            Option.map (fun parent -> parent.scope_id) scope.scope_parent,
-            Some scope.scope_valid )
+            Option.map (fun parent -> Scope.id parent) (Scope.parent scope),
+            Some (Scope.valid scope) )
     in
     let snapshot = signal_current_snapshot signal in
     {
@@ -1676,15 +1658,14 @@ module Make (Observer_error : Observer_error) () = struct
       |> take_dead_signal_tombstones max_dead_signal_tombstones
 
   let rec invalidate_scope ?(prune = true) scope =
-    if scope.scope_valid then (
-      scope.scope_valid <- false;
-      graph.dynamic_scope_invalidations <-
-        saturating_succ graph.dynamic_scope_invalidations;
-      let hooks = List.concat_map invalidate_node scope.scope_nodes in
-      scope.scope_nodes <- [];
-      if prune then prune_invalid_nodes_unlocked ();
-      hooks)
-    else []
+    match Scope.invalidate scope with
+    | None -> []
+    | Some nodes ->
+        graph.dynamic_scope_invalidations <-
+          saturating_succ graph.dynamic_scope_invalidations;
+        let hooks = List.concat_map invalidate_node nodes in
+        if prune then prune_invalid_nodes_unlocked ();
+        hooks
 
   and invalidate_node (P signal) =
     if signal.valid then (
@@ -1831,7 +1812,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Some id -> signal_id_int signal.id = signal_id_int id
     in
     let rec visit_scope scope =
-      if scope.scope_valid then List.iter visit scope.scope_nodes
+      if Scope.valid scope then List.iter visit (Scope.nodes scope)
     and visit (P signal as packed) =
       if
         signal.valid
@@ -2708,12 +2689,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivery_pending _ | Observer_delivery_running _ -> true
     | Observer_never_delivered | Observer_delivered _ -> false
 
-  let rec scope_depth = function
-    | None -> 0
-    | Some scope -> 1 + scope_depth scope.scope_parent
-
   let compare_signal_scope_then_id (P left) (P right) =
-    match Int.compare (scope_depth left.scope) (scope_depth right.scope) with
+    match Int.compare (Scope.depth left.scope) (Scope.depth right.scope) with
     | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
     | order -> order
 
@@ -3480,16 +3457,16 @@ module Make (Observer_error : Observer_error) () = struct
         ]
     | Some scope ->
         let parent =
-          match scope.scope_parent with
+          match Scope.parent scope with
           | None -> "root"
-          | Some parent -> scope_id_label parent.scope_id
+          | Some parent -> scope_id_label (Scope.id parent)
         in
         [
           "scope="
-          ^ scope_id_label scope.scope_id
+          ^ scope_id_label (Scope.id scope)
           ^ ":"
-          ^ (if scope.scope_valid then "valid" else "invalid");
-          "scope_id=" ^ scope_id_label scope.scope_id;
+          ^ (if Scope.valid scope then "valid" else "invalid");
+          "scope_id=" ^ scope_id_label (Scope.id scope);
           "scope_owner=" ^ signal_id_label (scope_owner_id scope);
           "scope_parent=" ^ parent;
         ]
