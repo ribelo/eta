@@ -184,6 +184,14 @@ let start ~advance_generation ~effective_state ~current_state =
       }
   else None
 
+let begin_start state ~generation =
+  match state with
+  | Timer_starting starting_generation when starting_generation = generation ->
+      Some (Timer_running_uncancellable (generation, None))
+  | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+  | Timer_running _ | Timer_finished _ ->
+      None
+
 let stop ~advance_generation ~cancel_running state =
   match state with
   | Timer_inactive _ | Timer_finished _ -> None

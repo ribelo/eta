@@ -79,6 +79,8 @@ val start :
   current_state:state ->
   start_plan option
 
+val begin_start : state -> generation:int -> state option
+
 val stop :
   advance_generation:(int -> int) ->
   cancel_running:bool ->

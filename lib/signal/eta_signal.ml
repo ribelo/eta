@@ -2330,15 +2330,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
-        match timer_current_state timer with
-        | Timer_starting starting_generation
-          when starting_generation = generation ->
-            set_timer_current_state timer
-              (Timer_running_uncancellable (generation, None));
+        match Timer.begin_start (timer_current_state timer) ~generation with
+        | Some state ->
+            set_timer_current_state timer state;
             `Continue
-        | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-        | Timer_running _ | Timer_finished _ ->
-            `Stop)
+        | None -> `Stop)
 
   let collect_necessary_node_ids () =
     prune_all_nodes_unlocked ();

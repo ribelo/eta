@@ -177,6 +177,22 @@ let test_start_policy () =
         plan.start_generation
   | None -> Alcotest.fail "expected staged effective start plan"
 
+let test_begin_start_policy () =
+  let starting = Timer.Timer_starting 7 in
+  let running = Timer.Timer_running (7, Some 10, noop) in
+  (match Timer.begin_start starting ~generation:7 with
+  | Some state ->
+      Alcotest.(check string) "state" "running_uncancellable"
+        (Timer.state_label state);
+      Alcotest.(check int) "generation" 7 (Timer.state_generation state);
+      Alcotest.(check (option int)) "next due" None
+        (Timer.state_next_due state)
+  | None -> Alcotest.fail "expected matching start to continue");
+  Alcotest.(check bool) "stale start stops" true
+    (Option.is_none (Timer.begin_start starting ~generation:8));
+  Alcotest.(check bool) "running start stops" true
+    (Option.is_none (Timer.begin_start running ~generation:7))
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -275,6 +291,8 @@ let () =
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
           Alcotest.test_case "start policy" `Quick test_start_policy;
+          Alcotest.test_case "begin start policy" `Quick
+            test_begin_start_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
