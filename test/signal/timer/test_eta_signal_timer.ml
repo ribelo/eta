@@ -76,6 +76,46 @@ let test_validation_policy () =
     (Error `Invalid_interval)
     (Timer.validate_interval_ms 0)
 
+let catch_up_policy_label = function
+  | Timer.Catch_up_every_cadence -> "every"
+  | Timer.Catch_up_once_per_wake -> "once"
+  | Timer.Catch_up_coalesced -> "coalesced"
+
+let refresh_spec_label : type a. a Timer.refresh_spec option -> string =
+  function
+  | None -> "none"
+  | Some Timer.Refresh_current_time -> "current_time"
+  | Some (Timer.Refresh_deadline deadline_ms) ->
+      "deadline:" ^ string_of_int deadline_ms
+  | Some (Timer.Refresh_interval interval_ms) ->
+      "interval:" ^ string_of_int interval_ms
+
+let source_policy_label policy =
+  String.concat ":"
+    [
+      string_of_bool policy.Timer.source_update_on_start;
+      catch_up_policy_label policy.Timer.source_catch_up_policy;
+      string_of_bool policy.Timer.source_refresh_when_inactive;
+      refresh_spec_label policy.Timer.source_refresh_on_demand;
+    ]
+
+let test_source_policy_defaults () =
+  Alcotest.(check string)
+    "now policy" "true:once:true:current_time"
+    (source_policy_label (Timer.current_time_source_policy ()));
+  Alcotest.(check string)
+    "deadline policy" "true:once:true:deadline:100"
+    (source_policy_label (Timer.deadline_source_policy ~deadline_ms:100));
+  Alcotest.(check string)
+    "interval policy" "false:coalesced:false:interval:10"
+    (source_policy_label (Timer.interval_source_policy ~interval_ms:10));
+  Alcotest.(check string)
+    "step policy" "false:coalesced:false:none"
+    (source_policy_label (Timer.step_source_policy ()));
+  Alcotest.(check string)
+    "step replay policy" "false:every:false:none"
+    (source_policy_label (Timer.step_replay_source_policy ()))
+
 let test_catch_up_policy () =
   Alcotest.(check int) "every count" 3
     (Timer.catch_up_update_count Catch_up_every_cadence 3);
@@ -949,6 +989,8 @@ let () =
             test_deadline_arithmetic;
           Alcotest.test_case "validation policy" `Quick
             test_validation_policy;
+          Alcotest.test_case "source policy defaults" `Quick
+            test_source_policy_defaults;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
           Alcotest.test_case "update batch policy" `Quick
             test_update_batch_policy;

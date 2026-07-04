@@ -73,6 +73,13 @@ type _ refresh_spec =
   | Refresh_deadline : int -> bool refresh_spec
   | Refresh_interval : int -> int refresh_spec
 
+type 'a source_policy = {
+  source_update_on_start : bool;
+  source_catch_up_policy : catch_up_policy;
+  source_refresh_when_inactive : bool;
+  source_refresh_on_demand : 'a refresh_spec option;
+}
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -170,6 +177,43 @@ let validate_future_deadline ~now_ms ~deadline_ms =
 
 let validate_positive_duration_ms duration_ms =
   if duration_ms <= 0 then Error `Past_deadline else Ok ()
+
+let source_policy ~update_on_start ~catch_up_policy ~refresh_when_inactive
+    ~refresh_on_demand =
+  {
+    source_update_on_start = update_on_start;
+    source_catch_up_policy = catch_up_policy;
+    source_refresh_when_inactive = refresh_when_inactive;
+    source_refresh_on_demand = refresh_on_demand;
+  }
+
+let current_time_source_policy () =
+  source_policy ~update_on_start:true
+    ~catch_up_policy:Catch_up_once_per_wake
+    ~refresh_when_inactive:true
+    ~refresh_on_demand:(Some Refresh_current_time)
+
+let deadline_source_policy ~deadline_ms =
+  source_policy ~update_on_start:true
+    ~catch_up_policy:Catch_up_once_per_wake
+    ~refresh_when_inactive:true
+    ~refresh_on_demand:(Some (Refresh_deadline deadline_ms))
+
+let interval_source_policy ~interval_ms =
+  source_policy ~update_on_start:false
+    ~catch_up_policy:Catch_up_coalesced
+    ~refresh_when_inactive:false
+    ~refresh_on_demand:(Some (Refresh_interval interval_ms))
+
+let step_source_policy () =
+  source_policy ~update_on_start:false
+    ~catch_up_policy:Catch_up_coalesced
+    ~refresh_when_inactive:false ~refresh_on_demand:None
+
+let step_replay_source_policy () =
+  source_policy ~update_on_start:false
+    ~catch_up_policy:Catch_up_every_cadence
+    ~refresh_when_inactive:false ~refresh_on_demand:None
 
 let catch_up_update_count policy missed =
   match policy with

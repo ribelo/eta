@@ -3365,19 +3365,22 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_refresh_operation source spec =
       Refresh_operation (source, spec)
 
-    let make_timer_signal ?(update_on_start = false)
-        ?(catch_up_policy = Catch_up_every_cadence)
-        ?(refresh_when_inactive = true) ?equal ?refresh_on_demand initial interval
-        ~runtime_contract update =
+    let make_timer_signal ?equal initial interval ~runtime_contract
+        source_policy update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
       let refresh_operation =
-        Option.map (timer_refresh_operation source) refresh_on_demand
+        Option.map (timer_refresh_operation source)
+          source_policy.Timer.source_refresh_on_demand
       in
-      attach_timer ~update_on_start ~refresh_when_inactive ?refresh_operation
-        ~runtime_contract signal interval
+      attach_timer
+        ~update_on_start:source_policy.Timer.source_update_on_start
+        ~refresh_when_inactive:
+          source_policy.Timer.source_refresh_when_inactive
+        ?refresh_operation ~runtime_contract signal interval
         {
-          timer_catch_up_policy = catch_up_policy;
+          timer_catch_up_policy =
+            source_policy.Timer.source_catch_up_policy;
           timer_update =
             (fun timer generation ~missed ->
               update.source_timer_update timer generation ~missed source);
@@ -3400,11 +3403,9 @@ module Make (Observer_error : Observer_error) () = struct
                     Effect.now
                     |> Effect.bind (fun initial ->
                            construct_timer_signal (fun () ->
-                               make_timer_signal ~update_on_start:true
-                                 ~equal:Int.equal
-                                 ~catch_up_policy:Catch_up_once_per_wake
-                                 ~refresh_on_demand:Timer.Refresh_current_time
-                                 initial every ~runtime_contract
+                               make_timer_signal ~equal:Int.equal initial
+                                 every ~runtime_contract
+                                 (Timer.current_time_source_policy ())
                                  {
                                    source_timer_update =
                                      (fun timer generation ~missed:_ source ->
@@ -3417,10 +3418,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let construct_deadline_signal every deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
-          make_timer_signal ~update_on_start:true
-            ~catch_up_policy:Catch_up_once_per_wake ~equal:Bool.equal false every
-            ~refresh_on_demand:(Timer.Refresh_deadline deadline_ms)
-            ~runtime_contract
+          make_timer_signal ~equal:Bool.equal false every ~runtime_contract
+            (Timer.deadline_source_policy ~deadline_ms)
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
@@ -3479,10 +3478,8 @@ module Make (Observer_error : Observer_error) () = struct
                     construct_timer_signal (fun () ->
                         let interval_ms = Duration.to_ms interval in
                         make_timer_signal ~equal:Int.equal 0 interval
-                          ~refresh_when_inactive:false
-                          ~refresh_on_demand:(Timer.Refresh_interval interval_ms)
-                          ~catch_up_policy:Catch_up_coalesced
                           ~runtime_contract
+                          (Timer.interval_source_policy ~interval_ms)
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
@@ -3504,8 +3501,8 @@ module Make (Observer_error : Observer_error) () = struct
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
-                        make_timer_signal initial every ~refresh_when_inactive:false
-                          ~catch_up_policy:Catch_up_coalesced ~runtime_contract
+                        make_timer_signal initial every ~runtime_contract
+                          (Timer.step_source_policy ())
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
@@ -3532,8 +3529,8 @@ module Make (Observer_error : Observer_error) () = struct
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
                     construct_timer_signal (fun () ->
-                        make_timer_signal initial every ~refresh_when_inactive:false
-                          ~runtime_contract
+                        make_timer_signal initial every ~runtime_contract
+                          (Timer.step_replay_source_policy ())
                           {
                             source_timer_update =
                               (fun timer generation ~missed:_ source ->

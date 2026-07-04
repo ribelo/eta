@@ -36,6 +36,13 @@ type _ refresh_spec =
   | Refresh_deadline : int -> bool refresh_spec
   | Refresh_interval : int -> int refresh_spec
 
+type 'a source_policy = {
+  source_update_on_start : bool;
+  source_catch_up_policy : catch_up_policy;
+  source_refresh_when_inactive : bool;
+  source_refresh_on_demand : 'a refresh_spec option;
+}
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -115,6 +122,12 @@ val validate_future_deadline :
   now_ms:int -> deadline_ms:int -> (unit, [> `Past_deadline ]) result
 
 val validate_positive_duration_ms : int -> (unit, [> `Past_deadline ]) result
+
+val current_time_source_policy : unit -> int source_policy
+val deadline_source_policy : deadline_ms:int -> bool source_policy
+val interval_source_policy : interval_ms:int -> int source_policy
+val step_source_policy : unit -> 'a source_policy
+val step_replay_source_policy : unit -> 'a source_policy
 
 val catch_up_update_count : catch_up_policy -> int -> int
 val catch_up_update_missed : catch_up_policy -> int -> int
