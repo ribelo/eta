@@ -62,17 +62,41 @@ let rollback state pure_token capability ops observers pending staging =
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token);
   hooks
 
+let rollback_without_staging state pure_token capability ops =
+  Eta_signal_stabilization.rollback_transaction state;
+  ops.timer_refresh.clear_active_timer_refresh capability;
+  ignore
+    (Eta_signal_stabilization.rollback_to_idle state pure_token
+      : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token);
+  []
+
 let run state capability ops =
   match Eta_signal_stabilization.begin_pure state with
   | Error `Reentrant_stabilization ->
       Pure_graph_error ([], ops.errors.reentrant_stabilization)
   | Ok pure_token ->
-      ops.pure.advance_generation capability;
-      let staging = ops.pure.begin_staging capability in
-      let pending = ops.pure.drain_pending capability in
-      ops.pure.release_pending_marks capability pending;
-      let observers = ops.pure.active_observers capability in
+      let staging = ref None in
+      let pending = ref [] in
+      let observers = ref [] in
+      let rollback_current () =
+        match !staging with
+        | None -> rollback_without_staging state pure_token capability ops
+        | Some staging ->
+            rollback state pure_token capability ops !observers !pending
+              staging
+      in
       try
+        ops.pure.advance_generation capability;
+        let staging_value = ops.pure.begin_staging capability in
+        staging := Some staging_value;
+        let pending_value = ops.pure.drain_pending capability in
+        pending := pending_value;
+        ops.pure.release_pending_marks capability pending_value;
+        let observers_value = ops.pure.active_observers capability in
+        observers := observers_value;
+        let staging = staging_value in
+        let pending = pending_value in
+        let observers = observers_value in
         ops.pure.stage_pending capability pending;
         ops.pure.plan_staged_binds capability observers;
         let delivery_observers =
@@ -89,9 +113,7 @@ let run state capability ops =
         Pure_ok (hooks, events, delivering_token)
       with exn -> (
         let backtrace = Printexc.get_raw_backtrace () in
-        let hooks =
-          rollback state pure_token capability ops observers pending staging
-        in
+        let hooks = rollback_current () in
         match ops.errors.classify_graph_error exn with
         | Some err -> Pure_graph_error (hooks, err)
         | None -> Pure_defect (hooks, exn, backtrace))
