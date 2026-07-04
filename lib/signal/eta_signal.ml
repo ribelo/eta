@@ -14,6 +14,7 @@ module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
+module Staging = Eta_signal_staging
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
@@ -1518,35 +1519,51 @@ module Make (Observer_error : Observer_error) () = struct
     graph.timer_refresh_disposal_hooks <- []
 
   let reset_staging () =
-    let disposal_hooks =
-      List.concat_map rollback_bind graph.staged_binds @ graph.pure_disposal_hooks
-    in
-    rollback_transaction ();
-    graph.computed_nodes <- [];
-    graph.staged_binds <- [];
-    graph.pure_disposal_hooks <- [];
-    clear_timer_refresh_staging ();
-    disposal_hooks
+    Staging.reset
+      {
+        rollback_binds =
+          (fun () -> List.concat_map rollback_bind graph.staged_binds);
+        pure_disposal_hooks = (fun () -> graph.pure_disposal_hooks);
+        rollback_transaction;
+        clear_computed_nodes = (fun () -> graph.computed_nodes <- []);
+        clear_staged_binds = (fun () -> graph.staged_binds <- []);
+        clear_pure_disposal_hooks =
+          (fun () -> graph.pure_disposal_hooks <- []);
+        clear_timer_refresh_staging;
+      }
 
   let commit_staging () =
-    preflight_commit_staging ();
-    let commit_hooks = List.concat_map commit_bind graph.staged_binds in
-    remember_pure_disposal_hooks commit_hooks;
-    List.iter prepare_signal_commit graph.computed_nodes;
-    commit_transaction ();
-    List.iter commit_timer_refresh_staging graph.timer_refresh_staged_timers;
-    List.iter commit_signal graph.computed_nodes;
-    let disposal_hooks =
-      graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks
-    in
-    graph.computed_nodes <- [];
-    graph.staged_binds <- [];
-    graph.pure_disposal_hooks <- [];
-    graph.timer_refresh_disposal_hooks <- [];
-    graph.timer_refresh_staged_timers <- [];
-    graph.pure_snapshot_commit_count <-
-      saturating_succ graph.pure_snapshot_commit_count;
-    disposal_hooks
+    Staging.commit
+      {
+        preflight = preflight_commit_staging;
+        commit_binds =
+          (fun () -> List.concat_map commit_bind graph.staged_binds);
+        remember_pure_disposal_hooks;
+        prepare_signals =
+          (fun () -> List.iter prepare_signal_commit graph.computed_nodes);
+        commit_transaction;
+        commit_timer_refresh =
+          (fun () ->
+            List.iter commit_timer_refresh_staging
+              graph.timer_refresh_staged_timers);
+        commit_signals =
+          (fun () -> List.iter commit_signal graph.computed_nodes);
+        disposal_hooks =
+          (fun () ->
+            graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks);
+        clear_computed_nodes = (fun () -> graph.computed_nodes <- []);
+        clear_staged_binds = (fun () -> graph.staged_binds <- []);
+        clear_pure_disposal_hooks =
+          (fun () -> graph.pure_disposal_hooks <- []);
+        clear_timer_refresh_disposal_hooks =
+          (fun () -> graph.timer_refresh_disposal_hooks <- []);
+        clear_timer_refresh_staged_timers =
+          (fun () -> graph.timer_refresh_staged_timers <- []);
+        commit_snapshot =
+          (fun () ->
+            graph.pure_snapshot_commit_count <-
+              saturating_succ graph.pure_snapshot_commit_count);
+      }
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (

@@ -12,6 +12,7 @@
   eta_signal_lane
   eta_signal_observer
   eta_signal_scope
+  eta_signal_staging
   eta_signal_stream_bridge
   eta_signal_test_hooks
   eta_signal_timer_policy
