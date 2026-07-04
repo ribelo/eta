@@ -123,6 +123,36 @@ let test_runtime_stream_fifo done_ =
   in
   run eff ~on_result:(finish done_ (expect_ok_pair (1, 2)))
 
+let test_runtime_resolve_wakes_live_waiter done_ =
+  let eff =
+    Eta.Effect.Expert.make @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    let promise, resolver = contract.Runtime_contract.create_promise () in
+    let waiter_started, waiter_started_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let waiter_result, waiter_result_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let result =
+      contract.Runtime_contract.run_scope
+        ~name:"live resolver conformance"
+        (fun child_scope ->
+          contract.Runtime_contract.fork child_scope (fun () ->
+              contract.Runtime_contract.resolve_promise waiter_started_resolver
+                ();
+              let value = contract.Runtime_contract.await_promise promise in
+              contract.Runtime_contract.resolve_promise waiter_result_resolver
+                value);
+          contract.Runtime_contract.await_promise waiter_started;
+          contract.Runtime_contract.yield ();
+          contract.Runtime_contract.resolve_promise resolver 17;
+          contract.Runtime_contract.await_promise waiter_result)
+    in
+    Eta.Exit.Ok result
+  in
+  run eff ~on_result:(finish done_ (expect_ok_int 17))
+
 let test_runtime_resolve_after_waiter_cancellation done_ =
   let eff =
     Eta.Effect.Expert.make @@ fun context ->
@@ -169,6 +199,59 @@ let test_runtime_resolve_after_waiter_cancellation done_ =
                  "expected resolve after waiter cancellation to succeed, got %a"
                  (Eta.Cause.pp pp_err) cause)))
 
+let test_runtime_canceled_waiter_does_not_strand_live_waiter done_ =
+  let eff =
+    Eta.Effect.Expert.make @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    let promise, resolver = contract.Runtime_contract.create_promise () in
+    let canceled_started, canceled_started_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let canceled_done, canceled_done_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let live_started, live_started_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let live_result, live_result_resolver =
+      contract.Runtime_contract.create_promise ()
+    in
+    let result =
+      contract.Runtime_contract.run_scope
+        ~name:"mixed waiter resolver conformance"
+        (fun child_scope ->
+          contract.Runtime_contract.fork child_scope (fun () ->
+              contract.Runtime_contract.cancel_sub @@ fun cancel_ctx ->
+              contract.Runtime_contract.resolve_promise
+                canceled_started_resolver cancel_ctx;
+              try ignore (contract.Runtime_contract.await_promise promise : int)
+              with exn -> (
+                match contract.Runtime_contract.cancellation_reason exn with
+                | Some _ ->
+                    contract.Runtime_contract.resolve_promise
+                      canceled_done_resolver ()
+                | None -> raise exn));
+          let cancel_ctx =
+            contract.Runtime_contract.await_promise canceled_started
+          in
+          contract.Runtime_contract.cancel cancel_ctx
+            (Failure "cancel one promise waiter");
+          contract.Runtime_contract.await_promise canceled_done;
+          contract.Runtime_contract.fork child_scope (fun () ->
+              contract.Runtime_contract.resolve_promise live_started_resolver
+                ();
+              let value = contract.Runtime_contract.await_promise promise in
+              contract.Runtime_contract.resolve_promise live_result_resolver
+                value);
+          contract.Runtime_contract.await_promise live_started;
+          contract.Runtime_contract.yield ();
+          contract.Runtime_contract.resolve_promise resolver 23;
+          contract.Runtime_contract.await_promise live_result)
+    in
+    Eta.Exit.Ok result
+  in
+  run eff ~on_result:(finish done_ (expect_ok_int 23))
+
 let test_daemon_drain done_ =
   let completed = ref false in
   let runtime = Eta_jsoo.Runtime.create () in
@@ -195,8 +278,11 @@ let tests =
     ("await cancel hook", test_await_cancel_hook);
     ("runtime locals cross fork", test_runtime_locals_cross_fork);
     ("runtime stream fifo", test_runtime_stream_fifo);
+    ("runtime resolve wakes live waiter", test_runtime_resolve_wakes_live_waiter);
     ( "runtime resolve after waiter cancellation",
       test_runtime_resolve_after_waiter_cancellation );
+    ( "runtime canceled waiter does not strand live waiter",
+      test_runtime_canceled_waiter_does_not_strand_live_waiter );
     ("daemon drain", test_daemon_drain);
   ]
 
