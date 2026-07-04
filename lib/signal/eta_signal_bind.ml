@@ -119,6 +119,11 @@ type ('source, 'inner, 'scope, 'owner) staged_switch = {
   staged : ('source, 'inner, 'scope) snapshot option;
 }
 
+type ('scope, 'owner) packed_staged_switch =
+  | Packed_staged_switch :
+      ('source, 'inner, 'scope, 'owner) staged_switch
+      -> ('scope, 'owner) packed_staged_switch
+
 let commit_staged_switch switch ~detach_old_inner ~invalidate_old_scope
     ~attach_new_inner =
   match (switch.owner, switch.staged) with
@@ -142,3 +147,19 @@ let preflight_staged_switch switch ~collect_old_scope =
       preflight_switch ~current:switch.current ~staged
         ~collect_old_scope:(collect_old_scope owner)
   | None, Some _ -> Error `Invalid_scope
+
+let collect_staged_switch_invalidations ~init ~switches ~staged_switch
+    ~collect_old_scope =
+  let rec loop acc = function
+    | [] -> Ok acc
+    | switch :: rest ->
+        let acc_ref = ref acc in
+        let (Packed_staged_switch staged) = staged_switch switch in
+        (match
+           preflight_staged_switch staged ~collect_old_scope:(fun owner scope ->
+               acc_ref := collect_old_scope !acc_ref ~owner scope)
+         with
+        | Ok () -> loop !acc_ref rest
+        | Error _ as error -> error)
+  in
+  loop init switches

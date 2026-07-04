@@ -1306,16 +1306,25 @@ module Make (Observer_error : Observer_error) () = struct
       Some (Transaction.read transaction bind.snapshot)
     else None
 
-  let commit_bind (B bind) =
-    let staged =
+  let bind_staged_switch (type a b) (bind : (a, b) bind) :
+      (a, b signal, scope, b signal) Bind.staged_switch =
+    {
+      Bind.owner = bind.owner;
+      current = bind_current_snapshot bind;
+      staged = bind_staged_snapshot bind;
+    }
+
+  let packed_bind_staged_switch (B bind) =
+    Bind.Packed_staged_switch
       {
-        Bind.owner = bind.owner;
+        Bind.owner = Option.map (fun owner -> P owner) bind.owner;
         current = bind_current_snapshot bind;
         staged = bind_staged_snapshot bind;
       }
-    in
+
+  let commit_bind (B bind) =
     match
-      Bind.commit_staged_switch staged
+      Bind.commit_staged_switch (bind_staged_switch bind)
         ~detach_old_inner:detach_dependency
         ~invalidate_old_scope:invalidate_scope
         ~attach_new_inner:attach_dependency
@@ -1347,22 +1356,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
 
-  let preflight_staged_bind_commit seen collected (B bind) =
-    let staged =
-      {
-        Bind.owner = bind.owner;
-        current = bind_current_snapshot bind;
-        staged = bind_staged_snapshot bind;
-      }
-    in
-    match
-      Bind.preflight_staged_switch staged ~collect_old_scope:(fun owner ->
-          collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
-            collected)
-    with
-    | Ok () -> ()
-    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-
   let preflight_signal_commit invalidated_ids (P signal) =
     if
       signal.valid
@@ -1378,10 +1371,20 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_staged_bind_invalidations () =
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
-    List.iter
-      (preflight_staged_bind_commit invalidated_ids invalidated_nodes)
-      (Graph_state.staged_binds graph.state);
-    (invalidated_ids, !invalidated_nodes)
+    match
+      Bind.collect_staged_switch_invalidations
+        ~init:(invalidated_ids, invalidated_nodes)
+        ~switches:(Graph_state.staged_binds graph.state)
+        ~staged_switch:packed_bind_staged_switch
+        ~collect_old_scope:(fun (seen, collected) ~owner scope ->
+          let P owner_signal = owner in
+          collect_scope_invalidations_into ~exclude_signal_id:owner_signal.id
+            seen collected scope;
+          (seen, collected))
+    with
+    | Ok (invalidated_ids, invalidated_nodes) ->
+        (invalidated_ids, !invalidated_nodes)
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let collect_post_commit_necessary_timers invalidated_ids =
     prune_all_nodes_unlocked ();

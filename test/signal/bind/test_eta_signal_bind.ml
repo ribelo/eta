@@ -203,6 +203,57 @@ let test_staged_switch_preflight_uses_owner_for_old_scope () =
         "collected" [ ("owner", 1) ] !collected
   | Error `Invalid_scope -> Alcotest.fail "expected preflight"
 
+let packed_staged_switch switch = Bind.Packed_staged_switch switch
+
+let test_collect_staged_switch_invalidations_collects_old_scopes () =
+  let first =
+    {
+      Bind.owner = Some "first";
+      current = Bind.switch ~source_value:0 ~inner:"old-first" ~scope:1;
+      staged = Some (Bind.switch ~source_value:1 ~inner:"new-first" ~scope:10);
+    }
+  in
+  let unstaged =
+    {
+      Bind.owner = Some "unstaged";
+      current = Bind.switch ~source_value:0 ~inner:"old-unstaged" ~scope:2;
+      staged = None;
+    }
+  in
+  let second =
+    {
+      Bind.owner = Some "second";
+      current = Bind.switch ~source_value:0 ~inner:"old-second" ~scope:3;
+      staged = Some (Bind.switch ~source_value:1 ~inner:"new-second" ~scope:30);
+    }
+  in
+  match
+    Bind.collect_staged_switch_invalidations ~init:[]
+      ~switches:[ first; unstaged; second ] ~staged_switch:packed_staged_switch
+      ~collect_old_scope:(fun collected ~owner scope ->
+        collected @ [ (owner, scope) ])
+  with
+  | Ok collected ->
+      Alcotest.(check (list (pair string int)))
+        "collected old scopes" [ ("first", 1); ("second", 3) ] collected
+  | Error `Invalid_scope -> Alcotest.fail "expected collection"
+
+let test_collect_staged_switch_invalidations_rejects_missing_owner () =
+  let missing_owner =
+    {
+      Bind.owner = None;
+      current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1;
+      staged = Some (Bind.switch ~source_value:1 ~inner:"new" ~scope:2);
+    }
+  in
+  Alcotest.(check bool)
+    "missing owner rejected" true
+    (Result.is_error
+       (Bind.collect_staged_switch_invalidations ~init:[]
+          ~switches:[ missing_owner ] ~staged_switch:packed_staged_switch
+          ~collect_old_scope:(fun collected ~owner scope ->
+            collected @ [ (owner, scope) ])))
+
 let test_switch_plans_reject_incomplete_staged_snapshot () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   Alcotest.(check bool) "commit rejected" true
@@ -364,6 +415,11 @@ let () =
             test_staged_switch_rejects_missing_owner;
           Alcotest.test_case "staged switch preflight owner" `Quick
             test_staged_switch_preflight_uses_owner_for_old_scope;
+          Alcotest.test_case "collect staged invalidations" `Quick
+            test_collect_staged_switch_invalidations_collects_old_scopes;
+          Alcotest.test_case "collect staged invalidations missing owner"
+            `Quick
+            test_collect_staged_switch_invalidations_rejects_missing_owner;
           Alcotest.test_case "incomplete switch rejected" `Quick
             test_switch_plans_reject_incomplete_staged_snapshot;
           Alcotest.test_case "dependencies include source and inner" `Quick

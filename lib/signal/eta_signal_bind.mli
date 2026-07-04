@@ -103,6 +103,11 @@ type ('source, 'inner, 'scope, 'owner) staged_switch = {
   staged : ('source, 'inner, 'scope) snapshot option;
 }
 
+type ('scope, 'owner) packed_staged_switch =
+  | Packed_staged_switch :
+      ('source, 'inner, 'scope, 'owner) staged_switch
+      -> ('scope, 'owner) packed_staged_switch
+
 val commit_staged_switch :
   ('source, 'inner, 'scope, 'owner) staged_switch ->
   detach_old_inner:('owner -> 'inner -> unit) ->
@@ -119,3 +124,10 @@ val preflight_staged_switch :
   ('source, 'inner, 'scope, 'owner) staged_switch ->
   collect_old_scope:('owner -> 'scope -> unit) ->
   (unit, [> `Invalid_scope ]) result
+
+val collect_staged_switch_invalidations :
+  init:'acc ->
+  switches:'switch list ->
+  staged_switch:('switch -> ('scope, 'owner) packed_staged_switch) ->
+  collect_old_scope:('acc -> owner:'owner -> 'scope -> 'acc) ->
+  ('acc, [> `Invalid_scope ]) result
