@@ -34,6 +34,19 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
       dynamic_reuse_value : 'value;
     }
 
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
+  dynamic_mark_recomputed : unit -> unit;
+  dynamic_switch_changed : 'value -> bool;
+  dynamic_stage_switch :
+    source_value:'source -> inner:'inner -> scope:'scope -> unit;
+  dynamic_stage_dependencies : 'dependency list -> unit;
+  dynamic_stage_value : 'value -> unit;
+  dynamic_current_value : unit -> 'value;
+  dynamic_recompute_with_dependencies :
+    'dependency list -> 'value -> 'value * bool;
+  dynamic_use_cached : unit -> 'value * bool;
+}
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -129,6 +142,32 @@ let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
                  dynamic_reuse_dependencies = reuse_dependencies;
                  dynamic_reuse_value = reuse_value;
                }))
+
+let apply_dynamic_eval callbacks = function
+  | Dynamic_switch
+      {
+        dynamic_source_value;
+        dynamic_inner;
+        dynamic_scope;
+        dynamic_switch_dependencies;
+        dynamic_switch_value;
+      } ->
+      callbacks.dynamic_mark_recomputed ();
+      let changed =
+        callbacks.dynamic_switch_changed dynamic_switch_value
+      in
+      callbacks.dynamic_stage_switch ~source_value:dynamic_source_value
+        ~inner:dynamic_inner ~scope:dynamic_scope;
+      callbacks.dynamic_stage_dependencies dynamic_switch_dependencies;
+      if changed then callbacks.dynamic_stage_value dynamic_switch_value;
+      ( (if changed then dynamic_switch_value
+         else callbacks.dynamic_current_value ()),
+        changed )
+  | Dynamic_reuse_recompute
+      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+      callbacks.dynamic_recompute_with_dependencies
+        dynamic_reuse_dependencies dynamic_reuse_value
+  | Dynamic_reuse_cached -> callbacks.dynamic_use_cached ()
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

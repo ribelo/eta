@@ -16,6 +16,19 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
       dynamic_reuse_value : 'value;
     }
 
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
+  dynamic_mark_recomputed : unit -> unit;
+  dynamic_switch_changed : 'value -> bool;
+  dynamic_stage_switch :
+    source_value:'source -> inner:'inner -> scope:'scope -> unit;
+  dynamic_stage_dependencies : 'dependency list -> unit;
+  dynamic_stage_value : 'value -> unit;
+  dynamic_current_value : unit -> 'value;
+  dynamic_recompute_with_dependencies :
+    'dependency list -> 'value -> 'value * bool;
+  dynamic_use_cached : unit -> 'value * bool;
+}
+
 val empty : ('source, 'inner, 'scope) snapshot
 
 val switch :
@@ -48,6 +61,11 @@ val eval_dynamic :
   initialized:bool ->
   dependencies_changed:('dependency list -> bool) ->
   (('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval, 'error) result
+
+val apply_dynamic_eval :
+  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply ->
+  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval ->
+  'value * bool
 
 val stage_transaction_switch :
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->

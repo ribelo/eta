@@ -1715,35 +1715,32 @@ module Make (Observer_error : Observer_error) () = struct
              ~dependencies_changed:dependency_changed
          with
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-        | Ok
-            (Bind.Dynamic_switch
+        | Ok eval ->
+            Bind.apply_dynamic_eval
               {
-                dynamic_source_value;
-                dynamic_inner;
-                dynamic_scope;
-                dynamic_switch_dependencies;
-                dynamic_switch_value;
-              }) ->
-          graph.recompute_count <- saturating_succ graph.recompute_count;
-          let snapshot = signal_effective_snapshot signal in
-          let changed =
-            Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
-              ~initialized:(Signal_snapshot.is_initialized snapshot)
-              ~current:(Signal_snapshot.value snapshot)
-              ~next:dynamic_switch_value
-          in
-          stage_bind_switch bind dynamic_source_value dynamic_inner
-            dynamic_scope;
-          stage_dependency_versions signal dynamic_switch_dependencies;
-          if changed then stage_signal signal dynamic_switch_value;
-          (if changed then dynamic_switch_value else current_or_raise signal),
-          changed
-        | Ok
-            (Bind.Dynamic_reuse_recompute
-              { dynamic_reuse_dependencies; dynamic_reuse_value }) ->
-            recompute_with_dependencies dynamic_reuse_dependencies
-              dynamic_reuse_value
-        | Ok Bind.Dynamic_reuse_cached -> use_cached ())
+                Bind.dynamic_mark_recomputed =
+                  (fun () ->
+                    graph.recompute_count <-
+                      saturating_succ graph.recompute_count);
+                dynamic_switch_changed =
+                  (fun next ->
+                    let snapshot = signal_effective_snapshot signal in
+                    Graph_algorithms.Value_cutoff.changed
+                      ~equal:signal.equal
+                      ~initialized:(Signal_snapshot.is_initialized snapshot)
+                      ~current:(Signal_snapshot.value snapshot) ~next);
+                dynamic_stage_switch =
+                  (fun ~source_value ~inner ~scope ->
+                    stage_bind_switch bind source_value inner scope);
+                dynamic_stage_dependencies =
+                  stage_dependency_versions signal;
+                dynamic_stage_value = stage_signal signal;
+                dynamic_current_value = (fun () -> current_or_raise signal);
+                dynamic_recompute_with_dependencies =
+                  recompute_with_dependencies;
+                dynamic_use_cached = use_cached;
+              }
+              eval)
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
