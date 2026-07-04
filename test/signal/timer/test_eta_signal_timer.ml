@@ -253,6 +253,31 @@ let test_mark_stopped_policy () =
   Alcotest.(check bool) "inactive ignored" true
     (Option.is_none (Timer.mark_stopped inactive ~generation:7))
 
+let test_mark_failed_policy () =
+  let cancelled = ref false in
+  let cancel () = cancelled := true in
+  let running = Timer.Timer_running (7, Some 11, cancel) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match
+     Timer.mark_failed ~advance_generation:succ ~effective_state:running
+       ~current_state:running ~generation:7
+   with
+  | Some state ->
+      Alcotest.(check string) "failed state" "inactive"
+        (Timer.state_label state);
+      Alcotest.(check int) "failed generation" 8
+        (Timer.state_generation state);
+      Alcotest.(check bool) "does not cancel running hook" false !cancelled
+  | None -> Alcotest.fail "expected failed cleanup state");
+  Alcotest.(check bool) "stale running ignored" true
+    (Option.is_none
+       (Timer.mark_failed ~advance_generation:succ ~effective_state:running
+          ~current_state:running ~generation:8));
+  Alcotest.(check bool) "inactive current ignored" true
+    (Option.is_none
+       (Timer.mark_failed ~advance_generation:succ ~effective_state:running
+          ~current_state:inactive ~generation:7))
+
 let test_read_next_due_policy () =
   let running_with_due = Timer.Timer_running (7, Some 11, noop) in
   let running_without_due = Timer.Timer_running_uncancellable (7, None) in
@@ -439,6 +464,8 @@ let () =
             test_install_cancel_policy;
           Alcotest.test_case "mark stopped policy" `Quick
             test_mark_stopped_policy;
+          Alcotest.test_case "mark failed policy" `Quick
+            test_mark_failed_policy;
           Alcotest.test_case "read next due policy" `Quick
             test_read_next_due_policy;
           Alcotest.test_case "set next due policy" `Quick

@@ -213,6 +213,32 @@ let mark_stopped state ~generation =
   if state_running_current state generation then Some (Timer_inactive generation)
   else None
 
+let stop ~advance_generation ~cancel_running state =
+  match state with
+  | Timer_inactive _ | Timer_finished _ -> None
+  | Timer_starting _ | Timer_running_uncancellable _ ->
+      Some
+        {
+          stop_state =
+            Timer_inactive (advance_generation (state_generation state));
+          stop_cancel_hooks = [];
+        }
+  | Timer_running (_, _, cancel) ->
+      Some
+        {
+          stop_state =
+            Timer_inactive (advance_generation (state_generation state));
+          stop_cancel_hooks = (if cancel_running then [ cancel ] else []);
+        }
+
+let mark_failed ~advance_generation ~effective_state ~current_state ~generation
+    =
+  if state_running_current effective_state generation then
+    match stop ~advance_generation ~cancel_running:false current_state with
+    | Some plan -> Some plan.stop_state
+    | None -> None
+  else None
+
 let read_next_due state ~generation ~fallback =
   if state_running_current state generation then
     Some (Option.value (state_next_due state) ~default:fallback)
@@ -232,24 +258,6 @@ let advance_next_due ~effective_state ~current_state ~generation ~expected
           (state_set_next_due current_state (Some next_due_ms))
     | Some _ | None -> Advance_next_due_stale
   else Advance_next_due_stop
-
-let stop ~advance_generation ~cancel_running state =
-  match state with
-  | Timer_inactive _ | Timer_finished _ -> None
-  | Timer_starting _ | Timer_running_uncancellable _ ->
-      Some
-        {
-          stop_state =
-            Timer_inactive (advance_generation (state_generation state));
-          stop_cancel_hooks = [];
-        }
-  | Timer_running (_, _, cancel) ->
-      Some
-        {
-          stop_state =
-            Timer_inactive (advance_generation (state_generation state));
-          stop_cancel_hooks = (if cancel_running then [ cancel ] else []);
-        }
 
 let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
     ~refresh_when_inactive ~active ~finished =

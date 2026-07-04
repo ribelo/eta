@@ -3664,10 +3664,11 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_mark_failed timer generation =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then
-            ignore
-              (timer_mark_unneeded_unlocked ~cancel_running:false timer
-                : (unit -> unit) list))
+          Option.iter (set_timer_current_state timer)
+            (Timer.mark_failed
+               ~advance_generation:(checked_succ "timer generation")
+               ~effective_state:(timer_effective_state timer)
+               ~current_state:(timer_current_state timer) ~generation))
 
     let timer_cleanup_after_exit timer generation = function
       | Eta.Exit.Ok _ -> timer_mark_stopped timer generation
