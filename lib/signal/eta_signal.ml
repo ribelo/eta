@@ -261,7 +261,7 @@ module Make (Observer_error : Observer_error) () = struct
     obs_id : observer_id;
     obs_signal : 'a signal;
     obs_equal : 'a -> 'a -> bool;
-    obs_callback : 'a update -> (unit, observer_error) Effect.t;
+    obs_callback : int -> 'a update -> (unit, observer_error) Effect.t;
     mutable obs_state : 'a observer_state;
   }
 
@@ -587,7 +587,19 @@ module Make (Observer_error : Observer_error) () = struct
       in
       live.obs_on_finish <- hooks
 
-    let run_observer_callback observer update = observer.obs_callback update
+    let run_observer_callback observer update =
+      let live = active_live_state observer in
+      let token =
+        match
+          Observer_core.Delivery.running_token
+            (observer_current_snapshot live).observer_delivery
+        with
+        | Some token -> token
+        | None ->
+            invalid_arg
+              "Eta_signal.Private_test_hooks: observer delivery is not running"
+      in
+      observer.obs_callback token update
   end
 
   type disposal_hook = unit -> unit
@@ -2707,7 +2719,7 @@ module Make (Observer_error : Observer_error) () = struct
     Effect.sync (fun () ->
         try
           if claimed_event_delivery_active observer token then
-            Ok (Some (observer.obs_callback update))
+            Ok (Some (observer.obs_callback token update))
           else Ok None
         with Graph_error err -> Error (err :> stabilize_error))
     |> Effect.flatten_result
@@ -2882,8 +2894,8 @@ module Make (Observer_error : Observer_error) () = struct
           | Error `Invalid_scope -> Error `Invalid_scope)
       |> Effect.flatten_result
 
-    let observe_with_hooks_callback ?(equal = default_equal) ?(on_finish = [])
-        signal callback =
+    let observe_with_hooks_delivery_callback ?(equal = default_equal)
+        ?(on_finish = []) signal callback =
       with_graph_lane_sync (fun () ->
           try
             if not signal.valid then Error `Invalid_scope
@@ -2904,7 +2916,8 @@ module Make (Observer_error : Observer_error) () = struct
                   obs_id = next_observer_id ();
                   obs_signal = signal;
                   obs_equal = equal;
-                  obs_callback = (fun update -> callback observer update);
+                  obs_callback =
+                    (fun token update -> callback observer token update);
                   obs_state = Observer_lifecycle.Registering live;
                 }
               in
@@ -2924,6 +2937,10 @@ module Make (Observer_error : Observer_error) () = struct
                   | Eta.Exit.Ok _ -> Effect.unit
                   | Eta.Exit.Error _ ->
                       abort_observer_registration_effect observer))
+
+    let observe_with_hooks_callback ?equal ?on_finish signal callback =
+      observe_with_hooks_delivery_callback ?equal ?on_finish signal
+        (fun observer _token update -> callback observer update)
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal
@@ -3103,13 +3120,10 @@ module Make (Observer_error : Observer_error) () = struct
     acknowledge_stream_published_delivery observer token update
       [ record_stream_bridge_drop_unlocked ]
 
-  let stream_delivery_token observer =
+  let active_event_delivery_token observer token =
     with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> None
-        | Some live ->
-            Observer_core.Delivery.running_token
-              (observer_current_snapshot live).observer_delivery)
+        if claimed_event_delivery_active observer token then Some token
+        else None)
 
   let signal_selected :
       type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
@@ -3912,11 +3926,11 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let offer_bridge_update observer on_drop queue update =
+    let offer_bridge_update observer token on_drop queue update =
       let delivery =
         {
           Stream_bridge.current_token =
-            (fun () -> stream_delivery_token observer);
+            (fun () -> active_event_delivery_token observer token);
           acknowledge_sent =
             (fun token update ->
               acknowledge_stream_sent_delivery observer token update);
@@ -3942,12 +3956,12 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun (queue, stream) ->
-             Observer.observe_with_hooks_callback ?equal
+             Observer.observe_with_hooks_delivery_callback ?equal
                ~on_finish:
                  [ Stream_bridge.observer_finish_hook ~queue ]
                signal
-               (fun observer update ->
-                 offer_bridge_update observer on_drop queue update)
+               (fun observer token update ->
+                 offer_bridge_update observer token on_drop queue update)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, stream)))
