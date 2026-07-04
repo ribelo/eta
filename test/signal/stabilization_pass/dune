@@ -41,4 +41,4 @@
   eta_signal_stabilization_pass
   eta_signal_stabilization
   eta_signal_transaction)
- (libraries alcotest))
+ (libraries alcotest eta eta_eio eio_main))

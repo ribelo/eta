@@ -36,3 +36,22 @@ val run :
   'error Eta_signal_stabilization.t ->
   ('pending, 'observer, 'event, 'hook, 'error) t ->
   ('hook, 'event, 'error) result
+
+type ('event, 'error) delivery = {
+  run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
+  run_events : 'event list -> (unit, 'error) Eta.Effect.t;
+  mark_complete : unit -> (unit, 'error) Eta.Effect.t;
+  finish : unit -> (unit, 'error) Eta.Effect.t;
+}
+(** Callback surface for the delivering phase. The module owns delivery
+    bracketing: cleanup before callbacks, callbacks, completion marking, final
+    cleanup, and phase finish. *)
+
+val deliver :
+  ('event, 'error) delivery ->
+  'event list ->
+  (unit, 'error) Eta.Effect.t
+
+val finish_delivery :
+  ('event, 'error) delivery ->
+  (unit, 'error) Eta.Effect.t

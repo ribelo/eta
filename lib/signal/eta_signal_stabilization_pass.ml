@@ -27,6 +27,13 @@ type ('pending, 'observer, 'event, 'hook, 'error) t = {
   classify_graph_error : exn -> 'error option;
 }
 
+type ('event, 'error) delivery = {
+  run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
+  run_events : 'event list -> (unit, 'error) Eta.Effect.t;
+  mark_complete : unit -> (unit, 'error) Eta.Effect.t;
+  finish : unit -> (unit, 'error) Eta.Effect.t;
+}
+
 let rollback state pure_token ops observers pending =
   let hooks = ops.rollback_staging () in
   ops.mark_observers_failed_without_current observers;
@@ -66,3 +73,15 @@ let run state ops =
         match ops.classify_graph_error exn with
         | Some err -> Pure_graph_error (hooks, err)
         | None -> Pure_defect (hooks, exn, backtrace))
+
+let finish_delivery ops =
+  let open Eta in
+  ops.run_pending_cleanup ()
+  |> Effect.on_exit (fun _exit -> ops.finish ())
+
+let deliver ops events =
+  let open Eta in
+  (ops.run_pending_cleanup ()
+  |> Effect.bind (fun () -> ops.run_events events)
+  |> Effect.bind ops.mark_complete)
+  |> Effect.on_exit (fun _exit -> finish_delivery ops)

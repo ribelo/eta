@@ -2284,49 +2284,57 @@ module Make (Observer_error : Observer_error) () = struct
      | Stabilization_pass.Pure_defect _ -> ());
     result
 
-  let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
-      finish_token_ref =
-    run_pending_stabilize_cleanup hooks_ref refresh_timers
-    |> Effect.on_exit (fun _exit ->
-           match !finish_token_ref with
-           | None -> Effect.unit
-           | Some delivering_token ->
-               with_graph_lane_sync (fun () ->
-                   finish_stabilize delivering_token))
+  let finish_recorded_stabilize finish_token_ref =
+    match !finish_token_ref with
+    | None -> Effect.unit
+    | Some delivering_token ->
+        with_graph_lane_sync (fun () -> finish_stabilize delivering_token)
+        |> Effect.on_exit (fun _exit ->
+               Effect.sync (fun () -> finish_token_ref := None))
+
+  let stabilization_delivery_ops hooks_ref refresh_timers finish_token_ref =
+    {
+      Stabilization_pass.run_pending_cleanup =
+        (fun () -> run_pending_stabilize_cleanup hooks_ref refresh_timers);
+      run_events;
+      mark_complete = mark_callback_delivery_complete;
+      finish = (fun () -> finish_recorded_stabilize finish_token_ref);
+    }
 
   let stabilize =
     Effect.sync (fun () -> (ref [], ref false, ref None))
     |> Effect.bind
          (fun (hooks_ref, refresh_timers, finish_token_ref) ->
-           current_runtime_contract ()
-           |> Effect.bind (fun runtime_contract ->
-                  with_graph_lane_sync (fun () ->
-                      try
-                        let timer_refresh =
-                          Some
-                            (Timer_policy.create_refresh_context
-                               ~token:(next_timer_refresh_token_unlocked ())
-                               ~runtime_contract
-                               ~now_ms:runtime_contract.Runtime_contract.now_ms)
-                        in
-                        begin_stabilize_with_pending_hooks timer_refresh
-                          hooks_ref finish_token_ref
-                      with Graph_error err ->
-                        Stabilization_pass.Pure_graph_error ([], err))
-                  |> Effect.bind (function
-                       | Stabilization_pass.Pure_graph_error (_, err) ->
-                           graph_error_with_pending_disposal_hooks hooks_ref err
-                       | Stabilization_pass.Pure_defect (_, exn, backtrace) ->
-                           defect_with_pending_disposal_hooks hooks_ref exn
-                             backtrace
-                       | Stabilization_pass.Pure_ok (_, events, _) ->
-                           refresh_timers := true;
-                           run_pending_stabilize_cleanup hooks_ref refresh_timers
-                           |> Effect.bind (fun () -> run_events events)
-                           |> Effect.bind mark_callback_delivery_complete))
+           let delivery_ops =
+             stabilization_delivery_ops hooks_ref refresh_timers
+               finish_token_ref
+           in
+           (current_runtime_contract ()
+            |> Effect.bind (fun runtime_contract ->
+                   with_graph_lane_sync (fun () ->
+                       try
+                         let timer_refresh =
+                           Some
+                             (Timer_policy.create_refresh_context
+                                ~token:(next_timer_refresh_token_unlocked ())
+                                ~runtime_contract
+                                ~now_ms:runtime_contract.Runtime_contract.now_ms)
+                         in
+                         begin_stabilize_with_pending_hooks timer_refresh
+                           hooks_ref finish_token_ref
+                       with Graph_error err ->
+                         Stabilization_pass.Pure_graph_error ([], err))
+                   |> Effect.bind (function
+                        | Stabilization_pass.Pure_graph_error (_, err) ->
+                            graph_error_with_pending_disposal_hooks hooks_ref err
+                        | Stabilization_pass.Pure_defect (_, exn, backtrace) ->
+                            defect_with_pending_disposal_hooks hooks_ref exn
+                              backtrace
+                        | Stabilization_pass.Pure_ok (_, events, _) ->
+                            refresh_timers := true;
+                            Stabilization_pass.deliver delivery_ops events)))
            |> Effect.on_exit (fun _exit ->
-                  finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
-                    finish_token_ref))
+                  Stabilization_pass.finish_delivery delivery_ops))
 
   module Var = struct
     type 'a t = 'a var
