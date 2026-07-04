@@ -3665,20 +3665,15 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let offer_bridge_update observer_delivery on_drop queue =
-      let observer_delivery =
-        {
-          Stream_bridge.observer_update =
-            observer_delivery.Observer.update;
-          observer_current_token =
-            observer_delivery.Observer.current_token;
-          observer_acknowledge_sent =
-            observer_delivery.Observer.acknowledge_sent;
-          observer_acknowledge_drop =
-            observer_delivery.Observer.acknowledge_drop;
-        }
-      in
-      let hooks =
+    let bridge_observer_delivery observer_delivery =
+      {
+        Stream_bridge.observer_update = observer_delivery.Observer.update;
+        observer_current_token = observer_delivery.Observer.current_token;
+        observer_acknowledge_sent = observer_delivery.Observer.acknowledge_sent;
+        observer_acknowledge_drop = observer_delivery.Observer.acknowledge_drop;
+      }
+
+    let bridge_hooks () =
         {
           Stream_bridge.after_try_send_before_ack =
             (fun () ->
@@ -3688,21 +3683,15 @@ module Make (Observer_error : Observer_error) () = struct
           on_closed_with_error =
             (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
         }
-      in
-      Stream_bridge.offer_observer_delivery ~queue ~observer_delivery ~hooks
-        ~on_drop
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
-      Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
-      |> Effect.flatten_result
-      |> Effect.bind (fun (queue, stream) ->
-             Observer.observe_delivery ?equal
-               ~on_finish:
-                 [ Stream_bridge.observer_finish_hook ~queue ]
-               signal
-               (fun delivery -> offer_bridge_update delivery on_drop queue)
-             |> Effect.map_error (fun err -> (err :> stream_error))
-             |> Effect.map (fun observer ->
-                    (observer, stream)))
+      Stream_bridge.observe ~capacity ?on_drop ?equal
+        ~hooks:(bridge_hooks ())
+        ~map_observe_error:(fun err -> (err :> stream_error))
+        ~observe_delivery:
+          (fun ?equal ~on_finish signal callback ->
+            Observer.observe_delivery ?equal ~on_finish signal (fun delivery ->
+                callback (bridge_observer_delivery delivery)))
+        signal
   end
 end

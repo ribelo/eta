@@ -149,3 +149,17 @@ let offer_observer_delivery ~queue ~observer_delivery ~hooks ~on_drop =
     }
   in
   offer ~queue ~delivery ~hooks ~on_drop observer_delivery.observer_update
+
+let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
+    ~observe_delivery signal =
+  Effect.sync (fun () -> create_stream ~capacity)
+  |> Effect.flatten_result
+  |> Effect.bind (fun (queue, stream) ->
+         observe_delivery ?equal
+           ~on_finish:[ observer_finish_hook ~queue ]
+           signal
+           (fun observer_delivery ->
+             offer_observer_delivery ~queue ~observer_delivery ~hooks
+               ~on_drop)
+         |> Effect.map_error map_observe_error
+         |> Effect.map (fun observer -> (observer, stream)))

@@ -3,7 +3,7 @@ module Queue = Eta.Queue
 module Observer_lifecycle = Eta_signal_observer.Lifecycle
 module Stream_bridge = Eta_signal_stream_bridge
 
-type test_error = [ `Invalid_scope ]
+type test_error = [ `Invalid_capacity | `Invalid_scope | `Observe_failed ]
 
 let pp_hidden ppf _ = Format.pp_print_string ppf "<stream-bridge-error>"
 
@@ -19,6 +19,14 @@ let run_invalid_scope runtime eff =
   | Eta.Exit.Ok _ -> Alcotest.fail "expected Invalid_scope failure"
   | Eta.Exit.Error cause ->
       Alcotest.failf "expected Invalid_scope, got %a"
+        (Eta.Cause.pp pp_hidden) cause
+
+let run_invalid_capacity runtime eff =
+  match Eta_eio.Runtime.run runtime eff with
+  | Eta.Exit.Error (Eta.Cause.Fail `Invalid_capacity) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected Invalid_capacity failure"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected Invalid_capacity, got %a"
         (Eta.Cause.pp pp_hidden) cause
 
 let test_capacity_validation () =
@@ -149,6 +157,60 @@ let test_offer_observer_delivery_sends_and_drops () =
   | `Empty | `Closed | `Closed_with_error _ ->
       Alcotest.fail "expected queued item"
 
+let test_observe_adapter () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let sent = ref [] in
+  let token = ref (Some 7) in
+  let finish_hooks = ref [] in
+  let observe_delivery ?equal:_ ~on_finish signal callback =
+    finish_hooks := on_finish;
+    callback
+      {
+        Stream_bridge.observer_update = signal;
+        observer_current_token =
+          (fun () -> Effect.sync (fun () -> !token));
+        observer_acknowledge_sent =
+          (fun token value ->
+            Effect.sync (fun () -> sent := (token, value) :: !sent));
+        observer_acknowledge_drop =
+          (fun _token _value -> Effect.unit);
+      }
+    |> Effect.map (fun () -> "observer")
+  in
+  let observer, stream =
+    run_ok runtime
+      (Stream_bridge.observe ~capacity:1 ~hooks:(hooks ())
+         ~map_observe_error:(function
+           | `Invalid_scope | `Observe_failed -> `Invalid_scope)
+         ~observe_delivery 42)
+  in
+  Alcotest.(check string) "observer" "observer" observer;
+  Alcotest.(check (list (pair int int))) "sent ack" [ (7, 42) ] !sent;
+  List.iter
+    (fun hook -> hook Observer_lifecycle.Finish_disposed)
+    !finish_hooks;
+  Alcotest.(check (list int)) "stream item" [ 42 ]
+    (run_ok runtime
+       (Eta_stream.Stream.take 1 stream
+       |> Eta_stream.run_collect
+       |> Effect.map_error (fun err -> (err :> test_error))));
+  Alcotest.(check (list int)) "stream closed" []
+    (run_ok runtime
+       (Eta_stream.run_collect stream
+       |> Effect.map_error (fun err -> (err :> test_error))));
+  run_invalid_capacity runtime
+    (Stream_bridge.observe ~capacity:0 ~hooks:(hooks ())
+       ~map_observe_error:(function
+         | `Invalid_scope | `Observe_failed -> `Invalid_scope)
+       ~observe_delivery 42);
+  run_invalid_scope runtime
+    (Stream_bridge.observe ~capacity:1 ~hooks:(hooks ())
+       ~map_observe_error:(function
+         | `Invalid_scope | `Observe_failed -> `Invalid_scope)
+       ~observe_delivery:(fun ?equal:_ ~on_finish:_ _signal _callback ->
+         Effect.fail `Observe_failed)
+       42)
+
 let test_offer_without_token_noops () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let queue =
@@ -260,6 +322,7 @@ let () =
             test_offer_sends_and_drops;
           Alcotest.test_case "offer observer delivery sends and drops" `Quick
             test_offer_observer_delivery_sends_and_drops;
+          Alcotest.test_case "observe adapter" `Quick test_observe_adapter;
           Alcotest.test_case "offer without token noops" `Quick
             test_offer_without_token_noops;
           Alcotest.test_case "drop ack runs once after failure" `Quick

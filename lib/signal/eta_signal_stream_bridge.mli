@@ -64,3 +64,22 @@ val offer_observer_delivery :
   hooks:('queue_error, 'error) hooks ->
   on_drop:('update -> unit) option ->
   (unit, 'error) Eta.Effect.t
+
+val observe :
+  capacity:int ->
+  ?on_drop:('update -> unit) ->
+  ?equal:('value -> 'value -> bool) ->
+  hooks:(([> `Invalid_scope ] as 'queue_error), 'callback_error) hooks ->
+  map_observe_error:('observe_error -> ([> `Invalid_capacity ] as 'stream_error)) ->
+  observe_delivery:
+    (?equal:('value -> 'value -> bool) ->
+     on_finish:
+       (Eta_signal_observer.Lifecycle.finish_reason -> unit) list ->
+     'signal ->
+     (('token, 'update, 'callback_error) observer_delivery ->
+      (unit, 'callback_error) Eta.Effect.t) ->
+     ('observer, 'observe_error) Eta.Effect.t) ->
+  'signal ->
+  ( 'observer * ('update, 'queue_error) Eta_stream.Stream.t,
+    'stream_error )
+  Eta.Effect.t
