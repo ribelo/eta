@@ -1193,12 +1193,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let max_dead_signal_tombstones = 1024
 
-  let rec take_dead_signal_tombstones remaining = function
-    | [] -> []
-    | _ when remaining <= 0 -> []
-    | tombstone :: rest ->
-        tombstone :: take_dead_signal_tombstones (remaining - 1) rest
-
   let timer_debug_snapshot timer =
     let snapshot = Timer.debug_snapshot (timer_effective_state timer) in
     { snapshot with debug_generation = timer_generation timer }
@@ -1235,11 +1229,10 @@ module Make (Observer_error : Observer_error) () = struct
 
   let record_dead_node_unlocked (P signal as packed) =
     graph.dead_nodes <-
-      signal_tombstone packed
-      :: List.filter
-           (fun tombstone -> tombstone.dead_id <> signal.id)
-           graph.dead_nodes
-      |> take_dead_signal_tombstones max_dead_signal_tombstones
+      Debug.remember_latest ~max_count:max_dead_signal_tombstones
+        ~id:(fun tombstone -> tombstone.dead_id)
+        ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+        (signal_tombstone packed) graph.dead_nodes
 
   let rec invalidate_scope ?(prune = true) scope =
     match Scope.invalidate scope with

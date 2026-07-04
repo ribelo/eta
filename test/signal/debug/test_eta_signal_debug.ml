@@ -20,6 +20,22 @@ let test_bool_field () =
   Alcotest.(check string) "false field" "dirty=false"
     (Debug.bool_field "dirty" false)
 
+let test_remember_latest () =
+  let id (id, _value) = id in
+  let entries =
+    Debug.remember_latest ~max_count:3 ~id ~equal_id:Int.equal (1, "new")
+      [ (2, "two"); (1, "old"); (3, "three"); (4, "four") ]
+  in
+  Alcotest.(check (list (pair int string)))
+    "deduplicates and caps"
+    [ (1, "new"); (2, "two"); (3, "three") ]
+    entries;
+  let empty =
+    Debug.remember_latest ~max_count:0 ~id ~equal_id:Int.equal (1, "new")
+      [ (2, "two") ]
+  in
+  Alcotest.(check (list (pair int string))) "zero cap" [] empty
+
 let test_timer_fields () =
   let running =
     {
@@ -242,6 +258,7 @@ let () =
         [
           Alcotest.test_case "stats counter" `Quick test_stats_counter;
           Alcotest.test_case "bool field" `Quick test_bool_field;
+          Alcotest.test_case "remember latest" `Quick test_remember_latest;
           Alcotest.test_case "timer fields" `Quick test_timer_fields;
           Alcotest.test_case "signal state fields" `Quick
             test_signal_state_fields;

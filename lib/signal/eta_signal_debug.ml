@@ -3,6 +3,19 @@ let stats_counter ~name value =
 
 let bool_field name value = name ^ "=" ^ string_of_bool value
 
+let remember_latest ~max_count ~id ~equal_id entry entries =
+  let entry_id = id entry in
+  let rec take remaining = function
+    | [] -> []
+    | _ when remaining <= 0 -> []
+    | entry :: rest -> entry :: take (remaining - 1) rest
+  in
+  entry
+  :: List.filter
+       (fun candidate -> not (equal_id (id candidate) entry_id))
+       entries
+  |> take max_count
+
 type timer_snapshot = {
   timer_active : bool;
   timer_running_generation : int option;
