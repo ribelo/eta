@@ -250,6 +250,41 @@ module Snapshot : sig
     ('a, 'after_ack) event_plan
 end
 
+type ('observer, 'live, 'a, 'after_ack) delivery_port = {
+  delivery_live : 'observer -> 'live option;
+  delivery_snapshot : 'live -> ('a, 'after_ack) Snapshot.t;
+  delivery_set_snapshot : 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  delivery_run_after_ack : 'after_ack list -> unit;
+}
+
+val acknowledge_delivery :
+  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  'observer ->
+  Delivery.token ->
+  'a Update.t ->
+  after_ack:'after_ack list ->
+  unit
+
+val claim_delivery :
+  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  'observer ->
+  Delivery.token ->
+  bool
+
+val finish_delivery_after_error :
+  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  'observer ->
+  Delivery.token ->
+  'a Update.t ->
+  delivered:bool ->
+  unit
+
+val running_delivery_token_matches :
+  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  'observer ->
+  Delivery.token ->
+  bool
+
 module Event : sig
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

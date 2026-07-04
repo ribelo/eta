@@ -394,6 +394,60 @@ module Snapshot = struct
     { snapshot; update }
 end
 
+type ('observer, 'live, 'a, 'after_ack) delivery_port = {
+  delivery_live : 'observer -> 'live option;
+  delivery_snapshot : 'live -> ('a, 'after_ack) Snapshot.t;
+  delivery_set_snapshot : 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  delivery_run_after_ack : 'after_ack list -> unit;
+}
+
+let acknowledge_delivery port observer token update ~after_ack =
+  match port.delivery_live observer with
+  | None -> ()
+  | Some live -> (
+      match
+        Snapshot.acknowledge_delivery ~token ~update ~after_ack
+          (port.delivery_snapshot live)
+      with
+      | Some (snapshot, after_ack) ->
+          port.delivery_set_snapshot live snapshot;
+          port.delivery_run_after_ack after_ack
+      | None -> ())
+
+let claim_delivery port observer token =
+  match port.delivery_live observer with
+  | None -> false
+  | Some live -> (
+      match
+        Snapshot.claim_delivery ~token (port.delivery_snapshot live)
+      with
+      | Some snapshot ->
+          port.delivery_set_snapshot live snapshot;
+          true
+      | None -> false)
+
+let finish_delivery_after_error port observer token update ~delivered =
+  match port.delivery_live observer with
+  | None -> ()
+  | Some live -> (
+      match
+        Snapshot.finish_running_delivery ~token ~update ~delivered
+          ~after_ack:[] (port.delivery_snapshot live)
+      with
+      | Some (Snapshot.Finish_acknowledged (snapshot, after_ack)) ->
+          port.delivery_set_snapshot live snapshot;
+          port.delivery_run_after_ack after_ack
+      | Some (Snapshot.Finish_released snapshot) ->
+          port.delivery_set_snapshot live snapshot
+      | None -> ())
+
+let running_delivery_token_matches port observer token =
+  match port.delivery_live observer with
+  | None -> false
+  | Some live ->
+      Snapshot.running_delivery_token_matches ~token
+        (port.delivery_snapshot live)
+
 module Event = struct
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

@@ -576,6 +576,103 @@ let test_snapshot_finish_running_delivery () =
   | Some (Observer.Snapshot.Finish_released _) | None ->
       Alcotest.fail "expected acknowledgement"
 
+type observer_live = {
+  mutable snapshot : (int, after_ack) Observer.Snapshot.t;
+}
+
+type observer_ref = { mutable live : observer_live option }
+
+let observer_delivery_port events =
+  {
+    Observer.delivery_live = (fun observer -> observer.live);
+    delivery_snapshot = (fun live -> live.snapshot);
+    delivery_set_snapshot =
+      (fun live snapshot ->
+        live.snapshot <- snapshot;
+        record events
+          ("set:"
+          ^ Observer.Delivery.label
+              (Observer.Snapshot.delivery snapshot)));
+    delivery_run_after_ack =
+      (fun actions ->
+        List.iter
+          (fun action ->
+            record events
+              (match action with
+              | Stored -> "after_ack:stored"
+              | Extra -> "after_ack:extra"))
+          actions);
+  }
+
+let test_delivery_port_claim_acknowledge_and_finish () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:
+            (Observer.Delivery.Observer_delivery_pending
+               (7, update_changed, [ Stored ]));
+    }
+  in
+  let observer = { live = Some live } in
+  let port = observer_delivery_port events in
+  Alcotest.(check bool) "claim" true
+    (Observer.claim_delivery port observer 7);
+  Alcotest.(check bool) "running token" true
+    (Observer.running_delivery_token_matches port observer 7);
+  Observer.acknowledge_delivery port observer 7 update_changed
+    ~after_ack:[ Extra ];
+  Alcotest.(check string) "acknowledged" "delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
+  Alcotest.(check (list string))
+    "ack events"
+    [
+      "set:running";
+      "set:delivered";
+      "after_ack:extra";
+      "after_ack:stored";
+    ]
+    !events;
+  events := [];
+  live.snapshot <-
+    Observer.Snapshot.create ~value:(Observer.Value.current 1)
+      ~delivery:
+        (Observer.Delivery.Observer_delivery_running
+           (8, update_changed, [ Stored ]));
+  Observer.finish_delivery_after_error port observer 8 update_changed
+    ~delivered:false;
+  Alcotest.(check string) "released" "pending"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
+  Alcotest.(check (list string)) "release events" [ "set:pending" ]
+    !events
+
+let test_delivery_port_ignores_missing_or_stale_delivery () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:
+            (Observer.Delivery.Observer_delivery_pending
+               (7, update_changed, []));
+    }
+  in
+  let observer = { live = Some live } in
+  let inactive = { live = None } in
+  let port = observer_delivery_port events in
+  Alcotest.(check bool) "stale claim" false
+    (Observer.claim_delivery port observer 8);
+  Observer.acknowledge_delivery port observer 8 update_changed
+    ~after_ack:[ Extra ];
+  Observer.finish_delivery_after_error port observer 8 update_changed
+    ~delivered:true;
+  Alcotest.(check bool) "inactive running token" false
+    (Observer.running_delivery_token_matches port inactive 7);
+  Alcotest.(check (list string)) "no events" [] !events;
+  Alcotest.(check string) "state unchanged" "pending"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot))
+
 let test_snapshot_event_plan () =
   let initial = Observer.Snapshot.initial in
   let initialized =
@@ -711,6 +808,10 @@ let () =
             test_delivery_runner_finishes_acknowledged_failure_as_delivered;
           Alcotest.test_case "handle accessors" `Quick
             test_delivery_handle_accessors;
+          Alcotest.test_case "port claim acknowledge finish" `Quick
+            test_delivery_port_claim_acknowledge_and_finish;
+          Alcotest.test_case "port ignores stale delivery" `Quick
+            test_delivery_port_ignores_missing_or_stale_delivery;
         ] );
       ( "snapshot",
         [

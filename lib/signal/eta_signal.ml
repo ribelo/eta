@@ -2038,20 +2038,18 @@ module Make (Observer_error : Observer_error) () = struct
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
 
+  let observer_delivery_port () =
+    {
+      Observer_core.delivery_live = observer_active_live_state;
+      delivery_snapshot = observer_current_snapshot;
+      delivery_set_snapshot = set_observer_current;
+      delivery_run_after_ack = run_after_ack_actions_unlocked;
+    }
+
   let acknowledge_event_delivery_unlocked (_lane : graph_lane) observer token
       update ~after_ack =
-    match observer_active_live_state observer with
-    | None -> ()
-    | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match
-          Observer_snapshot.acknowledge_delivery ~token ~update
-            ~after_ack snapshot
-        with
-        | Some (snapshot, after_ack) ->
-            set_observer_current live snapshot;
-            run_after_ack_actions_unlocked after_ack
-        | None -> ())
+    Observer_core.acknowledge_delivery (observer_delivery_port ()) observer
+      token update ~after_ack
 
   let acknowledge_event_delivery observer token update =
     with_graph_lane_access (fun lane ->
@@ -2059,15 +2057,7 @@ module Make (Observer_error : Observer_error) () = struct
           ~after_ack:[])
 
   let claim_event_delivery_unlocked (_lane : graph_lane) observer token =
-    match observer_active_live_state observer with
-    | None -> false
-    | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match Observer_snapshot.claim_delivery ~token snapshot with
-        | Some snapshot ->
-            set_observer_current live snapshot;
-            true
-        | None -> false)
+    Observer_core.claim_delivery (observer_delivery_port ()) observer token
 
   let claim_event_delivery observer token =
     with_graph_lane_access (fun lane ->
@@ -2075,20 +2065,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let finish_event_delivery_after_error_unlocked (_lane : graph_lane) observer
       token update ~delivered =
-    match observer_active_live_state observer with
-    | None -> ()
-    | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match
-          Observer_snapshot.finish_running_delivery ~token ~update ~delivered
-            ~after_ack:[] snapshot
-        with
-        | Some (Observer_snapshot.Finish_acknowledged (snapshot, after_ack)) ->
-            set_observer_current live snapshot;
-            run_after_ack_actions_unlocked after_ack
-        | Some (Observer_snapshot.Finish_released snapshot) ->
-            set_observer_current live snapshot
-        | None -> ())
+    Observer_core.finish_delivery_after_error (observer_delivery_port ())
+      observer token update ~delivered
 
   let finish_event_delivery_after_error observer token update ~delivered =
     with_graph_lane_access (fun lane ->
@@ -2096,11 +2074,8 @@ module Make (Observer_error : Observer_error) () = struct
           ~delivered)
 
   let claimed_event_delivery_active observer token =
-    match Observer_lifecycle.active_live observer.obs_state with
-    | Some live ->
-        Observer_snapshot.running_delivery_token_matches ~token
-          (observer_current_snapshot live)
-    | None -> false
+    Observer_core.running_delivery_token_matches (observer_delivery_port ())
+      observer token
 
   let acknowledge_stream_published_delivery observer token update ~after_ack =
     with_graph_lane_access (fun lane ->
