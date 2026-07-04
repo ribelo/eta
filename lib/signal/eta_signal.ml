@@ -497,11 +497,14 @@ module Make (Observer_error : Observer_error) () = struct
     | Finish
     | Cancel_after_commit of (unit -> unit)
 
+  and timer_snapshot = {
+    timer_state : timer_state;
+    timer_on_demand_refresh_token : int;
+  }
+
   and timer_node = {
-    mutable timer_state : timer_state;
-    mutable timer_staged_state : timer_state option;
+    timer_snapshot : timer_snapshot Transaction.staged;
     mutable timer_staged_refresh_token : int;
-    mutable timer_on_demand_refresh_token : int;
     timer_runtime_contract : Runtime_contract.t;
     timer_refresh_when_inactive : bool;
     timer_refresh_operation : timer_refresh_operation option;
@@ -619,28 +622,42 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
-          timer.timer_state <-
-            (match timer.timer_state with
-            | Timer_inactive _ -> Timer_inactive generation
-            | Timer_starting _ -> Timer_starting generation
-            | Timer_running_uncancellable (_, next_due_ms) ->
-                Timer_running_uncancellable (generation, next_due_ms)
-            | Timer_running (_, next_due_ms, cancel) ->
-                Timer_running (generation, next_due_ms, cancel)
-            | Timer_finished _ -> Timer_finished generation)
+          let snapshot = Transaction.current timer.timer_snapshot in
+          Transaction.set_current timer.timer_snapshot
+            {
+              snapshot with
+              timer_state =
+                (match snapshot.timer_state with
+                 | Timer_inactive _ -> Timer_inactive generation
+                 | Timer_starting _ -> Timer_starting generation
+                 | Timer_running_uncancellable (_, next_due_ms) ->
+                     Timer_running_uncancellable (generation, next_due_ms)
+                 | Timer_running (_, next_due_ms, cancel) ->
+                     Timer_running (generation, next_due_ms, cancel)
+                 | Timer_finished _ -> Timer_finished generation);
+            }
 
     let set_timer_next_due signal next_due_ms =
       match signal.timer with
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer -> (
-          match timer.timer_state with
+          let snapshot = Transaction.current timer.timer_snapshot in
+          match snapshot.timer_state with
           | Timer_running_uncancellable (generation, _) ->
-              timer.timer_state <-
-                Timer_running_uncancellable (generation, Some next_due_ms)
+              Transaction.set_current timer.timer_snapshot
+                {
+                  snapshot with
+                  timer_state =
+                    Timer_running_uncancellable (generation, Some next_due_ms);
+                }
           | Timer_running (generation, _, cancel) ->
-              timer.timer_state <-
-                Timer_running (generation, Some next_due_ms, cancel)
+              Transaction.set_current timer.timer_snapshot
+                {
+                  snapshot with
+                  timer_state =
+                    Timer_running (generation, Some next_due_ms, cancel);
+                }
           | Timer_inactive _ | Timer_starting _ | Timer_finished _ ->
               invalid_arg
                 "Eta_signal.Private_test_hooks: expected active timer state")
@@ -650,7 +667,7 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer -> (
-          match timer.timer_state with
+          match (Transaction.current timer.timer_snapshot).timer_state with
           | Timer_inactive _ -> "inactive"
           | Timer_starting _ -> "starting"
           | Timer_running_uncancellable _ -> "running_uncancellable"
@@ -1421,7 +1438,31 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_finished generation ->
         generation
 
-  let timer_generation timer = timer_state_generation timer.timer_state
+  let timer_current_snapshot timer =
+    Transaction.current timer.timer_snapshot
+
+  let timer_effective_snapshot timer =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.read transaction timer.timer_snapshot
+    | None -> timer_current_snapshot timer
+
+  let set_timer_current_snapshot timer snapshot =
+    Transaction.set_current timer.timer_snapshot snapshot
+
+  let set_timer_current_state timer timer_state =
+    let snapshot = timer_current_snapshot timer in
+    set_timer_current_snapshot timer { snapshot with timer_state }
+
+  let update_timer_staging timer f =
+    let transaction = active_transaction () in
+    let snapshot = Transaction.read transaction timer.timer_snapshot in
+    Transaction.stage transaction timer.timer_snapshot (f snapshot)
+
+  let timer_current_state timer =
+    (timer_current_snapshot timer).timer_state
+
+  let timer_generation timer =
+    timer_state_generation (timer_current_state timer)
 
   let timer_state_label = function
     | Timer_inactive _ -> "inactive"
@@ -1438,10 +1479,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_effective_state timer =
     if timer_has_staged_refresh timer then
-      match timer.timer_staged_state with
-      | Some state -> state
-      | None -> timer.timer_state
-    else timer.timer_state
+      (timer_effective_snapshot timer).timer_state
+    else timer_current_state timer
 
   let timer_active_state = function
     | Timer_starting _ | Timer_running_uncancellable _ | Timer_running _ ->
@@ -1459,7 +1498,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_finished timer = timer_finished_state (timer_effective_state timer)
 
   let timer_has_current_start timer =
-    match timer.timer_state with
+    match timer_current_state timer with
     | Timer_running_uncancellable _ | Timer_running _ -> true
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
 
@@ -1478,7 +1517,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_operation
-    && timer.timer_on_demand_refresh_token <> token
+    && (timer_current_snapshot timer).timer_on_demand_refresh_token <> token
     && timer.timer_staged_refresh_token <> token
     && (timer.timer_refresh_when_inactive || timer_active timer)
     && not (timer_finished timer)
@@ -1546,8 +1585,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
 
   let timer_set_next_due_unlocked timer next_due_ms =
-    timer.timer_state <-
-      timer_set_next_due_state timer.timer_state next_due_ms
+    set_timer_current_state timer
+      (timer_set_next_due_state (timer_current_state timer) next_due_ms)
 
   let remember_timer_refresh_timer timer =
     match graph.active_timer_refresh with
@@ -1555,13 +1594,18 @@ module Make (Observer_error : Observer_error) () = struct
     | Some { timer_refresh_token; _ } ->
         if timer.timer_staged_refresh_token <> timer_refresh_token then (
           timer.timer_staged_refresh_token <- timer_refresh_token;
-          timer.timer_staged_state <- None;
+          update_timer_staging timer (fun snapshot ->
+              {
+                snapshot with
+                timer_on_demand_refresh_token = timer_refresh_token;
+              });
           graph.timer_refresh_staged_timers <-
             timer :: graph.timer_refresh_staged_timers)
 
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
-    timer.timer_staged_state <- Some state
+    update_timer_staging timer (fun snapshot ->
+        { snapshot with timer_state = state })
 
   let timer_due_refresh_transitions timer interval_ms now_ms =
     match timer_next_due_unlocked timer with
@@ -1578,10 +1622,10 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_invalidate_generation_unlocked timer =
     let generation = checked_succ "timer generation" (timer_generation timer) in
-    timer.timer_state <- Timer_inactive generation
+    set_timer_current_state timer (Timer_inactive generation)
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
-    match timer.timer_state with
+    match timer_current_state timer with
     | Timer_inactive _ | Timer_finished _ -> []
     | Timer_starting _ | Timer_running_uncancellable _ ->
         timer_invalidate_generation_unlocked timer;
@@ -1591,7 +1635,7 @@ module Make (Observer_error : Observer_error) () = struct
         if cancel_running then [ cancel ] else []
 
   let timer_rollback_unclaimed_start_unlocked timer =
-    match timer.timer_state with
+    match timer_current_state timer with
     | Timer_starting _ -> timer_mark_unneeded_unlocked timer
     | Timer_inactive _ | Timer_running_uncancellable _ | Timer_running _
     | Timer_finished _ ->
@@ -2018,11 +2062,12 @@ module Make (Observer_error : Observer_error) () = struct
     Timer_finished generation
 
   let timer_finish_unlocked timer =
-    timer.timer_state <- timer_finish_state timer.timer_state
+    set_timer_current_state timer
+      (timer_finish_state (timer_current_state timer))
 
   let timer_finish_cancel_hooks_unlocked timer =
     let cancel_hooks =
-      match timer.timer_state with
+      match timer_current_state timer with
       | Timer_running (_, _, cancel) -> [ cancel ]
       | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
       | Timer_finished _ ->
@@ -2080,7 +2125,6 @@ module Make (Observer_error : Observer_error) () = struct
       (timer_refresh_plan timer now_ms operation)
 
   let clear_timer_refresh_timer_staging timer =
-    timer.timer_staged_state <- None;
     timer.timer_staged_refresh_token <- -1
 
   let rollback_timer_refresh_dirty_nodes () =
@@ -2093,10 +2137,6 @@ module Make (Observer_error : Observer_error) () = struct
         context.timer_refresh_dirty_nodes <- []
 
   let commit_timer_refresh_staging timer =
-    (match timer.timer_staged_state with
-     | None -> ()
-     | Some state -> timer.timer_state <- state);
-    timer.timer_on_demand_refresh_token <- timer.timer_staged_refresh_token;
     clear_timer_refresh_timer_staging timer
 
   let clear_timer_refresh_staging () =
@@ -2441,7 +2481,7 @@ module Make (Observer_error : Observer_error) () = struct
     if not (timer_needs_start timer) then None
     else (
       let generation = checked_succ "timer generation" (timer_generation timer) in
-      timer.timer_state <- Timer_starting generation;
+      set_timer_current_state timer (Timer_starting generation);
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
   type timer_demand_action =
@@ -2450,10 +2490,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
-        match timer.timer_state with
+        match timer_current_state timer with
         | Timer_starting starting_generation
           when starting_generation = generation ->
-            timer.timer_state <- Timer_running_uncancellable (generation, None);
+            set_timer_current_state timer
+              (Timer_running_uncancellable (generation, None));
             `Continue
         | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
         | Timer_running _ | Timer_finished _ ->
@@ -3545,7 +3586,7 @@ module Make (Observer_error : Observer_error) () = struct
           | Some generation -> string_of_int generation
         in
         [
-          "timer_state=" ^ timer_state_label timer.timer_state;
+          "timer_state=" ^ timer_state_label (timer_current_state timer);
           bool_field "timer_active" (timer_active timer);
           "timer_running=" ^ running;
           bool_field "timer_cancel" (timer_has_cancel timer);
@@ -3806,16 +3847,16 @@ module Make (Observer_error : Observer_error) () = struct
 
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->
-          match timer.timer_state with
+          match timer_current_state timer with
           | Timer_running_uncancellable (running_generation, next_due_ms)
             when running_generation = generation ->
-              timer.timer_state <-
-                Timer_running (generation, next_due_ms, cancel);
+              set_timer_current_state timer
+                (Timer_running (generation, next_due_ms, cancel));
               `Continue
           | Timer_running (running_generation, next_due_ms, _)
             when running_generation = generation ->
-              timer.timer_state <-
-                Timer_running (generation, next_due_ms, cancel);
+              set_timer_current_state timer
+                (Timer_running (generation, next_due_ms, cancel));
               `Continue
           | Timer_inactive _ | Timer_starting _
           | Timer_running_uncancellable _ | Timer_running _ | Timer_finished _
@@ -3851,7 +3892,7 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
           if timer_running_current timer generation then (
-            timer.timer_state <- Timer_inactive generation)
+            set_timer_current_state timer (Timer_inactive generation))
           )
 
     let timer_mark_failed timer generation =
@@ -4038,10 +4079,13 @@ module Make (Observer_error : Observer_error) () = struct
         ?refresh_operation ~runtime_contract signal interval update =
       let timer =
         {
-          timer_state = Timer_inactive 0;
-          timer_staged_state = None;
+          timer_snapshot =
+            Transaction.create_staged
+              {
+                timer_state = Timer_inactive 0;
+                timer_on_demand_refresh_token = -1;
+              };
           timer_staged_refresh_token = -1;
-          timer_on_demand_refresh_token = -1;
           timer_runtime_contract = runtime_contract;
           timer_refresh_when_inactive = refresh_when_inactive;
           timer_refresh_operation = refresh_operation;
