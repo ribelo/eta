@@ -32,18 +32,25 @@ type 'error core = {
 
 type (+'phase, 'error) t = { core : 'error core }
 
+type current_writer = Current_writer of string
+
+let initialize_current = Current_writer "initialize_current"
+let source_publication = Current_writer "source_publication"
+let observer_publication = Current_writer "observer_publication"
+let timer_lifecycle = Current_writer "timer_lifecycle"
+
 let next_id = ref 0
 
 let create_staged current = { current; pending = None }
 let current staged = staged.current
 
-let replace_current staged value =
+let publish_current (Current_writer writer) staged value =
   match staged.pending with
   | None -> staged.current <- value
   | Some _ ->
       invalid_arg
-        "Eta_signal_transaction.replace_current: staged value has pending \
-         transaction state"
+        ("Eta_signal_transaction.publish_current(" ^ writer
+       ^ "): staged value has pending transaction state")
 
 let id tx = tx.core.id
 let equal_id (Id left) (Id right) = Int.equal left right

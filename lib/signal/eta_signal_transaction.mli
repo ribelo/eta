@@ -13,14 +13,22 @@ type observers
 type (+'phase, 'error) t
 type 'a staged
 
+type current_writer
+
+val initialize_current : current_writer
+val source_publication : current_writer
+val observer_publication : current_writer
+val timer_lifecycle : current_writer
+
 val create_staged : 'a -> 'a staged
 val current : 'a staged -> 'a
-val replace_current : 'a staged -> 'a -> unit
-(** Replace the committed current value.
+val publish_current : current_writer -> 'a staged -> 'a -> unit
+(** Publish a committed current value outside a pure transaction.
 
-    This is for initialization and non-transactional source publication. It
-    raises [Invalid_argument] if the cell has a pending transaction value,
-    because that would bypass pure snapshot commit/rollback ordering. *)
+    Callers must choose a writer capability that describes why the
+    non-transactional current mutation is valid. This raises
+    [Invalid_argument] if the cell has a pending transaction value, because
+    that would bypass pure snapshot commit/rollback ordering. *)
 
 val begin_pure : unit -> (pure, 'error) t
 val id : (_, _) t -> id

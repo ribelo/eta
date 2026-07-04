@@ -402,6 +402,18 @@ module Make (Observer_error : Observer_error) () = struct
       signal.computed_generation <- generation
   end)
 
+  let publish_initial_current staged value =
+    Transaction.publish_current Transaction.initialize_current staged value
+
+  let publish_source_current staged value =
+    Transaction.publish_current Transaction.source_publication staged value
+
+  let publish_observer_current staged value =
+    Transaction.publish_current Transaction.observer_publication staged value
+
+  let publish_timer_current staged value =
+    Transaction.publish_current Transaction.timer_lifecycle staged value
+
   module Private_test_hooks = struct
     type hook = Test_hooks.hook =
       | After_observer_delivery_claim
@@ -477,7 +489,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Test_delivery_running (token, update) ->
             Observer_delivery_running (token, update, [])
       in
-      Transaction.replace_current live.observer_snapshot
+      publish_observer_current live.observer_snapshot
         (Observer_snapshot.with_delivery snapshot observer_delivery)
 
     let observer_delivery observer =
@@ -495,7 +507,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let set_signal_version signal value =
       let snapshot = Transaction.current signal.snapshot in
-      Transaction.replace_current signal.snapshot
+      publish_initial_current signal.snapshot
         (Signal_snapshot.with_version snapshot value)
     let signal_valid signal = signal.valid
     let set_signal_valid signal value = signal.valid <- value
@@ -503,8 +515,8 @@ module Make (Observer_error : Observer_error) () = struct
     let seed_var_source_value (type a) (signal : a signal) (value : a) =
       match signal.kind with
       | Var source ->
-          Transaction.replace_current source.source_value value;
-          Transaction.replace_current source.graph_value value
+          publish_source_current source.source_value value;
+          publish_source_current source.graph_value value
       | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
       | Map8 _ | Map9 _ | All _ | Bind _ ->
           invalid_arg
@@ -516,7 +528,7 @@ module Make (Observer_error : Observer_error) () = struct
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
           let snapshot = Transaction.current timer.timer_snapshot in
-          Transaction.replace_current timer.timer_snapshot
+          publish_timer_current timer.timer_snapshot
             (Timer_policy.snapshot_with_generation snapshot generation)
 
     let set_timer_next_due signal next_due_ms =
@@ -527,7 +539,7 @@ module Make (Observer_error : Observer_error) () = struct
           let snapshot = Transaction.current timer.timer_snapshot in
           match Timer_policy.snapshot_with_next_due snapshot next_due_ms with
           | Some snapshot ->
-              Transaction.replace_current timer.timer_snapshot
+              publish_timer_current timer.timer_snapshot
                 snapshot
           | None ->
               invalid_arg
@@ -882,7 +894,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage transaction live.observer_snapshot (f snapshot)
 
   let set_observer_current live snapshot =
-    Transaction.replace_current live.observer_snapshot snapshot
+    publish_observer_current live.observer_snapshot snapshot
 
   let set_observer_current_delivery live observer_delivery =
     let snapshot = observer_current_snapshot live in
@@ -974,7 +986,7 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> timer_current_snapshot timer
 
   let set_timer_current_snapshot timer snapshot =
-    Transaction.replace_current timer.timer_snapshot snapshot
+    publish_timer_current timer.timer_snapshot snapshot
 
   let set_timer_current_state timer timer_state =
     let snapshot = timer_current_snapshot timer in
@@ -1114,7 +1126,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in
-    Transaction.replace_current signal.snapshot
+    publish_initial_current signal.snapshot
       (Signal_snapshot.initialized value);
     signal
 
@@ -1431,7 +1443,7 @@ module Make (Observer_error : Observer_error) () = struct
       Graph_state.enqueue_pending graph.state (V source))
 
   let set_var_source_unlocked (type a) (source : a var) value =
-    Transaction.replace_current source.source_value value;
+    publish_source_current source.source_value value;
     queue_var_unlocked source
 
   let stage_timer_source_value (type a) (source : a var) value =
@@ -2933,7 +2945,7 @@ module Make (Observer_error : Observer_error) () = struct
       with_graph_lane_sync (fun () ->
           match Timer_policy.daemon_status (timer_effective_state timer) ~generation with
           | Timer_policy.Daemon_continue ->
-            Transaction.replace_current source.source_value value;
+            publish_source_current source.source_value value;
             Var.queue_var source;
             `Updated
           | Timer_policy.Daemon_stop -> `Stopped)

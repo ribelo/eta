@@ -38,17 +38,28 @@ let test_restage_uses_last_value () =
   ignore (commit_ok tx : (T.committed, test_error) T.t);
   Alcotest.(check int) "committed last value" 2 (T.current cell)
 
-let test_replace_current_rejects_pending_transaction_value () =
+let test_publish_current_rejects_pending_transaction_value () =
   let cell = T.create_staged 0 in
   let tx : (T.pure, test_error) T.t = T.begin_pure () in
   T.stage tx cell 1;
-  expect_invalid_arg "replace current while pending" (fun () ->
-      T.replace_current cell 2);
+  expect_invalid_arg "publish current while pending" (fun () ->
+      T.publish_current T.source_publication cell 2);
   Alcotest.(check int) "transaction reads pending value" 1 (T.read tx cell);
   Alcotest.(check int) "outside read keeps old current value" 0
     (T.current cell);
   T.rollback tx;
   Alcotest.(check int) "rollback keeps old current value" 0 (T.current cell)
+
+let test_publish_current_requires_explicit_writer () =
+  let cell = T.create_staged "old" in
+  T.publish_current T.initialize_current cell "initialized";
+  Alcotest.(check string) "initialized" "initialized" (T.current cell);
+  T.publish_current T.source_publication cell "source";
+  Alcotest.(check string) "source" "source" (T.current cell);
+  T.publish_current T.observer_publication cell "observer";
+  Alcotest.(check string) "observer" "observer" (T.current cell);
+  T.publish_current T.timer_lifecycle cell "timer";
+  Alcotest.(check string) "timer" "timer" (T.current cell)
 
 let test_stage_read_rollback () =
   let cell = T.create_staged "old" in
@@ -154,8 +165,10 @@ let () =
           Alcotest.test_case "restage uses last value" `Quick
             test_restage_uses_last_value;
           Alcotest.test_case
-            "replace_current rejects pending transaction value" `Quick
-            test_replace_current_rejects_pending_transaction_value;
+            "publish_current rejects pending transaction value" `Quick
+            test_publish_current_rejects_pending_transaction_value;
+          Alcotest.test_case "publish_current requires explicit writer" `Quick
+            test_publish_current_requires_explicit_writer;
           Alcotest.test_case "stage read rollback" `Quick
             test_stage_read_rollback;
           Alcotest.test_case "discard skips one staged cell" `Quick
