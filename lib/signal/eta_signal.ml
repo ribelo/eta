@@ -2,13 +2,13 @@ module Effect = Eta.Effect
 module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
-module Sync_lock = Eta.Sync_lock
 module Bind = Eta_signal_bind
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
 module Signal_snapshot = Kernel.Snapshot
+module Lane = Eta_signal_lane
 module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
@@ -428,6 +428,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Stats_total_node_count
       | Stats_necessary_node_count
       | Stats_dead_node_count
+      | Stats_lane_cancelled_waiter_count
 
     type action = Test_hooks.action = {
       run : 'err. unit -> (unit, 'err) Effect.t;
@@ -592,32 +593,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Pure_graph_error of disposal_hook list * graph_error
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
-  type lane_waiter_state =
-    | Lane_waiting
-    | Lane_granted
-    | Lane_cancelled
-
-  type lane_claim_result =
-    | Lane_grant_accepted
-    | Lane_grant_cancelled
-
-  type lane_waiter = {
-    lane_contract : Runtime_contract.t;
-    lane_resolver : unit Runtime_contract.resolver;
-    mutable lane_state : lane_waiter_state;
-    mutable lane_notified : bool;
-  }
-
-  type lane = {
-    lane_lock : Sync_lock.t;
-    lane_waiters : lane_waiter Stdlib.Queue.t;
-    mutable lane_busy : bool;
-    mutable lane_waiting : int;
-    mutable lane_cancelled : int;
-    mutable lane_cancelled_debt : int;
-    mutable lane_owner_fiber_id : int option;
-  }
-
   type timer_refresh_context = {
     timer_refresh_token : int;
     timer_refresh_runtime_contract : Runtime_contract.t;
@@ -627,7 +602,7 @@ module Make (Observer_error : Observer_error) () = struct
   }
 
   type graph = {
-    lane : lane;
+    lane : Lane.t;
     owner_domain : Domain.id;
     mutable next_id : int;
     mutable next_scope_id : int;
@@ -658,15 +633,7 @@ module Make (Observer_error : Observer_error) () = struct
   let graph =
     {
       lane =
-        {
-          lane_lock = Sync_lock.create ();
-          lane_waiters = Stdlib.Queue.create ();
-          lane_busy = false;
-          lane_waiting = 0;
-          lane_cancelled = 0;
-          lane_cancelled_debt = 0;
-          lane_owner_fiber_id = None;
-        };
+        Lane.create ();
       owner_domain = Domain.self ();
       next_id = 0;
       next_scope_id = 1;
@@ -781,192 +748,14 @@ module Make (Observer_error : Observer_error) () = struct
       || Runtime_contract.in_registered_worker_context ()
     then invalid_arg graph_context_error_message
 
-  let with_lane_lock lane f = Sync_lock.use lane.lane_lock f
-
-  let lane_invariant_failed message =
-    invalid_arg ("Eta_signal invariant failed: " ^ message)
-
-  let decrement_lane_cancelled_debt lane =
-    if lane.lane_cancelled_debt > 0 then
-      lane.lane_cancelled_debt <- lane.lane_cancelled_debt - 1
-
-  let rec take_waiting_waiter_locked lane =
-    if Stdlib.Queue.is_empty lane.lane_waiters then None
-    else
-      let waiter = Stdlib.Queue.take lane.lane_waiters in
-      match waiter.lane_state with
-      | Lane_waiting -> Some waiter
-      | Lane_granted -> take_waiting_waiter_locked lane
-      | Lane_cancelled ->
-          decrement_lane_cancelled_debt lane;
-          take_waiting_waiter_locked lane
-
-  let should_compact_cancelled retained_cancelled queue_length =
-    if retained_cancelled <= 0 || queue_length <= 0 then false
-    else
-      let half_rounded_up = (queue_length / 2) + (queue_length mod 2) in
-      retained_cancelled >= max 1 half_rounded_up
-
-  let compact_cancelled_lane_waiters_locked lane =
-    if
-      should_compact_cancelled lane.lane_cancelled_debt
-        (Stdlib.Queue.length lane.lane_waiters)
-    then (
-      let live = Stdlib.Queue.create () in
-      Stdlib.Queue.iter
-        (fun waiter ->
-          match waiter.lane_state with
-          | Lane_waiting -> Stdlib.Queue.push waiter live
-          | Lane_granted | Lane_cancelled -> ())
-        lane.lane_waiters;
-      Stdlib.Queue.clear lane.lane_waiters;
-      Stdlib.Queue.iter
-        (fun waiter -> Stdlib.Queue.push waiter lane.lane_waiters)
-        live;
-      lane.lane_cancelled_debt <- 0;
-      Private_test_hooks.note_lane_waiter_compaction ())
-
-  let add_lane_grant pending waiter = Stdlib.Queue.push waiter pending
-
-  let grant_lane_waiter_locked pending waiter =
-    waiter.lane_state <- Lane_granted;
-    add_lane_grant pending waiter;
-    waiter
-
-  let resolve_lane_waiter waiter =
-    waiter.lane_contract.Runtime_contract.protect (fun () ->
-        waiter.lane_contract.Runtime_contract.resolve_promise
-          waiter.lane_resolver ();
-        waiter.lane_notified <- true)
-
-  let rec resolve_lane_waiter_best_effort remaining waiter =
-    (* Lane grants are already committed. Runtime_contract requires resolver
-       notification to fail only for non-transient programmer/runtime boundary
-       errors, so a grant-resolution failure must not poison the operation
-       that released the lane. *)
-    try
-      resolve_lane_waiter waiter;
-      true
-    with _exn ->
-      waiter.lane_notified
-      || (remaining > 0
-         && resolve_lane_waiter_best_effort (remaining - 1) waiter)
-
-  let resolve_pending_lane_grants pending =
-    let rec loop () =
-      if not (Stdlib.Queue.is_empty pending) then (
-        let waiter = Stdlib.Queue.take pending in
-        ignore (resolve_lane_waiter_best_effort 1 waiter : bool);
-        loop ())
-    in
-    loop ()
-
-  let with_committed_lane_grant lock f =
-    let pending_grants = Stdlib.Queue.create () in
-    Fun.protect
-      ~finally:(fun () -> resolve_pending_lane_grants pending_grants)
-      (fun () ->
-        let result = lock (fun () -> f pending_grants) in
-        resolve_pending_lane_grants pending_grants;
-        result)
-
-  let release_lane_locked pending_grants lane =
-    match take_waiting_waiter_locked lane with
-    | Some waiter ->
-        lane.lane_waiting <- lane.lane_waiting - 1;
-        ignore (grant_lane_waiter_locked pending_grants waiter)
-    | None -> lane.lane_busy <- false
-
-  let cancel_lane_waiter_locked pending_grants lane waiter =
-    match waiter.lane_state with
-    | Lane_waiting ->
-        waiter.lane_state <- Lane_cancelled;
-        lane.lane_waiting <- lane.lane_waiting - 1;
-        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
-        lane.lane_cancelled_debt <- saturating_succ lane.lane_cancelled_debt;
-        compact_cancelled_lane_waiters_locked lane
-    | Lane_granted ->
-        waiter.lane_state <- Lane_cancelled;
-        lane.lane_cancelled <- saturating_succ lane.lane_cancelled;
-        release_lane_locked pending_grants lane
-    | Lane_cancelled -> ()
-
-  let claim_lane_waiter_locked waiter =
-    match waiter.lane_state with
-    | Lane_granted -> Lane_grant_accepted
-    | Lane_waiting ->
-        lane_invariant_failed "lane waiter was not granted"
-    | Lane_cancelled -> Lane_grant_cancelled
-
-  let with_lane_lock_during_cancel contract lane f =
-    contract.Runtime_contract.protect (fun () -> with_lane_lock lane f)
-
-  let enqueue_lane_waiter contract lane =
-    let promise, resolver = contract.Runtime_contract.create_promise () in
-    let waiter =
-      {
-        lane_contract = contract;
-        lane_resolver = resolver;
-        lane_state = Lane_waiting;
-        lane_notified = false;
-      }
-    in
-    Stdlib.Queue.push waiter lane.lane_waiters;
-    Private_test_hooks.note_lane_waiter_enqueued ();
-    lane.lane_waiting <- saturating_succ lane.lane_waiting;
-    (promise, waiter)
-
-  let enter_lane_sync contract lane =
-    match
-      with_lane_lock lane @@ fun () ->
-      if lane.lane_busy then
-        let promise, waiter = enqueue_lane_waiter contract lane in
-        `Wait (promise, waiter)
-      else (
-        lane.lane_busy <- true;
-        `Ready)
-    with
-    | `Ready -> ()
-    | `Wait (promise, waiter) -> (
-        let claimed = ref false in
-        try
-          contract.Runtime_contract.await_promise promise;
-          (match
-             with_lane_lock_during_cancel contract lane (fun () ->
-                 match claim_lane_waiter_locked waiter with
-                 | Lane_grant_accepted ->
-                     claimed := true;
-                     Lane_grant_accepted
-                 | Lane_grant_cancelled -> Lane_grant_cancelled)
-           with
-           | Lane_grant_accepted -> ()
-           | Lane_grant_cancelled -> contract.Runtime_contract.await_cancel ())
-        with exn
-          when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
-          (if !claimed then
-             with_committed_lane_grant
-               (fun f -> with_lane_lock_during_cancel contract lane f)
-               (fun pending_grants ->
-                 release_lane_locked pending_grants lane)
-           else
-             with_committed_lane_grant
-               (fun f -> with_lane_lock_during_cancel contract lane f)
-               (fun pending_grants ->
-                 cancel_lane_waiter_locked pending_grants lane waiter));
-          raise exn)
-
-  let leave_lane_sync lane =
-    with_committed_lane_grant (with_lane_lock lane) (fun pending_grants ->
-        release_lane_locked pending_grants lane)
-
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
 
   let release_graph_lane_sync owns_lane =
     if !owns_lane then (
       owns_lane := false;
-      graph.lane.lane_owner_fiber_id <- None;
-      leave_lane_sync graph.lane)
+      Lane.set_owner_fiber_id graph.lane None;
+      Lane.leave graph.lane)
 
   let with_graph_lane_sync f =
     Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane_sync" (fun context ->
@@ -978,7 +767,7 @@ module Make (Observer_error : Observer_error) () = struct
         in
         let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
         let owns_graph_lane =
-          match graph.lane.lane_owner_fiber_id with
+          match Lane.owner_fiber_id graph.lane with
           | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
           | None -> false
         in
@@ -995,9 +784,17 @@ module Make (Observer_error : Observer_error) () = struct
           in
           try
             ensure_graph_context ();
-            enter_lane_sync contract graph.lane;
+            Lane.enter
+              ~hooks:
+                {
+                  note_waiter_enqueued =
+                    Private_test_hooks.note_lane_waiter_enqueued;
+                  note_waiter_compaction =
+                    Private_test_hooks.note_lane_waiter_compaction;
+                }
+              contract graph.lane;
             owns_lane := true;
-            graph.lane.lane_owner_fiber_id <- Some current_fiber_id;
+            Lane.set_owner_fiber_id graph.lane (Some current_fiber_id);
             let release_graph_lane =
               Effect.sync (fun () -> release_graph_lane_sync owns_lane)
             in
@@ -3095,10 +2892,13 @@ module Make (Observer_error : Observer_error) () = struct
                 stats_counter "stats stream_bridge_drop_count"
                   graph.stream_bridge_drop_count;
               lane_waiter_count =
-                stats_counter "stats lane_waiter_count" graph.lane.lane_waiting;
+                stats_counter "stats lane_waiter_count"
+                  (Lane.waiting_count graph.lane);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
-                  graph.lane.lane_cancelled;
+                  (stats_count
+                     Private_test_hooks.Stats_lane_cancelled_waiter_count
+                     (Lane.cancelled_count graph.lane));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result

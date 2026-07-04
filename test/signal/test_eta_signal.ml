@@ -3721,8 +3721,8 @@ let test_stats_counter_saturation_is_typed_failure () =
     Overflow_signal.Private_test_hooks.Stats_necessary_node_count;
   check_stats_count "stats dead_node_count"
     Overflow_signal.Private_test_hooks.Stats_dead_node_count;
-  check "stats lane_cancelled_waiter_count" (fun value ->
-      Overflow_signal.graph.lane.lane_cancelled <- value)
+  check_stats_count "stats lane_cancelled_waiter_count"
+    Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
 
 let test_failed_initial_stabilization_leaves_no_current_value () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in

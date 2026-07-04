@@ -7,6 +7,7 @@
   eta_signal_error
   eta_signal_id
   eta_signal_kernel
+  eta_signal_lane
   eta_signal_observer
   eta_signal_scope
   eta_signal_stream_bridge
@@ -103,6 +104,18 @@
 (rule
  (target eta_signal_kernel.mli)
  (deps ../../lib/signal/eta_signal_kernel.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_lane.ml)
+ (deps ../../lib/signal/eta_signal_lane.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_lane.mli)
+ (deps ../../lib/signal/eta_signal_lane.mli)
  (action
   (copy %{deps} %{target})))
 

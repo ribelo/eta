@@ -13,6 +13,7 @@ type stats_count =
   | Stats_total_node_count
   | Stats_necessary_node_count
   | Stats_dead_node_count
+  | Stats_lane_cancelled_waiter_count
 
 type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
@@ -29,6 +30,7 @@ type t = {
   total_node_count_override : int option ref;
   necessary_node_count_override : int option ref;
   dead_node_count_override : int option ref;
+  lane_cancelled_waiter_count_override : int option ref;
   timer_runtime_mismatch_hook : (unit -> unit) ref;
 }
 
@@ -48,6 +50,7 @@ let create () =
     total_node_count_override = ref None;
     necessary_node_count_override = ref None;
     dead_node_count_override = ref None;
+    lane_cancelled_waiter_count_override = ref None;
     timer_runtime_mismatch_hook = ref (fun () -> ());
   }
 
@@ -67,6 +70,8 @@ let stats_count_slot state = function
   | Stats_total_node_count -> state.total_node_count_override
   | Stats_necessary_node_count -> state.necessary_node_count_override
   | Stats_dead_node_count -> state.dead_node_count_override
+  | Stats_lane_cancelled_waiter_count ->
+      state.lane_cancelled_waiter_count_override
 
 let with_hook state hook action f =
   let slot = slot state hook in
@@ -93,6 +98,7 @@ let clear state =
   state.total_node_count_override := None;
   state.necessary_node_count_override := None;
   state.dead_node_count_override := None;
+  state.lane_cancelled_waiter_count_override := None;
   state.timer_runtime_mismatch_hook := (fun () -> ())
 
 let run state hook =

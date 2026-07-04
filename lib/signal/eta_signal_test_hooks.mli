@@ -13,6 +13,7 @@ type stats_count =
   | Stats_total_node_count
   | Stats_necessary_node_count
   | Stats_dead_node_count
+  | Stats_lane_cancelled_waiter_count
 
 type action = { run : 'err. unit -> (unit, 'err) Eta.Effect.t }
 
