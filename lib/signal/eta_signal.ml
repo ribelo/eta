@@ -1809,18 +1809,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
-    Hashtbl.iter
-      (fun id () ->
-        if not (Hashtbl.mem graph.necessary_node_ids id) then
+    Kernel.Demand.diff ~previous:graph.necessary_node_ids ~next
+    |> List.iter (function
+         | Kernel.Demand.Became_necessary _ ->
           graph.nodes_became_necessary <-
-            saturating_succ graph.nodes_became_necessary)
-      next;
-    Hashtbl.iter
-      (fun id () ->
-        if not (Hashtbl.mem next id) then
+            saturating_succ graph.nodes_became_necessary
+         | Kernel.Demand.Became_unnecessary _ ->
           graph.nodes_became_unnecessary <-
-            saturating_succ graph.nodes_became_unnecessary)
-      graph.necessary_node_ids;
+            saturating_succ graph.nodes_became_unnecessary);
     graph.necessary_node_ids <- next
 
   let necessary_timers () =

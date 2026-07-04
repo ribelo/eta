@@ -43,6 +43,22 @@ module Make_reachable (Node : REACHABLE_NODE) : sig
   val ids : roots:Node.packed list -> (Node.id, unit) Hashtbl.t
 end
 
+module Demand : sig
+  type 'id transition =
+    | Became_necessary of 'id
+    | Became_unnecessary of 'id
+
+  type 'id t = 'id transition list
+
+  val diff :
+    previous:('id, unit) Hashtbl.t ->
+    next:('id, unit) Hashtbl.t ->
+    'id t
+
+  val count_became_necessary : _ t -> int
+  val count_became_unnecessary : _ t -> int
+end
+
 module type ORDER_NODE = sig
   type id
   type t

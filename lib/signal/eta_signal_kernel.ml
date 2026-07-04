@@ -73,6 +73,42 @@ module Make_reachable (Node : REACHABLE_NODE) = struct
         seen)
 end
 
+module Demand = struct
+  type 'id transition =
+    | Became_necessary of 'id
+    | Became_unnecessary of 'id
+
+  type 'id t = 'id transition list
+
+  let diff ~previous ~next =
+    let transitions = ref [] in
+    Hashtbl.iter
+      (fun id () ->
+        if not (Hashtbl.mem previous id) then
+          transitions := Became_necessary id :: !transitions)
+      next;
+    Hashtbl.iter
+      (fun id () ->
+        if not (Hashtbl.mem next id) then
+          transitions := Became_unnecessary id :: !transitions)
+      previous;
+    !transitions
+
+  let count_became_necessary transitions =
+    List.fold_left
+      (fun count -> function
+        | Became_necessary _ -> count + 1
+        | Became_unnecessary _ -> count)
+      0 transitions
+
+  let count_became_unnecessary transitions =
+    List.fold_left
+      (fun count -> function
+        | Became_unnecessary _ -> count + 1
+        | Became_necessary _ -> count)
+      0 transitions
+end
+
 module type ORDER_NODE = sig
   type id
   type t

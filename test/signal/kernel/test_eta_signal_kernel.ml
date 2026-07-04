@@ -107,6 +107,18 @@ let sorted_ids ids = List.sort Int.compare ids
 let reachable_ids table =
   Hashtbl.to_seq_keys table |> List.of_seq |> sorted_ids
 
+let id_table ids =
+  let table = Hashtbl.create 8 in
+  List.iter (fun id -> Hashtbl.replace table id ()) ids;
+  table
+
+let demand_transitions transitions =
+  transitions
+  |> List.map (function
+       | Kernel.Demand.Became_necessary id -> ("necessary", id)
+       | Kernel.Demand.Became_unnecessary id -> ("unnecessary", id))
+  |> List.sort compare
+
 let test_attach_is_bidirectional_and_idempotent () =
   let parent = node 1 in
   let child = node 2 in
@@ -161,6 +173,31 @@ let test_reachable_fold_visits_multiple_roots () =
     |> sorted_ids
   in
   Alcotest.(check (list int)) "visited" [ 1; 2; 3 ] visited
+
+let test_demand_diff_reports_necessary_changes () =
+  let transitions =
+    Kernel.Demand.diff ~previous:(id_table [ 1; 2; 4 ])
+      ~next:(id_table [ 2; 3; 4 ])
+  in
+  Alcotest.(check (list (pair string int)))
+    "transitions"
+    [ ("necessary", 3); ("unnecessary", 1) ]
+    (demand_transitions transitions);
+  Alcotest.(check int) "became necessary count" 1
+    (Kernel.Demand.count_became_necessary transitions);
+  Alcotest.(check int) "became unnecessary count" 1
+    (Kernel.Demand.count_became_unnecessary transitions)
+
+let test_demand_diff_ignores_stable_nodes () =
+  let transitions =
+    Kernel.Demand.diff ~previous:(id_table [ 1; 2 ]) ~next:(id_table [ 1; 2 ])
+  in
+  Alcotest.(check (list (pair string int))) "transitions" []
+    (demand_transitions transitions);
+  Alcotest.(check int) "became necessary count" 0
+    (Kernel.Demand.count_became_necessary transitions);
+  Alcotest.(check int) "became unnecessary count" 0
+    (Kernel.Demand.count_became_unnecessary transitions)
 
 let test_order_dependencies_precede_dependents () =
   let dependent = node 3 in
@@ -512,6 +549,13 @@ let () =
             test_reachable_ids_skip_invalid_and_deduplicate;
           Alcotest.test_case "fold visits multiple roots" `Quick
             test_reachable_fold_visits_multiple_roots;
+        ] );
+      ( "demand",
+        [
+          Alcotest.test_case "diff reports necessary changes" `Quick
+            test_demand_diff_reports_necessary_changes;
+          Alcotest.test_case "diff ignores stable nodes" `Quick
+            test_demand_diff_ignores_stable_nodes;
         ] );
       ( "order",
         [
