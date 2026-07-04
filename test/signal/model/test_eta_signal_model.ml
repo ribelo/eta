@@ -55,6 +55,14 @@ let expect_observer_failed label runtime eff =
       Alcotest.failf "%s: expected observer failure, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
+let expect_graph_error label pred runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Fail err) when pred err -> ()
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected graph failure, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected graph failure, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
 let expect_die label runtime eff =
   match Eta.Runtime.run runtime (widen eff) with
   | Eta.Exit.Error (Eta.Cause.Die _) -> ()
@@ -471,6 +479,84 @@ let test_pure_failure_matches_model () =
   run_ok runtime Signal.stabilize;
   check_model "after recovery";
   run_ok runtime (Signal.Observer.dispose observer)
+
+let test_dynamic_cycle_preserves_snapshot_matches_model () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let a_target = Signal.Var.create (Signal.const 1) in
+  let b_target = Signal.Var.create (Signal.const 10) in
+  let a = Signal.bind (Signal.Var.watch a_target) (fun signal -> signal) in
+  let b = Signal.bind (Signal.Var.watch b_target) (fun signal -> signal) in
+  let a_updates = ref [] in
+  let b_updates = ref [] in
+  let record updates update =
+    E.sync (fun () ->
+        updates := observed_of_signal_update update :: !updates)
+  in
+  let a_observer =
+    run_ok runtime (Signal.Observer.observe a (record a_updates))
+  in
+  let b_observer =
+    run_ok runtime (Signal.Observer.observe b (record b_updates))
+  in
+  let model_a = ref None in
+  let model_b = ref None in
+  let model_a_updates = ref [] in
+  let model_b_updates = ref [] in
+  let publish current updates next =
+    let update =
+      match !current with
+      | None -> Some (Initialized next)
+      | Some previous ->
+          if previous = next then None else Some (Changed (previous, next))
+    in
+    current := Some next;
+    Option.iter (fun update -> updates := update :: !updates) update
+  in
+  let commit_model ~a_value ~b_value =
+    publish model_a model_a_updates a_value;
+    publish model_b model_b_updates b_value
+  in
+  let check label =
+    Alcotest.(check (list observed_update))
+      (label ^ " a updates") (List.rev !model_a_updates)
+      (List.rev !a_updates);
+    Alcotest.(check (list observed_update))
+      (label ^ " b updates") (List.rev !model_b_updates)
+      (List.rev !b_updates);
+    Option.iter
+      (fun expected ->
+        Alcotest.(check int) (label ^ " a read") expected
+          (run_ok runtime (Signal.Observer.read a_observer)))
+      !model_a;
+    Option.iter
+      (fun expected ->
+        Alcotest.(check int) (label ^ " b read") expected
+          (run_ok runtime (Signal.Observer.read b_observer)))
+      !model_b
+  in
+  commit_model ~a_value:1 ~b_value:10;
+  run_ok runtime Signal.stabilize;
+  check "initial";
+  run_ok runtime (Signal.Var.set a_target b);
+  commit_model ~a_value:10 ~b_value:10;
+  run_ok runtime Signal.stabilize;
+  check "one way";
+  run_ok runtime (Signal.Var.set a_target (Signal.const 2));
+  run_ok runtime (Signal.Var.set b_target a);
+  commit_model ~a_value:2 ~b_value:2;
+  run_ok runtime Signal.stabilize;
+  check "reverse";
+  run_ok runtime (Signal.Var.set a_target b);
+  run_ok runtime (Signal.Var.set b_target a);
+  expect_graph_error "cycle" (( = ) `Cycle) runtime Signal.stabilize;
+  check "after cycle";
+  run_ok runtime (Signal.Var.set a_target (Signal.const 3));
+  run_ok runtime (Signal.Var.set b_target (Signal.const 4));
+  commit_model ~a_value:3 ~b_value:4;
+  run_ok runtime Signal.stabilize;
+  check "after recovery";
+  run_ok runtime (Signal.Observer.dispose a_observer);
+  run_ok runtime (Signal.Observer.dispose b_observer)
 
 let test_dispose_demand_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1120,6 +1206,8 @@ let () =
             test_observer_failure_retry_matches_model;
           Alcotest.test_case "pure failure matches model" `Quick
             test_pure_failure_matches_model;
+          Alcotest.test_case "dynamic cycle preserves snapshot" `Quick
+            test_dynamic_cycle_preserves_snapshot_matches_model;
           Alcotest.test_case "dispose demand matches model" `Quick
             test_dispose_demand_matches_model;
           Alcotest.test_case "observer lifecycle trace matches model" `Quick
