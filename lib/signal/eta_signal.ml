@@ -2460,30 +2460,24 @@ module Make (Observer_error : Observer_error) () = struct
     | Map7 _ | Map8 _ | Map9 _ | All _ ->
         signal.dependencies
 
-  let signal_depends_on signal dependency =
-    let seen = Hashtbl.create 16 in
-    let rec visit (P candidate) =
-      if Int.equal (signal_id_int candidate.id) (signal_id_int dependency.id)
-      then true
-      else if Hashtbl.mem seen candidate.id then false
-      else (
-        Hashtbl.add seen candidate.id ();
-        List.exists visit (observer_order_dependencies candidate))
-    in
-    List.exists visit (observer_order_dependencies signal)
+  module Kernel_signal_order = Kernel.Make_order (struct
+    type id = signal_id
+    type t = packed_signal
+
+    let id (P signal) = signal.id
+
+    let equal_id left right =
+      Int.equal (signal_id_int left) (signal_id_int right)
+
+    let compare_id left right =
+      Int.compare (signal_id_int left) (signal_id_int right)
+
+    let children (P signal) = observer_order_dependencies signal
+  end)
 
   let compare_observer_graph_order (O left) (O right) =
     let signal_order =
-      if
-        Int.equal
-          (signal_id_int left.obs_signal.id)
-          (signal_id_int right.obs_signal.id)
-      then 0
-      else if signal_depends_on left.obs_signal right.obs_signal then 1
-      else if signal_depends_on right.obs_signal left.obs_signal then -1
-      else
-        Int.compare (signal_id_int left.obs_signal.id)
-          (signal_id_int right.obs_signal.id)
+      Kernel_signal_order.compare (P left.obs_signal) (P right.obs_signal)
     in
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order

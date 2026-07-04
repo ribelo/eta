@@ -73,6 +73,40 @@ module Make_reachable (Node : REACHABLE_NODE) = struct
         seen)
 end
 
+module type ORDER_NODE = sig
+  type id
+  type t
+
+  val id : t -> id
+  val equal_id : id -> id -> bool
+  val compare_id : id -> id -> int
+  val children : t -> t list
+end
+
+module Make_order (Node : ORDER_NODE) = struct
+  let same_node left right =
+    Node.equal_id (Node.id left) (Node.id right)
+
+  let depends_on node dependency =
+    let target_id = Node.id dependency in
+    let seen = Hashtbl.create 16 in
+    let rec visit candidate =
+      let candidate_id = Node.id candidate in
+      if Node.equal_id candidate_id target_id then true
+      else if Hashtbl.mem seen candidate_id then false
+      else (
+        Hashtbl.add seen candidate_id ();
+        List.exists visit (Node.children candidate))
+    in
+    List.exists visit (Node.children node)
+
+  let compare left right =
+    if same_node left right then 0
+    else if depends_on left right then 1
+    else if depends_on right left then -1
+    else Node.compare_id (Node.id left) (Node.id right)
+end
+
 module type VERSION_NODE = sig
   type id
   type packed
