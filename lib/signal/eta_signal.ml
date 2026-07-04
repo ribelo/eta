@@ -3438,13 +3438,13 @@ module Make (Observer_error : Observer_error) () = struct
     exception Timer_cancelled
 
     let validate_interval duration =
-      if Duration.to_ms duration <= 0 then Error `Invalid_interval else Ok ()
+      Timer.validate_interval_ms (Duration.to_ms duration)
 
     let validate_future now deadline_ms =
-      if deadline_ms <= now then Error `Past_deadline else Ok ()
+      Timer.validate_future_deadline ~now_ms:now ~deadline_ms
 
     let validate_positive_duration duration =
-      if Duration.to_ms duration <= 0 then Error `Past_deadline else Ok ()
+      Timer.validate_positive_duration_ms (Duration.to_ms duration)
 
     let install_timer_cancel timer generation cancel =
       with_graph_lane_sync (fun () ->

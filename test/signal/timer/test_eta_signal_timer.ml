@@ -7,6 +7,12 @@ let pp_deadline_error ppf = function
 let deadline_error =
   Alcotest.testable pp_deadline_error (fun left right -> left = right)
 
+let pp_timer_error ppf = function
+  | `Invalid_interval -> Format.pp_print_string ppf "Invalid_interval"
+
+let timer_error =
+  Alcotest.testable pp_timer_error (fun left right -> left = right)
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer.add_ms_capped max_int 1);
@@ -31,6 +37,32 @@ let test_deadline_arithmetic () =
   Alcotest.(check (result int deadline_error)) "overflow"
     (Error `Deadline_overflow)
     (Timer.add_relative_deadline max_int 1)
+
+let test_validation_policy () =
+  Alcotest.(check (result unit deadline_error))
+    "future deadline"
+    (Ok ())
+    (Timer.validate_future_deadline ~now_ms:10 ~deadline_ms:11);
+  Alcotest.(check (result unit deadline_error))
+    "past deadline"
+    (Error `Past_deadline)
+    (Timer.validate_future_deadline ~now_ms:10 ~deadline_ms:10);
+  Alcotest.(check (result unit deadline_error))
+    "positive duration"
+    (Ok ())
+    (Timer.validate_positive_duration_ms 1);
+  Alcotest.(check (result unit deadline_error))
+    "non-positive duration"
+    (Error `Past_deadline)
+    (Timer.validate_positive_duration_ms 0);
+  Alcotest.(check (result unit timer_error))
+    "positive interval"
+    (Ok ())
+    (Timer.validate_interval_ms 1);
+  Alcotest.(check (result unit timer_error))
+    "non-positive interval"
+    (Error `Invalid_interval)
+    (Timer.validate_interval_ms 0)
 
 let test_catch_up_policy () =
   Alcotest.(check int) "every count" 3
@@ -548,6 +580,8 @@ let () =
           Alcotest.test_case "due arithmetic" `Quick test_due_arithmetic;
           Alcotest.test_case "deadline arithmetic" `Quick
             test_deadline_arithmetic;
+          Alcotest.test_case "validation policy" `Quick
+            test_validation_policy;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
           Alcotest.test_case "daemon status policy" `Quick

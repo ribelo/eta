@@ -61,6 +61,13 @@ val advance_due : int -> int -> int -> int
 val add_relative_deadline :
   int -> int -> (int, [> `Deadline_overflow | `Past_deadline ]) result
 
+val validate_interval_ms : int -> (unit, [> `Invalid_interval ]) result
+
+val validate_future_deadline :
+  now_ms:int -> deadline_ms:int -> (unit, [> `Past_deadline ]) result
+
+val validate_positive_duration_ms : int -> (unit, [> `Past_deadline ]) result
+
 val catch_up_update_count : catch_up_policy -> int -> int
 val catch_up_update_missed : catch_up_policy -> int -> int
 val state_generation : state -> int

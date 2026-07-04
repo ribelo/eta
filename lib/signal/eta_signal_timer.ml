@@ -99,6 +99,15 @@ let add_relative_deadline now_ms duration_ms =
   else if now_ms > max_int - duration_ms then Error `Deadline_overflow
   else Ok (now_ms + duration_ms)
 
+let validate_interval_ms interval_ms =
+  if interval_ms <= 0 then Error `Invalid_interval else Ok ()
+
+let validate_future_deadline ~now_ms ~deadline_ms =
+  if deadline_ms <= now_ms then Error `Past_deadline else Ok ()
+
+let validate_positive_duration_ms duration_ms =
+  if duration_ms <= 0 then Error `Past_deadline else Ok ()
+
 let catch_up_update_count policy missed =
   match policy with
   | Catch_up_every_cadence -> missed
