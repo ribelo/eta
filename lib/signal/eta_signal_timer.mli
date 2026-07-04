@@ -12,21 +12,10 @@ type state =
   | Timer_running of int * int option * (unit -> unit)
   | Timer_finished of int
 
-type due_refresh = {
-  missed : int;
-  saturated_due : bool;
-  next_due_ms : int option;
-}
-
-type deadline_refresh = {
-  deadline_value : bool;
-  deadline_finish : bool;
-}
-
-type interval_refresh = {
-  interval_value : int option;
-  interval_next_due_ms : int option;
-  interval_finish : bool;
+type 'a refresh_plan = {
+  refresh_value : 'a option;
+  refresh_next_due_ms : int option;
+  refresh_finish : bool;
 }
 
 type demand_action =
@@ -146,12 +135,14 @@ val can_refresh_on_demand :
 
 val finish_state : advance_generation:(int -> int) -> state -> state
 val finish_cancel_hooks : state -> (unit -> unit) list
-val due_refresh : state -> interval_ms:int -> now_ms:int -> due_refresh
-val deadline_refresh : now_ms:int -> deadline_ms:int -> deadline_refresh
+val current_time_refresh_plan : now_ms:int -> int refresh_plan
 
-val interval_refresh :
+val deadline_refresh_plan :
+  now_ms:int -> deadline_ms:int -> bool refresh_plan
+
+val interval_refresh_plan :
   state:state ->
   interval_ms:int ->
   current_value:int ->
   now_ms:int ->
-  interval_refresh
+  int refresh_plan

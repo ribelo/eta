@@ -456,22 +456,33 @@ let test_stop_policy () =
 
 let test_refresh_plans () =
   let running = Timer.Timer_running_uncancellable (1, Some 50) in
-  let due = Timer.due_refresh running ~interval_ms:10 ~now_ms:85 in
-  Alcotest.(check int) "missed" 4 due.missed;
-  Alcotest.(check (option int)) "next due" (Some 90) due.next_due_ms;
-  Alcotest.(check bool) "not saturated" false due.saturated_due;
+  let current = Timer.current_time_refresh_plan ~now_ms:85 in
+  Alcotest.(check (option int)) "current value" (Some 85)
+    current.refresh_value;
+  Alcotest.(check (option int)) "current next due" None
+    current.refresh_next_due_ms;
+  Alcotest.(check bool) "current does not finish" false
+    current.refresh_finish;
   let interval =
-    Timer.interval_refresh ~state:running ~interval_ms:10 ~current_value:3
-      ~now_ms:85
+    Timer.interval_refresh_plan ~state:running ~interval_ms:10
+      ~current_value:3 ~now_ms:85
   in
   Alcotest.(check (option int)) "interval value" (Some 7)
-    interval.interval_value;
+    interval.refresh_value;
   Alcotest.(check (option int)) "interval due" (Some 90)
-    interval.interval_next_due_ms;
-  Alcotest.(check bool) "interval finish" false interval.interval_finish;
-  let deadline = Timer.deadline_refresh ~now_ms:100 ~deadline_ms:99 in
-  Alcotest.(check bool) "deadline value" true deadline.deadline_value;
-  Alcotest.(check bool) "deadline finish" true deadline.deadline_finish
+    interval.refresh_next_due_ms;
+  Alcotest.(check bool) "interval finish" false interval.refresh_finish;
+  let saturated =
+    Timer.interval_refresh_plan
+      ~state:(Timer.Timer_running_uncancellable (1, Some max_int))
+      ~interval_ms:10 ~current_value:3 ~now_ms:max_int
+  in
+  Alcotest.(check bool) "saturated interval finishes" true
+    saturated.refresh_finish;
+  let deadline = Timer.deadline_refresh_plan ~now_ms:100 ~deadline_ms:99 in
+  Alcotest.(check (option bool)) "deadline value" (Some true)
+    deadline.refresh_value;
+  Alcotest.(check bool) "deadline finish" true deadline.refresh_finish
 
 let test_finish_policy () =
   let cancelled = ref false in

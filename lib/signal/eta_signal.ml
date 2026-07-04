@@ -1957,6 +1957,20 @@ module Make (Observer_error : Observer_error) () = struct
       (fun cancel -> Cancel_after_commit cancel)
       (Timer.finish_cancel_hooks state)
 
+  let timer_source_refresh_plan source refresh =
+    let due_transitions =
+      match refresh.Timer.refresh_next_due_ms with
+      | None -> []
+      | Some next_due_ms -> [ Advance_due next_due_ms ]
+    in
+    let source_transitions =
+      match refresh.refresh_value with
+      | None -> []
+      | Some value -> [ Set_source (source, value) ]
+    in
+    due_transitions @ source_transitions
+    @ (if refresh.refresh_finish then [ Finish ] else [])
+
   let rec stage_timer_transition timer = function
     | Set_source (source, value) ->
         stage_timer_source_value source value
@@ -1973,28 +1987,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_refresh_plan timer now_ms = function
     | Refresh_current_time_source source ->
-        [ Set_source (source, now_ms) ]
+        timer_source_refresh_plan source
+          (Timer.current_time_refresh_plan ~now_ms)
     | Refresh_deadline_source (source, deadline_ms) ->
-        let refresh = Timer.deadline_refresh ~now_ms ~deadline_ms in
-        Set_source (source, refresh.deadline_value)
-        :: (if refresh.deadline_finish then [ Finish ] else [])
+        timer_source_refresh_plan source
+          (Timer.deadline_refresh_plan ~now_ms ~deadline_ms)
     | Refresh_interval_source (source, interval_ms) ->
-        let refresh =
-          Timer.interval_refresh ~state:(timer_effective_state timer)
+        timer_source_refresh_plan source
+          (Timer.interval_refresh_plan ~state:(timer_effective_state timer)
             ~interval_ms ~current_value:(effective_var_value source) ~now_ms
-        in
-        let due_transitions =
-          match refresh.interval_next_due_ms with
-          | None -> []
-          | Some next_due_ms -> [ Advance_due next_due_ms ]
-        in
-        let source_transitions =
-          match refresh.interval_value with
-          | None -> []
-          | Some value -> [ Set_source (source, value) ]
-        in
-        due_transitions @ source_transitions
-        @ (if refresh.interval_finish then [ Finish ] else [])
+          )
 
   let stage_timer_refresh_operation timer now_ms operation =
     List.iter

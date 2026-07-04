@@ -27,6 +27,12 @@ type interval_refresh = {
   interval_finish : bool;
 }
 
+type 'a refresh_plan = {
+  refresh_value : 'a option;
+  refresh_next_due_ms : int option;
+  refresh_finish : bool;
+}
+
 type demand_action =
   | Demand_none
   | Demand_start
@@ -318,4 +324,27 @@ let interval_refresh ~state ~interval_ms ~current_value ~now_ms =
        else Some (add_int_capped current_value due.missed));
     interval_next_due_ms = due.next_due_ms;
     interval_finish = due.saturated_due;
+  }
+
+let current_time_refresh_plan ~now_ms =
+  {
+    refresh_value = Some now_ms;
+    refresh_next_due_ms = None;
+    refresh_finish = false;
+  }
+
+let deadline_refresh_plan ~now_ms ~deadline_ms =
+  let refresh = deadline_refresh ~now_ms ~deadline_ms in
+  {
+    refresh_value = Some refresh.deadline_value;
+    refresh_next_due_ms = None;
+    refresh_finish = refresh.deadline_finish;
+  }
+
+let interval_refresh_plan ~state ~interval_ms ~current_value ~now_ms =
+  let refresh = interval_refresh ~state ~interval_ms ~current_value ~now_ms in
+  {
+    refresh_value = refresh.interval_value;
+    refresh_next_due_ms = refresh.interval_next_due_ms;
+    refresh_finish = refresh.interval_finish;
   }
