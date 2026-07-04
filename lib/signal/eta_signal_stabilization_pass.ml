@@ -7,8 +7,12 @@ type ('owner, 'hook, 'event, 'error) result =
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
-type ('pending, 'observer, 'event, 'hook, 'error) t = {
-  reentrant_error : 'error;
+type 'error errors = {
+  reentrant_stabilization : 'error;
+  classify_graph_error : exn -> 'error option;
+}
+
+type ('pending, 'observer, 'event, 'hook) pure = {
   advance_generation : unit -> unit;
   begin_staging : unit -> unit;
   drain_pending : unit -> 'pending list;
@@ -21,11 +25,21 @@ type ('pending, 'observer, 'event, 'hook, 'error) t = {
   commit_staging : unit -> 'hook list;
   mark_events_pending : 'event list -> unit;
   update_necessity : unit -> unit;
-  clear_timer_refresh : unit -> unit;
+}
+
+type ('pending, 'observer, 'hook) rollback = {
   rollback_staging : unit -> 'hook list;
   mark_observers_failed_without_current : 'observer list -> unit;
   requeue_pending : 'pending list -> unit;
-  classify_graph_error : exn -> 'error option;
+}
+
+type timer_refresh = { clear_active_timer_refresh : unit -> unit }
+
+type ('pending, 'observer, 'event, 'hook, 'error) t = {
+  errors : 'error errors;
+  pure : ('pending, 'observer, 'event, 'hook) pure;
+  rollback : ('pending, 'observer, 'hook) rollback;
+  timer_refresh : timer_refresh;
 }
 
 type ('event, 'error) delivery = {
@@ -36,10 +50,10 @@ type ('event, 'error) delivery = {
 }
 
 let rollback state pure_token ops observers pending =
-  let hooks = ops.rollback_staging () in
-  ops.mark_observers_failed_without_current observers;
-  ops.requeue_pending pending;
-  ops.clear_timer_refresh ();
+  let hooks = ops.rollback.rollback_staging () in
+  ops.rollback.mark_observers_failed_without_current observers;
+  ops.rollback.requeue_pending pending;
+  ops.timer_refresh.clear_active_timer_refresh ();
   ignore
     (Eta_signal_stabilization.rollback_to_idle state pure_token
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token);
@@ -48,22 +62,22 @@ let rollback state pure_token ops observers pending =
 let run state ops =
   match Eta_signal_stabilization.begin_pure state with
   | Error `Reentrant_stabilization ->
-      Pure_graph_error ([], ops.reentrant_error)
+      Pure_graph_error ([], ops.errors.reentrant_stabilization)
   | Ok pure_token ->
-      ops.advance_generation ();
-      ops.begin_staging ();
-      let pending = ops.drain_pending () in
-      ops.release_pending_marks pending;
-      let observers = ops.active_observers () in
+      ops.pure.advance_generation ();
+      ops.pure.begin_staging ();
+      let pending = ops.pure.drain_pending () in
+      ops.pure.release_pending_marks pending;
+      let observers = ops.pure.active_observers () in
       try
-        ops.stage_pending pending;
-        ops.plan_staged_binds observers;
-        let delivery_observers = ops.sort_delivery_observers observers in
-        let events = ops.collect_events delivery_observers in
-        let hooks = ops.commit_staging () in
-        ops.mark_events_pending events;
-        ops.update_necessity ();
-        ops.clear_timer_refresh ();
+        ops.pure.stage_pending pending;
+        ops.pure.plan_staged_binds observers;
+        let delivery_observers = ops.pure.sort_delivery_observers observers in
+        let events = ops.pure.collect_events delivery_observers in
+        let hooks = ops.pure.commit_staging () in
+        ops.pure.mark_events_pending events;
+        ops.pure.update_necessity ();
+        ops.timer_refresh.clear_active_timer_refresh ();
         let delivering_token =
           Eta_signal_stabilization.commit_to_delivering state pure_token
         in
@@ -71,7 +85,7 @@ let run state ops =
       with exn -> (
         let backtrace = Printexc.get_raw_backtrace () in
         let hooks = rollback state pure_token ops observers pending in
-        match ops.classify_graph_error exn with
+        match ops.errors.classify_graph_error exn with
         | Some err -> Pure_graph_error (hooks, err)
         | None -> Pure_defect (hooks, exn, backtrace))
 

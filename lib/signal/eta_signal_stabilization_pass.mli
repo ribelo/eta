@@ -9,8 +9,12 @@ type ('owner, 'hook, 'event, 'error) result =
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
-type ('pending, 'observer, 'event, 'hook, 'error) t = {
-  reentrant_error : 'error;
+type 'error errors = {
+  reentrant_stabilization : 'error;
+  classify_graph_error : exn -> 'error option;
+}
+
+type ('pending, 'observer, 'event, 'hook) pure = {
   advance_generation : unit -> unit;
   begin_staging : unit -> unit;
   drain_pending : unit -> 'pending list;
@@ -23,15 +27,25 @@ type ('pending, 'observer, 'event, 'hook, 'error) t = {
   commit_staging : unit -> 'hook list;
   mark_events_pending : 'event list -> unit;
   update_necessity : unit -> unit;
-  clear_timer_refresh : unit -> unit;
+}
+
+type ('pending, 'observer, 'hook) rollback = {
   rollback_staging : unit -> 'hook list;
   mark_observers_failed_without_current : 'observer list -> unit;
   requeue_pending : 'pending list -> unit;
-  classify_graph_error : exn -> 'error option;
 }
-(** Callback surface for graph-specific work performed in a pure stabilization
-    pass. The module owns callback ordering, phase transitions, and rollback
-    cleanup; callers provide only graph operations. *)
+
+type timer_refresh = { clear_active_timer_refresh : unit -> unit }
+
+type ('pending, 'observer, 'event, 'hook, 'error) t = {
+  errors : 'error errors;
+  pure : ('pending, 'observer, 'event, 'hook) pure;
+  rollback : ('pending, 'observer, 'hook) rollback;
+  timer_refresh : timer_refresh;
+}
+(** Capability surface for graph-specific work performed in a pure
+    stabilization pass. The module owns callback ordering, phase transitions,
+    and rollback cleanup; callers provide grouped graph operations. *)
 
 val run :
   ('owner, 'error) Eta_signal_stabilization.t ->

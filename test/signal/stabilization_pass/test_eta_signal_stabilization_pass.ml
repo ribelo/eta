@@ -33,65 +33,81 @@ let expect_effect_fail label eff =
 let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
     state events =
   {
-    Pass.reentrant_error = `Reentrant_stabilization;
-    advance_generation = (fun () -> record events "advance_generation");
-    begin_staging = (fun () -> record events "begin_staging");
-    drain_pending =
-      (fun () ->
-        record events "drain_pending";
-        [ "pending" ]);
-    release_pending_marks =
-      (fun pending ->
-        record events ("release_pending_marks:" ^ String.concat "," pending));
-    active_observers =
-      (fun () ->
-        record events "active_observers";
-        [ "observer" ]);
-    stage_pending =
-      (fun pending ->
-        record events ("stage_pending:" ^ String.concat "," pending);
-        stage_pending pending);
-    plan_staged_binds =
-      (fun observers ->
-        record events ("plan_staged_binds:" ^ String.concat "," observers));
-    sort_delivery_observers =
-      (fun observers ->
-        record events ("sort_delivery_observers:" ^ String.concat "," observers);
-        observers);
-    collect_events =
-      (fun observers ->
-        record events ("collect_events:" ^ String.concat "," observers);
-        [ "event" ]);
-    commit_staging =
-      (fun () ->
-        record events "commit_staging";
-        let hooks = commit_staging () in
-        (match S.commit_transaction state with
-        | Ok () -> ()
-        | Error _ -> Alcotest.fail "unexpected transaction commit failure");
-        hooks);
-    mark_events_pending =
-      (fun events_to_mark ->
-        record events ("mark_events_pending:" ^ String.concat "," events_to_mark));
-    update_necessity = (fun () -> record events "update_necessity");
-    clear_timer_refresh = (fun () -> record events "clear_timer_refresh");
-    rollback_staging =
-      (fun () ->
-        record events "rollback_staging";
-        S.rollback_transaction state;
-        [ "rollback-hook" ]);
-    mark_observers_failed_without_current =
-      (fun observers ->
-        record events
-          ("mark_observers_failed_without_current:" ^ String.concat ","
-             observers));
-    requeue_pending =
-      (fun pending ->
-        record events ("requeue_pending:" ^ String.concat "," pending));
-    classify_graph_error =
-      (function
-      | Graph_failure -> Some `Graph
-      | _ -> None);
+    Pass.errors =
+      {
+        reentrant_stabilization = `Reentrant_stabilization;
+        classify_graph_error =
+          (function
+          | Graph_failure -> Some `Graph
+          | _ -> None);
+      };
+    pure =
+      {
+        advance_generation = (fun () -> record events "advance_generation");
+        begin_staging = (fun () -> record events "begin_staging");
+        drain_pending =
+          (fun () ->
+            record events "drain_pending";
+            [ "pending" ]);
+        release_pending_marks =
+          (fun pending ->
+            record events
+              ("release_pending_marks:" ^ String.concat "," pending));
+        active_observers =
+          (fun () ->
+            record events "active_observers";
+            [ "observer" ]);
+        stage_pending =
+          (fun pending ->
+            record events ("stage_pending:" ^ String.concat "," pending);
+            stage_pending pending);
+        plan_staged_binds =
+          (fun observers ->
+            record events ("plan_staged_binds:" ^ String.concat "," observers));
+        sort_delivery_observers =
+          (fun observers ->
+            record events
+              ("sort_delivery_observers:" ^ String.concat "," observers);
+            observers);
+        collect_events =
+          (fun observers ->
+            record events ("collect_events:" ^ String.concat "," observers);
+            [ "event" ]);
+        commit_staging =
+          (fun () ->
+            record events "commit_staging";
+            let hooks = commit_staging () in
+            (match S.commit_transaction state with
+            | Ok () -> ()
+            | Error _ -> Alcotest.fail "unexpected transaction commit failure");
+            hooks);
+        mark_events_pending =
+          (fun events_to_mark ->
+            record events
+              ("mark_events_pending:" ^ String.concat "," events_to_mark));
+        update_necessity = (fun () -> record events "update_necessity");
+      };
+    rollback =
+      {
+        rollback_staging =
+          (fun () ->
+            record events "rollback_staging";
+            S.rollback_transaction state;
+            [ "rollback-hook" ]);
+        mark_observers_failed_without_current =
+          (fun observers ->
+            record events
+              ("mark_observers_failed_without_current:" ^ String.concat ","
+                 observers));
+        requeue_pending =
+          (fun pending ->
+            record events ("requeue_pending:" ^ String.concat "," pending));
+      };
+    timer_refresh =
+      {
+        clear_active_timer_refresh =
+          (fun () -> record events "clear_timer_refresh");
+      };
   }
 
 let test_success_runs_pure_pass_in_order () =

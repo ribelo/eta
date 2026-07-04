@@ -2129,42 +2129,57 @@ module Make (Observer_error : Observer_error) () = struct
   let begin_stabilize timer_refresh =
     Stabilization_pass.run graph.stabilization
       {
-        reentrant_error = `Reentrant_stabilization;
-        advance_generation =
-          (fun () ->
-            Graph_state.advance_generation graph.state ~advance:(fun value ->
-              checked_succ "stabilization generation" value));
-        begin_staging =
-          (fun () ->
-            Graph_state.begin_staging graph.state ~timer_refresh);
-        drain_pending = (fun () -> Graph_state.drain_pending graph.state);
-        release_pending_marks =
-          (fun pending ->
-            List.iter (fun (V var) -> var.queued <- false) pending);
-        active_observers =
-          (fun () -> graph.observers |> List.filter observer_active);
-        stage_pending = (fun pending -> List.iter stage_pending_var pending);
-        plan_staged_binds = plan_staged_bind_switches;
-        sort_delivery_observers =
-          (fun observers -> List.sort compare_observer_graph_order observers);
-        collect_events =
-          (fun observers -> List.filter_map collect_observer_event observers);
-        commit_staging;
-        mark_events_pending =
-          (fun events -> List.iter mark_event_pending events);
-        update_necessity = update_necessity_counters_unlocked;
-        clear_timer_refresh =
-          (fun () -> Graph_state.clear_active_timer_refresh graph.state);
-        rollback_staging = reset_staging;
-        mark_observers_failed_without_current =
-          (fun observers ->
-            List.iter mark_failed_without_current observers);
-        requeue_pending =
-          (fun pending -> List.iter requeue_if_needed pending);
-        classify_graph_error =
-          (function
-          | Graph_error err -> Some err
-          | _ -> None);
+        errors =
+          {
+            reentrant_stabilization = `Reentrant_stabilization;
+            classify_graph_error =
+              (function
+              | Graph_error err -> Some err
+              | _ -> None);
+          };
+        pure =
+          {
+            advance_generation =
+              (fun () ->
+                Graph_state.advance_generation graph.state
+                  ~advance:(fun value ->
+                    checked_succ "stabilization generation" value));
+            begin_staging =
+              (fun () ->
+                Graph_state.begin_staging graph.state ~timer_refresh);
+            drain_pending = (fun () -> Graph_state.drain_pending graph.state);
+            release_pending_marks =
+              (fun pending ->
+                List.iter (fun (V var) -> var.queued <- false) pending);
+            active_observers =
+              (fun () -> graph.observers |> List.filter observer_active);
+            stage_pending =
+              (fun pending -> List.iter stage_pending_var pending);
+            plan_staged_binds = plan_staged_bind_switches;
+            sort_delivery_observers =
+              (fun observers -> List.sort compare_observer_graph_order observers);
+            collect_events =
+              (fun observers ->
+                List.filter_map collect_observer_event observers);
+            commit_staging;
+            mark_events_pending =
+              (fun events -> List.iter mark_event_pending events);
+            update_necessity = update_necessity_counters_unlocked;
+          };
+        rollback =
+          {
+            rollback_staging = reset_staging;
+            mark_observers_failed_without_current =
+              (fun observers ->
+                List.iter mark_failed_without_current observers);
+            requeue_pending =
+              (fun pending -> List.iter requeue_if_needed pending);
+          };
+        timer_refresh =
+          {
+            clear_active_timer_refresh =
+              (fun () -> Graph_state.clear_active_timer_refresh graph.state);
+          };
       }
 
   let finish_stabilize delivering_token =
