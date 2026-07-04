@@ -11,15 +11,26 @@ type state =
   | Pure
   | Delivering
 
-type t
+type 'error t
 
-val create : unit -> t
-val state : t -> state
-val is_pure : t -> bool
+val create : unit -> 'error t
+val state : 'error t -> state
+val is_pure : 'error t -> bool
 
 val begin_pure :
-  t -> (pure token, [> `Reentrant_stabilization ]) result
+  'error t -> (pure token, [> `Reentrant_stabilization ]) result
 
-val commit_to_delivering : t -> pure token -> delivering token
-val rollback_to_idle : t -> pure token -> idle token
-val finish : t -> unit
+val transaction :
+  'error t ->
+  (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t option
+
+val active_transaction :
+  'error t ->
+  (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t
+
+val commit_transaction : 'error t -> (unit, 'error) result
+val rollback_transaction : 'error t -> unit
+
+val commit_to_delivering : 'error t -> pure token -> delivering token
+val rollback_to_idle : 'error t -> pure token -> idle token
+val finish : 'error t -> unit

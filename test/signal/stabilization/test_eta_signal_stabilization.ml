@@ -1,4 +1,5 @@
 module S = Eta_signal_stabilization
+module T = Eta_signal_transaction
 
 let expect_invalid_arg label f =
   match f () with
@@ -21,6 +22,9 @@ let test_begin_commit_finish () =
         Alcotest.fail "expected idle begin to succeed"
   in
   Alcotest.(check bool) "pure" true (S.is_pure state);
+  (match S.commit_transaction state with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "commit unexpectedly failed");
   ignore (S.commit_to_delivering state pure : S.delivering S.token);
   Alcotest.(check bool) "delivering" true
     (match S.state state with
@@ -43,6 +47,9 @@ let test_reentrant_begin_rejected () =
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected reentrant pure begin to fail");
+  (match S.commit_transaction state with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "commit unexpectedly failed");
   ignore (S.commit_to_delivering state pure : S.delivering S.token);
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
@@ -56,6 +63,7 @@ let test_rollback_invalidates_pure_token () =
     | Error `Reentrant_stabilization ->
         Alcotest.fail "expected begin to succeed"
   in
+  S.rollback_transaction state;
   ignore (S.rollback_to_idle state pure : S.idle S.token);
   Alcotest.(check bool) "rolled back idle" true
     (match S.state state with
@@ -63,6 +71,44 @@ let test_rollback_invalidates_pure_token () =
     | Pure | Delivering -> false);
   expect_invalid_arg "reused pure token" (fun () ->
       ignore (S.commit_to_delivering state pure : S.delivering S.token))
+
+let test_begin_opens_transaction () =
+  let state = S.create () in
+  let staged = T.create_staged 1 in
+  let pure =
+    match S.begin_pure state with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected begin to succeed"
+  in
+  let transaction = S.active_transaction state in
+  T.stage transaction staged 2;
+  Alcotest.(check int) "staged read" 2 (T.read transaction staged);
+  Alcotest.(check int) "current unchanged" 1 (T.current staged);
+  (match S.commit_transaction state with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  Alcotest.(check int) "current committed" 2 (T.current staged);
+  expect_invalid_arg "active transaction after commit" (fun () ->
+      ignore (S.active_transaction state : (T.pure, unit) T.t));
+  ignore (S.commit_to_delivering state pure : S.delivering S.token)
+
+let test_rollback_transaction_clears_staged_value () =
+  let state = S.create () in
+  let staged = T.create_staged "current" in
+  let pure =
+    match S.begin_pure state with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected begin to succeed"
+  in
+  let transaction = S.active_transaction state in
+  T.stage transaction staged "staged";
+  S.rollback_transaction state;
+  Alcotest.(check string) "current preserved" "current" (T.current staged);
+  expect_invalid_arg "active transaction after rollback" (fun () ->
+      ignore (S.active_transaction state : (T.pure, unit) T.t));
+  ignore (S.rollback_to_idle state pure : S.idle S.token)
 
 let () =
   Alcotest.run "eta_signal_stabilization"
@@ -75,5 +121,9 @@ let () =
             test_reentrant_begin_rejected;
           Alcotest.test_case "rollback invalidates pure token" `Quick
             test_rollback_invalidates_pure_token;
+          Alcotest.test_case "begin opens transaction" `Quick
+            test_begin_opens_transaction;
+          Alcotest.test_case "rollback transaction clears staged value" `Quick
+            test_rollback_transaction_clears_staged_value;
         ] );
     ]

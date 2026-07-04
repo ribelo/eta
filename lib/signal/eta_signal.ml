@@ -37,8 +37,6 @@ module Make (Observer_error : Observer_error) () = struct
     [ graph_error | `Deadline_overflow | `Invalid_interval | `Past_deadline ]
   type stream_error = [ graph_error | `Invalid_capacity ]
 
-  type pure_transaction = (Transaction.pure, graph_error) Transaction.t
-
   module Private_test_hook_state = struct
     type hook =
       | After_observer_delivery_claim
@@ -730,7 +728,7 @@ module Make (Observer_error : Observer_error) () = struct
     owner_domain : Domain.id;
     mutable next_id : int;
     mutable next_scope_id : int;
-    stabilization : Stabilization.t;
+    stabilization : graph_error Stabilization.t;
     mutable stabilization_id : int;
     mutable pending_vars : packed_var list;
     mutable staged_binds : packed_bind list;
@@ -752,7 +750,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
     mutable next_timer_refresh_token : int;
     mutable active_timer_refresh : timer_refresh_context option;
-    mutable active_transaction : pure_transaction option;
   }
 
   let graph =
@@ -792,7 +789,6 @@ module Make (Observer_error : Observer_error) () = struct
       necessary_node_ids = Hashtbl.create 16;
       next_timer_refresh_token = 0;
       active_timer_refresh = None;
-      active_transaction = None;
     }
 
   let weak_packed_signal (P signal) =
@@ -1179,9 +1175,7 @@ module Make (Observer_error : Observer_error) () = struct
         source.watchers
 
   let active_transaction () =
-    match graph.active_transaction with
-    | Some transaction -> transaction
-    | None -> invalid_arg "Eta_signal: no active transaction"
+    Stabilization.active_transaction graph.stabilization
 
   let stage_var_graph_value (type a) (var : a var) value =
     Transaction.stage (active_transaction ()) var.graph_value value
@@ -1190,7 +1184,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage (active_transaction ()) var.source_value value
 
   let effective_var_value (type a) (var : a var) =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction var.graph_value
     | None -> Transaction.current var.graph_value
 
@@ -1204,7 +1198,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current signal.snapshot
 
   let signal_effective_snapshot signal =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction signal.snapshot
     | None -> signal_current_snapshot signal
 
@@ -1214,12 +1208,12 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage transaction signal.snapshot (f snapshot)
 
   let signal_staged_in_active_transaction signal =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.staged transaction signal.snapshot
     | None -> false
 
   let discard_signal_staging signal =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.discard transaction signal.snapshot
     | None -> ()
 
@@ -1285,7 +1279,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current live.observer_snapshot
 
   let observer_effective_snapshot live =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction live.observer_snapshot
     | None -> observer_current_snapshot live
 
@@ -1437,7 +1431,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current timer.timer_snapshot
 
   let timer_effective_snapshot timer =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction timer.timer_snapshot
     | None -> timer_current_snapshot timer
 
@@ -1817,19 +1811,12 @@ module Make (Observer_error : Observer_error) () = struct
     if signal.valid then signal.dirty <- false
 
   let commit_transaction () =
-    match graph.active_transaction with
-    | None -> ()
-    | Some transaction -> (
-        match Transaction.commit transaction with
-        | Ok _ -> graph.active_transaction <- None
-        | Error err -> raise (Graph_error err))
+    match Stabilization.commit_transaction graph.stabilization with
+    | Ok () -> ()
+    | Error err -> raise (Graph_error err)
 
   let rollback_transaction () =
-    match graph.active_transaction with
-    | None -> ()
-    | Some transaction ->
-        Transaction.rollback transaction;
-        graph.active_transaction <- None
+    Stabilization.rollback_transaction graph.stabilization
 
   let remember_staged_bind (B bind as packed) =
     let transaction = active_transaction () in
@@ -1851,7 +1838,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
       (a, b) bind_snapshot =
-    match graph.active_transaction with
+    match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction bind.snapshot
     | None -> bind_current_snapshot bind
 
@@ -2980,7 +2967,6 @@ module Make (Observer_error : Observer_error) () = struct
         checked_succ "stabilization generation" graph.stabilization_id
       in
       graph.stabilization_id <- generation;
-      graph.active_transaction <- Some (Transaction.begin_pure ());
       graph.computed_nodes <- [];
       graph.staged_binds <- [];
       graph.pure_disposal_hooks <- [];
