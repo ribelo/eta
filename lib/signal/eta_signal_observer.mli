@@ -11,6 +11,20 @@ module Update : sig
   val delivered_value : 'a t -> 'a
 end
 
+module Value : sig
+  type 'a t =
+    | Uninitialized
+    | Current of 'a
+    | Failed_without_current
+
+  val uninitialized : 'a t
+  val current : 'a -> 'a t
+  val mark_failed_without_current : 'a t -> 'a t
+  val read : 'a t -> ('a, [> `No_current_value | `Uninitialized_observer ]) result
+  val unsafe_read_exn : 'a t -> 'a
+  val label : 'a t -> string
+end
+
 module Delivery : sig
   type ('a, 'after_ack) t =
     | Observer_never_delivered

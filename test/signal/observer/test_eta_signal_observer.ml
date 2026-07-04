@@ -25,6 +25,51 @@ let test_update_delivered_value () =
   Alcotest.(check int) "changed" 2
     (Observer.Update.delivered_value update_changed)
 
+let test_value_read_and_label () =
+  let open Observer.Value in
+  Alcotest.(check string) "uninitialized label" "uninitialized"
+    (label uninitialized);
+  Alcotest.(check string) "current label" "current" (label (current 1));
+  Alcotest.(check string) "failed label" "failed_without_current"
+    (label Failed_without_current);
+  Alcotest.(check int) "current read" 1
+    (match read (current 1) with
+    | Ok value -> value
+    | Error _ -> Alcotest.fail "expected current value");
+  (match read uninitialized with
+  | Error `Uninitialized_observer -> ()
+  | Ok _ | Error `No_current_value ->
+      Alcotest.fail "expected uninitialized read error");
+  (match read Failed_without_current with
+  | Error `No_current_value -> ()
+  | Ok _ | Error `Uninitialized_observer ->
+      Alcotest.fail "expected no-current-value read error")
+
+let test_value_mark_failed_without_current () =
+  let open Observer.Value in
+  Alcotest.(check bool) "uninitialized becomes failed" true
+    (match mark_failed_without_current uninitialized with
+    | Failed_without_current -> true
+    | Uninitialized | Current _ -> false);
+  Alcotest.(check bool) "current stays current" true
+    (match mark_failed_without_current (current 1) with
+    | Current 1 -> true
+    | Uninitialized | Current _ | Failed_without_current -> false);
+  Alcotest.(check bool) "failed stays failed" true
+    (match mark_failed_without_current Failed_without_current with
+    | Failed_without_current -> true
+    | Uninitialized | Current _ -> false)
+
+let test_value_unsafe_read_exn () =
+  let open Observer.Value in
+  Alcotest.(check int) "current" 1 (unsafe_read_exn (current 1));
+  Alcotest.check_raises "uninitialized"
+    (Invalid_argument "Eta_signal observer is not initialized") (fun () ->
+      ignore (unsafe_read_exn uninitialized : int));
+  Alcotest.check_raises "failed without current"
+    (Invalid_argument "Eta_signal observer is not initialized") (fun () ->
+      ignore (unsafe_read_exn Failed_without_current : int))
+
 let test_delivery_base_values () =
   let open Observer.Delivery in
   Alcotest.(check (option int)) "never" None
@@ -82,6 +127,14 @@ let () =
         [
           Alcotest.test_case "delivered value" `Quick
             test_update_delivered_value;
+        ] );
+      ( "value",
+        [
+          Alcotest.test_case "read and label" `Quick test_value_read_and_label;
+          Alcotest.test_case "mark failed without current" `Quick
+            test_value_mark_failed_without_current;
+          Alcotest.test_case "unsafe read exception" `Quick
+            test_value_unsafe_read_exn;
         ] );
       ( "delivery",
         [

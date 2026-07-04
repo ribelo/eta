@@ -11,6 +11,35 @@ module Update = struct
     | Changed { new_value; _ } -> new_value
 end
 
+module Value = struct
+  type 'a t =
+    | Uninitialized
+    | Current of 'a
+    | Failed_without_current
+
+  let uninitialized = Uninitialized
+  let current value = Current value
+
+  let mark_failed_without_current = function
+    | Uninitialized -> Failed_without_current
+    | Current _ | Failed_without_current as value -> value
+
+  let read = function
+    | Current value -> Ok value
+    | Failed_without_current -> Error `No_current_value
+    | Uninitialized -> Error `Uninitialized_observer
+
+  let unsafe_read_exn = function
+    | Current value -> value
+    | Uninitialized | Failed_without_current ->
+        invalid_arg "Eta_signal observer is not initialized"
+
+  let label = function
+    | Uninitialized -> "uninitialized"
+    | Current _ -> "current"
+    | Failed_without_current -> "failed_without_current"
+end
+
 module Delivery = struct
   type ('a, 'after_ack) t =
     | Observer_never_delivered

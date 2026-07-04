@@ -378,18 +378,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_var = V : 'a var -> packed_var
 
-  and 'a observer_value_state =
-    | Observer_uninitialized
-    | Observer_current of 'a
-    | Observer_failed_without_current
-
   and observer_after_ack_action = After_ack_record_stream_bridge_drop
 
   and 'a observer_delivery_state =
     ('a, observer_after_ack_action) Observer_core.Delivery.t
 
   and 'a observer_snapshot = {
-    observer_value : 'a observer_value_state;
+    observer_value : 'a Observer_core.Value.t;
     observer_delivery : 'a observer_delivery_state;
   }
 
@@ -401,8 +396,8 @@ module Make (Observer_error : Observer_error) () = struct
   and 'a observer_state =
     | Observer_registering of 'a observer_live_state
     | Observer_active of 'a observer_live_state
-    | Observer_disposed of 'a observer_value_state
-    | Observer_invalid_scope of 'a observer_value_state
+    | Observer_disposed of 'a Observer_core.Value.t
+    | Observer_invalid_scope of 'a Observer_core.Value.t
 
   and observer_finish_reason =
     | Observer_finish_disposed
@@ -1327,7 +1322,7 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_observer_current observer value =
     let live = live_state_or_invalid_arg observer "stage" in
     update_observer_staging live (fun snapshot ->
-        { snapshot with observer_value = Observer_current value })
+        { snapshot with observer_value = Observer_core.Value.current value })
 
   let stage_observer_delivery_state observer state =
     let live = live_state_or_invalid_arg observer "stage delivery for" in
@@ -2060,16 +2055,15 @@ module Make (Observer_error : Observer_error) () = struct
 
   let mark_failed_without_current (O observer) =
     match observer_active_live_state observer with
-    | Some live -> (
+    | Some live ->
         let snapshot = observer_current_snapshot live in
-        match snapshot.observer_value with
-        | Observer_uninitialized ->
-            set_observer_current live
-              {
-                snapshot with
-                observer_value = Observer_failed_without_current;
-              }
-        | Observer_current _ | Observer_failed_without_current -> ())
+        set_observer_current live
+          {
+            snapshot with
+            observer_value =
+              Observer_core.Value.mark_failed_without_current
+                snapshot.observer_value;
+          }
     | None -> ()
 
   let rollback_pure pure_token observers pending_at_start =
@@ -3059,7 +3053,7 @@ module Make (Observer_error : Observer_error) () = struct
                   observer_snapshot =
                     Transaction.create_staged
                       {
-                        observer_value = Observer_uninitialized;
+                        observer_value = Observer_core.Value.uninitialized;
                         observer_delivery = Observer_never_delivered;
                       };
                   obs_on_finish = on_finish;
@@ -3103,11 +3097,9 @@ module Make (Observer_error : Observer_error) () = struct
           | Observer_registering _ -> Error `Uninitialized_observer
           | Observer_disposed _ -> Error `Disposed_observer
           | Observer_invalid_scope _ -> Error `Invalid_scope
-          | Observer_active live -> (
-              match (observer_current_snapshot live).observer_value with
-              | Observer_current value -> Ok value
-              | Observer_failed_without_current -> Error `No_current_value
-              | Observer_uninitialized -> Error `Uninitialized_observer))
+          | Observer_active live ->
+              Observer_core.Value.read
+                (observer_current_snapshot live).observer_value)
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
@@ -3118,11 +3110,9 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_disposed _ -> invalid_arg "Eta_signal observer is disposed"
       | Observer_invalid_scope _ ->
           invalid_arg "Eta_signal observer scope is invalid"
-      | Observer_active live -> (
-          match (observer_current_snapshot live).observer_value with
-          | Observer_current value -> value
-          | Observer_uninitialized | Observer_failed_without_current ->
-              invalid_arg "Eta_signal observer is not initialized")
+      | Observer_active live ->
+          Observer_core.Value.unsafe_read_exn
+            (observer_current_snapshot live).observer_value
 
     let dispose observer = dispose_observer_effect observer
     let dispose_checked observer = dispose_observer_checked_effect observer
@@ -3470,11 +3460,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_disposed _ -> "disposed"
     | Observer_invalid_scope _ -> "invalid_scope"
 
-  let observer_value_state_label = function
-    | Observer_uninitialized -> "uninitialized"
-    | Observer_current _ -> "current"
-    | Observer_failed_without_current -> "failed_without_current"
-
   let observer_delivery_state_label = function
     | Observer_never_delivered -> "never_delivered"
     | Observer_delivered _ -> "delivered"
@@ -3486,10 +3471,10 @@ module Make (Observer_error : Observer_error) () = struct
       match observer.obs_state with
       | Observer_registering live | Observer_active live ->
           let snapshot = observer_current_snapshot live in
-          ( observer_value_state_label snapshot.observer_value,
+          ( Observer_core.Value.label snapshot.observer_value,
             observer_delivery_state_label snapshot.observer_delivery )
       | Observer_disposed value | Observer_invalid_scope value ->
-          (observer_value_state_label value, "none")
+          (Observer_core.Value.label value, "none")
     in
     let fields =
       [
