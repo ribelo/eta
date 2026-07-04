@@ -2,12 +2,6 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('inner, 'scope) commit_switch = {
-  old_inner : 'inner option;
-  old_scope : 'scope option;
-  new_inner : 'inner;
-}
-
 type 'inner eval_plan =
   | Switch
   | Reuse of 'inner
@@ -79,13 +73,18 @@ val switch_parts :
 val commit_switch :
   current:('source, 'inner, 'scope) snapshot ->
   staged:('source, 'inner, 'scope) snapshot ->
-  (('inner, 'scope) commit_switch, [> `Invalid_scope ]) result
+  detach_old_inner:('inner -> unit) ->
+  invalidate_old_scope:('scope -> 'hook list) ->
+  attach_new_inner:('inner -> unit) ->
+  ('hook list, [> `Invalid_scope ]) result
 
 val rollback_switch :
   staged:('source, 'inner, 'scope) snapshot ->
-  ('scope, [> `Invalid_scope ]) result
+  invalidate_new_scope:('scope -> 'hook list) ->
+  ('hook list, [> `Invalid_scope ]) result
 
 val preflight_switch :
   current:('source, 'inner, 'scope) snapshot ->
   staged:('source, 'inner, 'scope) snapshot ->
-  ('scope option, [> `Invalid_scope ]) result
+  collect_old_scope:('scope -> unit) ->
+  (unit, [> `Invalid_scope ]) result

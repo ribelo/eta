@@ -54,35 +54,64 @@ let test_eval_plan_reuses_inner_for_equal_source () =
   | Ok Bind.Switch -> Alcotest.fail "expected reuse"
   | Error `Invalid_scope -> Alcotest.fail "expected valid reuse"
 
-let test_switch_commit_plan () =
+let test_switch_commit_runs_graph_effects_in_bind_order () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
-  match Bind.commit_switch ~current ~staged with
-  | Ok plan ->
-      Alcotest.(check (option string)) "old inner" (Some "old") plan.old_inner;
-      Alcotest.(check (option int)) "old scope" (Some 1) plan.old_scope;
-      Alcotest.(check string) "new inner" "new" plan.new_inner
+  let effects = ref [] in
+  let record effect = effects := !effects @ [ effect ] in
+  match
+    Bind.commit_switch ~current ~staged
+      ~detach_old_inner:(fun inner -> record ("detach:" ^ inner))
+      ~invalidate_old_scope:(fun scope ->
+        record ("invalidate:" ^ string_of_int scope);
+        [ "cleanup:" ^ string_of_int scope ])
+      ~attach_new_inner:(fun inner -> record ("attach:" ^ inner))
+  with
+  | Ok hooks ->
+      Alcotest.(check (list string))
+        "effect order"
+        [ "detach:old"; "invalidate:1"; "attach:new" ]
+        !effects;
+      Alcotest.(check (list string)) "hooks" [ "cleanup:1" ] hooks
   | Error `Invalid_scope -> Alcotest.fail "expected commit plan"
 
 let test_switch_rollback_and_preflight_plans () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
-  (match Bind.rollback_switch ~staged with
-   | Ok scope -> Alcotest.(check int) "rollback scope" 2 scope
-   | Error `Invalid_scope -> Alcotest.fail "expected rollback scope");
-  match Bind.preflight_switch ~current ~staged with
-  | Ok old_scope ->
-      Alcotest.(check (option int)) "preflight old scope" (Some 1) old_scope
+  let rolled_back = ref [] in
+  (match
+     Bind.rollback_switch ~staged ~invalidate_new_scope:(fun scope ->
+         rolled_back := scope :: !rolled_back;
+         [ "cleanup:" ^ string_of_int scope ])
+   with
+  | Ok hooks ->
+      Alcotest.(check (list int)) "rollback scope" [ 2 ] !rolled_back;
+      Alcotest.(check (list string)) "rollback hooks" [ "cleanup:2" ] hooks
+  | Error `Invalid_scope -> Alcotest.fail "expected rollback scope");
+  let preflighted = ref [] in
+  match
+    Bind.preflight_switch ~current ~staged
+      ~collect_old_scope:(fun scope -> preflighted := scope :: !preflighted)
+  with
+  | Ok () -> Alcotest.(check (list int)) "preflight old scope" [ 1 ] !preflighted
   | Error `Invalid_scope -> Alcotest.fail "expected preflight scope"
 
 let test_switch_plans_reject_incomplete_staged_snapshot () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   Alcotest.(check bool) "commit rejected" true
-    (Result.is_error (Bind.commit_switch ~current ~staged:Bind.empty));
+    (Result.is_error
+       (Bind.commit_switch ~current ~staged:Bind.empty
+          ~detach_old_inner:(fun _ -> ())
+          ~invalidate_old_scope:(fun _ -> [])
+          ~attach_new_inner:(fun _ -> ())));
   Alcotest.(check bool) "rollback rejected" true
-    (Result.is_error (Bind.rollback_switch ~staged:Bind.empty));
+    (Result.is_error
+       (Bind.rollback_switch ~staged:Bind.empty
+          ~invalidate_new_scope:(fun _ -> [])));
   Alcotest.(check bool) "preflight rejected" true
-    (Result.is_error (Bind.preflight_switch ~current ~staged:Bind.empty))
+    (Result.is_error
+       (Bind.preflight_switch ~current ~staged:Bind.empty
+          ~collect_old_scope:(fun _ -> ())))
 
 let test_dependencies_include_source_and_current_inner () =
   Alcotest.(check (list int))
@@ -214,8 +243,8 @@ let () =
             test_eval_plan_switches_for_initial_or_changed_source;
           Alcotest.test_case "eval plan reuses" `Quick
             test_eval_plan_reuses_inner_for_equal_source;
-          Alcotest.test_case "switch commit plan" `Quick
-            test_switch_commit_plan;
+          Alcotest.test_case "switch commit effects" `Quick
+            test_switch_commit_runs_graph_effects_in_bind_order;
           Alcotest.test_case "switch rollback and preflight plans" `Quick
             test_switch_rollback_and_preflight_plans;
           Alcotest.test_case "incomplete switch rejected" `Quick

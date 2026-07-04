@@ -4,12 +4,6 @@ type ('source, 'inner, 'scope) snapshot = {
   inner_scope : 'scope option;
 }
 
-type ('inner, 'scope) commit_switch = {
-  old_inner : 'inner option;
-  old_scope : 'scope option;
-  new_inner : 'inner;
-}
-
 type 'inner eval_plan =
   | Switch
   | Reuse of 'inner
@@ -89,23 +83,28 @@ let switch_parts snapshot =
   | Some source_value, Some inner, Some scope -> Some (source_value, inner, scope)
   | _ -> None
 
-let commit_switch ~current ~staged =
+let commit_switch ~current ~staged ~detach_old_inner ~invalidate_old_scope
+    ~attach_new_inner =
   match switch_parts staged with
   | Some (_, new_inner, _) ->
-      Ok
-        {
-          old_inner = current.inner;
-          old_scope = current.inner_scope;
-          new_inner;
-        }
+      Option.iter detach_old_inner current.inner;
+      let hooks =
+        match current.inner_scope with
+        | None -> []
+        | Some old_scope -> invalidate_old_scope old_scope
+      in
+      attach_new_inner new_inner;
+      Ok hooks
   | None -> Error `Invalid_scope
 
-let rollback_switch ~staged =
+let rollback_switch ~staged ~invalidate_new_scope =
   match switch_parts staged with
-  | Some (_, _, scope) -> Ok scope
+  | Some (_, _, scope) -> Ok (invalidate_new_scope scope)
   | None -> Error `Invalid_scope
 
-let preflight_switch ~current ~staged =
+let preflight_switch ~current ~staged ~collect_old_scope =
   match switch_parts staged with
-  | Some _ -> Ok current.inner_scope
+  | Some _ ->
+      Option.iter collect_old_scope current.inner_scope;
+      Ok ()
   | None -> Error `Invalid_scope

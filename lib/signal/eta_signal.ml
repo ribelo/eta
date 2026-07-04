@@ -1312,14 +1312,13 @@ module Make (Observer_error : Observer_error) () = struct
     match (bind.owner, bind_staged_snapshot bind) with
     | Some owner, Some staged -> (
         let current = bind_current_snapshot bind in
-        match Bind.commit_switch ~current ~staged with
-        | Ok plan ->
-            Option.iter (detach_dependency owner) plan.old_inner;
-            let hooks =
-              Option.fold ~none:[] ~some:invalidate_scope plan.old_scope
-            in
-            attach_dependency owner plan.new_inner;
-            hooks
+        match
+          Bind.commit_switch ~current ~staged
+            ~detach_old_inner:(detach_dependency owner)
+            ~invalidate_old_scope:invalidate_scope
+            ~attach_new_inner:(attach_dependency owner)
+        with
+        | Ok hooks -> hooks
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | _, None -> []
     | _ -> raise (Graph_error `Invalid_scope)
@@ -1327,8 +1326,10 @@ module Make (Observer_error : Observer_error) () = struct
   let rollback_bind (B bind) =
     match bind_staged_snapshot bind with
     | Some staged -> (
-        match Bind.rollback_switch ~staged with
-        | Ok scope -> invalidate_scope scope
+        match
+          Bind.rollback_switch ~staged ~invalidate_new_scope:invalidate_scope
+        with
+        | Ok hooks -> hooks
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | None -> []
 
@@ -1352,12 +1353,13 @@ module Make (Observer_error : Observer_error) () = struct
     match (bind.owner, bind_staged_snapshot bind) with
     | Some owner, Some staged -> (
         let current = bind_current_snapshot bind in
-        match Bind.preflight_switch ~current ~staged with
-        | Ok old_scope ->
-            Option.iter
+        match
+          Bind.preflight_switch ~current ~staged
+            ~collect_old_scope:
               (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
                  collected)
-              old_scope
+        with
+        | Ok () -> ()
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | _, None -> ()
     | _ -> raise (Graph_error `Invalid_scope)
