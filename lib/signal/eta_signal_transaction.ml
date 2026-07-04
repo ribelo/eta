@@ -36,7 +36,15 @@ let next_id = ref 0
 
 let create_staged current = { current; pending = None }
 let current staged = staged.current
-let set_current staged value = staged.current <- value
+
+let replace_current staged value =
+  match staged.pending with
+  | None -> staged.current <- value
+  | Some _ ->
+      invalid_arg
+        "Eta_signal_transaction.replace_current: staged value has pending \
+         transaction state"
+
 let id tx = tx.core.id
 let equal_id (Id left) (Id right) = Int.equal left right
 

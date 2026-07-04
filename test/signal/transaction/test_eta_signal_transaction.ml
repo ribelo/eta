@@ -38,15 +38,17 @@ let test_restage_uses_last_value () =
   ignore (commit_ok tx : (T.committed, test_error) T.t);
   Alcotest.(check int) "committed last value" 2 (T.current cell)
 
-let test_set_current_preserves_pending_transaction_value () =
+let test_replace_current_rejects_pending_transaction_value () =
   let cell = T.create_staged 0 in
   let tx : (T.pure, test_error) T.t = T.begin_pure () in
   T.stage tx cell 1;
-  T.set_current cell 2;
+  expect_invalid_arg "replace current while pending" (fun () ->
+      T.replace_current cell 2);
   Alcotest.(check int) "transaction reads pending value" 1 (T.read tx cell);
-  Alcotest.(check int) "outside read sees current value" 2 (T.current cell);
+  Alcotest.(check int) "outside read keeps old current value" 0
+    (T.current cell);
   T.rollback tx;
-  Alcotest.(check int) "rollback keeps explicit current value" 2 (T.current cell)
+  Alcotest.(check int) "rollback keeps old current value" 0 (T.current cell)
 
 let test_stage_read_rollback () =
   let cell = T.create_staged "old" in
@@ -152,8 +154,8 @@ let () =
           Alcotest.test_case "restage uses last value" `Quick
             test_restage_uses_last_value;
           Alcotest.test_case
-            "set_current preserves pending transaction value" `Quick
-            test_set_current_preserves_pending_transaction_value;
+            "replace_current rejects pending transaction value" `Quick
+            test_replace_current_rejects_pending_transaction_value;
           Alcotest.test_case "stage read rollback" `Quick
             test_stage_read_rollback;
           Alcotest.test_case "discard skips one staged cell" `Quick

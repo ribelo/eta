@@ -15,7 +15,12 @@ type 'a staged
 
 val create_staged : 'a -> 'a staged
 val current : 'a staged -> 'a
-val set_current : 'a staged -> 'a -> unit
+val replace_current : 'a staged -> 'a -> unit
+(** Replace the committed current value.
+
+    This is for initialization and non-transactional source publication. It
+    raises [Invalid_argument] if the cell has a pending transaction value,
+    because that would bypass pure snapshot commit/rollback ordering. *)
 
 val begin_pure : unit -> (pure, 'error) t
 val id : (_, _) t -> id
