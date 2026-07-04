@@ -117,6 +117,10 @@ end
 module Snapshot : sig
   type ('a, 'after_ack) t
 
+  type ('a, 'after_ack) finish =
+    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
+    | Finish_released of ('a, 'after_ack) t
+
   val initial : ('a, 'after_ack) t
 
   val create :
@@ -132,6 +136,40 @@ module Snapshot : sig
     ('a, 'after_ack) t ->
     ('a, 'after_ack) Delivery.t ->
     ('a, 'after_ack) t
+
+  val with_pending_delivery :
+    token:Delivery.token ->
+    'a Update.t ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) t
+
+  val acknowledge_delivery :
+    token:Delivery.token ->
+    update:'a Update.t ->
+    after_ack:'after_ack list ->
+    ('a, 'after_ack) t ->
+    (('a, 'after_ack) t * 'after_ack list) option
+
+  val claim_delivery :
+    token:Delivery.token ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) t option
+
+  val release_delivery :
+    token:Delivery.token ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) t option
+
+  val finish_running_delivery :
+    token:Delivery.token ->
+    update:'a Update.t ->
+    delivered:bool ->
+    after_ack:'after_ack list ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) finish option
+
+  val running_delivery_token_matches :
+    token:Delivery.token -> ('a, 'after_ack) t -> bool
 end
 
 module Event : sig

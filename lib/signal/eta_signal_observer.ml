@@ -211,6 +211,10 @@ module Snapshot = struct
     delivery : ('a, 'after_ack) Delivery.t;
   }
 
+  type ('a, 'after_ack) finish =
+    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
+    | Finish_released of ('a, 'after_ack) t
+
   let create ~value ~delivery = { value; delivery }
 
   let initial =
@@ -221,6 +225,36 @@ module Snapshot = struct
   let delivery snapshot = snapshot.delivery
   let with_value snapshot value = { snapshot with value }
   let with_delivery snapshot delivery = { snapshot with delivery }
+
+  let with_pending_delivery ~token update snapshot =
+    with_delivery snapshot (Delivery.pending_state ~token update)
+
+  let acknowledge_delivery ~token ~update ~after_ack snapshot =
+    Delivery.acknowledge ~token ~update ~after_ack snapshot.delivery
+    |> Option.map (fun (delivery, after_ack) ->
+           (with_delivery snapshot delivery, after_ack))
+
+  let claim_delivery ~token snapshot =
+    Delivery.claim ~token snapshot.delivery
+    |> Option.map (with_delivery snapshot)
+
+  let release_delivery ~token snapshot =
+    Delivery.release ~token snapshot.delivery
+    |> Option.map (with_delivery snapshot)
+
+  let finish_running_delivery ~token ~update ~delivered ~after_ack snapshot =
+    match
+      Delivery.finish_running ~token ~update ~delivered ~after_ack
+        snapshot.delivery
+    with
+    | Some (Delivery.Finish_acknowledged (delivery, after_ack)) ->
+        Some (Finish_acknowledged (with_delivery snapshot delivery, after_ack))
+    | Some (Delivery.Finish_released delivery) ->
+        Some (Finish_released (with_delivery snapshot delivery))
+    | None -> None
+
+  let running_delivery_token_matches ~token snapshot =
+    Delivery.running_token_matches ~token snapshot.delivery
 end
 
 module Event = struct

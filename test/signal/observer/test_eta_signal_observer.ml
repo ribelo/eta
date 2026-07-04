@@ -326,6 +326,72 @@ let test_snapshot_policy () =
   Alcotest.(check string) "explicit delivery" "delivered"
     (Observer.Delivery.label (Observer.Snapshot.delivery explicit))
 
+let test_snapshot_delivery_transitions () =
+  let initial = Observer.Snapshot.initial in
+  let pending =
+    Observer.Snapshot.with_pending_delivery ~token:1 update_initialized initial
+  in
+  Alcotest.(check string) "pending" "pending"
+    (Observer.Delivery.label (Observer.Snapshot.delivery pending));
+  let running =
+    match Observer.Snapshot.claim_delivery ~token:1 pending with
+    | Some snapshot -> snapshot
+    | None -> Alcotest.fail "expected claim"
+  in
+  Alcotest.(check string) "running" "running"
+    (Observer.Delivery.label (Observer.Snapshot.delivery running));
+  Alcotest.(check bool) "running token" true
+    (Observer.Snapshot.running_delivery_token_matches ~token:1 running);
+  let pending_again =
+    match Observer.Snapshot.release_delivery ~token:1 running with
+    | Some snapshot -> snapshot
+    | None -> Alcotest.fail "expected release"
+  in
+  Alcotest.(check string) "released" "pending"
+    (Observer.Delivery.label (Observer.Snapshot.delivery pending_again));
+  let running_again =
+    match Observer.Snapshot.claim_delivery ~token:1 pending_again with
+    | Some snapshot -> snapshot
+    | None -> Alcotest.fail "expected second claim"
+  in
+  (match
+     Observer.Snapshot.acknowledge_delivery ~token:1
+       ~update:update_initialized ~after_ack:[ Extra ] running_again
+   with
+  | Some (snapshot, ack_actions) ->
+      Alcotest.(check string) "acknowledged" "delivered"
+        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
+      Alcotest.(check (list after_ack)) "ack actions" [ Extra ] ack_actions
+  | None -> Alcotest.fail "expected acknowledge")
+
+let test_snapshot_finish_running_delivery () =
+  let running =
+    Observer.Snapshot.create ~value:(Observer.Value.current 1)
+      ~delivery:
+        (Observer.Delivery.Observer_delivery_running
+           (2, update_changed, [ Stored ]))
+  in
+  (match
+     Observer.Snapshot.finish_running_delivery ~token:2 ~update:update_changed
+       ~delivered:false ~after_ack:[ Extra ] running
+   with
+  | Some (Observer.Snapshot.Finish_released snapshot) ->
+      Alcotest.(check string) "released" "pending"
+        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot))
+  | Some (Observer.Snapshot.Finish_acknowledged _) | None ->
+      Alcotest.fail "expected release");
+  match
+    Observer.Snapshot.finish_running_delivery ~token:2 ~update:update_changed
+      ~delivered:true ~after_ack:[ Extra ] running
+  with
+  | Some (Observer.Snapshot.Finish_acknowledged (snapshot, ack_actions)) ->
+      Alcotest.(check string) "acknowledged" "delivered"
+        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
+      Alcotest.(check (list after_ack)) "ack actions"
+        [ Extra; Stored ] ack_actions
+  | Some (Observer.Snapshot.Finish_released _) | None ->
+      Alcotest.fail "expected acknowledgement"
+
 let check_event_plan label ~expected_value ~expected_update ~expected_delivery
     plan =
   Alcotest.(check (option update)) (label ^ " update") expected_update
@@ -426,7 +492,13 @@ let () =
           Alcotest.test_case "labels" `Quick test_delivery_labels;
         ] );
       ( "snapshot",
-        [ Alcotest.test_case "policy" `Quick test_snapshot_policy ] );
+        [
+          Alcotest.test_case "policy" `Quick test_snapshot_policy;
+          Alcotest.test_case "delivery transitions" `Quick
+            test_snapshot_delivery_transitions;
+          Alcotest.test_case "finish running delivery" `Quick
+            test_snapshot_finish_running_delivery;
+        ] );
       ( "event",
         [
           Alcotest.test_case "initializes and suppresses unchanged" `Quick
