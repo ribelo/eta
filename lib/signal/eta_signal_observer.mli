@@ -121,6 +121,11 @@ module Snapshot : sig
     | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
     | Finish_released of ('a, 'after_ack) t
 
+  type ('a, 'after_ack) event_plan = {
+    snapshot : ('a, 'after_ack) t;
+    update : 'a Update.t option;
+  }
+
   val initial : ('a, 'after_ack) t
 
   val create :
@@ -170,6 +175,13 @@ module Snapshot : sig
 
   val running_delivery_token_matches :
     token:Delivery.token -> ('a, 'after_ack) t -> bool
+
+  val plan_event :
+    equal:('a -> 'a -> bool) ->
+    changed:bool ->
+    value:'a ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) event_plan
 end
 
 module Event : sig

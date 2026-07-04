@@ -392,6 +392,33 @@ let test_snapshot_finish_running_delivery () =
   | Some (Observer.Snapshot.Finish_released _) | None ->
       Alcotest.fail "expected acknowledgement"
 
+let test_snapshot_event_plan () =
+  let initial = Observer.Snapshot.initial in
+  let initialized =
+    Observer.Snapshot.plan_event ~equal:Int.equal ~changed:true ~value:1
+      initial
+  in
+  Alcotest.(check (option update)) "initialized update"
+    (Some update_initialized) initialized.update;
+  Alcotest.(check string) "initialized value" "current"
+    (Observer.Value.label
+       (Observer.Snapshot.value initialized.snapshot));
+  let pending_equal =
+    Observer.Snapshot.create ~value:(Observer.Value.current 1)
+      ~delivery:
+        (Observer.Delivery.Observer_delivery_pending
+           (2, update_changed, []))
+  in
+  let suppressed =
+    Observer.Snapshot.plan_event ~equal:Int.equal ~changed:false ~value:1
+      pending_equal
+  in
+  Alcotest.(check (option update)) "suppressed update" None
+    suppressed.update;
+  Alcotest.(check string) "suppressed delivery" "delivered"
+    (Observer.Delivery.label
+       (Observer.Snapshot.delivery suppressed.snapshot))
+
 let check_event_plan label ~expected_value ~expected_update ~expected_delivery
     plan =
   Alcotest.(check (option update)) (label ^ " update") expected_update
@@ -498,6 +525,8 @@ let () =
             test_snapshot_delivery_transitions;
           Alcotest.test_case "finish running delivery" `Quick
             test_snapshot_finish_running_delivery;
+          Alcotest.test_case "event plan" `Quick
+            test_snapshot_event_plan;
         ] );
       ( "event",
         [

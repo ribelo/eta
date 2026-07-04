@@ -1197,16 +1197,6 @@ module Make (Observer_error : Observer_error) () = struct
     set_observer_current live
       (Observer_snapshot.with_delivery snapshot observer_delivery)
 
-  let stage_observer_value_state observer value =
-    let live = live_state_or_invalid_arg observer "stage" in
-    update_observer_staging live (fun snapshot ->
-        Observer_snapshot.with_value snapshot value)
-
-  let stage_observer_delivery_state observer state =
-    let live = live_state_or_invalid_arg observer "stage delivery for" in
-    update_observer_staging live (fun snapshot ->
-        Observer_snapshot.with_delivery snapshot state)
-
   let observer_active (O observer) =
     Observer_lifecycle.active observer.obs_state
 
@@ -2492,13 +2482,11 @@ module Make (Observer_error : Observer_error) () = struct
       let value, changed = compute observer.obs_signal in
       let snapshot = observer_effective_snapshot live in
       let event_plan =
-        Observer_core.Event.plan ~equal:observer.obs_equal ~changed ~value
-          (Observer_snapshot.delivery snapshot)
+        Observer_snapshot.plan_event ~equal:observer.obs_equal ~changed
+          ~value snapshot
       in
-      Option.iter
-        (stage_observer_delivery_state observer)
-        event_plan.delivery;
-      stage_observer_value_state observer event_plan.value;
+      Transaction.stage (active_transaction ()) live.observer_snapshot
+        event_plan.snapshot;
       Option.map
         (fun update -> E (current_generation (), observer, update))
         event_plan.update

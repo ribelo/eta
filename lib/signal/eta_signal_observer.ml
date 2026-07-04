@@ -205,6 +205,21 @@ module Delivery = struct
     | Observer_delivery_running _ -> "running"
 end
 
+let plan_event_parts ~equal ~changed ~value delivery =
+  let update, delivery =
+    match Delivery.base delivery with
+    | None -> (Some (Update.Initialized value), None)
+    | Some old_value ->
+        if changed || Delivery.pending delivery then
+          if equal old_value value then
+            (None, Some (Delivery.Observer_delivered value))
+          else
+            ( Some (Update.Changed { old_value; new_value = value }),
+              None )
+        else (None, None)
+  in
+  (Value.current value, update, delivery)
+
 module Snapshot = struct
   type ('a, 'after_ack) t = {
     value : 'a Value.t;
@@ -214,6 +229,11 @@ module Snapshot = struct
   type ('a, 'after_ack) finish =
     | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
     | Finish_released of ('a, 'after_ack) t
+
+  type ('a, 'after_ack) event_plan = {
+    snapshot : ('a, 'after_ack) t;
+    update : 'a Update.t option;
+  }
 
   let create ~value ~delivery = { value; delivery }
 
@@ -255,6 +275,18 @@ module Snapshot = struct
 
   let running_delivery_token_matches ~token snapshot =
     Delivery.running_token_matches ~token snapshot.delivery
+
+  let plan_event ~equal ~changed ~value snapshot =
+    let value, update, delivery =
+      plan_event_parts ~equal ~changed ~value snapshot.delivery
+    in
+    let snapshot = with_value snapshot value in
+    let snapshot =
+      match delivery with
+      | None -> snapshot
+      | Some delivery -> with_delivery snapshot delivery
+    in
+    { snapshot; update }
 end
 
 module Event = struct
@@ -265,17 +297,8 @@ module Event = struct
   }
 
   let plan ~equal ~changed ~value delivery =
-    let update, delivery =
-      match Delivery.base delivery with
-      | None -> (Some (Update.Initialized value), None)
-      | Some old_value ->
-          if changed || Delivery.pending delivery then
-            if equal old_value value then
-              (None, Some (Delivery.Observer_delivered value))
-            else
-              ( Some (Update.Changed { old_value; new_value = value }),
-                None )
-          else (None, None)
+    let value, update, delivery =
+      plan_event_parts ~equal ~changed ~value delivery
     in
-    { value = Value.current value; update; delivery }
+    { value; update; delivery }
 end
