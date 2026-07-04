@@ -656,6 +656,186 @@ let test_observer_lifecycle_trace_matches_model () =
         (generate_lifecycle_trace ~seed ~steps:90))
     [ 3; 17; 41; 79 ]
 
+type branch_demand_op =
+  | Branch_set_a of int
+  | Branch_set_b of int
+  | Branch_choose_a of bool
+  | Branch_stabilize
+  | Branch_read
+
+type branch_model = {
+  mutable branch_source : int;
+  mutable branch_committed : int;
+  mutable branch_current : int option;
+  mutable branch_recomputes : int;
+}
+
+type bind_demand_model = {
+  branch_a : branch_model;
+  branch_b : branch_model;
+  mutable pending_choose_a : bool;
+  mutable committed_choose_a : bool;
+  mutable bind_observer_current : int option;
+  mutable bind_observed_updates : observed_update list;
+}
+
+let pp_branch_demand_op formatter = function
+  | Branch_set_a value -> Format.fprintf formatter "Set_a %d" value
+  | Branch_set_b value -> Format.fprintf formatter "Set_b %d" value
+  | Branch_choose_a value -> Format.fprintf formatter "Choose_a %b" value
+  | Branch_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Branch_read -> Format.pp_print_string formatter "Read"
+
+let create_branch_model value =
+  {
+    branch_source = value;
+    branch_committed = value;
+    branch_current = None;
+    branch_recomputes = 0;
+  }
+
+let create_bind_demand_model () =
+  {
+    branch_a = create_branch_model 0;
+    branch_b = create_branch_model 10;
+    pending_choose_a = true;
+    committed_choose_a = true;
+    bind_observer_current = None;
+    bind_observed_updates = [];
+  }
+
+let set_branch_model_source branch value =
+  if branch.branch_source <> value then branch.branch_source <- value
+
+let commit_branch_source branch =
+  branch.branch_committed <- branch.branch_source
+
+let selected_branch_model model =
+  if model.committed_choose_a then model.branch_a else model.branch_b
+
+let compute_branch_if_needed branch =
+  match branch.branch_current with
+  | Some value when value = branch.branch_committed -> value
+  | None | Some _ ->
+      branch.branch_recomputes <- branch.branch_recomputes + 1;
+      branch.branch_current <- Some branch.branch_committed;
+      branch.branch_committed
+
+let stabilize_bind_demand_model model =
+  commit_branch_source model.branch_a;
+  commit_branch_source model.branch_b;
+  model.committed_choose_a <- model.pending_choose_a;
+  let value = compute_branch_if_needed (selected_branch_model model) in
+  let update =
+    match model.bind_observer_current with
+    | None -> Some (Initialized value)
+    | Some current ->
+        if current = value then None else Some (Changed (current, value))
+  in
+  model.bind_observer_current <- Some value;
+  Option.iter
+    (fun update ->
+      model.bind_observed_updates <- update :: model.bind_observed_updates)
+    update
+
+let check_bind_demand_model label model updates recomputes_a recomputes_b =
+  Alcotest.(check (list observed_update))
+    (label ^ " updates") (List.rev model.bind_observed_updates)
+    (List.rev !updates);
+  Alcotest.(check int)
+    (label ^ " branch a recomputes")
+    model.branch_a.branch_recomputes !recomputes_a;
+  Alcotest.(check int)
+    (label ^ " branch b recomputes")
+    model.branch_b.branch_recomputes !recomputes_b
+
+let generate_branch_demand_trace ~seed ~steps =
+  let random = Random.State.make [| seed |] in
+  let next_value () = Random.State.int random 11 - 5 in
+  let next_op index =
+    if index mod 6 = 0 then Branch_stabilize
+    else
+      match Random.State.int random 12 with
+      | 0 | 1 | 2 -> Branch_set_a (next_value ())
+      | 3 | 4 | 5 -> Branch_set_b (next_value ())
+      | 6 | 7 -> Branch_choose_a (Random.State.bool random)
+      | 8 -> Branch_read
+      | _ -> Branch_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Branch_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Branch_stabilize :: Branch_read :: loop 1 []
+
+let run_bind_branch_demand_trace name ops =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source_a = Signal.Var.create 0 in
+  let source_b = Signal.Var.create 10 in
+  let choose_a = Signal.Var.create true in
+  let recomputes_a = ref 0 in
+  let recomputes_b = ref 0 in
+  let branch_a =
+    Signal.Var.watch source_a
+    |> Signal.map (fun value ->
+           incr recomputes_a;
+           value)
+  in
+  let branch_b =
+    Signal.Var.watch source_b
+    |> Signal.map (fun value ->
+           incr recomputes_b;
+           value)
+  in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_a) (fun use_a ->
+        if use_a then branch_a else branch_b)
+  in
+  let updates = ref [] in
+  let record update =
+    E.sync (fun () ->
+        updates := observed_of_signal_update update :: !updates)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe selected record) in
+  let model = create_bind_demand_model () in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_branch_demand_op op
+      in
+      match op with
+      | Branch_set_a value ->
+          set_branch_model_source model.branch_a value;
+          run_ok runtime (Signal.Var.set source_a value)
+      | Branch_set_b value ->
+          set_branch_model_source model.branch_b value;
+          run_ok runtime (Signal.Var.set source_b value)
+      | Branch_choose_a value ->
+          model.pending_choose_a <- value;
+          run_ok runtime (Signal.Var.set choose_a value)
+      | Branch_stabilize ->
+          stabilize_bind_demand_model model;
+          run_ok runtime Signal.stabilize;
+          check_bind_demand_model label model updates recomputes_a recomputes_b
+      | Branch_read -> (
+          match model.bind_observer_current with
+          | None ->
+              expect_uninitialized_observer label runtime
+                (Signal.Observer.read observer)
+          | Some expected ->
+              Alcotest.(check int) label expected
+                (run_ok runtime (Signal.Observer.read observer))))
+    ops;
+  run_ok runtime (Signal.Observer.dispose observer)
+
+let test_bind_branch_demand_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_bind_branch_demand_trace
+        (Format.asprintf "bind-demand-seed-%d" seed)
+        (generate_branch_demand_trace ~seed ~steps:100))
+    [ 5; 23; 61; 97 ]
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -675,5 +855,7 @@ let () =
             test_dispose_demand_matches_model;
           Alcotest.test_case "observer lifecycle trace matches model" `Quick
             test_observer_lifecycle_trace_matches_model;
+          Alcotest.test_case "bind branch demand trace matches model" `Quick
+            test_bind_branch_demand_trace_matches_model;
         ] );
     ]
