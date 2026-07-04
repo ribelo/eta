@@ -529,6 +529,33 @@ module Make (Observer_error : Observer_error) () = struct
     let set_dirty (P signal) dirty = signal.dirty <- dirty
   end)
 
+  module Kernel_compute = Kernel.Make_compute (struct
+    type nonrec packed = packed_signal
+    type t = Kernel_edge_node.t
+
+    let pack = Kernel_edge_node.pack
+    let seen_generation (Kernel_edge_node.Packed signal) = signal.seen_generation
+
+    let set_seen_generation (Kernel_edge_node.Packed signal) generation =
+      signal.seen_generation <- generation
+
+    let changed_seen (Kernel_edge_node.Packed signal) = signal.changed_seen
+
+    let set_changed_seen (Kernel_edge_node.Packed signal) changed =
+      signal.changed_seen <- changed
+
+    let computing (Kernel_edge_node.Packed signal) = signal.computing
+
+    let set_computing (Kernel_edge_node.Packed signal) computing =
+      signal.computing <- computing
+
+    let computed_generation (Kernel_edge_node.Packed signal) =
+      signal.computed_generation
+
+    let set_computed_generation (Kernel_edge_node.Packed signal) generation =
+      signal.computed_generation <- generation
+  end)
+
   module Private_test_hooks = struct
     include Private_test_hook_state
 
@@ -1163,11 +1190,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Some transaction -> Transaction.read transaction var.graph_value
     | None -> Transaction.current var.graph_value
 
-  let remember_computed (P signal as packed) =
+  let remember_computed (P signal) =
     let generation = current_generation () in
-    if signal.computed_generation <> generation then (
-      signal.computed_generation <- generation;
-      graph.computed_nodes <- packed :: graph.computed_nodes)
+    graph.computed_nodes <-
+      Kernel_compute.remember ~generation graph.computed_nodes
+        (kernel_edge_node signal)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -2132,20 +2159,13 @@ module Make (Observer_error : Observer_error) () = struct
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute signal;
     let generation = current_generation () in
-    if signal.seen_generation = generation then
-      (effective_signal_value signal, signal.changed_seen)
-    else if signal.computing then raise (Graph_error `Cycle)
-    else (
-      signal.computing <- true;
-      match
-        Fun.protect
-          ~finally:(fun () -> signal.computing <- false)
-          (fun () -> compute_uncached signal)
-      with
-      | value, changed ->
-          signal.seen_generation <- generation;
-          signal.changed_seen <- changed;
-          (value, changed))
+    let compute_node = kernel_edge_node signal in
+    if Kernel_compute.seen ~generation compute_node then
+      (effective_signal_value signal, Kernel_compute.changed_seen compute_node)
+    else
+      Kernel_compute.run ~generation compute_node
+        ~cycle:(fun () -> raise (Graph_error `Cycle))
+        ~compute:(fun () -> compute_uncached signal)
 
   and compute_uncached : type a. a signal -> a * bool =
    fun signal ->

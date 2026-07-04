@@ -128,3 +128,46 @@ module Make_dirty (Node : DIRTY_NODE) = struct
   let restore entries =
     List.iter (fun (node, dirty) -> Node.set_dirty node dirty) entries
 end
+
+module type COMPUTE_NODE = sig
+  type packed
+  type t
+
+  val pack : t -> packed
+  val seen_generation : t -> int
+  val set_seen_generation : t -> int -> unit
+  val changed_seen : t -> bool
+  val set_changed_seen : t -> bool -> unit
+  val computing : t -> bool
+  val set_computing : t -> bool -> unit
+  val computed_generation : t -> int
+  val set_computed_generation : t -> int -> unit
+end
+
+module Make_compute (Node : COMPUTE_NODE) = struct
+  let remember ~generation computed node =
+    if Node.computed_generation node = generation then computed
+    else (
+      Node.set_computed_generation node generation;
+      Node.pack node :: computed)
+
+  let seen ~generation node =
+    Node.seen_generation node = generation
+
+  let changed_seen node =
+    Node.changed_seen node
+
+  let run ~generation node ~cycle ~compute =
+    if Node.computing node then cycle ()
+    else (
+      Node.set_computing node true;
+      match
+        Fun.protect
+          ~finally:(fun () -> Node.set_computing node false)
+          compute
+      with
+      | value, changed ->
+          Node.set_seen_generation node generation;
+          Node.set_changed_seen node changed;
+          (value, changed))
+end

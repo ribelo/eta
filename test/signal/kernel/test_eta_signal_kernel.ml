@@ -5,6 +5,10 @@ type node = {
   valid : bool;
   mutable version : int;
   mutable dirty : bool;
+  mutable computing : bool;
+  mutable seen_generation : int;
+  mutable changed_seen : bool;
+  mutable computed_generation : int;
   mutable dependencies : packed list;
   mutable dependents : packed list;
 }
@@ -54,8 +58,38 @@ module Dirty = Kernel.Make_dirty (struct
   let set_dirty (P node) dirty = node.dirty <- dirty
 end)
 
-let node ?(valid = true) ?(version = 0) ?(dirty = false) id =
-  { id; valid; version; dirty; dependencies = []; dependents = [] }
+module Compute = Kernel.Make_compute (struct
+  type nonrec packed = packed
+  type t = node
+
+  let pack node = P node
+  let seen_generation node = node.seen_generation
+  let set_seen_generation node generation = node.seen_generation <- generation
+  let changed_seen node = node.changed_seen
+  let set_changed_seen node changed = node.changed_seen <- changed
+  let computing node = node.computing
+  let set_computing node computing = node.computing <- computing
+  let computed_generation node = node.computed_generation
+
+  let set_computed_generation node generation =
+    node.computed_generation <- generation
+end)
+
+let node ?(valid = true) ?(version = 0) ?(dirty = false)
+    ?(computing = false) ?(seen_generation = -1) ?(changed_seen = false)
+    ?(computed_generation = -1) id =
+  {
+    id;
+    valid;
+    version;
+    dirty;
+    computing;
+    seen_generation;
+    changed_seen;
+    computed_generation;
+    dependencies = [];
+    dependents = [];
+  }
 
 let ids packed = List.map (fun (P node) -> node.id) packed
 let sorted_ids ids = List.sort Int.compare ids
@@ -162,6 +196,59 @@ let test_dirty_restore_preserves_initial_dirty () =
   Dirty.restore entries;
   Alcotest.(check bool) "restored" true target.dirty
 
+let test_compute_remember_records_once_per_generation () =
+  let target = node 1 in
+  let computed = Compute.remember ~generation:10 [] target in
+  let computed = Compute.remember ~generation:10 computed target in
+  Alcotest.(check (list int)) "computed" [ 1 ] (ids computed);
+  Alcotest.(check int) "generation" 10 target.computed_generation
+
+let test_compute_run_records_seen_generation_and_changed () =
+  let target = node 1 in
+  let value, changed =
+    Compute.run ~generation:2 target
+      ~cycle:(fun () -> failwith "unexpected cycle")
+      ~compute:(fun () -> ("value", true))
+  in
+  Alcotest.(check string) "value" "value" value;
+  Alcotest.(check bool) "changed" true changed;
+  Alcotest.(check int) "seen generation" 2 target.seen_generation;
+  Alcotest.(check bool) "changed seen" true target.changed_seen;
+  Alcotest.(check bool) "computing reset" false target.computing
+
+let test_compute_run_reports_cycle_without_resetting_existing_guard () =
+  let target = node ~computing:true 1 in
+  let value, changed =
+    Compute.run ~generation:2 target
+      ~cycle:(fun () -> ("cycle", false))
+      ~compute:(fun () -> failwith "unexpected compute")
+  in
+  Alcotest.(check string) "value" "cycle" value;
+  Alcotest.(check bool) "changed" false changed;
+  Alcotest.(check bool) "computing preserved" true target.computing
+
+let test_compute_run_resets_guard_after_exception () =
+  let target = node 1 in
+  let raised =
+    try
+      ignore
+        (Compute.run ~generation:2 target
+           ~cycle:(fun () -> failwith "unexpected cycle")
+           ~compute:(fun () -> failwith "boom")
+          : string * bool);
+      false
+    with Failure message -> String.equal message "boom"
+  in
+  Alcotest.(check bool) "raised" true raised;
+  Alcotest.(check bool) "computing reset" false target.computing
+
+let test_compute_seen_queries_generation_and_change_cache () =
+  let target = node ~seen_generation:3 ~changed_seen:true 1 in
+  Alcotest.(check bool) "seen current" true
+    (Compute.seen ~generation:3 target);
+  Alcotest.(check bool) "seen old" false (Compute.seen ~generation:4 target);
+  Alcotest.(check bool) "changed seen" true (Compute.changed_seen target)
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -197,5 +284,18 @@ let () =
             test_dirty_records_previous_state_once;
           Alcotest.test_case "restore preserves initial dirty" `Quick
             test_dirty_restore_preserves_initial_dirty;
+        ] );
+      ( "compute",
+        [
+          Alcotest.test_case "remember records once per generation" `Quick
+            test_compute_remember_records_once_per_generation;
+          Alcotest.test_case "run records seen generation and changed" `Quick
+            test_compute_run_records_seen_generation_and_changed;
+          Alcotest.test_case "run reports cycle" `Quick
+            test_compute_run_reports_cycle_without_resetting_existing_guard;
+          Alcotest.test_case "run resets guard after exception" `Quick
+            test_compute_run_resets_guard_after_exception;
+          Alcotest.test_case "seen queries generation and change cache" `Quick
+            test_compute_seen_queries_generation_and_change_cache;
         ] );
     ]

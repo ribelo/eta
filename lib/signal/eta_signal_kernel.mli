@@ -77,3 +77,33 @@ module Make_dirty (Node : DIRTY_NODE) : sig
 
   val restore : (Node.packed * bool) list -> unit
 end
+
+module type COMPUTE_NODE = sig
+  type packed
+  type t
+
+  val pack : t -> packed
+  val seen_generation : t -> int
+  val set_seen_generation : t -> int -> unit
+  val changed_seen : t -> bool
+  val set_changed_seen : t -> bool -> unit
+  val computing : t -> bool
+  val set_computing : t -> bool -> unit
+  val computed_generation : t -> int
+  val set_computed_generation : t -> int -> unit
+end
+
+module Make_compute (Node : COMPUTE_NODE) : sig
+  val remember :
+    generation:int -> Node.packed list -> Node.t -> Node.packed list
+
+  val seen : generation:int -> Node.t -> bool
+  val changed_seen : Node.t -> bool
+
+  val run :
+    generation:int ->
+    Node.t ->
+    cycle:(unit -> 'a * bool) ->
+    compute:(unit -> 'a * bool) ->
+    'a * bool
+end
