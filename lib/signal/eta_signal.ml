@@ -438,16 +438,13 @@ module Make (Observer_error : Observer_error) () = struct
     | Observer_delivery_pending of int * 'a update * observer_after_ack_action list
     | Observer_delivery_running of int * 'a update * observer_after_ack_action list
 
-  and 'a observer_staged_state = {
-    observer_staged_generation : int;
-    observer_staged_value : 'a observer_value_state;
-    observer_staged_delivery : 'a observer_delivery_state;
+  and 'a observer_snapshot = {
+    observer_value : 'a observer_value_state;
+    observer_delivery : 'a observer_delivery_state;
   }
 
   and 'a observer_live_state = {
-    mutable obs_value : 'a observer_value_state;
-    mutable obs_delivery : 'a observer_delivery_state;
-    mutable obs_staged : 'a observer_staged_state option;
+    observer_snapshot : 'a observer_snapshot Transaction.staged;
     mutable obs_on_finish : (observer_finish_reason -> unit) list;
   }
 
@@ -568,20 +565,27 @@ module Make (Observer_error : Observer_error) () = struct
         ->
           invalid_arg "Eta_signal.Private_test_hooks: observer is not active"
 
+    let observer_current_snapshot live =
+      Transaction.current live.observer_snapshot
+
     let set_observer_delivery observer delivery =
       let live = active_live_state observer in
-      live.obs_delivery <-
-        (match delivery with
+      let snapshot = observer_current_snapshot live in
+      let observer_delivery =
+        match delivery with
         | Test_delivery_never_delivered -> Observer_never_delivered
         | Test_delivery_delivered value -> Observer_delivered value
         | Test_delivery_pending (token, update) ->
             Observer_delivery_pending (token, update, [])
         | Test_delivery_running (token, update) ->
-            Observer_delivery_running (token, update, []))
+            Observer_delivery_running (token, update, [])
+      in
+      Transaction.set_current live.observer_snapshot
+        { snapshot with observer_delivery }
 
     let observer_delivery observer =
       let live = active_live_state observer in
-      match live.obs_delivery with
+      match (observer_current_snapshot live).observer_delivery with
       | Observer_never_delivered -> Test_delivery_never_delivered
       | Observer_delivered value -> Test_delivery_delivered value
       | Observer_delivery_pending (token, update, _) ->
@@ -713,7 +717,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable pending_vars : packed_var list;
     mutable staged_binds : packed_bind list;
     mutable computed_nodes : packed_signal list;
-    mutable staged_observers : packed_observer list;
     mutable pure_disposal_hooks : disposal_hook list;
     mutable timer_refresh_disposal_hooks : disposal_hook list;
     mutable timer_refresh_staged_timers : timer_node list;
@@ -754,7 +757,6 @@ module Make (Observer_error : Observer_error) () = struct
       pending_vars = [];
       staged_binds = [];
       computed_nodes = [];
-      staged_observers = [];
       pure_disposal_hooks = [];
       timer_refresh_disposal_hooks = [];
       timer_refresh_staged_timers = [];
@@ -1239,35 +1241,35 @@ module Make (Observer_error : Observer_error) () = struct
           ("Eta_signal: cannot " ^ operation
          ^ " a disposed or invalid observer")
 
-  let observer_staging (O observer as packed) live =
-    let generation = current_generation () in
-    match live.obs_staged with
-    | Some staged when staged.observer_staged_generation = generation -> staged
-    | Some _ | None ->
-        let staged =
-          {
-            observer_staged_generation = generation;
-            observer_staged_value = live.obs_value;
-            observer_staged_delivery = live.obs_delivery;
-          }
-        in
-        live.obs_staged <- Some staged;
-        graph.staged_observers <- packed :: graph.staged_observers;
-        staged
+  let observer_current_snapshot live =
+    Transaction.current live.observer_snapshot
 
-  let update_observer_staging packed live f =
-    let staged = observer_staging packed live in
-    live.obs_staged <- Some (f staged)
+  let observer_effective_snapshot live =
+    match graph.active_transaction with
+    | Some transaction -> Transaction.read transaction live.observer_snapshot
+    | None -> observer_current_snapshot live
+
+  let update_observer_staging live f =
+    let transaction = active_transaction () in
+    let snapshot = Transaction.read transaction live.observer_snapshot in
+    Transaction.stage transaction live.observer_snapshot (f snapshot)
+
+  let set_observer_current live snapshot =
+    Transaction.set_current live.observer_snapshot snapshot
+
+  let set_observer_current_delivery live observer_delivery =
+    let snapshot = observer_current_snapshot live in
+    set_observer_current live { snapshot with observer_delivery }
 
   let stage_observer_current observer value =
     let live = live_state_or_invalid_arg observer "stage" in
-    update_observer_staging (O observer) live (fun staged ->
-        { staged with observer_staged_value = Observer_current value })
+    update_observer_staging live (fun snapshot ->
+        { snapshot with observer_value = Observer_current value })
 
   let stage_observer_delivery_state observer state =
     let live = live_state_or_invalid_arg observer "stage delivery for" in
-    update_observer_staging (O observer) live (fun staged ->
-        { staged with observer_staged_delivery = state })
+    update_observer_staging live (fun snapshot ->
+        { snapshot with observer_delivery = state })
 
   let observer_active (O observer) =
     match observer.obs_state with
@@ -1293,21 +1295,25 @@ module Make (Observer_error : Observer_error) () = struct
     match (observer.obs_state, reason) with
     | Observer_registering live, Observer_finish_disposed ->
         let hooks = observer_finish_hooks live reason in
-        observer.obs_state <- Observer_disposed live.obs_value;
+        observer.obs_state <-
+          Observer_disposed (observer_current_snapshot live).observer_value;
         remove_observer observer;
         hooks
     | Observer_registering live, Observer_finish_invalid_scope ->
         let hooks = observer_finish_hooks live reason in
-        observer.obs_state <- Observer_invalid_scope live.obs_value;
+        observer.obs_state <-
+          Observer_invalid_scope (observer_current_snapshot live).observer_value;
         hooks
     | Observer_active live, Observer_finish_disposed ->
         let hooks = observer_finish_hooks live reason in
-        observer.obs_state <- Observer_disposed live.obs_value;
+        observer.obs_state <-
+          Observer_disposed (observer_current_snapshot live).observer_value;
         remove_observer observer;
         hooks
     | Observer_active live, Observer_finish_invalid_scope ->
         let hooks = observer_finish_hooks live reason in
-        observer.obs_state <- Observer_invalid_scope live.obs_value;
+        observer.obs_state <-
+          Observer_invalid_scope (observer_current_snapshot live).observer_value;
         hooks
     | Observer_invalid_scope value, Observer_finish_disposed ->
         observer.obs_state <- Observer_disposed value;
@@ -1960,41 +1966,6 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes;
     preflight_post_commit_timer_starts invalidated_ids
 
-  let clear_observer_staging live =
-    live.obs_staged <- None
-
-  let current_observer_staging live =
-    match live.obs_staged with
-    | Some staged when staged.observer_staged_generation = current_generation ()
-      ->
-        Some staged
-    | Some _ | None -> None
-
-  let commit_observer (O observer) =
-    match observer.obs_state with
-    | Observer_active live -> (
-      match current_observer_staging live with
-      | None -> ()
-      | Some staged ->
-        live.obs_value <- staged.observer_staged_value;
-        live.obs_delivery <- staged.observer_staged_delivery;
-        clear_observer_staging live
-      )
-    | Observer_registering live -> (
-      match current_observer_staging live with
-      | None -> ()
-      | Some _ -> clear_observer_staging live)
-    | Observer_disposed _ | Observer_invalid_scope _ ->
-        ()
-
-  let rollback_observer (O observer) =
-    match observer_live_state observer with
-    | Some live -> (
-      match current_observer_staging live with
-      | None -> ()
-      | Some _ -> clear_observer_staging live)
-    | None -> ()
-
   let remember_pure_disposal_hooks hooks =
     graph.pure_disposal_hooks <- hooks @ graph.pure_disposal_hooks
 
@@ -2122,10 +2093,8 @@ module Make (Observer_error : Observer_error) () = struct
       List.concat_map rollback_bind graph.staged_binds @ graph.pure_disposal_hooks
     in
     rollback_transaction ();
-    List.iter rollback_observer graph.staged_observers;
     graph.computed_nodes <- [];
     graph.staged_binds <- [];
-    graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
     clear_timer_refresh_staging ();
     disposal_hooks
@@ -2137,13 +2106,11 @@ module Make (Observer_error : Observer_error) () = struct
     commit_transaction ();
     List.iter commit_timer_refresh_staging graph.timer_refresh_staged_timers;
     List.iter commit_signal graph.computed_nodes;
-    List.iter commit_observer graph.staged_observers;
     let disposal_hooks =
       graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks
     in
     graph.computed_nodes <- [];
     graph.staged_binds <- [];
-    graph.staged_observers <- [];
     graph.pure_disposal_hooks <- [];
     graph.timer_refresh_disposal_hooks <- [];
     graph.timer_refresh_staged_timers <- [];
@@ -2159,9 +2126,14 @@ module Make (Observer_error : Observer_error) () = struct
   let mark_failed_without_current (O observer) =
     match observer_active_live_state observer with
     | Some live -> (
-        match live.obs_value with
+        let snapshot = observer_current_snapshot live in
+        match snapshot.observer_value with
         | Observer_uninitialized ->
-            live.obs_value <- Observer_failed_without_current
+            set_observer_current live
+              {
+                snapshot with
+                observer_value = Observer_failed_without_current;
+              }
         | Observer_current _ | Observer_failed_without_current -> ())
     | None -> ()
 
@@ -2852,12 +2824,13 @@ module Make (Observer_error : Observer_error) () = struct
         None
     | Some live ->
       let value, changed = compute observer.obs_signal in
+      let snapshot = observer_effective_snapshot live in
       let event =
-        match observer_delivery_base live.obs_delivery with
+        match observer_delivery_base snapshot.observer_delivery with
         | None -> Some (Initialized value)
         | Some old_value ->
             if
-              changed || observer_delivery_pending live.obs_delivery
+              changed || observer_delivery_pending snapshot.observer_delivery
             then
               if observer.obs_equal old_value value then (
                 stage_observer_delivery_state observer
@@ -2874,7 +2847,8 @@ module Make (Observer_error : Observer_error) () = struct
   let mark_event_pending (E (token, observer, update)) =
     match observer_active_live_state observer with
     | Some live ->
-        live.obs_delivery <- Observer_delivery_pending (token, update, [])
+        set_observer_current_delivery live
+          (Observer_delivery_pending (token, update, []))
     | None -> ()
 
   let run_after_ack_action_unlocked = function
@@ -2890,11 +2864,13 @@ module Make (Observer_error : Observer_error) () = struct
         match observer_active_live_state observer with
         | None -> ()
         | Some live -> (
-        match live.obs_delivery with
+        let snapshot = observer_current_snapshot live in
+        match snapshot.observer_delivery with
         | ( Observer_delivery_pending (pending_token, _, after_ack)
           | Observer_delivery_running (pending_token, _, after_ack) )
           when pending_token = token ->
-            live.obs_delivery <- Observer_delivered (delivered_value update);
+            set_observer_current_delivery live
+              (Observer_delivered (delivered_value update));
             run_after_ack_actions_unlocked after_ack
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
@@ -2905,11 +2881,12 @@ module Make (Observer_error : Observer_error) () = struct
         match observer_active_live_state observer with
         | None -> false
         | Some live -> (
-        match live.obs_delivery with
+        let snapshot = observer_current_snapshot live in
+        match snapshot.observer_delivery with
         | Observer_delivery_pending (pending_token, update, after_ack)
           when pending_token = token ->
-            live.obs_delivery <-
-              Observer_delivery_running (pending_token, update, after_ack);
+            set_observer_current_delivery live
+              (Observer_delivery_running (pending_token, update, after_ack));
             true
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
@@ -2920,11 +2897,12 @@ module Make (Observer_error : Observer_error) () = struct
         match observer_active_live_state observer with
         | None -> ()
         | Some live -> (
-        match live.obs_delivery with
+        let snapshot = observer_current_snapshot live in
+        match snapshot.observer_delivery with
         | Observer_delivery_running (running_token, update, after_ack)
           when running_token = token ->
-            live.obs_delivery <-
-              Observer_delivery_pending (token, update, after_ack)
+            set_observer_current_delivery live
+              (Observer_delivery_pending (token, update, after_ack))
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
             ()))
@@ -2932,7 +2910,7 @@ module Make (Observer_error : Observer_error) () = struct
   let claimed_event_delivery_active observer token =
     match observer.obs_state with
     | Observer_active live -> (
-        match live.obs_delivery with
+        match (observer_current_snapshot live).observer_delivery with
         | Observer_delivery_running (running_token, _, _) ->
             running_token = token
         | Observer_never_delivered | Observer_delivered _
@@ -2953,7 +2931,6 @@ module Make (Observer_error : Observer_error) () = struct
       graph.active_transaction <- Some (Transaction.begin_pure ());
       graph.computed_nodes <- [];
       graph.staged_binds <- [];
-      graph.staged_observers <- [];
       graph.pure_disposal_hooks <- [];
       graph.timer_refresh_disposal_hooks <- [];
       graph.timer_refresh_staged_timers <- [];
@@ -3234,9 +3211,12 @@ module Make (Observer_error : Observer_error) () = struct
             else
               let live =
                 {
-                  obs_value = Observer_uninitialized;
-                  obs_delivery = Observer_never_delivered;
-                  obs_staged = None;
+                  observer_snapshot =
+                    Transaction.create_staged
+                      {
+                        observer_value = Observer_uninitialized;
+                        observer_delivery = Observer_never_delivered;
+                      };
                   obs_on_finish = on_finish;
                 }
               in
@@ -3279,7 +3259,7 @@ module Make (Observer_error : Observer_error) () = struct
           | Observer_disposed _ -> Error `Disposed_observer
           | Observer_invalid_scope _ -> Error `Invalid_scope
           | Observer_active live -> (
-              match live.obs_value with
+              match (observer_current_snapshot live).observer_value with
               | Observer_current value -> Ok value
               | Observer_failed_without_current -> Error `No_current_value
               | Observer_uninitialized -> Error `Uninitialized_observer))
@@ -3294,7 +3274,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_invalid_scope _ ->
           invalid_arg "Eta_signal observer scope is invalid"
       | Observer_active live -> (
-          match live.obs_value with
+          match (observer_current_snapshot live).observer_value with
           | Observer_current value -> value
           | Observer_uninitialized | Observer_failed_without_current ->
               invalid_arg "Eta_signal observer is not initialized")
@@ -3438,12 +3418,14 @@ module Make (Observer_error : Observer_error) () = struct
         match observer_active_live_state observer with
         | None -> ()
         | Some live -> (
-        match live.obs_delivery with
+        let snapshot = observer_current_snapshot live in
+        match snapshot.observer_delivery with
         | ( Observer_delivery_pending (pending_token, _, after_ack)
           | Observer_delivery_running (pending_token, _, after_ack) )
           when pending_token = token ->
             let after_ack = List.rev_append after_ack_actions after_ack in
-            live.obs_delivery <- Observer_delivered (delivered_value update);
+            set_observer_current_delivery live
+              (Observer_delivered (delivered_value update));
             run_after_ack_actions_unlocked after_ack
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ | Observer_delivery_running _ ->
@@ -3461,7 +3443,7 @@ module Make (Observer_error : Observer_error) () = struct
         match observer_active_live_state observer with
         | None -> None
         | Some live -> (
-        match live.obs_delivery with
+        match (observer_current_snapshot live).observer_delivery with
         | Observer_delivery_running (token, _, _) -> Some token
         | Observer_never_delivered | Observer_delivered _
         | Observer_delivery_pending _ ->
@@ -3661,8 +3643,9 @@ module Make (Observer_error : Observer_error) () = struct
     let value_state_label, delivery_state_label =
       match observer.obs_state with
       | Observer_registering live | Observer_active live ->
-          ( observer_value_state_label live.obs_value,
-            observer_delivery_state_label live.obs_delivery )
+          let snapshot = observer_current_snapshot live in
+          ( observer_value_state_label snapshot.observer_value,
+            observer_delivery_state_label snapshot.observer_delivery )
       | Observer_disposed value | Observer_invalid_scope value ->
           (observer_value_state_label value, "none")
     in
