@@ -1,0 +1,16 @@
+(rule
+ (target eta_signal_timer.ml)
+ (deps ../../../lib/signal/eta_signal_timer.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_timer.mli)
+ (deps ../../../lib/signal/eta_signal_timer.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(test
+ (name test_eta_signal_timer)
+ (modules test_eta_signal_timer eta_signal_timer)
+ (libraries alcotest))

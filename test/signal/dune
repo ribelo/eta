@@ -4,6 +4,7 @@
   eta_signal_testable
   eta_signal_error
   eta_signal_id
+  eta_signal_timer
   eta_signal_transaction
   eta_signal_stabilization)
  (libraries eta eta_stream))
@@ -59,6 +60,18 @@
 (rule
  (target eta_signal_id.mli)
  (deps ../../lib/signal/eta_signal_id.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_timer.ml)
+ (deps ../../lib/signal/eta_signal_timer.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_timer.mli)
+ (deps ../../lib/signal/eta_signal_timer.mli)
  (action
   (copy %{deps} %{target})))
 

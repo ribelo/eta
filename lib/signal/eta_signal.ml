@@ -6,6 +6,7 @@ module Sync_lock = Eta.Sync_lock
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Stabilization = Eta_signal_stabilization
+module Timer = Eta_signal_timer
 module Transaction = Eta_signal_transaction
 
 module type Observer_error = sig
@@ -249,6 +250,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   type weak_packed_signal = Obj.t Weak.t
 
+  type timer_catch_up_policy = Timer.catch_up_policy =
+    | Catch_up_every_cadence
+    | Catch_up_once_per_wake
+    | Catch_up_coalesced
+
   type scope = {
     scope_id : scope_id;
     scope_owner : packed_signal;
@@ -427,11 +433,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Timer_running_uncancellable of int * int option
     | Timer_running of int * int option * (unit -> unit)
     | Timer_finished of int
-
-  and timer_catch_up_policy =
-    | Catch_up_every_cadence
-    | Catch_up_once_per_wake
-    | Catch_up_coalesced
 
   and _ timer_refresh_spec =
     | Refresh_current_time : int timer_refresh_spec
@@ -1491,29 +1492,10 @@ module Make (Observer_error : Observer_error) () = struct
         running_generation = generation
     | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> false
 
-  let add_ms_capped left right =
-    if right <= 0 then left
-    else if left > max_int - right then max_int
-    else left + right
-
-  let mul_ms_capped left right =
-    if left <= 0 || right <= 0 then 0
-    else if left > max_int / right then max_int
-    else left * right
-
-  let add_int_capped left right =
-    if right <= 0 then left
-    else if left > max_int - right then max_int
-    else left + right
-
-  let missed_cadences ~interval_ms ~next_due_ms ~now_ms =
-    if now_ms < next_due_ms then 0
-    else
-      let elapsed = (now_ms - next_due_ms) / interval_ms in
-      saturating_succ elapsed
-
-  let advance_due next_due_ms interval_ms missed =
-    add_ms_capped next_due_ms (mul_ms_capped interval_ms missed)
+  let add_ms_capped = Timer.add_ms_capped
+  let add_int_capped = Timer.add_int_capped
+  let missed_cadences = Timer.missed_cadences
+  let advance_due = Timer.advance_due
 
   let timer_next_due_state = function
     | Timer_running_uncancellable (_, next_due_ms)
@@ -3859,21 +3841,9 @@ module Make (Observer_error : Observer_error) () = struct
             `Updated)
           else `Stopped)
 
-    let add_relative_deadline now_ms duration_ms =
-      if duration_ms <= 0 then Error `Past_deadline
-      else if now_ms > max_int - duration_ms then Error `Deadline_overflow
-      else Ok (now_ms + duration_ms)
-
-    let catch_up_update_count policy missed =
-      match policy with
-      | Catch_up_every_cadence -> missed
-      | Catch_up_once_per_wake -> if missed <= 0 then 0 else 1
-      | Catch_up_coalesced -> if missed <= 0 then 0 else 1
-
-    let catch_up_update_missed policy missed =
-      match policy with
-      | Catch_up_every_cadence | Catch_up_once_per_wake -> 1
-      | Catch_up_coalesced -> missed
+    let add_relative_deadline = Timer.add_relative_deadline
+    let catch_up_update_count = Timer.catch_up_update_count
+    let catch_up_update_missed = Timer.catch_up_update_missed
 
     let timer_catch_up_batch_size = 64
 
