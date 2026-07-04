@@ -14,6 +14,12 @@ type 'inner eval_plan =
   | Switch
   | Reuse of 'inner
 
+type ('inner, 'value) switch_eval = {
+  eval_inner : 'inner;
+  eval_value : 'value;
+  eval_inner_changed : bool;
+}
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -38,6 +44,27 @@ let eval_plan ~equal snapshot ~source_value =
     match snapshot.inner with
     | Some inner -> Ok (Reuse inner)
     | None -> Error `Invalid_scope
+
+let eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
+    ~compute_inner ~on_failure =
+  try
+    let inner = with_scope scope (fun () -> selector source_value) in
+    match validate_inner scope inner with
+    | Error _ as error ->
+        on_failure scope;
+        error
+    | Ok () ->
+        let value, inner_changed = compute_inner inner in
+        Ok
+          {
+            eval_inner = inner;
+            eval_value = value;
+            eval_inner_changed = inner_changed;
+          }
+  with exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    on_failure scope;
+    Printexc.raise_with_backtrace exn backtrace
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

@@ -1391,11 +1391,6 @@ module Make (Observer_error : Observer_error) () = struct
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
-  let validate_bind_inner_scope scope inner =
-    match Scope_validation.validate_inner ~scope (P inner) with
-    | Ok () -> ()
-    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-
   let timer_state_generation = Timer.state_generation
 
   let timer_current_snapshot timer =
@@ -2226,27 +2221,30 @@ module Make (Observer_error : Observer_error) () = struct
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
         | Ok Bind.Switch -> (
           let scope = new_scope signal in
-          let inner, inner_value, changed, dependencies =
-            try
-              let inner =
-                Scope.with_current graph.current_scope scope (fun () ->
-                    bind.selector source_value)
-              in
-              validate_bind_inner_scope scope inner;
-              let inner_value, _inner_changed = compute inner in
-              let dependencies = [ P bind.source; P inner ] in
-              graph.recompute_count <- saturating_succ graph.recompute_count;
-              let snapshot = signal_effective_snapshot signal in
-              let changed =
-                Kernel.Value_cutoff.changed ~equal:signal.equal
-                  ~initialized:snapshot.signal_initialized
-                  ~current:snapshot.signal_value ~next:inner_value
-              in
-              (inner, inner_value, changed, dependencies)
-            with exn ->
-              let backtrace = Printexc.get_raw_backtrace () in
-              remember_pure_disposal_hooks (invalidate_scope scope);
-              Printexc.raise_with_backtrace exn backtrace
+          let eval =
+            match
+              Bind.eval_switch ~scope ~source_value
+                ~selector:bind.selector
+                ~with_scope:(fun scope f ->
+                  Scope.with_current graph.current_scope scope f)
+                ~validate_inner:(fun scope inner ->
+                  Scope_validation.validate_inner ~scope (P inner))
+                ~compute_inner:compute
+                ~on_failure:(fun scope ->
+                  remember_pure_disposal_hooks (invalidate_scope scope))
+            with
+            | Ok eval -> eval
+            | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+          in
+          let inner = eval.Bind.eval_inner in
+          let inner_value = eval.Bind.eval_value in
+          let dependencies = [ P bind.source; P inner ] in
+          graph.recompute_count <- saturating_succ graph.recompute_count;
+          let snapshot = signal_effective_snapshot signal in
+          let changed =
+            Kernel.Value_cutoff.changed ~equal:signal.equal
+              ~initialized:snapshot.signal_initialized
+              ~current:snapshot.signal_value ~next:inner_value
           in
           stage_bind_switch bind source_value inner scope;
           stage_dependency_versions signal dependencies;

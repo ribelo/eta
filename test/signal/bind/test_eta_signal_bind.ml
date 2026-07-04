@@ -84,6 +84,72 @@ let test_switch_plans_reject_incomplete_staged_snapshot () =
   Alcotest.(check bool) "preflight rejected" true
     (Result.is_error (Bind.preflight_switch ~current ~staged:Bind.empty))
 
+let test_eval_switch_runs_selector_in_scope_and_computes_inner () =
+  let entered_scope = ref None in
+  let validated = ref None in
+  let with_scope scope f =
+    entered_scope := Some scope;
+    f ()
+  in
+  match
+    Bind.eval_switch ~scope:7 ~source_value:3
+      ~selector:(fun source -> "inner-" ^ string_of_int source)
+      ~with_scope
+      ~validate_inner:(fun scope inner ->
+        validated := Some (scope, inner);
+        Ok ())
+      ~compute_inner:(fun inner -> (String.length inner, true))
+      ~on_failure:(fun _ -> Alcotest.fail "unexpected cleanup")
+  with
+  | Ok eval ->
+      Alcotest.(check (option int)) "entered scope" (Some 7) !entered_scope;
+      Alcotest.(check (option (pair int string)))
+        "validated inner" (Some (7, "inner-3")) !validated;
+      Alcotest.(check string) "inner" "inner-3" eval.Bind.eval_inner;
+      Alcotest.(check int) "value" 7 eval.Bind.eval_value;
+      Alcotest.(check bool) "inner changed" true eval.Bind.eval_inner_changed
+  | Error `Invalid_scope -> Alcotest.fail "expected successful switch eval"
+
+let test_eval_switch_validation_failure_runs_cleanup () =
+  let cleaned = ref [] in
+  match
+    Bind.eval_switch ~scope:11 ~source_value:1
+      ~selector:(fun source -> source + 1)
+      ~with_scope:(fun _ f -> f ())
+      ~validate_inner:(fun _ _ -> Error `Invalid_scope)
+      ~compute_inner:(fun _ -> Alcotest.fail "compute should not run")
+      ~on_failure:(fun scope -> cleaned := scope :: !cleaned)
+  with
+  | Ok _ -> Alcotest.fail "expected invalid scope"
+  | Error `Invalid_scope ->
+      Alcotest.(check (list int)) "cleaned scope" [ 11 ] !cleaned
+
+let test_eval_switch_selector_exception_runs_cleanup () =
+  let cleaned = ref [] in
+  Alcotest.check_raises "selector failure" Exit (fun () ->
+      ignore
+        (Bind.eval_switch ~scope:13 ~source_value:1
+           ~selector:(fun _ -> raise Exit)
+           ~with_scope:(fun _ f -> f ())
+           ~validate_inner:(fun _ _ -> Ok ())
+           ~compute_inner:(fun _ -> Alcotest.fail "compute should not run")
+           ~on_failure:(fun scope -> cleaned := scope :: !cleaned)
+          : ((int, int) Bind.switch_eval, [> `Invalid_scope ]) result));
+  Alcotest.(check (list int)) "cleaned scope" [ 13 ] !cleaned
+
+let test_eval_switch_compute_exception_runs_cleanup () =
+  let cleaned = ref [] in
+  Alcotest.check_raises "compute failure" Exit (fun () ->
+      ignore
+        (Bind.eval_switch ~scope:17 ~source_value:1
+           ~selector:(fun source -> source + 1)
+           ~with_scope:(fun _ f -> f ())
+           ~validate_inner:(fun _ _ -> Ok ())
+           ~compute_inner:(fun _ -> raise Exit)
+           ~on_failure:(fun scope -> cleaned := scope :: !cleaned)
+          : ((int, int) Bind.switch_eval, [> `Invalid_scope ]) result));
+  Alcotest.(check (list int)) "cleaned scope" [ 17 ] !cleaned
+
 let () =
   Alcotest.run "eta_signal_bind"
     [
@@ -101,5 +167,13 @@ let () =
             test_switch_rollback_and_preflight_plans;
           Alcotest.test_case "incomplete switch rejected" `Quick
             test_switch_plans_reject_incomplete_staged_snapshot;
+          Alcotest.test_case "eval switch runs scoped selector" `Quick
+            test_eval_switch_runs_selector_in_scope_and_computes_inner;
+          Alcotest.test_case "eval switch validation cleanup" `Quick
+            test_eval_switch_validation_failure_runs_cleanup;
+          Alcotest.test_case "eval switch selector cleanup" `Quick
+            test_eval_switch_selector_exception_runs_cleanup;
+          Alcotest.test_case "eval switch compute cleanup" `Quick
+            test_eval_switch_compute_exception_runs_cleanup;
         ] );
     ]

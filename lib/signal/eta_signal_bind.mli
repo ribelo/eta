@@ -12,6 +12,12 @@ type 'inner eval_plan =
   | Switch
   | Reuse of 'inner
 
+type ('inner, 'value) switch_eval = {
+  eval_inner : 'inner;
+  eval_value : 'value;
+  eval_inner_changed : bool;
+}
+
 val empty : ('source, 'inner, 'scope) snapshot
 
 val switch :
@@ -35,6 +41,17 @@ val eval_plan :
   ('source, 'inner, _) snapshot ->
   source_value:'source ->
   ('inner eval_plan, [> `Invalid_scope ]) result
+
+val eval_switch :
+  scope:'scope ->
+  source_value:'source ->
+  selector:('source -> 'inner) ->
+  with_scope:('scope -> (unit -> 'inner) -> 'inner) ->
+  validate_inner:
+    ('scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result) ->
+  compute_inner:('inner -> 'value * bool) ->
+  on_failure:('scope -> unit) ->
+  (('inner, 'value) switch_eval, 'error) result
 
 val switch_parts :
   ('source, 'inner, 'scope) snapshot ->
