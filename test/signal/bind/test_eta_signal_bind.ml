@@ -96,6 +96,113 @@ let test_switch_rollback_and_preflight_plans () =
   | Ok () -> Alcotest.(check (list int)) "preflight old scope" [ 1 ] !preflighted
   | Error `Invalid_scope -> Alcotest.fail "expected preflight scope"
 
+let test_stage_switch_remembers_before_staging_snapshot () =
+  let effects = ref [] in
+  let staged_snapshot = ref None in
+  Bind.stage_switch
+    ~remember:(fun () -> effects := !effects @ [ "remember" ])
+    ~stage:(fun snapshot ->
+      effects := !effects @ [ "stage" ];
+      staged_snapshot := Some snapshot)
+    ~source_value:1 ~inner:"inner" ~scope:2;
+  Alcotest.(check (list string))
+    "effect order" [ "remember"; "stage" ] !effects;
+  match !staged_snapshot with
+  | Some snapshot -> (
+      match Bind.switch_parts snapshot with
+      | Some (source_value, inner, scope) ->
+          Alcotest.(check int) "source" 1 source_value;
+          Alcotest.(check string) "inner" "inner" inner;
+          Alcotest.(check int) "scope" 2 scope
+      | None -> Alcotest.fail "expected staged switch")
+  | None -> Alcotest.fail "expected staged snapshot"
+
+let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
+  let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
+  let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
+  let effects = ref [] in
+  let record effect = effects := !effects @ [ effect ] in
+  let switch = { Bind.owner = Some "owner"; current; staged = Some staged } in
+  match
+    Bind.commit_staged_switch switch
+      ~detach_old_inner:(fun owner inner ->
+        record ("detach:" ^ owner ^ ":" ^ inner))
+      ~invalidate_old_scope:(fun scope ->
+        record ("invalidate:" ^ string_of_int scope);
+        [ "cleanup:" ^ string_of_int scope ])
+      ~attach_new_inner:(fun owner inner ->
+        record ("attach:" ^ owner ^ ":" ^ inner))
+  with
+  | Ok hooks ->
+      Alcotest.(check (list string))
+        "effect order"
+        [
+          "detach:owner:old";
+          "invalidate:1";
+          "attach:owner:new";
+        ]
+        !effects;
+      Alcotest.(check (list string)) "hooks" [ "cleanup:1" ] hooks
+  | Error `Invalid_scope -> Alcotest.fail "expected commit plan"
+
+let test_staged_switch_no_staged_snapshot_is_noop () =
+  let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
+  let effects = ref [] in
+  let switch = { Bind.owner = None; current; staged = None } in
+  (match
+     Bind.commit_staged_switch switch
+       ~detach_old_inner:(fun _ _ -> effects := "detach" :: !effects)
+       ~invalidate_old_scope:(fun _ ->
+         effects := "invalidate" :: !effects;
+         [])
+       ~attach_new_inner:(fun _ _ -> effects := "attach" :: !effects)
+   with
+  | Ok hooks -> Alcotest.(check (list string)) "commit hooks" [] hooks
+  | Error `Invalid_scope -> Alcotest.fail "expected noop commit");
+  (match
+     Bind.preflight_staged_switch switch ~collect_old_scope:(fun _ _ ->
+         effects := "preflight" :: !effects)
+   with
+  | Ok () -> ()
+  | Error `Invalid_scope -> Alcotest.fail "expected noop preflight");
+  (match
+     Bind.rollback_staged_switch ~staged:None ~invalidate_new_scope:(fun _ ->
+         effects := "rollback" :: !effects;
+         [])
+   with
+  | Ok hooks -> Alcotest.(check (list string)) "rollback hooks" [] hooks
+  | Error `Invalid_scope -> Alcotest.fail "expected noop rollback");
+  Alcotest.(check (list string)) "effects" [] !effects
+
+let test_staged_switch_rejects_missing_owner () =
+  let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
+  let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
+  let switch = { Bind.owner = None; current; staged = Some staged } in
+  Alcotest.(check bool) "commit rejected" true
+    (Result.is_error
+       (Bind.commit_staged_switch switch
+          ~detach_old_inner:(fun _ _ -> ())
+          ~invalidate_old_scope:(fun _ -> [])
+          ~attach_new_inner:(fun _ _ -> ())));
+  Alcotest.(check bool) "preflight rejected" true
+    (Result.is_error
+       (Bind.preflight_staged_switch switch ~collect_old_scope:(fun _ _ ->
+            ())))
+
+let test_staged_switch_preflight_uses_owner_for_old_scope () =
+  let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
+  let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
+  let collected = ref [] in
+  let switch = { Bind.owner = Some "owner"; current; staged = Some staged } in
+  match
+    Bind.preflight_staged_switch switch ~collect_old_scope:(fun owner scope ->
+        collected := (owner, scope) :: !collected)
+  with
+  | Ok () ->
+      Alcotest.(check (list (pair string int)))
+        "collected" [ ("owner", 1) ] !collected
+  | Error `Invalid_scope -> Alcotest.fail "expected preflight"
+
 let test_switch_plans_reject_incomplete_staged_snapshot () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   Alcotest.(check bool) "commit rejected" true
@@ -247,6 +354,16 @@ let () =
             test_switch_commit_runs_graph_effects_in_bind_order;
           Alcotest.test_case "switch rollback and preflight plans" `Quick
             test_switch_rollback_and_preflight_plans;
+          Alcotest.test_case "stage switch remembers first" `Quick
+            test_stage_switch_remembers_before_staging_snapshot;
+          Alcotest.test_case "staged switch commit effects" `Quick
+            test_staged_switch_commit_runs_graph_effects_in_bind_order;
+          Alcotest.test_case "staged switch noop" `Quick
+            test_staged_switch_no_staged_snapshot_is_noop;
+          Alcotest.test_case "staged switch missing owner" `Quick
+            test_staged_switch_rejects_missing_owner;
+          Alcotest.test_case "staged switch preflight owner" `Quick
+            test_staged_switch_preflight_uses_owner_for_old_scope;
           Alcotest.test_case "incomplete switch rejected" `Quick
             test_switch_plans_reject_incomplete_staged_snapshot;
           Alcotest.test_case "dependencies include source and inner" `Quick

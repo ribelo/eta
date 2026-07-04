@@ -83,6 +83,10 @@ let switch_parts snapshot =
   | Some source_value, Some inner, Some scope -> Some (source_value, inner, scope)
   | _ -> None
 
+let stage_switch ~remember ~stage ~source_value ~inner ~scope =
+  remember ();
+  stage (switch ~source_value ~inner ~scope)
+
 let commit_switch ~current ~staged ~detach_old_inner ~invalidate_old_scope
     ~attach_new_inner =
   match switch_parts staged with
@@ -108,3 +112,33 @@ let preflight_switch ~current ~staged ~collect_old_scope =
       Option.iter collect_old_scope current.inner_scope;
       Ok ()
   | None -> Error `Invalid_scope
+
+type ('source, 'inner, 'scope, 'owner) staged_switch = {
+  owner : 'owner option;
+  current : ('source, 'inner, 'scope) snapshot;
+  staged : ('source, 'inner, 'scope) snapshot option;
+}
+
+let commit_staged_switch switch ~detach_old_inner ~invalidate_old_scope
+    ~attach_new_inner =
+  match (switch.owner, switch.staged) with
+  | _, None -> Ok []
+  | Some owner, Some staged ->
+      commit_switch ~current:switch.current ~staged
+        ~detach_old_inner:(detach_old_inner owner)
+        ~invalidate_old_scope
+        ~attach_new_inner:(attach_new_inner owner)
+  | None, Some _ -> Error `Invalid_scope
+
+let rollback_staged_switch ~staged ~invalidate_new_scope =
+  match staged with
+  | None -> Ok []
+  | Some staged -> rollback_switch ~staged ~invalidate_new_scope
+
+let preflight_staged_switch switch ~collect_old_scope =
+  match (switch.owner, switch.staged) with
+  | _, None -> Ok ()
+  | Some owner, Some staged ->
+      preflight_switch ~current:switch.current ~staged
+        ~collect_old_scope:(collect_old_scope owner)
+  | None, Some _ -> Error `Invalid_scope

@@ -1249,9 +1249,10 @@ module Make (Observer_error : Observer_error) () = struct
       Graph_state.stage_bind graph.state packed
 
   let stage_bind_switch bind source_value inner scope =
-    remember_staged_bind (B bind);
-    Transaction.stage (active_transaction ()) bind.snapshot
-      (Bind.switch ~source_value ~inner ~scope)
+    Bind.stage_switch
+      ~remember:(fun () -> remember_staged_bind (B bind))
+      ~stage:(Transaction.stage (active_transaction ()) bind.snapshot)
+      ~source_value ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =
@@ -1293,29 +1294,29 @@ module Make (Observer_error : Observer_error) () = struct
     else None
 
   let commit_bind (B bind) =
-    match (bind.owner, bind_staged_snapshot bind) with
-    | Some owner, Some staged -> (
-        let current = bind_current_snapshot bind in
-        match
-          Bind.commit_switch ~current ~staged
-            ~detach_old_inner:(detach_dependency owner)
-            ~invalidate_old_scope:invalidate_scope
-            ~attach_new_inner:(attach_dependency owner)
-        with
-        | Ok hooks -> hooks
-        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
-    | _, None -> []
-    | _ -> raise (Graph_error `Invalid_scope)
+    let staged =
+      {
+        Bind.owner = bind.owner;
+        current = bind_current_snapshot bind;
+        staged = bind_staged_snapshot bind;
+      }
+    in
+    match
+      Bind.commit_staged_switch staged
+        ~detach_old_inner:detach_dependency
+        ~invalidate_old_scope:invalidate_scope
+        ~attach_new_inner:attach_dependency
+    with
+    | Ok hooks -> hooks
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let rollback_bind (B bind) =
-    match bind_staged_snapshot bind with
-    | Some staged -> (
-        match
-          Bind.rollback_switch ~staged ~invalidate_new_scope:invalidate_scope
-        with
-        | Ok hooks -> hooks
-        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
-    | None -> []
+    match
+      Bind.rollback_staged_switch ~staged:(bind_staged_snapshot bind)
+        ~invalidate_new_scope:invalidate_scope
+    with
+    | Ok hooks -> hooks
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
     Scope_invalidation.collect ?exclude_node_id:exclude_signal_id seen
@@ -1334,19 +1335,20 @@ module Make (Observer_error : Observer_error) () = struct
       ~current_state:(timer_current_state timer)
 
   let preflight_staged_bind_commit seen collected (B bind) =
-    match (bind.owner, bind_staged_snapshot bind) with
-    | Some owner, Some staged -> (
-        let current = bind_current_snapshot bind in
-        match
-          Bind.preflight_switch ~current ~staged
-            ~collect_old_scope:
-              (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
-                 collected)
-        with
-        | Ok () -> ()
-        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
-    | _, None -> ()
-    | _ -> raise (Graph_error `Invalid_scope)
+    let staged =
+      {
+        Bind.owner = bind.owner;
+        current = bind_current_snapshot bind;
+        staged = bind_staged_snapshot bind;
+      }
+    in
+    match
+      Bind.preflight_staged_switch staged ~collect_old_scope:(fun owner ->
+          collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
+            collected)
+    with
+    | Ok () -> ()
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let preflight_signal_commit invalidated_ids (P signal) =
     if

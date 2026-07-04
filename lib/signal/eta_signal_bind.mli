@@ -70,6 +70,14 @@ val switch_parts :
   ('source, 'inner, 'scope) snapshot ->
   ('source * 'inner * 'scope) option
 
+val stage_switch :
+  remember:(unit -> unit) ->
+  stage:(('source, 'inner, 'scope) snapshot -> unit) ->
+  source_value:'source ->
+  inner:'inner ->
+  scope:'scope ->
+  unit
+
 val commit_switch :
   current:('source, 'inner, 'scope) snapshot ->
   staged:('source, 'inner, 'scope) snapshot ->
@@ -87,4 +95,27 @@ val preflight_switch :
   current:('source, 'inner, 'scope) snapshot ->
   staged:('source, 'inner, 'scope) snapshot ->
   collect_old_scope:('scope -> unit) ->
+  (unit, [> `Invalid_scope ]) result
+
+type ('source, 'inner, 'scope, 'owner) staged_switch = {
+  owner : 'owner option;
+  current : ('source, 'inner, 'scope) snapshot;
+  staged : ('source, 'inner, 'scope) snapshot option;
+}
+
+val commit_staged_switch :
+  ('source, 'inner, 'scope, 'owner) staged_switch ->
+  detach_old_inner:('owner -> 'inner -> unit) ->
+  invalidate_old_scope:('scope -> 'hook list) ->
+  attach_new_inner:('owner -> 'inner -> unit) ->
+  ('hook list, [> `Invalid_scope ]) result
+
+val rollback_staged_switch :
+  staged:('source, 'inner, 'scope) snapshot option ->
+  invalidate_new_scope:('scope -> 'hook list) ->
+  ('hook list, [> `Invalid_scope ]) result
+
+val preflight_staged_switch :
+  ('source, 'inner, 'scope, 'owner) staged_switch ->
+  collect_old_scope:('owner -> 'scope -> unit) ->
   (unit, [> `Invalid_scope ]) result
