@@ -148,6 +148,56 @@ let test_lifecycle_finish () =
   check_finish "disposed invalid" (Disposed 4) None false
     (finish ~value_of_live Finish_invalid_scope (Disposed 4))
 
+let test_lifecycle_read_value () =
+  let open Observer.Lifecycle in
+  let read =
+    read_value ~value_of_live:(fun value -> value)
+  in
+  Alcotest.(check int) "active current" 1
+    (match read (Active (Observer.Value.current 1)) with
+    | Ok value -> value
+    | Error _ -> Alcotest.fail "expected current value");
+  (match read (Registering Observer.Value.uninitialized) with
+  | Error `Uninitialized_observer -> ()
+  | Ok _ | Error (`Disposed_observer | `Invalid_scope | `No_current_value) ->
+      Alcotest.fail "expected uninitialized observer");
+  (match read (Disposed (Observer.Value.current 1)) with
+  | Error `Disposed_observer -> ()
+  | Ok _ | Error (`Invalid_scope | `No_current_value | `Uninitialized_observer)
+    ->
+      Alcotest.fail "expected disposed observer");
+  (match read (Invalid_scope (Observer.Value.current 1)) with
+  | Error `Invalid_scope -> ()
+  | Ok _ | Error (`Disposed_observer | `No_current_value
+                 | `Uninitialized_observer) ->
+      Alcotest.fail "expected invalid scope");
+  match read (Active Observer.Value.Failed_without_current) with
+  | Error `No_current_value -> ()
+  | Ok _ | Error (`Disposed_observer | `Invalid_scope | `Uninitialized_observer)
+    ->
+      Alcotest.fail "expected no current value"
+
+let test_lifecycle_unsafe_read_value_exn () =
+  let open Observer.Lifecycle in
+  let read =
+    unsafe_read_value_exn ~value_of_live:(fun value -> value)
+  in
+  Alcotest.(check int) "active current" 1
+    (read (Active (Observer.Value.current 1)));
+  Alcotest.check_raises "registering"
+    (Invalid_argument
+       "Eta_signal observer registration has not completed")
+    (fun () -> ignore (read (Registering Observer.Value.uninitialized) : int));
+  Alcotest.check_raises "disposed"
+    (Invalid_argument "Eta_signal observer is disposed")
+    (fun () -> ignore (read (Disposed (Observer.Value.current 1)) : int));
+  Alcotest.check_raises "invalid scope"
+    (Invalid_argument "Eta_signal observer scope is invalid")
+    (fun () -> ignore (read (Invalid_scope (Observer.Value.current 1)) : int));
+  Alcotest.check_raises "active missing value"
+    (Invalid_argument "Eta_signal observer is not initialized")
+    (fun () -> ignore (read (Active Observer.Value.uninitialized) : int))
+
 let test_delivery_base_values () =
   let open Observer.Delivery in
   Alcotest.(check (option int)) "never" None
@@ -291,6 +341,9 @@ let () =
             test_lifecycle_predicates_and_labels;
           Alcotest.test_case "activate" `Quick test_lifecycle_activate;
           Alcotest.test_case "finish" `Quick test_lifecycle_finish;
+          Alcotest.test_case "read value" `Quick test_lifecycle_read_value;
+          Alcotest.test_case "unsafe read value" `Quick
+            test_lifecycle_unsafe_read_value_exn;
         ] );
       ( "delivery",
         [

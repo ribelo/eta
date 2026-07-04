@@ -103,6 +103,21 @@ module Lifecycle = struct
         { state = Disposed value; hook_live = None; remove = true }
     | Disposed _, _ | Invalid_scope _, Finish_invalid_scope ->
         { state; hook_live = None; remove = false }
+
+  let read_value ~value_of_live = function
+    | Registering _ -> Error `Uninitialized_observer
+    | Disposed _ -> Error `Disposed_observer
+    | Invalid_scope _ -> Error `Invalid_scope
+    | Active live -> Value.read (value_of_live live)
+
+  let unsafe_read_value_exn ~value_of_live = function
+    | Registering _ ->
+        invalid_arg "Eta_signal observer registration has not completed"
+    | Disposed _ ->
+        invalid_arg "Eta_signal observer is disposed"
+    | Invalid_scope _ ->
+        invalid_arg "Eta_signal observer scope is invalid"
+    | Active live -> Value.unsafe_read_exn (value_of_live live)
 end
 
 module Delivery = struct

@@ -2927,27 +2927,17 @@ module Make (Observer_error : Observer_error) () = struct
 
     let read observer =
       with_graph_lane_sync (fun () ->
-          match observer.obs_state with
-          | Observer_lifecycle.Registering _ -> Error `Uninitialized_observer
-          | Observer_lifecycle.Disposed _ -> Error `Disposed_observer
-          | Observer_lifecycle.Invalid_scope _ -> Error `Invalid_scope
-          | Observer_lifecycle.Active live ->
-              Observer_core.Value.read
-                (observer_current_snapshot live).observer_value)
+          Observer_lifecycle.read_value
+            ~value_of_live:(fun live ->
+              (observer_current_snapshot live).observer_value)
+            observer.obs_state)
       |> Effect.flatten_result
 
     let unsafe_read_exn observer =
       ensure_graph_context ();
-      match observer.obs_state with
-      | Observer_lifecycle.Registering _ ->
-          invalid_arg "Eta_signal observer registration has not completed"
-      | Observer_lifecycle.Disposed _ ->
-          invalid_arg "Eta_signal observer is disposed"
-      | Observer_lifecycle.Invalid_scope _ ->
-          invalid_arg "Eta_signal observer scope is invalid"
-      | Observer_lifecycle.Active live ->
-          Observer_core.Value.unsafe_read_exn
-            (observer_current_snapshot live).observer_value
+      Observer_lifecycle.unsafe_read_value_exn
+        ~value_of_live:(fun live -> (observer_current_snapshot live).observer_value)
+        observer.obs_state
 
     let dispose observer = dispose_observer_effect observer
     let dispose_checked observer = dispose_observer_checked_effect observer
