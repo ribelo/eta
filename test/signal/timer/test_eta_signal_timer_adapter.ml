@@ -30,6 +30,17 @@ let with_runtime f =
 
 let record events event = events := !events @ [ event ]
 
+let capability = "timer-demand"
+
+let check_cap cap =
+  Alcotest.(check string) "capability" capability cap
+
+let adapter_access =
+  {
+    Adapter.with_access =
+      (fun f -> Effect.sync (fun () -> f capability) |> Effect.flatten_result);
+  }
+
 let check_demand_failed cause =
   match Cause.failures cause with
   | [ `Demand_failed ] -> ()
@@ -56,19 +67,20 @@ let test_refresh_demand_orders_cancel_start_and_rollback () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
   run_ok runtime
-    (Adapter.refresh_demand
+    (Adapter.refresh_demand adapter_access
        {
          Adapter.acquire_demand =
-           (fun _runtime_contract ->
-             Effect.sync (fun () ->
-                 record events "acquire";
-                 ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ])));
+           (fun _runtime_contract cap ->
+             check_cap cap;
+             record events "acquire";
+             Ok ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ]));
          rollback_unclaimed_starts =
-           (fun attempts ->
-             Effect.sync (fun () ->
-                 List.iter
-                   (fun attempt -> record events ("rollback:" ^ attempt))
-                   attempts));
+           (fun cap attempts ->
+             check_cap cap;
+             List.iter
+               (fun attempt -> record events ("rollback:" ^ attempt))
+               attempts;
+             Ok [ "rollback-cancel" ]);
          run_cancel_hooks =
            (fun hooks ->
              Effect.sync (fun () ->
@@ -90,6 +102,7 @@ let test_refresh_demand_orders_cancel_start_and_rollback () =
       "start:start-b";
       "rollback:start-a";
       "rollback:start-b";
+      "cancel:rollback-cancel";
     ]
     !events
 
@@ -98,19 +111,20 @@ let test_refresh_demand_release_does_not_rerun_cancel_hooks () =
   let events = ref [] in
   let cause =
     run_error runtime
-      (Adapter.refresh_demand
+      (Adapter.refresh_demand adapter_access
          {
            Adapter.acquire_demand =
-             (fun _runtime_contract ->
-               Effect.sync (fun () ->
-                   record events "acquire";
-                   ([ "start" ], [ "cancel" ])));
+             (fun _runtime_contract cap ->
+               check_cap cap;
+               record events "acquire";
+               Ok ([ "start" ], [ "cancel" ]));
            rollback_unclaimed_starts =
-             (fun attempts ->
-               Effect.sync (fun () ->
-                   List.iter
-                     (fun attempt -> record events ("rollback:" ^ attempt))
-                     attempts));
+             (fun cap attempts ->
+               check_cap cap;
+               List.iter
+                 (fun attempt -> record events ("rollback:" ^ attempt))
+                 attempts;
+               Ok []);
            run_cancel_hooks =
              (fun hooks ->
                Effect.sync (fun () ->
@@ -137,15 +151,18 @@ let test_refresh_demand_acquire_failure_skips_use_and_release () =
   let events = ref [] in
   let cause =
     run_error runtime
-      (Adapter.refresh_demand
+      (Adapter.refresh_demand adapter_access
          {
            Adapter.acquire_demand =
-             (fun _runtime_contract ->
-               Effect.sync (fun () -> record events "acquire")
-               |> Effect.bind (fun () -> Effect.fail `Demand_failed));
+             (fun _runtime_contract cap ->
+               check_cap cap;
+               record events "acquire";
+               Error `Demand_failed);
            rollback_unclaimed_starts =
-             (fun _attempts ->
-               Effect.sync (fun () -> record events "rollback"));
+             (fun cap _attempts ->
+               check_cap cap;
+               record events "rollback";
+               Ok []);
            run_cancel_hooks =
              (fun _hooks -> Effect.sync (fun () -> record events "cancel"));
            run_start_attempts =

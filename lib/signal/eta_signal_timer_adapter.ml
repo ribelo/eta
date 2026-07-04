@@ -15,6 +15,11 @@ type advance =
   | `Stop
   ]
 
+type ('capability, 'error) access = {
+  with_access :
+    'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Effect.t;
+}
+
 type 'error callbacks = {
   read_next_due :
     generation:int -> fallback:int -> (int option, 'error) Effect.t;
@@ -45,10 +50,13 @@ type 'error start_callbacks = {
     generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
 }
 
-type ('attempt, 'cancel_hook, 'error) demand_callbacks = {
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
   acquire_demand :
-    Runtime_contract.t -> ('attempt list * 'cancel_hook list, 'error) Effect.t;
-  rollback_unclaimed_starts : 'attempt list -> (unit, 'error) Effect.t;
+    Runtime_contract.t ->
+    'capability ->
+    ('attempt list * 'cancel_hook list, 'error) result;
+  rollback_unclaimed_starts :
+    'capability -> 'attempt list -> ('cancel_hook list, 'error) result;
   run_cancel_hooks : 'cancel_hook list -> (unit, 'error) Effect.t;
   run_start_attempts : 'attempt list -> (unit, 'error) Effect.t;
 }
@@ -85,16 +93,25 @@ let run_pending_cancel_hooks callbacks hooks_ref =
       callbacks.run_cancel_hooks hooks
       |> Effect.on_exit (fun _exit -> Effect.sync (fun () -> hooks_ref := []))
 
-let refresh_demand callbacks =
+let acquire_demand access callbacks runtime_contract =
+  access.with_access (fun capability ->
+      callbacks.acquire_demand runtime_contract capability)
+
+let rollback_unclaimed_starts access callbacks start_attempts =
+  access.with_access (fun capability ->
+      callbacks.rollback_unclaimed_starts capability start_attempts)
+  |> Effect.bind callbacks.run_cancel_hooks
+
+let refresh_demand access callbacks =
   current_runtime_contract ()
   |> Effect.bind (fun runtime_contract ->
          Effect.acquire_use_release
            ~acquire:
-             (callbacks.acquire_demand runtime_contract
+             (acquire_demand access callbacks runtime_contract
              |> Effect.map (fun (start_attempts, cancel_hooks) ->
                     (start_attempts, ref cancel_hooks)))
            ~release:(fun (start_attempts, cancel_hooks_ref) ->
-             callbacks.rollback_unclaimed_starts start_attempts
+             rollback_unclaimed_starts access callbacks start_attempts
              |> Effect.bind (fun () ->
                     run_pending_cancel_hooks callbacks cancel_hooks_ref))
            (fun (start_attempts, cancel_hooks_ref) ->

@@ -1825,13 +1825,11 @@ module Make (Observer_error : Observer_error) () = struct
           demand_effects.Timer_policy.demand_cancel_hooks )
     | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
-  let rollback_unclaimed_timer_starts attempts =
-    with_graph_lane_sync (fun () ->
-        List.concat_map
-          (fun attempt ->
-            timer_rollback_unclaimed_start_unlocked attempt.start_timer)
-          attempts)
-    |> Effect.bind Cleanup.run_hooks
+  let rollback_unclaimed_timer_starts_unlocked attempts =
+    List.concat_map
+      (fun attempt ->
+        timer_rollback_unclaimed_start_unlocked attempt.start_timer)
+      attempts
 
   let run_timer_start_attempts attempts =
     Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
@@ -1843,16 +1841,24 @@ module Make (Observer_error : Observer_error) () = struct
     Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
       (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
 
+  let timer_demand_access =
+    {
+      Timer_adapter.with_access =
+        (fun f ->
+          with_graph_lane_access (fun lane ->
+              try f lane with Graph_error err -> Error err)
+          |> Effect.flatten_result);
+    }
+
   let refresh_timer_demand () =
-    Timer_adapter.refresh_demand
+    Timer_adapter.refresh_demand timer_demand_access
       {
         Timer_adapter.acquire_demand =
-          (fun runtime_contract ->
-            with_graph_lane_sync (fun () ->
-                try Ok (refresh_timer_demand_unlocked runtime_contract)
-                with Graph_error err -> Error err)
-            |> Effect.flatten_result);
-        rollback_unclaimed_starts = rollback_unclaimed_timer_starts;
+          (fun runtime_contract (_lane : graph_lane) ->
+            Ok (refresh_timer_demand_unlocked runtime_contract));
+        rollback_unclaimed_starts =
+          (fun (_lane : graph_lane) attempts ->
+            Ok (rollback_unclaimed_timer_starts_unlocked attempts));
         run_cancel_hooks = run_timer_cancel_hooks;
         run_start_attempts = run_timer_start_attempts;
       }

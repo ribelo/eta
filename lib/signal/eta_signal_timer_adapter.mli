@@ -16,6 +16,11 @@ type advance =
   | `Stop
   ]
 
+type ('capability, 'error) access = {
+  with_access :
+    'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t;
+}
+
 type 'error callbacks = {
   read_next_due :
     generation:int -> fallback:int -> (int option, 'error) Eta.Effect.t;
@@ -55,12 +60,13 @@ type 'error start_callbacks = {
     (unit, 'error) Eta.Effect.t;
 }
 
-type ('attempt, 'cancel_hook, 'error) demand_callbacks = {
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
   acquire_demand :
     Eta.Runtime_contract.t ->
-    ('attempt list * 'cancel_hook list, 'error) Eta.Effect.t;
+    'capability ->
+    ('attempt list * 'cancel_hook list, 'error) result;
   rollback_unclaimed_starts :
-    'attempt list -> (unit, 'error) Eta.Effect.t;
+    'capability -> 'attempt list -> ('cancel_hook list, 'error) result;
   run_cancel_hooks :
     'cancel_hook list -> (unit, 'error) Eta.Effect.t;
   run_start_attempts :
@@ -74,7 +80,8 @@ val run_cancellable :
   (unit, 'error) Eta.Effect.t
 
 val refresh_demand :
-  ('attempt, 'cancel_hook, 'error) demand_callbacks ->
+  ('capability, 'error) access ->
+  ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks ->
   (unit, 'error) Eta.Effect.t
 
 val run_loop :
