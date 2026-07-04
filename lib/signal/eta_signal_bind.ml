@@ -4,6 +4,12 @@ type ('source, 'inner, 'scope) snapshot = {
   inner_scope : 'scope option;
 }
 
+type ('inner, 'scope) commit_switch = {
+  old_inner : 'inner option;
+  old_scope : 'scope option;
+  new_inner : 'inner;
+}
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -26,3 +32,24 @@ let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
   | Some source_value, Some inner, Some scope -> Some (source_value, inner, scope)
   | _ -> None
+
+let commit_switch ~current ~staged =
+  match switch_parts staged with
+  | Some (_, new_inner, _) ->
+      Ok
+        {
+          old_inner = current.inner;
+          old_scope = current.inner_scope;
+          new_inner;
+        }
+  | None -> Error `Invalid_scope
+
+let rollback_switch ~staged =
+  match switch_parts staged with
+  | Some (_, _, scope) -> Ok scope
+  | None -> Error `Invalid_scope
+
+let preflight_switch ~current ~staged =
+  match switch_parts staged with
+  | Some _ -> Ok current.inner_scope
+  | None -> Error `Invalid_scope

@@ -2,6 +2,12 @@
 
 type ('source, 'inner, 'scope) snapshot
 
+type ('inner, 'scope) commit_switch = {
+  old_inner : 'inner option;
+  old_scope : 'scope option;
+  new_inner : 'inner;
+}
+
 val empty : ('source, 'inner, 'scope) snapshot
 
 val switch :
@@ -23,3 +29,17 @@ val needs_new_inner :
 val switch_parts :
   ('source, 'inner, 'scope) snapshot ->
   ('source * 'inner * 'scope) option
+
+val commit_switch :
+  current:('source, 'inner, 'scope) snapshot ->
+  staged:('source, 'inner, 'scope) snapshot ->
+  (('inner, 'scope) commit_switch, [> `Invalid_scope ]) result
+
+val rollback_switch :
+  staged:('source, 'inner, 'scope) snapshot ->
+  ('scope, [> `Invalid_scope ]) result
+
+val preflight_switch :
+  current:('source, 'inner, 'scope) snapshot ->
+  staged:('source, 'inner, 'scope) snapshot ->
+  ('scope option, [> `Invalid_scope ]) result

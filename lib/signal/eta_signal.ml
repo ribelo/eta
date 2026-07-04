@@ -1784,29 +1784,25 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_bind (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
     | Some owner, Some staged -> (
-        match Bind.switch_parts staged with
-        | Some (_, inner, _) ->
-            let current = bind_current_snapshot bind in
-            (match Bind.inner current with
-             | None -> ()
-             | Some old_inner -> detach_dependency owner old_inner);
+        let current = bind_current_snapshot bind in
+        match Bind.commit_switch ~current ~staged with
+        | Ok plan ->
+            Option.iter (detach_dependency owner) plan.old_inner;
             let hooks =
-              match Bind.inner_scope current with
-              | None -> []
-              | Some old_scope -> invalidate_scope old_scope
+              Option.fold ~none:[] ~some:invalidate_scope plan.old_scope
             in
-            attach_dependency owner inner;
+            attach_dependency owner plan.new_inner;
             hooks
-        | None -> raise (Graph_error `Invalid_scope))
+        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | _, None -> []
     | _ -> raise (Graph_error `Invalid_scope)
 
   let rollback_bind (B bind) =
     match bind_staged_snapshot bind with
     | Some staged -> (
-        match Bind.inner_scope staged with
-        | Some scope -> invalidate_scope scope
-        | None -> [])
+        match Bind.rollback_switch ~staged with
+        | Ok scope -> invalidate_scope scope
+        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | None -> []
 
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
@@ -1851,14 +1847,14 @@ module Make (Observer_error : Observer_error) () = struct
   let preflight_staged_bind_commit seen collected (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
     | Some owner, Some staged -> (
-        match Bind.switch_parts staged with
-        | Some _ ->
-            let current = bind_current_snapshot bind in
+        let current = bind_current_snapshot bind in
+        match Bind.preflight_switch ~current ~staged with
+        | Ok old_scope ->
             Option.iter
               (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
                  collected)
-              (Bind.inner_scope current)
-        | None -> raise (Graph_error `Invalid_scope))
+              old_scope
+        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope))
     | _, None -> ()
     | _ -> raise (Graph_error `Invalid_scope)
 
