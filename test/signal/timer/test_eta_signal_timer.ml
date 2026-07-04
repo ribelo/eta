@@ -132,6 +132,34 @@ let test_state_helpers () =
   Alcotest.(check int) "with generation" 8
     (Timer.state_generation (Timer.state_with_generation running 8))
 
+let test_snapshot_policy () =
+  let initial = Timer.initial_snapshot in
+  Alcotest.(check string) "initial state" "inactive"
+    (Timer.state_label (Timer.snapshot_state initial));
+  Alcotest.(check int) "initial generation" 0
+    (Timer.state_generation (Timer.snapshot_state initial));
+  Alcotest.(check int) "initial refresh token" (-1)
+    (Timer.snapshot_on_demand_refresh_token initial);
+  let running =
+    Timer.snapshot
+      ~state:(Timer.Timer_running (7, Some 10, noop))
+      ~on_demand_refresh_token:3
+  in
+  Alcotest.(check int) "snapshot generation" 9
+    (Timer.state_generation
+       (Timer.snapshot_state
+          (Timer.snapshot_with_generation running 9)));
+  Alcotest.(check int) "snapshot token update" 4
+    (Timer.snapshot_on_demand_refresh_token
+       (Timer.snapshot_with_on_demand_refresh_token running 4));
+  (match Timer.snapshot_with_next_due running 20 with
+  | Some snapshot ->
+      Alcotest.(check (option int)) "snapshot due" (Some 20)
+        (Timer.state_next_due (Timer.snapshot_state snapshot))
+  | None -> Alcotest.fail "expected active timer snapshot update");
+  Alcotest.(check bool) "inactive next due rejected" true
+    (Option.is_none (Timer.snapshot_with_next_due initial 20))
+
 let test_daemon_status_policy () =
   let running = Timer.Timer_running (7, Some 10, noop) in
   let running_uncancellable =
@@ -620,6 +648,7 @@ let () =
           Alcotest.test_case "daemon wake plan" `Quick
             test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
+          Alcotest.test_case "snapshot policy" `Quick test_snapshot_policy;
           Alcotest.test_case "daemon status policy" `Quick
             test_daemon_status_policy;
           Alcotest.test_case "start and refresh policy" `Quick

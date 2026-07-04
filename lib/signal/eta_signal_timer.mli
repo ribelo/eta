@@ -12,6 +12,8 @@ type state =
   | Timer_running of int * int option * (unit -> unit)
   | Timer_finished of int
 
+type snapshot
+
 type 'a refresh_plan = {
   refresh_value : 'a option;
   refresh_next_due_ms : int option;
@@ -87,6 +89,18 @@ val daemon_wake_plan :
 
 val state_generation : state -> int
 val state_with_generation : state -> int -> state
+
+val snapshot :
+  state:state -> on_demand_refresh_token:int -> snapshot
+
+val initial_snapshot : snapshot
+val snapshot_state : snapshot -> state
+val snapshot_on_demand_refresh_token : snapshot -> int
+val snapshot_with_state : snapshot -> state -> snapshot
+val snapshot_with_generation : snapshot -> int -> snapshot
+val snapshot_with_on_demand_refresh_token : snapshot -> int -> snapshot
+val snapshot_with_next_due : snapshot -> int -> snapshot option
+
 val state_label : state -> string
 val state_active : state -> bool
 val state_finished : state -> bool

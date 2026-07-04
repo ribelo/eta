@@ -10,6 +10,11 @@ type state =
   | Timer_running of int * int option * (unit -> unit)
   | Timer_finished of int
 
+type snapshot = {
+  state : state;
+  on_demand_refresh_token : int;
+}
+
 type due_refresh = {
   missed : int;
   saturated_due : bool;
@@ -157,6 +162,42 @@ let state_with_generation state generation =
   | Timer_running (_, next_due_ms, cancel) ->
       Timer_running (generation, next_due_ms, cancel)
   | Timer_finished _ -> Timer_finished generation
+
+let snapshot ~state ~on_demand_refresh_token =
+  { state; on_demand_refresh_token }
+
+let initial_snapshot =
+  snapshot ~state:(Timer_inactive 0) ~on_demand_refresh_token:(-1)
+
+let snapshot_state snapshot = snapshot.state
+
+let snapshot_on_demand_refresh_token snapshot =
+  snapshot.on_demand_refresh_token
+
+let snapshot_with_state snapshot state = { snapshot with state }
+
+let snapshot_with_generation snapshot generation =
+  snapshot_with_state snapshot
+    (state_with_generation snapshot.state generation)
+
+let snapshot_with_on_demand_refresh_token snapshot token =
+  { snapshot with on_demand_refresh_token = token }
+
+let snapshot_with_next_due snapshot next_due_ms =
+  match snapshot.state with
+  | Timer_running_uncancellable (generation, _) ->
+      Some
+        {
+          snapshot with
+          state = Timer_running_uncancellable (generation, Some next_due_ms);
+        }
+  | Timer_running (generation, _, cancel) ->
+      Some
+        {
+          snapshot with
+          state = Timer_running (generation, Some next_due_ms, cancel);
+        }
+  | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
 
 let state_label = function
   | Timer_inactive _ -> "inactive"

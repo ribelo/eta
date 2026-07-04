@@ -293,13 +293,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Finish
     | Cancel_after_commit of (unit -> unit)
 
-  and timer_snapshot = {
-    timer_state : timer_state;
-    timer_on_demand_refresh_token : int;
-  }
-
   and timer_node = {
-    timer_snapshot : timer_snapshot Transaction.staged;
+    timer_snapshot : Timer.snapshot Transaction.staged;
     mutable timer_staged_refresh_token : int;
     timer_runtime_contract : Runtime_contract.t;
     timer_refresh_when_inactive : bool;
@@ -541,11 +536,7 @@ module Make (Observer_error : Observer_error) () = struct
       | Some timer ->
           let snapshot = Transaction.current timer.timer_snapshot in
           Transaction.set_current timer.timer_snapshot
-            {
-              snapshot with
-              timer_state =
-                Timer.state_with_generation snapshot.timer_state generation;
-            }
+            (Timer.snapshot_with_generation snapshot generation)
 
     let set_timer_next_due signal next_due_ms =
       match signal.timer with
@@ -553,22 +544,11 @@ module Make (Observer_error : Observer_error) () = struct
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer -> (
           let snapshot = Transaction.current timer.timer_snapshot in
-          match snapshot.timer_state with
-          | Timer_running_uncancellable (generation, _) ->
+          match Timer.snapshot_with_next_due snapshot next_due_ms with
+          | Some snapshot ->
               Transaction.set_current timer.timer_snapshot
-                {
-                  snapshot with
-                  timer_state =
-                    Timer_running_uncancellable (generation, Some next_due_ms);
-                }
-          | Timer_running (generation, _, cancel) ->
-              Transaction.set_current timer.timer_snapshot
-                {
-                  snapshot with
-                  timer_state =
-                    Timer_running (generation, Some next_due_ms, cancel);
-                }
-          | Timer_inactive _ | Timer_starting _ | Timer_finished _ ->
+                snapshot
+          | None ->
               invalid_arg
                 "Eta_signal.Private_test_hooks: expected active timer state")
 
@@ -578,7 +558,8 @@ module Make (Observer_error : Observer_error) () = struct
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
           Timer.state_label
-            ((Transaction.current timer.timer_snapshot).timer_state)
+            (Timer.snapshot_state
+               (Transaction.current timer.timer_snapshot))
 
     let set_observer_on_finish observer hooks =
       let live =
@@ -1329,7 +1310,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let set_timer_current_state timer timer_state =
     let snapshot = timer_current_snapshot timer in
-    set_timer_current_snapshot timer { snapshot with timer_state }
+    set_timer_current_snapshot timer
+      (Timer.snapshot_with_state snapshot timer_state)
 
   let update_timer_staging timer f =
     let transaction = active_transaction () in
@@ -1337,7 +1319,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage transaction timer.timer_snapshot (f snapshot)
 
   let timer_current_state timer =
-    (timer_current_snapshot timer).timer_state
+    Timer.snapshot_state (timer_current_snapshot timer)
 
   let timer_generation timer =
     timer_state_generation (timer_current_state timer)
@@ -1352,7 +1334,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_effective_state timer =
     if timer_has_staged_refresh timer then
-      (timer_effective_snapshot timer).timer_state
+      Timer.snapshot_state (timer_effective_snapshot timer)
     else timer_current_state timer
 
   let timer_active_state = Timer.state_active
@@ -1379,7 +1361,8 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.can_refresh_on_demand
       ~refresh_operation:(Option.is_some timer.timer_refresh_operation)
       ~current_token:
-        (timer_current_snapshot timer).timer_on_demand_refresh_token
+        (Timer.snapshot_on_demand_refresh_token
+           (timer_current_snapshot timer))
       ~staged_token:timer.timer_staged_refresh_token ~token
       ~refresh_when_inactive:timer.timer_refresh_when_inactive
       ~active:(timer_active timer) ~finished:(timer_finished timer)
@@ -1402,17 +1385,15 @@ module Make (Observer_error : Observer_error) () = struct
         if timer.timer_staged_refresh_token <> timer_refresh_token then (
           timer.timer_staged_refresh_token <- timer_refresh_token;
           update_timer_staging timer (fun snapshot ->
-              {
-                snapshot with
-                timer_on_demand_refresh_token = timer_refresh_token;
-              });
+              Timer.snapshot_with_on_demand_refresh_token snapshot
+                timer_refresh_token);
           graph.timer_refresh_staged_timers <-
             timer :: graph.timer_refresh_staged_timers)
 
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
     update_timer_staging timer (fun snapshot ->
-        { snapshot with timer_state = state })
+        Timer.snapshot_with_state snapshot state)
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
     match
@@ -3715,11 +3696,7 @@ module Make (Observer_error : Observer_error) () = struct
       let timer =
         {
           timer_snapshot =
-            Transaction.create_staged
-              {
-                timer_state = Timer_inactive 0;
-                timer_on_demand_refresh_token = -1;
-              };
+            Transaction.create_staged Timer.initial_snapshot;
           timer_staged_refresh_token = -1;
           timer_runtime_contract = runtime_contract;
           timer_refresh_when_inactive = refresh_when_inactive;
