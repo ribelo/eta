@@ -134,6 +134,34 @@ module Make_versions (Node : VERSION_NODE) = struct
     not (same_snapshot current (snapshot nodes))
 end
 
+module Weak_cell = struct
+  type t = Obj.t Weak.t
+
+  let create raw =
+    let cell = Weak.create 1 in
+    (* Store the raw node, not a short-lived existential wrapper. *)
+    Weak.set cell 0 (Some (Obj.repr raw));
+    cell
+
+  let value ~pack cell =
+    match Weak.get cell 0 with
+    | None -> None
+    | Some raw -> Some (pack (Obj.obj raw))
+
+  let collect ~pack ~keep cells =
+    let rec loop kept_cells kept_values = function
+      | [] -> (List.rev kept_cells, List.rev kept_values)
+      | cell :: rest -> (
+          match value ~pack cell with
+          | None -> loop kept_cells kept_values rest
+          | Some packed ->
+              if keep packed then
+                loop (cell :: kept_cells) (packed :: kept_values) rest
+              else loop kept_cells kept_values rest)
+    in
+    loop [] [] cells
+end
+
 module Snapshot = struct
   type ('id, 'a) t = {
     value : 'a option;

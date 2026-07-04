@@ -213,6 +213,25 @@ let test_versions_changed_detects_dependency_set_update () =
   Alcotest.(check bool) "changed" true
     (Versions.changed ~current [ P left; P right ])
 
+let test_weak_cell_collect_keeps_matching_nodes () =
+  let left = node 1 in
+  let right = node ~valid:false 2 in
+  let left_cell = Kernel.Weak_cell.create left in
+  let right_cell = Kernel.Weak_cell.create right in
+  let pack node = P node in
+  let cells, packed =
+    Kernel.Weak_cell.collect ~pack
+      ~keep:(fun (P node) -> node.valid)
+      [ left_cell; right_cell ]
+  in
+  Alcotest.(check int) "kept cells" 1 (List.length cells);
+  Alcotest.(check (list int)) "kept nodes" [ 1 ] (ids packed);
+  Alcotest.(check (option int))
+    "cell value"
+    (Some 1)
+    (Option.map (fun (P node) -> node.id)
+       (Kernel.Weak_cell.value ~pack left_cell))
+
 let test_snapshot_publish_and_dependencies () =
   let empty = Kernel.Snapshot.empty in
   Alcotest.(check bool) "empty uninitialized" false
@@ -459,6 +478,11 @@ let () =
             test_versions_changed_detects_version_update;
           Alcotest.test_case "changed detects dependency set update" `Quick
             test_versions_changed_detects_dependency_set_update;
+        ] );
+      ( "weak_cell",
+        [
+          Alcotest.test_case "collect keeps matching nodes" `Quick
+            test_weak_cell_collect_keeps_matching_nodes;
         ] );
       ( "snapshot",
         [

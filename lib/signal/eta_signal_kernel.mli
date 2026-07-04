@@ -72,6 +72,19 @@ module Make_versions (Node : VERSION_NODE) : sig
   val changed : current:(Node.id * int) list -> Node.packed list -> bool
 end
 
+module Weak_cell : sig
+  type t
+
+  val create : 'raw -> t
+  val value : pack:('raw -> 'packed) -> t -> 'packed option
+
+  val collect :
+    pack:('raw -> 'packed) ->
+    keep:('packed -> bool) ->
+    t list ->
+    t list * 'packed list
+end
+
 module Snapshot : sig
   type ('id, 'a) t
 

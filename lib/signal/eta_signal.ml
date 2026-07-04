@@ -117,7 +117,7 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_id_label = Id.observer_label
   let compare_observer_id = Id.compare_observer
 
-  type weak_packed_signal = Obj.t Weak.t
+  type weak_packed_signal = Kernel.Weak_cell.t
 
   type timer_catch_up_policy = Timer.catch_up_policy =
     | Catch_up_every_cadence
@@ -641,29 +641,13 @@ module Make (Observer_error : Observer_error) () = struct
       active_timer_refresh = None;
     }
 
-  let weak_packed_signal (P signal) =
-    let cell = Weak.create 1 in
-    (* Store the signal record itself, not the short-lived existential wrapper. *)
-    Weak.set cell 0 (Some (Obj.repr signal));
-    cell
-
+  let pack_weak_signal signal = P signal
+  let weak_packed_signal (P signal) = Kernel.Weak_cell.create signal
   let weak_packed_signal_value cell =
-    match Weak.get cell 0 with
-    | None -> None
-    | Some signal -> Some (P (Obj.obj signal))
+    Kernel.Weak_cell.value ~pack:pack_weak_signal cell
 
   let collect_live_weak_signals keep cells =
-    let rec loop kept_cells kept_signals = function
-      | [] -> (List.rev kept_cells, List.rev kept_signals)
-      | cell :: rest -> (
-          match weak_packed_signal_value cell with
-          | None -> loop kept_cells kept_signals rest
-          | Some packed ->
-              if keep packed then
-                loop (cell :: kept_cells) (packed :: kept_signals) rest
-              else loop kept_cells kept_signals rest)
-    in
-    loop [] [] cells
+    Kernel.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
   let all_nodes_unlocked () =
     let cells, nodes = collect_live_weak_signals (fun _ -> true) graph.all_nodes in
