@@ -98,6 +98,17 @@ let stage tx staged value =
         "Eta_signal_transaction.stage: staged value belongs to another \
          transaction"
 
+let discard tx staged =
+  require_open "discard" tx;
+  match staged.pending with
+  | Some pending when equal_id pending.tx_id tx.core.id ->
+      staged.pending <- None
+  | Some _ ->
+      invalid_arg
+        "Eta_signal_transaction.discard: staged value belongs to another \
+         transaction"
+  | None -> ()
+
 let on_preflight tx hook =
   require_open "on_preflight" tx;
   tx.core.preflight_hooks <- hook :: tx.core.preflight_hooks

@@ -59,6 +59,21 @@ let test_stage_read_rollback () =
     (T.read tx cell);
   Alcotest.(check bool) "staging cleared" false (T.staged tx cell)
 
+let test_discard_skips_one_staged_cell () =
+  let skipped = T.create_staged 1 in
+  let committed = T.create_staged 10 in
+  let tx : (T.pure, test_error) T.t = T.begin_pure () in
+  T.stage tx skipped 2;
+  T.stage tx committed 20;
+  T.discard tx skipped;
+  Alcotest.(check int) "discarded cell reads current" 1 (T.read tx skipped);
+  Alcotest.(check bool) "discarded cell is not staged" false
+    (T.staged tx skipped);
+  Alcotest.(check int) "other cell remains staged" 20 (T.read tx committed);
+  ignore (commit_ok tx : (T.committed, test_error) T.t);
+  Alcotest.(check int) "discarded current unchanged" 1 (T.current skipped);
+  Alcotest.(check int) "other current committed" 20 (T.current committed)
+
 let test_two_transactions_cannot_share_pending_state () =
   let cell = T.create_staged 0 in
   let first : (T.pure, test_error) T.t = T.begin_pure () in
@@ -141,6 +156,8 @@ let () =
             test_set_current_preserves_pending_transaction_value;
           Alcotest.test_case "stage read rollback" `Quick
             test_stage_read_rollback;
+          Alcotest.test_case "discard skips one staged cell" `Quick
+            test_discard_skips_one_staged_cell;
           Alcotest.test_case "two transactions cannot share pending state"
             `Quick test_two_transactions_cannot_share_pending_state;
           Alcotest.test_case "commit hooks run once" `Quick

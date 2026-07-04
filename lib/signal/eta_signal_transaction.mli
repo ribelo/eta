@@ -24,6 +24,7 @@ val equal_id : id -> id -> bool
 val read : (_, _) t -> 'a staged -> 'a
 val stage : (pure, 'error) t -> 'a staged -> 'a -> unit
 val staged : (_, _) t -> 'a staged -> bool
+val discard : (pure, 'error) t -> 'a staged -> unit
 
 val on_preflight :
   (pure, 'error) t -> (unit -> (unit, 'error) result) -> unit
