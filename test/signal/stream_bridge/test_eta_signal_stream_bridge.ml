@@ -130,6 +130,44 @@ let test_drop_ack_runs_once_after_failure () =
   | `Empty | `Closed | `Closed_with_error _ ->
       Alcotest.fail "expected original queued item"
 
+let test_drop_hook_failure_is_best_effort () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  let sent = ref [] in
+  let dropped = ref [] in
+  let drop_calls = ref 0 in
+  let offer value =
+    Stream_bridge.offer ~queue
+      ~current_token:(fun () -> Effect.sync (fun () -> Some 1))
+      ~acknowledge_sent:(fun token value ->
+        Effect.sync (fun () -> sent := (token, value) :: !sent))
+      ~acknowledge_drop:(fun token value ->
+        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
+      ~after_try_send_before_ack:(fun () -> Effect.unit)
+      ~after_drop_before_ack:(fun () -> Effect.unit)
+      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~on_drop:
+        (Some
+           (fun _value ->
+             incr drop_calls;
+             failwith "drop hook failure"))
+      value
+  in
+  run_ok runtime (offer 1);
+  run_ok runtime (offer 2);
+  Alcotest.(check int) "drop hook ran once" 1 !drop_calls;
+  Alcotest.(check (list (pair int int))) "sent ack" [ (1, 1) ] !sent;
+  Alcotest.(check (list (pair int int))) "drop ack once" [ (1, 2) ]
+    !dropped;
+  match run_ok runtime (Queue.try_recv queue) with
+  | `Item value -> Alcotest.(check int) "queued value" 1 value
+  | `Empty | `Closed | `Closed_with_error _ ->
+      Alcotest.fail "expected original queued item"
+
 let () =
   Alcotest.run "eta_signal_stream_bridge"
     [
@@ -143,5 +181,7 @@ let () =
             test_offer_without_token_noops;
           Alcotest.test_case "drop ack runs once after failure" `Quick
             test_drop_ack_runs_once_after_failure;
+          Alcotest.test_case "drop hook failure is best effort" `Quick
+            test_drop_hook_failure_is_best_effort;
         ] );
     ]
