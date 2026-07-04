@@ -171,3 +171,12 @@ module Make_compute (Node : COMPUTE_NODE) = struct
           Node.set_changed_seen node changed;
           (value, changed))
 end
+
+module Value_cutoff = struct
+  let changed ~equal ~initialized ~current ~next =
+    (not initialized)
+    ||
+    match current with
+    | None -> true
+    | Some old_value -> not (equal old_value next)
+end

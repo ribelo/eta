@@ -2177,11 +2177,9 @@ module Make (Observer_error : Observer_error) () = struct
       graph.recompute_count <- saturating_succ graph.recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
-        (not snapshot.signal_initialized)
-        ||
-        match snapshot.signal_value with
-        | None -> true
-        | Some old_value -> not (signal.equal old_value value)
+        Kernel.Value_cutoff.changed ~equal:signal.equal
+          ~initialized:snapshot.signal_initialized
+          ~current:snapshot.signal_value ~next:value
       in
       if changed then stage_signal signal value;
       (if changed then value else current_or_raise signal), changed
@@ -2353,11 +2351,9 @@ module Make (Observer_error : Observer_error) () = struct
               graph.recompute_count <- saturating_succ graph.recompute_count;
               let snapshot = signal_effective_snapshot signal in
               let changed =
-                (not snapshot.signal_initialized)
-                ||
-                match snapshot.signal_value with
-                | None -> true
-                | Some old_value -> not (signal.equal old_value inner_value)
+                Kernel.Value_cutoff.changed ~equal:signal.equal
+                  ~initialized:snapshot.signal_initialized
+                  ~current:snapshot.signal_value ~next:inner_value
               in
               (inner, inner_value, changed, dependencies)
             with exn ->

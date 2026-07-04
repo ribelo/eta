@@ -107,3 +107,12 @@ module Make_compute (Node : COMPUTE_NODE) : sig
     compute:(unit -> 'a * bool) ->
     'a * bool
 end
+
+module Value_cutoff : sig
+  val changed :
+    equal:('a -> 'a -> bool) ->
+    initialized:bool ->
+    current:'a option ->
+    next:'a ->
+    bool
+end

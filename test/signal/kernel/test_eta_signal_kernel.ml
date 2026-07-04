@@ -249,6 +249,26 @@ let test_compute_seen_queries_generation_and_change_cache () =
   Alcotest.(check bool) "seen old" false (Compute.seen ~generation:4 target);
   Alcotest.(check bool) "changed seen" true (Compute.changed_seen target)
 
+let test_value_cutoff_uninitialized_is_changed () =
+  Alcotest.(check bool) "changed" true
+    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:false
+       ~current:(Some 1) ~next:1)
+
+let test_value_cutoff_missing_current_is_changed () =
+  Alcotest.(check bool) "changed" true
+    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+       ~current:None ~next:1)
+
+let test_value_cutoff_equal_value_is_unchanged () =
+  Alcotest.(check bool) "unchanged" false
+    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+       ~current:(Some 1) ~next:1)
+
+let test_value_cutoff_unequal_value_is_changed () =
+  Alcotest.(check bool) "changed" true
+    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+       ~current:(Some 1) ~next:2)
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -297,5 +317,16 @@ let () =
             test_compute_run_resets_guard_after_exception;
           Alcotest.test_case "seen queries generation and change cache" `Quick
             test_compute_seen_queries_generation_and_change_cache;
+        ] );
+      ( "value_cutoff",
+        [
+          Alcotest.test_case "uninitialized is changed" `Quick
+            test_value_cutoff_uninitialized_is_changed;
+          Alcotest.test_case "missing current is changed" `Quick
+            test_value_cutoff_missing_current_is_changed;
+          Alcotest.test_case "equal value is unchanged" `Quick
+            test_value_cutoff_equal_value_is_unchanged;
+          Alcotest.test_case "unequal value is changed" `Quick
+            test_value_cutoff_unequal_value_is_changed;
         ] );
     ]
