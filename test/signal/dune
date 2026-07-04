@@ -15,6 +15,7 @@
   eta_signal_staging
   eta_signal_stabilization_pass
   eta_signal_stream_bridge
+  eta_signal_timer_adapter
   eta_signal_test_hooks
   eta_signal_timer_policy
   eta_signal_transaction
@@ -204,6 +205,18 @@
 (rule
  (target eta_signal_stream_bridge.mli)
  (deps ../../lib/signal/eta_signal_stream_bridge.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_timer_adapter.ml)
+ (deps ../../lib/signal/eta_signal_timer_adapter.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_timer_adapter.mli)
+ (deps ../../lib/signal/eta_signal_timer_adapter.mli)
  (action
   (copy %{deps} %{target})))
 

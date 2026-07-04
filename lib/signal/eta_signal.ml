@@ -19,6 +19,7 @@ module Stabilization = Eta_signal_stabilization
 module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
+module Timer_adapter = Eta_signal_timer_adapter
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
@@ -2882,8 +2883,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~observers:dot_observers
 
   module Time = struct
-    exception Timer_cancelled
-
     let validate_interval duration =
       Timer_policy.validate_interval_ms (Duration.to_ms duration)
 
@@ -2903,32 +2902,6 @@ module Make (Observer_error : Observer_error) () = struct
               set_timer_current_state timer state;
               `Continue
           | None -> `Stop)
-
-    let cancellable_timer_loop timer generation loop =
-      Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
-      let contract = Effect.Expert.contract context in
-      let cancelled_exit = function
-        | Eta.Exit.Error cause when Eta.Cause.is_interrupt_only cause ->
-            Eta.Exit.Ok ()
-        | exit -> exit
-      in
-      try
-        contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
-        let cancel () =
-          contract.Runtime_contract.cancel cancel_context Timer_cancelled
-        in
-        match
-          Effect.Expert.eval context
-            (install_timer_cancel timer generation cancel)
-        with
-        | Eta.Exit.Error _ as error -> error
-        | Eta.Exit.Ok `Stop -> Eta.Exit.Ok ()
-        | Eta.Exit.Ok `Continue ->
-            Effect.Expert.eval context loop |> cancelled_exit
-      with exn ->
-        if Option.is_some (contract.Runtime_contract.cancellation_reason exn)
-        then Eta.Exit.Ok ()
-        else Effect.Expert.exit_of_exn context exn
 
     let timer_daemon_exit = function
       | Eta.Exit.Ok _ -> Timer_policy.Daemon_ok
@@ -2998,128 +2971,39 @@ module Make (Observer_error : Observer_error) () = struct
           | Timer_policy.Advance_next_due_stale -> `Stale
           | Timer_policy.Advance_next_due_stop -> `Stop)
 
-    let rec run_timer_update_batch timer generation remaining update ~missed =
-      if remaining <= 0 then Effect.pure `Continue
-      else
-        timer_after_update_state timer generation
-        |> Effect.bind (function
-             | `Stop -> Effect.pure `Stop
-             | `Continue ->
-                 Effect.sync (fun () ->
-                     update.timer_update timer generation ~missed)
-                 |> Effect.bind (fun update_eff ->
-                        Private_test_hooks.run
-                          After_timer_update_constructed_before_run
-                        |> Effect.bind (fun () -> update_eff))
-                 |> Effect.bind (fun () ->
-                        run_timer_update_batch timer generation (remaining - 1)
-                          update ~missed))
+    let timer_finish_saturated timer generation =
+      with_graph_lane_sync (fun () ->
+          let module P = Timer_policy in
+          let state =
+            P.finish_current_daemon
+              ~advance_generation:(checked_succ "timer generation")
+              ~effective_state:(timer_effective_state timer)
+              ~current_state:(timer_current_state timer) ~generation
+          in
+          Option.iter (set_timer_current_state timer) state)
 
-    let rec run_timer_updates timer generation remaining update ~missed =
-      match Timer_policy.update_batch ~remaining with
-      | None -> Effect.unit
-      | Some batch ->
-        run_timer_update_batch timer generation batch.update_batch_count update
-          ~missed
-        |> Effect.bind (function
-             | `Stop -> Effect.unit
-             | `Continue ->
-                 if not batch.update_batch_yield then Effect.unit
-                 else
-                   Effect.yield
-                   |> Effect.bind (fun () ->
-                          run_timer_updates timer generation
-                            batch.update_batch_remaining update ~missed))
-
-    let rec timer_loop timer generation interval_ms next_due_ms update =
-      timer_read_next_due timer generation next_due_ms
-      |> Effect.bind (function
-           | None -> Effect.unit
-           | Some next_due_ms ->
-               Effect.now
-               |> Effect.bind (fun now_ms ->
-                      let delay_ms =
-                        Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms
-                      in
-                      Effect.sleep (Duration.ms delay_ms))
-               |> Effect.bind (fun () ->
-                      timer_read_next_due timer generation next_due_ms
-                      |> Effect.bind (function
-                           | None -> Effect.unit
-                           | Some due_ms ->
-                               Effect.now
-                               |> Effect.bind (fun now_ms ->
-                                      let wake =
-                                        Timer_policy.daemon_wake_plan
-                                          ~catch_up_policy:
-                                            update.timer_catch_up_policy
-                                          ~interval_ms ~next_due_ms:due_ms
-                                          ~now_ms
-                                      in
-                                      let next_due_ms =
-                                        wake.wake_next_due_ms
-                                      in
-                                      let continue () =
-                                        timer_loop timer generation interval_ms
-                                          next_due_ms update
-                                      in
-                                      let update_count =
-                                        wake.wake_update_count
-                                      in
-                                      let update_missed =
-                                        wake.wake_update_missed
-                                      in
-                                      let saturated_due =
-                                        wake.wake_saturated_due
-                                      in
-                                      Private_test_hooks.run
-                                        After_timer_due_read_before_commit
-                                      |> Effect.bind (fun () ->
-                                             timer_advance_next_due timer
-                                               generation ~expected:due_ms
-                                               next_due_ms
-                                             |> Effect.bind (function
-                                                  | `Stop -> Effect.unit
-                                                  | `Stale -> continue ()
-                                                  | `Advanced ->
-                                                      run_timer_updates timer
-                                                        generation update_count
-                                                        update ~missed:update_missed
-                                                      |> Effect.bind (fun () ->
-                                                             (if saturated_due then
-                                                                with_graph_lane_sync
-                                                                 (fun () ->
-                                                                    let module P =
-                                                                      Timer_policy
-                                                                    in
-                                                                    let state =
-                                                                      P.finish_current_daemon
-                                                                        ~advance_generation:
-                                                                          (checked_succ
-                                                                             "timer generation")
-                                                                        ~effective_state:
-                                                                          (timer_effective_state
-                                                                             timer)
-                                                                        ~current_state:
-                                                                          (timer_current_state
-                                                                             timer)
-                                                                        ~generation
-                                                                    in
-                                                                    Option.iter
-                                                                      (set_timer_current_state
-                                                                         timer)
-                                                                      state)
-                                                              else Effect.unit)
-                                                             |> Effect.bind
-                                                                  (fun () ->
-                                                                    timer_after_update_state
-                                                                      timer
-                                                                      generation
-                                                                    |> Effect.bind
-                                                                         (function
-                                                                         | `Continue -> continue ()
-                                                                         | `Stop ->
-                                                                             Effect.unit)))))))))
+    let timer_loop_callbacks timer update =
+      {
+        Timer_adapter.read_next_due =
+          (fun ~generation ~fallback ->
+            timer_read_next_due timer generation fallback);
+        advance_next_due =
+          (fun ~generation ~expected ~next_due_ms ->
+            timer_advance_next_due timer generation ~expected next_due_ms);
+        after_update_state =
+          (fun ~generation -> timer_after_update_state timer generation);
+        finish_saturated =
+          (fun ~generation -> timer_finish_saturated timer generation);
+        construct_update =
+          (fun ~generation ~missed ->
+            update.timer_update timer generation ~missed);
+        after_due_read_before_commit =
+          (fun () ->
+            Private_test_hooks.run After_timer_due_read_before_commit);
+        after_update_constructed_before_run =
+          (fun () ->
+            Private_test_hooks.run After_timer_update_constructed_before_run);
+      }
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
@@ -3145,13 +3029,22 @@ module Make (Observer_error : Observer_error) () = struct
                        |> Effect.bind (function
                             | `Stop -> Effect.unit
                             | `Continue ->
+                                let callbacks =
+                                  timer_loop_callbacks timer update
+                                in
                                 Effect.daemon
-                                  (cancellable_timer_loop timer generation
-                                     (timer_loop timer generation interval_ms
-                                        next_due_ms update
-                                     |> Effect.on_exit
-                                          (timer_cleanup_after_exit timer
-                                             generation)))))
+                                  (Timer_adapter.run_cancellable
+                                     ~install_cancel:(fun ~cancel ->
+                                       install_timer_cancel timer generation
+                                         cancel)
+                                     ~loop:
+                                       (Timer_adapter.run_loop callbacks
+                                          ~generation ~interval_ms ~next_due_ms
+                                          ~catch_up_policy:
+                                            update.timer_catch_up_policy
+                                       |> Effect.on_exit
+                                            (timer_cleanup_after_exit timer
+                                               generation)))))
               in
               let start =
                 if update_on_start then

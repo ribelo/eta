@@ -16,6 +16,7 @@
   eta_signal_staging
   eta_signal_stabilization_pass
   eta_signal_stream_bridge
+  eta_signal_timer_adapter
   eta_signal_test_hooks
   eta_signal_timer_policy
   eta_signal_transaction
