@@ -784,6 +784,9 @@ module Make (Observer_error : Observer_error) () = struct
   let active_transaction () =
     Stabilization.active_transaction graph.stabilization
 
+  let active_staging () =
+    Graph_state.require_staging graph.state
+
   let stage_var_graph_value (type a) (var : a var) value =
     Transaction.stage (active_transaction ()) var.graph_value value
 
@@ -797,7 +800,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let remember_computed (P signal) =
     let generation = current_generation () in
-    Graph_state.remember_computed graph.state ~generation
+    Graph_state.remember_computed graph.state (active_staging ()) ~generation
       (P signal)
       ~project:(fun (P signal) -> graph_edge_node signal)
       ~remember:(fun ~generation nodes node ->
@@ -1073,7 +1076,8 @@ module Make (Observer_error : Observer_error) () = struct
           update_timer_staging timer (fun snapshot ->
               Timer_policy.snapshot_with_on_demand_refresh_token snapshot
                 timer_refresh_token);
-          Graph_state.stage_timer_refresh_timer graph.state timer)
+          Graph_state.stage_timer_refresh_timer graph.state
+            (active_staging ()) timer)
 
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
@@ -1255,7 +1259,8 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
     Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
-      ~remember:(fun () -> Graph_state.stage_bind graph.state (B bind))
+      ~remember:(fun () ->
+        Graph_state.stage_bind graph.state (active_staging ()) (B bind))
       ~source_value ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
@@ -1426,10 +1431,12 @@ module Make (Observer_error : Observer_error) () = struct
     preflight_post_commit_timer_starts invalidated_ids
 
   let remember_pure_disposal_hooks hooks =
-    Graph_state.remember_pure_disposal_hooks graph.state hooks
+    Graph_state.remember_pure_disposal_hooks graph.state (active_staging ())
+      hooks
 
   let remember_timer_refresh_disposal_hooks hooks =
-    Graph_state.remember_timer_refresh_disposal_hooks graph.state hooks
+    Graph_state.remember_timer_refresh_disposal_hooks graph.state
+      (active_staging ()) hooks
 
   let queue_var_unlocked (type a) (source : a var) =
     if not source.queued then (

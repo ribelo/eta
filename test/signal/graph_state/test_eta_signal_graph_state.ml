@@ -29,9 +29,9 @@ let test_reset_staging_owns_state_cleanup_order () =
   let state = create () in
   let events = ref [] in
   let staging = State.begin_staging state ~timer_refresh:(Some "refresh") in
-  State.stage_bind state "bind";
-  State.remember_pure_disposal_hooks state [ "pure-hook" ];
-  State.stage_timer_refresh_timer state "timer";
+  State.stage_bind state staging "bind";
+  State.remember_pure_disposal_hooks state staging [ "pure-hook" ];
+  State.stage_timer_refresh_timer state staging "timer";
   let hooks =
     State.reset_staging state staging
       ~rollback_bind:(fun bind ->
@@ -61,13 +61,13 @@ let test_commit_staging_owns_state_cleanup_order () =
   let state = create () in
   let events = ref [] in
   let staging = State.begin_staging state ~timer_refresh:(Some "refresh") in
-  State.stage_bind state "bind";
-  State.remember_computed state ~generation:1 "node"
+  State.stage_bind state staging "bind";
+  State.remember_computed state staging ~generation:1 "node"
     ~project:(fun node -> node)
     ~remember:(fun ~generation:_ nodes node -> node :: nodes);
-  State.remember_pure_disposal_hooks state [ "pure-hook" ];
-  State.remember_timer_refresh_disposal_hooks state [ "timer-hook" ];
-  State.stage_timer_refresh_timer state "timer";
+  State.remember_pure_disposal_hooks state staging [ "pure-hook" ];
+  State.remember_timer_refresh_disposal_hooks state staging [ "timer-hook" ];
+  State.stage_timer_refresh_timer state staging "timer";
   let hooks =
     State.commit_staging state staging
       ~preflight:(fun () -> record events "preflight")
@@ -122,6 +122,38 @@ let test_staging_token_validation () =
            ~clear_timer_refresh_timer:(fun _ -> ())
           : string list))
 
+let test_staging_mutations_require_active_token () =
+  let first = create () in
+  let second = create () in
+  let first_staging = State.begin_staging first ~timer_refresh:None in
+  let second_staging = State.begin_staging second ~timer_refresh:None in
+  State.stage_bind first first_staging "bind";
+  State.remember_computed first first_staging ~generation:1 "node"
+    ~project:(fun node -> node)
+    ~remember:(fun ~generation:_ nodes node -> node :: nodes);
+  State.remember_pure_disposal_hooks first first_staging [ "hook" ];
+  State.remember_timer_refresh_disposal_hooks first first_staging
+    [ "timer-hook" ];
+  State.stage_timer_refresh_timer first first_staging "timer";
+  Alcotest.check_raises "wrong active token"
+    (Invalid_argument "Eta_signal graph staging token is not active")
+    (fun () -> State.stage_bind first second_staging "wrong");
+  ignore
+    (State.reset_staging first first_staging ~rollback_bind:(fun _ -> [])
+       ~rollback_transaction:(fun () -> ())
+       ~rollback_timer_refresh_dirty:(fun _ -> ())
+       ~clear_timer_refresh_timer:(fun _ -> ())
+      : string list);
+  Alcotest.check_raises "stale token"
+    (Invalid_argument "Eta_signal graph staging is not active")
+    (fun () -> State.stage_bind first first_staging "stale");
+  ignore
+    (State.reset_staging second second_staging ~rollback_bind:(fun _ -> [])
+       ~rollback_transaction:(fun () -> ())
+       ~rollback_timer_refresh_dirty:(fun _ -> ())
+       ~clear_timer_refresh_timer:(fun _ -> ())
+      : string list)
+
 let test_timer_refresh_token_advances () =
   let state = create () in
   Alcotest.(check int)
@@ -144,6 +176,8 @@ let () =
             test_commit_staging_owns_state_cleanup_order;
           Alcotest.test_case "staging token validation" `Quick
             test_staging_token_validation;
+          Alcotest.test_case "staging mutations require token" `Quick
+            test_staging_mutations_require_active_token;
           Alcotest.test_case "timer refresh token" `Quick
             test_timer_refresh_token_advances;
         ] );

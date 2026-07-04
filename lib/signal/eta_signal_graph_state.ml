@@ -61,6 +61,11 @@ let begin_staging t ~timer_refresh =
   t.active_staging <- Some staging;
   staging
 
+let require_staging t =
+  match t.active_staging with
+  | Some staging -> staging
+  | None -> invalid_arg "Eta_signal graph staging is not active"
+
 let drain_pending t =
   let pending = List.rev t.pending in
   t.pending <- [];
@@ -68,28 +73,35 @@ let drain_pending t =
 
 let enqueue_pending t pending = t.pending <- pending :: t.pending
 
-let remember_computed t ~generation node ~project ~remember =
+let remember_computed t staging ~generation node ~project ~remember =
+  validate_staging t staging;
   t.computed_nodes <- remember ~generation t.computed_nodes (project node)
 
 let computed_nodes t = t.computed_nodes
 
-let stage_bind t bind = t.staged_binds <- bind :: t.staged_binds
+let stage_bind t staging bind =
+  validate_staging t staging;
+  t.staged_binds <- bind :: t.staged_binds
+
 let staged_binds t = t.staged_binds
 
-let remember_pure_disposal_hooks t hooks =
+let remember_pure_disposal_hooks t staging hooks =
+  validate_staging t staging;
   t.pure_disposal_hooks <- hooks @ t.pure_disposal_hooks
 
-let remember_timer_refresh_disposal_hooks t hooks =
+let remember_timer_refresh_disposal_hooks t staging hooks =
+  validate_staging t staging;
   match t.active_timer_refresh with
   | Some _ ->
       t.timer_refresh_disposal_hooks <-
         hooks @ t.timer_refresh_disposal_hooks
-  | None -> remember_pure_disposal_hooks t hooks
+  | None -> remember_pure_disposal_hooks t staging hooks
 
 let active_timer_refresh t = t.active_timer_refresh
 let clear_active_timer_refresh t = t.active_timer_refresh <- None
 
-let stage_timer_refresh_timer t timer =
+let stage_timer_refresh_timer t staging timer =
+  validate_staging t staging;
   t.timer_refresh_staged_timers <- timer :: t.timer_refresh_staged_timers
 
 let next_timer_refresh_token t ~advance =
@@ -139,7 +151,7 @@ let commit_staging t staging ~preflight ~commit_bind ~prepare_signal
       preflight;
       commit_binds =
         (fun () -> List.concat_map commit_bind t.staged_binds);
-      remember_pure_disposal_hooks = remember_pure_disposal_hooks t;
+      remember_pure_disposal_hooks = remember_pure_disposal_hooks t staging;
       prepare_signals =
         (fun () -> List.iter prepare_signal t.computed_nodes);
       commit_transaction;

@@ -17,6 +17,9 @@ val begin_staging :
   timer_refresh:'refresh option ->
   staging
 
+val require_staging :
+  ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t -> staging
+
 val drain_pending :
   ('pending, _, _, _, _, _) t -> 'pending list
 
@@ -25,6 +28,7 @@ val enqueue_pending :
 
 val remember_computed :
   (_, _, 'node, _, _, _) t ->
+  staging ->
   generation:int ->
   'node ->
   project:('node -> 'compute_node) ->
@@ -33,20 +37,20 @@ val remember_computed :
 
 val computed_nodes : (_, _, 'node, _, _, _) t -> 'node list
 
-val stage_bind : (_, 'bind, _, _, _, _) t -> 'bind -> unit
+val stage_bind : (_, 'bind, _, _, _, _) t -> staging -> 'bind -> unit
 val staged_binds : (_, 'bind, _, _, _, _) t -> 'bind list
 
 val remember_pure_disposal_hooks :
-  (_, _, _, 'hook, _, _) t -> 'hook list -> unit
+  (_, _, _, 'hook, _, _) t -> staging -> 'hook list -> unit
 
 val remember_timer_refresh_disposal_hooks :
-  (_, _, _, 'hook, _, _) t -> 'hook list -> unit
+  (_, _, _, 'hook, _, _) t -> staging -> 'hook list -> unit
 
 val active_timer_refresh : (_, _, _, _, _, 'refresh) t -> 'refresh option
 val clear_active_timer_refresh : (_, _, _, _, _, _) t -> unit
 
 val stage_timer_refresh_timer :
-  (_, _, _, _, 'timer, _) t -> 'timer -> unit
+  (_, _, _, _, 'timer, _) t -> staging -> 'timer -> unit
 
 val next_timer_refresh_token :
   (_, _, _, _, _, _) t -> advance:(int -> int) -> int
