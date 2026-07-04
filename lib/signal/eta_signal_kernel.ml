@@ -72,3 +72,30 @@ module Make_reachable (Node : REACHABLE_NODE) = struct
         Hashtbl.replace seen (Node.id packed) ();
         seen)
 end
+
+module type VERSION_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val equal_id : id -> id -> bool
+  val version : packed -> int
+end
+
+module Make_versions (Node : VERSION_NODE) = struct
+  let snapshot nodes =
+    List.map (fun node -> (Node.id node, Node.version node)) nodes
+
+  let rec same_snapshot left right =
+    match (left, right) with
+    | [], [] -> true
+    | (left_id, left_version) :: left_rest,
+      (right_id, right_version) :: right_rest ->
+        Node.equal_id left_id right_id
+        && Int.equal left_version right_version
+        && same_snapshot left_rest right_rest
+    | [], _ :: _ | _ :: _, [] -> false
+
+  let changed ~current nodes =
+    not (same_snapshot current (snapshot nodes))
+end

@@ -1206,14 +1206,22 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_signal_version signal =
     (signal_effective_snapshot signal).signal_version
 
+  module Kernel_versions = Kernel.Make_versions (struct
+    type id = signal_id
+    type nonrec packed = packed_signal
+
+    let id (P signal) = signal.id
+    let equal_id left right = signal_id_int left = signal_id_int right
+    let version (P signal) = effective_signal_version signal
+  end)
+
   let dependency_versions dependencies =
-    List.map
-      (fun (P signal) -> (signal.id, effective_signal_version signal))
-      dependencies
+    Kernel_versions.snapshot dependencies
 
   let dependencies_changed signal dependencies =
-    (signal_current_snapshot signal).signal_dependency_versions
-    <> dependency_versions dependencies
+    Kernel_versions.changed
+      ~current:(signal_current_snapshot signal).signal_dependency_versions
+      dependencies
 
   let stage_dependency_versions signal dependencies =
     update_signal_staging signal (fun snapshot ->

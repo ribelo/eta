@@ -42,3 +42,17 @@ module Make_reachable (Node : REACHABLE_NODE) : sig
 
   val ids : roots:Node.packed list -> (Node.id, unit) Hashtbl.t
 end
+
+module type VERSION_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val equal_id : id -> id -> bool
+  val version : packed -> int
+end
+
+module Make_versions (Node : VERSION_NODE) : sig
+  val snapshot : Node.packed list -> (Node.id * int) list
+  val changed : current:(Node.id * int) list -> Node.packed list -> bool
+end

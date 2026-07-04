@@ -3,6 +3,7 @@ module Kernel = Eta_signal_kernel
 type node = {
   id : int;
   valid : bool;
+  mutable version : int;
   mutable dependencies : packed list;
   mutable dependents : packed list;
 }
@@ -33,7 +34,18 @@ module Reachable = Kernel.Make_reachable (struct
   let children (P node) = node.dependencies
 end)
 
-let node ?(valid = true) id = { id; valid; dependencies = []; dependents = [] }
+module Versions = Kernel.Make_versions (struct
+  type id = int
+  type nonrec packed = packed
+
+  let id (P node) = node.id
+  let equal_id = Int.equal
+  let version (P node) = node.version
+end)
+
+let node ?(valid = true) ?(version = 0) id =
+  { id; valid; version; dependencies = []; dependents = [] }
+
 let ids packed = List.map (fun (P node) -> node.id) packed
 let sorted_ids ids = List.sort Int.compare ids
 
@@ -95,6 +107,28 @@ let test_reachable_fold_visits_multiple_roots () =
   in
   Alcotest.(check (list int)) "visited" [ 1; 2; 3 ] visited
 
+let test_versions_snapshot_preserves_order () =
+  let left = node ~version:10 1 in
+  let right = node ~version:20 2 in
+  Alcotest.(check (list (pair int int))) "snapshot" [ (1, 10); (2, 20) ]
+    (Versions.snapshot [ P left; P right ])
+
+let test_versions_changed_detects_version_update () =
+  let dependency = node ~version:1 1 in
+  let current = Versions.snapshot [ P dependency ] in
+  Alcotest.(check bool) "unchanged" false
+    (Versions.changed ~current [ P dependency ]);
+  dependency.version <- 2;
+  Alcotest.(check bool) "changed" true
+    (Versions.changed ~current [ P dependency ])
+
+let test_versions_changed_detects_dependency_set_update () =
+  let left = node 1 in
+  let right = node 2 in
+  let current = Versions.snapshot [ P left ] in
+  Alcotest.(check bool) "changed" true
+    (Versions.changed ~current [ P left; P right ])
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -113,5 +147,14 @@ let () =
             test_reachable_ids_skip_invalid_and_deduplicate;
           Alcotest.test_case "fold visits multiple roots" `Quick
             test_reachable_fold_visits_multiple_roots;
+        ] );
+      ( "versions",
+        [
+          Alcotest.test_case "snapshot preserves order" `Quick
+            test_versions_snapshot_preserves_order;
+          Alcotest.test_case "changed detects version update" `Quick
+            test_versions_changed_detects_version_update;
+          Alcotest.test_case "changed detects dependency set update" `Quick
+            test_versions_changed_detects_dependency_set_update;
         ] );
     ]
