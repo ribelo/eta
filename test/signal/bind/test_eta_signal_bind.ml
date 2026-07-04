@@ -29,6 +29,31 @@ let test_switch_snapshot () =
       Alcotest.(check int) "switch scope" 2 scope
   | None -> Alcotest.fail "expected complete switch parts"
 
+let test_eval_plan_switches_for_initial_or_changed_source () =
+  let initial_plan =
+    Bind.eval_plan ~equal:Int.equal Bind.empty ~source_value:1
+  in
+  let changed_plan =
+    Bind.eval_plan ~equal:Int.equal
+      (Bind.switch ~source_value:1 ~inner:"old" ~scope:2)
+      ~source_value:2
+  in
+  (match initial_plan with
+  | Ok Bind.Switch -> ()
+  | Ok (Bind.Reuse _) -> Alcotest.fail "expected initial switch"
+  | Error `Invalid_scope -> Alcotest.fail "expected valid initial switch");
+  match changed_plan with
+  | Ok Bind.Switch -> ()
+  | Ok (Bind.Reuse _) -> Alcotest.fail "expected changed switch"
+  | Error `Invalid_scope -> Alcotest.fail "expected valid changed switch"
+
+let test_eval_plan_reuses_inner_for_equal_source () =
+  let snapshot = Bind.switch ~source_value:1 ~inner:"inner" ~scope:2 in
+  match Bind.eval_plan ~equal:Int.equal snapshot ~source_value:1 with
+  | Ok (Bind.Reuse inner) -> Alcotest.(check string) "inner" "inner" inner
+  | Ok Bind.Switch -> Alcotest.fail "expected reuse"
+  | Error `Invalid_scope -> Alcotest.fail "expected valid reuse"
+
 let test_switch_commit_plan () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
@@ -66,6 +91,10 @@ let () =
         [
           Alcotest.test_case "empty snapshot" `Quick test_empty_snapshot;
           Alcotest.test_case "switch snapshot" `Quick test_switch_snapshot;
+          Alcotest.test_case "eval plan switches" `Quick
+            test_eval_plan_switches_for_initial_or_changed_source;
+          Alcotest.test_case "eval plan reuses" `Quick
+            test_eval_plan_reuses_inner_for_equal_source;
           Alcotest.test_case "switch commit plan" `Quick
             test_switch_commit_plan;
           Alcotest.test_case "switch rollback and preflight plans" `Quick

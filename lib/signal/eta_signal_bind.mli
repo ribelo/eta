@@ -8,6 +8,10 @@ type ('inner, 'scope) commit_switch = {
   new_inner : 'inner;
 }
 
+type 'inner eval_plan =
+  | Switch
+  | Reuse of 'inner
+
 val empty : ('source, 'inner, 'scope) snapshot
 
 val switch :
@@ -25,6 +29,12 @@ val needs_new_inner :
   ('source, _, _) snapshot ->
   'source ->
   bool
+
+val eval_plan :
+  equal:('source -> 'source -> bool) ->
+  ('source, 'inner, _) snapshot ->
+  source_value:'source ->
+  ('inner eval_plan, [> `Invalid_scope ]) result
 
 val switch_parts :
   ('source, 'inner, 'scope) snapshot ->

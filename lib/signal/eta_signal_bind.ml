@@ -10,6 +10,10 @@ type ('inner, 'scope) commit_switch = {
   new_inner : 'inner;
 }
 
+type 'inner eval_plan =
+  | Switch
+  | Reuse of 'inner
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -27,6 +31,13 @@ let needs_new_inner ~equal snapshot source_value =
   match snapshot.source_value with
   | None -> true
   | Some previous -> not (equal previous source_value)
+
+let eval_plan ~equal snapshot ~source_value =
+  if needs_new_inner ~equal snapshot source_value then Ok Switch
+  else
+    match snapshot.inner with
+    | Some inner -> Ok (Reuse inner)
+    | None -> Error `Invalid_scope
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

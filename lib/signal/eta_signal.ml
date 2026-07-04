@@ -2274,11 +2274,12 @@ module Make (Observer_error : Observer_error) () = struct
         finish_static (Kernel.Static_eval.all children)
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
-        let needs_new_inner =
-          Bind.needs_new_inner ~equal:bind.source.equal
-            (bind_effective_snapshot bind) source_value
-        in
-        if needs_new_inner then (
+        (match
+           Bind.eval_plan ~equal:bind.source.equal
+             (bind_effective_snapshot bind) ~source_value
+         with
+        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+        | Ok Bind.Switch -> (
           let scope = new_scope signal in
           let inner, inner_value, changed, dependencies =
             try
@@ -2306,19 +2307,14 @@ module Make (Observer_error : Observer_error) () = struct
           stage_dependency_versions signal dependencies;
           if changed then stage_signal signal inner_value;
           (if changed then inner_value else current_or_raise signal), changed)
-        else
-          let inner =
-            match bind_effective_inner bind with
-            | Some inner -> inner
-            | None -> raise (Graph_error `Invalid_scope)
-          in
+        | Ok (Bind.Reuse inner) ->
           let inner_value, inner_changed = compute inner in
           let dependencies = [ P bind.source; P inner ] in
           if
             signal.dirty || source_changed || inner_changed
             || dependency_changed dependencies || not (signal_initialized ())
           then recompute_with_dependencies dependencies inner_value
-          else use_cached ()
+          else use_cached ())
 
   let timer_start_unlocked timer =
     if not (timer_needs_start timer) then None
