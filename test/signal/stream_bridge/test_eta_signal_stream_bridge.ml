@@ -26,6 +26,25 @@ let test_capacity_validation () =
   Alcotest.(check bool) "positive accepted" true
     (Result.is_ok (Stream_bridge.create_queue ~capacity:1))
 
+let delivery ~token ~sent ~dropped =
+  {
+    Stream_bridge.current_token = (fun () -> Effect.sync (fun () -> !token));
+    acknowledge_sent =
+      (fun token value ->
+        Effect.sync (fun () -> sent := (token, value) :: !sent));
+    acknowledge_drop =
+      (fun token value ->
+        Effect.sync (fun () -> dropped := (token, value) :: !dropped));
+  }
+
+let hooks ?(after_send = fun () -> Effect.unit)
+    ?(after_drop = fun () -> Effect.unit) () =
+  {
+    Stream_bridge.after_try_send_before_ack = after_send;
+    after_drop_before_ack = after_drop;
+    on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
+  }
+
 let test_offer_sends_and_drops () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let queue =
@@ -39,14 +58,8 @@ let test_offer_sends_and_drops () =
   let token = ref (Some 1) in
   let offer value =
     Stream_bridge.offer ~queue
-      ~current_token:(fun () -> Effect.sync (fun () -> !token))
-      ~acknowledge_sent:(fun token value ->
-        Effect.sync (fun () -> sent := (token, value) :: !sent))
-      ~acknowledge_drop:(fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
-      ~after_try_send_before_ack:(fun () -> Effect.unit)
-      ~after_drop_before_ack:(fun () -> Effect.unit)
-      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~delivery:(delivery ~token ~sent ~dropped)
+      ~hooks:(hooks ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
       value
   in
@@ -71,18 +84,15 @@ let test_offer_without_token_noops () =
   let dropped = ref [] in
   let after_send = ref false in
   let after_drop = ref false in
+  let token = ref (None : int option) in
   let offer =
     Stream_bridge.offer ~queue
-      ~current_token:(fun () -> Effect.sync (fun () -> None))
-      ~acknowledge_sent:(fun token value ->
-        Effect.sync (fun () -> sent := (token, value) :: !sent))
-      ~acknowledge_drop:(fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
-      ~after_try_send_before_ack:(fun () ->
-        Effect.sync (fun () -> after_send := true))
-      ~after_drop_before_ack:(fun () ->
-        Effect.sync (fun () -> after_drop := true))
-      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~delivery:(delivery ~token ~sent ~dropped)
+      ~hooks:
+        (hooks
+           ~after_send:(fun () -> Effect.sync (fun () -> after_send := true))
+           ~after_drop:(fun () -> Effect.sync (fun () -> after_drop := true))
+           ())
       ~on_drop:None 1
   in
   run_ok runtime offer;
@@ -105,16 +115,11 @@ let test_drop_ack_runs_once_after_failure () =
   let sent = ref [] in
   let dropped = ref [] in
   let on_drop_seen = ref [] in
+  let token = ref (Some 1) in
   let offer ~after_drop value =
     Stream_bridge.offer ~queue
-      ~current_token:(fun () -> Effect.sync (fun () -> Some 1))
-      ~acknowledge_sent:(fun token value ->
-        Effect.sync (fun () -> sent := (token, value) :: !sent))
-      ~acknowledge_drop:(fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
-      ~after_try_send_before_ack:(fun () -> Effect.unit)
-      ~after_drop_before_ack:after_drop
-      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~delivery:(delivery ~token ~sent ~dropped)
+      ~hooks:(hooks ~after_drop ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
       value
   in
@@ -140,16 +145,11 @@ let test_drop_hook_failure_is_best_effort () =
   let sent = ref [] in
   let dropped = ref [] in
   let drop_calls = ref 0 in
+  let token = ref (Some 1) in
   let offer value =
     Stream_bridge.offer ~queue
-      ~current_token:(fun () -> Effect.sync (fun () -> Some 1))
-      ~acknowledge_sent:(fun token value ->
-        Effect.sync (fun () -> sent := (token, value) :: !sent))
-      ~acknowledge_drop:(fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped))
-      ~after_try_send_before_ack:(fun () -> Effect.unit)
-      ~after_drop_before_ack:(fun () -> Effect.unit)
-      ~on_closed_with_error:(fun `Invalid_scope -> Effect.fail `Invalid_scope)
+      ~delivery:(delivery ~token ~sent ~dropped)
+      ~hooks:(hooks ())
       ~on_drop:
         (Some
            (fun _value ->

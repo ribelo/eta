@@ -4103,19 +4103,30 @@ module Make (Observer_error : Observer_error) () = struct
     let default_capacity = Stream_bridge.default_capacity
 
     let offer_bridge_update observer on_drop queue update =
-      Stream_bridge.offer ~queue
-        ~current_token:(fun () -> stream_delivery_token observer)
-        ~acknowledge_sent:(fun token update ->
-          acknowledge_stream_sent_delivery observer token update)
-        ~acknowledge_drop:(fun token update ->
-          acknowledge_stream_drop_delivery observer token update)
-        ~after_try_send_before_ack:(fun () ->
-          Private_test_hooks.run After_stream_try_send_before_ack)
-        ~after_drop_before_ack:(fun () ->
-          Private_test_hooks.run After_stream_drop_before_ack)
-        ~on_closed_with_error:(fun err ->
-          Effect.sync (fun () -> raise (Graph_error err)))
-        ~on_drop update
+      let delivery =
+        {
+          Stream_bridge.current_token =
+            (fun () -> stream_delivery_token observer);
+          acknowledge_sent =
+            (fun token update ->
+              acknowledge_stream_sent_delivery observer token update);
+          acknowledge_drop =
+            (fun token update ->
+              acknowledge_stream_drop_delivery observer token update);
+        }
+      in
+      let hooks =
+        {
+          Stream_bridge.after_try_send_before_ack =
+            (fun () ->
+              Private_test_hooks.run After_stream_try_send_before_ack);
+          after_drop_before_ack =
+            (fun () -> Private_test_hooks.run After_stream_drop_before_ack);
+          on_closed_with_error =
+            (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
+        }
+      in
+      Stream_bridge.offer ~queue ~delivery ~hooks ~on_drop update
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Effect.sync (fun () -> Stream_bridge.create_queue ~capacity)

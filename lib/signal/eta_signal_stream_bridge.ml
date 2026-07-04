@@ -7,6 +7,18 @@ let create_queue ~capacity =
   if capacity <= 0 then Error `Invalid_capacity
   else Ok (Queue.create ~overflow:(Queue.Drop_new { capacity }) ())
 
+type ('token, 'update, 'error) delivery = {
+  current_token : unit -> ('token option, 'error) Effect.t;
+  acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
+  acknowledge_drop : 'token -> 'update -> (unit, 'error) Effect.t;
+}
+
+type ('queue_error, 'error) hooks = {
+  after_try_send_before_ack : unit -> (unit, 'error) Effect.t;
+  after_drop_before_ack : unit -> (unit, 'error) Effect.t;
+  on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
+}
+
 let report_dropped_update ~on_drop ~after_drop_before_ack ~acknowledge_drop
     update =
   let drop_published = ref false in
@@ -42,10 +54,8 @@ let report_dropped_update ~on_drop ~after_drop_before_ack ~acknowledge_drop
    |> Effect.bind (fun () -> acknowledge_published_drop ()))
   |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
-let offer ~queue ~current_token ~acknowledge_sent ~acknowledge_drop
-    ~after_try_send_before_ack ~after_drop_before_ack ~on_closed_with_error
-    ~on_drop update =
-  current_token ()
+let offer ~queue ~delivery ~hooks ~on_drop update =
+  delivery.current_token ()
   |> Effect.bind (function
        | None -> Effect.unit
        | Some token ->
@@ -56,7 +66,7 @@ let offer ~queue ~current_token ~acknowledge_sent ~acknowledge_drop
                   let acknowledge_sent_once () =
                     if !sent_acknowledged then Effect.unit
                     else
-                      acknowledge_sent token update
+                      delivery.acknowledge_sent token update
                       |> Effect.bind (fun () ->
                              Effect.sync (fun () -> sent_acknowledged := true))
                   in
@@ -78,7 +88,7 @@ let offer ~queue ~current_token ~acknowledge_sent ~acknowledge_drop
                   (Queue.try_send queue update
                    |> Effect.bind (function
                         | `Sent ->
-                            after_try_send_before_ack ()
+                            hooks.after_try_send_before_ack ()
                             |> Effect.bind (fun () ->
                                    Effect.sync (fun () ->
                                        sent_published := true))
@@ -87,8 +97,11 @@ let offer ~queue ~current_token ~acknowledge_sent ~acknowledge_drop
                         | `Closed -> Effect.unit
                         | `Dropped | `Full ->
                             report_dropped_update ~on_drop
-                              ~after_drop_before_ack
-                              ~acknowledge_drop:(acknowledge_drop token)
+                              ~after_drop_before_ack:
+                                hooks.after_drop_before_ack
+                              ~acknowledge_drop:
+                                (delivery.acknowledge_drop token)
                               update
-                        | `Closed_with_error err -> on_closed_with_error err))
+                        | `Closed_with_error err ->
+                            hooks.on_closed_with_error err))
                   |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())))
