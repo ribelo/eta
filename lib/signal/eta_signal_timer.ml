@@ -27,6 +27,11 @@ type interval_refresh = {
   interval_finish : bool;
 }
 
+type demand_action =
+  | Demand_none
+  | Demand_start
+  | Demand_stop
+
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
@@ -146,6 +151,18 @@ let needs_start ~effective_state ~current_state =
   not
     (state_finished effective_state
     || (state_active effective_state && state_has_current_start current_state))
+
+let needs_stop ~effective_state =
+  state_active effective_state
+  || Option.is_some (state_running_generation effective_state)
+  || state_has_cancel effective_state
+
+let demand_action ~necessary ~effective_state ~current_state =
+  if necessary then
+    if needs_start ~effective_state ~current_state then Demand_start
+    else Demand_none
+  else if needs_stop ~effective_state then Demand_stop
+  else Demand_none
 
 let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
     ~refresh_when_inactive ~active ~finished =

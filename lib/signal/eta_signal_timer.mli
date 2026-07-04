@@ -29,6 +29,11 @@ type interval_refresh = {
   interval_finish : bool;
 }
 
+type demand_action =
+  | Demand_none
+  | Demand_start
+  | Demand_stop
+
 val add_ms_capped : int -> int -> int
 val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
@@ -53,6 +58,10 @@ val state_next_due : state -> int option
 val state_set_next_due : state -> int option -> state
 
 val needs_start : effective_state:state -> current_state:state -> bool
+val needs_stop : effective_state:state -> bool
+
+val demand_action :
+  necessary:bool -> effective_state:state -> current_state:state -> demand_action
 
 val can_refresh_on_demand :
   refresh_operation:bool ->

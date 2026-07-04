@@ -100,6 +100,45 @@ let test_start_and_refresh_policy () =
        ~staged_token:(-1) ~token:1 ~refresh_when_inactive:false ~active:false
        ~finished:false)
 
+let pp_demand_action ppf = function
+  | Timer.Demand_none -> Format.pp_print_string ppf "Demand_none"
+  | Timer.Demand_start -> Format.pp_print_string ppf "Demand_start"
+  | Timer.Demand_stop -> Format.pp_print_string ppf "Demand_stop"
+
+let demand_action =
+  Alcotest.testable pp_demand_action (fun left right -> left = right)
+
+let test_demand_policy () =
+  let inactive = Timer.Timer_inactive 0 in
+  let running = Timer.Timer_running (1, Some 10, noop) in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (1, Some 10)
+  in
+  let finished = Timer.Timer_finished 1 in
+  Alcotest.(check demand_action) "necessary inactive starts" Timer.Demand_start
+    (Timer.demand_action ~necessary:true ~effective_state:inactive
+       ~current_state:inactive);
+  Alcotest.(check demand_action) "necessary running stays" Timer.Demand_none
+    (Timer.demand_action ~necessary:true ~effective_state:running
+       ~current_state:running);
+  Alcotest.(check demand_action) "necessary finished stays" Timer.Demand_none
+    (Timer.demand_action ~necessary:true ~effective_state:finished
+       ~current_state:finished);
+  Alcotest.(check demand_action) "unnecessary running stops" Timer.Demand_stop
+    (Timer.demand_action ~necessary:false ~effective_state:running
+       ~current_state:running);
+  Alcotest.(check demand_action) "unnecessary uncancellable stops"
+    Timer.Demand_stop
+    (Timer.demand_action ~necessary:false
+       ~effective_state:running_uncancellable ~current_state:inactive);
+  Alcotest.(check demand_action) "unnecessary inactive stays" Timer.Demand_none
+    (Timer.demand_action ~necessary:false ~effective_state:inactive
+       ~current_state:inactive);
+  Alcotest.(check bool) "running needs stop" true
+    (Timer.needs_stop ~effective_state:running);
+  Alcotest.(check bool) "inactive does not need stop" false
+    (Timer.needs_stop ~effective_state:inactive)
+
 let test_refresh_plans () =
   let running = Timer.Timer_running_uncancellable (1, Some 50) in
   let due = Timer.due_refresh running ~interval_ms:10 ~now_ms:85 in
@@ -148,6 +187,7 @@ let () =
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
+          Alcotest.test_case "demand policy" `Quick test_demand_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
         ] );

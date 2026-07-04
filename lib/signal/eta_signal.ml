@@ -1836,9 +1836,8 @@ module Make (Observer_error : Observer_error) () = struct
     (* Scope invalidation stops active timers during commit. Check generation
        overflow before commit mutates staged graph state; the actual stop
        happens later in [invalidate_scope]. *)
-    if timer_active timer || Option.is_some (timer_running_generation timer)
-       || timer_has_cancel timer
-    then ignore (checked_succ "timer generation" (timer_generation timer) : int)
+    if Timer.needs_stop ~effective_state:(timer_effective_state timer) then
+      ignore (checked_succ "timer generation" (timer_generation timer) : int)
 
   let preflight_timer_start timer =
     if timer_needs_start timer then
@@ -2323,10 +2322,6 @@ module Make (Observer_error : Observer_error) () = struct
       set_timer_current_state timer (Timer_starting generation);
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
-  type timer_demand_action =
-    | Timer_demand_start of timer_node
-    | Timer_demand_stop of timer_node
-
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
         match timer_current_state timer with
@@ -2432,29 +2427,33 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_actions =
       all_timers ()
       |> List.filter_map (fun (id, timer) ->
-             if Hashtbl.mem needed id then (
-               ensure_timer_runtime timer runtime_contract;
-               preflight_timer_start timer;
-               if timer_needs_start timer then Some (Timer_demand_start timer)
-               else None)
-             else (
-               preflight_timer_invalidation timer;
-               if timer_active timer || Option.is_some (timer_running_generation timer)
-                  || timer_has_cancel timer
-               then Some (Timer_demand_stop timer)
-               else None))
+             let necessary = Hashtbl.mem needed id in
+             if necessary then ensure_timer_runtime timer runtime_contract;
+             (match
+                Timer.demand_action ~necessary
+                  ~effective_state:(timer_effective_state timer)
+                  ~current_state:(timer_current_state timer)
+              with
+             | Timer.Demand_none -> None
+             | Timer.Demand_start ->
+                 preflight_timer_start timer;
+                 Some (timer, Timer.Demand_start)
+             | Timer.Demand_stop ->
+                 preflight_timer_invalidation timer;
+                 Some (timer, Timer.Demand_stop)))
     in
     let start_attempts = ref [] in
     let cancel_hooks = ref [] in
     List.iter
       (function
-        | Timer_demand_start timer ->
+        | timer, Timer.Demand_start ->
             Option.iter
               (fun attempt -> start_attempts := attempt :: !start_attempts)
               (timer_start_unlocked timer)
-        | Timer_demand_stop timer ->
-          cancel_hooks :=
-            List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks)
+        | timer, Timer.Demand_stop ->
+            cancel_hooks :=
+              List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks
+        | _, Timer.Demand_none -> ())
       timer_actions;
     (List.rev !start_attempts, List.rev !cancel_hooks)
 
