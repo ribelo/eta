@@ -1848,8 +1848,13 @@ module Make (Observer_error : Observer_error) () = struct
     let needed = necessary_timers () in
     let demand_items =
       all_timers ()
-      |> List.map (fun (id, timer) ->
-             let necessary = Hashtbl.mem needed id in
+      |> List.map (fun (id, timer) -> Kernel.Demand.resource ~id timer)
+      |> Kernel.Demand.classify_resources ~necessary:needed
+      |> List.map (fun resource_state ->
+             let timer = Kernel.Demand.resource_state_value resource_state in
+             let necessary =
+               Kernel.Demand.resource_state_necessary resource_state
+             in
              if necessary then ensure_timer_runtime timer runtime_contract;
              {
                Timer.demand_item = timer;

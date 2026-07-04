@@ -119,6 +119,12 @@ let demand_transitions transitions =
        | Kernel.Demand.Became_unnecessary id -> ("unnecessary", id))
   |> List.sort compare
 
+let demand_resource_states states =
+  states
+  |> List.map (fun state ->
+         ( Kernel.Demand.resource_state_value state,
+           Kernel.Demand.resource_state_necessary state ))
+
 let test_attach_is_bidirectional_and_idempotent () =
   let parent = node 1 in
   let child = node 2 in
@@ -198,6 +204,36 @@ let test_demand_diff_ignores_stable_nodes () =
     (Kernel.Demand.count_became_necessary transitions);
   Alcotest.(check int) "became unnecessary count" 0
     (Kernel.Demand.count_became_unnecessary transitions)
+
+let test_demand_classifies_resources () =
+  let resources =
+    [
+      Kernel.Demand.resource ~id:1 "cold";
+      Kernel.Demand.resource ~id:2 "hot";
+      Kernel.Demand.resource ~id:3 "warm";
+    ]
+  in
+  Alcotest.(check (list (pair string bool)))
+    "states"
+    [ ("cold", false); ("hot", true); ("warm", true) ]
+    (Kernel.Demand.classify_resources ~necessary:(id_table [ 2; 3 ])
+       resources
+    |> demand_resource_states)
+
+let test_demand_classification_preserves_resource_order () =
+  let resources =
+    [
+      Kernel.Demand.resource ~id:2 "first";
+      Kernel.Demand.resource ~id:1 "second";
+      Kernel.Demand.resource ~id:2 "third";
+    ]
+  in
+  Alcotest.(check (list (pair string bool)))
+    "states"
+    [ ("first", true); ("second", false); ("third", true) ]
+    (Kernel.Demand.classify_resources ~necessary:(id_table [ 2 ])
+       resources
+    |> demand_resource_states)
 
 let test_order_dependencies_precede_dependents () =
   let dependent = node 3 in
@@ -556,6 +592,10 @@ let () =
             test_demand_diff_reports_necessary_changes;
           Alcotest.test_case "diff ignores stable nodes" `Quick
             test_demand_diff_ignores_stable_nodes;
+          Alcotest.test_case "classifies resources" `Quick
+            test_demand_classifies_resources;
+          Alcotest.test_case "classification preserves resource order" `Quick
+            test_demand_classification_preserves_resource_order;
         ] );
       ( "order",
         [

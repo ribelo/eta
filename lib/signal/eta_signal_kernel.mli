@@ -49,6 +49,8 @@ module Demand : sig
     | Became_unnecessary of 'id
 
   type 'id t = 'id transition list
+  type ('id, 'resource) resource
+  type 'resource resource_state
 
   val diff :
     previous:('id, unit) Hashtbl.t ->
@@ -57,6 +59,16 @@ module Demand : sig
 
   val count_became_necessary : _ t -> int
   val count_became_unnecessary : _ t -> int
+
+  val resource : id:'id -> 'resource -> ('id, 'resource) resource
+
+  val classify_resources :
+    necessary:('id, 'presence) Hashtbl.t ->
+    ('id, 'resource) resource list ->
+    'resource resource_state list
+
+  val resource_state_value : 'resource resource_state -> 'resource
+  val resource_state_necessary : _ resource_state -> bool
 end
 
 module type ORDER_NODE = sig

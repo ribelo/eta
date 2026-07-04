@@ -80,6 +80,16 @@ module Demand = struct
 
   type 'id t = 'id transition list
 
+  type ('id, 'resource) resource = {
+    resource_id : 'id;
+    resource_value : 'resource;
+  }
+
+  type 'resource resource_state = {
+    resource_state_value : 'resource;
+    resource_state_necessary : bool;
+  }
+
   let diff ~previous ~next =
     let transitions = ref [] in
     Hashtbl.iter
@@ -107,6 +117,23 @@ module Demand = struct
         | Became_unnecessary _ -> count + 1
         | Became_necessary _ -> count)
       0 transitions
+
+  let resource ~id value =
+    { resource_id = id; resource_value = value }
+
+  let classify_resources ~necessary resources =
+    List.map
+      (fun resource ->
+        {
+          resource_state_value = resource.resource_value;
+          resource_state_necessary =
+            Hashtbl.mem necessary resource.resource_id;
+        })
+      resources
+
+  let resource_state_value state = state.resource_state_value
+
+  let resource_state_necessary state = state.resource_state_necessary
 end
 
 module type ORDER_NODE = sig
