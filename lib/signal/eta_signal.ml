@@ -1029,15 +1029,20 @@ module Make (Observer_error : Observer_error) () = struct
     Timer_policy.needs_start ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
 
-  let ensure_timer_runtime timer runtime_contract =
+  let validate_timer_runtime timer runtime_contract =
     match
       Timer_policy.validate_runtime ~same_runtime:Runtime_contract.same_runtime
         ~expected:timer.timer_runtime_contract ~actual:runtime_contract
     with
-    | Ok () -> ()
+    | Ok () -> Ok ()
     | Error `Runtime_mismatch ->
         Private_test_hooks.run_timer_runtime_mismatch_hook ();
-        raise (Graph_error `Runtime_mismatch)
+        Error `Runtime_mismatch
+
+  let ensure_timer_runtime timer runtime_contract =
+    match validate_timer_runtime timer runtime_contract with
+    | Ok () -> ()
+    | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
   let timer_can_refresh_on_demand token timer =
     Timer_policy.can_refresh_on_demand
@@ -1789,34 +1794,30 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_timer_demand_unlocked runtime_contract =
     let needed = collect_necessary_node_ids () in
-    let demand_items =
+    let timer_resources =
       all_timers ()
-      |> List.map (fun (id, timer) -> Graph_algorithms.Demand.resource ~id timer)
-      |> Graph_algorithms.Demand.classify_resources ~necessary:needed
-      |> List.map (fun resource_state ->
-             let timer = Graph_algorithms.Demand.resource_state_value resource_state in
-             let necessary =
-               Graph_algorithms.Demand.resource_state_necessary resource_state
-             in
-             if necessary then ensure_timer_runtime timer runtime_contract;
-             {
-               Timer_policy.demand_item = timer;
-               demand_necessary = necessary;
-               demand_effective_state = timer_effective_state timer;
-               demand_current_state = timer_current_state timer;
-             })
+      |> List.map (fun (id, timer) -> Timer_policy.demand_resource ~id timer)
     in
-    let timer_plans =
-      Timer_policy.demand_plans
+    match
+      Timer_policy.demand_effects
         ~advance_generation:(checked_succ "timer generation")
-        ~cancel_running:true demand_items
-    in
-    let demand_effects =
-      Timer_policy.apply_demand_plans ~start:timer_apply_start_plan_unlocked
-        ~stop:timer_apply_stop_plan_unlocked timer_plans
-    in
-    ( demand_effects.Timer_policy.demand_start_attempts,
-      demand_effects.Timer_policy.demand_cancel_hooks )
+        ~cancel_running:true
+        {
+          Timer_policy.demand_resource_necessary =
+            (fun id -> Hashtbl.mem needed id);
+          demand_resource_validate =
+            (fun timer -> validate_timer_runtime timer runtime_contract);
+          demand_resource_effective_state = timer_effective_state;
+          demand_resource_current_state = timer_current_state;
+          demand_plan_start = timer_apply_start_plan_unlocked;
+          demand_plan_stop = timer_apply_stop_plan_unlocked;
+        }
+        timer_resources
+    with
+    | Ok demand_effects ->
+        ( demand_effects.Timer_policy.demand_start_attempts,
+          demand_effects.Timer_policy.demand_cancel_hooks )
+    | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
   let rollback_unclaimed_timer_starts attempts =
     with_graph_lane_sync (fun () ->

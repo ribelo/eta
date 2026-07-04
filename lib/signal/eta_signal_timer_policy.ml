@@ -92,6 +92,11 @@ type 'a demand_item = {
   demand_current_state : state;
 }
 
+type ('id, 'timer) demand_resource = {
+  demand_resource_id : 'id;
+  demand_resource_timer : 'timer;
+}
+
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -108,6 +113,15 @@ type stop_plan = {
 type start_plan = {
   start_state : state;
   start_generation : int;
+}
+
+type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
+  demand_resource_necessary : 'id -> bool;
+  demand_resource_validate : 'timer -> (unit, 'error) result;
+  demand_resource_effective_state : 'timer -> state;
+  demand_resource_current_state : 'timer -> state;
+  demand_plan_start : 'timer -> start_plan -> 'start;
+  demand_plan_stop : 'timer -> stop_plan -> 'hook list;
 }
 
 type 'a demand_plan =
@@ -430,6 +444,36 @@ let demand_action ~necessary ~effective_state ~current_state =
   else if needs_stop ~effective_state then Demand_stop
   else Demand_none
 
+let demand_resource ~id timer =
+  { demand_resource_id = id; demand_resource_timer = timer }
+
+let classify_demand context resources =
+  let rec loop items = function
+    | [] -> Ok (List.rev items)
+    | resource :: resources ->
+        let timer = resource.demand_resource_timer in
+        let necessary = context.demand_resource_necessary resource.demand_resource_id in
+        let continue () =
+          loop
+            ({
+               demand_item = timer;
+               demand_necessary = necessary;
+               demand_effective_state =
+                 context.demand_resource_effective_state timer;
+               demand_current_state =
+                 context.demand_resource_current_state timer;
+             }
+              :: items)
+            resources
+        in
+        if necessary then
+          match context.demand_resource_validate timer with
+          | Ok () -> continue ()
+          | Error _ as error -> error
+        else continue ()
+  in
+  loop [] resources
+
 let start ~advance_generation ~effective_state ~current_state =
   if needs_start ~effective_state ~current_state then
     let generation = advance_generation (state_generation current_state) in
@@ -529,6 +573,15 @@ let apply_demand_plans ~start ~stop plans =
     demand_start_attempts = List.rev !start_attempts;
     demand_cancel_hooks = List.rev !cancel_hooks;
   }
+
+let demand_effects ~advance_generation ~cancel_running context resources =
+  match classify_demand context resources with
+  | Error _ as error -> error
+  | Ok items ->
+      Ok
+        (demand_plans ~advance_generation ~cancel_running items
+        |> apply_demand_plans ~start:context.demand_plan_start
+             ~stop:context.demand_plan_stop)
 
 let mark_failed ~advance_generation ~effective_state ~current_state ~generation
     =

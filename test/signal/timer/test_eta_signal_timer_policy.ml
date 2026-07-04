@@ -533,6 +533,96 @@ let test_apply_demand_plans_preserves_effect_order () =
     ]
     effects.Timer_policy.demand_cancel_hooks
 
+let test_demand_effects_classifies_resources () =
+  let inactive = Timer_policy.Timer_inactive 0 in
+  let running = Timer_policy.Timer_running (1, Some 10, noop) in
+  let state = function
+    | "start" -> inactive
+    | "stop" -> running
+    | "idle" -> inactive
+    | timer -> Alcotest.failf "unexpected timer %s" timer
+  in
+  let validated = ref [] in
+  let resources =
+    [
+      Timer_policy.demand_resource ~id:1 "start";
+      Timer_policy.demand_resource ~id:2 "stop";
+      Timer_policy.demand_resource ~id:3 "idle";
+    ]
+  in
+  let context =
+    {
+      Timer_policy.demand_resource_necessary = (fun id -> id = 1);
+      demand_resource_validate =
+        (fun timer ->
+          validated := timer :: !validated;
+          Ok ());
+      demand_resource_effective_state = state;
+      demand_resource_current_state = state;
+      demand_plan_start =
+        (fun timer plan ->
+          timer ^ ":start:"
+          ^ string_of_int plan.Timer_policy.start_generation);
+      demand_plan_stop =
+        (fun timer plan ->
+          if List.length plan.Timer_policy.stop_cancel_hooks = 0 then []
+          else [ timer ^ ":stop" ]);
+    }
+  in
+  match
+    Timer_policy.demand_effects ~advance_generation:succ
+      ~cancel_running:true context resources
+  with
+  | Error _ -> Alcotest.fail "unexpected demand validation failure"
+  | Ok effects ->
+      Alcotest.(check (list string))
+        "validated necessary timers" [ "start" ] !validated;
+      Alcotest.(check (list string))
+        "start attempts" [ "start:start:1" ]
+        effects.Timer_policy.demand_start_attempts;
+      Alcotest.(check (list string))
+        "cancel hooks" [ "stop:stop" ]
+        effects.Timer_policy.demand_cancel_hooks
+
+let test_demand_effects_validation_failure_short_circuits () =
+  let started = ref false in
+  let stopped = ref false in
+  let validated = ref [] in
+  let inactive = Timer_policy.Timer_inactive 0 in
+  let context =
+    {
+      Timer_policy.demand_resource_necessary = (fun _id -> true);
+      demand_resource_validate =
+        (fun timer ->
+          validated := timer :: !validated;
+          Error `Runtime_mismatch);
+      demand_resource_effective_state = (fun _timer -> inactive);
+      demand_resource_current_state = (fun _timer -> inactive);
+      demand_plan_start =
+        (fun _timer _plan ->
+          started := true;
+          "started");
+      demand_plan_stop =
+        (fun _timer _plan ->
+          stopped := true;
+          [ "stopped" ]);
+    }
+  in
+  let resources =
+    [
+      Timer_policy.demand_resource ~id:1 "bad";
+      Timer_policy.demand_resource ~id:2 "unreached";
+    ]
+  in
+  Alcotest.(check (result reject runtime_error))
+    "runtime validation failure"
+    (Error `Runtime_mismatch)
+    (Timer_policy.demand_effects ~advance_generation:succ
+       ~cancel_running:true context resources);
+  Alcotest.(check (list string)) "validated once" [ "bad" ] !validated;
+  Alcotest.(check bool) "no start effects" false !started;
+  Alcotest.(check bool) "no stop effects" false !stopped
+
 let test_start_policy () =
   let inactive = Timer_policy.Timer_inactive 0 in
   let running = Timer_policy.Timer_running (1, Some 10, noop) in
@@ -1081,6 +1171,10 @@ let () =
             test_demand_plans_policy;
           Alcotest.test_case "apply demand plans preserves effect order" `Quick
             test_apply_demand_plans_preserves_effect_order;
+          Alcotest.test_case "demand effects classification" `Quick
+            test_demand_effects_classifies_resources;
+          Alcotest.test_case "demand effects validation failure" `Quick
+            test_demand_effects_validation_failure_short_circuits;
           Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "preflight policy" `Quick
             test_preflight_policy;

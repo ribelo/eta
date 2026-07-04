@@ -58,6 +58,8 @@ type 'a demand_item = {
   demand_current_state : state;
 }
 
+type ('id, 'timer) demand_resource
+
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -87,6 +89,15 @@ type stop_plan = {
 type start_plan = {
   start_state : state;
   start_generation : int;
+}
+
+type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
+  demand_resource_necessary : 'id -> bool;
+  demand_resource_validate : 'timer -> (unit, 'error) result;
+  demand_resource_effective_state : 'timer -> state;
+  demand_resource_current_state : 'timer -> state;
+  demand_plan_start : 'timer -> start_plan -> 'start;
+  demand_plan_stop : 'timer -> stop_plan -> 'hook list;
 }
 
 type 'a demand_plan =
@@ -204,6 +215,13 @@ val needs_stop : effective_state:state -> bool
 val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
 
+val demand_resource : id:'id -> 'timer -> ('id, 'timer) demand_resource
+
+val classify_demand :
+  ('id, 'timer, _, _, 'error) demand_context ->
+  ('id, 'timer) demand_resource list ->
+  ('timer demand_item list, 'error) result
+
 val start :
   advance_generation:(int -> int) ->
   effective_state:state ->
@@ -233,6 +251,13 @@ val apply_demand_plans :
   stop:('timer -> stop_plan -> 'hook list) ->
   'timer demand_plan list ->
   ('start, 'hook) demand_effects
+
+val demand_effects :
+  advance_generation:(int -> int) ->
+  cancel_running:bool ->
+  ('id, 'timer, 'start, 'hook, 'error) demand_context ->
+  ('id, 'timer) demand_resource list ->
+  (('start, 'hook) demand_effects, 'error) result
 
 val begin_start : state -> generation:int -> state option
 
