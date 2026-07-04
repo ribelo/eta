@@ -116,3 +116,108 @@ module Value_cutoff : sig
     next:'a ->
     bool
 end
+
+module Static_eval : sig
+  type ('dependency, 'a) child
+  type ('dependency, 'a) result
+
+  val child :
+    dependency:'dependency -> 'a * bool -> ('dependency, 'a) child
+
+  val leaf : 'a -> ('dependency, 'a) result
+
+  val map :
+    ('dependency, 'a) child ->
+    ('a -> 'b) ->
+    ('dependency, 'b) result
+
+  val map2 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('a -> 'b -> 'c) ->
+    ('dependency, 'c) result
+
+  val map3 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('a -> 'b -> 'c -> 'd) ->
+    ('dependency, 'd) result
+
+  val map4 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e) ->
+    ('dependency, 'e) result
+
+  val map5 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('dependency, 'e) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f) ->
+    ('dependency, 'f) result
+
+  val map6 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('dependency, 'e) child ->
+    ('dependency, 'f) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g) ->
+    ('dependency, 'g) result
+
+  val map7 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('dependency, 'e) child ->
+    ('dependency, 'f) child ->
+    ('dependency, 'g) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h) ->
+    ('dependency, 'h) result
+
+  val map8 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('dependency, 'e) child ->
+    ('dependency, 'f) child ->
+    ('dependency, 'g) child ->
+    ('dependency, 'h) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i) ->
+    ('dependency, 'i) result
+
+  val map9 :
+    ('dependency, 'a) child ->
+    ('dependency, 'b) child ->
+    ('dependency, 'c) child ->
+    ('dependency, 'd) child ->
+    ('dependency, 'e) child ->
+    ('dependency, 'f) child ->
+    ('dependency, 'g) child ->
+    ('dependency, 'h) child ->
+    ('dependency, 'i) child ->
+    ('a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i -> 'j) ->
+    ('dependency, 'j) result
+
+  val all :
+    ('dependency, 'a) child list -> ('dependency, 'a list) result
+
+  val dependencies : ('dependency, 'a) result -> 'dependency list
+  val output : ('dependency, 'a) result -> 'a
+  val children_changed : ('dependency, 'a) result -> bool
+
+  val should_recompute :
+    dirty:bool ->
+    initialized:bool ->
+    dependencies_changed:('dependency list -> bool) ->
+    ('dependency, 'a) result ->
+    bool
+end

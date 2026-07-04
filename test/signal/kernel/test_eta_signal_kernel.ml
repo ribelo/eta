@@ -269,6 +269,76 @@ let test_value_cutoff_unequal_value_is_changed () =
     (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
        ~current:(Some 1) ~next:2)
 
+let test_static_eval_map2_preserves_dependencies_and_output () =
+  let left = Kernel.Static_eval.child ~dependency:"left" (2, false) in
+  let right = Kernel.Static_eval.child ~dependency:"right" (3, true) in
+  let result = Kernel.Static_eval.map2 left right ( + ) in
+  Alcotest.(check (list string)) "dependencies" [ "left"; "right" ]
+    (Kernel.Static_eval.dependencies result);
+  Alcotest.(check int) "output" 5 (Kernel.Static_eval.output result);
+  Alcotest.(check bool) "children changed" true
+    (Kernel.Static_eval.children_changed result)
+
+let test_static_eval_all_preserves_order () =
+  let left = Kernel.Static_eval.child ~dependency:1 ("a", false) in
+  let middle = Kernel.Static_eval.child ~dependency:2 ("b", false) in
+  let right = Kernel.Static_eval.child ~dependency:3 ("c", false) in
+  let result = Kernel.Static_eval.all [ left; middle; right ] in
+  Alcotest.(check (list int)) "dependencies" [ 1; 2; 3 ]
+    (Kernel.Static_eval.dependencies result);
+  Alcotest.(check (list string)) "output" [ "a"; "b"; "c" ]
+    (Kernel.Static_eval.output result);
+  Alcotest.(check bool) "children changed" false
+    (Kernel.Static_eval.children_changed result)
+
+let test_static_eval_recompute_predicate () =
+  let clean = Kernel.Static_eval.leaf 1 in
+  let changed_child =
+    Kernel.Static_eval.map
+      (Kernel.Static_eval.child ~dependency:"dep" (1, true))
+      succ
+  in
+  let dependencies_changed dependencies =
+    List.exists (String.equal "changed") dependencies
+  in
+  Alcotest.(check bool) "clean" false
+    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+       ~dependencies_changed clean);
+  Alcotest.(check bool) "dirty" true
+    (Kernel.Static_eval.should_recompute ~dirty:true ~initialized:true
+       ~dependencies_changed clean);
+  Alcotest.(check bool) "uninitialized" true
+    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:false
+       ~dependencies_changed clean);
+  Alcotest.(check bool) "child changed" true
+    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+       ~dependencies_changed changed_child);
+  let changed_dependency =
+    Kernel.Static_eval.map
+      (Kernel.Static_eval.child ~dependency:"changed" (1, false))
+      succ
+  in
+  Alcotest.(check bool) "dependency changed" true
+    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+       ~dependencies_changed changed_dependency)
+
+let test_static_eval_delays_output_until_requested () =
+  let ran = ref false in
+  let child = Kernel.Static_eval.child ~dependency:"dep" (1, false) in
+  let result =
+    Kernel.Static_eval.map child (fun value ->
+        ran := true;
+        value + 1)
+  in
+  let dependencies_changed _ = false in
+  ignore
+    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+       ~dependencies_changed result
+      : bool);
+  Alcotest.(check bool) "not forced by predicate" false !ran;
+  Alcotest.(check int) "output" 2 (Kernel.Static_eval.output result);
+  Alcotest.(check bool) "forced by output" true !ran
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -328,5 +398,16 @@ let () =
             test_value_cutoff_equal_value_is_unchanged;
           Alcotest.test_case "unequal value is changed" `Quick
             test_value_cutoff_unequal_value_is_changed;
+        ] );
+      ( "static_eval",
+        [
+          Alcotest.test_case "map2 preserves dependencies and output" `Quick
+            test_static_eval_map2_preserves_dependencies_and_output;
+          Alcotest.test_case "all preserves order" `Quick
+            test_static_eval_all_preserves_order;
+          Alcotest.test_case "recompute predicate" `Quick
+            test_static_eval_recompute_predicate;
+          Alcotest.test_case "delays output until requested" `Quick
+            test_static_eval_delays_output_until_requested;
         ] );
     ]

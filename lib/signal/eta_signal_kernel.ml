@@ -180,3 +180,144 @@ module Value_cutoff = struct
     | None -> true
     | Some old_value -> not (equal old_value next)
 end
+
+module Static_eval = struct
+  type ('dependency, 'a) child = {
+    dependency : 'dependency;
+    value : 'a;
+    changed : bool;
+  }
+
+  type ('dependency, 'a) result = {
+    dependencies : 'dependency list;
+    children_changed : bool;
+    output : unit -> 'a;
+  }
+
+  let child ~dependency (value, changed) = { dependency; value; changed }
+
+  let result ~dependencies ~children_changed output =
+    { dependencies; children_changed; output }
+
+  let leaf output =
+    { dependencies = []; children_changed = false; output = (fun () -> output) }
+
+  let map a f =
+    result ~dependencies:[ a.dependency ] ~children_changed:a.changed
+      (fun () -> f a.value)
+
+  let map2 a b f =
+    result
+      ~dependencies:[ a.dependency; b.dependency ]
+      ~children_changed:(a.changed || b.changed)
+      (fun () -> f a.value b.value)
+
+  let map3 a b c f =
+    result
+      ~dependencies:[ a.dependency; b.dependency; c.dependency ]
+      ~children_changed:(a.changed || b.changed || c.changed)
+      (fun () -> f a.value b.value c.value)
+
+  let map4 a b c d f =
+    result
+      ~dependencies:[ a.dependency; b.dependency; c.dependency; d.dependency ]
+      ~children_changed:(a.changed || b.changed || c.changed || d.changed)
+      (fun () -> f a.value b.value c.value d.value)
+
+  let map5 a b c d e f =
+    result
+      ~dependencies:
+        [ a.dependency; b.dependency; c.dependency; d.dependency; e.dependency ]
+      ~children_changed:
+        (a.changed || b.changed || c.changed || d.changed || e.changed)
+      (fun () -> f a.value b.value c.value d.value e.value)
+
+  let map6 a b c d e f_child f =
+    result
+      ~dependencies:
+        [
+          a.dependency;
+          b.dependency;
+          c.dependency;
+          d.dependency;
+          e.dependency;
+          f_child.dependency;
+        ]
+      ~children_changed:
+        (a.changed || b.changed || c.changed || d.changed || e.changed
+       || f_child.changed)
+      (fun () -> f a.value b.value c.value d.value e.value f_child.value)
+
+  let map7 a b c d e f_child g f =
+    result
+      ~dependencies:
+        [
+          a.dependency;
+          b.dependency;
+          c.dependency;
+          d.dependency;
+          e.dependency;
+          f_child.dependency;
+          g.dependency;
+        ]
+      ~children_changed:
+        (a.changed || b.changed || c.changed || d.changed || e.changed
+       || f_child.changed || g.changed)
+      (fun () ->
+        f a.value b.value c.value d.value e.value f_child.value g.value)
+
+  let map8 a b c d e f_child g h f =
+    result
+      ~dependencies:
+        [
+          a.dependency;
+          b.dependency;
+          c.dependency;
+          d.dependency;
+          e.dependency;
+          f_child.dependency;
+          g.dependency;
+          h.dependency;
+        ]
+      ~children_changed:
+        (a.changed || b.changed || c.changed || d.changed || e.changed
+       || f_child.changed || g.changed || h.changed)
+      (fun () ->
+        f a.value b.value c.value d.value e.value f_child.value g.value
+          h.value)
+
+  let map9 a b c d e f_child g h i f =
+    result
+      ~dependencies:
+        [
+          a.dependency;
+          b.dependency;
+          c.dependency;
+          d.dependency;
+          e.dependency;
+          f_child.dependency;
+          g.dependency;
+          h.dependency;
+          i.dependency;
+        ]
+      ~children_changed:
+        (a.changed || b.changed || c.changed || d.changed || e.changed
+       || f_child.changed || g.changed || h.changed || i.changed)
+      (fun () ->
+        f a.value b.value c.value d.value e.value f_child.value g.value h.value
+          i.value)
+
+  let all children =
+    result
+      ~dependencies:(List.map (fun child -> child.dependency) children)
+      ~children_changed:(List.exists (fun child -> child.changed) children)
+      (fun () -> List.map (fun child -> child.value) children)
+
+  let dependencies result = result.dependencies
+  let output result = result.output ()
+  let children_changed result = result.children_changed
+
+  let should_recompute ~dirty ~initialized ~dependencies_changed result =
+    dirty || (not initialized) || result.children_changed
+    || dependencies_changed result.dependencies
+end

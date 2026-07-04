@@ -2192,142 +2192,112 @@ module Make (Observer_error : Observer_error) () = struct
       stage_dependency_versions signal dependencies;
       recompute value
     in
+    let static_child child_signal =
+      Kernel.Static_eval.child ~dependency:(P child_signal)
+        (compute child_signal)
+    in
+    let finish_static ?(stage_dependencies = true) result =
+      if
+        Kernel.Static_eval.should_recompute ~dirty:signal.dirty
+          ~initialized:(signal_initialized ())
+          ~dependencies_changed:dependency_changed result
+      then
+        let output = Kernel.Static_eval.output result in
+        if stage_dependencies then
+          recompute_with_dependencies (Kernel.Static_eval.dependencies result)
+            output
+        else recompute output
+      else use_cached ()
+    in
     match signal.kind with
     | Const value ->
-        if signal.dirty || not (signal_initialized ()) then recompute value
-        else use_cached ()
+        finish_static ~stage_dependencies:false (Kernel.Static_eval.leaf value)
     | Var var ->
-        if signal.dirty || not (signal_initialized ()) then
-          recompute (effective_var_value var)
-        else use_cached ()
+        finish_static ~stage_dependencies:false
+          (Kernel.Static_eval.leaf (effective_var_value var))
     | Map (a, f) ->
-        let av, ac = compute a in
-        let dependencies = [ P a ] in
-        if
-          signal.dirty || ac || dependency_changed dependencies
-          || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av)
-        else use_cached ()
+        let a_child = static_child a in
+        finish_static (Kernel.Static_eval.map a_child f)
     | Map2 (a, b, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let dependencies = [ P a; P b ] in
-        if
-          signal.dirty || ac || bc || dependency_changed dependencies
-          || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av bv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        finish_static
+          (Kernel.Static_eval.map2 a_child b_child f)
     | Map3 (a, b, c, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dependencies = [ P a; P b; P c ] in
-        if
-          signal.dirty || ac || bc || cc || dependency_changed dependencies
-          || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av bv cv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        finish_static
+          (Kernel.Static_eval.map3 a_child b_child c_child f)
     | Map4 (a, b, c, d, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let dependencies = [ P a; P b; P c; P d ] in
-        if
-          signal.dirty || ac || bc || cc || dc || dependency_changed dependencies
-          || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av bv cv dv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        finish_static
+          (Kernel.Static_eval.map4 a_child b_child c_child d_child f)
     | Map5 (a, b, c, d, e, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let ev, ec = compute e in
-        let dependencies = [ P a; P b; P c; P d; P e ] in
-        if
-          signal.dirty || ac || bc || cc || dc || ec
-          || not (signal_initialized ()) || dependency_changed dependencies
-        then recompute_with_dependencies dependencies (f av bv cv dv ev)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        let e_child = static_child e in
+        finish_static
+          (Kernel.Static_eval.map5 a_child b_child c_child d_child e_child f)
     | Map6 (a, b, c, d, e, f_signal, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let ev, ec = compute e in
-        let fv, fc = compute f_signal in
-        let dependencies = [ P a; P b; P c; P d; P e; P f_signal ] in
-        if
-          signal.dirty || ac || bc || cc || dc || ec || fc
-          || dependency_changed dependencies || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av bv cv dv ev fv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        let e_child = static_child e in
+        let f_child = static_child f_signal in
+        finish_static
+          (Kernel.Static_eval.map6 a_child b_child c_child d_child e_child
+             f_child f)
     | Map7 (a, b, c, d, e, f_signal, g, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let ev, ec = compute e in
-        let fv, fc = compute f_signal in
-        let gv, gc = compute g in
-        let dependencies = [ P a; P b; P c; P d; P e; P f_signal; P g ] in
-        if
-          signal.dirty || ac || bc || cc || dc || ec || fc || gc
-          || dependency_changed dependencies || not (signal_initialized ())
-        then recompute_with_dependencies dependencies (f av bv cv dv ev fv gv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        let e_child = static_child e in
+        let f_child = static_child f_signal in
+        let g_child = static_child g in
+        finish_static
+          (Kernel.Static_eval.map7 a_child b_child c_child d_child e_child
+             f_child g_child f)
     | Map8 (a, b, c, d, e, f_signal, g, h, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let ev, ec = compute e in
-        let fv, fc = compute f_signal in
-        let gv, gc = compute g in
-        let hv, hc = compute h in
-        let dependencies =
-          [ P a; P b; P c; P d; P e; P f_signal; P g; P h ]
-        in
-        if
-          signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc
-          || dependency_changed dependencies || not (signal_initialized ())
-        then
-          recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        let e_child = static_child e in
+        let f_child = static_child f_signal in
+        let g_child = static_child g in
+        let h_child = static_child h in
+        finish_static
+          (Kernel.Static_eval.map8 a_child b_child c_child d_child e_child
+             f_child g_child h_child f)
     | Map9 (a, b, c, d, e, f_signal, g, h, i, f) ->
-        let av, ac = compute a in
-        let bv, bc = compute b in
-        let cv, cc = compute c in
-        let dv, dc = compute d in
-        let ev, ec = compute e in
-        let fv, fc = compute f_signal in
-        let gv, gc = compute g in
-        let hv, hc = compute h in
-        let iv, ic = compute i in
-        let dependencies =
-          [ P a; P b; P c; P d; P e; P f_signal; P g; P h; P i ]
-        in
-        if
-          signal.dirty || ac || bc || cc || dc || ec || fc || gc || hc || ic
-          || dependency_changed dependencies || not (signal_initialized ())
-        then
-          recompute_with_dependencies dependencies (f av bv cv dv ev fv gv hv iv)
-        else use_cached ()
+        let a_child = static_child a in
+        let b_child = static_child b in
+        let c_child = static_child c in
+        let d_child = static_child d in
+        let e_child = static_child e in
+        let f_child = static_child f_signal in
+        let g_child = static_child g in
+        let h_child = static_child h in
+        let i_child = static_child i in
+        finish_static
+          (Kernel.Static_eval.map9 a_child b_child c_child d_child e_child
+             f_child g_child h_child i_child f)
     | All signals ->
-        let values, changed =
+        let children =
           List.fold_right
-            (fun child (values, changed) ->
-              let value, child_changed = compute child in
-              (value :: values, changed || child_changed))
-            signals ([], false)
+            (fun child_signal children ->
+              static_child child_signal :: children)
+            signals []
         in
-        let dependencies = List.map (fun signal -> P signal) signals in
-        if
-          signal.dirty || changed || dependency_changed dependencies
-          || not (signal_initialized ())
-        then recompute_with_dependencies dependencies values
-        else use_cached ()
+        finish_static (Kernel.Static_eval.all children)
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         let needs_new_inner =
