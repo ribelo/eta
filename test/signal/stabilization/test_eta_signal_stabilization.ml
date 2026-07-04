@@ -32,12 +32,12 @@ let test_begin_commit_finish () =
     (match S.state state with
     | Committed -> true
     | Idle | Pure | Delivering -> false);
-  ignore (S.collect_to_delivering state committed : S.delivering S.token);
+  let delivering = S.collect_to_delivering state committed in
   Alcotest.(check bool) "delivering" true
     (match S.state state with
     | Delivering -> true
     | Idle | Pure | Committed -> false);
-  S.finish state;
+  ignore (S.finish_delivering state delivering : S.idle S.token);
   Alcotest.(check bool) "finished idle" true
     (match S.state state with
     | Idle -> true
@@ -149,9 +149,10 @@ let test_tokens_are_bound_to_state () =
       ignore
         (S.collect_to_delivering second first_committed
           : S.delivering S.token));
-  ignore (S.collect_to_delivering second second_committed : S.delivering S.token);
-  S.finish first;
-  S.finish second
+  let second_delivering = S.collect_to_delivering second second_committed in
+  let first_delivering = S.collect_to_delivering first first_committed in
+  ignore (S.finish_delivering first first_delivering : S.idle S.token);
+  ignore (S.finish_delivering second second_delivering : S.idle S.token)
 
 let test_begin_opens_transaction () =
   let state = S.create () in

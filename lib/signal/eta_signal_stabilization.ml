@@ -135,9 +135,3 @@ let finish_delivering t token =
   require_no_transaction "finish_delivering" t;
   t.state <- Idle;
   Token t.id
-
-let finish t =
-  require_no_transaction "finish" t;
-  match t.state with
-  | Idle -> ()
-  | Pure | Committed | Delivering -> t.state <- Idle
