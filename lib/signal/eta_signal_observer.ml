@@ -11,6 +11,23 @@ module Update = struct
     | Changed { new_value; _ } -> new_value
 end
 
+module Delivery_handle = struct
+  type ('token, 'update, 'after_ack) t = {
+    token : 'token;
+    update : 'update;
+    current_token :
+      'error. unit -> ('token option, 'error) Eta.Effect.t;
+    acknowledge_sent :
+      'error. 'token -> 'update -> (unit, 'error) Eta.Effect.t;
+    acknowledge_drop :
+      'error.
+      after_ack:'after_ack list ->
+      'token ->
+      'update ->
+      (unit, 'error) Eta.Effect.t;
+  }
+end
+
 module Value = struct
   type 'a t =
     | Uninitialized

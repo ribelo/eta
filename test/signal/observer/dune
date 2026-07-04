@@ -13,4 +13,4 @@
 (test
  (name test_eta_signal_observer)
  (modules test_eta_signal_observer eta_signal_observer)
- (libraries alcotest))
+ (libraries eta alcotest))

@@ -2463,24 +2463,13 @@ module Make (Observer_error : Observer_error) () = struct
     type 'a t = 'a observer
     type delivery_token = Observer_core.Delivery.token
 
-    type 'a delivery = {
-      token : delivery_token;
-      update : 'a update;
-      current_token :
-        'err. unit -> (delivery_token option, 'err) Effect.t;
-      acknowledge_sent :
-        'err. delivery_token -> 'a update -> (unit, 'err) Effect.t;
-      acknowledge_drop :
-        'err.
-        after_ack:observer_after_ack_action list ->
-        delivery_token ->
-        'a update ->
-        (unit, 'err) Effect.t;
-    }
+    type 'a delivery =
+      (delivery_token, 'a update, observer_after_ack_action)
+      Observer_core.Delivery_handle.t
 
     let delivery observer token update =
       {
-        token;
+        Observer_core.Delivery_handle.token;
         update;
         current_token = (fun () -> active_event_delivery_token observer token);
         acknowledge_sent =
@@ -3458,14 +3447,6 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let bridge_observer_delivery observer_delivery =
-      {
-        Stream_bridge.observer_update = observer_delivery.Observer.update;
-        observer_current_token = observer_delivery.Observer.current_token;
-        observer_acknowledge_sent = observer_delivery.Observer.acknowledge_sent;
-        observer_acknowledge_drop = observer_delivery.Observer.acknowledge_drop;
-      }
-
     let bridge_hooks () =
       Stream_bridge.hooks ~metrics:graph.stream_bridge_metrics
         ~after_try_send_before_ack:(fun () ->
@@ -3482,8 +3463,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~map_observe_error:(fun err -> (err :> stream_error))
         ~observe_delivery:
           (fun ?equal ~on_finish signal callback ->
-            Observer.observe_delivery ?equal ~on_finish signal (fun delivery ->
-                callback (bridge_observer_delivery delivery)))
+            Observer.observe_delivery ?equal ~on_finish signal callback)
         signal
   end
 end

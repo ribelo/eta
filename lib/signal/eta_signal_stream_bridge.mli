@@ -29,17 +29,8 @@ type ('token, 'update, 'error) delivery = {
     (unit, 'error) Eta.Effect.t;
 }
 
-type ('token, 'update, 'error) observer_delivery = {
-  observer_update : 'update;
-  observer_current_token : unit -> ('token option, 'error) Eta.Effect.t;
-  observer_acknowledge_sent :
-    'token -> 'update -> (unit, 'error) Eta.Effect.t;
-  observer_acknowledge_drop :
-    after_ack:(unit -> unit) list ->
-    'token ->
-    'update ->
-    (unit, 'error) Eta.Effect.t;
-}
+type ('token, 'update, 'error) observer_delivery =
+  ('token, 'update, unit -> unit) Eta_signal_observer.Delivery_handle.t
 
 type ('queue_error, 'error) hooks = {
   after_try_send_before_ack : unit -> (unit, 'error) Eta.Effect.t;

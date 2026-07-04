@@ -1,5 +1,6 @@
 module Effect = Eta.Effect
 module Queue = Eta.Queue
+module Delivery_handle = Eta_signal_observer.Delivery_handle
 module Observer_lifecycle = Eta_signal_observer.Lifecycle
 
 let default_capacity = 1024
@@ -32,16 +33,8 @@ type ('token, 'update, 'error) delivery = {
     (unit, 'error) Effect.t;
 }
 
-type ('token, 'update, 'error) observer_delivery = {
-  observer_update : 'update;
-  observer_current_token : unit -> ('token option, 'error) Effect.t;
-  observer_acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
-  observer_acknowledge_drop :
-    after_ack:(unit -> unit) list ->
-    'token ->
-    'update ->
-    (unit, 'error) Effect.t;
-}
+type ('token, 'update, 'error) observer_delivery =
+  ('token, 'update, unit -> unit) Delivery_handle.t
 
 type ('queue_error, 'error) hooks = {
   after_try_send_before_ack : unit -> (unit, 'error) Effect.t;
@@ -175,12 +168,13 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
 let offer_observer_delivery ~queue ~observer_delivery ~hooks ~on_drop =
   let delivery =
     {
-      current_token = observer_delivery.observer_current_token;
-      acknowledge_sent = observer_delivery.observer_acknowledge_sent;
-      acknowledge_drop = observer_delivery.observer_acknowledge_drop;
+      current_token = observer_delivery.Delivery_handle.current_token;
+      acknowledge_sent = observer_delivery.Delivery_handle.acknowledge_sent;
+      acknowledge_drop = observer_delivery.Delivery_handle.acknowledge_drop;
     }
   in
-  offer ~queue ~delivery ~hooks ~on_drop observer_delivery.observer_update
+  offer ~queue ~delivery ~hooks ~on_drop
+    observer_delivery.Delivery_handle.update
 
 let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
     ~observe_delivery signal =

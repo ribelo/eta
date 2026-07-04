@@ -1,5 +1,6 @@
 module Effect = Eta.Effect
 module Queue = Eta.Queue
+module Delivery_handle = Eta_signal_observer.Delivery_handle
 module Observer_lifecycle = Eta_signal_observer.Lifecycle
 module Stream_bridge = Eta_signal_stream_bridge
 
@@ -70,12 +71,13 @@ let delivery ~token ~sent ~dropped =
 
 let observer_delivery ~token ~sent ~dropped value =
   {
-    Stream_bridge.observer_update = value;
-    observer_current_token = (fun () -> Effect.sync (fun () -> !token));
-    observer_acknowledge_sent =
+    Delivery_handle.token = Option.value !token ~default:(-1);
+    update = value;
+    current_token = (fun () -> Effect.sync (fun () -> !token));
+    acknowledge_sent =
       (fun token value ->
         Effect.sync (fun () -> sent := (token, value) :: !sent));
-    observer_acknowledge_drop =
+    acknowledge_drop =
       (fun ~after_ack token value ->
         Effect.sync (fun () ->
             dropped := (token, value) :: !dropped;
@@ -221,13 +223,14 @@ let test_observe_adapter () =
     finish_hooks := on_finish;
     callback
       {
-        Stream_bridge.observer_update = signal;
-        observer_current_token =
+        Delivery_handle.token = Option.value !token ~default:(-1);
+        update = signal;
+        current_token =
           (fun () -> Effect.sync (fun () -> !token));
-        observer_acknowledge_sent =
+        acknowledge_sent =
           (fun token value ->
             Effect.sync (fun () -> sent := (token, value) :: !sent));
-        observer_acknowledge_drop =
+        acknowledge_drop =
           (fun ~after_ack:_ _token _value -> Effect.unit);
       }
     |> Effect.map (fun () -> "observer")
