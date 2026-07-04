@@ -2,4 +2,5 @@
  (name eta_signal)
  (public_name eta_signal)
  (synopsis "Incremental-style reactive signals for Eta")
+ (private_modules eta_signal_transaction)
  (libraries eta eta_stream))
