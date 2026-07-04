@@ -11,6 +11,11 @@ let run_ok runtime effect =
   | Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
+let run_error runtime effect =
+  match Eta_eio.Runtime.run runtime effect with
+  | Exit.Ok _ -> Alcotest.fail "expected Error, got Ok"
+  | Exit.Error cause -> cause
+
 let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -25,6 +30,15 @@ let with_runtime f =
 
 let record events event = events := !events @ [ event ]
 
+let check_demand_failed cause =
+  match Cause.failures cause with
+  | [ `Demand_failed ] -> ()
+  | _ ->
+      Alcotest.failf "expected Demand_failed, got %a"
+        (Cause.pp (fun ppf `Demand_failed ->
+             Format.pp_print_string ppf "Demand_failed"))
+        cause
+
 let test_cancellable_stop_skips_loop () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
@@ -37,6 +51,109 @@ let test_cancellable_stop_skips_loop () =
        ~loop:(Effect.sync (fun () -> record events "loop")));
   Alcotest.(check (list string))
     "events" [ "install_cancel" ] !events
+
+let test_refresh_demand_orders_cancel_start_and_rollback () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  run_ok runtime
+    (Adapter.refresh_demand
+       {
+         Adapter.acquire_demand =
+           (fun _runtime_contract ->
+             Effect.sync (fun () ->
+                 record events "acquire";
+                 ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ])));
+         rollback_unclaimed_starts =
+           (fun attempts ->
+             Effect.sync (fun () ->
+                 List.iter
+                   (fun attempt -> record events ("rollback:" ^ attempt))
+                   attempts));
+         run_cancel_hooks =
+           (fun hooks ->
+             Effect.sync (fun () ->
+                 List.iter (fun hook -> record events ("cancel:" ^ hook)) hooks));
+         run_start_attempts =
+           (fun attempts ->
+             Effect.sync (fun () ->
+                 List.iter
+                   (fun attempt -> record events ("start:" ^ attempt))
+                   attempts));
+       });
+  Alcotest.(check (list string))
+    "events"
+    [
+      "acquire";
+      "cancel:cancel-a";
+      "cancel:cancel-b";
+      "start:start-a";
+      "start:start-b";
+      "rollback:start-a";
+      "rollback:start-b";
+    ]
+    !events
+
+let test_refresh_demand_release_does_not_rerun_cancel_hooks () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let cause =
+    run_error runtime
+      (Adapter.refresh_demand
+         {
+           Adapter.acquire_demand =
+             (fun _runtime_contract ->
+               Effect.sync (fun () ->
+                   record events "acquire";
+                   ([ "start" ], [ "cancel" ])));
+           rollback_unclaimed_starts =
+             (fun attempts ->
+               Effect.sync (fun () ->
+                   List.iter
+                     (fun attempt -> record events ("rollback:" ^ attempt))
+                     attempts));
+           run_cancel_hooks =
+             (fun hooks ->
+               Effect.sync (fun () ->
+                   List.iter
+                     (fun hook -> record events ("cancel:" ^ hook))
+                     hooks));
+           run_start_attempts =
+             (fun attempts ->
+               Effect.sync (fun () ->
+                   List.iter
+                     (fun attempt -> record events ("start:" ^ attempt))
+                     attempts)
+               |> Effect.bind (fun () -> Effect.fail `Demand_failed));
+         })
+  in
+  check_demand_failed cause;
+  Alcotest.(check (list string))
+    "events"
+    [ "acquire"; "cancel:cancel"; "start:start"; "rollback:start" ]
+    !events
+
+let test_refresh_demand_acquire_failure_skips_use_and_release () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let cause =
+    run_error runtime
+      (Adapter.refresh_demand
+         {
+           Adapter.acquire_demand =
+             (fun _runtime_contract ->
+               Effect.sync (fun () -> record events "acquire")
+               |> Effect.bind (fun () -> Effect.fail `Demand_failed));
+           rollback_unclaimed_starts =
+             (fun _attempts ->
+               Effect.sync (fun () -> record events "rollback"));
+           run_cancel_hooks =
+             (fun _hooks -> Effect.sync (fun () -> record events "cancel"));
+           run_start_attempts =
+             (fun _attempts -> Effect.sync (fun () -> record events "start"));
+         })
+  in
+  check_demand_failed cause;
+  Alcotest.(check (list string)) "events" [ "acquire" ] !events
 
 let test_loop_orders_due_advance_and_update () =
   with_runtime @@ fun runtime ->
@@ -180,6 +297,12 @@ let () =
         [
           Alcotest.test_case "cancellable stop skips loop" `Quick
             test_cancellable_stop_skips_loop;
+          Alcotest.test_case "refresh demand callback order" `Quick
+            test_refresh_demand_orders_cancel_start_and_rollback;
+          Alcotest.test_case "refresh demand release does not rerun cancel hooks"
+            `Quick test_refresh_demand_release_does_not_rerun_cancel_hooks;
+          Alcotest.test_case "refresh demand acquire failure skips cleanup"
+            `Quick test_refresh_demand_acquire_failure_skips_use_and_release;
           Alcotest.test_case "loop callback order" `Quick
             test_loop_orders_due_advance_and_update;
           Alcotest.test_case "start update before initial due" `Quick

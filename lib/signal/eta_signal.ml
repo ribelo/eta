@@ -1787,9 +1787,6 @@ module Make (Observer_error : Observer_error) () = struct
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
-  let run_pending_timer_cancel_hooks hooks_ref =
-    Cleanup.run_pending hooks_ref |> Effect.uninterruptible
-
   let refresh_timer_demand_unlocked runtime_contract =
     let needed = collect_necessary_node_ids () in
     let demand_items =
@@ -1832,30 +1829,26 @@ module Make (Observer_error : Observer_error) () = struct
   let run_timer_start_attempts attempts =
     Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
 
+  let run_timer_cancel_hooks hooks =
+    Cleanup.run_hooks hooks |> Effect.uninterruptible
+
   let current_runtime_contract () =
     Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
       (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
 
   let refresh_timer_demand () =
-    current_runtime_contract ()
-    |> Effect.bind (fun runtime_contract ->
-           Effect.acquire_use_release
-             ~acquire:
-               (with_graph_lane_sync (fun () ->
-                    try
-                      let start_attempts, cancel_hooks =
-                        refresh_timer_demand_unlocked runtime_contract
-                      in
-                      Ok (start_attempts, ref cancel_hooks)
-                    with Graph_error err -> Error err)
-                |> Effect.flatten_result)
-             ~release:(fun (start_attempts, cancel_hooks_ref) ->
-               rollback_unclaimed_timer_starts start_attempts
-               |> Effect.bind (fun () ->
-                      run_pending_timer_cancel_hooks cancel_hooks_ref))
-             (fun (start_attempts, cancel_hooks_ref) ->
-               run_pending_timer_cancel_hooks cancel_hooks_ref
-               |> Effect.bind (fun () -> run_timer_start_attempts start_attempts)))
+    Timer_adapter.refresh_demand
+      {
+        Timer_adapter.acquire_demand =
+          (fun runtime_contract ->
+            with_graph_lane_sync (fun () ->
+                try Ok (refresh_timer_demand_unlocked runtime_contract)
+                with Graph_error err -> Error err)
+            |> Effect.flatten_result);
+        rollback_unclaimed_starts = rollback_unclaimed_timer_starts;
+        run_cancel_hooks = run_timer_cancel_hooks;
+        run_start_attempts = run_timer_start_attempts;
+      }
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
     fail_with_pending_disposal_hooks hooks_ref

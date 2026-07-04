@@ -55,10 +55,26 @@ type 'error start_callbacks = {
     (unit, 'error) Eta.Effect.t;
 }
 
+type ('attempt, 'cancel_hook, 'error) demand_callbacks = {
+  acquire_demand :
+    Eta.Runtime_contract.t ->
+    ('attempt list * 'cancel_hook list, 'error) Eta.Effect.t;
+  rollback_unclaimed_starts :
+    'attempt list -> (unit, 'error) Eta.Effect.t;
+  run_cancel_hooks :
+    'cancel_hook list -> (unit, 'error) Eta.Effect.t;
+  run_start_attempts :
+    'attempt list -> (unit, 'error) Eta.Effect.t;
+}
+
 val run_cancellable :
   install_cancel:
     (cancel:(unit -> unit) -> (continue, 'error) Eta.Effect.t) ->
   loop:(unit, 'error) Eta.Effect.t ->
+  (unit, 'error) Eta.Effect.t
+
+val refresh_demand :
+  ('attempt, 'cancel_hook, 'error) demand_callbacks ->
   (unit, 'error) Eta.Effect.t
 
 val run_loop :
