@@ -6,6 +6,7 @@ module Sync_lock = Eta.Sync_lock
 module Bind = Eta_signal_bind
 module Error = Eta_signal_error
 module Id = Eta_signal_id
+module Kernel = Eta_signal_kernel
 module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
@@ -496,6 +497,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let packed_signal_id (P signal) = signal.id
   let scope_owner_id scope = packed_signal_id (Scope.owner scope)
+
+  module Kernel_edge_node = struct
+    type id = signal_id
+    type nonrec packed = packed_signal
+    type t = Packed : 'a signal -> t
+
+    let pack (Packed signal) = P signal
+    let unpack (P signal) = Packed signal
+    let id (Packed signal) = signal.id
+    let equal_id left right = signal_id_int left = signal_id_int right
+    let dependencies (Packed signal) = signal.dependencies
+    let set_dependencies (Packed signal) dependencies =
+      signal.dependencies <- dependencies
+    let dependents (Packed signal) = signal.dependents
+    let set_dependents (Packed signal) dependents =
+      signal.dependents <- dependents
+  end
+
+  module Kernel_edges = Kernel.Make_edges (Kernel_edge_node)
+
+  let kernel_edge_node signal = Kernel_edge_node.Packed signal
 
   module Private_test_hooks = struct
     include Private_test_hook_state
@@ -1059,28 +1081,27 @@ module Make (Observer_error : Observer_error) () = struct
   let current_generation () = graph.stabilization_id
 
   let remove_dependent child parent =
-    child.dependents <-
-      List.filter (fun (P candidate) -> candidate.id <> parent.id) child.dependents
+    Kernel_edges.remove_dependent ~child:(kernel_edge_node child)
+      ~parent:(kernel_edge_node parent)
 
   let detach_dependency parent child =
-    remove_dependent child parent;
-    parent.dependencies <-
-      List.filter (fun (P candidate) -> candidate.id <> child.id) parent.dependencies
+    Kernel_edges.detach_dependency ~parent:(kernel_edge_node parent)
+      ~child:(kernel_edge_node child)
 
   let has_dependency parent child =
-    List.exists (fun (P candidate) -> candidate.id = child.id) parent.dependencies
+    Kernel_edges.has_dependency ~parent:(kernel_edge_node parent)
+      ~child:(kernel_edge_node child)
 
   let has_dependent child parent =
-    List.exists (fun (P candidate) -> candidate.id = parent.id) child.dependents
+    Kernel_edges.has_dependent ~child:(kernel_edge_node child)
+      ~parent:(kernel_edge_node parent)
 
   let attach_dependency parent child =
-    if not (has_dependent child parent) then
-      child.dependents <- P parent :: child.dependents;
-    if not (has_dependency parent child) then
-      parent.dependencies <- P child :: parent.dependencies
+    Kernel_edges.attach_dependency ~parent:(kernel_edge_node parent)
+      ~child:(kernel_edge_node child)
 
-  let attach_packed_dependency parent (P child) =
-    attach_dependency parent child
+  let attach_packed_dependency parent child =
+    Kernel_edges.attach_packed_dependency ~parent:(kernel_edge_node parent) child
 
   let mark_self_dirty (P signal) = signal.dirty <- true
 
