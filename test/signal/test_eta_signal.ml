@@ -3669,7 +3669,8 @@ let test_var_create_counter_overflow_raises_graph_error () =
 let test_stabilization_generation_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Overflow_signal.graph.stabilization_id <- max_int;
+  Eta_signal_testable.Graph_state.set_generation Overflow_signal.graph.state
+    max_int;
   expect_fail "stabilization generation overflow"
     (counter_overflow "stabilization generation")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
@@ -3677,7 +3678,8 @@ let test_stabilization_generation_overflow_is_typed_failure () =
 let test_timer_refresh_token_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Overflow_signal.graph.next_timer_refresh_token <- max_int;
+  Eta_signal_testable.Graph_state.set_next_timer_refresh_token
+    Overflow_signal.graph.state max_int;
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
@@ -3702,7 +3704,8 @@ let test_stats_counter_saturation_is_typed_failure () =
           (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ()))))
   in
   check "stats pure_snapshot_commit_count" (fun value ->
-      Overflow_signal.graph.pure_snapshot_commit_count <- value);
+      Eta_signal_testable.Graph_state.set_pure_snapshot_commit_count
+        Overflow_signal.graph.state value);
   check "stats callback_delivery_count" (fun value ->
       Overflow_signal.graph.callback_delivery_count <- value);
   check_stats_count "stats total_node_count"

@@ -6,6 +6,7 @@ module Bind = Eta_signal_bind
 module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
+module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
 module Signal_snapshot = Kernel.Snapshot
@@ -14,7 +15,6 @@ module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
-module Staging = Eta_signal_staging
 module Stabilization = Eta_signal_stabilization
 module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
@@ -581,18 +581,18 @@ module Make (Observer_error : Observer_error) () = struct
     mutable next_id : int;
     mutable next_scope_id : int;
     stabilization : graph_error Stabilization.t;
-    mutable stabilization_id : int;
-    mutable pending_vars : packed_var list;
-    mutable staged_binds : packed_bind list;
-    mutable computed_nodes : packed_signal list;
-    mutable pure_disposal_hooks : disposal_hook list;
-    mutable timer_refresh_disposal_hooks : disposal_hook list;
-    mutable timer_refresh_staged_timers : timer_node list;
+    state :
+      ( packed_var,
+        packed_bind,
+        packed_signal,
+        disposal_hook,
+        timer_node,
+        timer_refresh_context )
+      Graph_state.t;
     mutable observers : packed_observer list;
     mutable all_nodes : weak_packed_signal list;
     mutable dead_nodes : dead_signal list;
     current_scope : (scope_id, packed_signal, packed_signal) Scope.context;
-    mutable pure_snapshot_commit_count : int;
     mutable callback_delivery_count : int;
     mutable recompute_count : int;
     mutable dynamic_scope_invalidations : int;
@@ -600,8 +600,6 @@ module Make (Observer_error : Observer_error) () = struct
     mutable nodes_became_unnecessary : int;
     mutable stream_bridge_metrics : Stream_bridge.metrics;
     mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
-    mutable next_timer_refresh_token : int;
-    mutable active_timer_refresh : timer_refresh_context option;
   }
 
   let graph =
@@ -612,18 +610,11 @@ module Make (Observer_error : Observer_error) () = struct
       next_id = 0;
       next_scope_id = 1;
       stabilization = Stabilization.create ();
-      stabilization_id = 0;
-      pending_vars = [];
-      staged_binds = [];
-      computed_nodes = [];
-      pure_disposal_hooks = [];
-      timer_refresh_disposal_hooks = [];
-      timer_refresh_staged_timers = [];
+      state = Graph_state.create ();
       observers = [];
       all_nodes = [];
       dead_nodes = [];
       current_scope = Scope.create_context ();
-      pure_snapshot_commit_count = 0;
       callback_delivery_count = 0;
       recompute_count = 0;
       dynamic_scope_invalidations = 0;
@@ -631,8 +622,6 @@ module Make (Observer_error : Observer_error) () = struct
       nodes_became_unnecessary = 0;
       stream_bridge_metrics = Stream_bridge.create_metrics ();
       necessary_node_ids = Hashtbl.create 16;
-      next_timer_refresh_token = 0;
-      active_timer_refresh = None;
     }
 
   let pack_weak_signal signal = P signal
@@ -734,7 +723,7 @@ module Make (Observer_error : Observer_error) () = struct
     graph.next_scope_id <- checked_succ "scope id" id;
     Scope.create ~id:(Id.scope id) ~owner:(P owner) ~parent:owner.scope
 
-  let current_generation () = graph.stabilization_id
+  let current_generation () = Graph_state.generation graph.state
 
   let remove_dependent child parent =
     Kernel_edges.remove_dependent ~child:(kernel_edge_node child)
@@ -763,7 +752,7 @@ module Make (Observer_error : Observer_error) () = struct
     Kernel_dirty.mark packed
 
   let mark_timer_refresh_dirty packed =
-    match graph.active_timer_refresh with
+    match Graph_state.active_timer_refresh graph.state with
     | None -> Kernel_dirty.mark packed
     | Some context ->
         Timer_policy.set_refresh_dirty_items context
@@ -796,9 +785,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let remember_computed (P signal) =
     let generation = current_generation () in
-    graph.computed_nodes <-
-      Kernel_compute.remember ~generation graph.computed_nodes
-        (kernel_edge_node signal)
+    Graph_state.remember_computed graph.state ~generation
+      (P signal)
+      ~project:(fun (P signal) -> kernel_edge_node signal)
+      ~remember:(fun ~generation nodes node ->
+        Kernel_compute.remember ~generation nodes node)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -1003,7 +994,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_state_label = Timer_policy.state_label
 
   let timer_has_staged_refresh timer =
-    match graph.active_timer_refresh with
+    match Graph_state.active_timer_refresh graph.state with
     | Some context ->
         timer.timer_staged_refresh_token = Timer_policy.refresh_token context
     | None -> false
@@ -1056,7 +1047,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_set_next_due_state = Timer_policy.state_set_next_due
 
   let remember_timer_refresh_timer timer =
-    match graph.active_timer_refresh with
+    match Graph_state.active_timer_refresh graph.state with
     | None -> ()
     | Some context ->
         let timer_refresh_token = Timer_policy.refresh_token context in
@@ -1065,8 +1056,7 @@ module Make (Observer_error : Observer_error) () = struct
           update_timer_staging timer (fun snapshot ->
               Timer_policy.snapshot_with_on_demand_refresh_token snapshot
                 timer_refresh_token);
-          graph.timer_refresh_staged_timers <-
-            timer :: graph.timer_refresh_staged_timers)
+          Graph_state.stage_timer_refresh_timer graph.state timer)
 
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
@@ -1256,7 +1246,7 @@ module Make (Observer_error : Observer_error) () = struct
   let remember_staged_bind (B bind as packed) =
     let transaction = active_transaction () in
     if not (Transaction.staged transaction bind.snapshot) then
-      graph.staged_binds <- packed :: graph.staged_binds
+      Graph_state.stage_bind graph.state packed
 
   let stage_bind_switch bind source_value inner scope =
     remember_staged_bind (B bind);
@@ -1375,7 +1365,7 @@ module Make (Observer_error : Observer_error) () = struct
     let invalidated_nodes = ref [] in
     List.iter
       (preflight_staged_bind_commit invalidated_ids invalidated_nodes)
-      graph.staged_binds;
+      (Graph_state.staged_binds graph.state);
     (invalidated_ids, !invalidated_nodes)
 
   let collect_post_commit_necessary_timers invalidated_ids =
@@ -1422,22 +1412,20 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
-    List.iter (preflight_signal_commit invalidated_ids) graph.computed_nodes;
+    List.iter (preflight_signal_commit invalidated_ids)
+      (Graph_state.computed_nodes graph.state);
     preflight_post_commit_timer_starts invalidated_ids
 
   let remember_pure_disposal_hooks hooks =
-    graph.pure_disposal_hooks <- hooks @ graph.pure_disposal_hooks
+    Graph_state.remember_pure_disposal_hooks graph.state hooks
 
   let remember_timer_refresh_disposal_hooks hooks =
-    if Option.is_some graph.active_timer_refresh then
-      graph.timer_refresh_disposal_hooks <-
-        hooks @ graph.timer_refresh_disposal_hooks
-    else remember_pure_disposal_hooks hooks
+    Graph_state.remember_timer_refresh_disposal_hooks graph.state hooks
 
   let queue_var_unlocked (type a) (source : a var) =
     if not source.queued then (
       source.queued <- true;
-      graph.pending_vars <- V source :: graph.pending_vars)
+      Graph_state.enqueue_pending graph.state (V source))
 
   let set_var_source_unlocked (type a) (source : a var) value =
     Transaction.replace_current source.source_value value;
@@ -1495,73 +1483,27 @@ module Make (Observer_error : Observer_error) () = struct
   let clear_timer_refresh_timer_staging timer =
     timer.timer_staged_refresh_token <- -1
 
-  let rollback_timer_refresh_dirty_nodes () =
-    match graph.active_timer_refresh with
-    | None -> ()
-    | Some context ->
-        Kernel_dirty.restore (Timer_policy.refresh_dirty_items context);
-        Timer_policy.clear_refresh_dirty_items context
-
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
 
-  let clear_timer_refresh_staging () =
-    rollback_timer_refresh_dirty_nodes ();
-    List.iter clear_timer_refresh_timer_staging graph.timer_refresh_staged_timers;
-    graph.timer_refresh_staged_timers <- [];
-    graph.timer_refresh_disposal_hooks <- []
-
   let reset_staging () =
-    Staging.reset
-      {
-        rollback_binds =
-          (fun () -> List.concat_map rollback_bind graph.staged_binds);
-        pure_disposal_hooks = (fun () -> graph.pure_disposal_hooks);
-        rollback_transaction;
-        clear_computed_nodes = (fun () -> graph.computed_nodes <- []);
-        clear_staged_binds = (fun () -> graph.staged_binds <- []);
-        clear_pure_disposal_hooks =
-          (fun () -> graph.pure_disposal_hooks <- []);
-        clear_timer_refresh_staging;
-      }
+    Graph_state.reset_staging graph.state ~rollback_bind
+      ~rollback_transaction
+      ~rollback_timer_refresh_dirty:(fun context ->
+        Kernel_dirty.restore (Timer_policy.refresh_dirty_items context);
+        Timer_policy.clear_refresh_dirty_items context)
+      ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
   let commit_staging () =
-    Staging.commit
-      {
-        preflight = preflight_commit_staging;
-        commit_binds =
-          (fun () -> List.concat_map commit_bind graph.staged_binds);
-        remember_pure_disposal_hooks;
-        prepare_signals =
-          (fun () -> List.iter prepare_signal_commit graph.computed_nodes);
-        commit_transaction;
-        commit_timer_refresh =
-          (fun () ->
-            List.iter commit_timer_refresh_staging
-              graph.timer_refresh_staged_timers);
-        commit_signals =
-          (fun () -> List.iter commit_signal graph.computed_nodes);
-        disposal_hooks =
-          (fun () ->
-            graph.pure_disposal_hooks @ graph.timer_refresh_disposal_hooks);
-        clear_computed_nodes = (fun () -> graph.computed_nodes <- []);
-        clear_staged_binds = (fun () -> graph.staged_binds <- []);
-        clear_pure_disposal_hooks =
-          (fun () -> graph.pure_disposal_hooks <- []);
-        clear_timer_refresh_disposal_hooks =
-          (fun () -> graph.timer_refresh_disposal_hooks <- []);
-        clear_timer_refresh_staged_timers =
-          (fun () -> graph.timer_refresh_staged_timers <- []);
-        commit_snapshot =
-          (fun () ->
-            graph.pure_snapshot_commit_count <-
-              saturating_succ graph.pure_snapshot_commit_count);
-      }
+    Graph_state.commit_staging graph.state ~preflight:preflight_commit_staging
+      ~commit_bind ~prepare_signal:prepare_signal_commit ~commit_transaction
+      ~commit_timer_refresh:commit_timer_refresh_staging
+      ~commit_signal ~advance_snapshot:saturating_succ
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (
       var.queued <- true;
-      graph.pending_vars <- packed :: graph.pending_vars)
+      Graph_state.enqueue_pending graph.state packed)
 
   let mark_failed_without_current (O observer) =
     match observer_active_live_state observer with
@@ -1574,10 +1516,8 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
 
   let next_timer_refresh_token_unlocked () =
-    let token = graph.next_timer_refresh_token in
-    graph.next_timer_refresh_token <-
-      checked_succ "timer refresh token" graph.next_timer_refresh_token;
-    token
+    Graph_state.next_timer_refresh_token graph.state
+      ~advance:(fun token -> checked_succ "timer refresh token" token)
 
   let stage_pending_var (V var) =
     let graph_value = Transaction.current var.graph_value in
@@ -1587,7 +1527,7 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter mark_self_dirty (source_watchers_unlocked var))
 
   let refresh_timer_source_for_compute signal =
-    match (graph.active_timer_refresh, signal.timer) with
+    match (Graph_state.active_timer_refresh graph.state, signal.timer) with
     | Some timer_refresh, Some timer ->
         let timer_refresh_token = Timer_policy.refresh_token timer_refresh in
         ensure_timer_runtime timer
@@ -2197,23 +2137,12 @@ module Make (Observer_error : Observer_error) () = struct
         reentrant_error = `Reentrant_stabilization;
         advance_generation =
           (fun () ->
-            let generation =
-              checked_succ "stabilization generation" graph.stabilization_id
-            in
-            graph.stabilization_id <- generation);
+            Graph_state.advance_generation graph.state ~advance:(fun value ->
+              checked_succ "stabilization generation" value));
         begin_staging =
           (fun () ->
-            graph.computed_nodes <- [];
-            graph.staged_binds <- [];
-            graph.pure_disposal_hooks <- [];
-            graph.timer_refresh_disposal_hooks <- [];
-            graph.timer_refresh_staged_timers <- [];
-            graph.active_timer_refresh <- timer_refresh);
-        drain_pending =
-          (fun () ->
-            let pending_at_start = List.rev graph.pending_vars in
-            graph.pending_vars <- [];
-            pending_at_start);
+            Graph_state.begin_staging graph.state ~timer_refresh);
+        drain_pending = (fun () -> Graph_state.drain_pending graph.state);
         release_pending_marks =
           (fun pending ->
             List.iter (fun (V var) -> var.queued <- false) pending);
@@ -2229,7 +2158,8 @@ module Make (Observer_error : Observer_error) () = struct
         mark_events_pending =
           (fun events -> List.iter mark_event_pending events);
         update_necessity = update_necessity_counters_unlocked;
-        clear_timer_refresh = (fun () -> graph.active_timer_refresh <- None);
+        clear_timer_refresh =
+          (fun () -> Graph_state.clear_active_timer_refresh graph.state);
         rollback_staging = reset_staging;
         mark_observers_failed_without_current =
           (fun observers ->
@@ -2243,7 +2173,7 @@ module Make (Observer_error : Observer_error) () = struct
       }
 
   let finish_stabilize delivering_token =
-    graph.active_timer_refresh <- None;
+    Graph_state.clear_active_timer_refresh graph.state;
     ignore
       (Stabilization.finish_delivering graph.stabilization
          delivering_token
@@ -2633,7 +2563,7 @@ module Make (Observer_error : Observer_error) () = struct
             {
               pure_snapshot_commit_count =
                 stats_counter "stats pure_snapshot_commit_count"
-                  graph.pure_snapshot_commit_count;
+                  (Graph_state.pure_snapshot_commit_count graph.state);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
                   graph.callback_delivery_count;
