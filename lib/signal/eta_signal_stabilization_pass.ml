@@ -1,8 +1,9 @@
-type ('hook, 'event, 'error) result =
+type ('owner, 'hook, 'event, 'error) result =
   | Pure_ok of
       'hook list
       * 'event list
-      * Eta_signal_stabilization.delivering Eta_signal_stabilization.token
+      * ('owner, Eta_signal_stabilization.delivering)
+        Eta_signal_stabilization.token
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
@@ -41,7 +42,7 @@ let rollback state pure_token ops observers pending =
   ops.clear_timer_refresh ();
   ignore
     (Eta_signal_stabilization.rollback_to_idle state pure_token
-      : Eta_signal_stabilization.idle Eta_signal_stabilization.token);
+      : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token);
   hooks
 
 let run state ops =

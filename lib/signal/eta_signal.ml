@@ -593,7 +593,7 @@ module Make (Observer_error : Observer_error) () = struct
     owner_domain : Domain.id;
     mutable next_id : int;
     mutable next_scope_id : int;
-    stabilization : graph_error Stabilization.t;
+    stabilization : (graph, graph_error) Stabilization.t;
     state :
       ( packed_var,
         packed_bind,
@@ -2195,7 +2195,7 @@ module Make (Observer_error : Observer_error) () = struct
     ignore
       (Stabilization.finish_delivering graph.stabilization
          delivering_token
-        : Stabilization.idle Stabilization.token)
+        : (graph, Stabilization.idle) Stabilization.token)
 
   let graph_error_of_die die =
     match die.Eta.Cause.exn with

@@ -1,10 +1,11 @@
 (** Pure stabilization pass orchestration for Eta_signal internals. *)
 
-type ('hook, 'event, 'error) result =
+type ('owner, 'hook, 'event, 'error) result =
   | Pure_ok of
       'hook list
       * 'event list
-      * Eta_signal_stabilization.delivering Eta_signal_stabilization.token
+      * ('owner, Eta_signal_stabilization.delivering)
+        Eta_signal_stabilization.token
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
@@ -33,9 +34,9 @@ type ('pending, 'observer, 'event, 'hook, 'error) t = {
     cleanup; callers provide only graph operations. *)
 
 val run :
-  'error Eta_signal_stabilization.t ->
+  ('owner, 'error) Eta_signal_stabilization.t ->
   ('pending, 'observer, 'event, 'hook, 'error) t ->
-  ('hook, 'event, 'error) result
+  ('owner, 'hook, 'event, 'error) result
 
 type ('event, 'error) delivery = {
   run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;

@@ -1,6 +1,10 @@
 module S = Eta_signal_stabilization
 module Pass = Eta_signal_stabilization_pass
 
+type owner
+type 'state token = (owner, 'state) S.token
+type 'error stabilization = (owner, 'error) S.t
+
 type test_error = [ `Delivery_failed | `Graph | `Reentrant_stabilization ]
 
 exception Graph_failure
@@ -92,7 +96,7 @@ let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
 
 let test_success_runs_pure_pass_in_order () =
   let events = ref [] in
-  let state : test_error S.t = S.create () in
+  let state : test_error stabilization = S.create () in
   match Pass.run state (ops state events) with
   | Pass.Pure_ok (hooks, pass_events, delivering) ->
       Alcotest.(check (list string))
@@ -119,13 +123,13 @@ let test_success_runs_pure_pass_in_order () =
         (match S.state state with
         | S.Delivering -> true
         | S.Idle | S.Pure | S.Committed -> false);
-      ignore (S.finish_delivering state delivering : S.idle S.token)
+      ignore (S.finish_delivering state delivering : S.idle token)
   | Pass.Pure_graph_error _ -> Alcotest.fail "unexpected graph error"
   | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect"
 
 let test_graph_error_rolls_back_in_order () =
   let events = ref [] in
-  let state : test_error S.t = S.create () in
+  let state : test_error stabilization = S.create () in
   match
     Pass.run state
       (ops state events ~stage_pending:(fun _ -> raise Graph_failure))
@@ -160,7 +164,7 @@ let test_graph_error_rolls_back_in_order () =
 
 let test_defect_rolls_back_in_order () =
   let events = ref [] in
-  let state : test_error S.t = S.create () in
+  let state : test_error stabilization = S.create () in
   match
     Pass.run state
       (ops state events ~commit_staging:(fun () -> failwith "boom"))
@@ -195,7 +199,7 @@ let test_defect_rolls_back_in_order () =
 
 let test_reentrant_begin_is_graph_error_without_callbacks () =
   let events = ref [] in
-  let state : test_error S.t = S.create () in
+  let state : test_error stabilization = S.create () in
   let pure =
     match S.begin_pure state with
     | Ok pure -> pure
@@ -212,7 +216,7 @@ let test_reentrant_begin_is_graph_error_without_callbacks () =
   | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
   | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect");
   S.rollback_transaction state;
-  ignore (S.rollback_to_idle state pure : S.idle S.token)
+  ignore (S.rollback_to_idle state pure : S.idle token)
 
 let delivery_ops ?(run_events = fun _events -> Eta.Effect.unit) events =
   {

@@ -3,7 +3,7 @@ type pure
 type committed
 type delivering
 
-type +'state token = Token of int
+type ('owner, +'state) token = Token of int
 
 type state =
   | Idle
@@ -16,7 +16,7 @@ type pure_transaction_status =
   | Pure_transaction_committed
   | Pure_transaction_rolled_back
 
-type 'error t = {
+type ('owner, 'error) t = {
   id : int;
   mutable state : state;
   mutable pure_transaction_status : pure_transaction_status option;

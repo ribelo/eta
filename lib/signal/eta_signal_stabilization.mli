@@ -5,8 +5,9 @@ type pure
 type committed
 type delivering
 
-type +'state token
-(** Phase token bound to the stabilization state that created it. *)
+type ('owner, +'state) token
+(** Phase token carrying the owner phantom of the stabilization state that
+    created it. Runtime IDs still guard individual state instances. *)
 
 type state =
   | Idle
@@ -14,28 +15,38 @@ type state =
   | Committed
   | Delivering
 
-type 'error t
+type ('owner, 'error) t
 
-val create : unit -> 'error t
-val state : 'error t -> state
-val is_pure : 'error t -> bool
+val create : unit -> ('owner, 'error) t
+val state : (_, _) t -> state
+val is_pure : (_, _) t -> bool
 
 val begin_pure :
-  'error t -> (pure token, [> `Reentrant_stabilization ]) result
+  ('owner, 'error) t ->
+  (('owner, pure) token, [> `Reentrant_stabilization ]) result
 
 val transaction :
-  'error t ->
+  (_, 'error) t ->
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t option
 
 val active_transaction :
-  'error t ->
+  (_, 'error) t ->
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t
 
-val commit_transaction : 'error t -> (unit, 'error) result
-val rollback_transaction : 'error t -> unit
+val commit_transaction : (_, 'error) t -> (unit, 'error) result
+val rollback_transaction : (_, _) t -> unit
 
-val commit_to_committed : 'error t -> pure token -> committed token
-val collect_to_delivering : 'error t -> committed token -> delivering token
-val commit_to_delivering : 'error t -> pure token -> delivering token
-val rollback_to_idle : 'error t -> pure token -> idle token
-val finish_delivering : 'error t -> delivering token -> idle token
+val commit_to_committed :
+  ('owner, _) t -> ('owner, pure) token -> ('owner, committed) token
+
+val collect_to_delivering :
+  ('owner, _) t -> ('owner, committed) token -> ('owner, delivering) token
+
+val commit_to_delivering :
+  ('owner, _) t -> ('owner, pure) token -> ('owner, delivering) token
+
+val rollback_to_idle :
+  ('owner, _) t -> ('owner, pure) token -> ('owner, idle) token
+
+val finish_delivering :
+  ('owner, _) t -> ('owner, delivering) token -> ('owner, idle) token

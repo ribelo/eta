@@ -1,6 +1,10 @@
 module S = Eta_signal_stabilization
 module T = Eta_signal_transaction
 
+type owner
+type 'state token = (owner, 'state) S.token
+type 'error stabilization = (owner, 'error) S.t
+
 let expect_invalid_arg label f =
   match f () with
   | exception Invalid_argument _ -> ()
@@ -37,7 +41,7 @@ let test_begin_commit_finish () =
     (match S.state state with
     | Delivering -> true
     | Idle | Pure | Committed -> false);
-  ignore (S.finish_delivering state delivering : S.idle S.token);
+  ignore (S.finish_delivering state delivering : S.idle token);
   Alcotest.(check bool) "finished idle" true
     (match S.state state with
     | Idle -> true
@@ -61,7 +65,7 @@ let test_reentrant_begin_rejected () =
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected committed begin to fail");
-  ignore (S.collect_to_delivering state committed : S.delivering S.token);
+  ignore (S.collect_to_delivering state committed : S.delivering token);
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected delivering begin to fail")
@@ -77,7 +81,7 @@ let test_commit_to_delivering_combines_transitions () =
   (match S.commit_transaction state with
    | Ok () -> ()
    | Error () -> Alcotest.fail "commit unexpectedly failed");
-  ignore (S.commit_to_delivering state pure : S.delivering S.token);
+  ignore (S.commit_to_delivering state pure : S.delivering token);
   Alcotest.(check bool) "delivering" true
     (match S.state state with
     | Delivering -> true
@@ -95,13 +99,13 @@ let test_finish_delivering_uses_token () =
    | Ok () -> ()
    | Error () -> Alcotest.fail "commit unexpectedly failed");
   let delivering = S.commit_to_delivering state pure in
-  ignore (S.finish_delivering state delivering : S.idle S.token);
+  ignore (S.finish_delivering state delivering : S.idle token);
   Alcotest.(check bool) "finished idle" true
     (match S.state state with
     | Idle -> true
     | Pure | Committed | Delivering -> false);
   expect_invalid_arg "reused delivering token" (fun () ->
-      ignore (S.finish_delivering state delivering : S.idle S.token))
+      ignore (S.finish_delivering state delivering : S.idle token))
 
 let test_rollback_invalidates_pure_token () =
   let state = S.create () in
@@ -112,13 +116,13 @@ let test_rollback_invalidates_pure_token () =
         Alcotest.fail "expected begin to succeed"
   in
   S.rollback_transaction state;
-  ignore (S.rollback_to_idle state pure : S.idle S.token);
+  ignore (S.rollback_to_idle state pure : S.idle token);
   Alcotest.(check bool) "rolled back idle" true
     (match S.state state with
     | Idle -> true
     | Pure | Committed | Delivering -> false);
   expect_invalid_arg "reused pure token" (fun () ->
-      ignore (S.commit_to_committed state pure : S.committed S.token))
+      ignore (S.commit_to_committed state pure : S.committed token))
 
 let test_tokens_are_bound_to_state () =
   let first = S.create () in
@@ -139,7 +143,7 @@ let test_tokens_are_bound_to_state () =
    | Ok () -> ()
    | Error () -> Alcotest.fail "second commit unexpectedly failed");
   expect_invalid_arg "foreign pure token" (fun () ->
-      ignore (S.commit_to_committed second first_pure : S.committed S.token));
+      ignore (S.commit_to_committed second first_pure : S.committed token));
   let second_committed = S.commit_to_committed second second_pure in
   (match S.commit_transaction first with
    | Ok () -> ()
@@ -148,11 +152,11 @@ let test_tokens_are_bound_to_state () =
   expect_invalid_arg "foreign committed token" (fun () ->
       ignore
         (S.collect_to_delivering second first_committed
-          : S.delivering S.token));
+          : S.delivering token));
   let second_delivering = S.collect_to_delivering second second_committed in
   let first_delivering = S.collect_to_delivering first first_committed in
-  ignore (S.finish_delivering first first_delivering : S.idle S.token);
-  ignore (S.finish_delivering second second_delivering : S.idle S.token)
+  ignore (S.finish_delivering first first_delivering : S.idle token);
+  ignore (S.finish_delivering second second_delivering : S.idle token)
 
 let test_begin_opens_transaction () =
   let state = S.create () in
@@ -173,7 +177,7 @@ let test_begin_opens_transaction () =
   Alcotest.(check int) "current committed" 2 (T.current staged);
   expect_invalid_arg "active transaction after commit" (fun () ->
       ignore (S.active_transaction state : (T.pure, unit) T.t));
-  ignore (S.commit_to_committed state pure : S.committed S.token)
+  ignore (S.commit_to_committed state pure : S.committed token)
 
 let test_rollback_transaction_clears_staged_value () =
   let state = S.create () in
@@ -190,7 +194,7 @@ let test_rollback_transaction_clears_staged_value () =
   Alcotest.(check string) "current preserved" "current" (T.current staged);
   expect_invalid_arg "active transaction after rollback" (fun () ->
       ignore (S.active_transaction state : (T.pure, unit) T.t));
-  ignore (S.rollback_to_idle state pure : S.idle S.token)
+  ignore (S.rollback_to_idle state pure : S.idle token)
 
 let begin_or_fail state =
   match S.begin_pure state with
@@ -208,17 +212,17 @@ let test_commit_after_transaction_rollback_rejected () =
   let pure = begin_or_fail state in
   S.rollback_transaction state;
   expect_invalid_arg "commit after transaction rollback" (fun () ->
-      ignore (S.commit_to_committed state pure : S.committed S.token));
-  ignore (S.rollback_to_idle state pure : S.idle S.token)
+      ignore (S.commit_to_committed state pure : S.committed token));
+  ignore (S.rollback_to_idle state pure : S.idle token)
 
 let test_rollback_after_transaction_commit_rejected () =
   let state = S.create () in
   let pure = begin_or_fail state in
   commit_transaction_or_fail state;
   expect_invalid_arg "rollback after transaction commit" (fun () ->
-      ignore (S.rollback_to_idle state pure : S.idle S.token));
+      ignore (S.rollback_to_idle state pure : S.idle token));
   let delivering = S.commit_to_delivering state pure in
-  ignore (S.finish_delivering state delivering : S.idle S.token)
+  ignore (S.finish_delivering state delivering : S.idle token)
 
 type model_phase =
   | Model_idle
@@ -234,10 +238,10 @@ type model = {
 }
 
 type machine = {
-  state : unit S.t;
-  mutable pure_token : S.pure S.token option;
-  mutable committed_token : S.committed S.token option;
-  mutable delivering_token : S.delivering S.token option;
+  state : unit stabilization;
+  mutable pure_token : S.pure token option;
+  mutable committed_token : S.committed token option;
+  mutable delivering_token : S.delivering token option;
 }
 
 type op =
@@ -435,7 +439,7 @@ let run_trace_op label machine model op =
          match machine.pure_token with
          | None -> Alcotest.failf "%s: missing pure token" label
          | Some pure ->
-             ignore (S.rollback_to_idle machine.state pure : S.idle S.token);
+             ignore (S.rollback_to_idle machine.state pure : S.idle token);
              model.model_phase <- Model_idle;
              clear_pure_transaction_model model)
        else
@@ -448,7 +452,7 @@ let run_trace_op label machine model op =
          | None -> Alcotest.failf "%s: missing delivering token" label
          | Some delivering ->
              ignore
-               (S.finish_delivering machine.state delivering : S.idle S.token);
+               (S.finish_delivering machine.state delivering : S.idle token);
              model.model_phase <- Model_idle)
        else
          expect_invalid_token_op (label ^ ": finish delivering")
