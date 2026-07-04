@@ -7,8 +7,10 @@ type waiter_state =
   | Granted
   | Cancelled
 
+type access = Access of unit ref
+
 type claim_result =
-  | Grant_accepted
+  | Grant_accepted of access
   | Grant_cancelled
 
 type waiter = {
@@ -26,6 +28,7 @@ type t = {
   mutable cancelled : int;
   mutable cancelled_debt : int;
   mutable owner_fiber_id : int option;
+  mutable active_access : access option;
 }
 
 type hooks = {
@@ -42,6 +45,7 @@ let create () =
     cancelled = 0;
     cancelled_debt = 0;
     owner_fiber_id = None;
+    active_access = None;
   }
 
 let waiting_count lane = lane.waiting
@@ -61,6 +65,18 @@ let use_lock lane f = Sync_lock.use lane.lock f
 
 let invariant_failed message =
   invalid_arg ("Eta_signal lane invariant failed: " ^ message)
+
+let create_access () = Access (ref ())
+
+let access_matches left right =
+  match (left, right) with
+  | Access left, Access right -> left == right
+
+let validate_access lane access =
+  match lane.active_access with
+  | Some active when access_matches active access -> ()
+  | Some _ -> invariant_failed "lane access token is not active"
+  | None -> invariant_failed "lane access token is stale"
 
 let decrement_cancelled_debt lane =
   if lane.cancelled_debt > 0 then
@@ -141,6 +157,7 @@ let with_committed_grant lock f =
       result)
 
 let release_locked pending_grants lane =
+  lane.active_access <- None;
   match take_waiting_waiter_locked lane with
   | Some waiter ->
       lane.waiting <- lane.waiting - 1;
@@ -163,7 +180,7 @@ let cancel_waiter_locked ~hooks pending_grants lane waiter =
 
 let claim_waiter_locked waiter =
   match waiter.state with
-  | Granted -> Grant_accepted
+  | Granted -> Grant_accepted (create_access ())
   | Waiting -> invariant_failed "waiter was not granted"
   | Cancelled -> Grant_cancelled
 
@@ -187,46 +204,56 @@ let enter ~hooks contract lane =
       let promise, waiter = enqueue_waiter ~hooks contract lane in
       `Wait (promise, waiter)
     else (
+      let access = create_access () in
       lane.busy <- true;
-      `Ready)
+      lane.active_access <- Some access;
+      `Ready access)
   with
-  | `Ready -> ()
+  | `Ready access -> access
   | `Wait (promise, waiter) -> (
       let claimed = ref false in
+      let access = ref None in
       try
         contract.Runtime_contract.await_promise promise;
         (match
            use_lock_during_cancel contract lane (fun () ->
                match claim_waiter_locked waiter with
-               | Grant_accepted ->
+               | Grant_accepted granted_access ->
                    claimed := true;
-                   Grant_accepted
+                   access := Some granted_access;
+                   lane.active_access <- Some granted_access;
+                   Grant_accepted granted_access
                | Grant_cancelled -> Grant_cancelled)
          with
-        | Grant_accepted -> ()
+        | Grant_accepted granted_access -> granted_access
         | Grant_cancelled -> contract.Runtime_contract.await_cancel ())
       with exn
         when Option.is_some (contract.Runtime_contract.cancellation_reason exn) ->
         (if !claimed then
            with_committed_grant
              (fun f -> use_lock_during_cancel contract lane f)
-             (fun pending_grants -> release_locked pending_grants lane)
+             (fun pending_grants ->
+               Option.iter (validate_access lane) !access;
+               release_locked pending_grants lane)
          else
            with_committed_grant
              (fun f -> use_lock_during_cancel contract lane f)
              (fun pending_grants ->
-               cancel_waiter_locked ~hooks pending_grants lane waiter));
+                cancel_waiter_locked ~hooks pending_grants lane waiter));
         raise exn)
 
-let leave lane =
+let leave lane access =
   with_committed_grant (use_lock lane) (fun pending_grants ->
+      validate_access lane access;
       release_locked pending_grants lane)
 
-let release_sync lane owns_lane =
-  if !owns_lane then (
-    owns_lane := false;
+let release_sync lane access_ref =
+  match !access_ref with
+  | None -> ()
+  | Some access ->
+    access_ref := None;
     lane.owner_fiber_id <- None;
-    leave lane)
+    leave lane access
 
 let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
     lane f =
@@ -245,16 +272,19 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
       Effect.Expert.eval context (Effect.sync f)
     with exn -> Effect.Expert.exit_of_exn context exn
   else
-    let owns_lane = ref false in
+    let access_ref = ref None in
     let release_after_interrupt () =
-      contract.Runtime_contract.protect (fun () -> release_sync lane owns_lane)
+      contract.Runtime_contract.protect (fun () ->
+          release_sync lane access_ref)
     in
     try
       ensure_context ();
-      enter ~hooks contract lane;
-      owns_lane := true;
+      let access = enter ~hooks contract lane in
+      access_ref := Some access;
       lane.owner_fiber_id <- Some current_fiber_id;
-      let release_lane = Effect.sync (fun () -> release_sync lane owns_lane) in
+      let release_lane =
+        Effect.sync (fun () -> release_sync lane access_ref)
+      in
       contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
           Effect.Expert.eval context
             (after_acquired ()

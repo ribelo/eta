@@ -1,6 +1,7 @@
 (** Serialized graph-lane acquisition for Eta_signal internals. *)
 
 type t
+type access
 
 type hooks = {
   note_waiter_enqueued : unit -> unit;
@@ -9,8 +10,8 @@ type hooks = {
 
 val create : unit -> t
 
-val enter : hooks:hooks -> Eta.Runtime_contract.t -> t -> unit
-val leave : t -> unit
+val enter : hooks:hooks -> Eta.Runtime_contract.t -> t -> access
+val leave : t -> access -> unit
 
 val can_reenter :
   lane_depth:int -> owner_fiber_id:int option -> current_fiber_id:int -> bool
