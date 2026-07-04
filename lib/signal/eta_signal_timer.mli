@@ -56,6 +56,12 @@ type wake_plan = {
   wake_update_missed : int;
 }
 
+type update_batch = {
+  update_batch_count : int;
+  update_batch_remaining : int;
+  update_batch_yield : bool;
+}
+
 type stop_plan = {
   stop_state : state;
   stop_cancel_hooks : (unit -> unit) list;
@@ -94,6 +100,8 @@ val validate_positive_duration_ms : int -> (unit, [> `Past_deadline ]) result
 
 val catch_up_update_count : catch_up_policy -> int -> int
 val catch_up_update_missed : catch_up_policy -> int -> int
+
+val update_batch : remaining:int -> update_batch option
 
 val daemon_wake_plan :
   catch_up_policy:catch_up_policy ->

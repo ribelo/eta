@@ -3260,7 +3260,6 @@ module Make (Observer_error : Observer_error) () = struct
           | Timer.Daemon_stop -> `Stopped)
 
     let add_relative_deadline = Timer.add_relative_deadline
-    let timer_catch_up_batch_size = 64
 
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
@@ -3311,20 +3310,20 @@ module Make (Observer_error : Observer_error) () = struct
                           update ~missed))
 
     let rec run_timer_updates timer generation remaining update ~missed =
-      if remaining <= 0 then Effect.unit
-      else
-        let batch = min remaining timer_catch_up_batch_size in
-        run_timer_update_batch timer generation batch update ~missed
+      match Timer.update_batch ~remaining with
+      | None -> Effect.unit
+      | Some batch ->
+        run_timer_update_batch timer generation batch.update_batch_count update
+          ~missed
         |> Effect.bind (function
              | `Stop -> Effect.unit
              | `Continue ->
-                 let remaining = remaining - batch in
-                 if remaining <= 0 then Effect.unit
+                 if not batch.update_batch_yield then Effect.unit
                  else
                    Effect.yield
                    |> Effect.bind (fun () ->
-                          run_timer_updates timer generation remaining update
-                            ~missed))
+                          run_timer_updates timer generation
+                            batch.update_batch_remaining update ~missed))
 
     let rec timer_loop timer generation interval_ms next_due_ms update =
       timer_read_next_due timer generation next_due_ms

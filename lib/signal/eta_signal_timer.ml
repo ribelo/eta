@@ -45,6 +45,12 @@ type wake_plan = {
   wake_update_missed : int;
 }
 
+type update_batch = {
+  update_batch_count : int;
+  update_batch_remaining : int;
+  update_batch_yield : bool;
+}
+
 type deadline_refresh = {
   deadline_value : bool;
   deadline_finish : bool;
@@ -151,6 +157,20 @@ let catch_up_update_missed policy missed =
   match policy with
   | Catch_up_every_cadence | Catch_up_once_per_wake -> 1
   | Catch_up_coalesced -> missed
+
+let update_batch_size = 64
+
+let update_batch ~remaining =
+  if remaining <= 0 then None
+  else
+    let update_batch_count = min remaining update_batch_size in
+    let update_batch_remaining = remaining - update_batch_count in
+    Some
+      {
+        update_batch_count;
+        update_batch_remaining;
+        update_batch_yield = update_batch_remaining > 0;
+      }
 
 let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
   let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in

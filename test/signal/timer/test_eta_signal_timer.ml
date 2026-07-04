@@ -76,6 +76,28 @@ let test_catch_up_policy () =
   Alcotest.(check int) "coalesced missed" 3
     (Timer.catch_up_update_missed Catch_up_coalesced 3)
 
+let test_update_batch_policy () =
+  Alcotest.(check bool) "no remaining work" true
+    (Option.is_none (Timer.update_batch ~remaining:0));
+  (match Timer.update_batch ~remaining:3 with
+  | Some batch ->
+      Alcotest.(check int) "small batch count" 3
+        batch.update_batch_count;
+      Alcotest.(check int) "small batch remaining" 0
+        batch.update_batch_remaining;
+      Alcotest.(check bool) "small batch no yield" false
+        batch.update_batch_yield
+  | None -> Alcotest.fail "expected small batch");
+  (match Timer.update_batch ~remaining:65 with
+  | Some batch ->
+      Alcotest.(check int) "large batch count" 64
+        batch.update_batch_count;
+      Alcotest.(check int) "large batch remaining" 1
+        batch.update_batch_remaining;
+      Alcotest.(check bool) "large batch yields" true
+        batch.update_batch_yield
+  | None -> Alcotest.fail "expected large batch")
+
 let test_daemon_wake_plan () =
   let every =
     Timer.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
@@ -751,6 +773,8 @@ let () =
           Alcotest.test_case "validation policy" `Quick
             test_validation_policy;
           Alcotest.test_case "catch up policy" `Quick test_catch_up_policy;
+          Alcotest.test_case "update batch policy" `Quick
+            test_update_batch_policy;
           Alcotest.test_case "daemon wake plan" `Quick
             test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
