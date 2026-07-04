@@ -192,6 +192,18 @@ let begin_start state ~generation =
   | Timer_running _ | Timer_finished _ ->
       None
 
+let install_cancel state ~generation ~cancel =
+  match state with
+  | Timer_running_uncancellable (running_generation, next_due_ms)
+    when running_generation = generation ->
+      Some (Timer_running (generation, next_due_ms, cancel))
+  | Timer_running (running_generation, next_due_ms, _)
+    when running_generation = generation ->
+      Some (Timer_running (generation, next_due_ms, cancel))
+  | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+  | Timer_running _ | Timer_finished _ ->
+      None
+
 let stop ~advance_generation ~cancel_running state =
   match state with
   | Timer_inactive _ | Timer_finished _ -> None

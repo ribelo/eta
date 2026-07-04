@@ -193,6 +193,41 @@ let test_begin_start_policy () =
   Alcotest.(check bool) "running start stops" true
     (Option.is_none (Timer.begin_start running ~generation:7))
 
+let test_install_cancel_policy () =
+  let old_cancelled = ref false in
+  let new_cancelled = ref false in
+  let old_cancel () = old_cancelled := true in
+  let new_cancel () = new_cancelled := true in
+  let uncancellable = Timer.Timer_running_uncancellable (7, Some 10) in
+  let running = Timer.Timer_running (7, Some 11, old_cancel) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match
+     Timer.install_cancel uncancellable ~generation:7 ~cancel:new_cancel
+   with
+  | Some state ->
+      Alcotest.(check string) "uncancellable state" "running"
+        (Timer.state_label state);
+      Alcotest.(check (option int)) "uncancellable next due" (Some 10)
+        (Timer.state_next_due state);
+      List.iter (fun hook -> hook ()) (Timer.finish_cancel_hooks state);
+      Alcotest.(check bool) "new cancel installed" true !new_cancelled
+  | None -> Alcotest.fail "expected cancel install");
+  new_cancelled := false;
+  (match Timer.install_cancel running ~generation:7 ~cancel:new_cancel with
+  | Some state ->
+      Alcotest.(check (option int)) "running next due" (Some 11)
+        (Timer.state_next_due state);
+      List.iter (fun hook -> hook ()) (Timer.finish_cancel_hooks state);
+      Alcotest.(check bool) "old cancel replaced" false !old_cancelled;
+      Alcotest.(check bool) "new cancel replacement" true !new_cancelled
+  | None -> Alcotest.fail "expected cancel replacement");
+  Alcotest.(check bool) "stale generation ignored" true
+    (Option.is_none
+       (Timer.install_cancel running ~generation:8 ~cancel:new_cancel));
+  Alcotest.(check bool) "inactive ignored" true
+    (Option.is_none
+       (Timer.install_cancel inactive ~generation:7 ~cancel:new_cancel))
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -293,6 +328,8 @@ let () =
           Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "begin start policy" `Quick
             test_begin_start_policy;
+          Alcotest.test_case "install cancel policy" `Quick
+            test_install_cancel_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
