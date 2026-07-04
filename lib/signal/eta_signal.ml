@@ -1988,23 +1988,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_timer_demand_unlocked runtime_contract =
     let needed = necessary_timers () in
-    let timer_actions =
+    let demand_items =
       all_timers ()
-      |> List.filter_map (fun (id, timer) ->
+      |> List.map (fun (id, timer) ->
              let necessary = Hashtbl.mem needed id in
              if necessary then ensure_timer_runtime timer runtime_contract;
-             (match
-                Timer.demand_action ~necessary
-                  ~effective_state:(timer_effective_state timer)
-                  ~current_state:(timer_current_state timer)
-              with
-             | Timer.Demand_none -> None
-             | Timer.Demand_start ->
-                 preflight_timer_start timer;
-                 Some (timer, Timer.Demand_start)
-             | Timer.Demand_stop ->
-                 preflight_timer_invalidation timer;
-                 Some (timer, Timer.Demand_stop)))
+             {
+               Timer.demand_item = timer;
+               demand_necessary = necessary;
+               demand_effective_state = timer_effective_state timer;
+               demand_current_state = timer_current_state timer;
+             })
+    in
+    let timer_actions =
+      Timer.demand_decisions demand_items
+      |> List.map (function
+           | Timer.Demand_decision_start timer ->
+               preflight_timer_start timer;
+               (timer, Timer.Demand_start)
+           | Timer.Demand_decision_stop timer ->
+               preflight_timer_invalidation timer;
+               (timer, Timer.Demand_stop))
     in
     let start_attempts = ref [] in
     let cancel_hooks = ref [] in

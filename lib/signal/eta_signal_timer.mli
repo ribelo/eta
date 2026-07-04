@@ -46,6 +46,17 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type 'a demand_item = {
+  demand_item : 'a;
+  demand_necessary : bool;
+  demand_effective_state : state;
+  demand_current_state : state;
+}
+
+type 'a demand_decision =
+  | Demand_decision_start of 'a
+  | Demand_decision_stop of 'a
+
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -165,6 +176,8 @@ val needs_stop : effective_state:state -> bool
 
 val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
+
+val demand_decisions : 'a demand_item list -> 'a demand_decision list
 
 val start :
   advance_generation:(int -> int) ->

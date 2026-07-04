@@ -354,6 +354,52 @@ let test_demand_policy () =
   Alcotest.(check bool) "inactive does not need stop" false
     (Timer.needs_stop ~effective_state:inactive)
 
+let demand_decision_values decisions =
+  List.map
+    (function
+      | Timer.Demand_decision_start item -> (item, Timer.Demand_start)
+      | Timer.Demand_decision_stop item -> (item, Timer.Demand_stop))
+    decisions
+
+let test_demand_decisions_policy () =
+  let inactive = Timer.Timer_inactive 0 in
+  let running = Timer.Timer_running (1, Some 10, noop) in
+  let finished = Timer.Timer_finished 1 in
+  let decisions =
+    Timer.demand_decisions
+      [
+        {
+          Timer.demand_item = "start";
+          demand_necessary = true;
+          demand_effective_state = inactive;
+          demand_current_state = inactive;
+        };
+        {
+          Timer.demand_item = "keep-running";
+          demand_necessary = true;
+          demand_effective_state = running;
+          demand_current_state = running;
+        };
+        {
+          Timer.demand_item = "stop";
+          demand_necessary = false;
+          demand_effective_state = running;
+          demand_current_state = running;
+        };
+        {
+          Timer.demand_item = "finished";
+          demand_necessary = true;
+          demand_effective_state = finished;
+          demand_current_state = finished;
+        };
+      ]
+    |> demand_decision_values
+  in
+  Alcotest.(check (list (pair string demand_action)))
+    "non-noop demand decisions"
+    [ ("start", Timer.Demand_start); ("stop", Timer.Demand_stop) ]
+    decisions
+
 let test_start_policy () =
   let inactive = Timer.Timer_inactive 0 in
   let running = Timer.Timer_running (1, Some 10, noop) in
@@ -820,6 +866,8 @@ let () =
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
+          Alcotest.test_case "demand decisions policy" `Quick
+            test_demand_decisions_policy;
           Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "begin start policy" `Quick
             test_begin_start_policy;

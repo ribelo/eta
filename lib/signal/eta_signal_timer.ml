@@ -83,6 +83,17 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
+type 'a demand_item = {
+  demand_item : 'a;
+  demand_necessary : bool;
+  demand_effective_state : state;
+  demand_current_state : state;
+}
+
+type 'a demand_decision =
+  | Demand_decision_start of 'a
+  | Demand_decision_stop of 'a
+
 type daemon_status =
   | Daemon_continue
   | Daemon_stop
@@ -366,6 +377,19 @@ let demand_action ~necessary ~effective_state ~current_state =
     else Demand_none
   else if needs_stop ~effective_state then Demand_stop
   else Demand_none
+
+let demand_decisions items =
+  List.filter_map
+    (fun item ->
+      match
+        demand_action ~necessary:item.demand_necessary
+          ~effective_state:item.demand_effective_state
+          ~current_state:item.demand_current_state
+      with
+      | Demand_none -> None
+      | Demand_start -> Some (Demand_decision_start item.demand_item)
+      | Demand_stop -> Some (Demand_decision_stop item.demand_item))
+    items
 
 let start ~advance_generation ~effective_state ~current_state =
   if needs_start ~effective_state ~current_state then
