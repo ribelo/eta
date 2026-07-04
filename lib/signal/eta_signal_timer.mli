@@ -183,6 +183,18 @@ val start :
   current_state:state ->
   start_plan option
 
+val preflight_start :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  unit
+
+val preflight_stop :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  unit
+
 val demand_plans :
   advance_generation:(int -> int) ->
   cancel_running:bool ->

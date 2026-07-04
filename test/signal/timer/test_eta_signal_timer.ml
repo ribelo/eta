@@ -461,6 +461,41 @@ let test_start_policy () =
         plan.start_generation
   | None -> Alcotest.fail "expected staged effective start plan"
 
+let record_generation calls generation =
+  calls := generation :: !calls;
+  generation + 1
+
+let test_preflight_policy () =
+  let calls = ref [] in
+  let inactive = Timer.Timer_inactive 0 in
+  let inactive_current = Timer.Timer_inactive 5 in
+  let running = Timer.Timer_running (3, Some 10, noop) in
+  let staged_running =
+    Timer.Timer_running_uncancellable (9, Some 10)
+  in
+  Timer.preflight_start ~advance_generation:(record_generation calls)
+    ~effective_state:inactive ~current_state:inactive;
+  Alcotest.(check (list int)) "inactive start checks generation" [ 0 ]
+    !calls;
+  calls := [];
+  Timer.preflight_start ~advance_generation:(record_generation calls)
+    ~effective_state:running ~current_state:running;
+  Alcotest.(check (list int)) "running start noops" [] !calls;
+  Timer.preflight_stop ~advance_generation:(record_generation calls)
+    ~effective_state:running ~current_state:running;
+  Alcotest.(check (list int)) "running stop checks generation" [ 3 ]
+    !calls;
+  calls := [];
+  Timer.preflight_stop ~advance_generation:(record_generation calls)
+    ~effective_state:staged_running ~current_state:inactive_current;
+  Alcotest.(check (list int))
+    "staged active stop checks current generation"
+    [ 5 ] !calls;
+  calls := [];
+  Timer.preflight_stop ~advance_generation:(record_generation calls)
+    ~effective_state:inactive_current ~current_state:inactive_current;
+  Alcotest.(check (list int)) "inactive stop noops" [] !calls
+
 let test_begin_start_policy () =
   let starting = Timer.Timer_starting 7 in
   let running = Timer.Timer_running (7, Some 10, noop) in
@@ -931,6 +966,8 @@ let () =
           Alcotest.test_case "demand plans policy" `Quick
             test_demand_plans_policy;
           Alcotest.test_case "start policy" `Quick test_start_policy;
+          Alcotest.test_case "preflight policy" `Quick
+            test_preflight_policy;
           Alcotest.test_case "begin start policy" `Quick
             test_begin_start_policy;
           Alcotest.test_case "install cancel policy" `Quick

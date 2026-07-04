@@ -388,6 +388,15 @@ let start ~advance_generation ~effective_state ~current_state =
       }
   else None
 
+let preflight_start ~advance_generation ~effective_state ~current_state =
+  ignore
+    (start ~advance_generation ~effective_state ~current_state
+      : start_plan option)
+
+let preflight_stop ~advance_generation ~effective_state ~current_state =
+  if needs_stop ~effective_state then
+    ignore (advance_generation (state_generation current_state) : int)
+
 let begin_start state ~generation =
   match state with
   | Timer_starting starting_generation when starting_generation = generation ->

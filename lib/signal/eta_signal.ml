@@ -1384,19 +1384,16 @@ module Make (Observer_error : Observer_error) () = struct
       collected scope
 
   let preflight_timer_invalidation timer =
-    (* Scope invalidation stops active timers during commit. Check generation
-       overflow before commit mutates staged graph state; the actual stop
-       happens later in [invalidate_scope]. *)
-    if Timer.needs_stop ~effective_state:(timer_effective_state timer) then
-      ignore (checked_succ "timer generation" (timer_generation timer) : int)
+    Timer.preflight_stop
+      ~advance_generation:(checked_succ "timer generation")
+      ~effective_state:(timer_effective_state timer)
+      ~current_state:(timer_current_state timer)
 
   let preflight_timer_start timer =
-    ignore
-      (Timer.start
-         ~advance_generation:(checked_succ "timer generation")
-         ~effective_state:(timer_effective_state timer)
-         ~current_state:(timer_current_state timer)
-        : Timer.start_plan option)
+    Timer.preflight_start
+      ~advance_generation:(checked_succ "timer generation")
+      ~effective_state:(timer_effective_state timer)
+      ~current_state:(timer_current_state timer)
 
   let preflight_staged_bind_commit seen collected (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
