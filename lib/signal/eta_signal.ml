@@ -1339,7 +1339,7 @@ module Make (Observer_error : Observer_error) () = struct
         match graph.current_scope with
         | Some scope when scope.scope_valid -> Some scope
         | _ -> raise (Graph_error `Ambiguous_scope))
-    | Delivering -> raise (Graph_error `Ambiguous_scope)
+    | Committed | Delivering -> raise (Graph_error `Ambiguous_scope)
 
   let add_to_scope scope signal =
     match scope with
@@ -2949,8 +2949,12 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.active_timer_refresh <- None;
+        let committed_token =
+          Stabilization.commit_to_committed graph.stabilization pure_token
+        in
         ignore
-          (Stabilization.commit_to_delivering graph.stabilization pure_token
+          (Stabilization.collect_to_delivering graph.stabilization
+             committed_token
             : Stabilization.delivering Stabilization.token);
         Pure_ok (hooks, events)
       with

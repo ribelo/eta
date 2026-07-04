@@ -1,5 +1,6 @@
 type idle
 type pure
+type committed
 type delivering
 
 type +'state token = Token
@@ -7,6 +8,7 @@ type +'state token = Token
 type state =
   | Idle
   | Pure
+  | Committed
   | Delivering
 
 type 'error t = {
@@ -21,11 +23,12 @@ let state t = t.state
 let is_pure t =
   match t.state with
   | Pure -> true
-  | Idle | Delivering -> false
+  | Idle | Committed | Delivering -> false
 
 let state_label = function
   | Idle -> "idle"
   | Pure -> "pure"
+  | Committed -> "committed"
   | Delivering -> "delivering"
 
 let require_state name expected t =
@@ -49,7 +52,7 @@ let begin_pure t =
       t.state <- Pure;
       t.transaction <- Some (Eta_signal_transaction.begin_pure ());
       Ok Token
-  | Pure | Delivering ->
+  | Pure | Committed | Delivering ->
       Error `Reentrant_stabilization
 
 let transaction t = t.transaction
@@ -84,9 +87,14 @@ let rollback_transaction t =
       Eta_signal_transaction.rollback transaction;
       t.transaction <- None
 
-let commit_to_delivering t Token =
-  require_state "commit_to_delivering" Pure t;
-  require_no_transaction "commit_to_delivering" t;
+let commit_to_committed t Token =
+  require_state "commit_to_committed" Pure t;
+  require_no_transaction "commit_to_committed" t;
+  t.state <- Committed;
+  Token
+
+let collect_to_delivering t Token =
+  require_state "collect_to_delivering" Committed t;
   t.state <- Delivering;
   Token
 
@@ -100,4 +108,4 @@ let finish t =
   require_no_transaction "finish" t;
   match t.state with
   | Idle -> ()
-  | Pure | Delivering -> t.state <- Idle
+  | Pure | Committed | Delivering -> t.state <- Idle

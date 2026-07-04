@@ -14,7 +14,7 @@ let test_begin_commit_finish () =
   Alcotest.(check bool) "starts idle" true
     (match S.state state with
     | Idle -> true
-    | Pure | Delivering -> false);
+    | Pure | Committed | Delivering -> false);
   let pure =
     match S.begin_pure state with
     | Ok pure -> pure
@@ -25,16 +25,23 @@ let test_begin_commit_finish () =
   (match S.commit_transaction state with
    | Ok () -> ()
    | Error () -> Alcotest.fail "commit unexpectedly failed");
-  ignore (S.commit_to_delivering state pure : S.delivering S.token);
+  let committed =
+    S.commit_to_committed state pure
+  in
+  Alcotest.(check bool) "committed" true
+    (match S.state state with
+    | Committed -> true
+    | Idle | Pure | Delivering -> false);
+  ignore (S.collect_to_delivering state committed : S.delivering S.token);
   Alcotest.(check bool) "delivering" true
     (match S.state state with
     | Delivering -> true
-    | Idle | Pure -> false);
+    | Idle | Pure | Committed -> false);
   S.finish state;
   Alcotest.(check bool) "finished idle" true
     (match S.state state with
     | Idle -> true
-    | Pure | Delivering -> false)
+    | Pure | Committed | Delivering -> false)
 
 let test_reentrant_begin_rejected () =
   let state = S.create () in
@@ -50,7 +57,11 @@ let test_reentrant_begin_rejected () =
   (match S.commit_transaction state with
    | Ok () -> ()
    | Error () -> Alcotest.fail "commit unexpectedly failed");
-  ignore (S.commit_to_delivering state pure : S.delivering S.token);
+  let committed = S.commit_to_committed state pure in
+  (match S.begin_pure state with
+   | Error `Reentrant_stabilization -> ()
+   | Ok _ -> Alcotest.fail "expected committed begin to fail");
+  ignore (S.collect_to_delivering state committed : S.delivering S.token);
   (match S.begin_pure state with
    | Error `Reentrant_stabilization -> ()
    | Ok _ -> Alcotest.fail "expected delivering begin to fail")
@@ -68,9 +79,9 @@ let test_rollback_invalidates_pure_token () =
   Alcotest.(check bool) "rolled back idle" true
     (match S.state state with
     | Idle -> true
-    | Pure | Delivering -> false);
+    | Pure | Committed | Delivering -> false);
   expect_invalid_arg "reused pure token" (fun () ->
-      ignore (S.commit_to_delivering state pure : S.delivering S.token))
+      ignore (S.commit_to_committed state pure : S.committed S.token))
 
 let test_begin_opens_transaction () =
   let state = S.create () in
@@ -91,7 +102,7 @@ let test_begin_opens_transaction () =
   Alcotest.(check int) "current committed" 2 (T.current staged);
   expect_invalid_arg "active transaction after commit" (fun () ->
       ignore (S.active_transaction state : (T.pure, unit) T.t));
-  ignore (S.commit_to_delivering state pure : S.delivering S.token)
+  ignore (S.commit_to_committed state pure : S.committed S.token)
 
 let test_rollback_transaction_clears_staged_value () =
   let state = S.create () in
