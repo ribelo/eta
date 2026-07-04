@@ -261,7 +261,10 @@ module Make (Observer_error : Observer_error) () = struct
     obs_id : observer_id;
     obs_signal : 'a signal;
     obs_equal : 'a -> 'a -> bool;
-    obs_callback : int -> 'a update -> (unit, observer_error) Effect.t;
+    obs_callback :
+      Observer_core.Delivery.token ->
+      'a update ->
+      (unit, observer_error) Effect.t;
     mutable obs_state : 'a observer_state;
   }
 
@@ -604,7 +607,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   type disposal_hook = unit -> unit
 
-  type event = E : int * 'a observer * 'a update -> event
+  type event =
+    | E : Observer_core.Delivery.token * 'a observer * 'a update -> event
 
   type pure_stabilize_result =
     | Pure_ok of disposal_hook list * event list
@@ -2908,7 +2912,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   module Observer = struct
     type 'a t = 'a observer
-    type delivery_token = int
+    type delivery_token = Observer_core.Delivery.token
 
     type 'a delivery = {
       token : delivery_token;

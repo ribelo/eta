@@ -121,11 +121,13 @@ module Lifecycle = struct
 end
 
 module Delivery = struct
+  type token = int
+
   type ('a, 'after_ack) t =
     | Observer_never_delivered
     | Observer_delivered of 'a
-    | Observer_delivery_pending of int * 'a Update.t * 'after_ack list
-    | Observer_delivery_running of int * 'a Update.t * 'after_ack list
+    | Observer_delivery_pending of token * 'a Update.t * 'after_ack list
+    | Observer_delivery_running of token * 'a Update.t * 'after_ack list
 
   type ('a, 'after_ack) finish =
     | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list

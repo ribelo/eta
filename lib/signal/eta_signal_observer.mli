@@ -70,11 +70,13 @@ module Lifecycle : sig
 end
 
 module Delivery : sig
+  type token = int
+
   type ('a, 'after_ack) t =
     | Observer_never_delivered
     | Observer_delivered of 'a
-    | Observer_delivery_pending of int * 'a Update.t * 'after_ack list
-    | Observer_delivery_running of int * 'a Update.t * 'after_ack list
+    | Observer_delivery_pending of token * 'a Update.t * 'after_ack list
+    | Observer_delivery_running of token * 'a Update.t * 'after_ack list
 
   type ('a, 'after_ack) finish =
     | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
@@ -84,31 +86,31 @@ module Delivery : sig
   val pending : ('a, 'after_ack) t -> bool
 
   val pending_state :
-    token:int -> 'a Update.t -> ('a, 'after_ack) t
+    token:token -> 'a Update.t -> ('a, 'after_ack) t
 
   val acknowledge :
-    token:int ->
+    token:token ->
     update:'a Update.t ->
     after_ack:'after_ack list ->
     ('a, 'after_ack) t ->
     (('a, 'after_ack) t * 'after_ack list) option
 
   val claim :
-    token:int -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
+    token:token -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
 
   val release :
-    token:int -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
+    token:token -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
 
   val finish_running :
-    token:int ->
+    token:token ->
     update:'a Update.t ->
     delivered:bool ->
     after_ack:'after_ack list ->
     ('a, 'after_ack) t ->
     ('a, 'after_ack) finish option
 
-  val running_token : ('a, 'after_ack) t -> int option
-  val running_token_matches : token:int -> ('a, 'after_ack) t -> bool
+  val running_token : ('a, 'after_ack) t -> token option
+  val running_token_matches : token:token -> ('a, 'after_ack) t -> bool
   val label : ('a, 'after_ack) t -> string
 end
 
