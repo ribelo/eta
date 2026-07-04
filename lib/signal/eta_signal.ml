@@ -657,17 +657,11 @@ module Make (Observer_error : Observer_error) () = struct
   let prune_all_nodes_unlocked () =
     ignore (all_nodes_unlocked () : packed_signal list)
 
-  let scope_owner_signal signal =
-    match signal.scope with
-    | Some scope when Scope.valid scope ->
-        let (P owner as packed_owner) = Scope.owner scope in
-        if owner.valid then Some packed_owner else None
-    | None | Some _ -> None
-
   let children_with_scope_owner signal children =
-    match scope_owner_signal signal with
-    | None -> children
-    | Some owner -> owner :: children
+    Scope.children_with_scope_owner
+      ~owner_valid:(fun (P owner) -> owner.valid)
+      ~owner_node:(fun owner -> owner)
+      signal.scope children
 
   module Kernel_reachable_static = Kernel.Make_reachable (struct
     type id = signal_id

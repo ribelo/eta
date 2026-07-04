@@ -41,6 +41,38 @@ let test_ancestor_and_depth () =
   Alcotest.(check int) "none depth" 0 (Scope.depth None);
   Alcotest.(check int) "grandchild depth" 3 (Scope.depth (Some grandchild))
 
+let test_children_with_scope_owner () =
+  let valid_owner = (1, true) in
+  let invalid_owner = (2, false) in
+  let owner_valid (_id, valid) = valid in
+  let owner_node (id, _valid) = "owner-" ^ string_of_int id in
+  let children = [ "child" ] in
+  Alcotest.(check (list string))
+    "root children unchanged"
+    children
+    (Scope.children_with_scope_owner ~owner_valid ~owner_node None children);
+  let scope = Scope.create ~id:1 ~owner:valid_owner ~parent:None in
+  Alcotest.(check (list string))
+    "valid owner included"
+    [ "owner-1"; "child" ]
+    (Scope.children_with_scope_owner ~owner_valid ~owner_node (Some scope)
+       children);
+  let invalid_scope = Scope.create ~id:2 ~owner:valid_owner ~parent:None in
+  ignore (Scope.invalidate invalid_scope : string list option);
+  Alcotest.(check (list string))
+    "invalid scope skipped"
+    children
+    (Scope.children_with_scope_owner ~owner_valid ~owner_node
+       (Some invalid_scope) children);
+  let invalid_owner_scope =
+    Scope.create ~id:3 ~owner:invalid_owner ~parent:None
+  in
+  Alcotest.(check (list string))
+    "invalid owner skipped"
+    children
+    (Scope.children_with_scope_owner ~owner_valid ~owner_node
+       (Some invalid_owner_scope) children)
+
 let current_id context = Option.map Scope.id (Scope.current context)
 
 let test_context_tracks_and_restores_current_scope () =
@@ -223,6 +255,8 @@ let () =
             test_add_and_invalidate_nodes;
           Alcotest.test_case "ancestor and depth" `Quick
             test_ancestor_and_depth;
+          Alcotest.test_case "children include valid scope owner" `Quick
+            test_children_with_scope_owner;
           Alcotest.test_case "context restores current" `Quick
             test_context_tracks_and_restores_current_scope;
           Alcotest.test_case "context restores after exception" `Quick

@@ -35,6 +35,12 @@ let rec depth = function
   | None -> 0
   | Some scope -> 1 + depth scope.parent
 
+let children_with_scope_owner ~owner_valid ~owner_node scope children =
+  match scope with
+  | Some scope when valid scope && owner_valid scope.owner ->
+      owner_node scope.owner :: children
+  | None | Some _ -> children
+
 type ('id, 'owner, 'node) context = {
   mutable current : ('id, 'owner, 'node) t option;
 }

@@ -21,6 +21,13 @@ val is_ancestor :
 
 val depth : ('id, 'owner, 'node) t option -> int
 
+val children_with_scope_owner :
+  owner_valid:('owner -> bool) ->
+  owner_node:('owner -> 'node) ->
+  ('id, 'owner, 'node) t option ->
+  'node list ->
+  'node list
+
 type ('id, 'owner, 'node) context
 
 val create_context : unit -> ('id, 'owner, 'node) context
