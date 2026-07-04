@@ -62,6 +62,8 @@ module Make (Observer_error : Observer_error) () = struct
       lane_waiter_compaction_count : unit -> int;
       set_stats_count_override : stats_count -> int option -> unit;
       stats_count_override : stats_count -> int option;
+      set_timer_runtime_mismatch_hook : (unit -> unit) -> unit;
+      run_timer_runtime_mismatch_hook : unit -> unit;
     }
 
     let noop = { run = (fun () -> Effect.unit) }
@@ -79,6 +81,7 @@ module Make (Observer_error : Observer_error) () = struct
       let total_node_count_override = ref None in
       let necessary_node_count_override = ref None in
       let dead_node_count_override = ref None in
+      let timer_runtime_mismatch_hook = ref (fun () -> ()) in
       let slot = function
         | After_observer_delivery_claim -> after_observer_delivery_claim
         | After_observer_activation_before_return ->
@@ -120,7 +123,8 @@ module Make (Observer_error : Observer_error) () = struct
         lane_waiter_compaction_count := 0;
         total_node_count_override := None;
         necessary_node_count_override := None;
-        dead_node_count_override := None
+        dead_node_count_override := None;
+        timer_runtime_mismatch_hook := (fun () -> ())
       in
       let run hook =
         let slot = slot hook in
@@ -138,6 +142,10 @@ module Make (Observer_error : Observer_error) () = struct
         stats_count_slot count := value
       in
       let stats_count_override count = !(stats_count_slot count) in
+      let set_timer_runtime_mismatch_hook hook =
+        timer_runtime_mismatch_hook := hook
+      in
+      let run_timer_runtime_mismatch_hook () = !timer_runtime_mismatch_hook () in
       {
         with_hook;
         clear;
@@ -148,6 +156,8 @@ module Make (Observer_error : Observer_error) () = struct
         lane_waiter_compaction_count;
         set_stats_count_override;
         stats_count_override;
+        set_timer_runtime_mismatch_hook;
+        run_timer_runtime_mismatch_hook;
       }
 
     let with_hook hook action f = state.with_hook hook action f
@@ -159,6 +169,11 @@ module Make (Observer_error : Observer_error) () = struct
     let lane_waiter_compaction_count () = state.lane_waiter_compaction_count ()
     let set_stats_count_override = state.set_stats_count_override
     let stats_count_override = state.stats_count_override
+    let set_timer_runtime_mismatch_hook =
+      state.set_timer_runtime_mismatch_hook
+
+    let run_timer_runtime_mismatch_hook () =
+      state.run_timer_runtime_mismatch_hook ()
   end
 
   type 'a update =
@@ -618,6 +633,18 @@ module Make (Observer_error : Observer_error) () = struct
           | Timer_inactive _ | Timer_starting _ | Timer_finished _ ->
               invalid_arg
                 "Eta_signal.Private_test_hooks: expected active timer state")
+
+    let timer_state signal =
+      match signal.timer with
+      | None ->
+          invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
+      | Some timer -> (
+          match timer.timer_state with
+          | Timer_inactive _ -> "inactive"
+          | Timer_starting _ -> "starting"
+          | Timer_running_uncancellable _ -> "running_uncancellable"
+          | Timer_running _ -> "running"
+          | Timer_finished _ -> "finished")
 
     let set_observer_on_finish observer hooks =
       let live =
@@ -1415,7 +1442,9 @@ module Make (Observer_error : Observer_error) () = struct
     if
       not
         (Runtime_contract.same_runtime timer.timer_runtime_contract runtime_contract)
-    then raise (Graph_error `Runtime_mismatch)
+    then (
+      Private_test_hooks.run_timer_runtime_mismatch_hook ();
+      raise (Graph_error `Runtime_mismatch))
 
   let timer_can_refresh_on_demand token timer =
     Option.is_some timer.timer_refresh_operation
@@ -2416,6 +2445,10 @@ module Make (Observer_error : Observer_error) () = struct
       timer.timer_state <- Timer_starting generation;
       Some { start_timer = timer; start_effect = timer.timer_start timer })
 
+  type timer_demand_action =
+    | Timer_demand_start of timer_node
+    | Timer_demand_stop of timer_node
+
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->
         match timer.timer_state with
@@ -2535,19 +2568,33 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_timer_demand_unlocked runtime_contract =
     let needed = necessary_timers () in
+    let timer_actions =
+      all_timers ()
+      |> List.filter_map (fun (id, timer) ->
+             if Hashtbl.mem needed id then (
+               ensure_timer_runtime timer runtime_contract;
+               preflight_timer_start timer;
+               if timer_needs_start timer then Some (Timer_demand_start timer)
+               else None)
+             else (
+               preflight_timer_invalidation timer;
+               if timer_active timer || Option.is_some (timer_running_generation timer)
+                  || timer_has_cancel timer
+               then Some (Timer_demand_stop timer)
+               else None))
+    in
     let start_attempts = ref [] in
     let cancel_hooks = ref [] in
     List.iter
-      (fun (id, timer) ->
-        if Hashtbl.mem needed id then (
-          ensure_timer_runtime timer runtime_contract;
-          Option.iter
-            (fun attempt -> start_attempts := attempt :: !start_attempts)
-            (timer_start_unlocked timer))
-        else
+      (function
+        | Timer_demand_start timer ->
+            Option.iter
+              (fun attempt -> start_attempts := attempt :: !start_attempts)
+              (timer_start_unlocked timer)
+        | Timer_demand_stop timer ->
           cancel_hooks :=
             List.rev_append (timer_mark_unneeded_unlocked timer) !cancel_hooks)
-      (all_timers ());
+      timer_actions;
     (List.rev !start_attempts, List.rev !cancel_hooks)
 
   let rollback_unclaimed_timer_starts attempts =
