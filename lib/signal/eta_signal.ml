@@ -19,6 +19,7 @@ module Stabilization = Eta_signal_stabilization
 module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
+module Timer = Eta_signal_timer
 module Timer_adapter = Eta_signal_timer_adapter
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
@@ -1790,30 +1791,27 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.fail (err :> stabilize_error))
 
   let refresh_timer_demand_unlocked runtime_contract =
-    let needed = collect_necessary_node_ids () in
-    let timer_resources =
-      all_timers ()
-      |> List.map (fun (id, timer) -> Timer_policy.demand_resource ~id timer)
-    in
     match
-      Timer_policy.demand_effects
+      Timer.refresh_demand
         ~advance_generation:(checked_succ "timer generation")
         ~cancel_running:true
         {
-          Timer_policy.demand_resource_necessary =
-            (fun id -> Hashtbl.mem needed id);
-          demand_resource_validate =
-            (fun timer -> validate_timer_runtime timer runtime_contract);
-          demand_resource_effective_state = timer_effective_state;
-          demand_resource_current_state = timer_current_state;
+          Timer.demand_collect_necessary = collect_necessary_node_ids;
+          demand_collect_timers = all_timers;
+          demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
+          demand_validate_runtime =
+            (fun runtime_contract timer ->
+              validate_timer_runtime timer runtime_contract);
+          demand_effective_state = timer_effective_state;
+          demand_current_state = timer_current_state;
           demand_plan_start = timer_apply_start_plan_unlocked;
           demand_plan_stop = timer_apply_stop_plan_unlocked;
         }
-        timer_resources
+        runtime_contract
     with
     | Ok demand_effects ->
-        ( demand_effects.Timer_policy.demand_start_attempts,
-          demand_effects.Timer_policy.demand_cancel_hooks )
+        ( demand_effects.Timer.demand_start_attempts,
+          demand_effects.Timer.demand_cancel_hooks )
     | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
   let rollback_unclaimed_timer_starts_unlocked attempts =
