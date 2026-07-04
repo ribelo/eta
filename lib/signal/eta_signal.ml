@@ -239,7 +239,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_var = V : 'a var -> packed_var
 
-  and observer_after_ack_action = After_ack_record_stream_bridge_drop
+  and observer_after_ack_action = unit -> unit
 
   and 'a observer_delivery_state =
     ('a, observer_after_ack_action) Observer_core.Delivery.t
@@ -2539,13 +2539,12 @@ module Make (Observer_error : Observer_error) () = struct
           (Observer_core.Delivery.pending_state ~token update)
     | None -> ()
 
-  let run_after_ack_action_unlocked = function
-    | After_ack_record_stream_bridge_drop ->
-        graph.stream_bridge_drop_count <-
-          saturating_succ graph.stream_bridge_drop_count
+  let record_stream_bridge_drop_unlocked () =
+    graph.stream_bridge_drop_count <-
+      saturating_succ graph.stream_bridge_drop_count
 
   let run_after_ack_actions_unlocked actions =
-    List.iter run_after_ack_action_unlocked actions
+    List.iter (fun action -> action ()) actions
 
   let acknowledge_event_delivery observer token update =
     with_graph_lane_sync (fun () ->
@@ -3109,7 +3108,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let acknowledge_stream_drop_delivery observer token update =
     acknowledge_stream_published_delivery observer token update
-      [ After_ack_record_stream_bridge_drop ]
+      [ record_stream_bridge_drop_unlocked ]
 
   let stream_delivery_token observer =
     with_graph_lane_sync (fun () ->
