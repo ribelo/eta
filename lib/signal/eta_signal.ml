@@ -785,12 +785,28 @@ module Make (Observer_error : Observer_error) () = struct
   let prune_all_nodes_unlocked () =
     ignore (all_nodes_unlocked () : packed_signal list)
 
-  let visit_scope_owner_signal visit signal =
+  let scope_owner_signal signal =
     match signal.scope with
     | Some scope when Scope.valid scope ->
         let (P owner as packed_owner) = Scope.owner scope in
-        if owner.valid then visit packed_owner
-    | None | Some _ -> ()
+        if owner.valid then Some packed_owner else None
+    | None | Some _ -> None
+
+  let children_with_scope_owner signal children =
+    match scope_owner_signal signal with
+    | None -> children
+    | Some owner -> owner :: children
+
+  module Kernel_reachable_static = Kernel.Make_reachable (struct
+    type id = signal_id
+    type nonrec packed = packed_signal
+
+    let id (P signal) = signal.id
+    let valid (P signal) = signal.valid
+
+    let children (P signal) =
+      children_with_scope_owner signal signal.dependencies
+  end)
 
   let source_watchers_unlocked source =
     let cells, watchers =
@@ -1270,6 +1286,18 @@ module Make (Observer_error : Observer_error) () = struct
     match observer.obs_state with
     | Observer_registering _ | Observer_active _ -> true
     | Observer_disposed _ | Observer_invalid_scope _ -> false
+
+  let observer_roots selected observers =
+    List.filter_map
+      (fun (O observer as packed) ->
+        if selected packed then Some (P observer.obs_signal) else None)
+      observers
+
+  let observer_demand_roots observers =
+    observer_roots observer_demands_signal observers
+
+  let observer_active_roots observers =
+    observer_roots observer_active observers
 
   let remove_observer observer =
     graph.observers <-
@@ -1830,32 +1858,37 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_post_commit_necessary_timers invalidated_ids =
     prune_all_nodes_unlocked ();
-    let seen_nodes = Hashtbl.create 16 in
-    let timers = Hashtbl.create 8 in
-    let rec visit (P signal) =
-      if
-        signal.valid
-        && not (Hashtbl.mem invalidated_ids signal.id)
-        && not (Hashtbl.mem seen_nodes signal.id)
-      then (
-        Hashtbl.add seen_nodes signal.id ();
-        Option.iter
-          (fun timer -> Hashtbl.replace timers signal.id timer)
-          signal.timer;
-        visit_scope_owner_signal visit signal;
-        match signal.kind with
-        | Bind bind ->
-            visit (P bind.source);
-            Option.iter (fun inner -> visit (P inner)) (bind_effective_inner bind)
-        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-            List.iter visit signal.dependencies)
+    let module Reachable = Kernel.Make_reachable (struct
+      type id = signal_id
+      type nonrec packed = packed_signal
+
+      let id (P signal) = signal.id
+
+      let valid (P signal) =
+        signal.valid && not (Hashtbl.mem invalidated_ids signal.id)
+
+      let children (P signal) =
+        let signal_children =
+          match signal.kind with
+          | Bind bind ->
+              P bind.source
+              ::
+              (match bind_effective_inner bind with
+               | None -> []
+               | Some inner -> [ P inner ])
+          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+              signal.dependencies
+        in
+        children_with_scope_owner signal signal_children
+    end)
     in
-    List.iter
-      (fun (O observer) ->
-        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
-      graph.observers;
-    timers
+    Reachable.fold ~roots:(observer_demand_roots graph.observers)
+      ~init:(Hashtbl.create 8)
+      ~f:(fun timers (P signal) ->
+        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer)
+          signal.timer;
+        timers)
 
   let preflight_post_commit_timer_starts invalidated_ids =
     collect_post_commit_necessary_timers invalidated_ids
@@ -2346,18 +2379,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_necessary_node_ids () =
     prune_all_nodes_unlocked ();
-    let seen = Hashtbl.create 16 in
-    let rec visit (P signal) =
-      if signal.valid && not (Hashtbl.mem seen signal.id) then (
-        Hashtbl.add seen signal.id ();
-        visit_scope_owner_signal visit signal;
-        List.iter visit signal.dependencies)
-    in
-    List.iter
-      (fun (O observer) ->
-        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
-      graph.observers;
-    seen
+    Kernel_reachable_static.ids ~roots:(observer_demand_roots graph.observers)
 
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
@@ -2377,20 +2399,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   let necessary_timers () =
     prune_all_nodes_unlocked ();
-    let seen_nodes = Hashtbl.create 16 in
-    let timers = Hashtbl.create 8 in
-    let rec visit (P signal) =
-      if signal.valid && not (Hashtbl.mem seen_nodes signal.id) then (
-        Hashtbl.add seen_nodes signal.id ();
-        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer) signal.timer;
-        visit_scope_owner_signal visit signal;
-        List.iter visit signal.dependencies)
-    in
-    List.iter
-      (fun (O observer) ->
-        if observer_demands_signal (O observer) then visit (P observer.obs_signal))
-      graph.observers;
-    timers
+    Kernel_reachable_static.fold
+      ~roots:(observer_demand_roots graph.observers)
+      ~init:(Hashtbl.create 8)
+      ~f:(fun timers (P signal) ->
+        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer)
+          signal.timer;
+        timers)
 
   let all_timers () =
     List.filter_map
@@ -2684,24 +2699,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_observed_bind_nodes observers =
     prune_all_nodes_unlocked ();
-    let seen = Hashtbl.create 16 in
-    let binds = ref [] in
-    let rec visit (P signal as packed) =
-      if signal.valid && not (Hashtbl.mem seen signal.id) then (
-        Hashtbl.add seen signal.id ();
-        (match signal.kind with
-         | Bind _ -> binds := packed :: !binds
-         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-             ());
-        visit_scope_owner_signal visit signal;
-        List.iter visit signal.dependencies)
-    in
-    List.iter
-      (fun (O observer) ->
-        if observer_active (O observer) then visit (P observer.obs_signal))
-      observers;
-    List.sort compare_signal_scope_then_id !binds
+    Kernel_reachable_static.fold ~roots:(observer_active_roots observers) ~init:[]
+      ~f:(fun binds (P signal as packed) ->
+        match signal.kind with
+        | Bind _ -> packed :: binds
+        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            binds)
+    |> List.sort compare_signal_scope_then_id
 
   let signal_will_be_invalidated_by_staged_bind (P signal) =
     let invalidated_ids, _ = collect_staged_bind_invalidations () in

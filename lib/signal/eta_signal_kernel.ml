@@ -45,3 +45,30 @@ module Make_edges (Node : EDGE_NODE) = struct
   let attach_packed_dependency ~parent packed =
     attach_dependency ~parent ~child:(Node.unpack packed)
 end
+
+module type REACHABLE_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val valid : packed -> bool
+  val children : packed -> packed list
+end
+
+module Make_reachable (Node : REACHABLE_NODE) = struct
+  let fold ~roots ~init ~f =
+    let seen = Hashtbl.create 16 in
+    let rec visit acc packed =
+      let id = Node.id packed in
+      if (not (Node.valid packed)) || Hashtbl.mem seen id then acc
+      else (
+        Hashtbl.add seen id ();
+        List.fold_left visit (f acc packed) (Node.children packed))
+    in
+    List.fold_left visit init roots
+
+  let ids ~roots =
+    fold ~roots ~init:(Hashtbl.create 16) ~f:(fun seen packed ->
+        Hashtbl.replace seen (Node.id packed) ();
+        seen)
+end

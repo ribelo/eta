@@ -23,3 +23,22 @@ module Make_edges (Node : EDGE_NODE) : sig
   val attach_dependency : parent:Node.t -> child:Node.t -> unit
   val attach_packed_dependency : parent:Node.t -> Node.packed -> unit
 end
+
+module type REACHABLE_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val valid : packed -> bool
+  val children : packed -> packed list
+end
+
+module Make_reachable (Node : REACHABLE_NODE) : sig
+  val fold :
+    roots:Node.packed list ->
+    init:'acc ->
+    f:('acc -> Node.packed -> 'acc) ->
+    'acc
+
+  val ids : roots:Node.packed list -> (Node.id, unit) Hashtbl.t
+end
