@@ -4,6 +4,7 @@ type node = {
   id : int;
   valid : bool;
   mutable version : int;
+  mutable dirty : bool;
   mutable dependencies : packed list;
   mutable dependents : packed list;
 }
@@ -43,8 +44,18 @@ module Versions = Kernel.Make_versions (struct
   let version (P node) = node.version
 end)
 
-let node ?(valid = true) ?(version = 0) id =
-  { id; valid; version; dependencies = []; dependents = [] }
+module Dirty = Kernel.Make_dirty (struct
+  type id = int
+  type nonrec packed = packed
+
+  let id (P node) = node.id
+  let equal_id = Int.equal
+  let dirty (P node) = node.dirty
+  let set_dirty (P node) dirty = node.dirty <- dirty
+end)
+
+let node ?(valid = true) ?(version = 0) ?(dirty = false) id =
+  { id; valid; version; dirty; dependencies = []; dependents = [] }
 
 let ids packed = List.map (fun (P node) -> node.id) packed
 let sorted_ids ids = List.sort Int.compare ids
@@ -129,6 +140,28 @@ let test_versions_changed_detects_dependency_set_update () =
   Alcotest.(check bool) "changed" true
     (Versions.changed ~current [ P left; P right ])
 
+let test_dirty_mark_sets_dirty () =
+  let target = node 1 in
+  Dirty.mark (P target);
+  Alcotest.(check bool) "dirty" true target.dirty
+
+let test_dirty_records_previous_state_once () =
+  let target = node 1 in
+  let entries = Dirty.mark_recording_previous [] (P target) in
+  target.dirty <- false;
+  let entries = Dirty.mark_recording_previous entries (P target) in
+  Alcotest.(check int) "entry count" 1 (List.length entries);
+  Alcotest.(check bool) "dirty" true target.dirty;
+  Dirty.restore entries;
+  Alcotest.(check bool) "restored" false target.dirty
+
+let test_dirty_restore_preserves_initial_dirty () =
+  let target = node ~dirty:true 1 in
+  let entries = Dirty.mark_recording_previous [] (P target) in
+  target.dirty <- false;
+  Dirty.restore entries;
+  Alcotest.(check bool) "restored" true target.dirty
+
 let () =
   Alcotest.run "eta_signal_kernel"
     [
@@ -156,5 +189,13 @@ let () =
             test_versions_changed_detects_version_update;
           Alcotest.test_case "changed detects dependency set update" `Quick
             test_versions_changed_detects_dependency_set_update;
+        ] );
+      ( "dirty",
+        [
+          Alcotest.test_case "mark sets dirty" `Quick test_dirty_mark_sets_dirty;
+          Alcotest.test_case "records previous state once" `Quick
+            test_dirty_records_previous_state_once;
+          Alcotest.test_case "restore preserves initial dirty" `Quick
+            test_dirty_restore_preserves_initial_dirty;
         ] );
     ]

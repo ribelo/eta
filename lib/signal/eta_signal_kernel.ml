@@ -99,3 +99,32 @@ module Make_versions (Node : VERSION_NODE) = struct
   let changed ~current nodes =
     not (same_snapshot current (snapshot nodes))
 end
+
+module type DIRTY_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val equal_id : id -> id -> bool
+  val dirty : packed -> bool
+  val set_dirty : packed -> bool -> unit
+end
+
+module Make_dirty (Node : DIRTY_NODE) = struct
+  let mark node =
+    Node.set_dirty node true
+
+  let same_node node (candidate, _) =
+    Node.equal_id (Node.id node) (Node.id candidate)
+
+  let mark_recording_previous entries node =
+    let entries =
+      if List.exists (same_node node) entries then entries
+      else (node, Node.dirty node) :: entries
+    in
+    mark node;
+    entries
+
+  let restore entries =
+    List.iter (fun (node, dirty) -> Node.set_dirty node dirty) entries
+end

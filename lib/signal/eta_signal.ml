@@ -519,6 +519,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let kernel_edge_node signal = Kernel_edge_node.Packed signal
 
+  module Kernel_dirty = Kernel.Make_dirty (struct
+    type id = signal_id
+    type nonrec packed = packed_signal
+
+    let id (P signal) = signal.id
+    let equal_id left right = signal_id_int left = signal_id_int right
+    let dirty (P signal) = signal.dirty
+    let set_dirty (P signal) dirty = signal.dirty <- dirty
+  end)
+
   module Private_test_hooks = struct
     include Private_test_hook_state
 
@@ -1119,22 +1129,16 @@ module Make (Observer_error : Observer_error) () = struct
   let attach_packed_dependency parent child =
     Kernel_edges.attach_packed_dependency ~parent:(kernel_edge_node parent) child
 
-  let mark_self_dirty (P signal) = signal.dirty <- true
+  let mark_self_dirty packed =
+    Kernel_dirty.mark packed
 
-  let mark_timer_refresh_dirty (P signal as packed) =
-    (match graph.active_timer_refresh with
-     | None -> ()
+  let mark_timer_refresh_dirty packed =
+    match graph.active_timer_refresh with
+    | None -> Kernel_dirty.mark packed
      | Some context ->
-         if
-           not
-             (List.exists
-                (fun (P candidate, _) ->
-                  signal_id_int candidate.id = signal_id_int signal.id)
-                context.timer_refresh_dirty_nodes)
-         then
-           context.timer_refresh_dirty_nodes <-
-             (packed, signal.dirty) :: context.timer_refresh_dirty_nodes);
-    signal.dirty <- true
+         context.timer_refresh_dirty_nodes <-
+           Kernel_dirty.mark_recording_previous
+             context.timer_refresh_dirty_nodes packed
 
   let remove_var_watcher source signal =
     source.watchers <-
@@ -2015,9 +2019,7 @@ module Make (Observer_error : Observer_error) () = struct
     match graph.active_timer_refresh with
     | None -> ()
     | Some context ->
-        List.iter
-          (fun (P signal, was_dirty) -> signal.dirty <- was_dirty)
-          context.timer_refresh_dirty_nodes;
+        Kernel_dirty.restore context.timer_refresh_dirty_nodes;
         context.timer_refresh_dirty_nodes <- []
 
   let commit_timer_refresh_staging timer =

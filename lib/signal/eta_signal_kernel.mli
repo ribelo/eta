@@ -56,3 +56,24 @@ module Make_versions (Node : VERSION_NODE) : sig
   val snapshot : Node.packed list -> (Node.id * int) list
   val changed : current:(Node.id * int) list -> Node.packed list -> bool
 end
+
+module type DIRTY_NODE = sig
+  type id
+  type packed
+
+  val id : packed -> id
+  val equal_id : id -> id -> bool
+  val dirty : packed -> bool
+  val set_dirty : packed -> bool -> unit
+end
+
+module Make_dirty (Node : DIRTY_NODE) : sig
+  val mark : Node.packed -> unit
+
+  val mark_recording_previous :
+    (Node.packed * bool) list ->
+    Node.packed ->
+    (Node.packed * bool) list
+
+  val restore : (Node.packed * bool) list -> unit
+end
