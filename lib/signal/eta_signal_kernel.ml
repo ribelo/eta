@@ -425,7 +425,26 @@ module Static_eval = struct
   let output result = result.output ()
   let children_changed result = result.children_changed
 
+  type ('dependency, 'a) plan =
+    | Use_cached
+    | Recompute of {
+        dependencies : 'dependency list;
+        output : 'a;
+        stage_dependencies : bool;
+      }
+
   let should_recompute ~dirty ~initialized ~dependencies_changed result =
     dirty || (not initialized) || result.children_changed
     || dependencies_changed result.dependencies
+
+  let plan ?(stage_dependencies = true) ~dirty ~initialized
+      ~dependencies_changed result =
+    if should_recompute ~dirty ~initialized ~dependencies_changed result then
+      Recompute
+        {
+          dependencies = result.dependencies;
+          output = output result;
+          stage_dependencies;
+        }
+    else Use_cached
 end

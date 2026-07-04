@@ -270,10 +270,26 @@ module Static_eval : sig
   val output : ('dependency, 'a) result -> 'a
   val children_changed : ('dependency, 'a) result -> bool
 
+  type ('dependency, 'a) plan =
+    | Use_cached
+    | Recompute of {
+        dependencies : 'dependency list;
+        output : 'a;
+        stage_dependencies : bool;
+      }
+
   val should_recompute :
     dirty:bool ->
     initialized:bool ->
     dependencies_changed:('dependency list -> bool) ->
     ('dependency, 'a) result ->
     bool
+
+  val plan :
+    ?stage_dependencies:bool ->
+    dirty:bool ->
+    initialized:bool ->
+    dependencies_changed:('dependency list -> bool) ->
+    ('dependency, 'a) result ->
+    ('dependency, 'a) plan
 end

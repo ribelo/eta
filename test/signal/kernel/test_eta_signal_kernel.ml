@@ -425,6 +425,58 @@ let test_static_eval_recompute_predicate () =
     (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
        ~dependencies_changed changed_dependency)
 
+let test_static_eval_plan_reuses_without_forcing_output () =
+  let ran = ref false in
+  let child = Kernel.Static_eval.child ~dependency:"dep" (1, false) in
+  let result =
+    Kernel.Static_eval.map child (fun value ->
+        ran := true;
+        value + 1)
+  in
+  let plan =
+    Kernel.Static_eval.plan ~dirty:false ~initialized:true
+      ~dependencies_changed:(fun _ -> false)
+      result
+  in
+  (match plan with
+  | Kernel.Static_eval.Use_cached -> ()
+  | Kernel.Static_eval.Recompute _ -> Alcotest.fail "expected cached plan");
+  Alcotest.(check bool) "output not forced" false !ran
+
+let test_static_eval_plan_recomputes_with_dependencies_and_output () =
+  let ran = ref false in
+  let child = Kernel.Static_eval.child ~dependency:"dep" (1, true) in
+  let result =
+    Kernel.Static_eval.map child (fun value ->
+        ran := true;
+        value + 1)
+  in
+  match
+    Kernel.Static_eval.plan ~dirty:false ~initialized:true
+      ~dependencies_changed:(fun _ -> false)
+      result
+  with
+  | Kernel.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
+  | Kernel.Static_eval.Recompute
+      { dependencies; output; stage_dependencies } ->
+      Alcotest.(check (list string)) "dependencies" [ "dep" ] dependencies;
+      Alcotest.(check int) "output" 2 output;
+      Alcotest.(check bool) "stage dependencies" true stage_dependencies;
+      Alcotest.(check bool) "output forced" true !ran
+
+let test_static_eval_plan_can_skip_dependency_staging () =
+  match
+    Kernel.Static_eval.plan ~stage_dependencies:false ~dirty:true
+      ~initialized:true ~dependencies_changed:(fun _ -> false)
+      (Kernel.Static_eval.leaf "value")
+  with
+  | Kernel.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
+  | Kernel.Static_eval.Recompute
+      { dependencies; output; stage_dependencies } ->
+      Alcotest.(check (list string)) "dependencies" [] dependencies;
+      Alcotest.(check string) "output" "value" output;
+      Alcotest.(check bool) "stage dependencies" false stage_dependencies
+
 let test_static_eval_delays_output_until_requested () =
   let ran = ref false in
   let child = Kernel.Static_eval.child ~dependency:"dep" (1, false) in
@@ -531,6 +583,13 @@ let () =
             test_static_eval_all_preserves_order;
           Alcotest.test_case "recompute predicate" `Quick
             test_static_eval_recompute_predicate;
+          Alcotest.test_case "plan reuses without forcing output" `Quick
+            test_static_eval_plan_reuses_without_forcing_output;
+          Alcotest.test_case
+            "plan recomputes with dependencies and output" `Quick
+            test_static_eval_plan_recomputes_with_dependencies_and_output;
+          Alcotest.test_case "plan can skip dependency staging" `Quick
+            test_static_eval_plan_can_skip_dependency_staging;
           Alcotest.test_case "delays output until requested" `Quick
             test_static_eval_delays_output_until_requested;
         ] );

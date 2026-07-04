@@ -1704,17 +1704,16 @@ module Make (Observer_error : Observer_error) () = struct
         (compute child_signal)
     in
     let finish_static ?(stage_dependencies = true) result =
-      if
-        Kernel.Static_eval.should_recompute ~dirty:signal.dirty
+      match
+        Kernel.Static_eval.plan ~stage_dependencies ~dirty:signal.dirty
           ~initialized:(signal_initialized ())
           ~dependencies_changed:dependency_changed result
-      then
-        let output = Kernel.Static_eval.output result in
-        if stage_dependencies then
-          recompute_with_dependencies (Kernel.Static_eval.dependencies result)
-            output
-        else recompute output
-      else use_cached ()
+      with
+      | Kernel.Static_eval.Use_cached -> use_cached ()
+      | Kernel.Static_eval.Recompute
+          { dependencies; output; stage_dependencies } ->
+          if stage_dependencies then recompute_with_dependencies dependencies output
+          else recompute output
     in
     match signal.kind with
     | Const value ->
