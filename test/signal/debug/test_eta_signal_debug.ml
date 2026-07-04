@@ -61,6 +61,37 @@ let test_timer_fields () =
     ]
     (Debug.timer_fields finished)
 
+let test_observer_label () =
+  let active =
+    {
+      Debug.observer_id_label = "o1";
+      observer_state_label = "active";
+      observer_value_state_label = "current";
+      observer_delivery_state_label = "delivered";
+      observer_missing_observed_signal_id_label = None;
+    }
+  in
+  Alcotest.(check string)
+    "active observer label"
+    "observer:o1 observer_id=o1 state=active value_state=current \
+     delivery_state=delivered"
+    (Debug.observer_label active);
+  let invalid =
+    {
+      Debug.observer_id_label = "o2";
+      observer_state_label = "invalid_scope";
+      observer_value_state_label = "failed_without_current";
+      observer_delivery_state_label = "none";
+      observer_missing_observed_signal_id_label = Some "s3";
+    }
+  in
+  Alcotest.(check string)
+    "invalid observer label"
+    "observer:o2 observer_id=o2 state=invalid_scope \
+     value_state=failed_without_current delivery_state=none \
+     missing_observed_signal_id=s3"
+    (Debug.observer_label invalid)
+
 let test_render_dot () =
   let dot =
     Debug.render_dot
@@ -106,6 +137,7 @@ let () =
           Alcotest.test_case "stats counter" `Quick test_stats_counter;
           Alcotest.test_case "bool field" `Quick test_bool_field;
           Alcotest.test_case "timer fields" `Quick test_timer_fields;
+          Alcotest.test_case "observer label" `Quick test_observer_label;
           Alcotest.test_case "render dot" `Quick test_render_dot;
         ] );
     ]

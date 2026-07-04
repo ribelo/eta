@@ -27,6 +27,30 @@ let timer_fields ?state_label timer =
       "timer_generation=" ^ string_of_int timer.timer_generation;
     ]
 
+type observer_snapshot = {
+  observer_id_label : string;
+  observer_state_label : string;
+  observer_value_state_label : string;
+  observer_delivery_state_label : string;
+  observer_missing_observed_signal_id_label : string option;
+}
+
+let observer_label observer =
+  let fields =
+    [
+      "observer:" ^ observer.observer_id_label;
+      "observer_id=" ^ observer.observer_id_label;
+      "state=" ^ observer.observer_state_label;
+      "value_state=" ^ observer.observer_value_state_label;
+      "delivery_state=" ^ observer.observer_delivery_state_label;
+    ]
+    @
+    match observer.observer_missing_observed_signal_id_label with
+    | None -> []
+    | Some id -> [ "missing_observed_signal_id=" ^ id ]
+  in
+  String.concat " " fields
+
 type dot_node = {
   dot_node_id : string;
   dot_node_label : string;

@@ -3035,20 +3035,15 @@ module Make (Observer_error : Observer_error) () = struct
         ->
           (Observer_core.Value.label value, "none")
     in
-    let fields =
-      [
-        "observer:" ^ observer_id_label observer.obs_id;
-        "observer_id=" ^ observer_id_label observer.obs_id;
-        "state=" ^ Observer_lifecycle.label observer.obs_state;
-        "value_state=" ^ value_state_label;
-        "delivery_state=" ^ delivery_state_label;
-      ]
-      @
-      match missing_observed_signal_id with
-      | None -> []
-      | Some id -> [ "missing_observed_signal_id=" ^ signal_id_label id ]
-    in
-    String.concat " " fields
+    Debug.observer_label
+      {
+        Debug.observer_id_label = observer_id_label observer.obs_id;
+        observer_state_label = Observer_lifecycle.label observer.obs_state;
+        observer_value_state_label = value_state_label;
+        observer_delivery_state_label = delivery_state_label;
+        observer_missing_observed_signal_id_label =
+          Option.map signal_id_label missing_observed_signal_id;
+      }
 
   let observer_selected ~include_invalid (O observer as packed) =
     observer_active packed

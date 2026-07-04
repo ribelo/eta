@@ -15,6 +15,16 @@ type timer_snapshot = {
 
 val timer_fields : ?state_label:string -> timer_snapshot -> string list
 
+type observer_snapshot = {
+  observer_id_label : string;
+  observer_state_label : string;
+  observer_value_state_label : string;
+  observer_delivery_state_label : string;
+  observer_missing_observed_signal_id_label : string option;
+}
+
+val observer_label : observer_snapshot -> string
+
 type dot_node = {
   dot_node_id : string;
   dot_node_label : string;
