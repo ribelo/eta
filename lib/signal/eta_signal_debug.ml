@@ -27,6 +27,97 @@ let timer_fields ?state_label timer =
       "timer_generation=" ^ string_of_int timer.timer_generation;
     ]
 
+type signal_var_snapshot = {
+  signal_var_id_label : string;
+  signal_var_queued : bool;
+  signal_var_updating : bool;
+}
+
+type signal_state_snapshot = {
+  signal_valid : bool;
+  signal_initialized : bool;
+  signal_dirty : bool;
+  signal_computing : bool;
+  signal_dependency_count : int;
+  signal_dependent_count : int;
+  signal_var : signal_var_snapshot option;
+}
+
+let signal_state_fields state =
+  [
+    bool_field "valid" state.signal_valid;
+    bool_field "initialized" state.signal_initialized;
+    bool_field "dirty" state.signal_dirty;
+    bool_field "computing" state.signal_computing;
+    "dependencies=" ^ string_of_int state.signal_dependency_count;
+    "dependents=" ^ string_of_int state.signal_dependent_count;
+  ]
+  @
+  match state.signal_var with
+  | None -> []
+  | Some var ->
+      [
+        "var_id=" ^ var.signal_var_id_label;
+        bool_field "queued" var.signal_var_queued;
+        bool_field "updating" var.signal_var_updating;
+      ]
+
+type signal_scope_snapshot =
+  | Signal_root_scope
+  | Signal_child_scope of {
+      signal_scope_id_label : string;
+      signal_scope_valid : bool;
+      signal_scope_owner_label : string;
+      signal_scope_parent_label : string;
+    }
+
+let signal_scope_fields = function
+  | Signal_root_scope ->
+      [
+        "scope=root";
+        "scope_id=root";
+        "scope_owner=root";
+        "scope_parent=root";
+      ]
+  | Signal_child_scope scope ->
+      [
+        "scope="
+        ^ scope.signal_scope_id_label
+        ^ ":"
+        ^ (if scope.signal_scope_valid then "valid" else "invalid");
+        "scope_id=" ^ scope.signal_scope_id_label;
+        "scope_owner=" ^ scope.signal_scope_owner_label;
+        "scope_parent=" ^ scope.signal_scope_parent_label;
+      ]
+
+type signal_label_snapshot = {
+  signal_kind_label : string;
+  signal_id_label : string;
+  signal_tombstone : bool;
+  signal_state : signal_state_snapshot option;
+  signal_scope : signal_scope_snapshot option;
+  signal_timer_fields : string list;
+}
+
+let signal_label signal =
+  let fields =
+    [ "kind=" ^ signal.signal_kind_label; "signal_id=" ^ signal.signal_id_label ]
+  in
+  let fields =
+    if signal.signal_tombstone then fields @ [ "tombstone=true" ] else fields
+  in
+  let fields =
+    match signal.signal_state with
+    | None -> fields
+    | Some state -> fields @ signal_state_fields state
+  in
+  let fields =
+    match signal.signal_scope with
+    | None -> fields
+    | Some scope -> fields @ signal_scope_fields scope
+  in
+  String.concat " " (fields @ signal.signal_timer_fields)
+
 type observer_snapshot = {
   observer_id_label : string;
   observer_state_label : string;

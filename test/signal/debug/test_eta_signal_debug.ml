@@ -61,6 +61,112 @@ let test_timer_fields () =
     ]
     (Debug.timer_fields finished)
 
+let test_signal_state_fields () =
+  let source =
+    {
+      Debug.signal_valid = true;
+      signal_initialized = true;
+      signal_dirty = false;
+      signal_computing = false;
+      signal_dependency_count = 0;
+      signal_dependent_count = 2;
+      signal_var =
+        Some
+          {
+            Debug.signal_var_id_label = "v1";
+            signal_var_queued = true;
+            signal_var_updating = false;
+          };
+    }
+  in
+  Alcotest.(check (list string))
+    "source state fields"
+    [
+      "valid=true";
+      "initialized=true";
+      "dirty=false";
+      "computing=false";
+      "dependencies=0";
+      "dependents=2";
+      "var_id=v1";
+      "queued=true";
+      "updating=false";
+    ]
+    (Debug.signal_state_fields source)
+
+let test_signal_scope_fields () =
+  Alcotest.(check (list string))
+    "root scope"
+    [ "scope=root"; "scope_id=root"; "scope_owner=root"; "scope_parent=root" ]
+    (Debug.signal_scope_fields Debug.Signal_root_scope);
+  let child =
+    Debug.Signal_child_scope
+      {
+        signal_scope_id_label = "sc2";
+        signal_scope_valid = false;
+        signal_scope_owner_label = "s1";
+        signal_scope_parent_label = "sc1";
+      }
+  in
+  Alcotest.(check (list string))
+    "child scope"
+    [
+      "scope=sc2:invalid";
+      "scope_id=sc2";
+      "scope_owner=s1";
+      "scope_parent=sc1";
+    ]
+    (Debug.signal_scope_fields child)
+
+let test_signal_label () =
+  let signal =
+    {
+      Debug.signal_kind_label = "var";
+      signal_id_label = "s1";
+      signal_tombstone = false;
+      signal_state = None;
+      signal_scope = None;
+      signal_timer_fields = [];
+    }
+  in
+  Alcotest.(check string) "minimal signal label" "kind=var signal_id=s1"
+    (Debug.signal_label signal);
+  let tombstone =
+    {
+      Debug.signal_kind_label = "timer";
+      signal_id_label = "dead_s3";
+      signal_tombstone = true;
+      signal_state =
+        Some
+          {
+            Debug.signal_valid = false;
+            signal_initialized = true;
+            signal_dirty = false;
+            signal_computing = false;
+            signal_dependency_count = 1;
+            signal_dependent_count = 0;
+            signal_var = None;
+          };
+      signal_scope =
+        Some
+          (Debug.Signal_child_scope
+             {
+               signal_scope_id_label = "sc1";
+               signal_scope_valid = true;
+               signal_scope_owner_label = "s1";
+               signal_scope_parent_label = "root";
+             });
+      signal_timer_fields = [ "timer_active=false"; "timer_generation=4" ];
+    }
+  in
+  Alcotest.(check string)
+    "full tombstone label"
+    "kind=timer signal_id=dead_s3 tombstone=true valid=false \
+     initialized=true dirty=false computing=false dependencies=1 dependents=0 \
+     scope=sc1:valid scope_id=sc1 scope_owner=s1 scope_parent=root \
+     timer_active=false timer_generation=4"
+    (Debug.signal_label tombstone)
+
 let test_observer_label () =
   let active =
     {
@@ -137,6 +243,11 @@ let () =
           Alcotest.test_case "stats counter" `Quick test_stats_counter;
           Alcotest.test_case "bool field" `Quick test_bool_field;
           Alcotest.test_case "timer fields" `Quick test_timer_fields;
+          Alcotest.test_case "signal state fields" `Quick
+            test_signal_state_fields;
+          Alcotest.test_case "signal scope fields" `Quick
+            test_signal_scope_fields;
+          Alcotest.test_case "signal label" `Quick test_signal_label;
           Alcotest.test_case "observer label" `Quick test_observer_label;
           Alcotest.test_case "render dot" `Quick test_render_dot;
         ] );

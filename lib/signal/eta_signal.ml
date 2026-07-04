@@ -2870,58 +2870,49 @@ module Make (Observer_error : Observer_error) () = struct
     | `All_valid -> signal.valid
     | `All_including_invalid -> true
 
-  let bool_field = Debug.bool_field
-
-  let signal_state_fields : type a. a signal -> string list =
+  let signal_state_snapshot : type a. a signal -> Debug.signal_state_snapshot =
    fun signal ->
     let snapshot = signal_current_snapshot signal in
-    let base =
-      [
-        bool_field "valid" signal.valid;
-        bool_field "initialized" (Signal_snapshot.is_initialized snapshot);
-        bool_field "dirty" signal.dirty;
-        bool_field "computing" signal.computing;
-        "dependencies=" ^ string_of_int (List.length signal.dependencies);
-        "dependents=" ^ string_of_int (List.length signal.dependents);
-      ]
+    let signal_var =
+      match signal.kind with
+      | Var source ->
+          Some
+            {
+              Debug.signal_var_id_label = var_id_label source.var_id;
+              signal_var_queued = source.queued;
+              signal_var_updating = source.updating;
+            }
+      | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
+      | Map8 _ | Map9 _ | All _ | Bind _ ->
+          None
     in
-    match signal.kind with
-    | Var source ->
-        base
-        @ [
-            "var_id=" ^ var_id_label source.var_id;
-            bool_field "queued" source.queued;
-            bool_field "updating" source.updating;
-          ]
-    | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
-    | Map8 _ | Map9 _ | All _ | Bind _ ->
-        base
+    {
+      Debug.signal_valid = signal.valid;
+      signal_initialized = Signal_snapshot.is_initialized snapshot;
+      signal_dirty = signal.dirty;
+      signal_computing = signal.computing;
+      signal_dependency_count = List.length signal.dependencies;
+      signal_dependent_count = List.length signal.dependents;
+      signal_var;
+    }
 
-  let signal_scope_fields : type a. a signal -> string list =
+  let signal_scope_snapshot : type a. a signal -> Debug.signal_scope_snapshot =
    fun signal ->
     match signal.scope with
-    | None ->
-        [
-          "scope=root";
-          "scope_id=root";
-          "scope_owner=root";
-          "scope_parent=root";
-        ]
+    | None -> Debug.Signal_root_scope
     | Some scope ->
         let parent =
           match Scope.parent scope with
           | None -> "root"
           | Some parent -> scope_id_label (Scope.id parent)
         in
-        [
-          "scope="
-          ^ scope_id_label (Scope.id scope)
-          ^ ":"
-          ^ (if Scope.valid scope then "valid" else "invalid");
-          "scope_id=" ^ scope_id_label (Scope.id scope);
-          "scope_owner=" ^ signal_id_label (scope_owner_id scope);
-          "scope_parent=" ^ parent;
-        ]
+        Debug.Signal_child_scope
+          {
+            signal_scope_id_label = scope_id_label (Scope.id scope);
+            signal_scope_valid = Scope.valid scope;
+            signal_scope_owner_label = signal_id_label (scope_owner_id scope);
+            signal_scope_parent_label = parent;
+          }
 
   let debug_timer_snapshot (timer : Timer.debug_snapshot) =
     {
@@ -2941,43 +2932,36 @@ module Make (Observer_error : Observer_error) () = struct
           ~state_label:(timer_state_label (timer_current_state timer))
           (debug_timer_snapshot (timer_debug_snapshot timer))
 
-  let dead_signal_state_fields dead =
-    [
-      bool_field "valid" false;
-      bool_field "initialized" dead.dead_initialized;
-      bool_field "dirty" dead.dead_dirty;
-      bool_field "computing" dead.dead_computing;
-      "dependencies=" ^ string_of_int dead.dead_dependency_count;
-      "dependents=" ^ string_of_int dead.dead_dependent_count;
-    ]
+  let dead_signal_state_snapshot dead =
+    {
+      Debug.signal_valid = false;
+      signal_initialized = dead.dead_initialized;
+      signal_dirty = dead.dead_dirty;
+      signal_computing = dead.dead_computing;
+      signal_dependency_count = dead.dead_dependency_count;
+      signal_dependent_count = dead.dead_dependent_count;
+      signal_var = None;
+    }
 
-  let dead_signal_scope_fields dead =
+  let dead_signal_scope_snapshot dead =
     match
       ( dead.dead_scope_id,
         dead.dead_scope_owner,
         dead.dead_scope_parent,
         dead.dead_scope_valid )
     with
-    | None, None, None, None ->
-        [
-          "scope=root";
-          "scope_id=root";
-          "scope_owner=root";
-          "scope_parent=root";
-        ]
+    | None, None, None, None -> Debug.Signal_root_scope
     | Some scope_id, Some owner, parent, Some scope_valid ->
-        [
-          "scope="
-          ^ scope_id_label scope_id
-          ^ ":"
-          ^ (if scope_valid then "valid" else "invalid");
-          "scope_id=" ^ scope_id_label scope_id;
-          "scope_owner=" ^ signal_id_label owner;
-          "scope_parent="
-          ^ Option.fold ~none:"root"
-              ~some:(fun parent -> scope_id_label parent)
-              parent;
-        ]
+        Debug.Signal_child_scope
+          {
+            signal_scope_id_label = scope_id_label scope_id;
+            signal_scope_valid = scope_valid;
+            signal_scope_owner_label = signal_id_label owner;
+            signal_scope_parent_label =
+              Option.fold ~none:"root"
+                ~some:(fun parent -> scope_id_label parent)
+                parent;
+          }
     | _ -> invalid_arg "Eta_signal: inconsistent dead signal scope"
 
   let dead_timer_fields = function
@@ -2986,42 +2970,38 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->
-    let fields =
-      [ "kind=" ^ kind_name signal.kind; "signal_id=" ^ signal_id_label signal.id ]
-    in
-    let fields =
-      if options.dot_state then fields @ signal_state_fields signal else fields
-    in
-    let fields =
-      if options.dot_dynamic_scopes then fields @ signal_scope_fields signal
-      else fields
-    in
-    let fields =
-      if options.dot_timers then fields @ signal_timer_fields signal else fields
-    in
-    String.concat " " fields
+    Debug.signal_label
+      {
+        Debug.signal_kind_label = kind_name signal.kind;
+        signal_id_label = signal_id_label signal.id;
+        signal_tombstone = false;
+        signal_state =
+          (if options.dot_state then Some (signal_state_snapshot signal)
+           else None);
+        signal_scope =
+          (if options.dot_dynamic_scopes then
+             Some (signal_scope_snapshot signal)
+           else None);
+        signal_timer_fields =
+          (if options.dot_timers then signal_timer_fields signal else []);
+      }
 
   let dead_signal_label options dead =
-    let fields =
-      [
-        "kind=" ^ dead.dead_kind;
-        "signal_id=" ^ signal_id_label dead.dead_id;
-        "tombstone=true";
-      ]
-    in
-    let fields =
-      if options.dot_state then fields @ dead_signal_state_fields dead
-      else fields
-    in
-    let fields =
-      if options.dot_dynamic_scopes then fields @ dead_signal_scope_fields dead
-      else fields
-    in
-    let fields =
-      if options.dot_timers then fields @ dead_timer_fields dead.dead_timer
-      else fields
-    in
-    String.concat " " fields
+    Debug.signal_label
+      {
+        Debug.signal_kind_label = dead.dead_kind;
+        signal_id_label = signal_id_label dead.dead_id;
+        signal_tombstone = true;
+        signal_state =
+          (if options.dot_state then Some (dead_signal_state_snapshot dead)
+           else None);
+        signal_scope =
+          (if options.dot_dynamic_scopes then
+             Some (dead_signal_scope_snapshot dead)
+           else None);
+        signal_timer_fields =
+          (if options.dot_timers then dead_timer_fields dead.dead_timer else []);
+      }
 
   let observer_label ?missing_observed_signal_id (O observer) =
     let value_state_label, delivery_state_label =
