@@ -8,6 +8,7 @@ module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
+module Stream_bridge = Eta_signal_stream_bridge
 module Timer = Eta_signal_timer
 module Transaction = Eta_signal_transaction
 
@@ -4192,93 +4193,25 @@ module Make (Observer_error : Observer_error) () = struct
   end
 
   module Stream = struct
-    let default_capacity = 1024
-
-    let create_bridge_queue capacity =
-      if capacity <= 0 then Error `Invalid_capacity
-      else
-        Ok
-          (Queue.create
-             ~overflow:(Queue.Drop_new { capacity })
-             ())
-
-    let report_dropped_update observer token on_drop update =
-      let drop_published = ref false in
-      let acknowledge_published_drop () =
-        if !drop_published then acknowledge_stream_drop_delivery observer token update
-        else Effect.unit
-      in
-      let report_on_drop_failure exn =
-        Effect.log_error
-          ~attrs:[ ("exception.message", Printexc.to_string exn) ]
-          "eta_signal.stream.on_drop_failure"
-      in
-      (Effect.sync (fun () ->
-           let on_drop_failure =
-             match on_drop with
-             | None -> None
-             | Some on_drop -> (
-                 try
-                   on_drop update;
-                   None
-                 with exn -> Some exn)
-           in
-           drop_published := true;
-           on_drop_failure)
-       |> Effect.bind (function
-            | None -> Effect.unit
-            | Some exn -> report_on_drop_failure exn)
-       |> Effect.bind (fun () ->
-              Private_test_hooks.run After_stream_drop_before_ack)
-       |> Effect.bind (fun () -> acknowledge_published_drop ()))
-      |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
+    let default_capacity = Stream_bridge.default_capacity
 
     let offer_bridge_update observer on_drop queue update =
-      stream_delivery_token observer
-      |> Effect.bind (function
-           | None -> Effect.unit
-           | Some token ->
-               Effect.sync (fun () -> Queue.sent_token queue)
-               |> Effect.bind (fun sent_before ->
-                      let sent_published = ref false in
-                      let acknowledge_published_sent () =
-                        if !sent_published then
-                          acknowledge_stream_sent_delivery observer token update
-                        else
-                          Effect.sync (fun () ->
-                              if
-                                not
-                                  (Queue.same_sent_token (Queue.sent_token queue)
-                                     sent_before)
-                              then
-                                sent_published := true)
-                          |> Effect.bind (fun () ->
-                                 if !sent_published then
-                                   acknowledge_stream_sent_delivery observer token
-                                     update
-                                 else Effect.unit)
-                      in
-                      (Queue.try_send queue update
-                       |> Effect.bind (function
-                            | `Sent ->
-                                Private_test_hooks.run
-                                  After_stream_try_send_before_ack
-                                |> Effect.bind (fun () ->
-                                       Effect.sync (fun () ->
-                                           sent_published := true))
-                                |> Effect.bind (fun () ->
-                                       acknowledge_published_sent ())
-                            | `Closed -> Effect.unit
-                            | `Dropped | `Full ->
-                                report_dropped_update observer token on_drop
-                                  update
-                            | `Closed_with_error err ->
-                                Effect.sync (fun () -> raise (Graph_error err))))
-                      |> Effect.on_exit (fun _exit ->
-                             acknowledge_published_sent ())))
+      Stream_bridge.offer ~queue
+        ~current_token:(fun () -> stream_delivery_token observer)
+        ~acknowledge_sent:(fun token update ->
+          acknowledge_stream_sent_delivery observer token update)
+        ~acknowledge_drop:(fun token update ->
+          acknowledge_stream_drop_delivery observer token update)
+        ~after_try_send_before_ack:(fun () ->
+          Private_test_hooks.run After_stream_try_send_before_ack)
+        ~after_drop_before_ack:(fun () ->
+          Private_test_hooks.run After_stream_drop_before_ack)
+        ~on_closed_with_error:(fun err ->
+          Effect.sync (fun () -> raise (Graph_error err)))
+        ~on_drop update
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
-      Effect.sync (fun () -> create_bridge_queue capacity)
+      Effect.sync (fun () -> Stream_bridge.create_queue ~capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun queue ->
              Observer.observe_with_hooks_callback ?equal

@@ -6,6 +6,7 @@
   eta_signal_error
   eta_signal_id
   eta_signal_scope
+  eta_signal_stream_bridge
   eta_signal_timer
   eta_signal_transaction
   eta_signal_stabilization)
@@ -86,6 +87,18 @@
 (rule
  (target eta_signal_scope.mli)
  (deps ../../lib/signal/eta_signal_scope.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_stream_bridge.ml)
+ (deps ../../lib/signal/eta_signal_stream_bridge.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_stream_bridge.mli)
+ (deps ../../lib/signal/eta_signal_stream_bridge.mli)
  (action
   (copy %{deps} %{target})))
 
