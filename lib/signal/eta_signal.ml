@@ -2210,9 +2210,6 @@ module Make (Observer_error : Observer_error) () = struct
              (observer_current_snapshot live))
     | None -> ()
 
-  let record_stream_bridge_drop_unlocked () =
-    Stream_bridge.record_drop graph.stream_bridge_metrics
-
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
 
@@ -3570,16 +3567,14 @@ module Make (Observer_error : Observer_error) () = struct
       }
 
     let bridge_hooks () =
-        {
-          Stream_bridge.after_try_send_before_ack =
-            (fun () ->
-              Private_test_hooks.run After_stream_try_send_before_ack);
-          after_drop_before_ack =
-            (fun () -> Private_test_hooks.run After_stream_drop_before_ack);
-          after_drop_acknowledged = record_stream_bridge_drop_unlocked;
-          on_closed_with_error =
-            (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
-        }
+      Stream_bridge.hooks ~metrics:graph.stream_bridge_metrics
+        ~after_try_send_before_ack:(fun () ->
+          Private_test_hooks.run After_stream_try_send_before_ack)
+        ~after_drop_before_ack:(fun () ->
+          Private_test_hooks.run After_stream_drop_before_ack)
+        ~on_closed_with_error:(fun err ->
+          Effect.sync (fun () -> raise (Graph_error err)))
+        ()
 
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Stream_bridge.observe ~capacity ?on_drop ?equal

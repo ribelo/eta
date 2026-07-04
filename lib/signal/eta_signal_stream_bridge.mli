@@ -48,6 +48,14 @@ type ('queue_error, 'error) hooks = {
   on_closed_with_error : 'queue_error -> (unit, 'error) Eta.Effect.t;
 }
 
+val hooks :
+  metrics:metrics ->
+  ?after_try_send_before_ack:(unit -> (unit, 'error) Eta.Effect.t) ->
+  ?after_drop_before_ack:(unit -> (unit, 'error) Eta.Effect.t) ->
+  on_closed_with_error:('queue_error -> (unit, 'error) Eta.Effect.t) ->
+  unit ->
+  ('queue_error, 'error) hooks
+
 type ('finish_reason, 'queue_error) finish_policy = {
   is_invalid_scope : 'finish_reason -> bool;
   invalid_scope_error : 'queue_error;

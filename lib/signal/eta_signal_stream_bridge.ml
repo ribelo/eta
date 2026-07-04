@@ -50,6 +50,17 @@ type ('queue_error, 'error) hooks = {
   on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
 }
 
+let hooks ~metrics
+    ?(after_try_send_before_ack = fun () -> Effect.unit)
+    ?(after_drop_before_ack = fun () -> Effect.unit)
+    ~on_closed_with_error () =
+  {
+    after_try_send_before_ack;
+    after_drop_before_ack;
+    after_drop_acknowledged = (fun () -> record_drop metrics);
+    on_closed_with_error;
+  }
+
 type ('finish_reason, 'queue_error) finish_policy = {
   is_invalid_scope : 'finish_reason -> bool;
   invalid_scope_error : 'queue_error;

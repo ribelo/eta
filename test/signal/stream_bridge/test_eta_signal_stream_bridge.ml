@@ -92,6 +92,37 @@ let hooks ?(after_send = fun () -> Effect.unit)
     on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
   }
 
+let test_metrics_hook_records_acknowledged_drops () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let metrics = Stream_bridge.create_metrics () in
+  let queue =
+    match Stream_bridge.create_queue ~capacity:1 with
+    | Ok queue -> queue
+    | Error _ -> Alcotest.fail "expected queue"
+  in
+  let sent = ref [] in
+  let dropped = ref [] in
+  let token = ref (Some 1) in
+  let bridge_hooks =
+    Stream_bridge.hooks ~metrics
+      ~on_closed_with_error:(fun `Invalid_scope ->
+        Effect.fail `Invalid_scope)
+      ()
+  in
+  let offer value =
+    Stream_bridge.offer ~queue
+      ~delivery:(delivery ~token ~sent ~dropped)
+      ~hooks:bridge_hooks ~on_drop:None value
+  in
+  run_ok runtime (offer 1);
+  Alcotest.(check int) "sent does not count as drop" 0
+    (Stream_bridge.drop_count metrics);
+  run_ok runtime (offer 2);
+  Alcotest.(check (list (pair int int))) "drop ack" [ (1, 2) ]
+    !dropped;
+  Alcotest.(check int) "acknowledged drop count" 1
+    (Stream_bridge.drop_count metrics)
+
 let test_finish_hook_closes_queue () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let queue =
@@ -353,6 +384,8 @@ let () =
             test_capacity_validation;
           Alcotest.test_case "create stream" `Quick test_create_stream;
           Alcotest.test_case "metrics" `Quick test_metrics;
+          Alcotest.test_case "metrics hook records acknowledged drops"
+            `Quick test_metrics_hook_records_acknowledged_drops;
           Alcotest.test_case "finish hook closes queue" `Quick
             test_finish_hook_closes_queue;
           Alcotest.test_case "finish hook invalid scope closes with error"
