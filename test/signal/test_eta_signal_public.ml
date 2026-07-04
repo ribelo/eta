@@ -246,6 +246,60 @@ let test_timer_runtime_mismatch_on_observe () =
         (Eta.Runtime.run rt_b
            (widen (S.Observer.observe timer (fun _ -> E.unit)))))
 
+let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock_a = Eta_test.Test_clock.create () in
+  let clock_b = Eta_test.Test_clock.create () in
+  let rt_a =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_a)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
+      ()
+  in
+  let rt_b =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_b)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
+      ()
+  in
+  let wrong_runtime_timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
+  let same_runtime_timer = run_ok rt_b (S.Time.interval (Eta.Duration.ms 10)) in
+  let wrong_runtime_observer =
+    run_ok rt_a (S.Observer.observe wrong_runtime_timer (fun _ -> E.unit))
+  in
+  let wrong_runtime_observer_active = ref true in
+  let dispose_wrong_runtime_observer () =
+    if !wrong_runtime_observer_active then (
+      wrong_runtime_observer_active := false;
+      run_ok rt_a (S.Observer.dispose wrong_runtime_observer))
+  in
+  Fun.protect
+    ~finally:dispose_wrong_runtime_observer
+    (fun () ->
+      run_ok rt_a S.stabilize;
+      expect_exact_runtime_mismatch "mixed runtime observe"
+        (Eta.Runtime.run rt_b
+           (widen
+              (S.Observer.observe same_runtime_timer (fun _ -> E.unit))));
+      Alcotest.(check int)
+        "failed observe did not start same-runtime sleeper" 0
+        (Eta_test.Test_clock.sleeper_count clock_b);
+      dispose_wrong_runtime_observer ();
+      let same_runtime_observer =
+        run_ok rt_b (S.Observer.observe same_runtime_timer (fun _ -> E.unit))
+      in
+      Fun.protect
+        ~finally:(fun () ->
+          run_ok rt_b (S.Observer.dispose same_runtime_observer))
+        (fun () ->
+          run_ok rt_b S.stabilize;
+          Alcotest.(check int) "same-runtime timer still observes" 0
+            (run_ok rt_b (S.Observer.read same_runtime_observer));
+          Alcotest.(check bool) "same-runtime sleeper starts after retry" true
+            (Eta_test.Test_clock.sleeper_count clock_b > 0)))
+
 let test_dispose_checked_reports_timer_runtime_mismatch () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -319,6 +373,53 @@ let test_captured_branch_observer_invalidates_without_owner_observer () =
   run_ok runtime (S.Var.set choose_left false);
   run_ok runtime S.stabilize;
   expect_fail "captured branch read after switch" (( = ) `Invalid_scope)
+    (Eta.Runtime.run runtime (widen (S.Observer.read branch_observer)));
+  run_ok runtime (S.Observer.dispose branch_observer)
+
+let test_captured_branch_observer_invalidates_after_owner_gc () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let choose_left = S.Var.create true in
+  let left = S.Var.create 10 in
+  let right = S.Var.create 20 in
+  let captured_left = ref None in
+  let make_and_drop_owner () =
+    let external_signal = S.const 0 in
+    let selected =
+      S.bind (S.Var.watch choose_left) (fun use_left ->
+          if use_left then (
+            let branch = S.Var.watch left in
+            captured_left := Some branch;
+            external_signal)
+          else S.Var.watch right)
+    in
+    let selected_observer =
+      run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+    in
+    run_ok runtime S.stabilize;
+    Alcotest.(check int) "selected initialized through external branch" 0
+      (run_ok runtime (S.Observer.read selected_observer));
+    run_ok runtime (S.Observer.dispose selected_observer);
+    run_ok runtime S.stabilize
+  in
+  make_and_drop_owner ();
+  Gc.full_major ();
+  Gc.compact ();
+  Gc.full_major ();
+  let branch =
+    match !captured_left with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured branch"
+  in
+  let branch_observer =
+    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "captured branch initialized after owner gc" 10
+    (run_ok runtime (S.Observer.read branch_observer));
+  run_ok runtime (S.Var.set choose_left false);
+  run_ok runtime S.stabilize;
+  expect_fail "captured branch read after owner gc switch" (( = ) `Invalid_scope)
     (Eta.Runtime.run runtime (widen (S.Observer.read branch_observer)));
   run_ok runtime (S.Observer.dispose branch_observer)
 
@@ -405,10 +506,14 @@ let () =
             test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
             test_timer_runtime_mismatch_on_observe;
+          Alcotest.test_case "mixed runtime timer mismatch recovery" `Quick
+            test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer;
           Alcotest.test_case "dispose_checked reports timer runtime mismatch"
             `Quick test_dispose_checked_reports_timer_runtime_mismatch;
           Alcotest.test_case "captured branch observer invalidates" `Quick
             test_captured_branch_observer_invalidates_without_owner_observer;
+          Alcotest.test_case "captured branch observer invalidates after gc"
+            `Quick test_captured_branch_observer_invalidates_after_owner_gc;
           Alcotest.test_case "observer failure retries pending delivery" `Quick
             test_observer_failure_retries_pending_delivery;
           Alcotest.test_case "stream overflow does not block graph progress"
