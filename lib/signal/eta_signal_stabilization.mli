@@ -6,6 +6,7 @@ type committed
 type delivering
 
 type +'state token
+(** Phase token bound to the stabilization state that created it. *)
 
 type state =
   | Idle

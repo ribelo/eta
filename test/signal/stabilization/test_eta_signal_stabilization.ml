@@ -120,6 +120,39 @@ let test_rollback_invalidates_pure_token () =
   expect_invalid_arg "reused pure token" (fun () ->
       ignore (S.commit_to_committed state pure : S.committed S.token))
 
+let test_tokens_are_bound_to_state () =
+  let first = S.create () in
+  let second = S.create () in
+  let first_pure =
+    match S.begin_pure first with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected first begin to succeed"
+  in
+  let second_pure =
+    match S.begin_pure second with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected second begin to succeed"
+  in
+  (match S.commit_transaction second with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "second commit unexpectedly failed");
+  expect_invalid_arg "foreign pure token" (fun () ->
+      ignore (S.commit_to_committed second first_pure : S.committed S.token));
+  let second_committed = S.commit_to_committed second second_pure in
+  (match S.commit_transaction first with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "first commit unexpectedly failed");
+  let first_committed = S.commit_to_committed first first_pure in
+  expect_invalid_arg "foreign committed token" (fun () ->
+      ignore
+        (S.collect_to_delivering second first_committed
+          : S.delivering S.token));
+  ignore (S.collect_to_delivering second second_committed : S.delivering S.token);
+  S.finish first;
+  S.finish second
+
 let test_begin_opens_transaction () =
   let state = S.create () in
   let staged = T.create_staged 1 in
@@ -173,6 +206,8 @@ let () =
             test_finish_delivering_uses_token;
           Alcotest.test_case "rollback invalidates pure token" `Quick
             test_rollback_invalidates_pure_token;
+          Alcotest.test_case "tokens are bound to state" `Quick
+            test_tokens_are_bound_to_state;
           Alcotest.test_case "begin opens transaction" `Quick
             test_begin_opens_transaction;
           Alcotest.test_case "rollback transaction clears staged value" `Quick

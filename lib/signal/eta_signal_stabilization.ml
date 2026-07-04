@@ -3,7 +3,7 @@ type pure
 type committed
 type delivering
 
-type +'state token = Token
+type +'state token = Token of int
 
 type state =
   | Idle
@@ -12,12 +12,24 @@ type state =
   | Delivering
 
 type 'error t = {
+  id : int;
   mutable state : state;
   mutable transaction :
     (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t option;
 }
 
-let create () = { state = Idle; transaction = None }
+let next_id = ref 0
+
+let next_state_id () =
+  if !next_id = max_int then
+    invalid_arg "Eta_signal_stabilization: id overflow";
+  let id = !next_id in
+  incr next_id;
+  id
+
+let create () =
+  { id = next_state_id (); state = Idle; transaction = None }
+
 let state t = t.state
 
 let is_pure t =
@@ -37,6 +49,12 @@ let require_state name expected t =
       ("Eta_signal_stabilization." ^ name ^ ": expected "
       ^ state_label expected ^ ", got " ^ state_label t.state)
 
+let require_token name t (Token id) =
+  if id <> t.id then
+    invalid_arg
+      ("Eta_signal_stabilization." ^ name
+     ^ ": token belongs to another stabilization state")
+
 let require_no_transaction name t =
   match t.transaction with
   | None -> ()
@@ -51,7 +69,7 @@ let begin_pure t =
       require_no_transaction "begin_pure" t;
       t.state <- Pure;
       t.transaction <- Some (Eta_signal_transaction.begin_pure ());
-      Ok Token
+      Ok (Token t.id)
   | Pure | Committed | Delivering ->
       Error `Reentrant_stabilization
 
@@ -87,32 +105,36 @@ let rollback_transaction t =
       Eta_signal_transaction.rollback transaction;
       t.transaction <- None
 
-let commit_to_committed t Token =
+let commit_to_committed t token =
+  require_token "commit_to_committed" t token;
   require_state "commit_to_committed" Pure t;
   require_no_transaction "commit_to_committed" t;
   t.state <- Committed;
-  Token
+  Token t.id
 
-let collect_to_delivering t Token =
+let collect_to_delivering t token =
+  require_token "collect_to_delivering" t token;
   require_state "collect_to_delivering" Committed t;
   t.state <- Delivering;
-  Token
+  Token t.id
 
 let commit_to_delivering t token =
   let committed = commit_to_committed t token in
   collect_to_delivering t committed
 
-let rollback_to_idle t Token =
+let rollback_to_idle t token =
+  require_token "rollback_to_idle" t token;
   require_state "rollback_to_idle" Pure t;
   require_no_transaction "rollback_to_idle" t;
   t.state <- Idle;
-  Token
+  Token t.id
 
-let finish_delivering t Token =
+let finish_delivering t token =
+  require_token "finish_delivering" t token;
   require_state "finish_delivering" Delivering t;
   require_no_transaction "finish_delivering" t;
   t.state <- Idle;
-  Token
+  Token t.id
 
 let finish t =
   require_no_transaction "finish" t;
