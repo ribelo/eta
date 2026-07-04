@@ -247,6 +247,19 @@ let mark_failed ~advance_generation ~effective_state ~current_state ~generation
     | None -> None
   else None
 
+let finish_state ~advance_generation state =
+  let generation =
+    if state_active state then advance_generation (state_generation state)
+    else state_generation state
+  in
+  Timer_finished generation
+
+let finish_current_daemon ~advance_generation ~effective_state ~current_state
+    ~generation =
+  match daemon_status effective_state ~generation with
+  | Daemon_continue -> Some (finish_state ~advance_generation current_state)
+  | Daemon_stop -> None
+
 let read_next_due state ~generation ~fallback =
   if state_running_current state generation then
     Some (Option.value (state_next_due state) ~default:fallback)
@@ -272,13 +285,6 @@ let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
   refresh_operation && current_token <> token && staged_token <> token
   && (refresh_when_inactive || active)
   && not finished
-
-let finish_state ~advance_generation state =
-  let generation =
-    if state_active state then advance_generation (state_generation state)
-    else state_generation state
-  in
-  Timer_finished generation
 
 let finish_cancel_hooks = function
   | Timer_running (_, _, cancel) -> [ cancel ]

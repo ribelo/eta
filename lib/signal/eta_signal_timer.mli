@@ -104,6 +104,13 @@ val mark_failed :
   generation:int ->
   state option
 
+val finish_current_daemon :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  generation:int ->
+  state option
+
 val read_next_due : state -> generation:int -> fallback:int -> int option
 
 val set_next_due :

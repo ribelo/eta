@@ -3814,21 +3814,20 @@ module Make (Observer_error : Observer_error) () = struct
                                                              (if saturated_due then
                                                                 with_graph_lane_sync
                                                                   (fun () ->
-                                                                    match
-                                                                      Timer.daemon_status
-                                                                        (timer_effective_state
-                                                                           timer)
-                                                                        ~generation
-                                                                    with
-                                                                    | Timer
-                                                                      .Daemon_continue
-                                                                      ->
-                                                                        timer_finish_unlocked
-                                                                          timer
-                                                                    | Timer
-                                                                      .Daemon_stop
-                                                                      ->
-                                                                        ())
+                                                                    Option.iter
+                                                                      (set_timer_current_state
+                                                                         timer)
+                                                                      (Timer.finish_current_daemon
+                                                                         ~advance_generation:
+                                                                           (checked_succ
+                                                                              "timer generation")
+                                                                         ~effective_state:
+                                                                           (timer_effective_state
+                                                                              timer)
+                                                                         ~current_state:
+                                                                           (timer_current_state
+                                                                              timer)
+                                                                         ~generation))
                                                               else Effect.unit)
                                                              |> Effect.bind
                                                                   (fun () ->

@@ -298,6 +298,32 @@ let test_mark_failed_policy () =
        (Timer.mark_failed ~advance_generation:succ ~effective_state:running
           ~current_state:inactive ~generation:7))
 
+let test_finish_current_daemon_policy () =
+  let running = Timer.Timer_running (7, Some 11, noop) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match
+     Timer.finish_current_daemon ~advance_generation:succ
+       ~effective_state:running ~current_state:running ~generation:7
+   with
+  | Some state ->
+      Alcotest.(check string) "finished state" "finished"
+        (Timer.state_label state);
+      Alcotest.(check int) "active finish advances generation" 8
+        (Timer.state_generation state)
+  | None -> Alcotest.fail "expected current daemon finish");
+  Alcotest.(check bool) "stale daemon ignored" true
+    (Option.is_none
+       (Timer.finish_current_daemon ~advance_generation:succ
+          ~effective_state:running ~current_state:running ~generation:8));
+  (match
+     Timer.finish_current_daemon ~advance_generation:succ
+       ~effective_state:running ~current_state:inactive ~generation:7
+   with
+  | Some state ->
+      Alcotest.(check int) "uses current state generation" 7
+        (Timer.state_generation state)
+  | None -> Alcotest.fail "expected inactive current finish")
+
 let test_read_next_due_policy () =
   let running_with_due = Timer.Timer_running (7, Some 11, noop) in
   let running_without_due = Timer.Timer_running_uncancellable (7, None) in
@@ -488,6 +514,8 @@ let () =
             test_mark_stopped_policy;
           Alcotest.test_case "mark failed policy" `Quick
             test_mark_failed_policy;
+          Alcotest.test_case "finish current daemon policy" `Quick
+            test_finish_current_daemon_policy;
           Alcotest.test_case "read next due policy" `Quick
             test_read_next_due_policy;
           Alcotest.test_case "set next due policy" `Quick
