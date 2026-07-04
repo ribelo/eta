@@ -3,6 +3,7 @@ module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
+module Stabilization = Eta_signal_stabilization
 module Transaction = Eta_signal_transaction
 
 module type Observer_error = sig
@@ -288,11 +289,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let compare_observer_id left right =
     Int.compare (observer_id_int left) (observer_id_int right)
-
-  type phase =
-    | Not_stabilizing
-    | Pure
-    | Running_observers
 
   type weak_packed_signal = Obj.t Weak.t
 
@@ -734,7 +730,7 @@ module Make (Observer_error : Observer_error) () = struct
     owner_domain : Domain.id;
     mutable next_id : int;
     mutable next_scope_id : int;
-    mutable phase : phase;
+    stabilization : Stabilization.t;
     mutable stabilization_id : int;
     mutable pending_vars : packed_var list;
     mutable staged_binds : packed_bind list;
@@ -774,7 +770,7 @@ module Make (Observer_error : Observer_error) () = struct
       owner_domain = Domain.self ();
       next_id = 0;
       next_scope_id = 1;
-      phase = Not_stabilizing;
+      stabilization = Stabilization.create ();
       stabilization_id = 0;
       pending_vars = [];
       staged_binds = [];
@@ -1384,13 +1380,13 @@ module Make (Observer_error : Observer_error) () = struct
       observers
 
   let signal_scope () =
-    match graph.phase with
-    | Not_stabilizing -> graph.current_scope
+    match Stabilization.state graph.stabilization with
+    | Idle -> graph.current_scope
     | Pure -> (
         match graph.current_scope with
         | Some scope when scope.scope_valid -> Some scope
         | _ -> raise (Graph_error `Ambiguous_scope))
-    | Running_observers -> raise (Graph_error `Ambiguous_scope)
+    | Delivering -> raise (Graph_error `Ambiguous_scope)
 
   let add_to_scope scope signal =
     match scope with
@@ -2184,12 +2180,14 @@ module Make (Observer_error : Observer_error) () = struct
         | Observer_current _ | Observer_failed_without_current -> ())
     | None -> ()
 
-  let rollback_pure observers pending_at_start =
+  let rollback_pure pure_token observers pending_at_start =
     let disposal_hooks = reset_staging () in
     List.iter mark_failed_without_current observers;
     List.iter requeue_if_needed pending_at_start;
     graph.active_timer_refresh <- None;
-    graph.phase <- Not_stabilizing;
+    ignore
+      (Stabilization.rollback_to_idle graph.stabilization pure_token
+        : Stabilization.idle Stabilization.token);
     disposal_hooks
 
   let next_timer_refresh_token_unlocked () =
@@ -2974,13 +2972,13 @@ module Make (Observer_error : Observer_error) () = struct
         false
 
   let begin_stabilize timer_refresh =
-    if graph.phase <> Not_stabilizing then
-      Pure_graph_error ([], `Reentrant_stabilization)
-    else (
+    match Stabilization.begin_pure graph.stabilization with
+    | Error `Reentrant_stabilization ->
+        Pure_graph_error ([], `Reentrant_stabilization)
+    | Ok pure_token ->
       let generation =
         checked_succ "stabilization generation" graph.stabilization_id
       in
-      graph.phase <- Pure;
       graph.stabilization_id <- generation;
       graph.active_transaction <- Some (Transaction.begin_pure ());
       graph.computed_nodes <- [];
@@ -3006,22 +3004,22 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.active_timer_refresh <- None;
-        graph.phase <- Running_observers;
+        ignore
+          (Stabilization.commit_to_delivering graph.stabilization pure_token
+            : Stabilization.delivering Stabilization.token);
         Pure_ok (hooks, events)
       with
       | Graph_error err ->
-          let hooks = rollback_pure observers pending_at_start in
+          let hooks = rollback_pure pure_token observers pending_at_start in
           Pure_graph_error (hooks, err)
       | exn ->
           let backtrace = Printexc.get_raw_backtrace () in
-          let hooks = rollback_pure observers pending_at_start in
-          Pure_defect (hooks, exn, backtrace))
+          let hooks = rollback_pure pure_token observers pending_at_start in
+          Pure_defect (hooks, exn, backtrace)
 
   let finish_stabilize () =
     graph.active_timer_refresh <- None;
-    match graph.phase with
-    | Running_observers | Pure -> graph.phase <- Not_stabilizing
-    | Not_stabilizing -> ()
+    Stabilization.finish graph.stabilization
 
   let graph_error_of_die die =
     match die.Eta.Cause.exn with
@@ -3186,7 +3184,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let value (source : 'a t) =
       ensure_graph_context ();
-      if graph.phase = Pure then raise (Graph_error `Ambiguous_scope);
+      if Stabilization.is_pure graph.stabilization then
+        raise (Graph_error `Ambiguous_scope);
       Transaction.current source.source_value
 
     let watch (source : 'a t) =
