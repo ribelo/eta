@@ -23,6 +23,15 @@ type ('runtime, 'dirty) refresh_context = {
   mutable refresh_dirty_items : 'dirty list;
 }
 
+type debug_snapshot = {
+  debug_state_label : string;
+  debug_active : bool;
+  debug_running_generation : int option;
+  debug_has_cancel : bool;
+  debug_finished : bool;
+  debug_generation : int;
+}
+
 type due_refresh = {
   missed : int;
   saturated_due : bool;
@@ -293,6 +302,16 @@ let state_set_next_due state next_due_ms =
   | Timer_running (generation, _, cancel) ->
       Timer_running (generation, next_due_ms, cancel)
   | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> state
+
+let debug_snapshot state =
+  {
+    debug_state_label = state_label state;
+    debug_active = state_active state;
+    debug_running_generation = state_running_generation state;
+    debug_has_cancel = state_has_cancel state;
+    debug_finished = state_finished state;
+    debug_generation = state_generation state;
+  }
 
 let daemon_status state ~generation =
   if state_running_current state generation then Daemon_continue

@@ -304,14 +304,6 @@ module Make (Observer_error : Observer_error) () = struct
     timer_update : 'err. timer_node -> int -> missed:int -> (unit, 'err) Effect.t;
   }
 
-  and dead_timer = {
-    dead_timer_active : bool;
-    dead_timer_running_generation : int option;
-    dead_timer_cancel : bool;
-    dead_timer_finished : bool;
-    dead_timer_generation : int;
-  }
-
   and dead_signal = {
     dead_id : signal_id;
     dead_kind : string;
@@ -325,7 +317,7 @@ module Make (Observer_error : Observer_error) () = struct
     dead_scope_owner : signal_id option;
     dead_scope_parent : scope_id option;
     dead_scope_valid : bool option;
-    dead_timer : dead_timer option;
+    dead_timer : Timer.debug_snapshot option;
   }
 
   and 'a source_timer_update = {
@@ -1231,14 +1223,11 @@ module Make (Observer_error : Observer_error) () = struct
     | tombstone :: rest ->
         tombstone :: take_dead_signal_tombstones (remaining - 1) rest
 
-  let timer_tombstone timer =
-    {
-      dead_timer_active = timer_active timer;
-      dead_timer_running_generation = timer_running_generation timer;
-      dead_timer_cancel = timer_has_cancel timer;
-      dead_timer_finished = timer_finished timer;
-      dead_timer_generation = timer_generation timer;
-    }
+  let timer_debug_snapshot timer =
+    let snapshot = Timer.debug_snapshot (timer_effective_state timer) in
+    { snapshot with debug_generation = timer_generation timer }
+
+  let timer_tombstone timer = timer_debug_snapshot timer
 
   let signal_tombstone (P signal) =
     let dead_scope_id, dead_scope_owner, dead_scope_parent, dead_scope_valid =
@@ -2946,24 +2935,30 @@ module Make (Observer_error : Observer_error) () = struct
           "scope_parent=" ^ parent;
         ]
 
+  let timer_debug_fields ?state_label (timer : Timer.debug_snapshot) =
+    let running =
+      match timer.debug_running_generation with
+      | None -> "none"
+      | Some generation -> string_of_int generation
+    in
+    Option.fold ~none:[] ~some:(fun label -> [ "timer_state=" ^ label ])
+      state_label
+    @ [
+        bool_field "timer_active" timer.debug_active;
+        "timer_running=" ^ running;
+        bool_field "timer_cancel" timer.debug_has_cancel;
+        bool_field "timer_finished" timer.debug_finished;
+        "timer_generation=" ^ string_of_int timer.debug_generation;
+      ]
+
   let signal_timer_fields : type a. a signal -> string list =
    fun signal ->
     match signal.timer with
     | None -> []
     | Some timer ->
-        let running =
-          match timer_running_generation timer with
-          | None -> "none"
-          | Some generation -> string_of_int generation
-        in
-        [
-          "timer_state=" ^ timer_state_label (timer_current_state timer);
-          bool_field "timer_active" (timer_active timer);
-          "timer_running=" ^ running;
-          bool_field "timer_cancel" (timer_has_cancel timer);
-          bool_field "timer_finished" (timer_finished timer);
-          "timer_generation=" ^ string_of_int (timer_generation timer);
-        ]
+        timer_debug_fields
+          ~state_label:(timer_state_label (timer_current_state timer))
+          (timer_debug_snapshot timer)
 
   let dead_signal_state_fields dead =
     [
@@ -3006,19 +3001,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dead_timer_fields = function
     | None -> []
-    | Some timer ->
-        let running =
-          match timer.dead_timer_running_generation with
-          | None -> "none"
-          | Some generation -> string_of_int generation
-        in
-        [
-          bool_field "timer_active" timer.dead_timer_active;
-          "timer_running=" ^ running;
-          bool_field "timer_cancel" timer.dead_timer_cancel;
-          bool_field "timer_finished" timer.dead_timer_finished;
-          "timer_generation=" ^ string_of_int timer.dead_timer_generation;
-        ]
+    | Some timer -> timer_debug_fields timer
 
   let signal_label : type a. dot_options -> a signal -> string =
    fun options signal ->

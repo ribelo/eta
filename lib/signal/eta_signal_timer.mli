@@ -16,6 +16,15 @@ type snapshot
 
 type ('runtime, 'dirty) refresh_context
 
+type debug_snapshot = {
+  debug_state_label : string;
+  debug_active : bool;
+  debug_running_generation : int option;
+  debug_has_cancel : bool;
+  debug_finished : bool;
+  debug_generation : int;
+}
+
 type 'a refresh_plan = {
   refresh_value : 'a option;
   refresh_next_due_ms : int option;
@@ -132,6 +141,7 @@ val state_has_cancel : state -> bool
 val state_running_current : state -> int -> bool
 val state_next_due : state -> int option
 val state_set_next_due : state -> int option -> state
+val debug_snapshot : state -> debug_snapshot
 
 val daemon_status : state -> generation:int -> daemon_status
 

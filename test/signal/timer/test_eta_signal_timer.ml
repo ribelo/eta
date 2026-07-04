@@ -132,6 +132,41 @@ let test_state_helpers () =
   Alcotest.(check int) "with generation" 8
     (Timer.state_generation (Timer.state_with_generation running 8))
 
+let test_debug_snapshot () =
+  let running = Timer.Timer_running (7, Some 10, noop) in
+  let running_snapshot = Timer.debug_snapshot running in
+  Alcotest.(check string)
+    "running label"
+    "running"
+    running_snapshot.debug_state_label;
+  Alcotest.(check bool) "running active" true
+    running_snapshot.debug_active;
+  Alcotest.(check (option int)) "running generation" (Some 7)
+    running_snapshot.debug_running_generation;
+  Alcotest.(check bool) "running cancel" true
+    running_snapshot.debug_has_cancel;
+  Alcotest.(check bool) "running finished" false
+    running_snapshot.debug_finished;
+  Alcotest.(check int) "running state generation" 7
+    running_snapshot.debug_generation;
+  let finished_snapshot =
+    Timer.debug_snapshot (Timer.Timer_finished 8)
+  in
+  Alcotest.(check string)
+    "finished label"
+    "finished"
+    finished_snapshot.debug_state_label;
+  Alcotest.(check bool) "finished active" false
+    finished_snapshot.debug_active;
+  Alcotest.(check (option int)) "finished generation" None
+    finished_snapshot.debug_running_generation;
+  Alcotest.(check bool) "finished cancel" false
+    finished_snapshot.debug_has_cancel;
+  Alcotest.(check bool) "finished state" true
+    finished_snapshot.debug_finished;
+  Alcotest.(check int) "finished state generation" 8
+    finished_snapshot.debug_generation
+
 let test_snapshot_policy () =
   let initial = Timer.initial_snapshot in
   Alcotest.(check string) "initial state" "inactive"
@@ -719,6 +754,7 @@ let () =
           Alcotest.test_case "daemon wake plan" `Quick
             test_daemon_wake_plan;
           Alcotest.test_case "state helpers" `Quick test_state_helpers;
+          Alcotest.test_case "debug snapshot" `Quick test_debug_snapshot;
           Alcotest.test_case "snapshot policy" `Quick test_snapshot_policy;
           Alcotest.test_case "refresh context" `Quick test_refresh_context;
           Alcotest.test_case "daemon status policy" `Quick
