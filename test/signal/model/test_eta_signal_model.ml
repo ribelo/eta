@@ -984,6 +984,199 @@ let test_bind_branch_demand_trace_matches_model () =
         (generate_branch_demand_trace ~seed ~steps:100))
     [ 5; 23; 61; 97 ]
 
+type nested_bind_op =
+  | Nested_set_a of int
+  | Nested_set_b of int
+  | Nested_set_c of int
+  | Nested_choose of int
+  | Nested_inner_choose of bool
+  | Nested_external_offset of int
+  | Nested_stabilize
+  | Nested_read
+
+type nested_bind_model = {
+  mutable nested_pending_a : int;
+  mutable nested_pending_b : int;
+  mutable nested_pending_c : int;
+  mutable nested_pending_choose : int;
+  mutable nested_pending_inner_choose : bool;
+  mutable nested_pending_external_offset : int;
+  mutable nested_committed_a : int;
+  mutable nested_committed_b : int;
+  mutable nested_committed_c : int;
+  mutable nested_committed_choose : int;
+  mutable nested_committed_inner_choose : bool;
+  mutable nested_committed_external_offset : int;
+  mutable nested_current : int option;
+  mutable nested_updates : observed_update list;
+}
+
+let pp_nested_bind_op formatter = function
+  | Nested_set_a value -> Format.fprintf formatter "Set_a %d" value
+  | Nested_set_b value -> Format.fprintf formatter "Set_b %d" value
+  | Nested_set_c value -> Format.fprintf formatter "Set_c %d" value
+  | Nested_choose value -> Format.fprintf formatter "Choose %d" value
+  | Nested_inner_choose value ->
+      Format.fprintf formatter "Inner_choose %b" value
+  | Nested_external_offset value ->
+      Format.fprintf formatter "External_offset %d" value
+  | Nested_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Nested_read -> Format.pp_print_string formatter "Read"
+
+let create_nested_bind_model () =
+  {
+    nested_pending_a = 1;
+    nested_pending_b = 10;
+    nested_pending_c = 100;
+    nested_pending_choose = 0;
+    nested_pending_inner_choose = true;
+    nested_pending_external_offset = 5;
+    nested_committed_a = 1;
+    nested_committed_b = 10;
+    nested_committed_c = 100;
+    nested_committed_choose = 0;
+    nested_committed_inner_choose = true;
+    nested_committed_external_offset = 5;
+    nested_current = None;
+    nested_updates = [];
+  }
+
+let nested_bind_value model =
+  match model.nested_committed_choose with
+  | 0 ->
+      if model.nested_committed_inner_choose then
+        model.nested_committed_a + 1
+      else model.nested_committed_b + 2
+  | 1 -> model.nested_committed_c * 3
+  | _ -> model.nested_committed_a + model.nested_committed_external_offset
+
+let stabilize_nested_bind_model model =
+  model.nested_committed_a <- model.nested_pending_a;
+  model.nested_committed_b <- model.nested_pending_b;
+  model.nested_committed_c <- model.nested_pending_c;
+  model.nested_committed_choose <- model.nested_pending_choose;
+  model.nested_committed_inner_choose <- model.nested_pending_inner_choose;
+  model.nested_committed_external_offset <-
+    model.nested_pending_external_offset;
+  let next = nested_bind_value model in
+  let update =
+    match model.nested_current with
+    | None -> Some (Initialized next)
+    | Some current ->
+        if current = next then None else Some (Changed (current, next))
+  in
+  model.nested_current <- Some next;
+  Option.iter
+    (fun update ->
+      model.nested_updates <- update :: model.nested_updates)
+    update
+
+let generate_nested_bind_trace ~seed ~steps =
+  let random = Random.State.make [| seed; steps |] in
+  let next_value () = Random.State.int random 31 - 15 in
+  let next_op index =
+    if index mod 6 = 0 then Nested_stabilize
+    else
+      match Random.State.int random 16 with
+      | 0 | 1 -> Nested_set_a (next_value ())
+      | 2 | 3 -> Nested_set_b (next_value ())
+      | 4 | 5 -> Nested_set_c (next_value ())
+      | 6 | 7 | 8 -> Nested_choose (Random.State.int random 3)
+      | 9 | 10 -> Nested_inner_choose (Random.State.bool random)
+      | 11 | 12 -> Nested_external_offset (next_value ())
+      | 13 -> Nested_read
+      | _ -> Nested_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Nested_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Nested_read :: Nested_stabilize :: loop 1 []
+
+let run_nested_bind_trace name ops =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source_a = Signal.Var.create 1 in
+  let source_b = Signal.Var.create 10 in
+  let source_c = Signal.Var.create 100 in
+  let choose = Signal.Var.create 0 in
+  let inner_choose = Signal.Var.create true in
+  let external_offset = Signal.Var.create 5 in
+  let external_bind =
+    Signal.bind (Signal.Var.watch external_offset) (fun offset ->
+        Signal.Var.watch source_a
+        |> Signal.map (fun value -> value + offset))
+  in
+  let selected =
+    Signal.bind (Signal.Var.watch choose) (function
+      | 0 ->
+          Signal.bind (Signal.Var.watch inner_choose) (fun use_a ->
+              if use_a then
+                Signal.Var.watch source_a
+                |> Signal.map (fun value -> value + 1)
+              else
+                Signal.Var.watch source_b
+                |> Signal.map (fun value -> value + 2))
+      | 1 ->
+          Signal.Var.watch source_c
+          |> Signal.map (fun value -> value * 3)
+      | _ -> external_bind)
+  in
+  let updates = ref [] in
+  let record update =
+    E.sync (fun () ->
+        updates := observed_of_signal_update update :: !updates)
+  in
+  let observer = run_ok runtime (Signal.Observer.observe selected record) in
+  let model = create_nested_bind_model () in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_nested_bind_op op
+      in
+      match op with
+      | Nested_set_a value ->
+          model.nested_pending_a <- value;
+          run_ok runtime (Signal.Var.set source_a value)
+      | Nested_set_b value ->
+          model.nested_pending_b <- value;
+          run_ok runtime (Signal.Var.set source_b value)
+      | Nested_set_c value ->
+          model.nested_pending_c <- value;
+          run_ok runtime (Signal.Var.set source_c value)
+      | Nested_choose value ->
+          model.nested_pending_choose <- value;
+          run_ok runtime (Signal.Var.set choose value)
+      | Nested_inner_choose value ->
+          model.nested_pending_inner_choose <- value;
+          run_ok runtime (Signal.Var.set inner_choose value)
+      | Nested_external_offset value ->
+          model.nested_pending_external_offset <- value;
+          run_ok runtime (Signal.Var.set external_offset value)
+      | Nested_stabilize ->
+          stabilize_nested_bind_model model;
+          run_ok runtime Signal.stabilize;
+          Alcotest.(check (list observed_update))
+            (label ^ " updates") (List.rev model.nested_updates)
+            (List.rev !updates)
+      | Nested_read -> (
+          match model.nested_current with
+          | None ->
+              expect_uninitialized_observer label runtime
+                (Signal.Observer.read observer)
+          | Some expected ->
+              Alcotest.(check int) label expected
+                (run_ok runtime (Signal.Observer.read observer))))
+    ops;
+  run_ok runtime (Signal.Observer.dispose observer)
+
+let test_nested_bind_churn_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_nested_bind_trace
+        (Format.asprintf "nested-bind-seed-%d" seed)
+        (generate_nested_bind_trace ~seed ~steps:120))
+    [ 13; 31; 71; 113 ]
+
 type diamond_op =
   | Diamond_set of int
   | Diamond_stabilize
@@ -1482,6 +1675,8 @@ let () =
             test_observer_lifecycle_trace_matches_model;
           Alcotest.test_case "bind branch demand trace matches model" `Quick
             test_bind_branch_demand_trace_matches_model;
+          Alcotest.test_case "nested bind churn trace matches model" `Quick
+            test_nested_bind_churn_trace_matches_model;
           Alcotest.test_case "diamond trace matches model" `Quick
             test_diamond_trace_matches_model;
           Alcotest.test_case "generated small graphs match model" `Quick
