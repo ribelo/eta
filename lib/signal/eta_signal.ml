@@ -708,68 +708,18 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
 
-  let release_graph_lane_sync owns_lane =
-    if !owns_lane then (
-      owns_lane := false;
-      Lane.set_owner_fiber_id graph.lane None;
-      Lane.leave graph.lane)
-
   let with_graph_lane_sync f =
-    Effect.Expert.make ~leaf_name:"Eta_signal.with_graph_lane_sync" (fun context ->
-        let contract = Effect.Expert.contract context in
-        let lane_depth =
-          Option.value
-            (contract.Runtime_contract.local_get graph_lane_depth_local)
-            ~default:0
-        in
-        let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
-        let owns_graph_lane =
-          match Lane.owner_fiber_id graph.lane with
-          | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
-          | None -> false
-        in
-        if lane_depth > 0 || owns_graph_lane then
-          try
-            ensure_graph_context ();
-            Effect.Expert.eval context (Effect.sync f)
-          with exn -> Effect.Expert.exit_of_exn context exn
-        else
-          let owns_lane = ref false in
-          let release_after_interrupt () =
-            contract.Runtime_contract.protect (fun () ->
-                release_graph_lane_sync owns_lane)
-          in
-          try
-            ensure_graph_context ();
-            Lane.enter
-              ~hooks:
-                {
-                  note_waiter_enqueued =
-                    Private_test_hooks.note_lane_waiter_enqueued;
-                  note_waiter_compaction =
-                    Private_test_hooks.note_lane_waiter_compaction;
-                }
-              contract graph.lane;
-            owns_lane := true;
-            Lane.set_owner_fiber_id graph.lane (Some current_fiber_id);
-            let release_graph_lane =
-              Effect.sync (fun () -> release_graph_lane_sync owns_lane)
-            in
-            contract.Runtime_contract.local_with_binding graph_lane_depth_local 1
-              (fun () ->
-                Effect.Expert.eval context
-                  (Private_test_hooks.run After_graph_lane_acquired
-                  |> Effect.bind (fun () -> Effect.sync f)
-                  |> Effect.on_exit (fun _exit -> release_graph_lane)))
-          with
-          | exn
-            when Option.is_some
-                   (contract.Runtime_contract.cancellation_reason exn) ->
-              release_after_interrupt ();
-              raise exn
-          | exn ->
-              release_after_interrupt ();
-              Effect.Expert.exit_of_exn context exn)
+    Lane.with_sync ~leaf_name:"Eta_signal.with_graph_lane_sync"
+      ~depth_local:graph_lane_depth_local ~ensure_context:ensure_graph_context
+      ~hooks:
+        {
+          note_waiter_enqueued = Private_test_hooks.note_lane_waiter_enqueued;
+          note_waiter_compaction =
+            Private_test_hooks.note_lane_waiter_compaction;
+        }
+      ~after_acquired:(fun () ->
+        Private_test_hooks.run After_graph_lane_acquired)
+      graph.lane f
 
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;

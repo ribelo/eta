@@ -1,4 +1,5 @@
 module Runtime_contract = Eta.Runtime_contract
+module Effect = Eta.Effect
 module Sync_lock = Eta.Sync_lock
 
 type waiter_state =
@@ -43,15 +44,18 @@ let create () =
     owner_fiber_id = None;
   }
 
-let owner_fiber_id lane = lane.owner_fiber_id
-let set_owner_fiber_id lane owner_fiber_id =
-  lane.owner_fiber_id <- owner_fiber_id
-
 let waiting_count lane = lane.waiting
 let cancelled_count lane = lane.cancelled
 
 let saturating_succ value =
   if value = max_int then max_int else value + 1
+
+let can_reenter ~lane_depth ~owner_fiber_id ~current_fiber_id =
+  lane_depth > 0
+  ||
+  match owner_fiber_id with
+  | Some owner_fiber_id -> owner_fiber_id = current_fiber_id
+  | None -> false
 
 let use_lock lane f = Sync_lock.use lane.lock f
 
@@ -217,3 +221,50 @@ let enter ~hooks contract lane =
 let leave lane =
   with_committed_grant (use_lock lane) (fun pending_grants ->
       release_locked pending_grants lane)
+
+let release_sync lane owns_lane =
+  if !owns_lane then (
+    owns_lane := false;
+    lane.owner_fiber_id <- None;
+    leave lane)
+
+let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
+    lane f =
+  Effect.Expert.make ~leaf_name @@ fun context ->
+  let contract = Effect.Expert.contract context in
+  let lane_depth =
+    Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
+  in
+  let current_fiber_id = contract.Runtime_contract.current_fiber_id () in
+  if
+    can_reenter ~lane_depth ~owner_fiber_id:lane.owner_fiber_id
+      ~current_fiber_id
+  then
+    try
+      ensure_context ();
+      Effect.Expert.eval context (Effect.sync f)
+    with exn -> Effect.Expert.exit_of_exn context exn
+  else
+    let owns_lane = ref false in
+    let release_after_interrupt () =
+      contract.Runtime_contract.protect (fun () -> release_sync lane owns_lane)
+    in
+    try
+      ensure_context ();
+      enter ~hooks contract lane;
+      owns_lane := true;
+      lane.owner_fiber_id <- Some current_fiber_id;
+      let release_lane = Effect.sync (fun () -> release_sync lane owns_lane) in
+      contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
+          Effect.Expert.eval context
+            (after_acquired ()
+            |> Effect.bind (fun () -> Effect.sync f)
+            |> Effect.on_exit (fun _exit -> release_lane)))
+    with
+    | exn when Option.is_some (contract.Runtime_contract.cancellation_reason exn)
+      ->
+        release_after_interrupt ();
+        raise exn
+    | exn ->
+        release_after_interrupt ();
+        Effect.Expert.exit_of_exn context exn
