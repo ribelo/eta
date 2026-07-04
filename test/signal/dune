@@ -8,7 +8,7 @@
   eta_signal_error
   eta_signal_graph_state
   eta_signal_id
-  eta_signal_kernel
+  eta_signal_graph_algorithms
   eta_signal_lane
   eta_signal_observer
   eta_signal_scope
@@ -125,14 +125,14 @@
   (copy %{deps} %{target})))
 
 (rule
- (target eta_signal_kernel.ml)
- (deps ../../lib/signal/eta_signal_kernel.ml)
+ (target eta_signal_graph_algorithms.ml)
+ (deps ../../lib/signal/eta_signal_graph_algorithms.ml)
  (action
   (copy %{deps} %{target})))
 
 (rule
- (target eta_signal_kernel.mli)
- (deps ../../lib/signal/eta_signal_kernel.mli)
+ (target eta_signal_graph_algorithms.mli)
+ (deps ../../lib/signal/eta_signal_graph_algorithms.mli)
  (action
   (copy %{deps} %{target})))
 

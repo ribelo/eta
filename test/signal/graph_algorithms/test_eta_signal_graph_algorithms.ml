@@ -1,4 +1,4 @@
-module Kernel = Eta_signal_kernel
+module Graph_algorithms = Eta_signal_graph_algorithms
 
 type node = {
   id : int;
@@ -15,7 +15,7 @@ type node = {
 
 and packed = P of node
 
-module Edges = Kernel.Make_edges (struct
+module Edges = Graph_algorithms.Make_edges (struct
   type id = int
   type nonrec packed = packed
   type t = node
@@ -30,7 +30,7 @@ module Edges = Kernel.Make_edges (struct
   let set_dependents node dependents = node.dependents <- dependents
 end)
 
-module Reachable = Kernel.Make_reachable (struct
+module Reachable = Graph_algorithms.Make_reachable (struct
   type id = int
   type nonrec packed = packed
 
@@ -39,7 +39,7 @@ module Reachable = Kernel.Make_reachable (struct
   let children (P node) = node.dependencies
 end)
 
-module Order = Kernel.Make_order (struct
+module Order = Graph_algorithms.Make_order (struct
   type id = int
   type t = node
 
@@ -49,7 +49,7 @@ module Order = Kernel.Make_order (struct
   let children node = List.map (fun (P child) -> child) node.dependencies
 end)
 
-module Versions = Kernel.Make_versions (struct
+module Versions = Graph_algorithms.Make_versions (struct
   type id = int
   type nonrec packed = packed
 
@@ -58,7 +58,7 @@ module Versions = Kernel.Make_versions (struct
   let version (P node) = node.version
 end)
 
-module Dirty = Kernel.Make_dirty (struct
+module Dirty = Graph_algorithms.Make_dirty (struct
   type id = int
   type nonrec packed = packed
 
@@ -68,7 +68,7 @@ module Dirty = Kernel.Make_dirty (struct
   let set_dirty (P node) dirty = node.dirty <- dirty
 end)
 
-module Compute = Kernel.Make_compute (struct
+module Compute = Graph_algorithms.Make_compute (struct
   type nonrec packed = packed
   type t = node
 
@@ -115,22 +115,22 @@ let id_table ids =
 let demand_transitions transitions =
   transitions
   |> List.map (function
-       | Kernel.Demand.Became_necessary id -> ("necessary", id)
-       | Kernel.Demand.Became_unnecessary id -> ("unnecessary", id))
+       | Graph_algorithms.Demand.Became_necessary id -> ("necessary", id)
+       | Graph_algorithms.Demand.Became_unnecessary id -> ("unnecessary", id))
   |> List.sort compare
 
 let demand_resource_states states =
   states
   |> List.map (fun state ->
-         ( Kernel.Demand.resource_state_value state,
-           Kernel.Demand.resource_state_necessary state ))
+         ( Graph_algorithms.Demand.resource_state_value state,
+           Graph_algorithms.Demand.resource_state_necessary state ))
 
 let demand_summary transitions =
-  let summary = Kernel.Demand.summarize transitions in
+  let summary = Graph_algorithms.Demand.summarize transitions in
   (summary.became_necessary, summary.became_unnecessary)
 
 let demand_diff_summary ~previous ~next =
-  let summary = Kernel.Demand.summarize_diff ~previous ~next in
+  let summary = Graph_algorithms.Demand.summarize_diff ~previous ~next in
   (summary.became_necessary, summary.became_unnecessary)
 
 let test_attach_is_bidirectional_and_idempotent () =
@@ -191,7 +191,7 @@ let test_reachable_fold_visits_multiple_roots () =
 let test_demand_diff_reports_necessary_changes () =
   let previous = id_table [ 1; 2; 4 ] in
   let next = id_table [ 2; 3; 4 ] in
-  let transitions = Kernel.Demand.diff ~previous ~next in
+  let transitions = Graph_algorithms.Demand.diff ~previous ~next in
   Alcotest.(check (list (pair string int)))
     "transitions"
     [ ("necessary", 3); ("unnecessary", 1) ]
@@ -204,7 +204,7 @@ let test_demand_diff_reports_necessary_changes () =
 let test_demand_diff_ignores_stable_nodes () =
   let previous = id_table [ 1; 2 ] in
   let next = id_table [ 1; 2 ] in
-  let transitions = Kernel.Demand.diff ~previous ~next in
+  let transitions = Graph_algorithms.Demand.diff ~previous ~next in
   Alcotest.(check (list (pair string int))) "transitions" []
     (demand_transitions transitions);
   Alcotest.(check (pair int int)) "summary" (0, 0)
@@ -215,30 +215,30 @@ let test_demand_diff_ignores_stable_nodes () =
 let test_demand_classifies_resources () =
   let resources =
     [
-      Kernel.Demand.resource ~id:1 "cold";
-      Kernel.Demand.resource ~id:2 "hot";
-      Kernel.Demand.resource ~id:3 "warm";
+      Graph_algorithms.Demand.resource ~id:1 "cold";
+      Graph_algorithms.Demand.resource ~id:2 "hot";
+      Graph_algorithms.Demand.resource ~id:3 "warm";
     ]
   in
   Alcotest.(check (list (pair string bool)))
     "states"
     [ ("cold", false); ("hot", true); ("warm", true) ]
-    (Kernel.Demand.classify_resources ~necessary:(id_table [ 2; 3 ])
+    (Graph_algorithms.Demand.classify_resources ~necessary:(id_table [ 2; 3 ])
        resources
     |> demand_resource_states)
 
 let test_demand_classification_preserves_resource_order () =
   let resources =
     [
-      Kernel.Demand.resource ~id:2 "first";
-      Kernel.Demand.resource ~id:1 "second";
-      Kernel.Demand.resource ~id:2 "third";
+      Graph_algorithms.Demand.resource ~id:2 "first";
+      Graph_algorithms.Demand.resource ~id:1 "second";
+      Graph_algorithms.Demand.resource ~id:2 "third";
     ]
   in
   Alcotest.(check (list (pair string bool)))
     "states"
     [ ("first", true); ("second", false); ("third", true) ]
-    (Kernel.Demand.classify_resources ~necessary:(id_table [ 2 ])
+    (Graph_algorithms.Demand.classify_resources ~necessary:(id_table [ 2 ])
        resources
     |> demand_resource_states)
 
@@ -296,11 +296,11 @@ let test_versions_changed_detects_dependency_set_update () =
 let test_weak_cell_collect_keeps_matching_nodes () =
   let left = node 1 in
   let right = node ~valid:false 2 in
-  let left_cell = Kernel.Weak_cell.create left in
-  let right_cell = Kernel.Weak_cell.create right in
+  let left_cell = Graph_algorithms.Weak_cell.create left in
+  let right_cell = Graph_algorithms.Weak_cell.create right in
   let pack node = P node in
   let cells, packed =
-    Kernel.Weak_cell.collect ~pack
+    Graph_algorithms.Weak_cell.collect ~pack
       ~keep:(fun (P node) -> node.valid)
       [ left_cell; right_cell ]
   in
@@ -310,47 +310,47 @@ let test_weak_cell_collect_keeps_matching_nodes () =
     "cell value"
     (Some 1)
     (Option.map (fun (P node) -> node.id)
-       (Kernel.Weak_cell.value ~pack left_cell))
+       (Graph_algorithms.Weak_cell.value ~pack left_cell))
 
 let test_snapshot_publish_and_dependencies () =
-  let empty = Kernel.Snapshot.empty in
+  let empty = Graph_algorithms.Snapshot.empty in
   Alcotest.(check bool) "empty uninitialized" false
-    (Kernel.Snapshot.is_initialized empty);
+    (Graph_algorithms.Snapshot.is_initialized empty);
   Alcotest.(check (option int)) "empty value" None
-    (Kernel.Snapshot.value empty);
+    (Graph_algorithms.Snapshot.value empty);
   let first =
-    Kernel.Snapshot.publish ~advance_version:succ ~current:empty empty 10
+    Graph_algorithms.Snapshot.publish ~advance_version:succ ~current:empty empty 10
   in
   Alcotest.(check bool) "published initialized" true
-    (Kernel.Snapshot.is_initialized first);
+    (Graph_algorithms.Snapshot.is_initialized first);
   Alcotest.(check (option int)) "published value" (Some 10)
-    (Kernel.Snapshot.value first);
+    (Graph_algorithms.Snapshot.value first);
   Alcotest.(check int) "published version" 1
-    (Kernel.Snapshot.version first);
-  let staged = Kernel.Snapshot.with_version first 3 in
+    (Graph_algorithms.Snapshot.version first);
+  let staged = Graph_algorithms.Snapshot.with_version first 3 in
   let republished =
-    Kernel.Snapshot.publish ~advance_version:succ ~current:first staged 20
+    Graph_algorithms.Snapshot.publish ~advance_version:succ ~current:first staged 20
   in
   Alcotest.(check int) "keeps advanced staged version" 3
-    (Kernel.Snapshot.version republished);
+    (Graph_algorithms.Snapshot.version republished);
   let dependencies =
-    Kernel.Snapshot.with_dependency_versions republished [ (1, 5) ]
+    Graph_algorithms.Snapshot.with_dependency_versions republished [ (1, 5) ]
   in
   Alcotest.(check (list (pair int int))) "dependencies" [ (1, 5) ]
-    (Kernel.Snapshot.dependency_versions dependencies)
+    (Graph_algorithms.Snapshot.dependency_versions dependencies)
 
 let test_snapshot_preflight_commit_version () =
-  let current = Kernel.Snapshot.initialized 1 in
-  let staged = Kernel.Snapshot.with_version current 1 in
+  let current = Graph_algorithms.Snapshot.initialized 1 in
+  let staged = Graph_algorithms.Snapshot.with_version current 1 in
   let checked = ref [] in
-  Kernel.Snapshot.preflight_commit_version
+  Graph_algorithms.Snapshot.preflight_commit_version
     ~advance_version:(fun version ->
       checked := version :: !checked;
       version + 1)
     ~current ~staged;
   Alcotest.(check (list int)) "checked current version" [ 0 ] !checked;
   checked := [];
-  Kernel.Snapshot.preflight_commit_version
+  Graph_algorithms.Snapshot.preflight_commit_version
     ~advance_version:(fun version ->
       checked := version :: !checked;
       version + 1)
@@ -434,110 +434,110 @@ let test_compute_seen_queries_generation_and_change_cache () =
 
 let test_value_cutoff_uninitialized_is_changed () =
   Alcotest.(check bool) "changed" true
-    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:false
+    (Graph_algorithms.Value_cutoff.changed ~equal:Int.equal ~initialized:false
        ~current:(Some 1) ~next:1)
 
 let test_value_cutoff_missing_current_is_changed () =
   Alcotest.(check bool) "changed" true
-    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+    (Graph_algorithms.Value_cutoff.changed ~equal:Int.equal ~initialized:true
        ~current:None ~next:1)
 
 let test_value_cutoff_equal_value_is_unchanged () =
   Alcotest.(check bool) "unchanged" false
-    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+    (Graph_algorithms.Value_cutoff.changed ~equal:Int.equal ~initialized:true
        ~current:(Some 1) ~next:1)
 
 let test_value_cutoff_unequal_value_is_changed () =
   Alcotest.(check bool) "changed" true
-    (Kernel.Value_cutoff.changed ~equal:Int.equal ~initialized:true
+    (Graph_algorithms.Value_cutoff.changed ~equal:Int.equal ~initialized:true
        ~current:(Some 1) ~next:2)
 
 let test_static_eval_map2_preserves_dependencies_and_output () =
-  let left = Kernel.Static_eval.child ~dependency:"left" (2, false) in
-  let right = Kernel.Static_eval.child ~dependency:"right" (3, true) in
-  let result = Kernel.Static_eval.map2 left right ( + ) in
+  let left = Graph_algorithms.Static_eval.child ~dependency:"left" (2, false) in
+  let right = Graph_algorithms.Static_eval.child ~dependency:"right" (3, true) in
+  let result = Graph_algorithms.Static_eval.map2 left right ( + ) in
   Alcotest.(check (list string)) "dependencies" [ "left"; "right" ]
-    (Kernel.Static_eval.dependencies result);
-  Alcotest.(check int) "output" 5 (Kernel.Static_eval.output result);
+    (Graph_algorithms.Static_eval.dependencies result);
+  Alcotest.(check int) "output" 5 (Graph_algorithms.Static_eval.output result);
   Alcotest.(check bool) "children changed" true
-    (Kernel.Static_eval.children_changed result)
+    (Graph_algorithms.Static_eval.children_changed result)
 
 let test_static_eval_all_preserves_order () =
-  let left = Kernel.Static_eval.child ~dependency:1 ("a", false) in
-  let middle = Kernel.Static_eval.child ~dependency:2 ("b", false) in
-  let right = Kernel.Static_eval.child ~dependency:3 ("c", false) in
-  let result = Kernel.Static_eval.all [ left; middle; right ] in
+  let left = Graph_algorithms.Static_eval.child ~dependency:1 ("a", false) in
+  let middle = Graph_algorithms.Static_eval.child ~dependency:2 ("b", false) in
+  let right = Graph_algorithms.Static_eval.child ~dependency:3 ("c", false) in
+  let result = Graph_algorithms.Static_eval.all [ left; middle; right ] in
   Alcotest.(check (list int)) "dependencies" [ 1; 2; 3 ]
-    (Kernel.Static_eval.dependencies result);
+    (Graph_algorithms.Static_eval.dependencies result);
   Alcotest.(check (list string)) "output" [ "a"; "b"; "c" ]
-    (Kernel.Static_eval.output result);
+    (Graph_algorithms.Static_eval.output result);
   Alcotest.(check bool) "children changed" false
-    (Kernel.Static_eval.children_changed result)
+    (Graph_algorithms.Static_eval.children_changed result)
 
 let test_static_eval_recompute_predicate () =
-  let clean = Kernel.Static_eval.leaf 1 in
+  let clean = Graph_algorithms.Static_eval.leaf 1 in
   let changed_child =
-    Kernel.Static_eval.map
-      (Kernel.Static_eval.child ~dependency:"dep" (1, true))
+    Graph_algorithms.Static_eval.map
+      (Graph_algorithms.Static_eval.child ~dependency:"dep" (1, true))
       succ
   in
   let dependencies_changed dependencies =
     List.exists (String.equal "changed") dependencies
   in
   Alcotest.(check bool) "clean" false
-    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:false ~initialized:true
        ~dependencies_changed clean);
   Alcotest.(check bool) "dirty" true
-    (Kernel.Static_eval.should_recompute ~dirty:true ~initialized:true
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:true ~initialized:true
        ~dependencies_changed clean);
   Alcotest.(check bool) "uninitialized" true
-    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:false
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:false ~initialized:false
        ~dependencies_changed clean);
   Alcotest.(check bool) "child changed" true
-    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:false ~initialized:true
        ~dependencies_changed changed_child);
   let changed_dependency =
-    Kernel.Static_eval.map
-      (Kernel.Static_eval.child ~dependency:"changed" (1, false))
+    Graph_algorithms.Static_eval.map
+      (Graph_algorithms.Static_eval.child ~dependency:"changed" (1, false))
       succ
   in
   Alcotest.(check bool) "dependency changed" true
-    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:false ~initialized:true
        ~dependencies_changed changed_dependency)
 
 let test_static_eval_plan_reuses_without_forcing_output () =
   let ran = ref false in
-  let child = Kernel.Static_eval.child ~dependency:"dep" (1, false) in
+  let child = Graph_algorithms.Static_eval.child ~dependency:"dep" (1, false) in
   let result =
-    Kernel.Static_eval.map child (fun value ->
+    Graph_algorithms.Static_eval.map child (fun value ->
         ran := true;
         value + 1)
   in
   let plan =
-    Kernel.Static_eval.plan ~dirty:false ~initialized:true
+    Graph_algorithms.Static_eval.plan ~dirty:false ~initialized:true
       ~dependencies_changed:(fun _ -> false)
       result
   in
   (match plan with
-  | Kernel.Static_eval.Use_cached -> ()
-  | Kernel.Static_eval.Recompute _ -> Alcotest.fail "expected cached plan");
+  | Graph_algorithms.Static_eval.Use_cached -> ()
+  | Graph_algorithms.Static_eval.Recompute _ -> Alcotest.fail "expected cached plan");
   Alcotest.(check bool) "output not forced" false !ran
 
 let test_static_eval_plan_recomputes_with_dependencies_and_output () =
   let ran = ref false in
-  let child = Kernel.Static_eval.child ~dependency:"dep" (1, true) in
+  let child = Graph_algorithms.Static_eval.child ~dependency:"dep" (1, true) in
   let result =
-    Kernel.Static_eval.map child (fun value ->
+    Graph_algorithms.Static_eval.map child (fun value ->
         ran := true;
         value + 1)
   in
   match
-    Kernel.Static_eval.plan ~dirty:false ~initialized:true
+    Graph_algorithms.Static_eval.plan ~dirty:false ~initialized:true
       ~dependencies_changed:(fun _ -> false)
       result
   with
-  | Kernel.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
-  | Kernel.Static_eval.Recompute
+  | Graph_algorithms.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
+  | Graph_algorithms.Static_eval.Recompute
       { dependencies; output; stage_dependencies } ->
       Alcotest.(check (list string)) "dependencies" [ "dep" ] dependencies;
       Alcotest.(check int) "output" 2 output;
@@ -546,12 +546,12 @@ let test_static_eval_plan_recomputes_with_dependencies_and_output () =
 
 let test_static_eval_plan_can_skip_dependency_staging () =
   match
-    Kernel.Static_eval.plan ~stage_dependencies:false ~dirty:true
+    Graph_algorithms.Static_eval.plan ~stage_dependencies:false ~dirty:true
       ~initialized:true ~dependencies_changed:(fun _ -> false)
-      (Kernel.Static_eval.leaf "value")
+      (Graph_algorithms.Static_eval.leaf "value")
   with
-  | Kernel.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
-  | Kernel.Static_eval.Recompute
+  | Graph_algorithms.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
+  | Graph_algorithms.Static_eval.Recompute
       { dependencies; output; stage_dependencies } ->
       Alcotest.(check (list string)) "dependencies" [] dependencies;
       Alcotest.(check string) "output" "value" output;
@@ -559,23 +559,23 @@ let test_static_eval_plan_can_skip_dependency_staging () =
 
 let test_static_eval_delays_output_until_requested () =
   let ran = ref false in
-  let child = Kernel.Static_eval.child ~dependency:"dep" (1, false) in
+  let child = Graph_algorithms.Static_eval.child ~dependency:"dep" (1, false) in
   let result =
-    Kernel.Static_eval.map child (fun value ->
+    Graph_algorithms.Static_eval.map child (fun value ->
         ran := true;
         value + 1)
   in
   let dependencies_changed _ = false in
   ignore
-    (Kernel.Static_eval.should_recompute ~dirty:false ~initialized:true
+    (Graph_algorithms.Static_eval.should_recompute ~dirty:false ~initialized:true
        ~dependencies_changed result
       : bool);
   Alcotest.(check bool) "not forced by predicate" false !ran;
-  Alcotest.(check int) "output" 2 (Kernel.Static_eval.output result);
+  Alcotest.(check int) "output" 2 (Graph_algorithms.Static_eval.output result);
   Alcotest.(check bool) "forced by output" true !ran
 
 let () =
-  Alcotest.run "eta_signal_kernel"
+  Alcotest.run "eta_signal_graph_algorithms"
     [
       ( "edges",
         [

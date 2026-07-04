@@ -8,8 +8,8 @@ module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
-module Kernel = Eta_signal_kernel
-module Signal_snapshot = Kernel.Snapshot
+module Graph_algorithms = Eta_signal_graph_algorithms
+module Signal_snapshot = Graph_algorithms.Snapshot
 module Lane = Eta_signal_lane
 module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
@@ -121,7 +121,7 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_id_label = Id.observer_label
   let compare_observer_id = Id.compare_observer
 
-  type weak_packed_signal = Kernel.Weak_cell.t
+  type weak_packed_signal = Graph_algorithms.Weak_cell.t
 
   type timer_catch_up_policy = Timer_policy.catch_up_policy =
     | Catch_up_every_cadence
@@ -344,7 +344,7 @@ module Make (Observer_error : Observer_error) () = struct
           signal.dependencies
   end)
 
-  module Kernel_edge_node = struct
+  module Graph_edge_node = struct
     type id = signal_id
     type nonrec packed = packed_signal
     type t = Packed : 'a signal -> t
@@ -361,11 +361,11 @@ module Make (Observer_error : Observer_error) () = struct
       signal.dependents <- dependents
   end
 
-  module Kernel_edges = Kernel.Make_edges (Kernel_edge_node)
+  module Graph_edges = Graph_algorithms.Make_edges (Graph_edge_node)
 
-  let kernel_edge_node signal = Kernel_edge_node.Packed signal
+  let graph_edge_node signal = Graph_edge_node.Packed signal
 
-  module Kernel_dirty = Kernel.Make_dirty (struct
+  module Graph_dirty = Graph_algorithms.Make_dirty (struct
     type id = signal_id
     type nonrec packed = packed_signal
 
@@ -375,30 +375,30 @@ module Make (Observer_error : Observer_error) () = struct
     let set_dirty (P signal) dirty = signal.dirty <- dirty
   end)
 
-  module Kernel_compute = Kernel.Make_compute (struct
+  module Graph_compute = Graph_algorithms.Make_compute (struct
     type nonrec packed = packed_signal
-    type t = Kernel_edge_node.t
+    type t = Graph_edge_node.t
 
-    let pack = Kernel_edge_node.pack
-    let seen_generation (Kernel_edge_node.Packed signal) = signal.seen_generation
+    let pack = Graph_edge_node.pack
+    let seen_generation (Graph_edge_node.Packed signal) = signal.seen_generation
 
-    let set_seen_generation (Kernel_edge_node.Packed signal) generation =
+    let set_seen_generation (Graph_edge_node.Packed signal) generation =
       signal.seen_generation <- generation
 
-    let changed_seen (Kernel_edge_node.Packed signal) = signal.changed_seen
+    let changed_seen (Graph_edge_node.Packed signal) = signal.changed_seen
 
-    let set_changed_seen (Kernel_edge_node.Packed signal) changed =
+    let set_changed_seen (Graph_edge_node.Packed signal) changed =
       signal.changed_seen <- changed
 
-    let computing (Kernel_edge_node.Packed signal) = signal.computing
+    let computing (Graph_edge_node.Packed signal) = signal.computing
 
-    let set_computing (Kernel_edge_node.Packed signal) computing =
+    let set_computing (Graph_edge_node.Packed signal) computing =
       signal.computing <- computing
 
-    let computed_generation (Kernel_edge_node.Packed signal) =
+    let computed_generation (Graph_edge_node.Packed signal) =
       signal.computed_generation
 
-    let set_computed_generation (Kernel_edge_node.Packed signal) generation =
+    let set_computed_generation (Graph_edge_node.Packed signal) generation =
       signal.computed_generation <- generation
   end)
 
@@ -638,12 +638,12 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let pack_weak_signal signal = P signal
-  let weak_packed_signal (P signal) = Kernel.Weak_cell.create signal
+  let weak_packed_signal (P signal) = Graph_algorithms.Weak_cell.create signal
   let weak_packed_signal_value cell =
-    Kernel.Weak_cell.value ~pack:pack_weak_signal cell
+    Graph_algorithms.Weak_cell.value ~pack:pack_weak_signal cell
 
   let collect_live_weak_signals keep cells =
-    Kernel.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
+    Graph_algorithms.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
   let all_nodes_unlocked () =
     let cells, nodes = collect_live_weak_signals (fun _ -> true) graph.all_nodes in
@@ -659,7 +659,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~owner_node:(fun owner -> owner)
       signal.scope children
 
-  module Kernel_reachable_static = Kernel.Make_reachable (struct
+  module Graph_reachable_static = Graph_algorithms.Make_reachable (struct
     type id = signal_id
     type nonrec packed = packed_signal
 
@@ -739,37 +739,37 @@ module Make (Observer_error : Observer_error) () = struct
   let current_generation () = Graph_state.generation graph.state
 
   let remove_dependent child parent =
-    Kernel_edges.remove_dependent ~child:(kernel_edge_node child)
-      ~parent:(kernel_edge_node parent)
+    Graph_edges.remove_dependent ~child:(graph_edge_node child)
+      ~parent:(graph_edge_node parent)
 
   let detach_dependency parent child =
-    Kernel_edges.detach_dependency ~parent:(kernel_edge_node parent)
-      ~child:(kernel_edge_node child)
+    Graph_edges.detach_dependency ~parent:(graph_edge_node parent)
+      ~child:(graph_edge_node child)
 
   let has_dependency parent child =
-    Kernel_edges.has_dependency ~parent:(kernel_edge_node parent)
-      ~child:(kernel_edge_node child)
+    Graph_edges.has_dependency ~parent:(graph_edge_node parent)
+      ~child:(graph_edge_node child)
 
   let has_dependent child parent =
-    Kernel_edges.has_dependent ~child:(kernel_edge_node child)
-      ~parent:(kernel_edge_node parent)
+    Graph_edges.has_dependent ~child:(graph_edge_node child)
+      ~parent:(graph_edge_node parent)
 
   let attach_dependency parent child =
-    Kernel_edges.attach_dependency ~parent:(kernel_edge_node parent)
-      ~child:(kernel_edge_node child)
+    Graph_edges.attach_dependency ~parent:(graph_edge_node parent)
+      ~child:(graph_edge_node child)
 
   let attach_packed_dependency parent child =
-    Kernel_edges.attach_packed_dependency ~parent:(kernel_edge_node parent) child
+    Graph_edges.attach_packed_dependency ~parent:(graph_edge_node parent) child
 
   let mark_self_dirty packed =
-    Kernel_dirty.mark packed
+    Graph_dirty.mark packed
 
   let mark_timer_refresh_dirty packed =
     match Graph_state.active_timer_refresh graph.state with
-    | None -> Kernel_dirty.mark packed
+    | None -> Graph_dirty.mark packed
     | Some context ->
         Timer_policy.set_refresh_dirty_items context
-          (Kernel_dirty.mark_recording_previous
+          (Graph_dirty.mark_recording_previous
              (Timer_policy.refresh_dirty_items context)
              packed)
 
@@ -800,9 +800,9 @@ module Make (Observer_error : Observer_error) () = struct
     let generation = current_generation () in
     Graph_state.remember_computed graph.state ~generation
       (P signal)
-      ~project:(fun (P signal) -> kernel_edge_node signal)
+      ~project:(fun (P signal) -> graph_edge_node signal)
       ~remember:(fun ~generation nodes node ->
-        Kernel_compute.remember ~generation nodes node)
+        Graph_compute.remember ~generation nodes node)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -837,7 +837,7 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_signal_version signal =
     Signal_snapshot.version (signal_effective_snapshot signal)
 
-  module Kernel_versions = Kernel.Make_versions (struct
+  module Graph_versions = Graph_algorithms.Make_versions (struct
     type id = signal_id
     type nonrec packed = packed_signal
 
@@ -847,10 +847,10 @@ module Make (Observer_error : Observer_error) () = struct
   end)
 
   let dependency_versions dependencies =
-    Kernel_versions.snapshot dependencies
+    Graph_versions.snapshot dependencies
 
   let dependencies_changed signal dependencies =
-    Kernel_versions.changed
+    Graph_versions.changed
       ~current:
         (Signal_snapshot.dependency_versions
            (signal_current_snapshot signal))
@@ -1383,7 +1383,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_post_commit_necessary_timers invalidated_ids =
     prune_all_nodes_unlocked ();
-    let module Reachable = Kernel.Make_reachable (struct
+    let module Reachable = Graph_algorithms.Make_reachable (struct
       type id = signal_id
       type nonrec packed = packed_signal
 
@@ -1503,7 +1503,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_state.reset_staging graph.state ~rollback_bind
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
-        Kernel_dirty.restore (Timer_policy.refresh_dirty_items context);
+        Graph_dirty.restore (Timer_policy.refresh_dirty_items context);
         Timer_policy.clear_refresh_dirty_items context)
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
@@ -1558,11 +1558,11 @@ module Make (Observer_error : Observer_error) () = struct
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute signal;
     let generation = current_generation () in
-    let compute_node = kernel_edge_node signal in
-    if Kernel_compute.seen ~generation compute_node then
-      (effective_signal_value signal, Kernel_compute.changed_seen compute_node)
+    let compute_node = graph_edge_node signal in
+    if Graph_compute.seen ~generation compute_node then
+      (effective_signal_value signal, Graph_compute.changed_seen compute_node)
     else
-      Kernel_compute.run ~generation compute_node
+      Graph_compute.run ~generation compute_node
         ~cycle:(fun () -> raise (Graph_error `Cycle))
         ~compute:(fun () -> compute_uncached signal)
 
@@ -1576,7 +1576,7 @@ module Make (Observer_error : Observer_error) () = struct
       graph.recompute_count <- saturating_succ graph.recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
-        Kernel.Value_cutoff.changed ~equal:signal.equal
+        Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
           ~initialized:(Signal_snapshot.is_initialized snapshot)
           ~current:(Signal_snapshot.value snapshot) ~next:value
       in
@@ -1592,48 +1592,48 @@ module Make (Observer_error : Observer_error) () = struct
       recompute value
     in
     let static_child child_signal =
-      Kernel.Static_eval.child ~dependency:(P child_signal)
+      Graph_algorithms.Static_eval.child ~dependency:(P child_signal)
         (compute child_signal)
     in
     let finish_static ?(stage_dependencies = true) result =
       match
-        Kernel.Static_eval.plan ~stage_dependencies ~dirty:signal.dirty
+        Graph_algorithms.Static_eval.plan ~stage_dependencies ~dirty:signal.dirty
           ~initialized:(signal_initialized ())
           ~dependencies_changed:dependency_changed result
       with
-      | Kernel.Static_eval.Use_cached -> use_cached ()
-      | Kernel.Static_eval.Recompute
+      | Graph_algorithms.Static_eval.Use_cached -> use_cached ()
+      | Graph_algorithms.Static_eval.Recompute
           { dependencies; output; stage_dependencies } ->
           if stage_dependencies then recompute_with_dependencies dependencies output
           else recompute output
     in
     match signal.kind with
     | Const value ->
-        finish_static ~stage_dependencies:false (Kernel.Static_eval.leaf value)
+        finish_static ~stage_dependencies:false (Graph_algorithms.Static_eval.leaf value)
     | Var var ->
         finish_static ~stage_dependencies:false
-          (Kernel.Static_eval.leaf (effective_var_value var))
+          (Graph_algorithms.Static_eval.leaf (effective_var_value var))
     | Map (a, f) ->
         let a_child = static_child a in
-        finish_static (Kernel.Static_eval.map a_child f)
+        finish_static (Graph_algorithms.Static_eval.map a_child f)
     | Map2 (a, b, f) ->
         let a_child = static_child a in
         let b_child = static_child b in
         finish_static
-          (Kernel.Static_eval.map2 a_child b_child f)
+          (Graph_algorithms.Static_eval.map2 a_child b_child f)
     | Map3 (a, b, c, f) ->
         let a_child = static_child a in
         let b_child = static_child b in
         let c_child = static_child c in
         finish_static
-          (Kernel.Static_eval.map3 a_child b_child c_child f)
+          (Graph_algorithms.Static_eval.map3 a_child b_child c_child f)
     | Map4 (a, b, c, d, f) ->
         let a_child = static_child a in
         let b_child = static_child b in
         let c_child = static_child c in
         let d_child = static_child d in
         finish_static
-          (Kernel.Static_eval.map4 a_child b_child c_child d_child f)
+          (Graph_algorithms.Static_eval.map4 a_child b_child c_child d_child f)
     | Map5 (a, b, c, d, e, f) ->
         let a_child = static_child a in
         let b_child = static_child b in
@@ -1641,7 +1641,7 @@ module Make (Observer_error : Observer_error) () = struct
         let d_child = static_child d in
         let e_child = static_child e in
         finish_static
-          (Kernel.Static_eval.map5 a_child b_child c_child d_child e_child f)
+          (Graph_algorithms.Static_eval.map5 a_child b_child c_child d_child e_child f)
     | Map6 (a, b, c, d, e, f_signal, f) ->
         let a_child = static_child a in
         let b_child = static_child b in
@@ -1650,7 +1650,7 @@ module Make (Observer_error : Observer_error) () = struct
         let e_child = static_child e in
         let f_child = static_child f_signal in
         finish_static
-          (Kernel.Static_eval.map6 a_child b_child c_child d_child e_child
+          (Graph_algorithms.Static_eval.map6 a_child b_child c_child d_child e_child
              f_child f)
     | Map7 (a, b, c, d, e, f_signal, g, f) ->
         let a_child = static_child a in
@@ -1661,7 +1661,7 @@ module Make (Observer_error : Observer_error) () = struct
         let f_child = static_child f_signal in
         let g_child = static_child g in
         finish_static
-          (Kernel.Static_eval.map7 a_child b_child c_child d_child e_child
+          (Graph_algorithms.Static_eval.map7 a_child b_child c_child d_child e_child
              f_child g_child f)
     | Map8 (a, b, c, d, e, f_signal, g, h, f) ->
         let a_child = static_child a in
@@ -1673,7 +1673,7 @@ module Make (Observer_error : Observer_error) () = struct
         let g_child = static_child g in
         let h_child = static_child h in
         finish_static
-          (Kernel.Static_eval.map8 a_child b_child c_child d_child e_child
+          (Graph_algorithms.Static_eval.map8 a_child b_child c_child d_child e_child
              f_child g_child h_child f)
     | Map9 (a, b, c, d, e, f_signal, g, h, i, f) ->
         let a_child = static_child a in
@@ -1686,7 +1686,7 @@ module Make (Observer_error : Observer_error) () = struct
         let h_child = static_child h in
         let i_child = static_child i in
         finish_static
-          (Kernel.Static_eval.map9 a_child b_child c_child d_child e_child
+          (Graph_algorithms.Static_eval.map9 a_child b_child c_child d_child e_child
              f_child g_child h_child i_child f)
     | All signals ->
         let children =
@@ -1695,7 +1695,7 @@ module Make (Observer_error : Observer_error) () = struct
               static_child child_signal :: children)
             signals []
         in
-        finish_static (Kernel.Static_eval.all children)
+        finish_static (Graph_algorithms.Static_eval.all children)
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         (match
@@ -1730,7 +1730,7 @@ module Make (Observer_error : Observer_error) () = struct
           graph.recompute_count <- saturating_succ graph.recompute_count;
           let snapshot = signal_effective_snapshot signal in
           let changed =
-            Kernel.Value_cutoff.changed ~equal:signal.equal
+            Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
               ~initialized:(Signal_snapshot.is_initialized snapshot)
               ~current:(Signal_snapshot.value snapshot)
               ~next:dynamic_switch_value
@@ -1762,12 +1762,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_necessary_node_ids () =
     prune_all_nodes_unlocked ();
-    Kernel_reachable_static.ids ~roots:(observer_demand_roots graph.observers)
+    Graph_reachable_static.ids ~roots:(observer_demand_roots graph.observers)
 
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
     let summary =
-      Kernel.Demand.summarize_diff ~previous:graph.necessary_node_ids ~next
+      Graph_algorithms.Demand.summarize_diff ~previous:graph.necessary_node_ids ~next
     in
     graph.nodes_became_necessary <-
       add_int_capped graph.nodes_became_necessary summary.became_necessary;
@@ -1791,12 +1791,12 @@ module Make (Observer_error : Observer_error) () = struct
     let needed = collect_necessary_node_ids () in
     let demand_items =
       all_timers ()
-      |> List.map (fun (id, timer) -> Kernel.Demand.resource ~id timer)
-      |> Kernel.Demand.classify_resources ~necessary:needed
+      |> List.map (fun (id, timer) -> Graph_algorithms.Demand.resource ~id timer)
+      |> Graph_algorithms.Demand.classify_resources ~necessary:needed
       |> List.map (fun resource_state ->
-             let timer = Kernel.Demand.resource_state_value resource_state in
+             let timer = Graph_algorithms.Demand.resource_state_value resource_state in
              let necessary =
-               Kernel.Demand.resource_state_necessary resource_state
+               Graph_algorithms.Demand.resource_state_necessary resource_state
              in
              if necessary then ensure_timer_runtime timer runtime_contract;
              {
@@ -1966,7 +1966,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Map7 _ | Map8 _ | Map9 _ | All _ ->
         signal.dependencies
 
-  module Kernel_signal_order = Kernel.Make_order (struct
+  module Graph_signal_order = Graph_algorithms.Make_order (struct
     type id = signal_id
     type t = packed_signal
 
@@ -1983,14 +1983,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let compare_observer_graph_order (O left) (O right) =
     let signal_order =
-      Kernel_signal_order.compare (P left.obs_signal) (P right.obs_signal)
+      Graph_signal_order.compare (P left.obs_signal) (P right.obs_signal)
     in
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order
 
   let collect_observed_bind_nodes observers =
     prune_all_nodes_unlocked ();
-    Kernel_reachable_static.fold ~roots:(observer_active_roots observers) ~init:[]
+    Graph_reachable_static.fold ~roots:(observer_active_roots observers) ~init:[]
       ~f:(fun binds (P signal as packed) ->
         match signal.kind with
         | Bind _ -> packed :: binds

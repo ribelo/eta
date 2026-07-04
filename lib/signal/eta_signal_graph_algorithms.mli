@@ -1,4 +1,4 @@
-(** Static graph kernel helpers for Eta_signal internals. *)
+(** Static graph algorithms for Eta_signal internals. *)
 
 module type EDGE_NODE = sig
   type id
