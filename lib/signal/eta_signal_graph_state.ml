@@ -1,3 +1,5 @@
+type staging = Staging of unit ref
+
 type ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t = {
   mutable generation : int;
   mutable pending : 'pending list;
@@ -9,6 +11,7 @@ type ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t = {
   mutable pure_snapshot_commit_count : int;
   mutable next_timer_refresh_token : int;
   mutable active_timer_refresh : 'refresh option;
+  mutable active_staging : staging option;
 }
 
 let create () =
@@ -23,19 +26,40 @@ let create () =
     pure_snapshot_commit_count = 0;
     next_timer_refresh_token = 0;
     active_timer_refresh = None;
+    active_staging = None;
   }
 
 let generation t = t.generation
 let set_generation t generation = t.generation <- generation
 let advance_generation t ~advance = t.generation <- advance t.generation
 
+let staging_matches left right =
+  match (left, right) with
+  | Staging left, Staging right -> left == right
+
+let validate_staging t staging =
+  match t.active_staging with
+  | Some active when staging_matches active staging -> ()
+  | Some _ -> invalid_arg "Eta_signal graph staging token is not active"
+  | None -> invalid_arg "Eta_signal graph staging is not active"
+
+let clear_staging_token t staging =
+  validate_staging t staging;
+  t.active_staging <- None
+
 let begin_staging t ~timer_refresh =
+  (match t.active_staging with
+  | None -> ()
+  | Some _ -> invalid_arg "Eta_signal graph staging is already active");
+  let staging = Staging (ref ()) in
   t.computed_nodes <- [];
   t.staged_binds <- [];
   t.pure_disposal_hooks <- [];
   t.timer_refresh_disposal_hooks <- [];
   t.timer_refresh_staged_timers <- [];
-  t.active_timer_refresh <- timer_refresh
+  t.active_timer_refresh <- timer_refresh;
+  t.active_staging <- Some staging;
+  staging
 
 let drain_pending t =
   let pending = List.rev t.pending in
@@ -82,9 +106,11 @@ let clear_timer_refresh_staging t ~rollback_dirty ~clear_timer =
   t.timer_refresh_staged_timers <- [];
   t.timer_refresh_disposal_hooks <- []
 
-let reset_staging t ~rollback_bind ~rollback_transaction
+let reset_staging t staging ~rollback_bind ~rollback_transaction
     ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
-  Eta_signal_staging.reset
+  validate_staging t staging;
+  let hooks =
+    Eta_signal_staging.reset
     {
       rollback_binds =
         (fun () -> List.concat_map rollback_bind t.staged_binds);
@@ -99,11 +125,16 @@ let reset_staging t ~rollback_bind ~rollback_transaction
             ~rollback_dirty:rollback_timer_refresh_dirty
             ~clear_timer:clear_timer_refresh_timer);
     }
+  in
+  clear_staging_token t staging;
+  hooks
 
-let commit_staging t ~preflight ~commit_bind ~prepare_signal
+let commit_staging t staging ~preflight ~commit_bind ~prepare_signal
     ~commit_transaction ~commit_timer_refresh ~commit_signal
     ~advance_snapshot =
-  Eta_signal_staging.commit
+  validate_staging t staging;
+  let hooks =
+    Eta_signal_staging.commit
     {
       preflight;
       commit_binds =
@@ -130,6 +161,9 @@ let commit_staging t ~preflight ~commit_bind ~prepare_signal
           t.pure_snapshot_commit_count <-
             advance_snapshot t.pure_snapshot_commit_count);
     }
+  in
+  clear_staging_token t staging;
+  hooks
 
 let pure_snapshot_commit_count t = t.pure_snapshot_commit_count
 

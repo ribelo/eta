@@ -1,6 +1,7 @@
 (** Stabilization-facing graph state for Eta_signal internals. *)
 
 type ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t
+type staging
 
 val create : unit -> ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t
 
@@ -14,7 +15,7 @@ val advance_generation :
 val begin_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
   timer_refresh:'refresh option ->
-  unit
+  staging
 
 val drain_pending :
   ('pending, _, _, _, _, _) t -> 'pending list
@@ -60,6 +61,7 @@ val clear_timer_refresh_staging :
 
 val reset_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
+  staging ->
   rollback_bind:('bind -> 'hook list) ->
   rollback_transaction:(unit -> unit) ->
   rollback_timer_refresh_dirty:('refresh -> unit) ->
@@ -68,6 +70,7 @@ val reset_staging :
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
+  staging ->
   preflight:(unit -> unit) ->
   commit_bind:('bind -> 'hook list) ->
   prepare_signal:('node -> unit) ->

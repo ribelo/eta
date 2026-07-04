@@ -1504,19 +1504,20 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
 
-  let reset_staging () =
-    Graph_state.reset_staging graph.state ~rollback_bind
+  let reset_staging staging =
+    Graph_state.reset_staging graph.state staging ~rollback_bind
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
         Graph_dirty.restore (Timer_policy.refresh_dirty_items context);
         Timer_policy.clear_refresh_dirty_items context)
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
-  let commit_staging () =
-    Graph_state.commit_staging graph.state ~preflight:preflight_commit_staging
-      ~commit_bind ~prepare_signal:prepare_signal_commit ~commit_transaction
-      ~commit_timer_refresh:commit_timer_refresh_staging
-      ~commit_signal ~advance_snapshot:saturating_succ
+  let commit_staging staging =
+    Graph_state.commit_staging graph.state staging
+      ~preflight:preflight_commit_staging ~commit_bind
+      ~prepare_signal:prepare_signal_commit ~commit_transaction
+      ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
+      ~advance_snapshot:saturating_succ
 
   let requeue_if_needed (V var as packed) =
     if not var.queued then (

@@ -30,8 +30,11 @@ let expect_effect_fail label eff =
   | Eta.Exit.Error _ -> Alcotest.failf "%s: expected Delivery_failed" label
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected failure" label
 
-let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
-    state events =
+let ops ?(stage_pending = fun _ -> ())
+    ?(commit_staging = fun _ -> [ "hook" ]) state events =
+  let check_staging staging =
+    Alcotest.(check string) "staging token" "staging" staging
+  in
   {
     Pass.errors =
       {
@@ -44,7 +47,10 @@ let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
     pure =
       {
         advance_generation = (fun () -> record events "advance_generation");
-        begin_staging = (fun () -> record events "begin_staging");
+        begin_staging =
+          (fun () ->
+            record events "begin_staging";
+            "staging");
         drain_pending =
           (fun () ->
             record events "drain_pending";
@@ -74,9 +80,10 @@ let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
             record events ("collect_events:" ^ String.concat "," observers);
             [ "event" ]);
         commit_staging =
-          (fun () ->
+          (fun staging ->
+            check_staging staging;
             record events "commit_staging";
-            let hooks = commit_staging () in
+            let hooks = commit_staging staging in
             (match S.commit_transaction state with
             | Ok () -> ()
             | Error _ -> Alcotest.fail "unexpected transaction commit failure");
@@ -90,7 +97,8 @@ let ops ?(stage_pending = fun _ -> ()) ?(commit_staging = fun () -> [ "hook" ])
     rollback =
       {
         rollback_staging =
-          (fun () ->
+          (fun staging ->
+            check_staging staging;
             record events "rollback_staging";
             S.rollback_transaction state;
             [ "rollback-hook" ]);
@@ -183,7 +191,7 @@ let test_defect_rolls_back_in_order () =
   let state : test_error stabilization = S.create () in
   match
     Pass.run state
-      (ops state events ~commit_staging:(fun () -> failwith "boom"))
+      (ops state events ~commit_staging:(fun _ -> failwith "boom"))
   with
   | Pass.Pure_defect (hooks, _, _) ->
       Alcotest.(check (list string))

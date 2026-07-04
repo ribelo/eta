@@ -12,9 +12,9 @@ type 'error errors = {
   classify_graph_error : exn -> 'error option;
 }
 
-type ('pending, 'observer, 'event, 'hook) pure = {
+type ('pending, 'observer, 'event, 'hook, 'staging) pure = {
   advance_generation : unit -> unit;
-  begin_staging : unit -> unit;
+  begin_staging : unit -> 'staging;
   drain_pending : unit -> 'pending list;
   release_pending_marks : 'pending list -> unit;
   active_observers : unit -> 'observer list;
@@ -22,23 +22,23 @@ type ('pending, 'observer, 'event, 'hook) pure = {
   plan_staged_binds : 'observer list -> unit;
   sort_delivery_observers : 'observer list -> 'observer list;
   collect_events : 'observer list -> 'event list;
-  commit_staging : unit -> 'hook list;
+  commit_staging : 'staging -> 'hook list;
   mark_events_pending : 'event list -> unit;
   update_necessity : unit -> unit;
 }
 
-type ('pending, 'observer, 'hook) rollback = {
-  rollback_staging : unit -> 'hook list;
+type ('pending, 'observer, 'hook, 'staging) rollback = {
+  rollback_staging : 'staging -> 'hook list;
   mark_observers_failed_without_current : 'observer list -> unit;
   requeue_pending : 'pending list -> unit;
 }
 
 type timer_refresh = { clear_active_timer_refresh : unit -> unit }
 
-type ('pending, 'observer, 'event, 'hook, 'error) t = {
+type ('pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   errors : 'error errors;
-  pure : ('pending, 'observer, 'event, 'hook) pure;
-  rollback : ('pending, 'observer, 'hook) rollback;
+  pure : ('pending, 'observer, 'event, 'hook, 'staging) pure;
+  rollback : ('pending, 'observer, 'hook, 'staging) rollback;
   timer_refresh : timer_refresh;
 }
 
@@ -49,8 +49,8 @@ type ('event, 'error) delivery = {
   finish : unit -> (unit, 'error) Eta.Effect.t;
 }
 
-let rollback state pure_token ops observers pending =
-  let hooks = ops.rollback.rollback_staging () in
+let rollback state pure_token ops observers pending staging =
+  let hooks = ops.rollback.rollback_staging staging in
   ops.rollback.mark_observers_failed_without_current observers;
   ops.rollback.requeue_pending pending;
   ops.timer_refresh.clear_active_timer_refresh ();
@@ -65,7 +65,7 @@ let run state ops =
       Pure_graph_error ([], ops.errors.reentrant_stabilization)
   | Ok pure_token ->
       ops.pure.advance_generation ();
-      ops.pure.begin_staging ();
+      let staging = ops.pure.begin_staging () in
       let pending = ops.pure.drain_pending () in
       ops.pure.release_pending_marks pending;
       let observers = ops.pure.active_observers () in
@@ -74,7 +74,7 @@ let run state ops =
         ops.pure.plan_staged_binds observers;
         let delivery_observers = ops.pure.sort_delivery_observers observers in
         let events = ops.pure.collect_events delivery_observers in
-        let hooks = ops.pure.commit_staging () in
+        let hooks = ops.pure.commit_staging staging in
         ops.pure.mark_events_pending events;
         ops.pure.update_necessity ();
         ops.timer_refresh.clear_active_timer_refresh ();
@@ -84,7 +84,7 @@ let run state ops =
         Pure_ok (hooks, events, delivering_token)
       with exn -> (
         let backtrace = Printexc.get_raw_backtrace () in
-        let hooks = rollback state pure_token ops observers pending in
+        let hooks = rollback state pure_token ops observers pending staging in
         match ops.errors.classify_graph_error exn with
         | Some err -> Pure_graph_error (hooks, err)
         | None -> Pure_defect (hooks, exn, backtrace))

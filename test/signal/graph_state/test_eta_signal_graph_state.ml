@@ -12,7 +12,7 @@ let test_generation_pending_and_active_refresh () =
   State.enqueue_pending state "first";
   State.enqueue_pending state "second";
   State.advance_generation state ~advance:(fun value -> value + 1);
-  State.begin_staging state ~timer_refresh:(Some "refresh");
+  ignore (State.begin_staging state ~timer_refresh:(Some "refresh"));
   Alcotest.(check int) "generation" 1 (State.generation state);
   Alcotest.(check string_list)
     "pending order" [ "first"; "second" ]
@@ -28,12 +28,12 @@ let test_generation_pending_and_active_refresh () =
 let test_reset_staging_owns_state_cleanup_order () =
   let state = create () in
   let events = ref [] in
-  State.begin_staging state ~timer_refresh:(Some "refresh");
+  let staging = State.begin_staging state ~timer_refresh:(Some "refresh") in
   State.stage_bind state "bind";
   State.remember_pure_disposal_hooks state [ "pure-hook" ];
   State.stage_timer_refresh_timer state "timer";
   let hooks =
-    State.reset_staging state
+    State.reset_staging state staging
       ~rollback_bind:(fun bind ->
         record events ("rollback_bind:" ^ bind);
         [ "bind-hook" ])
@@ -60,7 +60,7 @@ let test_reset_staging_owns_state_cleanup_order () =
 let test_commit_staging_owns_state_cleanup_order () =
   let state = create () in
   let events = ref [] in
-  State.begin_staging state ~timer_refresh:(Some "refresh");
+  let staging = State.begin_staging state ~timer_refresh:(Some "refresh") in
   State.stage_bind state "bind";
   State.remember_computed state ~generation:1 "node"
     ~project:(fun node -> node)
@@ -69,7 +69,7 @@ let test_commit_staging_owns_state_cleanup_order () =
   State.remember_timer_refresh_disposal_hooks state [ "timer-hook" ];
   State.stage_timer_refresh_timer state "timer";
   let hooks =
-    State.commit_staging state
+    State.commit_staging state staging
       ~preflight:(fun () -> record events "preflight")
       ~commit_bind:(fun bind ->
         record events ("commit_bind:" ^ bind);
@@ -100,6 +100,28 @@ let test_commit_staging_owns_state_cleanup_order () =
   Alcotest.(check string_list) "binds cleared" [] (State.staged_binds state);
   Alcotest.(check string_list) "nodes cleared" [] (State.computed_nodes state)
 
+let test_staging_token_validation () =
+  let state = create () in
+  let staging = State.begin_staging state ~timer_refresh:None in
+  Alcotest.check_raises "begin while active"
+    (Invalid_argument "Eta_signal graph staging is already active")
+    (fun () -> ignore (State.begin_staging state ~timer_refresh:None));
+  ignore
+    (State.reset_staging state staging ~rollback_bind:(fun _ -> [])
+       ~rollback_transaction:(fun () -> ())
+       ~rollback_timer_refresh_dirty:(fun _ -> ())
+       ~clear_timer_refresh_timer:(fun _ -> ())
+      : string list);
+  Alcotest.check_raises "reuse stale token"
+    (Invalid_argument "Eta_signal graph staging is not active")
+    (fun () ->
+      ignore
+        (State.reset_staging state staging ~rollback_bind:(fun _ -> [])
+           ~rollback_transaction:(fun () -> ())
+           ~rollback_timer_refresh_dirty:(fun _ -> ())
+           ~clear_timer_refresh_timer:(fun _ -> ())
+          : string list))
+
 let test_timer_refresh_token_advances () =
   let state = create () in
   Alcotest.(check int)
@@ -120,6 +142,8 @@ let () =
             test_reset_staging_owns_state_cleanup_order;
           Alcotest.test_case "commit staging state" `Quick
             test_commit_staging_owns_state_cleanup_order;
+          Alcotest.test_case "staging token validation" `Quick
+            test_staging_token_validation;
           Alcotest.test_case "timer refresh token" `Quick
             test_timer_refresh_token_advances;
         ] );

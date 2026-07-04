@@ -14,9 +14,9 @@ type 'error errors = {
   classify_graph_error : exn -> 'error option;
 }
 
-type ('pending, 'observer, 'event, 'hook) pure = {
+type ('pending, 'observer, 'event, 'hook, 'staging) pure = {
   advance_generation : unit -> unit;
-  begin_staging : unit -> unit;
+  begin_staging : unit -> 'staging;
   drain_pending : unit -> 'pending list;
   release_pending_marks : 'pending list -> unit;
   active_observers : unit -> 'observer list;
@@ -24,23 +24,23 @@ type ('pending, 'observer, 'event, 'hook) pure = {
   plan_staged_binds : 'observer list -> unit;
   sort_delivery_observers : 'observer list -> 'observer list;
   collect_events : 'observer list -> 'event list;
-  commit_staging : unit -> 'hook list;
+  commit_staging : 'staging -> 'hook list;
   mark_events_pending : 'event list -> unit;
   update_necessity : unit -> unit;
 }
 
-type ('pending, 'observer, 'hook) rollback = {
-  rollback_staging : unit -> 'hook list;
+type ('pending, 'observer, 'hook, 'staging) rollback = {
+  rollback_staging : 'staging -> 'hook list;
   mark_observers_failed_without_current : 'observer list -> unit;
   requeue_pending : 'pending list -> unit;
 }
 
 type timer_refresh = { clear_active_timer_refresh : unit -> unit }
 
-type ('pending, 'observer, 'event, 'hook, 'error) t = {
+type ('pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   errors : 'error errors;
-  pure : ('pending, 'observer, 'event, 'hook) pure;
-  rollback : ('pending, 'observer, 'hook) rollback;
+  pure : ('pending, 'observer, 'event, 'hook, 'staging) pure;
+  rollback : ('pending, 'observer, 'hook, 'staging) rollback;
   timer_refresh : timer_refresh;
 }
 (** Capability surface for graph-specific work performed in a pure
@@ -49,7 +49,7 @@ type ('pending, 'observer, 'event, 'hook, 'error) t = {
 
 val run :
   ('owner, 'error) Eta_signal_stabilization.t ->
-  ('pending, 'observer, 'event, 'hook, 'error) t ->
+  ('pending, 'observer, 'event, 'hook, 'error, 'staging) t ->
   ('owner, 'hook, 'event, 'error) result
 
 type ('event, 'error) delivery = {
