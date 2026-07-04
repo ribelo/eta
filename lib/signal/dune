@@ -11,6 +11,7 @@
   eta_signal_observer
   eta_signal_scope
   eta_signal_stream_bridge
+  eta_signal_test_hooks
   eta_signal_timer
   eta_signal_transaction
   eta_signal_stabilization)

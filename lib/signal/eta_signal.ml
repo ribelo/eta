@@ -13,6 +13,7 @@ module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
+module Test_hooks = Eta_signal_test_hooks
 module Timer = Eta_signal_timer
 module Transaction = Eta_signal_transaction
 
@@ -34,147 +35,6 @@ module Make (Observer_error : Observer_error) () = struct
   type stabilize_error = observer_error Error.stabilize_error
   type time_error = Error.time_error
   type stream_error = Error.stream_error
-
-  module Private_test_hook_state = struct
-    type hook =
-      | After_observer_delivery_claim
-      | After_observer_activation_before_return
-      | After_graph_lane_acquired
-      | After_stream_try_send_before_ack
-      | After_stream_drop_before_ack
-      | After_timer_due_read_before_commit
-      | After_timer_update_constructed_before_run
-
-    type stats_count =
-      | Stats_total_node_count
-      | Stats_necessary_node_count
-      | Stats_dead_node_count
-
-    type action = { run : 'err. unit -> (unit, 'err) Effect.t }
-
-    type state = {
-      with_hook : 'a. hook -> action -> (unit -> 'a) -> 'a;
-      clear : unit -> unit;
-      run_hook : 'err. hook -> (unit, 'err) Effect.t;
-      note_lane_waiter_enqueued : unit -> unit;
-      lane_waiter_enqueued_count : unit -> int;
-      note_lane_waiter_compaction : unit -> unit;
-      lane_waiter_compaction_count : unit -> int;
-      set_stats_count_override : stats_count -> int option -> unit;
-      stats_count_override : stats_count -> int option;
-      set_timer_runtime_mismatch_hook : (unit -> unit) -> unit;
-      run_timer_runtime_mismatch_hook : unit -> unit;
-    }
-
-    let noop = { run = (fun () -> Effect.unit) }
-
-    let state =
-      let after_observer_delivery_claim = ref noop in
-      let after_observer_activation_before_return = ref noop in
-      let after_graph_lane_acquired = ref noop in
-      let after_stream_try_send_before_ack = ref noop in
-      let after_stream_drop_before_ack = ref noop in
-      let after_timer_due_read_before_commit = ref noop in
-      let after_timer_update_constructed_before_run = ref noop in
-      let lane_waiter_enqueued_count = ref 0 in
-      let lane_waiter_compaction_count = ref 0 in
-      let total_node_count_override = ref None in
-      let necessary_node_count_override = ref None in
-      let dead_node_count_override = ref None in
-      let timer_runtime_mismatch_hook = ref (fun () -> ()) in
-      let slot = function
-        | After_observer_delivery_claim -> after_observer_delivery_claim
-        | After_observer_activation_before_return ->
-            after_observer_activation_before_return
-        | After_graph_lane_acquired -> after_graph_lane_acquired
-        | After_stream_try_send_before_ack -> after_stream_try_send_before_ack
-        | After_stream_drop_before_ack -> after_stream_drop_before_ack
-        | After_timer_due_read_before_commit ->
-            after_timer_due_read_before_commit
-        | After_timer_update_constructed_before_run ->
-            after_timer_update_constructed_before_run
-      in
-      let stats_count_slot = function
-        | Stats_total_node_count -> total_node_count_override
-        | Stats_necessary_node_count -> necessary_node_count_override
-        | Stats_dead_node_count -> dead_node_count_override
-      in
-      let with_hook hook action f =
-        let slot = slot hook in
-        let previous = !slot in
-        slot := action;
-        Fun.protect ~finally:(fun () -> slot := previous) f
-      in
-      let clear () =
-        List.iter
-          (fun hook ->
-            let slot = slot hook in
-            slot := noop)
-          [
-            After_observer_delivery_claim;
-            After_observer_activation_before_return;
-            After_graph_lane_acquired;
-            After_stream_try_send_before_ack;
-            After_stream_drop_before_ack;
-            After_timer_due_read_before_commit;
-            After_timer_update_constructed_before_run;
-          ];
-        lane_waiter_enqueued_count := 0;
-        lane_waiter_compaction_count := 0;
-        total_node_count_override := None;
-        necessary_node_count_override := None;
-        dead_node_count_override := None;
-        timer_runtime_mismatch_hook := (fun () -> ())
-      in
-      let run hook =
-        let slot = slot hook in
-        (!slot).run ()
-      in
-      let note_lane_waiter_enqueued () =
-        lane_waiter_enqueued_count := !lane_waiter_enqueued_count + 1
-      in
-      let lane_waiter_enqueued_count () = !lane_waiter_enqueued_count in
-      let note_lane_waiter_compaction () =
-        lane_waiter_compaction_count := !lane_waiter_compaction_count + 1
-      in
-      let lane_waiter_compaction_count () = !lane_waiter_compaction_count in
-      let set_stats_count_override count value =
-        stats_count_slot count := value
-      in
-      let stats_count_override count = !(stats_count_slot count) in
-      let set_timer_runtime_mismatch_hook hook =
-        timer_runtime_mismatch_hook := hook
-      in
-      let run_timer_runtime_mismatch_hook () = !timer_runtime_mismatch_hook () in
-      {
-        with_hook;
-        clear;
-        run_hook = run;
-        note_lane_waiter_enqueued;
-        lane_waiter_enqueued_count;
-        note_lane_waiter_compaction;
-        lane_waiter_compaction_count;
-        set_stats_count_override;
-        stats_count_override;
-        set_timer_runtime_mismatch_hook;
-        run_timer_runtime_mismatch_hook;
-      }
-
-    let with_hook hook action f = state.with_hook hook action f
-    let clear () = state.clear ()
-    let run hook = state.run_hook hook
-    let note_lane_waiter_enqueued () = state.note_lane_waiter_enqueued ()
-    let lane_waiter_enqueued_count () = state.lane_waiter_enqueued_count ()
-    let note_lane_waiter_compaction () = state.note_lane_waiter_compaction ()
-    let lane_waiter_compaction_count () = state.lane_waiter_compaction_count ()
-    let set_stats_count_override = state.set_stats_count_override
-    let stats_count_override = state.stats_count_override
-    let set_timer_runtime_mismatch_hook =
-      state.set_timer_runtime_mismatch_hook
-
-    let run_timer_runtime_mismatch_hook () =
-      state.run_timer_runtime_mismatch_hook ()
-  end
 
   type 'a update = 'a Observer_core.Update.t =
     | Initialized of 'a
@@ -565,7 +425,51 @@ module Make (Observer_error : Observer_error) () = struct
   end)
 
   module Private_test_hooks = struct
-    include Private_test_hook_state
+    type hook = Test_hooks.hook =
+      | After_observer_delivery_claim
+      | After_observer_activation_before_return
+      | After_graph_lane_acquired
+      | After_stream_try_send_before_ack
+      | After_stream_drop_before_ack
+      | After_timer_due_read_before_commit
+      | After_timer_update_constructed_before_run
+
+    type stats_count = Test_hooks.stats_count =
+      | Stats_total_node_count
+      | Stats_necessary_node_count
+      | Stats_dead_node_count
+
+    type action = Test_hooks.action = {
+      run : 'err. unit -> (unit, 'err) Effect.t;
+    }
+
+    let state = Test_hooks.create ()
+    let with_hook hook action f = Test_hooks.with_hook state hook action f
+    let clear () = Test_hooks.clear state
+    let run hook = Test_hooks.run state hook
+    let note_lane_waiter_enqueued () =
+      Test_hooks.note_lane_waiter_enqueued state
+
+    let lane_waiter_enqueued_count () =
+      Test_hooks.lane_waiter_enqueued_count state
+
+    let note_lane_waiter_compaction () =
+      Test_hooks.note_lane_waiter_compaction state
+
+    let lane_waiter_compaction_count () =
+      Test_hooks.lane_waiter_compaction_count state
+
+    let set_stats_count_override count value =
+      Test_hooks.set_stats_count_override state count value
+
+    let stats_count_override count =
+      Test_hooks.stats_count_override state count
+
+    let set_timer_runtime_mismatch_hook hook =
+      Test_hooks.set_timer_runtime_mismatch_hook state hook
+
+    let run_timer_runtime_mismatch_hook () =
+      Test_hooks.run_timer_runtime_mismatch_hook state
 
     type 'a observer_delivery_snapshot =
       | Test_delivery_never_delivered

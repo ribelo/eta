@@ -1,0 +1,19 @@
+(rule
+ (target eta_signal_test_hooks.ml)
+ (deps ../../../lib/signal/eta_signal_test_hooks.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_test_hooks.mli)
+ (deps ../../../lib/signal/eta_signal_test_hooks.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(test
+ (name test_eta_signal_test_hooks)
+ (modules test_eta_signal_test_hooks eta_signal_test_hooks)
+ (libraries eta eta_eio eta_test alcotest eio_main unix)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))
