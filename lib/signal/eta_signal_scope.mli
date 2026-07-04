@@ -21,6 +21,21 @@ val is_ancestor :
 
 val depth : ('id, 'owner, 'node) t option -> int
 
+type ('id, 'owner, 'node) context
+
+val create_context : unit -> ('id, 'owner, 'node) context
+val current : ('id, 'owner, 'node) context -> ('id, 'owner, 'node) t option
+
+val require_valid_current :
+  ('id, 'owner, 'node) context ->
+  (('id, 'owner, 'node) t, [> `Ambiguous_scope ]) result
+
+val with_current :
+  ('id, 'owner, 'node) context ->
+  ('id, 'owner, 'node) t ->
+  (unit -> 'a) ->
+  'a
+
 module type VALIDATION_NODE = sig
   type node_id
   type scope_id

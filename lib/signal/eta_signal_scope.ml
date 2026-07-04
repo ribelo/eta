@@ -35,6 +35,23 @@ let rec depth = function
   | None -> 0
   | Some scope -> 1 + depth scope.parent
 
+type ('id, 'owner, 'node) context = {
+  mutable current : ('id, 'owner, 'node) t option;
+}
+
+let create_context () = { current = None }
+let current context = context.current
+
+let require_valid_current context =
+  match context.current with
+  | Some scope when valid scope -> Ok scope
+  | None | Some _ -> Error `Ambiguous_scope
+
+let with_current context scope f =
+  let previous = context.current in
+  context.current <- Some scope;
+  Fun.protect ~finally:(fun () -> context.current <- previous) f
+
 module type VALIDATION_NODE = sig
   type node_id
   type scope_id

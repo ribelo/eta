@@ -756,7 +756,7 @@ module Make (Observer_error : Observer_error) () = struct
     mutable observers : packed_observer list;
     mutable all_nodes : weak_packed_signal list;
     mutable dead_nodes : dead_signal list;
-    mutable current_scope : scope option;
+    current_scope : (scope_id, packed_signal, packed_signal) Scope.context;
     mutable pure_snapshot_commit_count : int;
     mutable callback_delivery_count : int;
     mutable recompute_count : int;
@@ -795,7 +795,7 @@ module Make (Observer_error : Observer_error) () = struct
       observers = [];
       all_nodes = [];
       dead_nodes = [];
-      current_scope = None;
+      current_scope = Scope.create_context ();
       pure_snapshot_commit_count = 0;
       callback_delivery_count = 0;
       recompute_count = 0;
@@ -1415,11 +1415,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   let signal_scope () =
     match Stabilization.state graph.stabilization with
-    | Idle -> graph.current_scope
+    | Idle -> Scope.current graph.current_scope
     | Pure -> (
-        match graph.current_scope with
-        | Some scope when Scope.valid scope -> Some scope
-        | _ -> raise (Graph_error `Ambiguous_scope))
+        match Scope.require_valid_current graph.current_scope with
+        | Ok scope -> Some scope
+        | Error `Ambiguous_scope -> raise (Graph_error `Ambiguous_scope))
     | Committed | Delivering -> raise (Graph_error `Ambiguous_scope)
 
   let add_to_scope scope signal =
@@ -2280,14 +2280,11 @@ module Make (Observer_error : Observer_error) () = struct
         in
         if needs_new_inner then (
           let scope = new_scope signal in
-          let previous_scope = graph.current_scope in
           let inner, inner_value, changed, dependencies =
             try
-              graph.current_scope <- Some scope;
               let inner =
-                Fun.protect
-                  ~finally:(fun () -> graph.current_scope <- previous_scope)
-                  (fun () -> bind.selector source_value)
+                Scope.with_current graph.current_scope scope (fun () ->
+                    bind.selector source_value)
               in
               validate_bind_inner_scope scope inner;
               let inner_value, _inner_changed = compute inner in
@@ -2302,7 +2299,6 @@ module Make (Observer_error : Observer_error) () = struct
               (inner, inner_value, changed, dependencies)
             with exn ->
               let backtrace = Printexc.get_raw_backtrace () in
-              graph.current_scope <- previous_scope;
               remember_pure_disposal_hooks (invalidate_scope scope);
               Printexc.raise_with_backtrace exn backtrace
           in

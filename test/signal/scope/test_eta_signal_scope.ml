@@ -41,6 +41,54 @@ let test_ancestor_and_depth () =
   Alcotest.(check int) "none depth" 0 (Scope.depth None);
   Alcotest.(check int) "grandchild depth" 3 (Scope.depth (Some grandchild))
 
+let current_id context = Option.map Scope.id (Scope.current context)
+
+let test_context_tracks_and_restores_current_scope () =
+  let context = Scope.create_context () in
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let child = Scope.create ~id:2 ~owner:"child" ~parent:(Some root) in
+  Alcotest.(check (option int)) "initial current" None (current_id context);
+  let result =
+    Scope.with_current context root (fun () ->
+        Alcotest.(check (option int)) "root current" (Some 1)
+          (current_id context);
+        Scope.with_current context child (fun () ->
+            Alcotest.(check (option int)) "child current" (Some 2)
+              (current_id context);
+            42))
+  in
+  Alcotest.(check int) "result" 42 result;
+  Alcotest.(check (option int)) "restored empty current" None
+    (current_id context)
+
+let test_context_restores_current_scope_after_exception () =
+  let context = Scope.create_context () in
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  let child = Scope.create ~id:2 ~owner:"child" ~parent:(Some root) in
+  Scope.with_current context root (fun () ->
+      (try
+         Scope.with_current context child (fun () -> raise Exit)
+       with Exit -> ());
+      Alcotest.(check (option int)) "restored root current" (Some 1)
+        (current_id context));
+  Alcotest.(check (option int)) "restored empty current" None
+    (current_id context)
+
+let test_require_valid_current_scope () =
+  let context = Scope.create_context () in
+  let root = Scope.create ~id:1 ~owner:"root" ~parent:None in
+  (match Scope.require_valid_current context with
+  | Ok _ -> Alcotest.fail "expected ambiguous scope without current"
+  | Error `Ambiguous_scope -> ());
+  Scope.with_current context root (fun () ->
+      (match Scope.require_valid_current context with
+      | Ok scope -> Alcotest.(check int) "current scope" 1 (Scope.id scope)
+      | Error `Ambiguous_scope -> Alcotest.fail "expected valid current");
+      ignore (Scope.invalidate root : string list option);
+      match Scope.require_valid_current context with
+      | Ok _ -> Alcotest.fail "expected invalid current rejection"
+      | Error `Ambiguous_scope -> ())
+
 type node = {
   node_id : int;
   mutable node_valid : bool;
@@ -109,6 +157,12 @@ let () =
             test_add_and_invalidate_nodes;
           Alcotest.test_case "ancestor and depth" `Quick
             test_ancestor_and_depth;
+          Alcotest.test_case "context restores current" `Quick
+            test_context_tracks_and_restores_current_scope;
+          Alcotest.test_case "context restores after exception" `Quick
+            test_context_restores_current_scope_after_exception;
+          Alcotest.test_case "context requires valid current" `Quick
+            test_require_valid_current_scope;
           Alcotest.test_case "validate accepts scoped nodes" `Quick
             test_validate_inner_accepts_unscoped_and_ancestor_scoped_nodes;
           Alcotest.test_case "validate rejects invalid nodes" `Quick
