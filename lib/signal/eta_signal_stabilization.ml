@@ -108,6 +108,12 @@ let rollback_to_idle t Token =
   t.state <- Idle;
   Token
 
+let finish_delivering t Token =
+  require_state "finish_delivering" Delivering t;
+  require_no_transaction "finish_delivering" t;
+  t.state <- Idle;
+  Token
+
 let finish t =
   require_no_transaction "finish" t;
   match t.state with

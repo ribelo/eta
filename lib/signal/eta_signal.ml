@@ -611,7 +611,10 @@ module Make (Observer_error : Observer_error) () = struct
     | E : Observer_core.Delivery.token * 'a observer * 'a update -> event
 
   type pure_stabilize_result =
-    | Pure_ok of disposal_hook list * event list
+    | Pure_ok of
+        disposal_hook list
+        * event list
+        * Stabilization.delivering Stabilization.token
     | Pure_graph_error of disposal_hook list * graph_error
     | Pure_defect of disposal_hook list * exn * Printexc.raw_backtrace
 
@@ -2691,11 +2694,11 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter mark_event_pending events;
         update_necessity_counters_unlocked ();
         graph.active_timer_refresh <- None;
-        ignore
-          (Stabilization.commit_to_delivering graph.stabilization
-             pure_token
-            : Stabilization.delivering Stabilization.token);
-        Pure_ok (hooks, events)
+        let delivering_token =
+          Stabilization.commit_to_delivering graph.stabilization
+            pure_token
+        in
+        Pure_ok (hooks, events, delivering_token)
       with
       | Graph_error err ->
           let hooks = rollback_pure pure_token observers pending_at_start in
@@ -2705,9 +2708,12 @@ module Make (Observer_error : Observer_error) () = struct
           let hooks = rollback_pure pure_token observers pending_at_start in
           Pure_defect (hooks, exn, backtrace)
 
-  let finish_stabilize () =
+  let finish_stabilize delivering_token =
     graph.active_timer_refresh <- None;
-    Stabilization.finish graph.stabilization
+    ignore
+      (Stabilization.finish_delivering graph.stabilization
+         delivering_token
+        : Stabilization.idle Stabilization.token)
 
   let graph_error_of_die die =
     match die.Eta.Cause.exn with
@@ -2781,31 +2787,36 @@ module Make (Observer_error : Observer_error) () = struct
                                    release_event_delivery_claim observer token)
                           |> Effect.bind (fun () -> run_events rest))))
 
-  let begin_stabilize_with_pending_hooks timer_refresh hooks_ref finish_needed =
+  let begin_stabilize_with_pending_hooks timer_refresh hooks_ref
+      finish_token_ref =
     let result = begin_stabilize timer_refresh in
     let hooks =
       match result with
-      | Pure_ok (hooks, _) | Pure_graph_error (hooks, _)
+      | Pure_ok (hooks, _, _) | Pure_graph_error (hooks, _)
       | Pure_defect (hooks, _, _) ->
           hooks
     in
     hooks_ref := hooks;
     (match result with
-     | Pure_ok _ -> finish_needed := true
+     | Pure_ok (_, _, delivering_token) ->
+         finish_token_ref := Some delivering_token
      | Pure_graph_error _ | Pure_defect _ -> ());
     result
 
   let finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
-      finish_needed =
+      finish_token_ref =
     run_pending_stabilize_cleanup hooks_ref refresh_timers
     |> Effect.on_exit (fun _exit ->
-           if !finish_needed then with_graph_lane_sync finish_stabilize
-           else Effect.unit)
+           match !finish_token_ref with
+           | None -> Effect.unit
+           | Some delivering_token ->
+               with_graph_lane_sync (fun () ->
+                   finish_stabilize delivering_token))
 
   let stabilize =
-    Effect.sync (fun () -> (ref [], ref false, ref false))
+    Effect.sync (fun () -> (ref [], ref false, ref None))
     |> Effect.bind
-         (fun (hooks_ref, refresh_timers, finish_needed) ->
+         (fun (hooks_ref, refresh_timers, finish_token_ref) ->
            current_runtime_contract ()
            |> Effect.bind (fun runtime_contract ->
                   with_graph_lane_sync (fun () ->
@@ -2824,7 +2835,7 @@ module Make (Observer_error : Observer_error) () = struct
                             }
                         in
                         begin_stabilize_with_pending_hooks timer_refresh
-                          hooks_ref finish_needed
+                          hooks_ref finish_token_ref
                       with Graph_error err -> Pure_graph_error ([], err))
                   |> Effect.bind (function
                        | Pure_graph_error (_, err) ->
@@ -2832,14 +2843,14 @@ module Make (Observer_error : Observer_error) () = struct
                        | Pure_defect (_, exn, backtrace) ->
                            defect_with_pending_disposal_hooks hooks_ref exn
                              backtrace
-                       | Pure_ok (_, events) ->
+                       | Pure_ok (_, events, _) ->
                            refresh_timers := true;
                            run_pending_stabilize_cleanup hooks_ref refresh_timers
                            |> Effect.bind (fun () -> run_events events)
                            |> Effect.bind mark_callback_delivery_complete))
            |> Effect.on_exit (fun _exit ->
                   finish_stabilize_with_pending_cleanup hooks_ref refresh_timers
-                    finish_needed))
+                    finish_token_ref))
 
   module Var = struct
     type 'a t = 'a var

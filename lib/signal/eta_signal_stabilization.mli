@@ -37,4 +37,5 @@ val commit_to_committed : 'error t -> pure token -> committed token
 val collect_to_delivering : 'error t -> committed token -> delivering token
 val commit_to_delivering : 'error t -> pure token -> delivering token
 val rollback_to_idle : 'error t -> pure token -> idle token
+val finish_delivering : 'error t -> delivering token -> idle token
 val finish : 'error t -> unit

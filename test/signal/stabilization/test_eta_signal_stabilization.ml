@@ -83,6 +83,26 @@ let test_commit_to_delivering_combines_transitions () =
     | Delivering -> true
     | Idle | Pure | Committed -> false)
 
+let test_finish_delivering_uses_token () =
+  let state = S.create () in
+  let pure =
+    match S.begin_pure state with
+    | Ok pure -> pure
+    | Error `Reentrant_stabilization ->
+        Alcotest.fail "expected begin to succeed"
+  in
+  (match S.commit_transaction state with
+   | Ok () -> ()
+   | Error () -> Alcotest.fail "commit unexpectedly failed");
+  let delivering = S.commit_to_delivering state pure in
+  ignore (S.finish_delivering state delivering : S.idle S.token);
+  Alcotest.(check bool) "finished idle" true
+    (match S.state state with
+    | Idle -> true
+    | Pure | Committed | Delivering -> false);
+  expect_invalid_arg "reused delivering token" (fun () ->
+      ignore (S.finish_delivering state delivering : S.idle S.token))
+
 let test_rollback_invalidates_pure_token () =
   let state = S.create () in
   let pure =
@@ -149,6 +169,8 @@ let () =
             test_reentrant_begin_rejected;
           Alcotest.test_case "commit to delivering" `Quick
             test_commit_to_delivering_combines_transitions;
+          Alcotest.test_case "finish delivering" `Quick
+            test_finish_delivering_uses_token;
           Alcotest.test_case "rollback invalidates pure token" `Quick
             test_rollback_invalidates_pure_token;
           Alcotest.test_case "begin opens transaction" `Quick
