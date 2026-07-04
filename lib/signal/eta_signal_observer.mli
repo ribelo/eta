@@ -76,6 +76,10 @@ module Delivery : sig
     | Observer_delivery_pending of int * 'a Update.t * 'after_ack list
     | Observer_delivery_running of int * 'a Update.t * 'after_ack list
 
+  type ('a, 'after_ack) finish =
+    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
+    | Finish_released of ('a, 'after_ack) t
+
   val base : ('a, 'after_ack) t -> 'a option
   val pending : ('a, 'after_ack) t -> bool
 
@@ -94,6 +98,14 @@ module Delivery : sig
 
   val release :
     token:int -> ('a, 'after_ack) t -> ('a, 'after_ack) t option
+
+  val finish_running :
+    token:int ->
+    update:'a Update.t ->
+    delivered:bool ->
+    after_ack:'after_ack list ->
+    ('a, 'after_ack) t ->
+    ('a, 'after_ack) finish option
 
   val running_token : ('a, 'after_ack) t -> int option
   val label : ('a, 'after_ack) t -> string

@@ -2589,6 +2589,26 @@ module Make (Observer_error : Observer_error) () = struct
             set_observer_current_delivery live observer_delivery
         | None -> ()))
 
+  let finish_event_delivery_after_error observer token update ~delivered =
+    with_graph_lane_sync (fun () ->
+        match observer_active_live_state observer with
+        | None -> ()
+        | Some live -> (
+            let snapshot = observer_current_snapshot live in
+            match
+              Observer_core.Delivery.finish_running ~token ~update
+                ~delivered ~after_ack:[] snapshot.observer_delivery
+            with
+            | Some
+                (Observer_core.Delivery.Finish_acknowledged
+                  (observer_delivery, after_ack)) ->
+                set_observer_current_delivery live observer_delivery;
+                run_after_ack_actions_unlocked after_ack
+            | Some
+                (Observer_core.Delivery.Finish_released observer_delivery) ->
+                set_observer_current_delivery live observer_delivery
+            | None -> ()))
+
   let claimed_event_delivery_active observer token =
     match Observer_lifecycle.active_live observer.obs_state with
     | Some live ->
@@ -2661,8 +2681,8 @@ module Make (Observer_error : Observer_error) () = struct
   let run_observer_effect observer token update observer_eff =
     let delivered = ref false in
     let finish_delivery_after_error () =
-      if !delivered then acknowledge_event_delivery observer token update
-      else release_event_delivery_claim observer token
+      finish_event_delivery_after_error observer token update
+        ~delivered:!delivered
     in
     ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
       try

@@ -236,6 +236,27 @@ let test_delivery_claim_release_acknowledge () =
   Alcotest.check delivery "delivered" (Observer_delivered 2) delivered;
   Alcotest.(check (list after_ack)) "actions" [ Extra; Stored ] actions
 
+let test_delivery_finish_running_acknowledges_or_releases () =
+  let open Observer.Delivery in
+  let running = Observer_delivery_running (7, update_changed, [ Stored ]) in
+  (match
+     finish_running ~token:7 ~update:update_changed ~delivered:true
+       ~after_ack:[ Extra ] running
+   with
+  | Some (Finish_acknowledged (Observer_delivered 2, actions)) ->
+      Alcotest.(check (list after_ack)) "ack actions" [ Extra; Stored ]
+        actions
+  | Some (Finish_acknowledged _ | Finish_released _) | None ->
+      Alcotest.fail "expected acknowledged finish");
+  match
+    finish_running ~token:7 ~update:update_changed ~delivered:false
+      ~after_ack:[ Extra ] running
+  with
+  | Some (Finish_released (Observer_delivery_pending (7, _, [ Stored ]))) ->
+      ()
+  | Some (Finish_acknowledged _ | Finish_released _) | None ->
+      Alcotest.fail "expected released finish"
+
 let test_delivery_ignores_stale_token () =
   let open Observer.Delivery in
   let state = Observer_delivery_pending (7, update_changed, []) in
@@ -247,6 +268,18 @@ let test_delivery_ignores_stale_token () =
   Alcotest.(check bool) "acknowledge" true
     (Option.is_none
        (acknowledge ~token:8 ~update:update_changed ~after_ack:[] state))
+
+let test_delivery_finish_ignores_stale_token () =
+  let open Observer.Delivery in
+  let running = Observer_delivery_running (7, update_changed, []) in
+  Alcotest.(check bool) "delivered" true
+    (Option.is_none
+       (finish_running ~token:8 ~update:update_changed ~delivered:true
+          ~after_ack:[] running));
+  Alcotest.(check bool) "undelivered" true
+    (Option.is_none
+       (finish_running ~token:8 ~update:update_changed ~delivered:false
+          ~after_ack:[] running))
 
 let test_delivery_labels () =
   let open Observer.Delivery in
@@ -350,8 +383,12 @@ let () =
           Alcotest.test_case "base values" `Quick test_delivery_base_values;
           Alcotest.test_case "claim release acknowledge" `Quick
             test_delivery_claim_release_acknowledge;
+          Alcotest.test_case "finish running" `Quick
+            test_delivery_finish_running_acknowledges_or_releases;
           Alcotest.test_case "ignores stale token" `Quick
             test_delivery_ignores_stale_token;
+          Alcotest.test_case "finish ignores stale token" `Quick
+            test_delivery_finish_ignores_stale_token;
           Alcotest.test_case "labels" `Quick test_delivery_labels;
         ] );
       ( "event",

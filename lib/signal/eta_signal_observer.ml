@@ -127,6 +127,10 @@ module Delivery = struct
     | Observer_delivery_pending of int * 'a Update.t * 'after_ack list
     | Observer_delivery_running of int * 'a Update.t * 'after_ack list
 
+  type ('a, 'after_ack) finish =
+    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
+    | Finish_released of ('a, 'after_ack) t
+
   let base = function
     | Observer_never_delivered -> None
     | Observer_delivered value -> Some value
@@ -170,6 +174,16 @@ module Delivery = struct
     | Observer_never_delivered | Observer_delivered _
     | Observer_delivery_pending _ | Observer_delivery_running _ ->
         None
+
+  let finish_running ~token ~update ~delivered ~after_ack state =
+    if delivered then
+      match acknowledge ~token ~update ~after_ack state with
+      | Some (state, after_ack) -> Some (Finish_acknowledged (state, after_ack))
+      | None -> None
+    else
+      match release ~token state with
+      | Some state -> Some (Finish_released state)
+      | None -> None
 
   let running_token = function
     | Observer_delivery_running (token, _, _) -> Some token
