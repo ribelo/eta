@@ -73,6 +73,15 @@ module Lifecycle = struct
     | Registering _ | Active _ -> true
     | Disposed _ | Invalid_scope _ -> false
 
+  let invalid_scope = function
+    | Invalid_scope _ -> true
+    | Registering _ | Active _ | Disposed _ -> false
+
+  let diagnostic_visible ~include_invalid = function
+    | Active _ -> true
+    | Invalid_scope _ -> include_invalid
+    | Registering _ | Disposed _ -> false
+
   let label = function
     | Registering _ -> "registering"
     | Active _ -> "active"

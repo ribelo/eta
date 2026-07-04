@@ -109,6 +109,23 @@ let test_lifecycle_predicates_and_labels () =
   Alcotest.(check bool) "registering inactive" false
     (active (Registering "live"))
 
+let test_lifecycle_diagnostic_visibility () =
+  let open Observer.Lifecycle in
+  Alcotest.(check bool) "active visible" true
+    (diagnostic_visible ~include_invalid:false (Active "live"));
+  Alcotest.(check bool) "registering hidden" false
+    (diagnostic_visible ~include_invalid:true (Registering "live"));
+  Alcotest.(check bool) "disposed hidden" false
+    (diagnostic_visible ~include_invalid:true (Disposed 1));
+  Alcotest.(check bool) "invalid predicate" true
+    (invalid_scope (Invalid_scope 1));
+  Alcotest.(check bool) "active not invalid" false
+    (invalid_scope (Active "live"));
+  Alcotest.(check bool) "invalid hidden when excluded" false
+    (diagnostic_visible ~include_invalid:false (Invalid_scope 1));
+  Alcotest.(check bool) "invalid visible when included" true
+    (diagnostic_visible ~include_invalid:true (Invalid_scope 1))
+
 let test_lifecycle_activate () =
   let open Observer.Lifecycle in
   Alcotest.check lifecycle_state "registering activates" (Active "live")
@@ -499,6 +516,8 @@ let () =
         [
           Alcotest.test_case "predicates and labels" `Quick
             test_lifecycle_predicates_and_labels;
+          Alcotest.test_case "diagnostic visibility" `Quick
+            test_lifecycle_diagnostic_visibility;
           Alcotest.test_case "activate" `Quick test_lifecycle_activate;
           Alcotest.test_case "finish" `Quick test_lifecycle_finish;
           Alcotest.test_case "read value" `Quick test_lifecycle_read_value;

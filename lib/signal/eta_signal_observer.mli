@@ -46,6 +46,9 @@ module Lifecycle : sig
   val active_live : ('live, 'value) t -> 'live option
   val active : ('live, 'value) t -> bool
   val demands : ('live, 'value) t -> bool
+  val invalid_scope : ('live, 'value) t -> bool
+  val diagnostic_visible :
+    include_invalid:bool -> ('live, 'value) t -> bool
   val label : ('live, 'value) t -> string
 
   val activate :

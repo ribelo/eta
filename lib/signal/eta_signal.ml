@@ -2750,12 +2750,7 @@ module Make (Observer_error : Observer_error) () = struct
   let invalid_observer_count () =
     List.fold_left
       (fun count (O observer) ->
-        if
-          match observer.obs_state with
-          | Observer_lifecycle.Invalid_scope _ -> true
-          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
-          | Observer_lifecycle.Disposed _ -> false
-        then
+        if Observer_lifecycle.invalid_scope observer.obs_state then
           saturating_succ count
         else count)
       0 graph.observers
@@ -3001,13 +2996,8 @@ module Make (Observer_error : Observer_error) () = struct
           Option.map signal_id_label missing_observed_signal_id;
       }
 
-  let observer_selected ~include_invalid (O observer as packed) =
-    observer_active packed
-    ||
-    match observer.obs_state with
-    | Observer_lifecycle.Invalid_scope _ -> include_invalid
-    | Observer_lifecycle.Registering _ | Observer_lifecycle.Disposed _
-    | Observer_lifecycle.Active _ -> false
+  let observer_selected ~include_invalid (O observer) =
+    Observer_lifecycle.diagnostic_visible ~include_invalid observer.obs_state
 
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
