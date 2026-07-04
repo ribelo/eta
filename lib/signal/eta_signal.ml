@@ -4033,15 +4033,6 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let finish_policy =
-      {
-        Stream_bridge.is_invalid_scope =
-          (function
-          | Observer_lifecycle.Finish_disposed -> false
-          | Observer_lifecycle.Finish_invalid_scope -> true);
-        invalid_scope_error = `Invalid_scope;
-      }
-
     let offer_bridge_update observer on_drop queue update =
       let delivery =
         {
@@ -4074,7 +4065,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun (queue, stream) ->
              Observer.observe_with_hooks_callback ?equal
                ~on_finish:
-                 [ Stream_bridge.finish_hook ~queue ~policy:finish_policy ]
+                 [ Stream_bridge.observer_finish_hook ~queue ]
                signal
                (fun observer update ->
                  offer_bridge_update observer on_drop queue update)

@@ -36,6 +36,11 @@ val finish_hook :
   'finish_reason ->
   unit
 
+val observer_finish_hook :
+  queue:('update, [> `Invalid_scope ]) Eta.Queue.t ->
+  Eta_signal_observer.Lifecycle.finish_reason ->
+  unit
+
 val offer :
   queue:('update, 'queue_error) Eta.Queue.t ->
   delivery:('token, 'update, 'error) delivery ->

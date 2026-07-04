@@ -1,5 +1,6 @@
 module Effect = Eta.Effect
 module Queue = Eta.Queue
+module Observer_lifecycle = Eta_signal_observer.Lifecycle
 module Stream_bridge = Eta_signal_stream_bridge
 
 type test_error = [ `Invalid_scope ]
@@ -53,19 +54,6 @@ let hooks ?(after_send = fun () -> Effect.unit)
     on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
   }
 
-type finish_reason =
-  | Finish_disposed
-  | Finish_invalid_scope
-
-let finish_policy =
-  {
-    Stream_bridge.is_invalid_scope =
-      (function
-      | Finish_disposed -> false
-      | Finish_invalid_scope -> true);
-    invalid_scope_error = `Invalid_scope;
-  }
-
 let test_finish_hook_closes_queue () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let queue =
@@ -73,7 +61,8 @@ let test_finish_hook_closes_queue () =
     | Ok queue -> queue
     | Error _ -> Alcotest.fail "expected queue"
   in
-  Stream_bridge.finish_hook ~queue ~policy:finish_policy Finish_disposed;
+  Stream_bridge.observer_finish_hook ~queue
+    Observer_lifecycle.Finish_disposed;
   match run_ok runtime (Queue.try_recv queue) with
   | `Closed -> ()
   | `Empty | `Item _ | `Closed_with_error _ ->
@@ -86,7 +75,8 @@ let test_finish_hook_invalid_scope_closes_with_error () =
     | Ok queue -> queue
     | Error _ -> Alcotest.fail "expected queue"
   in
-  Stream_bridge.finish_hook ~queue ~policy:finish_policy Finish_invalid_scope;
+  Stream_bridge.observer_finish_hook ~queue
+    Observer_lifecycle.Finish_invalid_scope;
   match run_ok runtime (Queue.try_recv queue) with
   | `Closed_with_error `Invalid_scope -> ()
   | `Empty | `Item _ | `Closed ->

@@ -1,5 +1,6 @@
 module Effect = Eta.Effect
 module Queue = Eta.Queue
+module Observer_lifecycle = Eta_signal_observer.Lifecycle
 
 let default_capacity = 1024
 
@@ -28,10 +29,22 @@ type ('finish_reason, 'queue_error) finish_policy = {
   invalid_scope_error : 'queue_error;
 }
 
+let observer_finish_policy =
+  {
+    is_invalid_scope =
+      (function
+      | Observer_lifecycle.Finish_disposed -> false
+      | Observer_lifecycle.Finish_invalid_scope -> true);
+    invalid_scope_error = `Invalid_scope;
+  }
+
 let finish_hook ~queue ~policy reason =
   if policy.is_invalid_scope reason then
     Queue.close_with_error queue policy.invalid_scope_error
   else Queue.close queue
+
+let observer_finish_hook ~queue reason =
+  finish_hook ~queue ~policy:observer_finish_policy reason
 
 let report_dropped_update ~on_drop ~after_drop_before_ack ~acknowledge_drop
     update =
