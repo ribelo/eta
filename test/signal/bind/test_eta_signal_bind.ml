@@ -1,4 +1,5 @@
 module Bind = Eta_signal_bind
+module T = Eta_signal_transaction
 
 let test_empty_snapshot () =
   let snapshot = Bind.empty in
@@ -116,6 +117,32 @@ let test_stage_switch_remembers_before_staging_snapshot () =
           Alcotest.(check int) "scope" 2 scope
       | None -> Alcotest.fail "expected staged switch")
   | None -> Alcotest.fail "expected staged snapshot"
+
+let test_stage_transaction_switch_remembers_once () =
+  let effects = ref [] in
+  let staged = T.create_staged Bind.empty in
+  let tx : (T.pure, unit) T.t = T.begin_pure () in
+  let remember () = effects := !effects @ [ "remember" ] in
+  Bind.stage_transaction_switch tx staged ~remember ~source_value:1
+    ~inner:"inner" ~scope:2;
+  Alcotest.(check (list string)) "remembered first stage" [ "remember" ]
+    !effects;
+  Alcotest.(check bool) "staged" true (T.staged tx staged);
+  (match Bind.switch_parts (T.read tx staged) with
+  | Some (source_value, inner, scope) ->
+      Alcotest.(check int) "source" 1 source_value;
+      Alcotest.(check string) "inner" "inner" inner;
+      Alcotest.(check int) "scope" 2 scope
+  | None -> Alcotest.fail "expected first staged switch");
+  Bind.stage_transaction_switch tx staged ~remember ~source_value:2
+    ~inner:"next" ~scope:3;
+  Alcotest.(check (list string)) "remembered once" [ "remember" ] !effects;
+  match Bind.switch_parts (T.read tx staged) with
+  | Some (source_value, inner, scope) ->
+      Alcotest.(check int) "updated source" 2 source_value;
+      Alcotest.(check string) "updated inner" "next" inner;
+      Alcotest.(check int) "updated scope" 3 scope
+  | None -> Alcotest.fail "expected updated staged switch"
 
 let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
@@ -407,6 +434,8 @@ let () =
             test_switch_rollback_and_preflight_plans;
           Alcotest.test_case "stage switch remembers first" `Quick
             test_stage_switch_remembers_before_staging_snapshot;
+          Alcotest.test_case "stage transaction switch remembers once" `Quick
+            test_stage_transaction_switch_remembers_once;
           Alcotest.test_case "staged switch commit effects" `Quick
             test_staged_switch_commit_runs_graph_effects_in_bind_order;
           Alcotest.test_case "staged switch noop" `Quick

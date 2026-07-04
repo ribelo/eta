@@ -78,6 +78,15 @@ val stage_switch :
   scope:'scope ->
   unit
 
+val stage_transaction_switch :
+  (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->
+  ('source, 'inner, 'scope) snapshot Eta_signal_transaction.staged ->
+  remember:(unit -> unit) ->
+  source_value:'source ->
+  inner:'inner ->
+  scope:'scope ->
+  unit
+
 val commit_switch :
   current:('source, 'inner, 'scope) snapshot ->
   staged:('source, 'inner, 'scope) snapshot ->

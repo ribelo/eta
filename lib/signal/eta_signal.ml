@@ -1256,15 +1256,10 @@ module Make (Observer_error : Observer_error) () = struct
   let rollback_transaction () =
     Stabilization.rollback_transaction graph.stabilization
 
-  let remember_staged_bind (B bind as packed) =
-    let transaction = active_transaction () in
-    if not (Transaction.staged transaction bind.snapshot) then
-      Graph_state.stage_bind graph.state packed
-
-  let stage_bind_switch bind source_value inner scope =
-    Bind.stage_switch
-      ~remember:(fun () -> remember_staged_bind (B bind))
-      ~stage:(Transaction.stage (active_transaction ()) bind.snapshot)
+  let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
+      scope =
+    Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
+      ~remember:(fun () -> Graph_state.stage_bind graph.state (B bind))
       ~source_value ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :

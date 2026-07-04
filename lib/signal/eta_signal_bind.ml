@@ -87,6 +87,13 @@ let stage_switch ~remember ~stage ~source_value ~inner ~scope =
   remember ();
   stage (switch ~source_value ~inner ~scope)
 
+let stage_transaction_switch transaction staged_snapshot ~remember
+    ~source_value ~inner ~scope =
+  if not (Eta_signal_transaction.staged transaction staged_snapshot) then
+    remember ();
+  Eta_signal_transaction.stage transaction staged_snapshot
+    (switch ~source_value ~inner ~scope)
+
 let commit_switch ~current ~staged ~detach_old_inner ~invalidate_old_scope
     ~attach_new_inner =
   match switch_parts staged with
