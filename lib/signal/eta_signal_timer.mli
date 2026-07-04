@@ -263,6 +263,14 @@ val refresh_actions :
   'a refresh_plan ->
   'a refresh_action list
 
+val refresh_actions_for_spec :
+  advance_generation:(int -> int) ->
+  state:state ->
+  current_value:'a ->
+  now_ms:int ->
+  'a refresh_spec ->
+  'a refresh_action list
+
 val refresh_plan_for_spec :
   state:state ->
   current_value:'a ->

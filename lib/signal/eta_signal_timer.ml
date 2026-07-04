@@ -592,3 +592,8 @@ let refresh_plan_for_spec : type a.
       deadline_refresh_plan ~now_ms ~deadline_ms
   | Refresh_interval interval_ms ->
       interval_refresh_plan ~state ~interval_ms ~current_value ~now_ms
+
+let refresh_actions_for_spec ~advance_generation ~state ~current_value ~now_ms
+    spec =
+  refresh_plan_for_spec ~state ~current_value ~now_ms spec
+  |> refresh_actions ~advance_generation ~state

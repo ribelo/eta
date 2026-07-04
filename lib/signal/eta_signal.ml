@@ -1527,19 +1527,17 @@ module Make (Observer_error : Observer_error) () = struct
         stage_timer_state_unlocked timer plan.finish_state;
         remember_timer_refresh_disposal_hooks plan.finish_cancel_hooks
 
-  let timer_refresh_actions timer source refresh =
-    Timer.refresh_actions
-      ~advance_generation:(checked_succ "timer generation")
-      ~state:(timer_effective_state timer) refresh
-    |> List.map (function
-         | Timer.Refresh_set value -> Set_source (source, value)
-         | Timer.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
-         | Timer.Refresh_finish plan -> Finish plan)
+  let timer_refresh_action source = function
+    | Timer.Refresh_set value -> Set_source (source, value)
+    | Timer.Refresh_advance_due next_due_ms -> Advance_due next_due_ms
+    | Timer.Refresh_finish plan -> Finish plan
 
   let timer_refresh_plan timer now_ms (Refresh_operation (source, spec)) =
-    Timer.refresh_plan_for_spec ~state:(timer_effective_state timer)
+    Timer.refresh_actions_for_spec
+      ~advance_generation:(checked_succ "timer generation")
+      ~state:(timer_effective_state timer)
       ~current_value:(effective_var_value source) ~now_ms spec
-    |> timer_refresh_actions timer source
+    |> List.map (timer_refresh_action source)
 
   let stage_timer_refresh_operation timer now_ms operation =
     List.iter

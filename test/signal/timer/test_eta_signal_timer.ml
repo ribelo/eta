@@ -832,6 +832,26 @@ let test_refresh_actions () =
       List.iter (fun hook -> hook ()) plan.finish_cancel_hooks
   | _ -> Alcotest.fail "expected finish action");
   Alcotest.(check bool) "finish action carries cancel hook" true !cancelled;
+  let spec_actions =
+    Timer.refresh_actions_for_spec ~advance_generation:succ ~state:running
+      ~current_value:false ~now_ms:85 (Timer.Refresh_deadline 80)
+  in
+  Alcotest.(check (list string))
+    "spec action includes finish plan"
+    [ "set:true"; "finish:finished:8:1" ]
+    (List.map
+       (function
+         | Timer.Refresh_advance_due next_due_ms ->
+             "advance:" ^ string_of_int next_due_ms
+         | Timer.Refresh_set value -> "set:" ^ string_of_bool value
+         | Timer.Refresh_finish plan ->
+             "finish:"
+             ^ Timer.state_label plan.finish_state
+             ^ ":"
+             ^ string_of_int (Timer.state_generation plan.finish_state)
+             ^ ":"
+             ^ string_of_int (List.length plan.finish_cancel_hooks))
+       spec_actions);
   Alcotest.(check (list string))
     "empty"
     []
