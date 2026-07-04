@@ -4,6 +4,7 @@ module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
 module Bind = Eta_signal_bind
+module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
@@ -3195,7 +3196,9 @@ module Make (Observer_error : Observer_error) () = struct
       0 all_nodes
 
   let stats_counter name value =
-    if value = max_int then counter_overflow name else value
+    match Debug.stats_counter ~name value with
+    | Ok value -> value
+    | Error (`Counter_overflow name) -> counter_overflow name
 
   let stats_count count actual =
     Option.value (Private_test_hooks.stats_count_override count) ~default:actual
@@ -3295,7 +3298,7 @@ module Make (Observer_error : Observer_error) () = struct
     | `All_valid -> signal.valid
     | `All_including_invalid -> true
 
-  let bool_field name value = name ^ "=" ^ string_of_bool value
+  let bool_field = Debug.bool_field
 
   let signal_state_fields : type a. a signal -> string list =
    fun signal ->

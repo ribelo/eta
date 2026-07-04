@@ -3,6 +3,7 @@
  (modules
   eta_signal_testable
   eta_signal_bind
+  eta_signal_debug
   eta_signal_error
   eta_signal_id
   eta_signal_kernel
@@ -29,6 +30,18 @@
 (rule
  (target eta_signal_bind.mli)
  (deps ../../lib/signal/eta_signal_bind.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_debug.ml)
+ (deps ../../lib/signal/eta_signal_debug.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_debug.mli)
+ (deps ../../lib/signal/eta_signal_debug.mli)
  (action
   (copy %{deps} %{target})))
 
