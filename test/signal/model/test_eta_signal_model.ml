@@ -1207,6 +1207,14 @@ type small_graph_node =
       children : int list;
       bias : int;
     }
+  | Small_bind_select of {
+      source : int;
+      even_child : int;
+      odd_child : int;
+      even_scale : int;
+      odd_scale : int;
+      bias : int;
+    }
 
 type small_graph_op =
   | Small_set of int * int
@@ -1244,7 +1252,12 @@ let small_graph_eval ast committed =
               values.(left) values.(right)
         | Small_all_sum { children; bias } ->
             List.fold_left (fun sum child -> sum + values.(child)) bias
-              children))
+              children
+        | Small_bind_select
+            { source; even_child; odd_child; even_scale; odd_scale; bias } ->
+            if values.(source) mod 2 = 0 then
+              (values.(even_child) * even_scale) + bias
+            else (values.(odd_child) * odd_scale) + bias))
     ast;
   values.(Array.length values - 1)
 
@@ -1289,12 +1302,23 @@ let small_graph_children random upper_bound =
   in
   loop count []
 
+let small_graph_bind_select random upper_bound =
+  Small_bind_select
+    {
+      source = small_graph_child random upper_bound;
+      even_child = small_graph_child random upper_bound;
+      odd_child = small_graph_child random upper_bound;
+      even_scale = small_graph_coeff random;
+      odd_scale = small_graph_coeff random;
+      bias = Random.State.int random 7 - 3;
+    }
+
 let generate_small_graph_ast ~seed ~var_count ~node_count =
   let random = Random.State.make [| seed; node_count; var_count |] in
   Array.init node_count (fun index ->
       if index < var_count then Small_var index
       else
-        match Random.State.int random 4 with
+        match Random.State.int random 5 with
         | 0 ->
             Small_map
               {
@@ -1317,6 +1341,7 @@ let generate_small_graph_ast ~seed ~var_count ~node_count =
                 children = small_graph_children random index;
                 bias = Random.State.int random 7 - 3;
               }
+        | 3 -> small_graph_bind_select random index
         | _ ->
             let child = small_graph_child random index in
             Small_map2
@@ -1359,6 +1384,17 @@ let small_graph_signal_of_node signals = function
       |> List.map (fun child -> signals.(child))
       |> Signal.all
       |> Signal.map (List.fold_left ( + ) bias)
+  | Small_bind_select
+      { source; even_child; odd_child; even_scale; odd_scale; bias } ->
+      Signal.bind signals.(source) (fun source_value ->
+          if source_value mod 2 = 0 then
+            Signal.map
+              (fun value -> (value * even_scale) + bias)
+              signals.(even_child)
+          else
+            Signal.map
+              (fun value -> (value * odd_scale) + bias)
+              signals.(odd_child))
 
 let run_small_graph_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1373,7 +1409,7 @@ let run_small_graph_trace name ~seed =
       signals.(index) <-
         (match node with
         | Small_var var -> Signal.Var.watch vars.(var)
-        | Small_map _ | Small_map2 _ | Small_all_sum _ ->
+        | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_bind_select _ ->
             small_graph_signal_of_node signals node))
     ast;
   let updates = ref [] in
