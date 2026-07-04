@@ -25,6 +25,40 @@ module Value : sig
   val label : 'a t -> string
 end
 
+module Lifecycle : sig
+  type finish_reason =
+    | Finish_disposed
+    | Finish_invalid_scope
+
+  type ('live, 'value) t =
+    | Registering of 'live
+    | Active of 'live
+    | Disposed of 'value
+    | Invalid_scope of 'value
+
+  type ('live, 'value) finish = {
+    state : ('live, 'value) t;
+    hook_live : 'live option;
+    remove : bool;
+  }
+
+  val live : ('live, 'value) t -> 'live option
+  val active_live : ('live, 'value) t -> 'live option
+  val active : ('live, 'value) t -> bool
+  val demands : ('live, 'value) t -> bool
+  val label : ('live, 'value) t -> string
+
+  val activate :
+    ('live, 'value) t ->
+    (('live, 'value) t, [> `Invalid_scope ]) result
+
+  val finish :
+    value_of_live:('live -> 'value) ->
+    finish_reason ->
+    ('live, 'value) t ->
+    ('live, 'value) finish
+end
+
 module Delivery : sig
   type ('a, 'after_ack) t =
     | Observer_never_delivered

@@ -19,6 +19,12 @@ let delivery =
     (fun ppf _ -> Format.pp_print_string ppf "<delivery>")
     ( = )
 
+let lifecycle_state =
+  Alcotest.testable
+    (fun ppf state ->
+      Format.pp_print_string ppf (Observer.Lifecycle.label state))
+    ( = )
+
 let test_update_delivered_value () =
   Alcotest.(check int) "initialized" 1
     (Observer.Update.delivered_value update_initialized);
@@ -69,6 +75,68 @@ let test_value_unsafe_read_exn () =
   Alcotest.check_raises "failed without current"
     (Invalid_argument "Eta_signal observer is not initialized") (fun () ->
       ignore (unsafe_read_exn Failed_without_current : int))
+
+let test_lifecycle_predicates_and_labels () =
+  let open Observer.Lifecycle in
+  Alcotest.(check string) "registering label" "registering"
+    (label (Registering "live"));
+  Alcotest.(check string) "active label" "active" (label (Active "live"));
+  Alcotest.(check string) "disposed label" "disposed" (label (Disposed 1));
+  Alcotest.(check string) "invalid label" "invalid_scope"
+    (label (Invalid_scope 1));
+  Alcotest.(check (option string)) "registering live" (Some "live")
+    (live (Registering "live"));
+  Alcotest.(check (option string)) "active live" (Some "live")
+    (active_live (Active "live"));
+  Alcotest.(check bool) "registering demands" true
+    (demands (Registering "live"));
+  Alcotest.(check bool) "active demands" true (demands (Active "live"));
+  Alcotest.(check bool) "disposed demand removed" false
+    (demands (Disposed 1));
+  Alcotest.(check bool) "invalid demand removed" false
+    (demands (Invalid_scope 1));
+  Alcotest.(check bool) "active predicate" true (active (Active "live"));
+  Alcotest.(check bool) "registering inactive" false
+    (active (Registering "live"))
+
+let test_lifecycle_activate () =
+  let open Observer.Lifecycle in
+  Alcotest.check lifecycle_state "registering activates" (Active "live")
+    (match activate (Registering "live") with
+    | Ok state -> state
+    | Error _ -> Alcotest.fail "expected activation");
+  Alcotest.check lifecycle_state "active stays active" (Active "live")
+    (match activate (Active "live") with
+    | Ok state -> state
+    | Error _ -> Alcotest.fail "expected active state");
+  (match activate (Disposed 1) with
+  | Error `Invalid_scope -> ()
+  | Ok _ -> Alcotest.fail "expected disposed activation failure");
+  match activate (Invalid_scope 1) with
+  | Error `Invalid_scope -> ()
+  | Ok _ -> Alcotest.fail "expected invalid-scope activation failure"
+
+let test_lifecycle_finish () =
+  let open Observer.Lifecycle in
+  let value_of_live = String.length in
+  let check_finish label expected_state expected_hook_live expected_remove
+      finish =
+    Alcotest.check lifecycle_state (label ^ " state") expected_state
+      finish.state;
+    Alcotest.(check (option string))
+      (label ^ " hook live") expected_hook_live finish.hook_live;
+    Alcotest.(check bool) (label ^ " remove") expected_remove finish.remove
+  in
+  check_finish "registering dispose" (Disposed 4) (Some "live") true
+    (finish ~value_of_live Finish_disposed (Registering "live"));
+  check_finish "active invalid" (Invalid_scope 4) (Some "live") false
+    (finish ~value_of_live Finish_invalid_scope (Active "live"));
+  check_finish "invalid dispose" (Disposed 4) None true
+    (finish ~value_of_live Finish_disposed (Invalid_scope 4));
+  check_finish "invalid invalid" (Invalid_scope 4) None false
+    (finish ~value_of_live Finish_invalid_scope (Invalid_scope 4));
+  check_finish "disposed invalid" (Disposed 4) None false
+    (finish ~value_of_live Finish_invalid_scope (Disposed 4))
 
 let test_delivery_base_values () =
   let open Observer.Delivery in
@@ -135,6 +203,13 @@ let () =
             test_value_mark_failed_without_current;
           Alcotest.test_case "unsafe read exception" `Quick
             test_value_unsafe_read_exn;
+        ] );
+      ( "lifecycle",
+        [
+          Alcotest.test_case "predicates and labels" `Quick
+            test_lifecycle_predicates_and_labels;
+          Alcotest.test_case "activate" `Quick test_lifecycle_activate;
+          Alcotest.test_case "finish" `Quick test_lifecycle_finish;
         ] );
       ( "delivery",
         [

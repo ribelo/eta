@@ -9,6 +9,7 @@ module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Kernel = Eta_signal_kernel
 module Observer_core = Eta_signal_observer
+module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
 module Stabilization = Eta_signal_stabilization
 module Stream_bridge = Eta_signal_stream_bridge
@@ -390,18 +391,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   and 'a observer_live_state = {
     observer_snapshot : 'a observer_snapshot Transaction.staged;
-    mutable obs_on_finish : (observer_finish_reason -> unit) list;
+    mutable obs_on_finish : (Observer_lifecycle.finish_reason -> unit) list;
   }
 
   and 'a observer_state =
-    | Observer_registering of 'a observer_live_state
-    | Observer_active of 'a observer_live_state
-    | Observer_disposed of 'a Observer_core.Value.t
-    | Observer_invalid_scope of 'a Observer_core.Value.t
-
-  and observer_finish_reason =
-    | Observer_finish_disposed
-    | Observer_finish_invalid_scope
+    ('a observer_live_state, 'a Observer_core.Value.t) Observer_lifecycle.t
 
   and 'a observer = {
     obs_id : observer_id;
@@ -580,10 +574,9 @@ module Make (Observer_error : Observer_error) () = struct
       | Test_delivery_running of int * 'a update
 
     let active_live_state observer =
-      match observer.obs_state with
-      | Observer_active live -> live
-      | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _
-        ->
+      match Observer_lifecycle.active_live observer.obs_state with
+      | Some live -> live
+      | None ->
           invalid_arg "Eta_signal.Private_test_hooks: observer is not active"
 
     let observer_current_snapshot live =
@@ -682,9 +675,9 @@ module Make (Observer_error : Observer_error) () = struct
 
     let set_observer_on_finish observer hooks =
       let live =
-        match observer.obs_state with
-        | Observer_registering live | Observer_active live -> live
-        | Observer_disposed _ | Observer_invalid_scope _ ->
+        match Observer_lifecycle.live observer.obs_state with
+        | Some live -> live
+        | None ->
             invalid_arg
               "Eta_signal.Private_test_hooks: expected live observer state"
       in
@@ -1281,15 +1274,10 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> raise (Graph_error `Invalid_scope)
 
   let observer_live_state observer =
-    match observer.obs_state with
-    | Observer_registering live | Observer_active live -> Some live
-    | Observer_disposed _ | Observer_invalid_scope _ -> None
+    Observer_lifecycle.live observer.obs_state
 
   let observer_active_live_state observer =
-    match observer.obs_state with
-    | Observer_active live -> Some live
-    | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _ ->
-        None
+    Observer_lifecycle.active_live observer.obs_state
 
   let live_state_or_invalid_arg observer operation =
     match observer_live_state observer with
@@ -1330,15 +1318,10 @@ module Make (Observer_error : Observer_error) () = struct
         { snapshot with observer_delivery = state })
 
   let observer_active (O observer) =
-    match observer.obs_state with
-    | Observer_active _ -> true
-    | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _ ->
-        false
+    Observer_lifecycle.active observer.obs_state
 
   let observer_demands_signal (O observer) =
-    match observer.obs_state with
-    | Observer_registering _ | Observer_active _ -> true
-    | Observer_disposed _ | Observer_invalid_scope _ -> false
+    Observer_lifecycle.demands observer.obs_state
 
   let observer_roots selected observers =
     List.filter_map
@@ -1361,43 +1344,25 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
 
+  let observer_value_of_live live =
+    (observer_current_snapshot live).observer_value
+
   let finish_observer_unlocked observer reason =
-    match (observer.obs_state, reason) with
-    | Observer_registering live, Observer_finish_disposed ->
-        let hooks = observer_finish_hooks live reason in
-        observer.obs_state <-
-          Observer_disposed (observer_current_snapshot live).observer_value;
-        remove_observer observer;
-        hooks
-    | Observer_registering live, Observer_finish_invalid_scope ->
-        let hooks = observer_finish_hooks live reason in
-        observer.obs_state <-
-          Observer_invalid_scope (observer_current_snapshot live).observer_value;
-        hooks
-    | Observer_active live, Observer_finish_disposed ->
-        let hooks = observer_finish_hooks live reason in
-        observer.obs_state <-
-          Observer_disposed (observer_current_snapshot live).observer_value;
-        remove_observer observer;
-        hooks
-    | Observer_active live, Observer_finish_invalid_scope ->
-        let hooks = observer_finish_hooks live reason in
-        observer.obs_state <-
-          Observer_invalid_scope (observer_current_snapshot live).observer_value;
-        hooks
-    | Observer_invalid_scope value, Observer_finish_disposed ->
-        observer.obs_state <- Observer_disposed value;
-        remove_observer observer;
-        []
-    | Observer_disposed _, _
-    | Observer_invalid_scope _, Observer_finish_invalid_scope ->
-        []
+    let finish =
+      Observer_lifecycle.finish ~value_of_live:observer_value_of_live reason
+        observer.obs_state
+    in
+    observer.obs_state <- finish.state;
+    if finish.remove then remove_observer observer;
+    match finish.hook_live with
+    | None -> []
+    | Some live -> observer_finish_hooks live reason
 
   let dispose_observer_unlocked observer =
-    finish_observer_unlocked observer Observer_finish_disposed
+    finish_observer_unlocked observer Observer_lifecycle.Finish_disposed
 
   let invalidate_observer_unlocked observer =
-    finish_observer_unlocked observer Observer_finish_invalid_scope
+    finish_observer_unlocked observer Observer_lifecycle.Finish_invalid_scope
 
   let dispose_signal_observers signal =
     let observers =
@@ -2544,8 +2509,9 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync
       (fun () ->
         (match observer.obs_state with
-         | Observer_disposed _ -> ()
-         | Observer_registering _ | Observer_active _ | Observer_invalid_scope _ ->
+         | Observer_lifecycle.Disposed _ -> ()
+         | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
+         | Observer_lifecycle.Invalid_scope _ ->
           let hooks = dispose_observer_unlocked observer in
           hooks_ref := hooks;
           refresh_timers := true;
@@ -2570,13 +2536,14 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync
       (fun () ->
         match observer.obs_state with
-        | Observer_registering _ | Observer_active _ | Observer_invalid_scope _ ->
+        | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
+        | Observer_lifecycle.Invalid_scope _ ->
             let hooks = dispose_observer_unlocked observer in
             hooks_ref := hooks;
             refresh_timers := true;
             update_necessity_counters_unlocked ();
             true
-        | Observer_disposed _ -> false)
+        | Observer_lifecycle.Disposed _ -> false)
     |> Effect.bind (function
          | true -> run_cleanup ()
          | false -> Effect.unit)
@@ -2743,16 +2710,15 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> ()))
 
   let claimed_event_delivery_active observer token =
-    match observer.obs_state with
-    | Observer_active live ->
+    match Observer_lifecycle.active_live observer.obs_state with
+    | Some live ->
         (match
            Observer_core.Delivery.running_token
              (observer_current_snapshot live).observer_delivery
          with
          | Some running_token -> running_token = token
          | None -> false)
-    | Observer_registering _ | Observer_disposed _ | Observer_invalid_scope _ ->
-        false
+    | None -> false
 
   let begin_stabilize timer_refresh =
     match Stabilization.begin_pure graph.stabilization with
@@ -3032,14 +2998,11 @@ module Make (Observer_error : Observer_error) () = struct
          window between the final state check and returning the handle. *)
       Effect.sync (fun () ->
           ensure_graph_context ();
-          match observer.obs_state with
-          | Observer_registering live ->
-              observer.obs_state <- Observer_active live;
+          match Observer_lifecycle.activate observer.obs_state with
+          | Ok state ->
+              observer.obs_state <- state;
               Ok observer
-          | Observer_active _ ->
-              Ok observer
-          | Observer_invalid_scope _ | Observer_disposed _ ->
-              Error `Invalid_scope)
+          | Error `Invalid_scope -> Error `Invalid_scope)
       |> Effect.flatten_result
 
     let observe_with_hooks_callback ?(equal = default_equal) ?(on_finish = [])
@@ -3065,7 +3028,7 @@ module Make (Observer_error : Observer_error) () = struct
                   obs_signal = signal;
                   obs_equal = equal;
                   obs_callback = (fun update -> callback observer update);
-                  obs_state = Observer_registering live;
+                  obs_state = Observer_lifecycle.Registering live;
                 }
               in
               graph.observers <- O observer :: graph.observers;
@@ -3094,10 +3057,10 @@ module Make (Observer_error : Observer_error) () = struct
     let read observer =
       with_graph_lane_sync (fun () ->
           match observer.obs_state with
-          | Observer_registering _ -> Error `Uninitialized_observer
-          | Observer_disposed _ -> Error `Disposed_observer
-          | Observer_invalid_scope _ -> Error `Invalid_scope
-          | Observer_active live ->
+          | Observer_lifecycle.Registering _ -> Error `Uninitialized_observer
+          | Observer_lifecycle.Disposed _ -> Error `Disposed_observer
+          | Observer_lifecycle.Invalid_scope _ -> Error `Invalid_scope
+          | Observer_lifecycle.Active live ->
               Observer_core.Value.read
                 (observer_current_snapshot live).observer_value)
       |> Effect.flatten_result
@@ -3105,12 +3068,13 @@ module Make (Observer_error : Observer_error) () = struct
     let unsafe_read_exn observer =
       ensure_graph_context ();
       match observer.obs_state with
-      | Observer_registering _ ->
+      | Observer_lifecycle.Registering _ ->
           invalid_arg "Eta_signal observer registration has not completed"
-      | Observer_disposed _ -> invalid_arg "Eta_signal observer is disposed"
-      | Observer_invalid_scope _ ->
+      | Observer_lifecycle.Disposed _ ->
+          invalid_arg "Eta_signal observer is disposed"
+      | Observer_lifecycle.Invalid_scope _ ->
           invalid_arg "Eta_signal observer scope is invalid"
-      | Observer_active live ->
+      | Observer_lifecycle.Active live ->
           Observer_core.Value.unsafe_read_exn
             (observer_current_snapshot live).observer_value
 
@@ -3166,9 +3130,9 @@ module Make (Observer_error : Observer_error) () = struct
       (fun count (O observer) ->
         if
           match observer.obs_state with
-          | Observer_invalid_scope _ -> true
-          | Observer_registering _ | Observer_active _ | Observer_disposed _ ->
-              false
+          | Observer_lifecycle.Invalid_scope _ -> true
+          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
+          | Observer_lifecycle.Disposed _ -> false
         then
           saturating_succ count
         else count)
@@ -3454,12 +3418,6 @@ module Make (Observer_error : Observer_error) () = struct
     in
     String.concat " " fields
 
-  let observer_state_label = function
-    | Observer_registering _ -> "registering"
-    | Observer_active _ -> "active"
-    | Observer_disposed _ -> "disposed"
-    | Observer_invalid_scope _ -> "invalid_scope"
-
   let observer_delivery_state_label = function
     | Observer_never_delivered -> "never_delivered"
     | Observer_delivered _ -> "delivered"
@@ -3469,18 +3427,19 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_label ?missing_observed_signal_id (O observer) =
     let value_state_label, delivery_state_label =
       match observer.obs_state with
-      | Observer_registering live | Observer_active live ->
+      | Observer_lifecycle.Registering live | Observer_lifecycle.Active live ->
           let snapshot = observer_current_snapshot live in
           ( Observer_core.Value.label snapshot.observer_value,
             observer_delivery_state_label snapshot.observer_delivery )
-      | Observer_disposed value | Observer_invalid_scope value ->
+      | Observer_lifecycle.Disposed value | Observer_lifecycle.Invalid_scope value
+        ->
           (Observer_core.Value.label value, "none")
     in
     let fields =
       [
         "observer:" ^ observer_id_label observer.obs_id;
         "observer_id=" ^ observer_id_label observer.obs_id;
-        "state=" ^ observer_state_label observer.obs_state;
+        "state=" ^ Observer_lifecycle.label observer.obs_state;
         "value_state=" ^ value_state_label;
         "delivery_state=" ^ delivery_state_label;
       ]
@@ -3495,8 +3454,9 @@ module Make (Observer_error : Observer_error) () = struct
     observer_active packed
     ||
     match observer.obs_state with
-    | Observer_invalid_scope _ -> include_invalid
-    | Observer_registering _ | Observer_disposed _ | Observer_active _ -> false
+    | Observer_lifecycle.Invalid_scope _ -> include_invalid
+    | Observer_lifecycle.Registering _ | Observer_lifecycle.Disposed _
+    | Observer_lifecycle.Active _ -> false
 
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_sync @@ fun () ->
@@ -4095,8 +4055,8 @@ module Make (Observer_error : Observer_error) () = struct
       {
         Stream_bridge.is_invalid_scope =
           (function
-          | Observer_finish_disposed -> false
-          | Observer_finish_invalid_scope -> true);
+          | Observer_lifecycle.Finish_disposed -> false
+          | Observer_lifecycle.Finish_invalid_scope -> true);
         invalid_scope_error = `Invalid_scope;
       }
 

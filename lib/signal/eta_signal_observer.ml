@@ -40,6 +40,71 @@ module Value = struct
     | Failed_without_current -> "failed_without_current"
 end
 
+module Lifecycle = struct
+  type finish_reason =
+    | Finish_disposed
+    | Finish_invalid_scope
+
+  type ('live, 'value) t =
+    | Registering of 'live
+    | Active of 'live
+    | Disposed of 'value
+    | Invalid_scope of 'value
+
+  type ('live, 'value) finish = {
+    state : ('live, 'value) t;
+    hook_live : 'live option;
+    remove : bool;
+  }
+
+  let live = function
+    | Registering live | Active live -> Some live
+    | Disposed _ | Invalid_scope _ -> None
+
+  let active_live = function
+    | Active live -> Some live
+    | Registering _ | Disposed _ | Invalid_scope _ -> None
+
+  let active = function
+    | Active _ -> true
+    | Registering _ | Disposed _ | Invalid_scope _ -> false
+
+  let demands = function
+    | Registering _ | Active _ -> true
+    | Disposed _ | Invalid_scope _ -> false
+
+  let label = function
+    | Registering _ -> "registering"
+    | Active _ -> "active"
+    | Disposed _ -> "disposed"
+    | Invalid_scope _ -> "invalid_scope"
+
+  let activate = function
+    | Registering live -> Ok (Active live)
+    | Active _ as state -> Ok state
+    | Disposed _ | Invalid_scope _ -> Error `Invalid_scope
+
+  let finish ~value_of_live reason state =
+    match (state, reason) with
+    | Registering live, Finish_disposed | Active live, Finish_disposed ->
+        {
+          state = Disposed (value_of_live live);
+          hook_live = Some live;
+          remove = true;
+        }
+    | Registering live, Finish_invalid_scope
+    | Active live, Finish_invalid_scope ->
+        {
+          state = Invalid_scope (value_of_live live);
+          hook_live = Some live;
+          remove = false;
+        }
+    | Invalid_scope value, Finish_disposed ->
+        { state = Disposed value; hook_live = None; remove = true }
+    | Disposed _, _ | Invalid_scope _, Finish_invalid_scope ->
+        { state; hook_live = None; remove = false }
+end
+
 module Delivery = struct
   type ('a, 'after_ack) t =
     | Observer_never_delivered
