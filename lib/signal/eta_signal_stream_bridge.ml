@@ -25,19 +25,28 @@ let create_stream ~capacity =
 type ('token, 'update, 'error) delivery = {
   current_token : unit -> ('token option, 'error) Effect.t;
   acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
-  acknowledge_drop : 'token -> 'update -> (unit, 'error) Effect.t;
+  acknowledge_drop :
+    after_ack:(unit -> unit) list ->
+    'token ->
+    'update ->
+    (unit, 'error) Effect.t;
 }
 
 type ('token, 'update, 'error) observer_delivery = {
   observer_update : 'update;
   observer_current_token : unit -> ('token option, 'error) Effect.t;
   observer_acknowledge_sent : 'token -> 'update -> (unit, 'error) Effect.t;
-  observer_acknowledge_drop : 'token -> 'update -> (unit, 'error) Effect.t;
+  observer_acknowledge_drop :
+    after_ack:(unit -> unit) list ->
+    'token ->
+    'update ->
+    (unit, 'error) Effect.t;
 }
 
 type ('queue_error, 'error) hooks = {
   after_try_send_before_ack : unit -> (unit, 'error) Effect.t;
   after_drop_before_ack : unit -> (unit, 'error) Effect.t;
+  after_drop_acknowledged : unit -> unit;
   on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
 }
 
@@ -63,13 +72,13 @@ let finish_hook ~queue ~policy reason =
 let observer_finish_hook ~queue reason =
   finish_hook ~queue ~policy:observer_finish_policy reason
 
-let report_dropped_update ~on_drop ~after_drop_before_ack ~acknowledge_drop
-    update =
+let report_dropped_update ~on_drop ~after_drop_before_ack
+    ~after_drop_acknowledged ~acknowledge_drop update =
   let drop_published = ref false in
   let drop_acknowledged = ref false in
   let acknowledge_published_drop () =
     if (not !drop_acknowledged) && !drop_published then
-      acknowledge_drop update
+      acknowledge_drop ~after_ack:[ after_drop_acknowledged ] update
       |> Effect.bind (fun () ->
              Effect.sync (fun () -> drop_acknowledged := true))
     else Effect.unit
@@ -143,6 +152,8 @@ let offer ~queue ~delivery ~hooks ~on_drop update =
                             report_dropped_update ~on_drop
                               ~after_drop_before_ack:
                                 hooks.after_drop_before_ack
+                              ~after_drop_acknowledged:
+                                hooks.after_drop_acknowledged
                               ~acknowledge_drop:
                                 (delivery.acknowledge_drop token)
                               update

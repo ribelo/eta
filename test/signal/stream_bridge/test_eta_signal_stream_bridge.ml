@@ -62,8 +62,10 @@ let delivery ~token ~sent ~dropped =
       (fun token value ->
         Effect.sync (fun () -> sent := (token, value) :: !sent));
     acknowledge_drop =
-      (fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped));
+      (fun ~after_ack token value ->
+        Effect.sync (fun () ->
+            dropped := (token, value) :: !dropped;
+            List.iter (fun action -> action ()) after_ack));
   }
 
 let observer_delivery ~token ~sent ~dropped value =
@@ -74,15 +76,19 @@ let observer_delivery ~token ~sent ~dropped value =
       (fun token value ->
         Effect.sync (fun () -> sent := (token, value) :: !sent));
     observer_acknowledge_drop =
-      (fun token value ->
-        Effect.sync (fun () -> dropped := (token, value) :: !dropped));
+      (fun ~after_ack token value ->
+        Effect.sync (fun () ->
+            dropped := (token, value) :: !dropped;
+            List.iter (fun action -> action ()) after_ack));
   }
 
 let hooks ?(after_send = fun () -> Effect.unit)
-    ?(after_drop = fun () -> Effect.unit) () =
+    ?(after_drop = fun () -> Effect.unit)
+    ?(after_drop_acknowledged = fun () -> ()) () =
   {
     Stream_bridge.after_try_send_before_ack = after_send;
     after_drop_before_ack = after_drop;
+    after_drop_acknowledged;
     on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
   }
 
@@ -124,11 +130,13 @@ let test_offer_sends_and_drops () =
   let sent = ref [] in
   let dropped = ref [] in
   let on_drop_seen = ref [] in
+  let drop_acknowledged = ref 0 in
   let token = ref (Some 1) in
   let offer value =
     Stream_bridge.offer ~queue
       ~delivery:(delivery ~token ~sent ~dropped)
-      ~hooks:(hooks ())
+      ~hooks:
+        (hooks ~after_drop_acknowledged:(fun () -> incr drop_acknowledged) ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
       value
   in
@@ -137,6 +145,7 @@ let test_offer_sends_and_drops () =
   Alcotest.(check (list (pair int int))) "sent ack" [ (1, 1) ] !sent;
   Alcotest.(check (list (pair int int))) "drop ack" [ (1, 2) ] !dropped;
   Alcotest.(check (list int)) "on_drop" [ 2 ] !on_drop_seen;
+  Alcotest.(check int) "drop acknowledged" 1 !drop_acknowledged;
   match run_ok runtime (Queue.try_recv queue) with
   | `Item value -> Alcotest.(check int) "queued value" 1 value
   | `Empty | `Closed | `Closed_with_error _ ->
@@ -152,11 +161,13 @@ let test_offer_observer_delivery_sends_and_drops () =
   let sent = ref [] in
   let dropped = ref [] in
   let on_drop_seen = ref [] in
+  let drop_acknowledged = ref 0 in
   let token = ref (Some 1) in
   let offer value =
     Stream_bridge.offer_observer_delivery ~queue
       ~observer_delivery:(observer_delivery ~token ~sent ~dropped value)
-      ~hooks:(hooks ())
+      ~hooks:
+        (hooks ~after_drop_acknowledged:(fun () -> incr drop_acknowledged) ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
   in
   run_ok runtime (offer 1);
@@ -164,6 +175,7 @@ let test_offer_observer_delivery_sends_and_drops () =
   Alcotest.(check (list (pair int int))) "sent ack" [ (1, 1) ] !sent;
   Alcotest.(check (list (pair int int))) "drop ack" [ (1, 2) ] !dropped;
   Alcotest.(check (list int)) "on_drop" [ 2 ] !on_drop_seen;
+  Alcotest.(check int) "drop acknowledged" 1 !drop_acknowledged;
   match run_ok runtime (Queue.try_recv queue) with
   | `Item value -> Alcotest.(check int) "queued value" 1 value
   | `Empty | `Closed | `Closed_with_error _ ->
@@ -185,7 +197,7 @@ let test_observe_adapter () =
           (fun token value ->
             Effect.sync (fun () -> sent := (token, value) :: !sent));
         observer_acknowledge_drop =
-          (fun _token _value -> Effect.unit);
+          (fun ~after_ack:_ _token _value -> Effect.unit);
       }
     |> Effect.map (fun () -> "observer")
   in
@@ -234,6 +246,7 @@ let test_offer_without_token_noops () =
   let dropped = ref [] in
   let after_send = ref false in
   let after_drop = ref false in
+  let after_drop_acknowledged = ref false in
   let token = ref (None : int option) in
   let offer =
     Stream_bridge.offer ~queue
@@ -242,6 +255,8 @@ let test_offer_without_token_noops () =
         (hooks
            ~after_send:(fun () -> Effect.sync (fun () -> after_send := true))
            ~after_drop:(fun () -> Effect.sync (fun () -> after_drop := true))
+           ~after_drop_acknowledged:(fun () ->
+             after_drop_acknowledged := true)
            ())
       ~on_drop:None 1
   in
@@ -250,6 +265,8 @@ let test_offer_without_token_noops () =
   Alcotest.(check (list (pair int int))) "drop ack" [] !dropped;
   Alcotest.(check bool) "after send skipped" false !after_send;
   Alcotest.(check bool) "after drop skipped" false !after_drop;
+  Alcotest.(check bool)
+    "drop acknowledged skipped" false !after_drop_acknowledged;
   match run_ok runtime (Queue.try_recv queue) with
   | `Empty -> ()
   | `Item _ | `Closed | `Closed_with_error _ ->
@@ -265,11 +282,15 @@ let test_drop_ack_runs_once_after_failure () =
   let sent = ref [] in
   let dropped = ref [] in
   let on_drop_seen = ref [] in
+  let drop_acknowledged = ref 0 in
   let token = ref (Some 1) in
   let offer ~after_drop value =
     Stream_bridge.offer ~queue
       ~delivery:(delivery ~token ~sent ~dropped)
-      ~hooks:(hooks ~after_drop ())
+      ~hooks:
+        (hooks ~after_drop
+           ~after_drop_acknowledged:(fun () -> incr drop_acknowledged)
+           ())
       ~on_drop:(Some (fun value -> on_drop_seen := value :: !on_drop_seen))
       value
   in
@@ -280,6 +301,7 @@ let test_drop_ack_runs_once_after_failure () =
   Alcotest.(check (list (pair int int))) "drop ack once" [ (1, 2) ]
     !dropped;
   Alcotest.(check (list int)) "on_drop once" [ 2 ] !on_drop_seen;
+  Alcotest.(check int) "drop acknowledged once" 1 !drop_acknowledged;
   match run_ok runtime (Queue.try_recv queue) with
   | `Item value -> Alcotest.(check int) "queued value" 1 value
   | `Empty | `Closed | `Closed_with_error _ ->
@@ -295,11 +317,14 @@ let test_drop_hook_failure_is_best_effort () =
   let sent = ref [] in
   let dropped = ref [] in
   let drop_calls = ref 0 in
+  let drop_acknowledged = ref 0 in
   let token = ref (Some 1) in
   let offer value =
     Stream_bridge.offer ~queue
       ~delivery:(delivery ~token ~sent ~dropped)
-      ~hooks:(hooks ())
+      ~hooks:
+        (hooks ~after_drop_acknowledged:(fun () -> incr drop_acknowledged)
+           ())
       ~on_drop:
         (Some
            (fun _value ->
@@ -313,6 +338,7 @@ let test_drop_hook_failure_is_best_effort () =
   Alcotest.(check (list (pair int int))) "sent ack" [ (1, 1) ] !sent;
   Alcotest.(check (list (pair int int))) "drop ack once" [ (1, 2) ]
     !dropped;
+  Alcotest.(check int) "drop acknowledged once" 1 !drop_acknowledged;
   match run_ok runtime (Queue.try_recv queue) with
   | `Item value -> Alcotest.(check int) "queued value" 1 value
   | `Empty | `Closed | `Closed_with_error _ ->

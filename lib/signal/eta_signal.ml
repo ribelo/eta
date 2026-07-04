@@ -2301,8 +2301,7 @@ module Make (Observer_error : Observer_error) () = struct
           (observer_current_snapshot live)
     | None -> false
 
-  let acknowledge_stream_published_delivery observer token update
-      after_ack_actions =
+  let acknowledge_stream_published_delivery observer token update ~after_ack =
     with_graph_lane_sync (fun () ->
         match observer_active_live_state observer with
         | None -> ()
@@ -2310,7 +2309,7 @@ module Make (Observer_error : Observer_error) () = struct
         let snapshot = observer_current_snapshot live in
         match
           Observer_snapshot.acknowledge_delivery ~token ~update
-            ~after_ack:after_ack_actions snapshot
+            ~after_ack snapshot
         with
         | Some (snapshot, after_ack) ->
             set_observer_current live snapshot;
@@ -2318,11 +2317,10 @@ module Make (Observer_error : Observer_error) () = struct
         | None -> ()))
 
   let acknowledge_stream_sent_delivery observer token update =
-    acknowledge_stream_published_delivery observer token update []
+    acknowledge_stream_published_delivery observer token update ~after_ack:[]
 
-  let acknowledge_stream_drop_delivery observer token update =
-    acknowledge_stream_published_delivery observer token update
-      [ record_stream_bridge_drop_unlocked ]
+  let acknowledge_stream_drop_delivery observer token update ~after_ack =
+    acknowledge_stream_published_delivery observer token update ~after_ack
 
   let active_event_delivery_token observer token =
     with_graph_lane_sync (fun () ->
@@ -2594,7 +2592,11 @@ module Make (Observer_error : Observer_error) () = struct
       acknowledge_sent :
         'err. delivery_token -> 'a update -> (unit, 'err) Effect.t;
       acknowledge_drop :
-        'err. delivery_token -> 'a update -> (unit, 'err) Effect.t;
+        'err.
+        after_ack:observer_after_ack_action list ->
+        delivery_token ->
+        'a update ->
+        (unit, 'err) Effect.t;
     }
 
     let delivery observer token update =
@@ -2606,8 +2608,8 @@ module Make (Observer_error : Observer_error) () = struct
           (fun token update ->
             acknowledge_stream_sent_delivery observer token update);
         acknowledge_drop =
-          (fun token update ->
-            acknowledge_stream_drop_delivery observer token update);
+          (fun ~after_ack token update ->
+            acknowledge_stream_drop_delivery observer token update ~after_ack);
       }
 
     let transfer_active_observer observer =
@@ -3595,6 +3597,7 @@ module Make (Observer_error : Observer_error) () = struct
               Private_test_hooks.run After_stream_try_send_before_ack);
           after_drop_before_ack =
             (fun () -> Private_test_hooks.run After_stream_drop_before_ack);
+          after_drop_acknowledged = record_stream_bridge_drop_unlocked;
           on_closed_with_error =
             (fun err -> Effect.sync (fun () -> raise (Graph_error err)));
         }
