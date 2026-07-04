@@ -136,6 +136,8 @@ let () =
         [
           Alcotest.test_case "reentrant use fails fast" `Quick
             test_sync_lock_reentrant_use_fails_fast;
+          Alcotest.test_case "cross-domain contention waits" `Quick
+            test_sync_lock_cross_domain_contention_waits;
           Alcotest.test_case "runtime operation under lock fails fast" `Quick
             test_sync_lock_rejects_runtime_operation;
           Alcotest.test_case

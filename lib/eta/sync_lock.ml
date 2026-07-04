@@ -12,11 +12,11 @@
     fast instead of yielding under the lock. *)
 
 type t = {
-  locked : bool Atomic.t;
+  mutex : Mutex.t;
   owner : Domain.id option Atomic.t;
 }
 
-let create () = { locked = Atomic.make false; owner = Atomic.make None }
+let create () = { mutex = Mutex.create (); owner = Atomic.make None }
 
 let reentrant_message = "Eta.Sync_lock: reentrant lock acquisition"
 let runtime_operation_message =
@@ -46,15 +46,14 @@ let leave_critical_section () =
   if depth <= 1 then dls_set critical_depth_key 0
   else dls_set critical_depth_key (depth - 1)
 
-let rec lock t =
+let lock t =
   let current = Domain.self () in
   match Atomic.get t.owner with
   | Some owner when owner = current -> invalid_arg reentrant_message
   | _ ->
-      if Atomic.compare_and_set t.locked false true then (
-        Atomic.set t.owner (Some current);
-        enter_critical_section ())
-      else lock t
+      Mutex.lock t.mutex;
+      Atomic.set t.owner (Some current);
+      enter_critical_section ()
 
 let unlock t =
   let current = Domain.self () in
@@ -62,7 +61,7 @@ let unlock t =
   | Some owner when owner = current ->
       leave_critical_section ();
       Atomic.set t.owner None;
-      Atomic.set t.locked false
+      Mutex.unlock t.mutex
   | Some _ -> invalid_arg "Eta.Sync_lock: unlock from non-owner domain"
   | None -> invalid_arg "Eta.Sync_lock: unlock of unlocked lock"
 

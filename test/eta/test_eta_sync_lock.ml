@@ -40,6 +40,28 @@ let test_sync_lock_reentrant_use_fails_fast () =
   Alcotest.(check int) "lock remains usable" 1
     (Sync_lock.use lock (fun () -> 1))
 
+let test_sync_lock_cross_domain_contention_waits () =
+  let lock = Sync_lock.create () in
+  let started = Atomic.make false in
+  let acquired = Atomic.make false in
+  let waiter =
+    Sync_lock.use lock @@ fun () ->
+    let waiter =
+      (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+        (fun () ->
+          Atomic.set started true;
+          Sync_lock.use lock @@ fun () -> Atomic.set acquired true)
+    in
+    while not (Atomic.get started) do
+      Domain.cpu_relax ()
+    done;
+    Alcotest.(check bool) "waiter did not enter while held" false
+      (Atomic.get acquired);
+    waiter
+  in
+  Domain.join waiter;
+  Alcotest.(check bool) "waiter entered after release" true (Atomic.get acquired)
+
 let test_sync_lock_rejects_runtime_operation () =
   with_runtime @@ fun rt ->
   let lock = Sync_lock.create () in
