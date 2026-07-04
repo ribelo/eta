@@ -86,6 +86,8 @@ val install_cancel :
 
 val mark_stopped : state -> generation:int -> state option
 
+val read_next_due : state -> generation:int -> fallback:int -> int option
+
 val stop :
   advance_generation:(int -> int) ->
   cancel_running:bool ->

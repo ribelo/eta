@@ -3706,9 +3706,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_read_next_due timer generation fallback =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then
-            Some (Option.value (timer_next_due_unlocked timer) ~default:fallback)
-          else None)
+          Timer.read_next_due (timer_effective_state timer) ~generation
+            ~fallback)
 
     let timer_set_next_due timer generation next_due_ms =
       with_graph_lane_sync (fun () ->

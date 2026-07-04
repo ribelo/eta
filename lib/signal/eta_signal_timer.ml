@@ -208,6 +208,11 @@ let mark_stopped state ~generation =
   if state_running_current state generation then Some (Timer_inactive generation)
   else None
 
+let read_next_due state ~generation ~fallback =
+  if state_running_current state generation then
+    Some (Option.value (state_next_due state) ~default:fallback)
+  else None
+
 let stop ~advance_generation ~cancel_running state =
   match state with
   | Timer_inactive _ | Timer_finished _ -> None

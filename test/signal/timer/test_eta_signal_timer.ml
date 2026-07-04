@@ -253,6 +253,19 @@ let test_mark_stopped_policy () =
   Alcotest.(check bool) "inactive ignored" true
     (Option.is_none (Timer.mark_stopped inactive ~generation:7))
 
+let test_read_next_due_policy () =
+  let running_with_due = Timer.Timer_running (7, Some 11, noop) in
+  let running_without_due = Timer.Timer_running_uncancellable (7, None) in
+  let inactive = Timer.Timer_inactive 7 in
+  Alcotest.(check (option int)) "current due" (Some 11)
+    (Timer.read_next_due running_with_due ~generation:7 ~fallback:20);
+  Alcotest.(check (option int)) "current fallback" (Some 20)
+    (Timer.read_next_due running_without_due ~generation:7 ~fallback:20);
+  Alcotest.(check (option int)) "stale running stops" None
+    (Timer.read_next_due running_with_due ~generation:8 ~fallback:20);
+  Alcotest.(check (option int)) "inactive stops" None
+    (Timer.read_next_due inactive ~generation:7 ~fallback:20)
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -357,6 +370,8 @@ let () =
             test_install_cancel_policy;
           Alcotest.test_case "mark stopped policy" `Quick
             test_mark_stopped_policy;
+          Alcotest.test_case "read next due policy" `Quick
+            test_read_next_due_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
