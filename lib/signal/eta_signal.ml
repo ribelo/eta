@@ -2880,10 +2880,11 @@ module Make (Observer_error : Observer_error) () = struct
 
   module Observer = struct
     type 'a t = 'a observer
+    type delivery_token = int
 
     type 'a delivery = {
-      delivery_token : int;
-      delivery_update : 'a update;
+      token : delivery_token;
+      update : 'a update;
     }
 
     let transfer_active_observer observer =
@@ -2947,11 +2948,10 @@ module Make (Observer_error : Observer_error) () = struct
       observe_with_hooks_delivery_callback ?equal ?on_finish signal
         (fun observer _token update -> callback observer update)
 
-    let observe_with_hooks_delivery ?equal ?on_finish signal callback =
+    let observe_delivery ?equal ?on_finish signal callback =
       observe_with_hooks_delivery_callback ?equal ?on_finish signal
         (fun observer token update ->
-          callback observer
-            { delivery_token = token; delivery_update = update })
+          callback observer { token; update })
 
     let observe_with_hooks ?equal ?on_finish signal callback =
       observe_with_hooks_callback ?equal ?on_finish signal
@@ -3967,13 +3967,13 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.sync (fun () -> Stream_bridge.create_stream ~capacity)
       |> Effect.flatten_result
       |> Effect.bind (fun (queue, stream) ->
-             Observer.observe_with_hooks_delivery ?equal
+             Observer.observe_delivery ?equal
                ~on_finish:
                  [ Stream_bridge.observer_finish_hook ~queue ]
                signal
                (fun observer delivery ->
-                 offer_bridge_update observer delivery.delivery_token on_drop
-                   queue delivery.delivery_update)
+                 offer_bridge_update observer delivery.token on_drop queue
+                   delivery.update)
              |> Effect.map_error (fun err -> (err :> stream_error))
              |> Effect.map (fun observer ->
                     (observer, stream)))
