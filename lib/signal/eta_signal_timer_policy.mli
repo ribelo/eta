@@ -197,6 +197,7 @@ val set_refresh_dirty_items : (_, 'dirty) refresh_context -> 'dirty list -> unit
 val clear_refresh_dirty_items : (_, 'dirty) refresh_context -> unit
 
 val state_label : state -> string
+val state_starting : state -> bool
 val state_active : state -> bool
 val state_finished : state -> bool
 val state_has_current_start : state -> bool

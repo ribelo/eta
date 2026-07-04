@@ -266,13 +266,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   and packed_observer = O : 'a observer -> packed_observer
 
-  and timer_state = Timer_policy.state =
-    | Timer_inactive of int
-    | Timer_starting of int
-    | Timer_running_uncancellable of int * int option
-    | Timer_running of int * int option * (unit -> unit)
-    | Timer_finished of int
-
   and timer_refresh_operation =
     | Refresh_operation : 'a var * 'a Timer_policy.refresh_spec -> timer_refresh_operation
 
@@ -1100,11 +1093,9 @@ module Make (Observer_error : Observer_error) () = struct
     | Some plan -> timer_apply_stop_plan_unlocked timer plan
 
   let timer_rollback_unclaimed_start_unlocked timer =
-    match timer_current_state timer with
-    | Timer_starting _ -> timer_mark_unneeded_unlocked timer
-    | Timer_inactive _ | Timer_running_uncancellable _ | Timer_running _
-    | Timer_finished _ ->
-        []
+    if Timer_policy.state_starting (timer_current_state timer) then
+      timer_mark_unneeded_unlocked timer
+    else []
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();

@@ -218,6 +218,9 @@ let test_state_helpers () =
   let running = Timer_policy.Timer_running (7, Some 10, noop) in
   Alcotest.(check int) "generation" 7 (Timer_policy.state_generation running);
   Alcotest.(check string) "label" "running" (Timer_policy.state_label running);
+  Alcotest.(check bool) "starting" false (Timer_policy.state_starting running);
+  Alcotest.(check bool) "starting state" true
+    (Timer_policy.state_starting (Timer_policy.Timer_starting 7));
   Alcotest.(check bool) "active" true (Timer_policy.state_active running);
   Alcotest.(check bool) "finished" false (Timer_policy.state_finished running);
   Alcotest.(check bool) "has current start" true

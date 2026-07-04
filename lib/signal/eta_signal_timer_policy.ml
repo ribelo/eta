@@ -294,6 +294,12 @@ let state_with_generation state generation =
       Timer_running (generation, next_due_ms, cancel)
   | Timer_finished _ -> Timer_finished generation
 
+let state_starting = function
+  | Timer_starting _ -> true
+  | Timer_inactive _ | Timer_running_uncancellable _ | Timer_running _
+  | Timer_finished _ ->
+      false
+
 let snapshot ~state ~on_demand_refresh_token =
   { state; on_demand_refresh_token }
 
