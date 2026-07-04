@@ -20,6 +20,20 @@ type ('dependency, 'value) reuse_eval =
       reuse_value : 'value;
     }
 
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
+  | Dynamic_switch of {
+      dynamic_source_value : 'source;
+      dynamic_inner : 'inner;
+      dynamic_scope : 'scope;
+      dynamic_switch_dependencies : 'dependency list;
+      dynamic_switch_value : 'value;
+    }
+  | Dynamic_reuse_cached
+  | Dynamic_reuse_recompute of {
+      dynamic_reuse_dependencies : 'dependency list;
+      dynamic_reuse_value : 'value;
+    }
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -77,6 +91,44 @@ let eval_reuse ~source_dependency ~inner_dependency ~source_changed
     || not initialized
   then Reuse_recompute { reuse_dependencies = dependencies; reuse_value = value }
   else Reuse_cached
+
+let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
+    ~source_changed ~new_scope ~selector ~with_scope ~validate_inner
+    ~compute_inner ~on_switch_failure ~dirty ~initialized
+    ~dependencies_changed =
+  match eval_plan ~equal snapshot ~source_value with
+  | Error _ as error -> error
+  | Ok Switch ->
+      let scope = new_scope () in
+      eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
+        ~compute_inner ~on_failure:on_switch_failure
+      |> Result.map (fun eval ->
+             let inner_dependency = pack_inner eval.eval_inner in
+             Dynamic_switch
+               {
+                 dynamic_source_value = source_value;
+                 dynamic_inner = eval.eval_inner;
+                 dynamic_scope = scope;
+                 dynamic_switch_dependencies =
+                   dependencies ~source:source_dependency
+                     ~inner:(Some inner_dependency);
+                 dynamic_switch_value = eval.eval_value;
+               })
+  | Ok (Reuse inner) -> (
+      let inner_dependency = pack_inner inner in
+      match
+        eval_reuse ~source_dependency ~inner_dependency ~source_changed
+          ~compute_inner:(fun () -> compute_inner inner)
+          ~dirty ~initialized ~dependencies_changed
+      with
+      | Reuse_cached -> Ok Dynamic_reuse_cached
+      | Reuse_recompute { reuse_dependencies; reuse_value } ->
+          Ok
+            (Dynamic_reuse_recompute
+               {
+                 dynamic_reuse_dependencies = reuse_dependencies;
+                 dynamic_reuse_value = reuse_value;
+               }))
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

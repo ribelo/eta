@@ -1699,54 +1699,54 @@ module Make (Observer_error : Observer_error) () = struct
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         (match
-           Bind.eval_plan ~equal:bind.source.equal
+           Bind.eval_dynamic ~equal:bind.source.equal
              (bind_effective_snapshot bind) ~source_value
+             ~source_dependency:(P bind.source)
+             ~pack_inner:(fun inner -> P inner)
+             ~source_changed
+             ~new_scope:(fun () -> new_scope signal)
+             ~selector:bind.selector
+             ~with_scope:(fun scope f ->
+               Scope.with_current graph.current_scope scope f)
+             ~validate_inner:(fun scope inner ->
+               Scope_validation.validate_inner ~scope (P inner))
+             ~compute_inner:compute
+             ~on_switch_failure:(fun scope ->
+               remember_pure_disposal_hooks (invalidate_scope scope))
+             ~dirty:signal.dirty
+             ~initialized:(signal_initialized ())
+             ~dependencies_changed:dependency_changed
          with
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-        | Ok Bind.Switch -> (
-          let scope = new_scope signal in
-          let eval =
-            match
-              Bind.eval_switch ~scope ~source_value
-                ~selector:bind.selector
-                ~with_scope:(fun scope f ->
-                  Scope.with_current graph.current_scope scope f)
-                ~validate_inner:(fun scope inner ->
-                  Scope_validation.validate_inner ~scope (P inner))
-                ~compute_inner:compute
-                ~on_failure:(fun scope ->
-                  remember_pure_disposal_hooks (invalidate_scope scope))
-            with
-            | Ok eval -> eval
-            | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-          in
-          let inner = eval.Bind.eval_inner in
-          let inner_value = eval.Bind.eval_value in
-          let dependencies =
-            Bind.dependencies ~source:(P bind.source) ~inner:(Some (P inner))
-          in
+        | Ok
+            (Bind.Dynamic_switch
+              {
+                dynamic_source_value;
+                dynamic_inner;
+                dynamic_scope;
+                dynamic_switch_dependencies;
+                dynamic_switch_value;
+              }) ->
           graph.recompute_count <- saturating_succ graph.recompute_count;
           let snapshot = signal_effective_snapshot signal in
           let changed =
             Kernel.Value_cutoff.changed ~equal:signal.equal
               ~initialized:(Signal_snapshot.is_initialized snapshot)
-              ~current:(Signal_snapshot.value snapshot) ~next:inner_value
+              ~current:(Signal_snapshot.value snapshot)
+              ~next:dynamic_switch_value
           in
-          stage_bind_switch bind source_value inner scope;
-          stage_dependency_versions signal dependencies;
-          if changed then stage_signal signal inner_value;
-          (if changed then inner_value else current_or_raise signal), changed)
-        | Ok (Bind.Reuse inner) ->
-          (match
-             Bind.eval_reuse ~source_dependency:(P bind.source)
-               ~inner_dependency:(P inner) ~source_changed
-               ~compute_inner:(fun () -> compute inner) ~dirty:signal.dirty
-               ~initialized:(signal_initialized ())
-               ~dependencies_changed:dependency_changed
-           with
-          | Bind.Reuse_recompute { reuse_dependencies; reuse_value } ->
-              recompute_with_dependencies reuse_dependencies reuse_value
-          | Bind.Reuse_cached -> use_cached ()))
+          stage_bind_switch bind dynamic_source_value dynamic_inner
+            dynamic_scope;
+          stage_dependency_versions signal dynamic_switch_dependencies;
+          if changed then stage_signal signal dynamic_switch_value;
+          (if changed then dynamic_switch_value else current_or_raise signal),
+          changed
+        | Ok
+            (Bind.Dynamic_reuse_recompute
+              { dynamic_reuse_dependencies; dynamic_reuse_value }) ->
+            recompute_with_dependencies dynamic_reuse_dependencies
+              dynamic_reuse_value
+        | Ok Bind.Dynamic_reuse_cached -> use_cached ())
 
   let timer_apply_start_plan_unlocked timer plan =
     set_timer_current_state timer plan.Timer_policy.start_state;
