@@ -2160,59 +2160,74 @@ module Make (Observer_error : Observer_error) () = struct
         pure =
           {
             advance_generation =
-              (fun (_lane : graph_lane) ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
                 Graph_state.advance_generation graph.state
                   ~advance:(fun value ->
                     checked_succ "stabilization generation" value));
             begin_staging =
-              (fun (_lane : graph_lane) ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
                 Graph_state.begin_staging graph.state ~timer_refresh);
             drain_pending =
-              (fun (_lane : graph_lane) ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
                 Graph_state.drain_pending graph.state);
             release_pending_marks =
-              (fun (_lane : graph_lane) pending ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   pending ->
                 List.iter (fun (V var) -> var.queued <- false) pending);
             active_observers =
-              (fun (_lane : graph_lane) ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
                 graph.observers |> List.filter observer_active);
             stage_pending =
-              (fun (_lane : graph_lane) pending ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   pending ->
                 List.iter stage_pending_var pending);
             plan_staged_binds =
-              (fun (_lane : graph_lane) observers ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   observers ->
                 plan_staged_bind_switches observers);
             sort_delivery_observers =
-              (fun (_lane : graph_lane) observers ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   observers ->
                 List.sort compare_observer_graph_order observers);
             collect_events =
-              (fun (_lane : graph_lane) observers ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   observers ->
                 List.filter_map collect_observer_event observers);
             commit_staging =
-              (fun (_lane : graph_lane) staging ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   staging ->
                 commit_staging staging);
             mark_events_pending =
-              (fun (_lane : graph_lane) events ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context)
+                   events ->
                 List.iter Observer_core.Delivery_event.mark_pending events);
             update_necessity =
-              (fun (_lane : graph_lane) ->
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
                 update_necessity_counters_unlocked ());
           };
         rollback =
           {
             rollback_staging =
-              (fun (_lane : graph_lane) staging -> reset_staging staging);
+              (fun
+                (_context : graph_lane Stabilization_pass.rollback_context)
+                staging -> reset_staging staging);
             mark_observers_failed_without_current =
-              (fun (_lane : graph_lane) observers ->
+              (fun
+                (_context : graph_lane Stabilization_pass.rollback_context)
+                observers ->
                 List.iter mark_failed_without_current observers);
             requeue_pending =
-              (fun (_lane : graph_lane) pending ->
+              (fun
+                (_context : graph_lane Stabilization_pass.rollback_context)
+                pending ->
                 List.iter requeue_if_needed pending);
           };
         timer_refresh =
           {
             clear_active_timer_refresh =
-              (fun (_lane : graph_lane) ->
+              (fun
+                (_context :
+                  graph_lane Stabilization_pass.timer_refresh_context) ->
                 Graph_state.clear_active_timer_refresh graph.state);
           };
       }

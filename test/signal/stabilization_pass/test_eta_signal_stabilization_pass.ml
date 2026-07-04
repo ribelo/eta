@@ -16,6 +16,15 @@ let record events event = events := !events @ [ event ]
 let check_cap cap =
   Alcotest.(check string) "capability" capability cap
 
+let check_pure_context context =
+  check_cap (Pass.pure_capability context)
+
+let check_rollback_context context =
+  check_cap (Pass.rollback_capability context)
+
+let check_timer_refresh_context context =
+  check_cap (Pass.timer_refresh_capability context)
+
 let run_effect eff =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -168,61 +177,61 @@ let ops ?(stage_pending = fun _ -> ())
     pure =
       {
         advance_generation =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_pure_context context;
             record events "advance_generation";
             maybe_fail fail_at failure_kind Advance_generation);
         begin_staging =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_pure_context context;
             record events "begin_staging";
             maybe_fail fail_at failure_kind Begin_staging;
             "staging");
         drain_pending =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_pure_context context;
             record events "drain_pending";
             maybe_fail fail_at failure_kind Drain_pending;
             [ "pending" ]);
         release_pending_marks =
-          (fun cap pending ->
-            check_cap cap;
+          (fun context pending ->
+            check_pure_context context;
             record events
               ("release_pending_marks:" ^ String.concat "," pending);
             maybe_fail fail_at failure_kind Release_pending_marks);
         active_observers =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_pure_context context;
             record events "active_observers";
             maybe_fail fail_at failure_kind Active_observers;
             [ "observer" ]);
         stage_pending =
-          (fun cap pending ->
-            check_cap cap;
+          (fun context pending ->
+            check_pure_context context;
             record events ("stage_pending:" ^ String.concat "," pending);
             maybe_fail fail_at failure_kind Stage_pending;
             stage_pending pending);
         plan_staged_binds =
-          (fun cap observers ->
-            check_cap cap;
+          (fun context observers ->
+            check_pure_context context;
             record events ("plan_staged_binds:" ^ String.concat "," observers);
             maybe_fail fail_at failure_kind Plan_staged_binds);
         sort_delivery_observers =
-          (fun cap observers ->
-            check_cap cap;
+          (fun context observers ->
+            check_pure_context context;
             record events
               ("sort_delivery_observers:" ^ String.concat "," observers);
             maybe_fail fail_at failure_kind Sort_delivery_observers;
             observers);
         collect_events =
-          (fun cap observers ->
-            check_cap cap;
+          (fun context observers ->
+            check_pure_context context;
             record events ("collect_events:" ^ String.concat "," observers);
             maybe_fail fail_at failure_kind Collect_events;
             [ "event" ]);
         commit_staging =
-          (fun cap staging ->
-            check_cap cap;
+          (fun context staging ->
+            check_pure_context context;
             check_staging staging;
             record events "commit_staging";
             maybe_fail fail_at failure_kind Commit_staging;
@@ -232,40 +241,40 @@ let ops ?(stage_pending = fun _ -> ())
             | Error _ -> Alcotest.fail "unexpected transaction commit failure");
             hooks);
         mark_events_pending =
-          (fun cap events_to_mark ->
-            check_cap cap;
+          (fun context events_to_mark ->
+            check_pure_context context;
             record events
               ("mark_events_pending:" ^ String.concat "," events_to_mark));
         update_necessity =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_pure_context context;
             record events "update_necessity");
       };
     rollback =
       {
         rollback_staging =
-          (fun cap staging ->
-            check_cap cap;
+          (fun context staging ->
+            check_rollback_context context;
             check_staging staging;
             record events "rollback_staging";
             S.rollback_transaction state;
             [ "rollback-hook" ]);
         mark_observers_failed_without_current =
-          (fun cap observers ->
-            check_cap cap;
+          (fun context observers ->
+            check_rollback_context context;
             record events
               ("mark_observers_failed_without_current:" ^ String.concat ","
                  observers));
         requeue_pending =
-          (fun cap pending ->
-            check_cap cap;
+          (fun context pending ->
+            check_rollback_context context;
             record events ("requeue_pending:" ^ String.concat "," pending));
       };
     timer_refresh =
       {
         clear_active_timer_refresh =
-          (fun cap ->
-            check_cap cap;
+          (fun context ->
+            check_timer_refresh_context context;
             record events "clear_timer_refresh");
       };
   }
