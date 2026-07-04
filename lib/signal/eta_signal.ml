@@ -3,6 +3,7 @@ module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
 module Sync_lock = Eta.Sync_lock
+module Bind = Eta_signal_bind
 module Error = Eta_signal_error
 module Id = Eta_signal_id
 module Scope = Eta_signal_scope
@@ -356,13 +357,7 @@ module Make (Observer_error : Observer_error) () = struct
     source : 'a signal;
     selector : 'a -> 'b signal;
     mutable owner : 'b signal option;
-    snapshot : ('a, 'b) bind_snapshot Transaction.staged;
-  }
-
-  and ('a, 'b) bind_snapshot = {
-    bind_source_value : 'a option;
-    bind_inner : 'b signal option;
-    bind_inner_scope : scope option;
+    snapshot : ('a, 'b signal, scope) Bind.snapshot Transaction.staged;
   }
 
   and packed_bind = B : ('a, 'b) bind -> packed_bind
@@ -1691,7 +1686,7 @@ module Make (Observer_error : Observer_error) () = struct
             remove_var_watcher source signal;
             []
         | Bind bind -> (
-            match (Transaction.current bind.snapshot).bind_inner_scope with
+            match Bind.inner_scope (Transaction.current bind.snapshot) with
             | None -> []
             | Some scope -> invalidate_scope ~prune:false scope)
         | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
@@ -1707,13 +1702,7 @@ module Make (Observer_error : Observer_error) () = struct
         source;
         selector;
         owner = None;
-        snapshot =
-          Transaction.create_staged
-            {
-              bind_source_value = None;
-              bind_inner = None;
-              bind_inner_scope = None;
-            };
+        snapshot = Transaction.create_staged Bind.empty;
       }
     in
     let signal = new_signal ?equal (Bind bind) [ P source ] in
@@ -1748,30 +1737,23 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_bind_switch bind source_value inner scope =
     remember_staged_bind (B bind);
     Transaction.stage (active_transaction ()) bind.snapshot
-      {
-        bind_source_value = Some source_value;
-        bind_inner = Some inner;
-        bind_inner_scope = Some scope;
-      }
+      (Bind.switch ~source_value ~inner ~scope)
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
-      (a, b) bind_snapshot =
+      (a, b signal, scope) Bind.snapshot =
     Transaction.current bind.snapshot
 
   let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
-      (a, b) bind_snapshot =
+      (a, b signal, scope) Bind.snapshot =
     match Stabilization.transaction graph.stabilization with
     | Some transaction -> Transaction.read transaction bind.snapshot
     | None -> bind_current_snapshot bind
 
-  let bind_effective_source_value bind =
-    (bind_effective_snapshot bind).bind_source_value
-
   let bind_effective_inner bind =
-    (bind_effective_snapshot bind).bind_inner
+    Bind.inner (bind_effective_snapshot bind)
 
   let bind_staged_snapshot (type a b) (bind : (a, b) bind) :
-      (a, b) bind_snapshot option =
+      (a, b signal, scope) Bind.snapshot option =
     let transaction = active_transaction () in
     if Transaction.staged transaction bind.snapshot then
       Some (Transaction.read transaction bind.snapshot)
@@ -1779,31 +1761,31 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_bind (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
-    | ( Some owner,
-        Some
-          {
-            bind_source_value = Some _;
-            bind_inner = Some inner;
-            bind_inner_scope = Some _;
-          } ) ->
-        let current = bind_current_snapshot bind in
-        (match current.bind_inner with
-         | None -> ()
-         | Some old_inner -> detach_dependency owner old_inner);
-        let hooks =
-          match current.bind_inner_scope with
-          | None -> []
-          | Some old_scope -> invalidate_scope old_scope
-        in
-        attach_dependency owner inner;
-        hooks
+    | Some owner, Some staged -> (
+        match Bind.switch_parts staged with
+        | Some (_, inner, _) ->
+            let current = bind_current_snapshot bind in
+            (match Bind.inner current with
+             | None -> ()
+             | Some old_inner -> detach_dependency owner old_inner);
+            let hooks =
+              match Bind.inner_scope current with
+              | None -> []
+              | Some old_scope -> invalidate_scope old_scope
+            in
+            attach_dependency owner inner;
+            hooks
+        | None -> raise (Graph_error `Invalid_scope))
     | _, None -> []
     | _ -> raise (Graph_error `Invalid_scope)
 
   let rollback_bind (B bind) =
     match bind_staged_snapshot bind with
-    | Some { bind_inner_scope = Some scope; _ } -> invalidate_scope scope
-    | None | Some { bind_inner_scope = None; _ } -> []
+    | Some staged -> (
+        match Bind.inner_scope staged with
+        | Some scope -> invalidate_scope scope
+        | None -> [])
+    | None -> []
 
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
     let excluded signal =
@@ -1824,7 +1806,8 @@ module Make (Observer_error : Observer_error) () = struct
         List.iter visit signal.dependents;
         match signal.kind with
         | Bind bind ->
-            Option.iter visit_scope (bind_current_snapshot bind).bind_inner_scope
+            Option.iter visit_scope
+              (Bind.inner_scope (bind_current_snapshot bind))
         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
             ())
@@ -1845,18 +1828,15 @@ module Make (Observer_error : Observer_error) () = struct
 
   let preflight_staged_bind_commit seen collected (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
-    | ( Some owner,
-        Some
-          {
-            bind_source_value = Some _;
-            bind_inner = Some _;
-            bind_inner_scope = Some _;
-          } ) ->
-        let current = bind_current_snapshot bind in
-        Option.iter
-          (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
-             collected)
-          current.bind_inner_scope
+    | Some owner, Some staged -> (
+        match Bind.switch_parts staged with
+        | Some _ ->
+            let current = bind_current_snapshot bind in
+            Option.iter
+              (collect_scope_invalidations_into ~exclude_signal_id:owner.id seen
+                 collected)
+              (Bind.inner_scope current)
+        | None -> raise (Graph_error `Invalid_scope))
     | _, None -> ()
     | _ -> raise (Graph_error `Invalid_scope)
 
@@ -2321,9 +2301,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Bind bind ->
         let source_value, source_changed = compute bind.source in
         let needs_new_inner =
-          match bind_effective_source_value bind with
-          | None -> true
-          | Some previous -> not (bind.source.equal previous source_value)
+          Bind.needs_new_inner ~equal:bind.source.equal
+            (bind_effective_snapshot bind) source_value
         in
         if needs_new_inner then (
           let scope = new_scope signal in

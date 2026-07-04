@@ -2,6 +2,7 @@
  (name eta_signal_testable)
  (modules
   eta_signal_testable
+  eta_signal_bind
   eta_signal_error
   eta_signal_id
   eta_signal_scope
@@ -13,6 +14,18 @@
 (rule
  (target eta_signal_testable.ml)
  (deps ../../lib/signal/eta_signal.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_bind.ml)
+ (deps ../../lib/signal/eta_signal_bind.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_bind.mli)
+ (deps ../../lib/signal/eta_signal_bind.mli)
  (action
   (copy %{deps} %{target})))
 
