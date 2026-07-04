@@ -37,6 +37,11 @@ type stop_plan = {
   stop_cancel_hooks : (unit -> unit) list;
 }
 
+type start_plan = {
+  start_state : state;
+  start_generation : int;
+}
+
 let saturating_succ value =
   if value = max_int then max_int else value + 1
 
@@ -168,6 +173,16 @@ let demand_action ~necessary ~effective_state ~current_state =
     else Demand_none
   else if needs_stop ~effective_state then Demand_stop
   else Demand_none
+
+let start ~advance_generation ~effective_state ~current_state =
+  if needs_start ~effective_state ~current_state then
+    let generation = advance_generation (state_generation current_state) in
+    Some
+      {
+        start_state = Timer_starting generation;
+        start_generation = generation;
+      }
+  else None
 
 let stop ~advance_generation ~cancel_running state =
   match state with

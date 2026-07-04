@@ -139,6 +139,44 @@ let test_demand_policy () =
   Alcotest.(check bool) "inactive does not need stop" false
     (Timer.needs_stop ~effective_state:inactive)
 
+let test_start_policy () =
+  let inactive = Timer.Timer_inactive 0 in
+  let running = Timer.Timer_running (1, Some 10, noop) in
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (1, Some 10)
+  in
+  let finished = Timer.Timer_finished 1 in
+  (match
+     Timer.start ~advance_generation:succ ~effective_state:inactive
+       ~current_state:inactive
+   with
+  | Some plan ->
+      Alcotest.(check int) "inactive start generation" 1
+        plan.start_generation;
+      Alcotest.(check int) "inactive start state generation" 1
+        (Timer.state_generation plan.start_state)
+  | None -> Alcotest.fail "expected inactive start plan");
+  (match
+     Timer.start ~advance_generation:succ ~effective_state:running
+       ~current_state:running
+   with
+  | Some _ -> Alcotest.fail "expected running no-op"
+  | None -> ());
+  (match
+     Timer.start ~advance_generation:succ ~effective_state:finished
+       ~current_state:finished
+   with
+  | Some _ -> Alcotest.fail "expected finished no-op"
+  | None -> ());
+  match
+    Timer.start ~advance_generation:succ
+      ~effective_state:running_uncancellable ~current_state:inactive
+  with
+  | Some plan ->
+      Alcotest.(check int) "staged effective start generation" 1
+        plan.start_generation
+  | None -> Alcotest.fail "expected staged effective start plan"
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -236,6 +274,7 @@ let () =
           Alcotest.test_case "start and refresh policy" `Quick
             test_start_and_refresh_policy;
           Alcotest.test_case "demand policy" `Quick test_demand_policy;
+          Alcotest.test_case "start policy" `Quick test_start_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;

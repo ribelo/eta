@@ -1837,8 +1837,12 @@ module Make (Observer_error : Observer_error) () = struct
       ignore (checked_succ "timer generation" (timer_generation timer) : int)
 
   let preflight_timer_start timer =
-    if timer_needs_start timer then
-      ignore (checked_succ "timer generation" (timer_generation timer) : int)
+    ignore
+      (Timer.start
+         ~advance_generation:(checked_succ "timer generation")
+         ~effective_state:(timer_effective_state timer)
+         ~current_state:(timer_current_state timer)
+        : Timer.start_plan option)
 
   let preflight_staged_bind_commit seen collected (B bind) =
     match (bind.owner, bind_staged_snapshot bind) with
@@ -2313,11 +2317,16 @@ module Make (Observer_error : Observer_error) () = struct
           else use_cached ())
 
   let timer_start_unlocked timer =
-    if not (timer_needs_start timer) then None
-    else (
-      let generation = checked_succ "timer generation" (timer_generation timer) in
-      set_timer_current_state timer (Timer_starting generation);
-      Some { start_timer = timer; start_effect = timer.timer_start timer })
+    match
+      Timer.start
+        ~advance_generation:(checked_succ "timer generation")
+        ~effective_state:(timer_effective_state timer)
+        ~current_state:(timer_current_state timer)
+    with
+    | None -> None
+    | Some plan ->
+        set_timer_current_state timer plan.start_state;
+        Some { start_timer = timer; start_effect = timer.timer_start timer }
 
   let timer_begin_start timer generation =
     with_graph_lane_sync (fun () ->

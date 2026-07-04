@@ -39,6 +39,11 @@ type stop_plan = {
   stop_cancel_hooks : (unit -> unit) list;
 }
 
+type start_plan = {
+  start_state : state;
+  start_generation : int;
+}
+
 val add_ms_capped : int -> int -> int
 val mul_ms_capped : int -> int -> int
 val add_int_capped : int -> int -> int
@@ -67,6 +72,12 @@ val needs_stop : effective_state:state -> bool
 
 val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
+
+val start :
+  advance_generation:(int -> int) ->
+  effective_state:state ->
+  current_state:state ->
+  start_plan option
 
 val stop :
   advance_generation:(int -> int) ->
