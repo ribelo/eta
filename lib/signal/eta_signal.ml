@@ -3668,9 +3668,8 @@ module Make (Observer_error : Observer_error) () = struct
 
     let timer_mark_stopped timer generation =
       with_graph_lane_sync (fun () ->
-          if timer_running_current timer generation then (
-            set_timer_current_state timer (Timer_inactive generation))
-          )
+          Option.iter (set_timer_current_state timer)
+            (Timer.mark_stopped (timer_effective_state timer) ~generation))
 
     let timer_mark_failed timer generation =
       with_graph_lane_sync (fun () ->

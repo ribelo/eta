@@ -228,6 +228,31 @@ let test_install_cancel_policy () =
     (Option.is_none
        (Timer.install_cancel inactive ~generation:7 ~cancel:new_cancel))
 
+let test_mark_stopped_policy () =
+  let running_uncancellable =
+    Timer.Timer_running_uncancellable (7, Some 10)
+  in
+  let running = Timer.Timer_running (7, Some 11, noop) in
+  let inactive = Timer.Timer_inactive 7 in
+  (match Timer.mark_stopped running_uncancellable ~generation:7 with
+  | Some state ->
+      Alcotest.(check string) "uncancellable stopped" "inactive"
+        (Timer.state_label state);
+      Alcotest.(check int) "uncancellable generation" 7
+        (Timer.state_generation state)
+  | None -> Alcotest.fail "expected uncancellable stopped state");
+  (match Timer.mark_stopped running ~generation:7 with
+  | Some state ->
+      Alcotest.(check string) "running stopped" "inactive"
+        (Timer.state_label state);
+      Alcotest.(check int) "running generation" 7
+        (Timer.state_generation state)
+  | None -> Alcotest.fail "expected running stopped state");
+  Alcotest.(check bool) "stale running ignored" true
+    (Option.is_none (Timer.mark_stopped running ~generation:8));
+  Alcotest.(check bool) "inactive ignored" true
+    (Option.is_none (Timer.mark_stopped inactive ~generation:7))
+
 let test_stop_policy () =
   let cancelled = ref false in
   let cancel () = cancelled := true in
@@ -330,6 +355,8 @@ let () =
             test_begin_start_policy;
           Alcotest.test_case "install cancel policy" `Quick
             test_install_cancel_policy;
+          Alcotest.test_case "mark stopped policy" `Quick
+            test_mark_stopped_policy;
           Alcotest.test_case "stop policy" `Quick test_stop_policy;
           Alcotest.test_case "refresh plans" `Quick test_refresh_plans;
           Alcotest.test_case "finish policy" `Quick test_finish_policy;
