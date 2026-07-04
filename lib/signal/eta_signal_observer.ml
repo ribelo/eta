@@ -255,6 +255,49 @@ module Delivery = struct
     | Observer_delivery_running _ -> "running"
 end
 
+module Delivery_runner = struct
+  type ('event, 'callback, 'error) ops = {
+    active : 'event -> (bool, 'error) Eta.Effect.t;
+    claim : 'event -> (bool, 'error) Eta.Effect.t;
+    after_claim : unit -> (unit, 'error) Eta.Effect.t;
+    construct : 'event -> ('callback option, 'error) Eta.Effect.t;
+    run_callback : 'event -> 'callback -> (unit, 'error) Eta.Effect.t;
+    acknowledge : 'event -> (unit, 'error) Eta.Effect.t;
+    finish_error : 'event -> delivered:bool -> (unit, 'error) Eta.Effect.t;
+  }
+
+  let run_claimed ops event =
+    let open Eta in
+    let delivered = ref false in
+    (ops.after_claim ()
+    |> Effect.bind (fun () -> ops.construct event)
+    |> Effect.bind (function
+         | None -> Effect.unit
+         | Some callback ->
+             ops.run_callback event callback
+             |> Effect.bind (fun () ->
+                    Effect.sync (fun () -> delivered := true))
+             |> Effect.bind (fun () -> ops.acknowledge event)))
+    |> Effect.on_exit (function
+         | Exit.Ok _ -> Effect.unit
+         | Exit.Error _ -> ops.finish_error event ~delivered:!delivered)
+
+  let rec run ops = function
+    | [] -> Eta.Effect.unit
+    | event :: rest ->
+        let open Eta in
+        ops.active event
+        |> Effect.bind (function
+             | false -> run ops rest
+             | true -> (
+                 ops.claim event
+                 |> Effect.bind (function
+                      | false -> run ops rest
+                      | true ->
+                          run_claimed ops event
+                          |> Effect.bind (fun () -> run ops rest))))
+end
+
 let plan_event_parts ~equal ~changed ~value delivery =
   let update, delivery =
     match Delivery.base delivery with

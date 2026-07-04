@@ -2086,17 +2086,6 @@ module Make (Observer_error : Observer_error) () = struct
             true
         | None -> false))
 
-  let release_event_delivery_claim observer token =
-    with_graph_lane_sync (fun () ->
-        match observer_active_live_state observer with
-        | None -> ()
-        | Some live -> (
-        let snapshot = observer_current_snapshot live in
-        match Observer_snapshot.release_delivery ~token snapshot with
-        | Some snapshot ->
-            set_observer_current live snapshot
-        | None -> ()))
-
   let finish_event_delivery_after_error observer token update ~delivered =
     with_graph_lane_sync (fun () ->
         match observer_active_live_state observer with
@@ -2202,30 +2191,19 @@ module Make (Observer_error : Observer_error) () = struct
     | Graph_error err -> Some err
     | _ -> None
 
-  let run_observer_effect observer token update observer_eff =
-    let delivered = ref false in
-    let finish_delivery_after_error () =
-      finish_event_delivery_after_error observer token update
-        ~delivered:!delivered
-    in
-    ((Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
-      try
-        if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
-        else
-          match Effect.Expert.eval context observer_eff with
-          | Eta.Exit.Ok () ->
-              delivered := true;
-              Eta.Exit.Ok ()
-          | Eta.Exit.Error cause ->
-              Eta.Exit.Error
-                (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
-      with
-      | Graph_error err ->
-          Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error)))
-     |> Effect.bind (fun () -> acknowledge_event_delivery observer token update))
-    |> Effect.on_exit (function
-         | Eta.Exit.Ok _ -> Effect.unit
-         | Eta.Exit.Error _ -> finish_delivery_after_error ())
+  let run_observer_effect observer token observer_eff =
+    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+    try
+      if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
+      else
+        match Effect.Expert.eval context observer_eff with
+        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
+        | Eta.Exit.Error cause ->
+            Eta.Exit.Error
+              (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
+    with
+    | Graph_error err ->
+        Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
 
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
@@ -2244,30 +2222,29 @@ module Make (Observer_error : Observer_error) () = struct
         with Graph_error err -> Error (err :> stabilize_error))
     |> Effect.flatten_result
 
-  let rec run_events = function
-    | [] -> Effect.unit
-    | E (token, observer, update) :: rest -> (
-        event_observer_active observer
-        |> Effect.bind (function
-             | false -> run_events rest
-             | true ->
-                 claim_event_delivery observer token
-                 |> Effect.bind (function
-                      | false -> run_events rest
-                      | true ->
-                          (Private_test_hooks.run After_observer_delivery_claim
-                           |> Effect.bind (fun () ->
-                                  construct_observer_effect observer token update)
-                           |> Effect.bind (function
-                                | None -> Effect.unit
-                                | Some observer_eff ->
-                                    run_observer_effect observer token update
-                                      observer_eff))
-                          |> Effect.on_exit (function
-                               | Eta.Exit.Ok _ -> Effect.unit
-                               | Eta.Exit.Error _ ->
-                                   release_event_delivery_claim observer token)
-                          |> Effect.bind (fun () -> run_events rest))))
+  let run_event_observer_effect (E (token, observer, _)) observer_eff =
+    run_observer_effect observer token observer_eff
+
+  let run_events events =
+    Observer_core.Delivery_runner.run
+      {
+        active = (fun (E (_, observer, _)) -> event_observer_active observer);
+        claim = (fun (E (token, observer, _)) ->
+          claim_event_delivery observer token);
+        after_claim =
+          (fun () -> Private_test_hooks.run After_observer_delivery_claim);
+        construct =
+          (fun (E (token, observer, update)) ->
+            construct_observer_effect observer token update);
+        run_callback = run_event_observer_effect;
+        acknowledge =
+          (fun (E (token, observer, update)) ->
+            acknowledge_event_delivery observer token update);
+        finish_error =
+          (fun (E (token, observer, update)) ~delivered ->
+            finish_event_delivery_after_error observer token update ~delivered);
+      }
+      events
 
   let begin_stabilize_with_pending_hooks timer_refresh hooks_ref
       finish_token_ref =

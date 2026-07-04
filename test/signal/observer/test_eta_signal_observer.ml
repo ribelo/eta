@@ -1,5 +1,7 @@
 module Observer = Eta_signal_observer
 
+type test_error = [ `Delivery_failed ]
+
 type after_ack =
   | Stored
   | Extra
@@ -28,6 +30,25 @@ let delivery =
   Alcotest.testable
     (fun ppf _ -> Format.pp_print_string ppf "<delivery>")
     ( = )
+
+let run_effect eff =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+  in
+  Eta.Runtime.run runtime eff
+
+let expect_effect_ok label eff =
+  match run_effect eff with
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error _ -> Alcotest.failf "%s: expected Ok" label
+
+let expect_delivery_failed label eff =
+  match run_effect eff with
+  | Eta.Exit.Error (Eta.Cause.Fail `Delivery_failed) -> ()
+  | Eta.Exit.Error _ -> Alcotest.failf "%s: expected Delivery_failed" label
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected failure" label
 
 let lifecycle_state =
   Alcotest.testable
@@ -317,6 +338,137 @@ let test_delivery_labels () =
   Alcotest.(check string) "running" "running"
     (label (Observer_delivery_running (7, update_changed, [])))
 
+let record events event = events := !events @ [ event ]
+
+let delivery_runner_ops ?(active = fun _ -> true) ?(claim = fun _ -> true)
+    ?(construct = fun event -> Some ("callback:" ^ event))
+    ?(run_callback = fun _event _callback -> Ok ())
+    ?(acknowledge = fun _event -> Ok ()) events =
+  let effect value = Eta.Effect.sync (fun () -> value) in
+  {
+    Observer.Delivery_runner.active =
+      (fun event ->
+        effect
+          (record events ("active:" ^ event);
+           active event));
+    claim =
+      (fun event ->
+        effect
+          (record events ("claim:" ^ event);
+           claim event));
+    after_claim =
+      (fun () -> effect (record events "after_claim"));
+    construct =
+      (fun event ->
+        effect
+          (record events ("construct:" ^ event);
+           construct event));
+    run_callback =
+      (fun event callback ->
+        match run_callback event callback with
+        | Ok () ->
+            effect (record events ("run:" ^ event ^ ":" ^ callback))
+        | Error `Delivery_failed ->
+            Eta.Effect.sync (fun () ->
+                record events ("run:" ^ event ^ ":" ^ callback))
+            |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed));
+    acknowledge =
+      (fun event ->
+        match acknowledge event with
+        | Ok () -> effect (record events ("ack:" ^ event))
+        | Error `Delivery_failed ->
+            Eta.Effect.sync (fun () -> record events ("ack:" ^ event))
+            |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed));
+    finish_error =
+      (fun event ~delivered ->
+        effect
+          (record events
+             ("finish_error:" ^ event ^ ":" ^ string_of_bool delivered)));
+  }
+
+let test_delivery_runner_orders_claimed_events () =
+  let events = ref [] in
+  let ops =
+    delivery_runner_ops
+      ~active:(fun event -> event <> "inactive")
+      ~claim:(fun event -> event <> "unclaimed")
+      ~construct:(fun event ->
+        if event = "no-callback" then None else Some ("callback:" ^ event))
+      events
+  in
+  expect_effect_ok "runner"
+    (Observer.Delivery_runner.run ops
+       [ "first"; "inactive"; "unclaimed"; "no-callback"; "second" ]);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "active:first";
+      "claim:first";
+      "after_claim";
+      "construct:first";
+      "run:first:callback:first";
+      "ack:first";
+      "active:inactive";
+      "active:unclaimed";
+      "claim:unclaimed";
+      "active:no-callback";
+      "claim:no-callback";
+      "after_claim";
+      "construct:no-callback";
+      "active:second";
+      "claim:second";
+      "after_claim";
+      "construct:second";
+      "run:second:callback:second";
+      "ack:second";
+    ]
+    !events
+
+let test_delivery_runner_releases_claim_on_failure () =
+  let events = ref [] in
+  let ops =
+    delivery_runner_ops
+      ~run_callback:(fun event _callback ->
+        if event = "first" then Error `Delivery_failed else Ok ())
+      events
+  in
+  expect_delivery_failed "runner failure"
+    (Observer.Delivery_runner.run ops [ "first"; "second" ]);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "active:first";
+      "claim:first";
+      "after_claim";
+      "construct:first";
+      "run:first:callback:first";
+      "finish_error:first:false";
+    ]
+    !events
+
+let test_delivery_runner_finishes_acknowledged_failure_as_delivered () =
+  let events = ref [] in
+  let ops =
+    delivery_runner_ops
+      ~acknowledge:(fun event ->
+        if event = "first" then Error `Delivery_failed else Ok ())
+      events
+  in
+  expect_delivery_failed "acknowledge failure"
+    (Observer.Delivery_runner.run ops [ "first"; "second" ]);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "active:first";
+      "claim:first";
+      "after_claim";
+      "construct:first";
+      "run:first:callback:first";
+      "ack:first";
+      "finish_error:first:true";
+    ]
+    !events
+
 let test_delivery_handle_accessors () =
   let handle =
     Observer.Delivery_handle.create ~token:7 ~update:update_changed
@@ -560,6 +712,12 @@ let () =
           Alcotest.test_case "finish ignores stale token" `Quick
             test_delivery_finish_ignores_stale_token;
           Alcotest.test_case "labels" `Quick test_delivery_labels;
+          Alcotest.test_case "runner order" `Quick
+            test_delivery_runner_orders_claimed_events;
+          Alcotest.test_case "runner release on failure" `Quick
+            test_delivery_runner_releases_claim_on_failure;
+          Alcotest.test_case "runner delivered ack failure" `Quick
+            test_delivery_runner_finishes_acknowledged_failure_as_delivered;
           Alcotest.test_case "handle accessors" `Quick
             test_delivery_handle_accessors;
         ] );
