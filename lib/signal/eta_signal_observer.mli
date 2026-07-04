@@ -156,23 +156,26 @@ module Delivery : sig
 end
 
 module Delivery_runner : sig
-  type ('event, 'callback, 'error) ops = {
-    active : 'event -> (bool, 'error) Eta.Effect.t;
-    claim : 'event -> (bool, 'error) Eta.Effect.t;
-    after_claim : unit -> (unit, 'error) Eta.Effect.t;
-    construct : 'event -> ('callback option, 'error) Eta.Effect.t;
-    run_callback : 'event -> 'callback -> (unit, 'error) Eta.Effect.t;
-    acknowledge : 'event -> (unit, 'error) Eta.Effect.t;
-    finish_error : 'event -> delivered:bool -> (unit, 'error) Eta.Effect.t;
-  }
-  (** Callback surface for delivering observer events. The runner owns the
+  type ('event, 'callback, 'error) t
+  (** Context for delivering observer events. The runner owns the
       ordering: skip inactive observers, claim before constructing/running a
       callback, acknowledge only after a callback succeeds, release a claim on
       failure or finish an already-delivered callback, then continue to the
       next event. *)
 
+  val create :
+    active:('event -> (bool, 'error) Eta.Effect.t) ->
+    claim:('event -> (bool, 'error) Eta.Effect.t) ->
+    after_claim:(unit -> (unit, 'error) Eta.Effect.t) ->
+    construct:('event -> ('callback option, 'error) Eta.Effect.t) ->
+    run_callback:('event -> 'callback -> (unit, 'error) Eta.Effect.t) ->
+    acknowledge:('event -> (unit, 'error) Eta.Effect.t) ->
+    finish_error:
+      ('event -> delivered:bool -> (unit, 'error) Eta.Effect.t) ->
+    ('event, 'callback, 'error) t
+
   val run :
-    ('event, 'callback, 'error) ops ->
+    ('event, 'callback, 'error) t ->
     'event list ->
     (unit, 'error) Eta.Effect.t
 end

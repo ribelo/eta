@@ -2231,23 +2231,20 @@ module Make (Observer_error : Observer_error) () = struct
 
   let run_events events =
     Observer_core.Delivery_runner.run
-      {
-        active = (fun (E (_, observer, _)) -> event_observer_active observer);
-        claim = (fun (E (token, observer, _)) ->
-          claim_event_delivery observer token);
-        after_claim =
-          (fun () -> Private_test_hooks.run After_observer_delivery_claim);
-        construct =
-          (fun (E (token, observer, update)) ->
-            construct_observer_effect observer token update);
-        run_callback = run_event_observer_effect;
-        acknowledge =
-          (fun (E (token, observer, update)) ->
-            acknowledge_event_delivery observer token update);
-        finish_error =
-          (fun (E (token, observer, update)) ~delivered ->
-            finish_event_delivery_after_error observer token update ~delivered);
-      }
+      (Observer_core.Delivery_runner.create
+         ~active:(fun (E (_, observer, _)) -> event_observer_active observer)
+         ~claim:(fun (E (token, observer, _)) ->
+           claim_event_delivery observer token)
+         ~after_claim:(fun () ->
+           Private_test_hooks.run After_observer_delivery_claim)
+         ~construct:(fun (E (token, observer, update)) ->
+           construct_observer_effect observer token update)
+         ~run_callback:run_event_observer_effect
+         ~acknowledge:(fun (E (token, observer, update)) ->
+           acknowledge_event_delivery observer token update)
+         ~finish_error:(fun (E (token, observer, update)) ~delivered ->
+           finish_event_delivery_after_error observer token update ~delivered)
+      )
       events
 
   let begin_stabilize_with_pending_hooks timer_refresh hooks_ref

@@ -345,46 +345,37 @@ let delivery_runner_ops ?(active = fun _ -> true) ?(claim = fun _ -> true)
     ?(run_callback = fun _event _callback -> Ok ())
     ?(acknowledge = fun _event -> Ok ()) events =
   let effect value = Eta.Effect.sync (fun () -> value) in
-  {
-    Observer.Delivery_runner.active =
-      (fun event ->
-        effect
-          (record events ("active:" ^ event);
-           active event));
-    claim =
-      (fun event ->
-        effect
-          (record events ("claim:" ^ event);
-           claim event));
-    after_claim =
-      (fun () -> effect (record events "after_claim"));
-    construct =
-      (fun event ->
-        effect
-          (record events ("construct:" ^ event);
-           construct event));
-    run_callback =
-      (fun event callback ->
-        match run_callback event callback with
-        | Ok () ->
-            effect (record events ("run:" ^ event ^ ":" ^ callback))
-        | Error `Delivery_failed ->
-            Eta.Effect.sync (fun () ->
-                record events ("run:" ^ event ^ ":" ^ callback))
-            |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed));
-    acknowledge =
-      (fun event ->
-        match acknowledge event with
-        | Ok () -> effect (record events ("ack:" ^ event))
-        | Error `Delivery_failed ->
-            Eta.Effect.sync (fun () -> record events ("ack:" ^ event))
-            |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed));
-    finish_error =
-      (fun event ~delivered ->
-        effect
-          (record events
-             ("finish_error:" ^ event ^ ":" ^ string_of_bool delivered)));
-  }
+  Observer.Delivery_runner.create
+    ~active:(fun event ->
+      effect
+        (record events ("active:" ^ event);
+         active event))
+    ~claim:(fun event ->
+      effect
+        (record events ("claim:" ^ event);
+         claim event))
+    ~after_claim:(fun () -> effect (record events "after_claim"))
+    ~construct:(fun event ->
+      effect
+        (record events ("construct:" ^ event);
+         construct event))
+    ~run_callback:(fun event callback ->
+      match run_callback event callback with
+      | Ok () -> effect (record events ("run:" ^ event ^ ":" ^ callback))
+      | Error `Delivery_failed ->
+          Eta.Effect.sync (fun () ->
+              record events ("run:" ^ event ^ ":" ^ callback))
+          |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed))
+    ~acknowledge:(fun event ->
+      match acknowledge event with
+      | Ok () -> effect (record events ("ack:" ^ event))
+      | Error `Delivery_failed ->
+          Eta.Effect.sync (fun () -> record events ("ack:" ^ event))
+          |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Delivery_failed))
+    ~finish_error:(fun event ~delivered ->
+      effect
+        (record events
+           ("finish_error:" ^ event ^ ":" ^ string_of_bool delivered)))
 
 let test_delivery_runner_orders_claimed_events () =
   let events = ref [] in

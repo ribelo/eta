@@ -256,7 +256,7 @@ module Delivery = struct
 end
 
 module Delivery_runner = struct
-  type ('event, 'callback, 'error) ops = {
+  type ('event, 'callback, 'error) t = {
     active : 'event -> (bool, 'error) Eta.Effect.t;
     claim : 'event -> (bool, 'error) Eta.Effect.t;
     after_claim : unit -> (unit, 'error) Eta.Effect.t;
@@ -265,6 +265,18 @@ module Delivery_runner = struct
     acknowledge : 'event -> (unit, 'error) Eta.Effect.t;
     finish_error : 'event -> delivered:bool -> (unit, 'error) Eta.Effect.t;
   }
+
+  let create ~active ~claim ~after_claim ~construct ~run_callback ~acknowledge
+      ~finish_error =
+    {
+      active;
+      claim;
+      after_claim;
+      construct;
+      run_callback;
+      acknowledge;
+      finish_error;
+    }
 
   let run_claimed ops event =
     let open Eta in
