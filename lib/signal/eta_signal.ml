@@ -589,8 +589,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let graph_state = Graph.state graph
   let graph_stabilization = Graph.stabilization graph
-  let graph_current_scope = Graph.current_scope graph
   let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
+
+  let scope_ops =
+    {
+      Graph.scope_current = Scope.current;
+      scope_require_valid_current = Scope.require_valid_current;
+      scope_with_current = Scope.with_current;
+    }
 
   let pack_weak_signal signal = P signal
   let weak_packed_signal (P signal) = Graph_algorithms.Weak_cell.create signal
@@ -925,13 +931,9 @@ module Make (Observer_error : Observer_error) () = struct
       observers
 
   let signal_scope () =
-    match Stabilization.state graph_stabilization with
-    | Idle -> Scope.current graph_current_scope
-    | Pure -> (
-        match Scope.require_valid_current graph_current_scope with
-        | Ok scope -> Some scope
-        | Error `Ambiguous_scope -> raise (Graph_error `Ambiguous_scope))
-    | Committed | Delivering -> raise (Graph_error `Ambiguous_scope)
+    match Graph.allocation_scope graph scope_ops with
+    | Ok scope -> scope
+    | Error err -> raise (Graph_error err)
 
   let add_to_scope scope signal =
     match scope with
@@ -1683,7 +1685,7 @@ module Make (Observer_error : Observer_error) () = struct
                context_selector = bind.selector;
                context_with_scope =
                  (fun _lane scope f ->
-                   Scope.with_current graph_current_scope scope f);
+                   Graph.with_current_scope graph scope_ops scope f);
                context_validate_inner =
                  (fun _lane scope inner ->
                    Scope_validation.validate_inner ~scope (P inner));
@@ -2279,8 +2281,9 @@ module Make (Observer_error : Observer_error) () = struct
 
     let value (source : 'a t) =
       ensure_graph_context ();
-      if Stabilization.is_pure graph_stabilization then
-        raise (Graph_error `Ambiguous_scope);
+      (match Graph.ensure_not_pure graph with
+      | Ok () -> ()
+      | Error err -> raise (Graph_error err));
       Transaction.current source.source_value
 
     let watch (source : 'a t) =

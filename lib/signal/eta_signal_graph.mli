@@ -33,6 +33,13 @@ type counter =
   | Nodes_became_necessary
   | Nodes_became_unnecessary
 
+type ('scope_context, 'scope) scope_ops = {
+  scope_current : 'scope_context -> 'scope option;
+  scope_require_valid_current :
+    'scope_context -> ('scope, [ `Ambiguous_scope ]) result;
+  scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
+}
+
 val create :
   create_scope_context:(unit -> 'scope_context) ->
   create_stream_bridge_metrics:(unit -> 'stream_metrics) ->
@@ -136,8 +143,21 @@ val state :
   t ->
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) Eta_signal_graph_state.t
 
-val current_scope :
-  (_, _, _, _, _, _, _, _, _, 'scope_context, _) t -> 'scope_context
+val allocation_scope :
+  (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
+  ('scope_context, 'scope) scope_ops ->
+  ('scope option, Eta_signal_error.graph_error) result
+
+val with_current_scope :
+  (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
+  ('scope_context, 'scope) scope_ops ->
+  'scope ->
+  (unit -> 'a) ->
+  'a
+
+val ensure_not_pure :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (unit, Eta_signal_error.graph_error) result
 
 val stream_bridge_metrics :
   (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics

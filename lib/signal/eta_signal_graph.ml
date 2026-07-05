@@ -52,6 +52,13 @@ type counter =
   | Nodes_became_necessary
   | Nodes_became_unnecessary
 
+type ('scope_context, 'scope) scope_ops = {
+  scope_current : 'scope_context -> 'scope option;
+  scope_require_valid_current :
+    'scope_context -> ('scope, [ `Ambiguous_scope ]) result;
+  scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
+}
+
 let core_counter = function
   | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
   | Recompute_count -> Eta_signal_graph_core.Recompute_count
@@ -106,7 +113,24 @@ let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
 let stabilization t = t.stabilization
 let state t = t.state
-let current_scope t = t.current_scope
+
+let allocation_scope t ops =
+  match Eta_signal_stabilization.state t.stabilization with
+  | Idle -> Ok (ops.scope_current t.current_scope)
+  | Pure -> (
+      match ops.scope_require_valid_current t.current_scope with
+      | Ok scope -> Ok (Some scope)
+      | Error `Ambiguous_scope -> Error `Ambiguous_scope)
+  | Committed | Delivering -> Error `Ambiguous_scope
+
+let with_current_scope t ops scope f =
+  ops.scope_with_current t.current_scope scope f
+
+let ensure_not_pure t =
+  if Eta_signal_stabilization.is_pure t.stabilization then
+    Error `Ambiguous_scope
+  else Ok ()
+
 let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t metrics = t.stream_bridge_metrics <- metrics
 let add_observer t observer = t.observers <- observer :: t.observers
