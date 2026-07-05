@@ -355,7 +355,6 @@ type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
   rollback_bind:('bind -> 'hook list) ->
-  rollback_transaction:(unit -> unit) ->
   rollback_timer_refresh_dirty:('refresh -> unit) ->
   clear_timer_refresh_timer:('timer -> unit) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
@@ -398,8 +397,6 @@ val active_pure_transaction :
 val commit_transaction :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   (unit, Eta_signal_error.graph_error) result
-
-val rollback_transaction : (_, _, _, _, _, _, _, _, _, _, _) t -> unit
 
 val read_effective :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

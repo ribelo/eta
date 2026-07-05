@@ -484,16 +484,14 @@ let remember_timer_refresh_disposal_hooks t hooks =
 
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
   staging_reset_rollback_bind : 'bind -> 'hook list;
-  staging_reset_rollback_transaction : unit -> unit;
   staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
   staging_reset_clear_timer_refresh_timer : 'timer -> unit;
 }
 
-let staging_reset_context ~rollback_bind ~rollback_transaction
-    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
+let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
+    ~clear_timer_refresh_timer =
   {
     staging_reset_rollback_bind = rollback_bind;
-    staging_reset_rollback_transaction = rollback_transaction;
     staging_reset_rollback_timer_refresh_dirty = rollback_timer_refresh_dirty;
     staging_reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
   }
@@ -502,7 +500,8 @@ let reset_staging t staging context =
   let state_context =
     Eta_signal_graph_state.reset_context
       ~rollback_bind:context.staging_reset_rollback_bind
-      ~rollback_transaction:context.staging_reset_rollback_transaction
+      ~rollback_transaction:(fun () ->
+        Eta_signal_stabilization.rollback_transaction t.stabilization)
       ~rollback_timer_refresh_dirty:
         context.staging_reset_rollback_timer_refresh_dirty
       ~clear_timer_refresh_timer:
@@ -559,9 +558,6 @@ let active_pure_transaction = active_transaction
 
 let commit_transaction t =
   Eta_signal_stabilization.commit_transaction t.stabilization
-
-let rollback_transaction t =
-  Eta_signal_stabilization.rollback_transaction t.stabilization
 
 let read_effective t cell =
   match Eta_signal_stabilization.transaction t.stabilization with

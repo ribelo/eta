@@ -1091,9 +1091,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok () -> ()
     | Error err -> raise (Graph_error err)
 
-  let rollback_transaction () =
-    Graph.rollback_transaction graph
-
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
     Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
@@ -1316,7 +1313,6 @@ module Make (Observer_error : Observer_error) () = struct
   let reset_staging lane staging =
     let context =
       Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
-        ~rollback_transaction
         ~rollback_timer_refresh_dirty:(fun context ->
           Graph.restore_dirty graph dirty_ops
             (Timer_policy.refresh_dirty_items context);
