@@ -109,10 +109,8 @@ let with_lane core f =
          ~leaf_name:"test_eta_signal_graph_core"
          ~depth_local:(Eta.Runtime_contract.create_local ())
          ~hooks:
-           {
-             Core.note_waiter_enqueued = ignore;
-             note_waiter_compaction = ignore;
-           }
+           (Core.lane_hooks ~note_waiter_enqueued:ignore
+              ~note_waiter_compaction:ignore)
          ~after_acquired:(fun () -> Eta.Effect.unit)
          f)
   with

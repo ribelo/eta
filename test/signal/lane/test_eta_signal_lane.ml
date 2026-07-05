@@ -1,10 +1,8 @@
 module Lane = Eta_signal_lane
 
 let hooks =
-  {
-    Lane.note_waiter_enqueued = (fun () -> ());
-    note_waiter_compaction = (fun () -> ());
-  }
+  Lane.hooks ~note_waiter_enqueued:(fun () -> ())
+    ~note_waiter_compaction:(fun () -> ())
 
 let run_effect eff =
   Eio_main.run @@ fun env ->

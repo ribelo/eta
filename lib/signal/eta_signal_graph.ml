@@ -45,6 +45,9 @@ type lane_hooks = {
   note_waiter_compaction : unit -> unit;
 }
 
+let lane_hooks ~note_waiter_enqueued ~note_waiter_compaction =
+  { note_waiter_enqueued; note_waiter_compaction }
+
 type counter =
   | Callback_delivery_count
   | Recompute_count
@@ -239,16 +242,14 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
 let context_error_message = Eta_signal_graph_core.context_error_message
 let ensure_context t = Eta_signal_graph_core.ensure_context t.core
 
+let lane_hooks_to_core hooks =
+  Eta_signal_graph_core.lane_hooks
+    ~note_waiter_enqueued:hooks.note_waiter_enqueued
+    ~note_waiter_compaction:hooks.note_waiter_compaction
+
 let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
-  let hooks =
-    {
-      Eta_signal_graph_core.note_waiter_enqueued =
-        hooks.note_waiter_enqueued;
-      note_waiter_compaction = hooks.note_waiter_compaction;
-    }
-  in
   Eta_signal_graph_core.with_lane_access t.core ~leaf_name ~depth_local
-    ~hooks ~after_acquired f
+    ~hooks:(lane_hooks_to_core hooks) ~after_acquired f
 
 let lane_waiting_count t = Eta_signal_graph_core.lane_waiting_count t.core
 let lane_cancelled_count t = Eta_signal_graph_core.lane_cancelled_count t.core

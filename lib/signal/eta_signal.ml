@@ -644,12 +644,11 @@ module Make (Observer_error : Observer_error) () = struct
       ~leaf_name:"Eta_signal.with_graph_lane_sync"
       ~depth_local:graph_lane_depth_local
       ~hooks:
-        {
-          Graph.note_waiter_enqueued =
-            Private_test_hooks.note_lane_waiter_enqueued;
-          note_waiter_compaction =
-            Private_test_hooks.note_lane_waiter_compaction;
-        }
+        (Graph.lane_hooks
+           ~note_waiter_enqueued:
+             Private_test_hooks.note_lane_waiter_enqueued
+           ~note_waiter_compaction:
+             Private_test_hooks.note_lane_waiter_compaction)
       ~after_acquired:(fun () ->
         Private_test_hooks.run After_graph_lane_acquired)
       f

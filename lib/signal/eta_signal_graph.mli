@@ -21,10 +21,12 @@ type
 
 type lane_access
 
-type lane_hooks = {
-  note_waiter_enqueued : unit -> unit;
-  note_waiter_compaction : unit -> unit;
-}
+type lane_hooks
+
+val lane_hooks :
+  note_waiter_enqueued:(unit -> unit) ->
+  note_waiter_compaction:(unit -> unit) ->
+  lane_hooks
 
 type counter =
   | Callback_delivery_count

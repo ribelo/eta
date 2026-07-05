@@ -36,6 +36,9 @@ type hooks = {
   note_waiter_compaction : unit -> unit;
 }
 
+let hooks ~note_waiter_enqueued ~note_waiter_compaction =
+  { note_waiter_enqueued; note_waiter_compaction }
+
 let create () =
   {
     lock = Sync_lock.create ();

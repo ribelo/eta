@@ -3,10 +3,12 @@
 type t
 type access
 
-type hooks = {
-  note_waiter_enqueued : unit -> unit;
-  note_waiter_compaction : unit -> unit;
-}
+type hooks
+
+val hooks :
+  note_waiter_enqueued:(unit -> unit) ->
+  note_waiter_compaction:(unit -> unit) ->
+  hooks
 
 val create : unit -> t
 
