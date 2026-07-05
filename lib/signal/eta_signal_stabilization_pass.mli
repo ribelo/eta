@@ -9,10 +9,12 @@ type ('owner, 'hook, 'event, 'error) result =
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
-type 'error errors = {
-  reentrant_stabilization : 'error;
-  classify_graph_error : exn -> 'error option;
-}
+type 'error errors
+
+val errors :
+  reentrant_stabilization:'error ->
+  classify_graph_error:(exn -> 'error option) ->
+  'error errors
 
 type 'capability pure_context
 type 'capability rollback_context
@@ -35,38 +37,53 @@ val observer_plan :
     delivery state is marked; graph code owns how those steps traverse its
     registry. *)
 
-type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
-  advance_generation : 'capability pure_context -> unit;
-  begin_staging : 'capability pure_context -> 'staging;
-  drain_pending : 'capability pure_context -> 'pending list;
-  release_pending_marks : 'capability pure_context -> 'pending list -> unit;
-  observer_plan :
-    'capability pure_context ->
-    ('capability, 'observer, 'event) observer_plan;
-  stage_pending : 'capability pure_context -> 'pending list -> unit;
-  plan_staged_binds : 'capability pure_context -> 'observer list -> unit;
-  commit_staging : 'capability pure_context -> 'staging -> 'hook list;
-  update_necessity : 'capability pure_context -> unit;
-}
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure
 
-type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
-  rollback_staging : 'capability rollback_context -> 'staging -> 'hook list;
-  mark_observers_failed_without_current :
-    'capability rollback_context -> 'observer list -> unit;
-  requeue_pending : 'capability rollback_context -> 'pending list -> unit;
-}
+val pure_ops :
+  advance_generation:('capability pure_context -> unit) ->
+  begin_staging:('capability pure_context -> 'staging) ->
+  drain_pending:('capability pure_context -> 'pending list) ->
+  release_pending_marks:
+    ('capability pure_context -> 'pending list -> unit) ->
+  observer_plan:
+    ('capability pure_context ->
+    ('capability, 'observer, 'event) observer_plan) ->
+  stage_pending:('capability pure_context -> 'pending list -> unit) ->
+  plan_staged_binds:
+    ('capability pure_context -> 'observer list -> unit) ->
+  commit_staging:
+    ('capability pure_context -> 'staging -> 'hook list) ->
+  update_necessity:('capability pure_context -> unit) ->
+  ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure
 
-type 'capability timer_refresh = {
-  clear_active_timer_refresh : 'capability timer_refresh_context -> unit;
-}
+type ('capability, 'pending, 'observer, 'hook, 'staging) rollback
 
-type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
-  errors : 'error errors;
-  pure :
-    ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure;
-  rollback : ('capability, 'pending, 'observer, 'hook, 'staging) rollback;
-  timer_refresh : 'capability timer_refresh;
-}
+val rollback_ops :
+  rollback_staging:
+    ('capability rollback_context -> 'staging -> 'hook list) ->
+  mark_observers_failed_without_current:
+    ('capability rollback_context -> 'observer list -> unit) ->
+  requeue_pending:
+    ('capability rollback_context -> 'pending list -> unit) ->
+  ('capability, 'pending, 'observer, 'hook, 'staging) rollback
+
+type 'capability timer_refresh
+
+val timer_refresh_ops :
+  clear_active_timer_refresh:
+    ('capability timer_refresh_context -> unit) ->
+  'capability timer_refresh
+
+type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t
+
+val pass_ops :
+  errors:'error errors ->
+  pure:
+    ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure ->
+  rollback:
+    ('capability, 'pending, 'observer, 'hook, 'staging) rollback ->
+  timer_refresh:'capability timer_refresh ->
+  ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t
 (** Capability surface for graph-specific work performed in a pure
     stabilization pass. The module owns callback ordering, phase transitions,
     and rollback cleanup; callers provide grouped graph operations. Each
@@ -79,12 +96,14 @@ val run :
   ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t ->
   ('owner, 'hook, 'event, 'error) result
 
-type ('event, 'error) delivery = {
-  run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
-  run_events : 'event list -> (unit, 'error) Eta.Effect.t;
-  mark_complete : unit -> (unit, 'error) Eta.Effect.t;
-  finish : unit -> (unit, 'error) Eta.Effect.t;
-}
+type ('event, 'error) delivery
+
+val delivery_ops :
+  run_pending_cleanup:(unit -> (unit, 'error) Eta.Effect.t) ->
+  run_events:('event list -> (unit, 'error) Eta.Effect.t) ->
+  mark_complete:(unit -> (unit, 'error) Eta.Effect.t) ->
+  finish:(unit -> (unit, 'error) Eta.Effect.t) ->
+  ('event, 'error) delivery
 (** Callback surface for the delivering phase. The module owns delivery
     bracketing: cleanup before callbacks, callbacks, completion marking, final
     cleanup, and phase finish. *)

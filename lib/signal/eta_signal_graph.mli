@@ -490,21 +490,23 @@ val observer_delivery_plan :
     observer-specific collection transition behind one typed context. *)
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
-     stabilization_ops =
-  {
-    errors : Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors;
-    pure :
-      ( 'capability,
-        'pending,
-        'observer,
-        'event,
-        'hook,
-        'staging )
-      Eta_signal_stabilization_pass.pure;
-    rollback :
-      ('capability, 'pending, 'observer, 'hook, 'staging)
-      Eta_signal_stabilization_pass.rollback;
-  }
+     stabilization_ops
+
+val stabilization_ops :
+  errors:Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors ->
+  pure:
+    ( 'capability,
+      'pending,
+      'observer,
+      'event,
+      'hook,
+      'staging )
+    Eta_signal_stabilization_pass.pure ->
+  rollback:
+    ('capability, 'pending, 'observer, 'hook, 'staging)
+    Eta_signal_stabilization_pass.rollback ->
+  ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+  stabilization_ops
 
 val run_stabilization :
   ( 'pending,

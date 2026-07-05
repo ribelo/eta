@@ -12,6 +12,9 @@ type 'error errors = {
   classify_graph_error : exn -> 'error option;
 }
 
+let errors ~reentrant_stabilization ~classify_graph_error =
+  { reentrant_stabilization; classify_graph_error }
+
 type 'capability pure_context = Pure_context of 'capability
 type 'capability rollback_context = Rollback_context of 'capability
 type 'capability timer_refresh_context = Timer_refresh_context of 'capability
@@ -44,6 +47,21 @@ type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
   update_necessity : 'capability pure_context -> unit;
 }
 
+let pure_ops ~advance_generation ~begin_staging ~drain_pending
+    ~release_pending_marks ~observer_plan ~stage_pending
+    ~plan_staged_binds ~commit_staging ~update_necessity =
+  {
+    advance_generation;
+    begin_staging;
+    drain_pending;
+    release_pending_marks;
+    observer_plan;
+    stage_pending;
+    plan_staged_binds;
+    commit_staging;
+    update_necessity;
+  }
+
 type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
   rollback_staging : 'capability rollback_context -> 'staging -> 'hook list;
   mark_observers_failed_without_current :
@@ -51,9 +69,20 @@ type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
   requeue_pending : 'capability rollback_context -> 'pending list -> unit;
 }
 
+let rollback_ops ~rollback_staging ~mark_observers_failed_without_current
+    ~requeue_pending =
+  {
+    rollback_staging;
+    mark_observers_failed_without_current;
+    requeue_pending;
+  }
+
 type 'capability timer_refresh = {
   clear_active_timer_refresh : 'capability timer_refresh_context -> unit;
 }
+
+let timer_refresh_ops ~clear_active_timer_refresh =
+  { clear_active_timer_refresh }
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   errors : 'error errors;
@@ -63,12 +92,18 @@ type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
   timer_refresh : 'capability timer_refresh;
 }
 
+let pass_ops ~errors ~pure ~rollback ~timer_refresh =
+  { errors; pure; rollback; timer_refresh }
+
 type ('event, 'error) delivery = {
   run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
   run_events : 'event list -> (unit, 'error) Eta.Effect.t;
   mark_complete : unit -> (unit, 'error) Eta.Effect.t;
   finish : unit -> (unit, 'error) Eta.Effect.t;
 }
+
+let delivery_ops ~run_pending_cleanup ~run_events ~mark_complete ~finish =
+  { run_pending_cleanup; run_events; mark_complete; finish }
 
 let rollback state pure_token rollback_context timer_refresh_context ops
     observers pending staging =

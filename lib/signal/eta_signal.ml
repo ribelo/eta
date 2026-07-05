@@ -1981,88 +1981,86 @@ module Make (Observer_error : Observer_error) () = struct
     let rollback_lane context =
       Stabilization_pass.rollback_capability context
     in
+    let errors =
+      Stabilization_pass.errors
+        ~reentrant_stabilization:`Reentrant_stabilization
+        ~classify_graph_error:(function
+          | Graph_error err -> Some err
+          | _ -> None)
+    in
+    let pure =
+      Stabilization_pass.pure_ops
+        ~advance_generation:
+          (fun (context : graph_lane Stabilization_pass.pure_context) ->
+            let _lane = pure_lane context in
+            Graph.advance_generation graph
+              ~advance:(fun value ->
+                checked_succ "stabilization generation" value))
+        ~begin_staging:
+          (fun (context : graph_lane Stabilization_pass.pure_context) ->
+            let _lane = pure_lane context in
+            Graph.begin_staging graph ~timer_refresh)
+        ~drain_pending:
+          (fun (context : graph_lane Stabilization_pass.pure_context) ->
+            let _lane = pure_lane context in
+            Graph.drain_pending graph)
+        ~release_pending_marks:
+          (fun (context : graph_lane Stabilization_pass.pure_context)
+               pending ->
+            let _lane = pure_lane context in
+            List.iter (fun (V var) -> var.queued <- false) pending)
+        ~observer_plan:
+          (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+            let delivery =
+              Graph.observer_delivery_context ~active:observer_active
+                ~compare:compare_observer_graph_order
+                ~collect_event:collect_observer_event
+                ~mark_pending:Observer_core.Delivery_event.mark_pending
+            in
+            Graph.observer_delivery_plan graph delivery)
+        ~stage_pending:
+          (fun (context : graph_lane Stabilization_pass.pure_context)
+               pending ->
+            let lane = pure_lane context in
+            List.iter (stage_pending_var lane) pending)
+        ~plan_staged_binds:
+          (fun (context : graph_lane Stabilization_pass.pure_context)
+               observers ->
+            let lane = pure_lane context in
+            plan_staged_bind_switches lane observers)
+        ~commit_staging:
+          (fun (context : graph_lane Stabilization_pass.pure_context)
+               staging ->
+            let lane = pure_lane context in
+            commit_staging lane staging)
+        ~update_necessity:
+          (fun (context : graph_lane Stabilization_pass.pure_context) ->
+            let lane = pure_lane context in
+            update_necessity_counters_unlocked lane)
+    in
+    let rollback =
+      Stabilization_pass.rollback_ops
+        ~rollback_staging:
+          (fun
+            (context : graph_lane Stabilization_pass.rollback_context)
+            staging ->
+            let lane = rollback_lane context in
+            reset_staging lane staging)
+        ~mark_observers_failed_without_current:
+          (fun
+            (context : graph_lane Stabilization_pass.rollback_context)
+            observers ->
+            let lane = rollback_lane context in
+            List.iter (mark_failed_without_current lane) observers)
+        ~requeue_pending:
+          (fun
+            (context : graph_lane Stabilization_pass.rollback_context)
+            pending ->
+            let lane = rollback_lane context in
+            List.iter (requeue_if_needed lane) pending)
+    in
     Graph.run_stabilization graph lane
-      {
-        errors =
-          {
-            reentrant_stabilization = `Reentrant_stabilization;
-            classify_graph_error =
-              (function
-              | Graph_error err -> Some err
-              | _ -> None);
-          };
-        pure =
-          {
-            advance_generation =
-              (fun (context : graph_lane Stabilization_pass.pure_context) ->
-                let _lane = pure_lane context in
-                Graph.advance_generation graph
-                  ~advance:(fun value ->
-                    checked_succ "stabilization generation" value));
-            begin_staging =
-              (fun (context : graph_lane Stabilization_pass.pure_context) ->
-                let _lane = pure_lane context in
-                Graph.begin_staging graph ~timer_refresh);
-            drain_pending =
-              (fun (context : graph_lane Stabilization_pass.pure_context) ->
-                let _lane = pure_lane context in
-                Graph.drain_pending graph);
-            release_pending_marks =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   pending ->
-                let _lane = pure_lane context in
-                List.iter (fun (V var) -> var.queued <- false) pending);
-            observer_plan =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
-                let delivery =
-                  Graph.observer_delivery_context ~active:observer_active
-                    ~compare:compare_observer_graph_order
-                    ~collect_event:collect_observer_event
-                    ~mark_pending:Observer_core.Delivery_event.mark_pending
-                in
-                Graph.observer_delivery_plan graph delivery);
-            stage_pending =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   pending ->
-                let lane = pure_lane context in
-                List.iter (stage_pending_var lane) pending);
-            plan_staged_binds =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   observers ->
-                let lane = pure_lane context in
-                plan_staged_bind_switches lane observers);
-            commit_staging =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   staging ->
-                let lane = pure_lane context in
-                commit_staging lane staging);
-            update_necessity =
-              (fun (context : graph_lane Stabilization_pass.pure_context) ->
-                let lane = pure_lane context in
-                update_necessity_counters_unlocked lane);
-          };
-        rollback =
-          {
-            rollback_staging =
-              (fun
-                (context : graph_lane Stabilization_pass.rollback_context)
-                staging ->
-                let lane = rollback_lane context in
-                reset_staging lane staging);
-            mark_observers_failed_without_current =
-              (fun
-                (context : graph_lane Stabilization_pass.rollback_context)
-                observers ->
-                let lane = rollback_lane context in
-                List.iter (mark_failed_without_current lane) observers);
-            requeue_pending =
-              (fun
-                (context : graph_lane Stabilization_pass.rollback_context)
-                pending ->
-                let lane = rollback_lane context in
-                List.iter (requeue_if_needed lane) pending);
-          };
-      }
+      (Graph.stabilization_ops ~errors ~pure ~rollback)
 
   let finish_stabilize (_lane : graph_lane) delivering_token =
     Graph.finish_stabilization graph delivering_token
@@ -2099,13 +2097,11 @@ module Make (Observer_error : Observer_error) () = struct
                Effect.sync (fun () -> finish_token_ref := None))
 
   let stabilization_delivery_ops hooks_ref refresh_timers finish_token_ref =
-    {
-      Stabilization_pass.run_pending_cleanup =
-        (fun () -> run_pending_stabilize_cleanup hooks_ref refresh_timers);
-      run_events;
-      mark_complete = mark_callback_delivery_complete;
-      finish = (fun () -> finish_recorded_stabilize finish_token_ref);
-    }
+    Stabilization_pass.delivery_ops
+      ~run_pending_cleanup:(fun () ->
+        run_pending_stabilize_cleanup hooks_ref refresh_timers)
+      ~run_events ~mark_complete:mark_callback_delivery_complete
+      ~finish:(fun () -> finish_recorded_stabilize finish_token_ref)
 
   let stabilize =
     Effect.sync (fun () -> (ref [], ref false, ref None))

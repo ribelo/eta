@@ -596,21 +596,19 @@ type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
       Eta_signal_stabilization_pass.rollback;
   }
 
+let stabilization_ops ~errors ~pure ~rollback =
+  { errors; pure; rollback }
+
 let clear_timer_refresh t _context =
   Eta_signal_graph_state.clear_active_timer_refresh t.state
 
 let run_stabilization t capability ops =
   Eta_signal_stabilization_pass.run t.stabilization capability
-    {
-      errors = ops.errors;
-      pure = ops.pure;
-      rollback = ops.rollback;
-      timer_refresh =
-        {
-          Eta_signal_stabilization_pass.clear_active_timer_refresh =
-            clear_timer_refresh t;
-        };
-    }
+    (Eta_signal_stabilization_pass.pass_ops ~errors:ops.errors
+       ~pure:ops.pure ~rollback:ops.rollback
+       ~timer_refresh:
+         (Eta_signal_stabilization_pass.timer_refresh_ops
+            ~clear_active_timer_refresh:(clear_timer_refresh t)))
 
 let finish_stabilization t delivering_token =
   Eta_signal_graph_state.clear_active_timer_refresh t.state;

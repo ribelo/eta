@@ -435,90 +435,73 @@ let test_observer_delivery_plan_owns_sorted_collection () =
     Observer.collect_event collection cap observer
   in
   let pure =
-    {
-      Pass.advance_generation = (fun context ->
-        check_cap (Pass.pure_capability context));
-      begin_staging =
-        (fun context ->
-          check_cap (Pass.pure_capability context);
-          Graph.begin_staging graph ~timer_refresh:None);
-      drain_pending =
-        (fun context ->
-          check_cap (Pass.pure_capability context);
-          []);
-      release_pending_marks =
-        (fun context _pending ->
-          check_cap (Pass.pure_capability context));
-      observer_plan =
-        (fun context ->
-          check_cap (Pass.pure_capability context);
-          let delivery =
-            Graph.observer_delivery_context
-              ~active:(fun observer -> observer.active)
-              ~compare:(fun left right -> Int.compare left.id right.id)
-              ~collect_event
-              ~mark_pending:(fun cap event ->
-                check_cap cap;
-                record events ("pending:" ^ event))
-          in
-          Graph.observer_delivery_plan graph delivery);
-      stage_pending =
-        (fun context _pending ->
-          check_cap (Pass.pure_capability context));
-      plan_staged_binds =
-        (fun context observers ->
-          check_cap (Pass.pure_capability context);
-          record events
-            ("plan_observers:"
-            ^ String.concat ","
-                (List.map
-                   (fun observer -> string_of_int observer.id)
-                   observers)));
-      commit_staging =
-        (fun context staging ->
-          check_cap (Pass.pure_capability context);
-          let commit_context =
-            Graph.staging_commit_context
-              ~preflight:(fun () -> record events "preflight")
-              ~commit_bind:(fun _bind -> [])
-              ~prepare_signal:(fun _node -> ())
-              ~commit_transaction:(fun () -> commit_transaction graph)
-              ~commit_timer_refresh:(fun _timer -> ())
-              ~commit_signal:(fun _node -> ())
-              ~advance_snapshot:(fun value -> value + 1)
-          in
-          Graph.commit_staging graph staging commit_context);
-      update_necessity =
-        (fun context ->
-          check_cap (Pass.pure_capability context);
-          record events "update_necessity");
-    }
+    Pass.pure_ops
+      ~advance_generation:(fun context ->
+        check_cap (Pass.pure_capability context))
+      ~begin_staging:(fun context ->
+        check_cap (Pass.pure_capability context);
+        Graph.begin_staging graph ~timer_refresh:None)
+      ~drain_pending:(fun context ->
+        check_cap (Pass.pure_capability context);
+        [])
+      ~release_pending_marks:(fun context _pending ->
+        check_cap (Pass.pure_capability context))
+      ~observer_plan:(fun context ->
+        check_cap (Pass.pure_capability context);
+        let delivery =
+          Graph.observer_delivery_context
+            ~active:(fun observer -> observer.active)
+            ~compare:(fun left right -> Int.compare left.id right.id)
+            ~collect_event
+            ~mark_pending:(fun cap event ->
+              check_cap cap;
+              record events ("pending:" ^ event))
+        in
+        Graph.observer_delivery_plan graph delivery)
+      ~stage_pending:(fun context _pending ->
+        check_cap (Pass.pure_capability context))
+      ~plan_staged_binds:(fun context observers ->
+        check_cap (Pass.pure_capability context);
+        record events
+          ("plan_observers:"
+          ^ String.concat ","
+              (List.map
+                 (fun observer -> string_of_int observer.id)
+                 observers)))
+      ~commit_staging:(fun context staging ->
+        check_cap (Pass.pure_capability context);
+        let commit_context =
+          Graph.staging_commit_context
+            ~preflight:(fun () -> record events "preflight")
+            ~commit_bind:(fun _bind -> [])
+            ~prepare_signal:(fun _node -> ())
+            ~commit_transaction:(fun () -> commit_transaction graph)
+            ~commit_timer_refresh:(fun _timer -> ())
+            ~commit_signal:(fun _node -> ())
+            ~advance_snapshot:(fun value -> value + 1)
+        in
+        Graph.commit_staging graph staging commit_context)
+      ~update_necessity:(fun context ->
+        check_cap (Pass.pure_capability context);
+        record events "update_necessity")
   in
   let rollback =
-    {
-      Pass.rollback_staging =
-        (fun context _staging ->
-          check_cap (Pass.rollback_capability context);
-          []);
-      mark_observers_failed_without_current =
-        (fun context _observers ->
-          check_cap (Pass.rollback_capability context));
-      requeue_pending =
-        (fun context _pending ->
-          check_cap (Pass.rollback_capability context));
-    }
+    Pass.rollback_ops
+      ~rollback_staging:(fun context _staging ->
+        check_cap (Pass.rollback_capability context);
+        [])
+      ~mark_observers_failed_without_current:(fun context _observers ->
+        check_cap (Pass.rollback_capability context))
+      ~requeue_pending:(fun context _pending ->
+        check_cap (Pass.rollback_capability context))
+  in
+  let errors =
+    Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
+      ~classify_graph_error:(fun _ -> None)
   in
   match
     Graph.run_stabilization graph capability
-      {
-        Graph.errors =
-          {
-            Pass.reentrant_stabilization = `Reentrant_stabilization;
-            classify_graph_error = (fun _ -> None);
-          };
-        pure;
-        rollback;
-      }
+      (Graph.stabilization_ops ~errors ~pure ~rollback)
   with
   | Pass.Pure_ok (hooks, delivery_events, delivering_token) ->
       Alcotest.(check (list string)) "hooks" [] hooks;

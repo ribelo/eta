@@ -158,112 +158,92 @@ let ops ?(stage_pending = fun _ -> ())
   let check_staging staging =
     Alcotest.(check string) "staging token" "staging" staging
   in
-  {
-    Pass.errors =
-      {
-        reentrant_stabilization = `Reentrant_stabilization;
-        classify_graph_error =
-          (function
-          | Graph_failure -> Some `Graph
-          | _ -> None);
-      };
-    pure =
-      {
-        advance_generation =
-          (fun context ->
+  let errors =
+    Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
+      ~classify_graph_error:(function
+        | Graph_failure -> Some `Graph
+        | _ -> None)
+  in
+  let pure =
+    Pass.pure_ops
+      ~advance_generation:(fun context ->
+        check_pure_context context;
+        record events "advance_generation";
+        maybe_fail fail_at failure_kind Advance_generation)
+      ~begin_staging:(fun context ->
+        check_pure_context context;
+        record events "begin_staging";
+        maybe_fail fail_at failure_kind Begin_staging;
+        "staging")
+      ~drain_pending:(fun context ->
+        check_pure_context context;
+        record events "drain_pending";
+        maybe_fail fail_at failure_kind Drain_pending;
+        [ "pending" ])
+      ~release_pending_marks:(fun context pending ->
+        check_pure_context context;
+        record events ("release_pending_marks:" ^ String.concat "," pending);
+        maybe_fail fail_at failure_kind Release_pending_marks)
+      ~observer_plan:(fun context ->
+        check_pure_context context;
+        record events "observer_plan";
+        maybe_fail fail_at failure_kind Observer_plan;
+        Pass.observer_plan ~observers:[ "observer" ]
+          ~collect_events:(fun context observers ->
             check_pure_context context;
-            record events "advance_generation";
-            maybe_fail fail_at failure_kind Advance_generation);
-        begin_staging =
-          (fun context ->
-            check_pure_context context;
-            record events "begin_staging";
-            maybe_fail fail_at failure_kind Begin_staging;
-            "staging");
-        drain_pending =
-          (fun context ->
-            check_pure_context context;
-            record events "drain_pending";
-            maybe_fail fail_at failure_kind Drain_pending;
-            [ "pending" ]);
-        release_pending_marks =
-          (fun context pending ->
+            record events ("collect_events:" ^ String.concat "," observers);
+            maybe_fail fail_at failure_kind Collect_events;
+            [ "event" ])
+          ~mark_events_pending:(fun context events_to_mark ->
             check_pure_context context;
             record events
-              ("release_pending_marks:" ^ String.concat "," pending);
-            maybe_fail fail_at failure_kind Release_pending_marks);
-        observer_plan =
-          (fun context ->
-            check_pure_context context;
-            record events "observer_plan";
-            maybe_fail fail_at failure_kind Observer_plan;
-            Pass.observer_plan ~observers:[ "observer" ]
-              ~collect_events:(fun context observers ->
-                check_pure_context context;
-                record events
-                  ("collect_events:" ^ String.concat "," observers);
-                maybe_fail fail_at failure_kind Collect_events;
-                [ "event" ])
-              ~mark_events_pending:(fun context events_to_mark ->
-                check_pure_context context;
-                record events
-                  ("mark_events_pending:" ^ String.concat ","
-                     events_to_mark)));
-        stage_pending =
-          (fun context pending ->
-            check_pure_context context;
-            record events ("stage_pending:" ^ String.concat "," pending);
-            maybe_fail fail_at failure_kind Stage_pending;
-            stage_pending pending);
-        plan_staged_binds =
-          (fun context observers ->
-            check_pure_context context;
-            record events ("plan_staged_binds:" ^ String.concat "," observers);
-            maybe_fail fail_at failure_kind Plan_staged_binds);
-        commit_staging =
-          (fun context staging ->
-            check_pure_context context;
-            check_staging staging;
-            record events "commit_staging";
-            maybe_fail fail_at failure_kind Commit_staging;
-            let hooks = commit_staging staging in
-            (match S.commit_transaction state with
-            | Ok () -> ()
-            | Error _ -> Alcotest.fail "unexpected transaction commit failure");
-            hooks);
-        update_necessity =
-          (fun context ->
-            check_pure_context context;
-            record events "update_necessity");
-      };
-    rollback =
-      {
-        rollback_staging =
-          (fun context staging ->
-            check_rollback_context context;
-            check_staging staging;
-            record events "rollback_staging";
-            S.rollback_transaction state;
-            [ "rollback-hook" ]);
-        mark_observers_failed_without_current =
-          (fun context observers ->
-            check_rollback_context context;
-            record events
-              ("mark_observers_failed_without_current:" ^ String.concat ","
-                 observers));
-        requeue_pending =
-          (fun context pending ->
-            check_rollback_context context;
-            record events ("requeue_pending:" ^ String.concat "," pending));
-      };
-    timer_refresh =
-      {
-        clear_active_timer_refresh =
-          (fun context ->
-            check_timer_refresh_context context;
-            record events "clear_timer_refresh");
-      };
-  }
+              ("mark_events_pending:" ^ String.concat "," events_to_mark)))
+      ~stage_pending:(fun context pending ->
+        check_pure_context context;
+        record events ("stage_pending:" ^ String.concat "," pending);
+        maybe_fail fail_at failure_kind Stage_pending;
+        stage_pending pending)
+      ~plan_staged_binds:(fun context observers ->
+        check_pure_context context;
+        record events ("plan_staged_binds:" ^ String.concat "," observers);
+        maybe_fail fail_at failure_kind Plan_staged_binds)
+      ~commit_staging:(fun context staging ->
+        check_pure_context context;
+        check_staging staging;
+        record events "commit_staging";
+        maybe_fail fail_at failure_kind Commit_staging;
+        let hooks = commit_staging staging in
+        (match S.commit_transaction state with
+        | Ok () -> ()
+        | Error _ -> Alcotest.fail "unexpected transaction commit failure");
+        hooks)
+      ~update_necessity:(fun context ->
+        check_pure_context context;
+        record events "update_necessity")
+  in
+  let rollback =
+    Pass.rollback_ops
+      ~rollback_staging:(fun context staging ->
+        check_rollback_context context;
+        check_staging staging;
+        record events "rollback_staging";
+        S.rollback_transaction state;
+        [ "rollback-hook" ])
+      ~mark_observers_failed_without_current:(fun context observers ->
+        check_rollback_context context;
+        record events
+          ("mark_observers_failed_without_current:" ^ String.concat ","
+             observers))
+      ~requeue_pending:(fun context pending ->
+        check_rollback_context context;
+        record events ("requeue_pending:" ^ String.concat "," pending))
+  in
+  let timer_refresh =
+    Pass.timer_refresh_ops ~clear_active_timer_refresh:(fun context ->
+        check_timer_refresh_context context;
+        record events "clear_timer_refresh")
+  in
+  Pass.pass_ops ~errors ~pure ~rollback ~timer_refresh
 
 let test_success_runs_pure_pass_in_order () =
   let events = ref [] in
@@ -438,19 +418,16 @@ let test_generated_pure_failure_slots_roll_back () =
     failure_slots
 
 let delivery_ops ?(run_events = fun _events -> Eta.Effect.unit) events =
-  {
-    Pass.run_pending_cleanup =
-      (fun () -> Eta.Effect.sync (fun () -> record events "cleanup"));
-    run_events =
-      (fun delivery_events ->
-        Eta.Effect.sync (fun () ->
-            record events
-              ("events:" ^ String.concat "," delivery_events))
-        |> Eta.Effect.bind (fun () -> run_events delivery_events));
-    mark_complete =
-      (fun () -> Eta.Effect.sync (fun () -> record events "complete"));
-    finish = (fun () -> Eta.Effect.sync (fun () -> record events "finish"));
-  }
+  Pass.delivery_ops
+    ~run_pending_cleanup:(fun () ->
+      Eta.Effect.sync (fun () -> record events "cleanup"))
+    ~run_events:(fun delivery_events ->
+      Eta.Effect.sync (fun () ->
+          record events ("events:" ^ String.concat "," delivery_events))
+      |> Eta.Effect.bind (fun () -> run_events delivery_events))
+    ~mark_complete:(fun () ->
+      Eta.Effect.sync (fun () -> record events "complete"))
+    ~finish:(fun () -> Eta.Effect.sync (fun () -> record events "finish"))
 
 let test_delivery_success_brackets_cleanup_and_finish () =
   let events = ref [] in
