@@ -28,6 +28,15 @@ type node = {
   mutable node_dependencies : int list;
 }
 
+type compute_node = {
+  compute_id : int;
+  mutable compute_seen_generation : int;
+  mutable compute_changed_seen : bool;
+  mutable compute_computing : bool;
+  mutable compute_computed_generation : int;
+  mutable compute_current : int;
+}
+
 let capability = "graph-lane"
 
 let record events event =
@@ -84,6 +93,25 @@ let test_scope_ops =
   }
 
 let live_nodes_from_cells _keep cells = (cells, cells)
+
+let compute_ops =
+  {
+    Graph.compute_node = (fun node -> node);
+    compute_pack = (fun node -> node);
+    compute_seen_generation = (fun node -> node.compute_seen_generation);
+    compute_set_seen_generation =
+      (fun node generation -> node.compute_seen_generation <- generation);
+    compute_changed_seen = (fun node -> node.compute_changed_seen);
+    compute_set_changed_seen =
+      (fun node changed -> node.compute_changed_seen <- changed);
+    compute_computing = (fun node -> node.compute_computing);
+    compute_set_computing =
+      (fun node computing -> node.compute_computing <- computing);
+    compute_computed_generation =
+      (fun node -> node.compute_computed_generation);
+    compute_set_computed_generation =
+      (fun node generation -> node.compute_computed_generation <- generation);
+  }
 
 let test_create_live_node_owns_lifecycle_context () =
   let events = ref [] in
@@ -159,6 +187,59 @@ let test_create_live_node_owns_lifecycle_context () =
       "pack:0";
       "weak:0";
     ]
+    !events
+
+let test_compute_cached_owns_cache_and_cycle_dispatch () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let node =
+    {
+      compute_id = 1;
+      compute_seen_generation = -1;
+      compute_changed_seen = false;
+      compute_computing = false;
+      compute_computed_generation = -1;
+      compute_current = 0;
+    }
+  in
+  let current node =
+    record events ("current:" ^ string_of_int node.compute_current);
+    node.compute_current
+  in
+  let cycle node =
+    record events ("cycle:" ^ string_of_int node.compute_id);
+    (node.compute_current, false)
+  in
+  let compute node =
+    record events ("compute:" ^ string_of_int node.compute_id);
+    node.compute_current <- 10;
+    (node.compute_current, true)
+  in
+  Graph.set_generation graph 1;
+  Alcotest.(check (pair int bool))
+    "first compute" (10, true)
+    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
+  Alcotest.(check int) "seen generation" 1 node.compute_seen_generation;
+  Alcotest.(check bool) "changed seen" true node.compute_changed_seen;
+  Alcotest.(check bool) "guard cleared" false node.compute_computing;
+  Alcotest.(check (pair int bool))
+    "cached compute" (10, true)
+    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
+  node.compute_computing <- true;
+  Graph.set_generation graph 2;
+  Alcotest.(check (pair int bool))
+    "cycle result" (10, false)
+    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
+  Alcotest.(check int)
+    "cycle does not publish generation" 1 node.compute_seen_generation;
+  Alcotest.(check bool)
+    "existing guard remains owned by caller" true node.compute_computing;
+  Alcotest.(check (list string))
+    "events"
+    [ "compute:1"; "current:10"; "cycle:1" ]
     !events
 
 let test_observer_delivery_plan_owns_sorted_collection () =
@@ -339,6 +420,11 @@ let () =
         [
           Alcotest.test_case "context owns creation" `Quick
             test_create_live_node_owns_lifecycle_context;
+        ] );
+      ( "compute dispatch",
+        [
+          Alcotest.test_case "cached dispatch" `Quick
+            test_compute_cached_owns_cache_and_cycle_dispatch;
         ] );
       ( "observer delivery",
         [

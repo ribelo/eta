@@ -280,6 +280,15 @@ let compute_run t ops node ~cycle ~compute =
         ops.compute_set_changed_seen node changed;
         (value, changed))
 
+let compute_cached t ops node ~current ~cycle ~compute =
+  let compute_node = ops.compute_node node in
+  if compute_seen t ops compute_node then
+    (current compute_node, compute_changed_seen t ops compute_node)
+  else
+    compute_run t ops compute_node
+      ~cycle:(fun () -> cycle compute_node)
+      ~compute:(fun () -> compute compute_node)
+
 let version_snapshot _t ops nodes =
   List.map (fun node -> (ops.version_id node, ops.version node)) nodes
 

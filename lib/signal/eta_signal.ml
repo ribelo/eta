@@ -1458,14 +1458,10 @@ module Make (Observer_error : Observer_error) () = struct
    fun lane signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute signal;
-    let compute_node = graph_edge_node signal in
-    if Graph.compute_seen graph compute_ops compute_node then
-      (effective_signal_value signal,
-       Graph.compute_changed_seen graph compute_ops compute_node)
-    else
-      Graph.compute_run graph compute_ops compute_node
-        ~cycle:(fun () -> raise (Graph_error `Cycle))
-        ~compute:(fun () -> compute_uncached lane signal)
+    Graph.compute_cached graph compute_ops (P signal)
+      ~current:(fun _compute_node -> effective_signal_value signal)
+      ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
+      ~compute:(fun _compute_node -> compute_uncached lane signal)
 
   and compute_uncached : type a. graph_lane -> a signal -> a * bool =
    fun lane signal ->

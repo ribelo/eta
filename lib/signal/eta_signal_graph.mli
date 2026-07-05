@@ -239,24 +239,13 @@ val remember_computed :
 
 val computed_nodes : (_, _, 'node, _, _, _, _, _, _, _, _) t -> 'node list
 
-val compute_seen :
+val compute_cached :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (_, 'compute_node) compute_ops ->
-  'compute_node ->
-  bool
-
-val compute_changed_seen :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (_, 'compute_node) compute_ops ->
-  'compute_node ->
-  bool
-
-val compute_run :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (_, 'compute_node) compute_ops ->
-  'compute_node ->
-  cycle:(unit -> 'a * bool) ->
-  compute:(unit -> 'a * bool) ->
+  ('node, 'compute_node) compute_ops ->
+  'node ->
+  current:('compute_node -> 'a) ->
+  cycle:('compute_node -> 'a * bool) ->
+  compute:('compute_node -> 'a * bool) ->
   'a * bool
 
 val version_snapshot :
