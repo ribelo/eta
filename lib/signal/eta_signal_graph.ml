@@ -591,12 +591,12 @@ let update_cell t _lane cell f =
   let value = Eta_signal_transaction.read transaction cell in
   Eta_signal_transaction.stage transaction cell (f value)
 
-let staged_in_active_transaction t cell =
+let staged_in_active_transaction t _lane cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction -> Eta_signal_transaction.staged transaction cell
   | None -> false
 
-let staged_value t cell =
+let staged_value t _lane cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction when Eta_signal_transaction.staged transaction cell ->
       Some (Eta_signal_transaction.read transaction cell)

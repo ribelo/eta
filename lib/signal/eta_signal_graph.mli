@@ -440,11 +440,13 @@ val update_cell :
 
 val staged_in_active_transaction :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'a Eta_signal_transaction.staged ->
   bool
 
 val staged_value :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'a Eta_signal_transaction.staged ->
   'a option
 

@@ -763,8 +763,8 @@ module Make (Observer_error : Observer_error) () = struct
   let update_signal_staging lane signal f =
     Graph.update_cell graph lane signal.snapshot f
 
-  let signal_staged_in_active_transaction signal =
-    Graph.staged_in_active_transaction graph signal.snapshot
+  let signal_staged_in_active_transaction lane signal =
+    Graph.staged_in_active_transaction graph lane signal.snapshot
 
   let discard_signal_staging lane signal =
     Graph.discard_staging graph lane signal.snapshot
@@ -1102,7 +1102,10 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> raise (Graph_error `Invalid_scope)
 
   let prepare_signal_commit lane (P signal) =
-    if (not signal.valid) && signal_staged_in_active_transaction signal then
+    if
+      (not signal.valid)
+      && signal_staged_in_active_transaction lane signal
+    then
       discard_signal_staging lane signal
 
   let commit_signal (P signal) =
@@ -1143,26 +1146,26 @@ module Make (Observer_error : Observer_error) () = struct
   let bind_effective_inner bind =
     Bind.inner (bind_effective_snapshot bind)
 
-  let bind_staged_snapshot (type a b) (bind : (a, b) bind) :
+  let bind_staged_snapshot (type a b) lane (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot option =
-    Graph.staged_value graph bind.snapshot
+    Graph.staged_value graph lane bind.snapshot
 
-  let bind_staged_switch (type a b) (bind : (a, b) bind) :
+  let bind_staged_switch (type a b) lane (bind : (a, b) bind) :
       (a, b signal, scope, b signal) Bind.staged_switch =
     Bind.staged_switch ~owner:bind.owner
       ~current:(bind_current_snapshot bind)
-      ~staged:(bind_staged_snapshot bind)
+      ~staged:(bind_staged_snapshot lane bind)
 
-  let packed_bind_staged_switch (B bind) =
+  let packed_bind_staged_switch lane (B bind) =
     Bind.pack_staged_switch
       (Bind.staged_switch
          ~owner:(Option.map (fun owner -> P owner) bind.owner)
          ~current:(bind_current_snapshot bind)
-         ~staged:(bind_staged_snapshot bind))
+         ~staged:(bind_staged_snapshot lane bind))
 
   let commit_bind lane (B bind) =
     match
-      Graph.commit_staged_bind_switch (bind_staged_switch bind)
+      Graph.commit_staged_bind_switch (bind_staged_switch lane bind)
         ~detach_old_inner:(detach_dependency lane)
         ~invalidate_old_scope:(invalidate_scope lane)
         ~attach_new_inner:(attach_dependency lane)
@@ -1172,7 +1175,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let rollback_bind lane (B bind) =
     match
-      Graph.rollback_staged_bind_switch ~staged:(bind_staged_snapshot bind)
+      Graph.rollback_staged_bind_switch
+        ~staged:(bind_staged_snapshot lane bind)
         ~invalidate_new_scope:(invalidate_scope lane)
     with
     | Ok hooks -> hooks
@@ -1190,11 +1194,11 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.preflight_start ~advance_generation:(checked_succ "timer generation")
       timer_state_port timer
 
-  let preflight_signal_commit invalidated_ids (P signal) =
+  let preflight_signal_commit lane invalidated_ids (P signal) =
     if
       signal.valid
       && not (Hashtbl.mem invalidated_ids signal.id)
-      && signal_staged_in_active_transaction signal
+      && signal_staged_in_active_transaction lane signal
     then
       let current = signal_current_snapshot signal in
       let staged = signal_effective_snapshot signal in
@@ -1208,7 +1212,7 @@ module Make (Observer_error : Observer_error) () = struct
     match
       Graph.collect_staged_bind_switch_invalidations graph lane
         ~init:(invalidated_ids, invalidated_nodes)
-        ~staged_switch:packed_bind_staged_switch
+        ~staged_switch:(packed_bind_staged_switch lane)
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
           let P owner_signal = owner in
           collect_scope_invalidations_into ~exclude_signal_id:owner_signal.id
@@ -1262,7 +1266,7 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
     Graph.iter_computed graph lane
-      ~f:(preflight_signal_commit invalidated_ids);
+      ~f:(preflight_signal_commit lane invalidated_ids);
     preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks lane hooks =

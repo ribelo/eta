@@ -624,7 +624,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
             Alcotest.(check string) "bind" "bind" bind;
             Bind.staged_switch ~owner:(Some "owner")
               ~current:(Transaction.current staged)
-              ~staged:(Graph.staged_value graph staged)
+              ~staged:(Graph.staged_value graph lane staged)
             |> Bind.pack_staged_switch)
           ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
       with
@@ -640,7 +640,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       Graph.collect_staged_bind_switch_invalidations graph lane ~init:[]
         ~staged_switch:(fun _bind ->
           Bind.staged_switch ~owner:None ~current:(Transaction.current staged)
-            ~staged:(Graph.staged_value graph staged)
+            ~staged:(Graph.staged_value graph lane staged)
           |> Bind.pack_staged_switch)
         ~collect_old_scope:(fun acc ~owner:_ _scope -> acc)
     with
