@@ -1108,10 +1108,10 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_signal (P signal) =
     if signal.valid then signal.dirty <- false
 
-  let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
+  let stage_bind_switch (type a b) lane (bind : (a, b) bind) source_value inner
       scope =
-    Graph.stage_bind_switch graph (B bind) bind.snapshot ~source_value ~inner
-      ~scope
+    Graph.stage_bind_switch graph lane (B bind) bind.snapshot ~source_value
+      ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =
@@ -1570,7 +1570,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)
         ~stage_switch:(fun ~source_value ~inner ~scope ->
-          stage_bind_switch bind source_value inner scope)
+          stage_bind_switch lane bind source_value inner scope)
         ~stage_dependencies:(stage_dependency_versions signal)
         ~stage_value:(stage_signal signal)
     in

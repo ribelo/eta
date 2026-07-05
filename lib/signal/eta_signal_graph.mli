@@ -317,6 +317,7 @@ val reachable_ids :
 
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'bind ->
   ('source, 'inner, 'scope) Eta_signal_bind.snapshot
   Eta_signal_transaction.staged ->

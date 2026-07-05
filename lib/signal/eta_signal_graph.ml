@@ -450,14 +450,14 @@ let reachable_ids t ops ~roots =
       Hashtbl.replace seen (ops.reachable_id node) ();
       seen)
 
-let remember_staged_bind t bind =
+let remember_staged_bind t _lane bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
 
-let stage_bind_switch t bind snapshot ~source_value ~inner ~scope =
+let stage_bind_switch t lane bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
     (Eta_signal_stabilization.active_transaction t.stabilization)
     snapshot
-    ~remember:(fun () -> remember_staged_bind t bind)
+    ~remember:(fun () -> remember_staged_bind t lane bind)
     ~source_value ~inner ~scope
 
 let graph_error_of_bind_switch_error = function

@@ -599,10 +599,10 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Transaction.create_staged
       (Bind.switch ~source_value:0 ~inner:"old" ~scope:1)
   in
-  let stage_twice () =
-    Graph.stage_bind_switch graph "bind" staged ~source_value:1
+  let stage_twice lane =
+    Graph.stage_bind_switch graph lane "bind" staged ~source_value:1
       ~inner:"inner" ~scope:2;
-    Graph.stage_bind_switch graph "bind" staged ~source_value:2
+    Graph.stage_bind_switch graph lane "bind" staged ~source_value:2
       ~inner:"next" ~scope:3;
     let snapshot = Graph.read_effective graph staged in
     Alcotest.(check (option string)) "staged inner" (Some "next")
@@ -651,7 +651,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Graph.stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
-      ~stage_pending:(fun _context _pending -> stage_twice ())
+      ~stage_pending:(fun context _pending -> stage_twice context)
       ~plan_staged_binds:(fun _context _observers -> ())
       ~commit_staging:(fun _context staging ->
         let commit_context =
