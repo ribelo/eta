@@ -433,23 +433,3 @@ val collect_event :
   'capability ->
   'observer ->
   'event option
-
-module Event : sig
-  type ('a, 'after_ack) plan
-
-  val plan :
-    equal:('a -> 'a -> bool) ->
-    changed:bool ->
-    value:'a ->
-    ('a, 'after_ack) Delivery.t ->
-    ('a, 'after_ack) plan
-
-  val plan_result :
-    ('a, 'after_ack) plan ->
-    result:
-      (value:'a Value.t ->
-      update:'a Update.t option ->
-      delivery:('a, 'after_ack) Delivery.t option ->
-      'result) ->
-    'result
-end

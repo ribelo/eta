@@ -703,20 +703,3 @@ let collect_event port capability observer =
           Option.map
             (port.collection_make_event capability observer)
             update)
-
-module Event = struct
-  type ('a, 'after_ack) plan = {
-    value : 'a Value.t;
-    update : 'a Update.t option;
-    delivery : ('a, 'after_ack) Delivery.t option;
-  }
-
-  let plan ~equal ~changed ~value delivery =
-    let value, update, delivery =
-      plan_event_parts ~equal ~changed ~value delivery
-    in
-    { value; update; delivery }
-
-  let plan_result plan ~result =
-    result ~value:plan.value ~update:plan.update ~delivery:plan.delivery
-end

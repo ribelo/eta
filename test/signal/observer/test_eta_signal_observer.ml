@@ -1471,68 +1471,63 @@ let test_snapshot_event_plan () =
       Alcotest.(check string) "suppressed delivery" "delivered"
         (Observer.Delivery.label (Observer.Snapshot.delivery snapshot)))
 
-let check_event_plan label ~expected_value ~expected_update ~expected_delivery
-    plan =
-  Observer.Event.plan_result plan
-    ~result:(fun ~value:planned_value ~update:planned_update
-                 ~delivery:planned_delivery ->
-      Alcotest.(check (option update)) (label ^ " update") expected_update
-        planned_update;
-      Alcotest.(check (option delivery))
-        (label ^ " delivery") expected_delivery planned_delivery;
-      Alcotest.(check int)
-        (label ^ " current value")
-        expected_value
-        (match planned_value with
-        | Observer.Value.Current value -> value
-        | Observer.Value.Uninitialized | Observer.Value.Failed_without_current ->
-            Alcotest.fail "expected current observer value"))
+let check_snapshot_event_plan label ~delivery ~changed ~value
+    ~expected_value ~expected_update ~expected_delivery_label =
+  let snapshot =
+    Observer.Snapshot.create ~value:Observer.Value.uninitialized ~delivery
+  in
+  Observer.Snapshot.plan_event ~equal:Int.equal ~changed ~value snapshot
+  |> Observer.Snapshot.event_plan ~plan:(fun ~snapshot ~update:planned_update ->
+         Alcotest.(check (option update)) (label ^ " update") expected_update
+           planned_update;
+         Alcotest.(check string)
+           (label ^ " delivery") expected_delivery_label
+           (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
+         Alcotest.(check int)
+           (label ^ " current value")
+           expected_value
+           (match Observer.Value.read (Observer.Snapshot.value snapshot) with
+           | Ok value -> value
+           | Error _ -> Alcotest.fail "expected current observer value"))
 
 let test_event_plan_initializes_and_suppresses_unchanged () =
   let open Observer.Delivery in
-  check_event_plan "initial"
+  check_snapshot_event_plan "initial"
+    ~delivery:Observer_never_delivered ~changed:false ~value:1
+    ~expected_value:1 ~expected_delivery_label:"never_delivered"
+    ~expected_update:(Some (Observer.Update.Initialized 1));
+  check_snapshot_event_plan "unchanged"
+    ~delivery:(Observer_delivered 1) ~changed:false ~value:1
     ~expected_value:1
-    ~expected_update:(Some (Observer.Update.Initialized 1))
-    ~expected_delivery:None
-    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
-       Observer_never_delivered);
-  check_event_plan "unchanged"
-    ~expected_value:1
-    ~expected_update:None ~expected_delivery:None
-    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
-       (Observer_delivered 1))
+    ~expected_update:None ~expected_delivery_label:"delivered"
 
 let test_event_plan_changed_and_cutoff () =
   let open Observer.Delivery in
-  check_event_plan "changed"
+  check_snapshot_event_plan "changed"
+    ~delivery:(Observer_delivered 1) ~changed:true ~value:2
     ~expected_value:2
     ~expected_update:
       (Some (Observer.Update.Changed { old_value = 1; new_value = 2 }))
-    ~expected_delivery:None
-    (Observer.Event.plan ~equal:Int.equal ~changed:true ~value:2
-       (Observer_delivered 1));
-  check_event_plan "equal cutoff"
+    ~expected_delivery_label:"delivered";
+  check_snapshot_event_plan "equal cutoff"
+    ~delivery:(Observer_delivered 1) ~changed:true ~value:1
     ~expected_value:1
-    ~expected_update:None
-    ~expected_delivery:(Some (Observer_delivered 1))
-    (Observer.Event.plan ~equal:Int.equal ~changed:true ~value:1
-       (Observer_delivered 1))
+    ~expected_update:None ~expected_delivery_label:"delivered"
 
 let test_event_plan_pending_delivery () =
   let open Observer.Delivery in
-  check_event_plan "pending changed"
+  check_snapshot_event_plan "pending changed"
+    ~delivery:(Observer_delivery_pending (7, update_changed, []))
+    ~changed:false ~value:2
     ~expected_value:2
     ~expected_update:
       (Some (Observer.Update.Changed { old_value = 1; new_value = 2 }))
-    ~expected_delivery:None
-    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:2
-       (Observer_delivery_pending (7, update_changed, [])));
-  check_event_plan "pending reverted"
+    ~expected_delivery_label:"pending";
+  check_snapshot_event_plan "pending reverted"
+    ~delivery:(Observer_delivery_pending (7, update_changed, []))
+    ~changed:false ~value:1
     ~expected_value:1
-    ~expected_update:None
-    ~expected_delivery:(Some (Observer_delivered 1))
-    (Observer.Event.plan ~equal:Int.equal ~changed:false ~value:1
-       (Observer_delivery_pending (7, update_changed, [])))
+    ~expected_update:None ~expected_delivery_label:"delivered"
 
 let () =
   Alcotest.run "eta_signal_observer"
