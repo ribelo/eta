@@ -179,6 +179,15 @@ type ('observer, 'live, 'value, 'hook) lifecycle_port = {
   lifecycle_remove : 'observer -> unit;
 }
 
+let lifecycle_port ~state ~set_state ~value ~finish_hooks ~remove =
+  {
+    lifecycle_state = state;
+    lifecycle_set_state = set_state;
+    lifecycle_value = value;
+    lifecycle_finish_hooks = finish_hooks;
+    lifecycle_remove = remove;
+  }
+
 let activate_observer port observer =
   match Lifecycle.activate (port.lifecycle_state observer) with
   | Ok state ->
@@ -474,6 +483,14 @@ type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port = {
   delivery_run_after_ack : 'capability -> 'after_ack list -> unit;
 }
 
+let delivery_port ~live ~snapshot ~set_snapshot ~run_after_ack =
+  {
+    delivery_live = live;
+    delivery_snapshot = snapshot;
+    delivery_set_snapshot = set_snapshot;
+    delivery_run_after_ack = run_after_ack;
+  }
+
 let acknowledge_delivery port capability observer token update ~after_ack =
   match port.delivery_live capability observer with
   | None -> ()
@@ -545,10 +562,25 @@ type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
     (unit, 'error) Eta.Effect.t;
 }
 
+let delivery_event_port ~active ~construct ~run_callback =
+  {
+    event_active = active;
+    event_construct = construct;
+    event_run_callback = run_callback;
+  }
+
 type 'capability delivery_event_access = {
   event_with_delivery_access :
     'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
+
+let delivery_event_access :
+    type capability.
+    with_delivery_access:
+      ('a 'error. (capability -> 'a) -> ('a, 'error) Eta.Effect.t) ->
+    capability delivery_event_access =
+ fun ~with_delivery_access ->
+  { event_with_delivery_access = with_delivery_access }
 
 let make_delivery_handle ~access delivery_port ~observer ~token update =
   Delivery_handle.create ~token ~update
@@ -621,6 +653,18 @@ type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
   collection_make_event :
     'capability -> 'observer -> 'a Update.t -> 'event;
 }
+
+let collection_port ~live ~skip ~compute ~snapshot ~stage_snapshot ~equal
+    ~make_event =
+  {
+    collection_live = live;
+    collection_skip = skip;
+    collection_compute = compute;
+    collection_snapshot = snapshot;
+    collection_stage_snapshot = stage_snapshot;
+    collection_equal = equal;
+    collection_make_event = make_event;
+  }
 
 let collect_event port capability observer =
   match port.collection_live capability observer with

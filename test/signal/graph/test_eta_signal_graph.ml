@@ -385,40 +385,31 @@ let test_observer_delivery_plan_owns_sorted_collection () =
   Graph.add_observer graph inactive;
   Graph.add_observer graph first;
   let collection =
-    {
-      Observer.collection_live =
-        (fun cap observer ->
-          check_cap cap;
-          observer.live);
-      collection_skip =
-        (fun cap observer ->
-          check_cap cap;
-          observer.id = 99);
-      collection_compute =
-        (fun cap observer ->
-          check_cap cap;
-          record events ("compute:" ^ string_of_int observer.id);
-          (observer.id * 10, true));
-      collection_snapshot =
-        (fun cap live ->
-          check_cap cap;
-          live.snapshot);
-      collection_stage_snapshot =
-        (fun cap live snapshot ->
-          check_cap cap;
-          live.snapshot <- snapshot;
-          record events
-            ("stage:"
-            ^ Observer.Value.label (Observer.Snapshot.value snapshot)));
-      collection_equal = (fun _observer -> Int.equal);
-      collection_make_event =
-        (fun cap observer update ->
-          check_cap cap;
-          let label = update_label update in
-          record events
-            ("event:" ^ string_of_int observer.id ^ ":" ^ label);
-          "event:" ^ string_of_int observer.id ^ ":" ^ label);
-    }
+    Observer.collection_port
+      ~live:(fun cap observer ->
+        check_cap cap;
+        observer.live)
+      ~skip:(fun cap observer ->
+        check_cap cap;
+        observer.id = 99)
+      ~compute:(fun cap observer ->
+        check_cap cap;
+        record events ("compute:" ^ string_of_int observer.id);
+        (observer.id * 10, true))
+      ~snapshot:(fun cap live ->
+        check_cap cap;
+        live.snapshot)
+      ~stage_snapshot:(fun cap live snapshot ->
+        check_cap cap;
+        live.snapshot <- snapshot;
+        record events
+          ("stage:" ^ Observer.Value.label (Observer.Snapshot.value snapshot)))
+      ~equal:(fun _observer -> Int.equal)
+      ~make_event:(fun cap observer update ->
+        check_cap cap;
+        let label = update_label update in
+        record events ("event:" ^ string_of_int observer.id ^ ":" ^ label);
+        "event:" ^ string_of_int observer.id ^ ":" ^ label)
   in
   let collect_event cap observer =
     Observer.collect_event collection cap observer

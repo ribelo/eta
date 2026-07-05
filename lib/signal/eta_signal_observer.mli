@@ -110,14 +110,15 @@ module Lifecycle : sig
     value_of_live:('live -> 'a Value.t) -> ('live, 'a Value.t) t -> 'a
 end
 
-type ('observer, 'live, 'value, 'hook) lifecycle_port = {
-  lifecycle_state : 'observer -> ('live, 'value) Lifecycle.t;
-  lifecycle_set_state :
-    'observer -> ('live, 'value) Lifecycle.t -> unit;
-  lifecycle_value : 'live -> 'value;
-  lifecycle_finish_hooks : 'live -> Lifecycle.finish_reason -> 'hook list;
-  lifecycle_remove : 'observer -> unit;
-}
+type ('observer, 'live, 'value, 'hook) lifecycle_port
+
+val lifecycle_port :
+  state:('observer -> ('live, 'value) Lifecycle.t) ->
+  set_state:('observer -> ('live, 'value) Lifecycle.t -> unit) ->
+  value:('live -> 'value) ->
+  finish_hooks:('live -> Lifecycle.finish_reason -> 'hook list) ->
+  remove:('observer -> unit) ->
+  ('observer, 'live, 'value, 'hook) lifecycle_port
 
 val activate_observer :
   ('observer, 'live, 'value, 'hook) lifecycle_port ->
@@ -303,13 +304,15 @@ module Snapshot : sig
     ('a, 'after_ack) event_plan
 end
 
-type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port = {
-  delivery_live : 'capability -> 'observer -> 'live option;
-  delivery_snapshot : 'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
-  delivery_set_snapshot :
-    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
-  delivery_run_after_ack : 'capability -> 'after_ack list -> unit;
-}
+type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port
+
+val delivery_port :
+  live:('capability -> 'observer -> 'live option) ->
+  snapshot:('capability -> 'live -> ('a, 'after_ack) Snapshot.t) ->
+  set_snapshot:
+    ('capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit) ->
+  run_after_ack:('capability -> 'after_ack list -> unit) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port
 
 val acknowledge_delivery :
   ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
@@ -349,25 +352,29 @@ val mark_failed_without_current :
   'observer ->
   unit
 
-type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
-  event_active : 'capability -> 'observer -> bool;
-  event_construct :
-    'capability ->
+type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
+
+val delivery_event_port :
+  active:('capability -> 'observer -> bool) ->
+  construct:
+    ('capability ->
     'observer ->
     Delivery.token ->
     'a Update.t ->
-    ('callback option, 'error) result;
-  event_run_callback :
-    'observer ->
+    ('callback option, 'error) result) ->
+  run_callback:
+    ('observer ->
     Delivery.token ->
     'callback ->
-    (unit, 'error) Eta.Effect.t;
-}
+    (unit, 'error) Eta.Effect.t) ->
+  ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
 
-type 'capability delivery_event_access = {
-  event_with_delivery_access :
-    'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
-}
+type 'capability delivery_event_access
+
+val delivery_event_access :
+  with_delivery_access:
+    ('a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t) ->
+  'capability delivery_event_access
 
 val make_delivery_handle :
   access:'capability delivery_event_access ->
@@ -387,18 +394,18 @@ val make_delivery_event :
   ('capability, 'callback, 'error) Delivery_event.t
 
 type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
-     collection_port = {
-  collection_live : 'capability -> 'observer -> 'live option;
-  collection_skip : 'capability -> 'observer -> bool;
-  collection_compute : 'capability -> 'observer -> 'a * bool;
-  collection_snapshot :
-    'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
-  collection_stage_snapshot :
-    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
-  collection_equal : 'observer -> 'a -> 'a -> bool;
-  collection_make_event :
-    'capability -> 'observer -> 'a Update.t -> 'event;
-}
+     collection_port
+
+val collection_port :
+  live:('capability -> 'observer -> 'live option) ->
+  skip:('capability -> 'observer -> bool) ->
+  compute:('capability -> 'observer -> 'a * bool) ->
+  snapshot:('capability -> 'live -> ('a, 'after_ack) Snapshot.t) ->
+  stage_snapshot:
+    ('capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit) ->
+  equal:('observer -> 'a -> 'a -> bool) ->
+  make_event:('capability -> 'observer -> 'a Update.t -> 'event) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'event) collection_port
 
 val collect_event :
   ('capability, 'observer, 'live, 'a, 'after_ack, 'event)

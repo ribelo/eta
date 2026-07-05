@@ -610,26 +610,20 @@ let test_lifecycle_port_owns_activation_finish_and_removal () =
   in
   let removed = ref false in
   let port =
-    {
-      Observer.lifecycle_state = (fun _observer -> !state);
-      lifecycle_set_state =
-        (fun _observer next ->
-          state := next;
-          record events ("state:" ^ Observer.Lifecycle.label next));
-      lifecycle_value =
-        (fun live -> Observer.Value.current (String.length live));
-      lifecycle_finish_hooks =
-        (fun live reason ->
-          [
-            (fun () ->
-              record events
-                ("hook:" ^ live ^ ":" ^ finish_reason_label reason));
-          ]);
-      lifecycle_remove =
-        (fun _observer ->
-          removed := true;
-          record events "remove");
-    }
+    Observer.lifecycle_port ~state:(fun _observer -> !state)
+      ~set_state:(fun _observer next ->
+        state := next;
+        record events ("state:" ^ Observer.Lifecycle.label next))
+      ~value:(fun live -> Observer.Value.current (String.length live))
+      ~finish_hooks:(fun live reason ->
+        [
+          (fun () ->
+            record events
+              ("hook:" ^ live ^ ":" ^ finish_reason_label reason));
+        ])
+      ~remove:(fun _observer ->
+        removed := true;
+        record events "remove")
   in
   (match Observer.activate_observer port "observer" with
   | Ok _ -> ()
@@ -666,12 +660,10 @@ let test_delivery_port_marks_failed_without_current () =
     ref Observer.Snapshot.initial
   in
   let port =
-    {
-      Observer.delivery_live = (fun () () -> Some ());
-      delivery_snapshot = (fun () () -> !snapshot);
-      delivery_set_snapshot = (fun () () next -> snapshot := next);
-      delivery_run_after_ack = (fun () _actions -> ());
-    }
+    Observer.delivery_port ~live:(fun () () -> Some ())
+      ~snapshot:(fun () () -> !snapshot)
+      ~set_snapshot:(fun () () next -> snapshot := next)
+      ~run_after_ack:(fun () _actions -> ())
   in
   Observer.mark_failed_without_current port () ();
   (match Observer.Value.read (Observer.Snapshot.value !snapshot) with
@@ -709,38 +701,31 @@ let test_collect_event_stages_snapshot_and_constructs_event () =
   in
   let observer = { live = Some live } in
   let port =
-    {
-      Observer.collection_live =
-        (fun capability observer ->
-          check_observer_capability capability;
-          observer.live);
-      collection_skip =
-        (fun capability _observer ->
-          check_observer_capability capability;
-          false);
-      collection_compute =
-        (fun capability _observer ->
-          check_observer_capability capability;
-          record events "compute";
-          (1, true));
-      collection_snapshot =
-        (fun capability live ->
-          check_observer_capability capability;
-          live.snapshot);
-      collection_stage_snapshot =
-        (fun capability live snapshot ->
-          check_observer_capability capability;
-          live.snapshot <- snapshot;
-          record events
-            ("stage:"
-            ^ Observer.Value.label (Observer.Snapshot.value snapshot)));
-      collection_equal = (fun _observer -> Int.equal);
-      collection_make_event =
-        (fun capability _observer update ->
-          check_observer_capability capability;
-          record events "event";
-          update);
-    }
+    Observer.collection_port
+      ~live:(fun capability observer ->
+        check_observer_capability capability;
+        observer.live)
+      ~skip:(fun capability _observer ->
+        check_observer_capability capability;
+        false)
+      ~compute:(fun capability _observer ->
+        check_observer_capability capability;
+        record events "compute";
+        (1, true))
+      ~snapshot:(fun capability live ->
+        check_observer_capability capability;
+        live.snapshot)
+      ~stage_snapshot:(fun capability live snapshot ->
+        check_observer_capability capability;
+        live.snapshot <- snapshot;
+        record events
+          ("stage:"
+          ^ Observer.Value.label (Observer.Snapshot.value snapshot)))
+      ~equal:(fun _observer -> Int.equal)
+      ~make_event:(fun capability _observer update ->
+        check_observer_capability capability;
+        record events "event";
+        update)
   in
   Alcotest.(check (option update))
     "event" (Some (Observer.Update.Initialized 1))
@@ -762,26 +747,20 @@ let test_collect_event_skips_inactive_and_invalidated_observers () =
   let inactive = { live = None } in
   let skipped = { live = Some live } in
   let port =
-    {
-      Observer.collection_live =
-        (fun _capability observer -> observer.live);
-      collection_skip =
-        (fun _capability observer -> observer == skipped);
-      collection_compute =
-        (fun _capability _observer ->
-          record events "compute";
-          (2, true));
-      collection_snapshot = (fun _capability live -> live.snapshot);
-      collection_stage_snapshot =
-        (fun _capability live snapshot ->
-          live.snapshot <- snapshot;
-          record events "stage");
-      collection_equal = (fun _observer -> Int.equal);
-      collection_make_event =
-        (fun _capability _observer update ->
-          record events "event";
-          update);
-    }
+    Observer.collection_port
+      ~live:(fun _capability observer -> observer.live)
+      ~skip:(fun _capability observer -> observer == skipped)
+      ~compute:(fun _capability _observer ->
+        record events "compute";
+        (2, true))
+      ~snapshot:(fun _capability live -> live.snapshot)
+      ~stage_snapshot:(fun _capability live snapshot ->
+        live.snapshot <- snapshot;
+        record events "stage")
+      ~equal:(fun _observer -> Int.equal)
+      ~make_event:(fun _capability _observer update ->
+        record events "event";
+        update)
   in
   Alcotest.(check (option update)) "inactive" None
     (Observer.collect_event port observer_capability inactive);
@@ -1141,34 +1120,28 @@ let test_snapshot_finish_running_delivery () =
       Alcotest.fail "expected acknowledgement"
 
 let observer_delivery_port events =
-  {
-    Observer.delivery_live =
-      (fun capability observer ->
-        check_observer_capability capability;
-        observer.live);
-    delivery_snapshot =
-      (fun capability live ->
-        check_observer_capability capability;
-        live.snapshot);
-    delivery_set_snapshot =
-      (fun capability live snapshot ->
-        check_observer_capability capability;
-        live.snapshot <- snapshot;
-        record events
-          ("set:"
-          ^ Observer.Delivery.label
-              (Observer.Snapshot.delivery snapshot)));
-    delivery_run_after_ack =
-      (fun capability actions ->
-        check_observer_capability capability;
-        List.iter
-          (fun action ->
-            record events
-              (match action with
-              | Stored -> "after_ack:stored"
-              | Extra -> "after_ack:extra"))
-          actions);
-  }
+  Observer.delivery_port
+    ~live:(fun capability observer ->
+      check_observer_capability capability;
+      observer.live)
+    ~snapshot:(fun capability live ->
+      check_observer_capability capability;
+      live.snapshot)
+    ~set_snapshot:(fun capability live snapshot ->
+      check_observer_capability capability;
+      live.snapshot <- snapshot;
+      record events
+        ("set:"
+        ^ Observer.Delivery.label (Observer.Snapshot.delivery snapshot)))
+    ~run_after_ack:(fun capability actions ->
+      check_observer_capability capability;
+      List.iter
+        (fun action ->
+          record events
+            (match action with
+            | Stored -> "after_ack:stored"
+            | Extra -> "after_ack:extra"))
+        actions)
 
 let test_delivery_port_claim_acknowledge_and_finish () =
   let events = ref [] in
@@ -1243,34 +1216,25 @@ let test_delivery_port_ignores_missing_or_stale_delivery () =
 
 let observer_event_port ?(run_callback = fun _observer _token _callback ->
     Eta.Effect.unit) events =
-  {
-    Observer.event_active =
-      (fun capability observer ->
-        check_observer_capability capability;
-        record events "active";
-        Option.is_some observer.live);
-    event_construct =
-      (fun capability _observer token _update ->
-        check_observer_capability capability;
-        record events ("construct:" ^ string_of_int token);
-        Ok (Some "callback"));
-    event_run_callback =
-      (fun observer token callback ->
-        Eta.Effect.sync (fun () ->
-            record events
-              ("run:" ^ string_of_int token ^ ":" ^ callback))
-        |> Eta.Effect.bind (fun () ->
-               run_callback observer token callback));
-  }
+  Observer.delivery_event_port
+    ~active:(fun capability observer ->
+      check_observer_capability capability;
+      record events "active";
+      Option.is_some observer.live)
+    ~construct:(fun capability _observer token _update ->
+      check_observer_capability capability;
+      record events ("construct:" ^ string_of_int token);
+      Ok (Some "callback"))
+    ~run_callback:(fun observer token callback ->
+      Eta.Effect.sync (fun () ->
+          record events ("run:" ^ string_of_int token ^ ":" ^ callback))
+      |> Eta.Effect.bind (fun () -> run_callback observer token callback))
 
 let observer_event_access events =
-  {
-    Observer.event_with_delivery_access =
-      (fun f ->
-        Eta.Effect.sync (fun () ->
-            record events "access";
-            f observer_capability));
-  }
+  Observer.delivery_event_access ~with_delivery_access:(fun f ->
+      Eta.Effect.sync (fun () ->
+          record events "access";
+          f observer_capability))
 
 let test_make_delivery_handle_owns_token_and_acknowledge () =
   let events = ref [] in

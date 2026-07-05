@@ -821,33 +821,26 @@ module Make (Observer_error : Observer_error) () = struct
     List.map (fun hook () -> hook reason) live.obs_on_finish
 
   let observer_lifecycle_port () =
-    {
-      Observer_core.lifecycle_state = (fun observer -> observer.obs_state);
-      lifecycle_set_state =
-        (fun observer state -> observer.obs_state <- state);
-      lifecycle_value =
-        (fun live -> Observer_snapshot.value (observer_current_snapshot live));
-      lifecycle_finish_hooks = observer_finish_hooks;
-      lifecycle_remove = remove_observer;
-    }
+    Observer_core.lifecycle_port
+      ~state:(fun observer -> observer.obs_state)
+      ~set_state:(fun observer state -> observer.obs_state <- state)
+      ~value:(fun live ->
+        Observer_snapshot.value (observer_current_snapshot live))
+      ~finish_hooks:observer_finish_hooks ~remove:remove_observer
 
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
 
   let observer_delivery_port () =
-    {
-      Observer_core.delivery_live =
-        (fun (_lane : graph_lane) observer ->
-          observer_active_live_state observer);
-      delivery_snapshot =
-        (fun (_lane : graph_lane) live -> observer_current_snapshot live);
-      delivery_set_snapshot =
-        (fun (_lane : graph_lane) live snapshot ->
-          set_observer_current live snapshot);
-      delivery_run_after_ack =
-        (fun (_lane : graph_lane) actions ->
-          run_after_ack_actions_unlocked actions);
-    }
+    Observer_core.delivery_port
+      ~live:(fun (_lane : graph_lane) observer ->
+        observer_active_live_state observer)
+      ~snapshot:(fun (_lane : graph_lane) live ->
+        observer_current_snapshot live)
+      ~set_snapshot:(fun (_lane : graph_lane) live snapshot ->
+        set_observer_current live snapshot)
+      ~run_after_ack:(fun (_lane : graph_lane) actions ->
+        run_after_ack_actions_unlocked actions)
 
   let dispose_observer_unlocked observer =
     Observer_core.dispose_observer (observer_lifecycle_port ()) observer
@@ -1889,19 +1882,15 @@ module Make (Observer_error : Observer_error) () = struct
     with Graph_error err -> Error (err :> stabilize_error)
 
   let observer_delivery_event_port () =
-    {
-      Observer_core.event_active = event_observer_active;
-      event_construct = construct_observer_effect;
-      event_run_callback =
-        (fun observer token observer_eff ->
-          run_observer_effect observer token observer_eff);
-    }
+    Observer_core.delivery_event_port ~active:event_observer_active
+      ~construct:construct_observer_effect
+      ~run_callback:(fun observer token observer_eff ->
+        run_observer_effect observer token observer_eff)
 
   let observer_delivery_event_access =
-    {
-      Observer_core.event_with_delivery_access =
-        (fun f -> with_graph_lane_access (fun lane -> f lane));
-    }
+    Observer_core.delivery_event_access
+      ~with_delivery_access:(fun f ->
+        with_graph_lane_access (fun lane -> f lane))
 
   let make_observer_event ~token observer update =
     Observer_core.make_delivery_event ~access:observer_delivery_event_access
@@ -1909,27 +1898,20 @@ module Make (Observer_error : Observer_error) () = struct
       (observer_delivery_event_port ()) ~observer ~token update
 
   let observer_collection_port () =
-    {
-      Observer_core.collection_live =
-        (fun (_lane : graph_lane) observer ->
-          observer_active_live_state observer);
-      collection_skip =
-        (fun lane observer ->
-          signal_will_be_invalidated_by_staged_bind lane
-            (P observer.obs_signal));
-      collection_compute =
-        (fun lane observer -> compute lane observer.obs_signal);
-      collection_snapshot =
-        (fun (_lane : graph_lane) live -> observer_effective_snapshot live);
-      collection_stage_snapshot =
-        (fun (_lane : graph_lane) live snapshot ->
-          Graph.stage_cell graph live.observer_snapshot snapshot);
-      collection_equal = (fun observer -> observer.obs_equal);
-      collection_make_event =
-        (fun _lane observer update ->
-          make_observer_event ~token:(current_generation ()) observer
-            update);
-    }
+    Observer_core.collection_port
+      ~live:(fun (_lane : graph_lane) observer ->
+        observer_active_live_state observer)
+      ~skip:(fun lane observer ->
+        signal_will_be_invalidated_by_staged_bind lane
+          (P observer.obs_signal))
+      ~compute:(fun lane observer -> compute lane observer.obs_signal)
+      ~snapshot:(fun (_lane : graph_lane) live ->
+        observer_effective_snapshot live)
+      ~stage_snapshot:(fun (_lane : graph_lane) live snapshot ->
+        Graph.stage_cell graph live.observer_snapshot snapshot)
+      ~equal:(fun observer -> observer.obs_equal)
+      ~make_event:(fun _lane observer update ->
+        make_observer_event ~token:(current_generation ()) observer update)
 
   let collect_observer_event lane (O observer) =
     Observer_core.collect_event (observer_collection_port ()) lane observer
