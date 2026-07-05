@@ -36,15 +36,12 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
 
 type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
   dynamic_mark_recomputed : unit -> unit;
-  dynamic_switch_changed : 'value -> bool;
+  dynamic_value_changed : 'value -> bool;
   dynamic_stage_switch :
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
   dynamic_stage_dependencies : 'dependency list -> unit;
   dynamic_stage_value : 'value -> unit;
   dynamic_current_value : unit -> 'value;
-  dynamic_recompute_with_dependencies :
-    'dependency list -> 'value -> 'value * bool;
-  dynamic_use_cached : unit -> 'value * bool;
 }
 
 type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
@@ -62,15 +59,12 @@ type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
   context_initialized : bool;
   context_dependencies_changed : 'dependency list -> bool;
   context_mark_recomputed : unit -> unit;
-  context_switch_changed : 'value -> bool;
+  context_value_changed : 'value -> bool;
   context_stage_switch :
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
   context_stage_dependencies : 'dependency list -> unit;
   context_stage_value : 'value -> unit;
   context_current_value : unit -> 'value;
-  context_recompute_with_dependencies :
-    'dependency list -> 'value -> 'value * bool;
-  context_use_cached : unit -> 'value * bool;
 }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -169,6 +163,13 @@ let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
                  dynamic_reuse_value = reuse_value;
                }))
 
+let apply_value callbacks value =
+  callbacks.dynamic_mark_recomputed ();
+  let changed = callbacks.dynamic_value_changed value in
+  if changed then callbacks.dynamic_stage_value value;
+  ( (if changed then value else callbacks.dynamic_current_value ()),
+    changed )
+
 let apply_dynamic_eval callbacks = function
   | Dynamic_switch
       {
@@ -180,7 +181,7 @@ let apply_dynamic_eval callbacks = function
       } ->
       callbacks.dynamic_mark_recomputed ();
       let changed =
-        callbacks.dynamic_switch_changed dynamic_switch_value
+        callbacks.dynamic_value_changed dynamic_switch_value
       in
       callbacks.dynamic_stage_switch ~source_value:dynamic_source_value
         ~inner:dynamic_inner ~scope:dynamic_scope;
@@ -191,9 +192,9 @@ let apply_dynamic_eval callbacks = function
         changed )
   | Dynamic_reuse_recompute
       { dynamic_reuse_dependencies; dynamic_reuse_value } ->
-      callbacks.dynamic_recompute_with_dependencies
-        dynamic_reuse_dependencies dynamic_reuse_value
-  | Dynamic_reuse_cached -> callbacks.dynamic_use_cached ()
+      callbacks.dynamic_stage_dependencies dynamic_reuse_dependencies;
+      apply_value callbacks dynamic_reuse_value
+  | Dynamic_reuse_cached -> (callbacks.dynamic_current_value (), false)
 
 let compute_dynamic context snapshot ~source_value ~source_changed =
   match
@@ -217,14 +218,11 @@ let compute_dynamic context snapshot ~source_value ~source_changed =
         (apply_dynamic_eval
            {
              dynamic_mark_recomputed = context.context_mark_recomputed;
-             dynamic_switch_changed = context.context_switch_changed;
+             dynamic_value_changed = context.context_value_changed;
              dynamic_stage_switch = context.context_stage_switch;
              dynamic_stage_dependencies = context.context_stage_dependencies;
              dynamic_stage_value = context.context_stage_value;
              dynamic_current_value = context.context_current_value;
-             dynamic_recompute_with_dependencies =
-               context.context_recompute_with_dependencies;
-             dynamic_use_cached = context.context_use_cached;
            }
            eval)
 

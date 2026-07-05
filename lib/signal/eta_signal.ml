@@ -1716,7 +1716,7 @@ module Make (Observer_error : Observer_error) () = struct
                context_mark_recomputed =
                  (fun () ->
                    Graph_core.bump_counter graph.core Graph_core.Recompute_count);
-               context_switch_changed =
+               context_value_changed =
                  (fun next ->
                    let snapshot = signal_effective_snapshot signal in
                    Graph_algorithms.Value_cutoff.changed
@@ -1729,8 +1729,6 @@ module Make (Observer_error : Observer_error) () = struct
                context_stage_dependencies = stage_dependency_versions signal;
                context_stage_value = stage_signal signal;
                context_current_value = (fun () -> current_or_raise signal);
-               context_recompute_with_dependencies = recompute_with_dependencies;
-               context_use_cached = use_cached;
              }
              (bind_effective_snapshot bind) ~source_value ~source_changed
          with

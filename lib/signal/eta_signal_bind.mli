@@ -17,15 +17,12 @@ type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
   context_initialized : bool;
   context_dependencies_changed : 'dependency list -> bool;
   context_mark_recomputed : unit -> unit;
-  context_switch_changed : 'value -> bool;
+  context_value_changed : 'value -> bool;
   context_stage_switch :
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
   context_stage_dependencies : 'dependency list -> unit;
   context_stage_value : 'value -> unit;
   context_current_value : unit -> 'value;
-  context_recompute_with_dependencies :
-    'dependency list -> 'value -> 'value * bool;
-  context_use_cached : unit -> 'value * bool;
 }
 
 val empty : ('source, 'inner, 'scope) snapshot
