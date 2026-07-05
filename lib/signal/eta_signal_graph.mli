@@ -632,35 +632,6 @@ val run_stabilization :
     graph-state finalizer; callers provide the remaining graph-specific
     pure/rollback plans. *)
 
-val finish_stabilization :
-  ( 'pending,
-    'bind,
-    'node,
-    'hook,
-    'timer,
-    'refresh,
-    'observer,
-    'weak_node,
-    'dead_node,
-    'scope_context,
-    'stream_metrics )
-  t ->
-  ( ( 'pending,
-      'bind,
-      'node,
-      'hook,
-      'timer,
-      'refresh,
-      'observer,
-      'weak_node,
-      'dead_node,
-      'scope_context,
-      'stream_metrics )
-    t,
-    Eta_signal_stabilization.delivering )
-  Eta_signal_stabilization.token ->
-  unit
-
 type 'owner stabilization_finish
 
 val create_stabilization_finish : unit -> 'owner stabilization_finish

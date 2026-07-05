@@ -814,7 +814,7 @@ let run_stabilization t capability ~timer_refresh ops =
          (Eta_signal_stabilization_pass.timer_refresh_ops
             ~clear_active_timer_refresh:(clear_timer_refresh t)))
 
-let finish_stabilization t delivering_token =
+let finish_stabilization t _lane delivering_token =
   Eta_signal_graph_state.clear_active_timer_refresh t.state;
   ignore
     (Eta_signal_stabilization.finish_delivering t.stabilization
@@ -841,12 +841,12 @@ let record_stabilization_result finish _lane result =
 let stabilization_finish_pending finish =
   Option.is_some finish.delivering_token
 
-let finish_recorded_stabilization t _lane finish =
+let finish_recorded_stabilization t lane finish =
   match finish.delivering_token with
   | None -> ()
   | Some delivering_token ->
       finish.delivering_token <- None;
-      finish_stabilization t delivering_token
+      finish_stabilization t lane delivering_token
 
 let max_dead_node_tombstones = 1024
 
