@@ -714,9 +714,6 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
-  let active_transaction () =
-    Graph.active_pure_transaction graph
-
   let stage_var_graph_value (type a) (var : a var) value =
     Graph.stage_cell graph var.graph_value value
 
@@ -1088,9 +1085,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
-    Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
-      ~remember:(fun () -> Graph.remember_staged_bind graph (B bind))
-      ~source_value ~inner ~scope
+    Graph.stage_bind_switch graph (B bind) bind.snapshot ~source_value ~inner
+      ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =

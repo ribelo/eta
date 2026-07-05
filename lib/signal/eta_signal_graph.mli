@@ -314,10 +314,17 @@ val reachable_ids :
   roots:'node list ->
   ('id, unit) Hashtbl.t
 
-val remember_staged_bind :
-  (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind -> unit
-
 val staged_binds : (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind list
+
+val stage_bind_switch :
+  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  'bind ->
+  ('source, 'inner, 'scope) Eta_signal_bind.snapshot
+  Eta_signal_transaction.staged ->
+  source_value:'source ->
+  inner:'inner ->
+  scope:'scope ->
+  unit
 
 val preflight_staged_bind_switch :
   ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
@@ -386,11 +393,6 @@ val pure_snapshot_commit_count :
 
 val set_pure_snapshot_commit_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
-
-val active_pure_transaction :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (Eta_signal_transaction.pure, Eta_signal_error.graph_error)
-  Eta_signal_transaction.t
 
 val read_effective :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

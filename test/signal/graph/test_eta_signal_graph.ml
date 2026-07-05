@@ -3,6 +3,7 @@ module Bind = Eta_signal_testable.Bind
 module Id = Eta_signal_testable.Id
 module Observer = Eta_signal_testable.Observer_core
 module Pass = Eta_signal_testable.Stabilization_pass
+module Transaction = Eta_signal_testable.Transaction
 
 type live = {
   mutable snapshot : (int, unit) Observer.Snapshot.t;
@@ -375,6 +376,97 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
     [ "compute:1"; "current:10"; "cycle:1" ]
     !events
 
+let test_stage_bind_switch_owns_transaction_staging () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let staged = Transaction.create_staged Bind.empty in
+  let stage_twice () =
+    Graph.stage_bind_switch graph "bind" staged ~source_value:1
+      ~inner:"inner" ~scope:2;
+    Graph.stage_bind_switch graph "bind" staged ~source_value:2
+      ~inner:"next" ~scope:3;
+    Alcotest.(check (list string)) "staged binds" [ "bind" ]
+      (Graph.staged_binds graph);
+    let snapshot = Graph.read_effective graph staged in
+    Alcotest.(check (option string)) "staged inner" (Some "next")
+      (Bind.inner snapshot);
+    Alcotest.(check (option int)) "staged scope" (Some 3)
+      (Bind.inner_scope snapshot)
+  in
+  let observer_plan _context =
+    Pass.observer_plan ~observers:[]
+      ~collect_events:(fun _context _observers -> [])
+      ~mark_events_pending:(fun _context _events -> ())
+  in
+  let pure =
+    Pass.pure_ops
+      ~advance_generation:(fun _context -> ())
+      ~begin_staging:(fun _context ->
+        Graph.begin_staging graph ~timer_refresh:None)
+      ~drain_pending:(fun _context -> [])
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~observer_plan
+      ~stage_pending:(fun _context _pending -> stage_twice ())
+      ~plan_staged_binds:(fun _context _observers -> ())
+      ~commit_staging:(fun _context staging ->
+        let commit_context =
+          Graph.staging_commit_context
+            ~preflight:(fun () -> record events "preflight")
+            ~commit_bind:(fun bind ->
+              record events ("commit_bind:" ^ bind);
+              [])
+            ~prepare_signal:(fun _node -> ())
+            ~commit_timer_refresh:(fun _timer -> ())
+            ~commit_signal:(fun _node -> ())
+        in
+        match Graph.commit_staging graph staging commit_context with
+        | Ok hooks -> hooks
+        | Error err ->
+            Alcotest.failf "unexpected graph error: %s"
+              (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+                 err))
+      ~update_necessity:(fun _context -> record events "update_necessity")
+  in
+  let rollback =
+    Pass.rollback_ops
+      ~rollback_staging:(fun _context _staging -> [])
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let errors =
+    Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
+      ~classify_graph_error:(fun _ -> None)
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result =
+    Graph.run_stabilization graph capability
+      (Graph.stabilization_ops ~errors ~pure ~rollback)
+  in
+  let hooks = Graph.record_stabilization_result finish result in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "events" [] events)
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Graph.finish_recorded_stabilization graph finish;
+  Alcotest.(check (list string))
+    "commit events" [ "preflight"; "commit_bind:bind"; "update_necessity" ]
+    !events;
+  let snapshot = Graph.read_effective graph staged in
+  Alcotest.(check (option string)) "committed inner" (Some "next")
+    (Bind.inner snapshot);
+  Alcotest.(check (option int)) "committed scope" (Some 3)
+    (Bind.inner_scope snapshot);
+  Alcotest.(check (list string)) "staged binds cleared" []
+    (Graph.staged_binds graph)
+
 let test_observer_delivery_plan_uses_collection_order () =
   let events = ref [] in
   let graph =
@@ -659,6 +751,8 @@ let () =
         ] );
       ( "bind switch",
         [
+          Alcotest.test_case "graph owns transaction staging" `Quick
+            test_stage_bind_switch_owns_transaction_staging;
           Alcotest.test_case "graph error boundary" `Quick
             test_staged_bind_switch_protocol_maps_graph_errors;
         ] );

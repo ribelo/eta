@@ -447,6 +447,13 @@ let remember_staged_bind t bind =
 
 let staged_binds t = Eta_signal_graph_state.staged_binds t.state
 
+let stage_bind_switch t bind snapshot ~source_value ~inner ~scope =
+  Eta_signal_bind.stage_transaction_switch
+    (Eta_signal_stabilization.active_transaction t.stabilization)
+    snapshot
+    ~remember:(fun () -> remember_staged_bind t bind)
+    ~source_value ~inner ~scope
+
 let graph_error_of_bind_switch_error = function
   | `Invalid_scope -> (`Invalid_scope : Eta_signal_error.graph_error)
 
@@ -556,8 +563,6 @@ let set_pure_snapshot_commit_count t count =
 
 let active_transaction t =
   Eta_signal_stabilization.active_transaction t.stabilization
-
-let active_pure_transaction = active_transaction
 
 let read_effective t cell =
   match Eta_signal_stabilization.transaction t.stabilization with
