@@ -260,6 +260,8 @@ type ('scope, 'owner) packed_staged_switch =
       ('source, 'inner, 'scope, 'owner) staged_switch
       -> ('scope, 'owner) packed_staged_switch
 
+let pack_staged_switch switch = Packed_staged_switch switch
+
 let commit_staged_switch switch ~detach_old_inner ~invalidate_old_scope
     ~attach_new_inner =
   match (switch.owner, switch.staged) with

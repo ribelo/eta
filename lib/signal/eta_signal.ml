@@ -1159,7 +1159,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~staged:(bind_staged_snapshot bind)
 
   let packed_bind_staged_switch (B bind) =
-    Bind.Packed_staged_switch
+    Bind.pack_staged_switch
       (Bind.staged_switch
          ~owner:(Option.map (fun owner -> P owner) bind.owner)
          ~current:(bind_current_snapshot bind)

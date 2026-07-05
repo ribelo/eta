@@ -131,7 +131,7 @@ let test_staged_switch_preflight_uses_owner_for_old_scope () =
         "collected" [ ("owner", 1) ] !collected
   | Error `Invalid_scope -> Alcotest.fail "expected preflight"
 
-let packed_staged_switch switch = Bind.Packed_staged_switch switch
+let packed_staged_switch = Bind.pack_staged_switch
 
 let test_collect_staged_switch_invalidations_collects_old_scopes () =
   let first =

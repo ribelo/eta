@@ -81,10 +81,11 @@ val staged_switch :
   staged:('source, 'inner, 'scope) snapshot option ->
   ('source, 'inner, 'scope, 'owner) staged_switch
 
-type ('scope, 'owner) packed_staged_switch =
-  | Packed_staged_switch :
-      ('source, 'inner, 'scope, 'owner) staged_switch
-      -> ('scope, 'owner) packed_staged_switch
+type ('scope, 'owner) packed_staged_switch
+
+val pack_staged_switch :
+  ('source, 'inner, 'scope, 'owner) staged_switch ->
+  ('scope, 'owner) packed_staged_switch
 
 val commit_staged_switch :
   ('source, 'inner, 'scope, 'owner) staged_switch ->
