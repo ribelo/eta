@@ -315,20 +315,20 @@ let detach_node_edges t ops node =
   ops.edge_set_dependents node [];
   (dependencies, dependents)
 
-let mark_dirty _t ops node = ops.dirty_set node true
+let mark_dirty _t _lane ops node = ops.dirty_set node true
 
 let same_dirty_node ops node (candidate, _) =
   ops.dirty_equal_id (ops.dirty_id node) (ops.dirty_id candidate)
 
-let mark_dirty_recording_previous t ops entries node =
+let mark_dirty_recording_previous t lane ops entries node =
   let entries =
     if List.exists (same_dirty_node ops node) entries then entries
     else (node, ops.dirty node) :: entries
   in
-  mark_dirty t ops node;
+  mark_dirty t lane ops node;
   entries
 
-let restore_dirty _t ops entries =
+let restore_dirty _t _lane ops entries =
   List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
 let generation t = Eta_signal_graph_state.generation t.state
@@ -613,7 +613,7 @@ let next_timer_refresh_token t =
 let set_next_timer_refresh_token t token =
   Eta_signal_graph_state.set_next_timer_refresh_token t.state token
 
-let mark_timer_refresh_dirty t ~mark ~record =
+let mark_timer_refresh_dirty t _lane ~mark ~record =
   match Eta_signal_graph_state.active_timer_refresh t.state with
   | None -> mark ()
   | Some refresh -> record refresh

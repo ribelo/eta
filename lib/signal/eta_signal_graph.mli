@@ -228,12 +228,14 @@ val detach_node_edges :
 
 val mark_dirty :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) dirty_ops ->
   'node ->
   unit
 
 val mark_dirty_recording_previous :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) dirty_ops ->
   ('node * bool) list ->
   'node ->
@@ -241,6 +243,7 @@ val mark_dirty_recording_previous :
 
 val restore_dirty :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) dirty_ops ->
   ('node * bool) list ->
   unit
@@ -426,6 +429,7 @@ val set_next_timer_refresh_token :
 
 val mark_timer_refresh_dirty :
   (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  lane_access ->
   mark:(unit -> unit) ->
   record:('refresh -> unit) ->
   unit

@@ -693,15 +693,15 @@ module Make (Observer_error : Observer_error) () = struct
   let attach_packed_dependency parent child =
     Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child
 
-  let mark_self_dirty packed =
-    Graph.mark_dirty graph dirty_ops packed
+  let mark_self_dirty lane packed =
+    Graph.mark_dirty graph lane dirty_ops packed
 
-  let mark_timer_refresh_dirty packed =
-    Graph.mark_timer_refresh_dirty graph
-      ~mark:(fun () -> Graph.mark_dirty graph dirty_ops packed)
+  let mark_timer_refresh_dirty lane packed =
+    Graph.mark_timer_refresh_dirty graph lane
+      ~mark:(fun () -> Graph.mark_dirty graph lane dirty_ops packed)
       ~record:(fun context ->
         Timer_policy.set_refresh_dirty_items context
-          (Graph.mark_dirty_recording_previous graph dirty_ops
+          (Graph.mark_dirty_recording_previous graph lane dirty_ops
              (Timer_policy.refresh_dirty_items context)
              packed))
 
@@ -1258,20 +1258,22 @@ module Make (Observer_error : Observer_error) () = struct
     publish_source_current source.source_value value;
     queue_var_unlocked lane source
 
-  let stage_timer_source_value (type a) (source : a var) value =
+  let stage_timer_source_value (type a) lane (source : a var) value =
     let graph_value = effective_var_value source in
     stage_var_source_value source value;
     if not (source.var_equal graph_value value) then (
       stage_var_graph_value source value;
-      List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
+      List.iter
+        (mark_timer_refresh_dirty lane)
+        (source_watchers_unlocked source))
 
   let timer_finish_unlocked timer =
     Timer.finish_node ~advance_generation:(checked_succ "timer generation")
       timer_state_port timer
 
-  let stage_timer_transition timer = function
+  let stage_timer_transition lane timer = function
     | Set_source (source, value) ->
-        stage_timer_source_value source value
+        stage_timer_source_value lane source value
     | Advance_due next_due_ms ->
         stage_timer_state_unlocked timer
           (timer_set_next_due_state (timer_effective_state timer)
@@ -1293,9 +1295,9 @@ module Make (Observer_error : Observer_error) () = struct
       ~current_value:(effective_var_value source) ~now_ms spec
     |> List.map (timer_refresh_action source)
 
-  let stage_timer_refresh_operation timer now_ms operation =
+  let stage_timer_refresh_operation lane timer now_ms operation =
     List.iter
-      (stage_timer_transition timer)
+      (stage_timer_transition lane timer)
       (timer_refresh_plan timer now_ms operation)
 
   let clear_timer_refresh_timer_staging timer =
@@ -1308,7 +1310,7 @@ module Make (Observer_error : Observer_error) () = struct
     let context =
       Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
         ~rollback_timer_refresh_dirty:(fun context ->
-          Graph.restore_dirty graph dirty_ops
+          Graph.restore_dirty graph lane dirty_ops
             (Timer_policy.refresh_dirty_items context);
           Timer_policy.clear_refresh_dirty_items context)
         ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
@@ -1341,14 +1343,14 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok token -> token
     | Error err -> raise (Graph_error err)
 
-  let stage_pending_var (_lane : graph_lane) (V var) =
+  let stage_pending_var lane (V var) =
     let graph_value = Transaction.current var.graph_value in
     let source_value = Transaction.current var.source_value in
     if not (var.var_equal graph_value source_value) then (
       stage_var_graph_value var source_value;
-      List.iter mark_self_dirty (source_watchers_unlocked var))
+      List.iter (mark_self_dirty lane) (source_watchers_unlocked var))
 
-  let refresh_timer_source_for_compute signal =
+  let refresh_timer_source_for_compute lane signal =
     Graph.with_timer_refresh_timer graph signal.timer
       ~none:(fun () -> ())
       ~some:(fun timer_refresh timer ->
@@ -1360,7 +1362,7 @@ module Make (Observer_error : Observer_error) () = struct
             ~effective_state:timer_effective_state
             ~remember:remember_timer_refresh_timer
             ~run_operation:(fun timer ~now_ms operation ->
-              stage_timer_refresh_operation timer now_ms operation)
+              stage_timer_refresh_operation lane timer now_ms operation)
             timer_refresh timer
         with
         | Ok () -> ()
@@ -1369,7 +1371,7 @@ module Make (Observer_error : Observer_error) () = struct
   let rec compute : type a. graph_lane -> a signal -> a * bool =
    fun lane signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
-    refresh_timer_source_for_compute signal;
+    refresh_timer_source_for_compute lane signal;
     Graph.compute_cached graph compute_ops (P signal)
       ~current:(fun _compute_node -> effective_signal_value signal)
       ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
