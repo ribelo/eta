@@ -9,7 +9,7 @@ type after_ack =
 let update_initialized = Observer.Update.Initialized 1
 let update_changed = Observer.Update.Changed { old_value = 1; new_value = 2 }
 
-let after_ack =
+let after_ack_testable =
   Alcotest.testable
     (fun ppf -> function
       | Stored -> Format.pp_print_string ppf "stored"
@@ -272,7 +272,8 @@ let test_delivery_claim_release_acknowledge () =
     | None -> Alcotest.fail "acknowledge failed"
   in
   Alcotest.check delivery "delivered" (Observer_delivered 2) delivered;
-  Alcotest.(check (list after_ack)) "actions" [ Extra; Stored ] actions
+  Alcotest.(check (list after_ack_testable))
+    "actions" [ Extra; Stored ] actions
 
 let test_delivery_finish_running_acknowledges_or_releases () =
   let open Observer.Delivery in
@@ -282,8 +283,8 @@ let test_delivery_finish_running_acknowledges_or_releases () =
        ~after_ack:[ Extra ] running
    with
   | Some (Finish_acknowledged (Observer_delivered 2, actions)) ->
-      Alcotest.(check (list after_ack)) "ack actions" [ Extra; Stored ]
-        actions
+      Alcotest.(check (list after_ack_testable))
+        "ack actions" [ Extra; Stored ] actions
   | Some (Finish_acknowledged _ | Finish_released _) | None ->
       Alcotest.fail "expected acknowledged finish");
   match
@@ -326,6 +327,262 @@ let test_delivery_finish_ignores_stale_token () =
     (Option.is_none
        (finish_running ~token:8 ~update:update_changed ~delivered:false
           ~after_ack:[] running))
+
+type model_update =
+  | Model_initialized of int
+  | Model_changed of {
+      old_value : int;
+      new_value : int;
+    }
+
+type model_delivery =
+  | Model_never_delivered
+  | Model_delivered of int
+  | Model_pending of int * model_update * after_ack list
+  | Model_running of int * model_update * after_ack list
+
+type delivery_op =
+  | Op_pending of int * model_update
+  | Op_claim of int
+  | Op_release of int
+  | Op_acknowledge of int * model_update * after_ack list
+  | Op_finish of int * model_update * bool * after_ack list
+  | Op_running_token_matches of int
+
+let observer_update_of_model = function
+  | Model_initialized value -> Observer.Update.Initialized value
+  | Model_changed { old_value; new_value } ->
+      Observer.Update.Changed { old_value; new_value }
+
+let delivered_model_value = function
+  | Model_initialized value -> value
+  | Model_changed { new_value; _ } -> new_value
+
+let observer_delivery_of_model = function
+  | Model_never_delivered -> Observer.Delivery.Observer_never_delivered
+  | Model_delivered value -> Observer.Delivery.Observer_delivered value
+  | Model_pending (token, update, after_ack) ->
+      Observer.Delivery.Observer_delivery_pending
+        (token, observer_update_of_model update, after_ack)
+  | Model_running (token, update, after_ack) ->
+      Observer.Delivery.Observer_delivery_running
+        (token, observer_update_of_model update, after_ack)
+
+let model_running_token = function
+  | Model_running (token, _, _) -> Some token
+  | Model_never_delivered | Model_delivered _ | Model_pending _ -> None
+
+let model_claim token = function
+  | Model_pending (pending_token, update, after_ack)
+    when pending_token = token ->
+      Some (Model_running (pending_token, update, after_ack))
+  | Model_never_delivered | Model_delivered _ | Model_pending _
+  | Model_running _ ->
+      None
+
+let model_release token = function
+  | Model_running (running_token, update, after_ack)
+    when running_token = token ->
+      Some (Model_pending (token, update, after_ack))
+  | Model_never_delivered | Model_delivered _ | Model_pending _
+  | Model_running _ ->
+      None
+
+let model_acknowledge token update after_ack = function
+  | Model_pending (pending_token, _, stored_after_ack)
+  | Model_running (pending_token, _, stored_after_ack)
+    when pending_token = token ->
+      Some
+        ( Model_delivered (delivered_model_value update),
+          List.rev_append after_ack stored_after_ack )
+  | Model_never_delivered | Model_delivered _ | Model_pending _
+  | Model_running _ ->
+      None
+
+let model_finish token update delivered after_ack state =
+  if delivered then
+    match model_acknowledge token update after_ack state with
+    | Some (state, actions) -> Some (`Ack (state, actions))
+    | None -> None
+  else
+    match model_release token state with
+    | Some state -> Some (`Release state)
+    | None -> None
+
+let model_update random =
+  match Random.State.int random 3 with
+  | 0 -> Model_initialized (Random.State.int random 20)
+  | _ ->
+      let old_value = Random.State.int random 20 in
+      let new_value = Random.State.int random 20 in
+      Model_changed { old_value; new_value }
+
+let model_after_ack_list random =
+  let rec loop acc = function
+    | 0 -> acc
+    | count ->
+        let action =
+          if Random.State.bool random then Stored else Extra
+        in
+        loop (action :: acc) (count - 1)
+  in
+  loop [] (Random.State.int random 3)
+
+let delivery_op random =
+  let token = Random.State.int random 4 in
+  match Random.State.int random 6 with
+  | 0 -> Op_pending (token, model_update random)
+  | 1 -> Op_claim token
+  | 2 -> Op_release token
+  | 3 ->
+      Op_acknowledge
+        (token, model_update random, model_after_ack_list random)
+  | 4 ->
+      Op_finish
+        ( token,
+          model_update random,
+          Random.State.bool random,
+          model_after_ack_list random )
+  | _ -> Op_running_token_matches token
+
+let pp_model_update formatter = function
+  | Model_initialized value -> Format.fprintf formatter "init(%d)" value
+  | Model_changed { old_value; new_value } ->
+      Format.fprintf formatter "changed(%d,%d)" old_value new_value
+
+let pp_after_ack_list formatter actions =
+  let pp_action formatter = function
+    | Stored -> Format.pp_print_string formatter "stored"
+    | Extra -> Format.pp_print_string formatter "extra"
+  in
+  Format.fprintf formatter "[%a]"
+    (Format.pp_print_list
+       ~pp_sep:(fun formatter () -> Format.pp_print_string formatter ";")
+       pp_action)
+    actions
+
+let pp_delivery_op formatter = function
+  | Op_pending (token, update) ->
+      Format.fprintf formatter "pending(%d,%a)" token pp_model_update update
+  | Op_claim token -> Format.fprintf formatter "claim(%d)" token
+  | Op_release token -> Format.fprintf formatter "release(%d)" token
+  | Op_acknowledge (token, update, actions) ->
+      Format.fprintf formatter "ack(%d,%a,%a)" token pp_model_update update
+        pp_after_ack_list actions
+  | Op_finish (token, update, delivered, actions) ->
+      Format.fprintf formatter "finish(%d,%a,%b,%a)" token pp_model_update
+        update delivered pp_after_ack_list actions
+  | Op_running_token_matches token ->
+      Format.fprintf formatter "running_token_matches(%d)" token
+
+let check_delivery_matches_model label expected actual =
+  Alcotest.check delivery label (observer_delivery_of_model expected) actual
+
+let check_delivery_trace_step label model_state actual_state step op =
+  let step_label =
+    Format.asprintf "%s step %d %a" label step pp_delivery_op op
+  in
+  match op with
+  | Op_pending (token, update) ->
+      let next_model = Model_pending (token, update, []) in
+      let next_actual =
+        Observer.Delivery.pending_state ~token
+          (observer_update_of_model update)
+      in
+      (next_model, next_actual)
+  | Op_claim token ->
+      let model_result = model_claim token model_state in
+      let actual_result = Observer.Delivery.claim ~token actual_state in
+      Alcotest.(check bool)
+        (step_label ^ " claim result")
+        (Option.is_some model_result)
+        (Option.is_some actual_result);
+      ( Option.value model_result ~default:model_state,
+        Option.value actual_result ~default:actual_state )
+  | Op_release token ->
+      let model_result = model_release token model_state in
+      let actual_result = Observer.Delivery.release ~token actual_state in
+      Alcotest.(check bool)
+        (step_label ^ " release result")
+        (Option.is_some model_result)
+        (Option.is_some actual_result);
+      ( Option.value model_result ~default:model_state,
+        Option.value actual_result ~default:actual_state )
+  | Op_acknowledge (token, update, after_ack) ->
+      let model_result =
+        model_acknowledge token update after_ack model_state
+      in
+      let actual_result =
+        Observer.Delivery.acknowledge ~token
+          ~update:(observer_update_of_model update) ~after_ack actual_state
+      in
+      Alcotest.(check bool)
+        (step_label ^ " ack result")
+        (Option.is_some model_result)
+        (Option.is_some actual_result);
+      (match (model_result, actual_result) with
+      | Some (model_state, model_actions), Some (actual_state, actual_actions)
+        ->
+          Alcotest.(check (list after_ack_testable))
+            (step_label ^ " ack actions") model_actions actual_actions;
+          (model_state, actual_state)
+      | None, None -> (model_state, actual_state)
+      | Some _, None | None, Some _ ->
+          Alcotest.failf "%s: inconsistent ack result" step_label)
+  | Op_finish (token, update, delivered, after_ack) ->
+      let model_result =
+        model_finish token update delivered after_ack model_state
+      in
+      let actual_result =
+        Observer.Delivery.finish_running ~token
+          ~update:(observer_update_of_model update) ~delivered ~after_ack
+          actual_state
+      in
+      Alcotest.(check bool)
+        (step_label ^ " finish result")
+        (Option.is_some model_result)
+        (Option.is_some actual_result);
+      (match (model_result, actual_result) with
+      | Some (`Ack (model_state, model_actions)),
+        Some (Observer.Delivery.Finish_acknowledged
+                (actual_state, actual_actions)) ->
+          Alcotest.(check (list after_ack_testable))
+            (step_label ^ " finish actions") model_actions actual_actions;
+          (model_state, actual_state)
+      | Some (`Release model_state),
+        Some (Observer.Delivery.Finish_released actual_state) ->
+          (model_state, actual_state)
+      | None, None -> (model_state, actual_state)
+      | _ -> Alcotest.failf "%s: inconsistent finish result" step_label)
+  | Op_running_token_matches token ->
+      Alcotest.(check bool)
+        (step_label ^ " running token matches")
+        (match model_running_token model_state with
+        | Some running_token -> running_token = token
+        | None -> false)
+        (Observer.Delivery.running_token_matches ~token actual_state);
+      (model_state, actual_state)
+
+let run_delivery_generated_trace seed =
+  let label = Format.asprintf "delivery-seed-%d" seed in
+  let random = Random.State.make [| seed |] in
+  let rec loop model_state actual_state step =
+    check_delivery_matches_model
+      (Format.asprintf "%s before %d" label step)
+      model_state actual_state;
+    if step = 150 then ()
+    else
+      let op = delivery_op random in
+      let model_state, actual_state =
+        check_delivery_trace_step label model_state actual_state step op
+      in
+      loop model_state actual_state (step + 1)
+  in
+  loop Model_never_delivered Observer.Delivery.Observer_never_delivered 0
+
+let test_delivery_generated_traces_match_model () =
+  List.iter run_delivery_generated_trace
+    [ 1; 2; 3; 5; 8; 13; 21; 34; 55; 89 ]
 
 let test_delivery_labels () =
   let open Observer.Delivery in
@@ -658,7 +915,8 @@ let test_snapshot_delivery_transitions () =
   | Some (snapshot, ack_actions) ->
       Alcotest.(check string) "acknowledged" "delivered"
         (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
-      Alcotest.(check (list after_ack)) "ack actions" [ Extra ] ack_actions
+      Alcotest.(check (list after_ack_testable))
+        "ack actions" [ Extra ] ack_actions
   | None -> Alcotest.fail "expected acknowledge")
 
 let test_snapshot_finish_running_delivery () =
@@ -684,7 +942,8 @@ let test_snapshot_finish_running_delivery () =
   | Some (Observer.Snapshot.Finish_acknowledged (snapshot, ack_actions)) ->
       Alcotest.(check string) "acknowledged" "delivered"
         (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
-      Alcotest.(check (list after_ack)) "ack actions"
+      Alcotest.(check (list after_ack_testable))
+        "ack actions"
         [ Extra; Stored ] ack_actions
   | Some (Observer.Snapshot.Finish_released _) | None ->
       Alcotest.fail "expected acknowledgement"
@@ -1025,6 +1284,8 @@ let () =
             test_delivery_ignores_stale_token;
           Alcotest.test_case "finish ignores stale token" `Quick
             test_delivery_finish_ignores_stale_token;
+          Alcotest.test_case "generated traces match model" `Quick
+            test_delivery_generated_traces_match_model;
           Alcotest.test_case "labels" `Quick test_delivery_labels;
           Alcotest.test_case "runner order" `Quick
             test_delivery_runner_orders_claimed_events;
