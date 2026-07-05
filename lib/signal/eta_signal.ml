@@ -1594,55 +1594,63 @@ module Make (Observer_error : Observer_error) () = struct
         finish_static (Graph_algorithms.Static_eval.all children)
     | Bind bind ->
         let source_value, source_changed = compute lane bind.source in
-        (match
-           Bind.compute_dynamic
-             {
-               Bind.context_equal = bind.source.equal;
-               context_source_dependency = P bind.source;
-               context_pack_inner = (fun inner -> P inner);
-               context_new_scope = (fun _lane -> new_scope signal);
-               context_selector = bind.selector;
-               context_with_scope =
-                 (fun _lane scope f ->
-                   Graph.with_current_scope graph scope_ops scope f);
-               context_validate_inner =
-                 (fun _lane scope inner ->
-                   Scope_validation.validate_inner ~scope (P inner));
-               context_compute_inner = compute;
-               context_on_switch_failure =
-                 (fun lane scope ->
-                   remember_pure_disposal_hooks
-                     (invalidate_scope lane scope));
-               context_dirty = signal.dirty;
-               context_initialized = signal_initialized ();
-               context_dependencies_changed =
-                 (fun _lane dependencies -> dependency_changed dependencies);
-               context_mark_recomputed =
-                 (fun lane ->
-                   Graph.bump_counter graph lane Graph.Recompute_count);
-               context_value_changed =
-                 (fun _lane next ->
-                   let snapshot = signal_effective_snapshot signal in
-                   Graph_algorithms.Value_cutoff.changed
-                     ~equal:signal.equal
-                     ~initialized:(Signal_snapshot.is_initialized snapshot)
-                     ~current:(Signal_snapshot.value snapshot) ~next);
-               context_stage_switch =
-                 (fun _lane ~source_value ~inner ~scope ->
-                   stage_bind_switch bind source_value inner scope);
-               context_stage_dependencies =
-                 (fun _lane dependencies ->
-                   stage_dependency_versions signal dependencies);
-               context_stage_value =
-                 (fun _lane value -> stage_signal signal value);
-               context_current_value =
-                 (fun _lane -> current_or_raise signal);
-             }
-             lane
-             (bind_effective_snapshot bind) ~source_value ~source_changed
-         with
-        | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-        | Ok result -> result)
+        compute_bind_dynamic lane signal bind source_value source_changed
+
+  and compute_bind_dynamic :
+      type source value.
+      graph_lane ->
+      value signal ->
+      (source, value) bind ->
+      source ->
+      bool ->
+      value * bool =
+   fun lane signal bind source_value source_changed ->
+    match
+      Bind.compute_dynamic
+        {
+          Bind.context_equal = bind.source.equal;
+          context_source_dependency = P bind.source;
+          context_pack_inner = (fun inner -> P inner);
+          context_new_scope = (fun _lane -> new_scope signal);
+          context_selector = bind.selector;
+          context_with_scope =
+            (fun _lane scope f ->
+              Graph.with_current_scope graph scope_ops scope f);
+          context_validate_inner =
+            (fun _lane scope inner ->
+              Scope_validation.validate_inner ~scope (P inner));
+          context_compute_inner = compute;
+          context_on_switch_failure =
+            (fun lane scope ->
+              remember_pure_disposal_hooks (invalidate_scope lane scope));
+          context_dirty = signal.dirty;
+          context_initialized =
+            Signal_snapshot.is_initialized
+              (signal_effective_snapshot signal);
+          context_dependencies_changed =
+            (fun _lane dependencies -> dependencies_changed signal dependencies);
+          context_mark_recomputed =
+            (fun lane -> Graph.bump_counter graph lane Graph.Recompute_count);
+          context_value_changed =
+            (fun _lane next ->
+              let snapshot = signal_effective_snapshot signal in
+              Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
+                ~initialized:(Signal_snapshot.is_initialized snapshot)
+                ~current:(Signal_snapshot.value snapshot) ~next);
+          context_stage_switch =
+            (fun _lane ~source_value ~inner ~scope ->
+              stage_bind_switch bind source_value inner scope);
+          context_stage_dependencies =
+            (fun _lane dependencies ->
+              stage_dependency_versions signal dependencies);
+          context_stage_value = (fun _lane value -> stage_signal signal value);
+          context_current_value = (fun _lane -> current_or_raise signal);
+        }
+        lane
+        (bind_effective_snapshot bind) ~source_value ~source_changed
+    with
+    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+    | Ok result -> result
 
   let collect_necessary_node_ids (_lane : graph_lane) =
     Graph.necessary_ids graph
