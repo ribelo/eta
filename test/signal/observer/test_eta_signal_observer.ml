@@ -625,7 +625,13 @@ let test_lifecycle_port_owns_activation_finish_and_removal () =
         : (string, int Observer.Value.t) Observer.Lifecycle.t)
   in
   let removed = ref false in
-  let port =
+  let activation =
+    Observer.activation_port ~state:(fun _observer -> !state)
+      ~set_state:(fun _observer next ->
+        state := next;
+        record events ("state:" ^ Observer.Lifecycle.label next))
+  in
+  let lifecycle =
     Observer.lifecycle_port ~state:(fun _observer -> !state)
       ~set_state:(fun _observer next ->
         state := next;
@@ -641,19 +647,19 @@ let test_lifecycle_port_owns_activation_finish_and_removal () =
         removed := true;
         record events "remove")
   in
-  (match Observer.activate_observer port "observer" with
+  (match Observer.activate_observer activation "observer" with
   | Ok _ -> ()
   | Error `Invalid_scope -> Alcotest.fail "expected activation");
   (match !state with
   | Observer.Lifecycle.Active "live" -> ()
   | _ -> Alcotest.fail "expected active observer");
-  let hooks = Observer.invalidate_observer port "observer" in
+  let hooks = Observer.invalidate_observer lifecycle "observer" in
   (match !state with
   | Observer.Lifecycle.Invalid_scope (Observer.Value.Current 4) -> ()
   | _ -> Alcotest.fail "expected invalid observer");
   Alcotest.(check bool) "invalidated observer retained" false !removed;
   List.iter (fun hook -> hook ()) hooks;
-  let hooks = Observer.dispose_observer port "observer" in
+  let hooks = Observer.dispose_observer lifecycle "observer" in
   (match !state with
   | Observer.Lifecycle.Disposed (Observer.Value.Current 4) -> ()
   | _ -> Alcotest.fail "expected disposed observer");

@@ -480,6 +480,7 @@ val add_observer :
 
 val remove_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
   keep:('observer -> bool) ->
   unit
 

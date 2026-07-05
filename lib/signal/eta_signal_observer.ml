@@ -173,6 +173,15 @@ module Lifecycle = struct
     | Active live -> Value.unsafe_read_exn (value_of_live live)
 end
 
+type ('observer, 'live, 'value) activation_port = {
+  activation_state : 'observer -> ('live, 'value) Lifecycle.t;
+  activation_set_state :
+    'observer -> ('live, 'value) Lifecycle.t -> unit;
+}
+
+let activation_port ~state ~set_state =
+  { activation_state = state; activation_set_state = set_state }
+
 type ('observer, 'live, 'value, 'hook) lifecycle_port = {
   lifecycle_state : 'observer -> ('live, 'value) Lifecycle.t;
   lifecycle_set_state :
@@ -192,9 +201,9 @@ let lifecycle_port ~state ~set_state ~value ~finish_hooks ~remove =
   }
 
 let activate_observer port observer =
-  match Lifecycle.activate (port.lifecycle_state observer) with
+  match Lifecycle.activate (port.activation_state observer) with
   | Ok state ->
-      port.lifecycle_set_state observer state;
+      port.activation_set_state observer state;
       Ok observer
   | Error `Invalid_scope -> Error `Invalid_scope
 

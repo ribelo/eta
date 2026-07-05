@@ -115,6 +115,13 @@ module Lifecycle : sig
     value_of_live:('live -> 'a Value.t) -> ('live, 'a Value.t) t -> 'a
 end
 
+type ('observer, 'live, 'value) activation_port
+
+val activation_port :
+  state:('observer -> ('live, 'value) Lifecycle.t) ->
+  set_state:('observer -> ('live, 'value) Lifecycle.t -> unit) ->
+  ('observer, 'live, 'value) activation_port
+
 type ('observer, 'live, 'value, 'hook) lifecycle_port
 
 val lifecycle_port :
@@ -126,7 +133,7 @@ val lifecycle_port :
   ('observer, 'live, 'value, 'hook) lifecycle_port
 
 val activate_observer :
-  ('observer, 'live, 'value, 'hook) lifecycle_port ->
+  ('observer, 'live, 'value) activation_port ->
   'observer ->
   ('observer, [> `Invalid_scope ]) result
 

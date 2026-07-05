@@ -660,7 +660,7 @@ let ensure_not_pure t =
 let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
-let remove_observers t ~keep = t.observers <- List.filter keep t.observers
+let remove_observers t _lane ~keep = t.observers <- List.filter keep t.observers
 let matching_observers t ~selected = List.filter selected t.observers
 
 let count_observers t ~selected =

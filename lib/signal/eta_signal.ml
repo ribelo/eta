@@ -807,20 +807,25 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_active_roots observers =
     observer_roots observer_active observers
 
-  let remove_observer observer =
-    Graph.remove_observers graph ~keep:(fun (O candidate) ->
+  let remove_observer lane observer =
+    Graph.remove_observers graph lane ~keep:(fun (O candidate) ->
         candidate.obs_id <> observer.obs_id)
 
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
 
-  let observer_lifecycle_port () =
+  let observer_activation_port () =
+    Observer_core.activation_port
+      ~state:(fun observer -> observer.obs_state)
+      ~set_state:(fun observer state -> observer.obs_state <- state)
+
+  let observer_lifecycle_port lane =
     Observer_core.lifecycle_port
       ~state:(fun observer -> observer.obs_state)
       ~set_state:(fun observer state -> observer.obs_state <- state)
       ~value:(fun live ->
         Observer_snapshot.value (observer_current_snapshot live))
-      ~finish_hooks:observer_finish_hooks ~remove:remove_observer
+      ~finish_hooks:observer_finish_hooks ~remove:(remove_observer lane)
 
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
@@ -836,19 +841,19 @@ module Make (Observer_error : Observer_error) () = struct
       ~run_after_ack:(fun (_lane : graph_lane) actions ->
         run_after_ack_actions_unlocked actions)
 
-  let dispose_observer_unlocked observer =
-    Observer_core.dispose_observer (observer_lifecycle_port ()) observer
+  let dispose_observer_unlocked lane observer =
+    Observer_core.dispose_observer (observer_lifecycle_port lane) observer
 
-  let invalidate_observer_unlocked observer =
-    Observer_core.invalidate_observer (observer_lifecycle_port ()) observer
+  let invalidate_observer_unlocked lane observer =
+    Observer_core.invalidate_observer (observer_lifecycle_port lane) observer
 
-  let dispose_signal_observers signal =
+  let dispose_signal_observers lane signal =
     let observers =
       Graph.matching_observers graph ~selected:
         (fun (O observer) -> observer.obs_signal.id = signal.id)
     in
     List.concat_map
-      (fun (O observer) -> invalidate_observer_unlocked observer)
+      (fun (O observer) -> invalidate_observer_unlocked lane observer)
       observers
 
   let validate_dependency (P signal) =
@@ -1021,7 +1026,7 @@ module Make (Observer_error : Observer_error) () = struct
       dead_timer = Option.map timer_tombstone signal.timer;
     }
 
-  let node_invalidation =
+  let node_invalidation lane =
     Graph.node_invalidation
       ~valid:(fun (P signal) -> signal.valid)
       ~set_invalid:(fun (P signal) -> signal.valid <- false)
@@ -1031,7 +1036,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Some timer -> timer_mark_unneeded_unlocked timer)
       ~tombstone:signal_tombstone
       ~tombstone_id:(fun tombstone -> tombstone.dead_id)
-      ~observer_hooks:(fun (P signal) -> dispose_signal_observers signal)
+      ~observer_hooks:(fun (P signal) -> dispose_signal_observers lane signal)
       ~kind_hooks:(fun ~invalidate_scope (P signal) ->
         match signal.kind with
         | Var source ->
@@ -1055,7 +1060,7 @@ module Make (Observer_error : Observer_error) () = struct
         hooks
 
   and invalidate_node lane packed =
-    Graph.invalidate_live_node graph edge_ops node_invalidation
+    Graph.invalidate_live_node graph edge_ops (node_invalidation lane)
       ~invalidate_scope:(invalidate_scope lane) packed
 
   let make_bind ?equal source selector =
@@ -1680,7 +1685,7 @@ module Make (Observer_error : Observer_error) () = struct
          | Observer_lifecycle.Disposed _ -> ()
          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
          | Observer_lifecycle.Invalid_scope _ ->
-          let hooks = dispose_observer_unlocked observer in
+          let hooks = dispose_observer_unlocked lane observer in
           hooks_ref := hooks;
           refresh_timers := true;
           update_necessity_counters_unlocked lane))
@@ -1706,7 +1711,7 @@ module Make (Observer_error : Observer_error) () = struct
         match observer.obs_state with
         | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
         | Observer_lifecycle.Invalid_scope _ ->
-            let hooks = dispose_observer_unlocked observer in
+            let hooks = dispose_observer_unlocked lane observer in
             hooks_ref := hooks;
             refresh_timers := true;
             update_necessity_counters_unlocked lane;
@@ -2040,7 +2045,7 @@ module Make (Observer_error : Observer_error) () = struct
          window between the final state check and returning the handle. *)
       Effect.sync (fun () ->
           ensure_graph_context ();
-          Observer_core.activate_observer (observer_lifecycle_port ())
+          Observer_core.activate_observer (observer_activation_port ())
             observer)
       |> Effect.flatten_result
 
