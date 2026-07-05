@@ -70,6 +70,14 @@ type daemon_hooks = {
     'error. unit -> (unit, 'error) Eta.Effect.t;
 }
 
+type 'timer daemon_context = {
+  daemon_advance_generation : int -> int;
+  daemon_state_access : daemon_state_access;
+  daemon_state : 'timer state_port;
+  daemon_update : 'timer daemon_update;
+  daemon_hooks : daemon_hooks;
+}
+
 type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
@@ -338,9 +346,13 @@ let daemon_exit = function
   | Eta.Exit.Ok _ -> Eta_signal_timer_policy.Daemon_ok
   | Eta.Exit.Error _ -> Eta_signal_timer_policy.Daemon_error
 
-let start_daemon ~advance_generation access port timer update hooks
-    ~generation ~interval_ms ~update_on_start ~catch_up_policy =
-  let with_state f = access.daemon_with_state f in
+let start_daemon context timer ~generation ~interval_ms ~update_on_start
+    ~catch_up_policy =
+  let advance_generation = context.daemon_advance_generation in
+  let port = context.daemon_state in
+  let update = context.daemon_update in
+  let hooks = context.daemon_hooks in
+  let with_state f = context.daemon_state_access.daemon_with_state f in
   let cleanup_after_exit ~generation exit =
     with_state (fun () ->
         cleanup_after_exit ~advance_generation port timer ~generation
@@ -404,8 +416,8 @@ let start_daemon ~advance_generation access port timer update hooks
     ~interval_ms ~update_on_start ~catch_up_policy
 
 let create_daemon_node ~runtime_contract ~refresh_when_inactive
-    ~refresh_operation ~advance_generation access port update hooks
-    ~interval_ms ~update_on_start ~catch_up_policy =
+    ~refresh_operation context ~interval_ms ~update_on_start
+    ~catch_up_policy =
   create_node ~runtime_contract ~refresh_when_inactive ~refresh_operation
     ~start:
       {
@@ -413,8 +425,8 @@ let create_daemon_node ~runtime_contract ~refresh_when_inactive
           (fun timer ->
             let generation =
               Eta_signal_timer_policy.state_generation
-                (port.state_current timer)
+                (context.daemon_state.state_current timer)
             in
-            start_daemon ~advance_generation access port timer update hooks
-              ~generation ~interval_ms ~update_on_start ~catch_up_policy);
+            start_daemon context timer ~generation ~interval_ms
+              ~update_on_start ~catch_up_policy);
       }

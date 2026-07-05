@@ -61,6 +61,14 @@ type daemon_hooks = {
     'error. unit -> (unit, 'error) Eta.Effect.t;
 }
 
+type 'timer daemon_context = {
+  daemon_advance_generation : int -> int;
+  daemon_state_access : daemon_state_access;
+  daemon_state : 'timer state_port;
+  daemon_update : 'timer daemon_update;
+  daemon_hooks : daemon_hooks;
+}
+
 type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
@@ -234,12 +242,8 @@ val finish_saturated :
   unit
 
 val start_daemon :
-  advance_generation:(int -> int) ->
-  daemon_state_access ->
-  'timer state_port ->
+  'timer daemon_context ->
   'timer ->
-  'timer daemon_update ->
-  daemon_hooks ->
   generation:int ->
   interval_ms:int ->
   update_on_start:bool ->
@@ -250,11 +254,7 @@ val create_daemon_node :
   runtime_contract:Eta.Runtime_contract.t ->
   refresh_when_inactive:bool ->
   refresh_operation:'operation option ->
-  advance_generation:(int -> int) ->
-  daemon_state_access ->
-  'operation node state_port ->
-  'operation node daemon_update ->
-  daemon_hooks ->
+  'operation node daemon_context ->
   interval_ms:int ->
   update_on_start:bool ->
   catch_up_policy:Eta_signal_timer_policy.catch_up_policy ->

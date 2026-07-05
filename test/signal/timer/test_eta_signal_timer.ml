@@ -718,6 +718,30 @@ let test_refresh_demand_effect_acquire_failure_skips_release () =
   Alcotest.(check (list string))
     "events" [ "access"; "acquire:capability" ] !events
 
+let daemon_context events port update =
+  {
+    Timer.daemon_advance_generation = succ;
+    daemon_state_access =
+      {
+        Timer.daemon_with_state =
+          (fun f ->
+            Eta.Effect.sync (fun () ->
+                append_event events "access";
+                f ()));
+      };
+    daemon_state = port;
+    daemon_update = update;
+    daemon_hooks =
+      {
+        Timer.daemon_after_due_read_before_commit =
+          (fun () ->
+            Eta.Effect.sync (fun () -> append_event events "due_hook"));
+        daemon_after_update_constructed_before_run =
+          (fun () ->
+            Eta.Effect.sync (fun () -> append_event events "after_update"));
+      };
+  }
+
 let test_start_daemon_wires_start_update_through_timer_port () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
@@ -737,31 +761,17 @@ let test_start_daemon_wires_start_update_through_timer_port () =
     }
   in
   run_ok runtime
-    (Timer.start_daemon ~advance_generation:succ
-       {
-         Timer.daemon_with_state =
-           (fun f ->
-             Eta.Effect.sync (fun () ->
-                 append_event events "access";
-                 f ()));
-       }
-       port timer
-       {
-         Timer.daemon_update =
-           (fun _timer ~generation ~missed ->
-             Eta.Effect.sync (fun () ->
-                 append_event events
-                   ("update:" ^ string_of_int generation ^ ":"
-                  ^ string_of_int missed)));
-       }
-       {
-         Timer.daemon_after_due_read_before_commit =
-           (fun () ->
-             Eta.Effect.sync (fun () -> append_event events "due_hook"));
-         daemon_after_update_constructed_before_run =
-           (fun () ->
-             Eta.Effect.sync (fun () -> append_event events "after_update"));
-       }
+    (Timer.start_daemon
+       (daemon_context events port
+          {
+            Timer.daemon_update =
+              (fun _timer ~generation ~missed ->
+                Eta.Effect.sync (fun () ->
+                    append_event events
+                      ("update:" ^ string_of_int generation ^ ":"
+                     ^ string_of_int missed)));
+          })
+       timer
        ~generation:3 ~interval_ms:10 ~update_on_start:true
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
   Alcotest.(check (list string))
@@ -798,31 +808,16 @@ let test_create_daemon_node_owns_start_effect_generation () =
     let runtime_contract = Eta.Effect.Expert.contract context in
     let timer =
       Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
-        ~refresh_operation:None ~advance_generation:succ
-        {
-          Timer.daemon_with_state =
-            (fun f ->
-              Eta.Effect.sync (fun () ->
-                  append_event events "access";
-                  f ()));
-        }
-        port
-        {
-          Timer.daemon_update =
-            (fun _timer ~generation ~missed ->
-              Eta.Effect.sync (fun () ->
-                  append_event events
-                    ("update:" ^ string_of_int generation ^ ":"
-                   ^ string_of_int missed)));
-        }
-        {
-          Timer.daemon_after_due_read_before_commit =
-            (fun () ->
-              Eta.Effect.sync (fun () -> append_event events "due_hook"));
-          daemon_after_update_constructed_before_run =
-            (fun () ->
-              Eta.Effect.sync (fun () -> append_event events "after_update"));
-        }
+        ~refresh_operation:None
+        (daemon_context events port
+           {
+             Timer.daemon_update =
+               (fun _timer ~generation ~missed ->
+                 Eta.Effect.sync (fun () ->
+                     append_event events
+                       ("update:" ^ string_of_int generation ^ ":"
+                      ^ string_of_int missed)));
+           })
         ~interval_ms:10 ~update_on_start:true
         ~catch_up_policy:Timer_policy.Catch_up_coalesced
     in
