@@ -364,13 +364,21 @@ type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
     (unit, 'error) Eta.Effect.t;
 }
 
-type ('capability, 'error) delivery_event_access = {
+type 'capability delivery_event_access = {
   event_with_delivery_access :
-    'a. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
+    'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
+val make_delivery_handle :
+  access:'capability delivery_event_access ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  observer:'observer ->
+  token:Delivery.token ->
+  'a Update.t ->
+  (Delivery.token, 'a Update.t, 'after_ack) Delivery_handle.t
+
 val make_delivery_event :
-  access:('capability, 'error) delivery_event_access ->
+  access:'capability delivery_event_access ->
   ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
   ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
   observer:'observer ->

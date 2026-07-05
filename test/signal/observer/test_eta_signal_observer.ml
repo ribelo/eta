@@ -1272,6 +1272,63 @@ let observer_event_access events =
             f observer_capability));
   }
 
+let test_make_delivery_handle_owns_token_and_acknowledge () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:
+            (Observer.Delivery.Observer_delivery_running
+               (7, update_changed, [ Stored ]));
+    }
+  in
+  let observer = { live = Some live } in
+  let handle =
+    Observer.make_delivery_handle ~access:(observer_event_access events)
+      (observer_delivery_port events) ~observer ~token:7 update_changed
+  in
+  Alcotest.(check (option int)) "current token" (Some 7)
+    (expect_effect_ok "handle current token"
+       (Observer.Delivery_handle.current_token handle ()));
+  Alcotest.(check (list string)) "current token events" [ "access" ] !events;
+  events := [];
+  expect_effect_ok "handle sent"
+    (Observer.Delivery_handle.acknowledge_sent handle 7 update_changed);
+  Alcotest.(check string) "sent delivered" "delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
+  Alcotest.(check (list string))
+    "sent events"
+    [ "access"; "set:delivered"; "after_ack:stored" ]
+    !events;
+  events := [];
+  live.snapshot <-
+    Observer.Snapshot.create ~value:(Observer.Value.current 1)
+      ~delivery:
+        (Observer.Delivery.Observer_delivery_running
+           (8, update_changed, [ Stored ]));
+  let drop_handle =
+    Observer.make_delivery_handle ~access:(observer_event_access events)
+      (observer_delivery_port events) ~observer ~token:8 update_changed
+  in
+  expect_effect_ok "handle drop"
+    (Observer.Delivery_handle.acknowledge_drop drop_handle
+       ~after_ack:[ Extra ] 8 update_changed);
+  Alcotest.(check (list string))
+    "drop events"
+    [
+      "access";
+      "set:delivered";
+      "after_ack:extra";
+      "after_ack:stored";
+    ]
+    !events;
+  events := [];
+  Alcotest.(check (option int)) "stale current token" None
+    (expect_effect_ok "handle stale current token"
+       (Observer.Delivery_handle.current_token drop_handle ()));
+  Alcotest.(check (list string)) "stale events" [ "access" ] !events
+
 let test_make_delivery_event_owns_success_transitions () =
   let events = ref [] in
   let live =
@@ -1543,6 +1600,8 @@ let () =
             test_delivery_event_finishes_error;
           Alcotest.test_case "handle accessors" `Quick
             test_delivery_handle_accessors;
+          Alcotest.test_case "make handle token and acknowledge" `Quick
+            test_make_delivery_handle_owns_token_and_acknowledge;
           Alcotest.test_case "port claim acknowledge finish" `Quick
             test_delivery_port_claim_acknowledge_and_finish;
           Alcotest.test_case "port ignores stale delivery" `Quick

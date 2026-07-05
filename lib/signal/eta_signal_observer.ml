@@ -545,10 +545,28 @@ type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
     (unit, 'error) Eta.Effect.t;
 }
 
-type ('capability, 'error) delivery_event_access = {
+type 'capability delivery_event_access = {
   event_with_delivery_access :
-    'a. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
+    'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
+
+let make_delivery_handle ~access delivery_port ~observer ~token update =
+  Delivery_handle.create ~token ~update
+    ~current_token:(fun () ->
+      access.event_with_delivery_access (fun capability ->
+          if
+            running_delivery_token_matches delivery_port capability observer
+              token
+          then Some token
+          else None))
+    ~acknowledge_sent:(fun token update ->
+      access.event_with_delivery_access (fun capability ->
+          acknowledge_delivery delivery_port capability observer token update
+            ~after_ack:[]))
+    ~acknowledge_drop:(fun ~after_ack token update ->
+      access.event_with_delivery_access (fun capability ->
+          acknowledge_delivery delivery_port capability observer token update
+            ~after_ack))
 
 let make_delivery_event ~access delivery_port event_port ~observer ~token update =
   Delivery_event.create

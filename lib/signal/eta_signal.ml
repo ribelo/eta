@@ -1883,31 +1883,6 @@ module Make (Observer_error : Observer_error) () = struct
               ())
       (collect_observed_bind_nodes lane observers)
 
-  let acknowledge_event_delivery_unlocked lane observer token
-      update ~after_ack =
-    Observer_core.acknowledge_delivery (observer_delivery_port ()) lane observer
-      token update ~after_ack
-
-  let claimed_event_delivery_active lane observer token =
-    Observer_core.running_delivery_token_matches (observer_delivery_port ())
-      lane observer token
-
-  let acknowledge_stream_published_delivery observer token update ~after_ack =
-    with_graph_lane_access (fun lane ->
-        acknowledge_event_delivery_unlocked lane observer token update
-          ~after_ack)
-
-  let acknowledge_stream_sent_delivery observer token update =
-    acknowledge_stream_published_delivery observer token update ~after_ack:[]
-
-  let acknowledge_stream_drop_delivery observer token update ~after_ack =
-    acknowledge_stream_published_delivery observer token update ~after_ack
-
-  let active_event_delivery_token observer token =
-    with_graph_lane_access (fun lane ->
-        if claimed_event_delivery_active lane observer token then Some token
-        else None)
-
   let graph_error_of_die die =
     match die.Eta.Cause.exn with
     | Graph_error err -> Some err
@@ -2228,12 +2203,9 @@ module Make (Observer_error : Observer_error) () = struct
       Observer_core.Delivery_handle.t
 
     let delivery observer token update =
-      Observer_core.Delivery_handle.create ~token ~update
-        ~current_token:(fun () -> active_event_delivery_token observer token)
-        ~acknowledge_sent:(fun token update ->
-          acknowledge_stream_sent_delivery observer token update)
-        ~acknowledge_drop:(fun ~after_ack token update ->
-          acknowledge_stream_drop_delivery observer token update ~after_ack)
+      Observer_core.make_delivery_handle
+        ~access:observer_delivery_event_access
+        (observer_delivery_port ()) ~observer ~token update
 
     let transfer_active_observer observer =
       (* This is deliberately a same-domain leaf, not another lane acquisition:
