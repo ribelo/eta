@@ -61,15 +61,13 @@ let state_label state =
 let append_event events event = events := !events @ [ event ]
 
 let state_port ?(record = fun _ -> ()) () =
-  {
-    Timer.state_effective = (fun timer -> timer.effective);
-    state_current = (fun timer -> timer.current);
-    state_set_current =
-      (fun timer state ->
-        timer.current <- state;
-        timer.effective <- state;
-        record ("set:" ^ timer.name ^ ":" ^ state_label state));
-  }
+  Timer.state_port
+    ~effective:(fun timer -> timer.effective)
+    ~current:(fun timer -> timer.current)
+    ~set_current:(fun timer state ->
+      timer.current <- state;
+      timer.effective <- state;
+      record ("set:" ^ timer.name ^ ":" ^ state_label state))
 
 let test_refresh_demand_classifies_and_orders_effects () =
   let events = ref [] in
@@ -89,32 +87,27 @@ let test_refresh_demand_classifies_and_orders_effects () =
     make_timer "idle" ~current:(inactive 0) ~effective:(inactive 0)
   in
   let port =
-    {
-      Timer.demand_collect_necessary =
-        (fun () ->
-          record "collect_necessary";
-          [ 1 ]);
-      demand_collect_timers =
-        (fun () ->
-          record "collect_timers";
-          [ (1, start); (2, stop); (3, idle) ]);
-      demand_is_necessary =
-        (fun necessary id -> List.exists (( = ) id) necessary);
-      demand_validate_runtime =
-        (fun runtime timer ->
-          record ("validate:" ^ runtime ^ ":" ^ timer.name);
-          Ok ());
-      demand_effective_state = (fun timer -> timer.effective);
-      demand_current_state = (fun timer -> timer.current);
-      demand_set_current_state =
-        (fun timer state ->
-          timer.current <- state;
-          record ("set:" ^ timer.name ^ ":" ^ state_label state));
-      demand_start_effect =
-        (fun timer ->
-          record ("start:" ^ timer.name ^ ":" ^ state_label timer.current);
-          timer.name ^ ":start");
-    }
+    Timer.demand_port
+      ~collect_necessary:(fun () ->
+        record "collect_necessary";
+        [ 1 ])
+      ~collect_timers:(fun () ->
+        record "collect_timers";
+        [ (1, start); (2, stop); (3, idle) ])
+      ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+      ~validate_runtime:(fun runtime timer ->
+        record ("validate:" ^ runtime ^ ":" ^ timer.name);
+        Ok ())
+      ~state:
+        (Timer.state_port
+           ~effective:(fun timer -> timer.effective)
+           ~current:(fun timer -> timer.current)
+           ~set_current:(fun timer state ->
+             timer.current <- state;
+             record ("set:" ^ timer.name ^ ":" ^ state_label state)))
+      ~start_effect:(fun timer ->
+        record ("start:" ^ timer.name ^ ":" ^ state_label timer.current);
+        timer.name ^ ":start")
   in
   match
     Timer.refresh_demand ~advance_generation:succ ~cancel_running:true port
@@ -188,18 +181,14 @@ let test_refresh_node_demand_owns_node_start_wiring () =
       | None -> Alcotest.fail "unknown timer node"
     in
     let port =
-      {
-        Timer.state_effective =
-          (fun timer -> (find_case timer).case_effective);
-        state_current = (fun timer -> (find_case timer).case_current);
-        state_set_current =
-          (fun timer state ->
-            let case = find_case timer in
-            case.case_current <- state;
-            case.case_effective <- state;
-            record
-              ("set:" ^ case.case_name ^ ":" ^ state_label state));
-      }
+      Timer.state_port
+        ~effective:(fun timer -> (find_case timer).case_effective)
+        ~current:(fun timer -> (find_case timer).case_current)
+        ~set_current:(fun timer state ->
+          let case = find_case timer in
+          case.case_current <- state;
+          case.case_effective <- state;
+          record ("set:" ^ case.case_name ^ ":" ^ state_label state))
     in
     let make_node case =
       let node =
@@ -314,17 +303,14 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
     | None -> Alcotest.fail "unknown timer node"
   in
   let port =
-    {
-      Timer.state_effective =
-        (fun timer -> (find_case timer).case_effective);
-      state_current = (fun timer -> (find_case timer).case_current);
-      state_set_current =
-        (fun timer state ->
-          let case = find_case timer in
-          case.case_current <- state;
-          case.case_effective <- state;
-          record ("set:" ^ case.case_name ^ ":" ^ state_label state));
-    }
+    Timer.state_port
+      ~effective:(fun timer -> (find_case timer).case_effective)
+      ~current:(fun timer -> (find_case timer).case_current)
+      ~set_current:(fun timer state ->
+        let case = find_case timer in
+        case.case_current <- state;
+        case.case_effective <- state;
+        record ("set:" ^ case.case_name ^ ":" ^ state_label state))
   in
   let make_node runtime_contract case =
     let node =
@@ -354,17 +340,13 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
   in
   run_ok runtime
     (Timer.refresh_node_demand_effect ~advance_generation:succ
-       {
-         Timer.demand_with_access =
-           (fun f ->
-             Eta.Effect.sync (fun () ->
-                 record "access";
-                 f ())
-             |> Eta.Effect.flatten_result);
-       }
-       {
-         Timer.node_demand_effect_plan =
-           (fun runtime_contract () ->
+       (Timer.demand_effect_access ~with_access:(fun f ->
+            Eta.Effect.sync (fun () ->
+                record "access";
+                f ())
+            |> Eta.Effect.flatten_result))
+       (Timer.node_demand_effect_port
+          ~plan:(fun runtime_contract () ->
              record "acquire";
              let start_node, stop_node = nodes runtime_contract in
              Timer.node_demand_plan ~necessary:[ 1 ]
@@ -377,11 +359,10 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
                    record ("validate:" ^ case.case_name);
                    if
                      Eta.Runtime_contract.same_runtime actual_runtime
-                       (Timer.runtime_contract timer)
+                     (Timer.runtime_contract timer)
                    then Ok ()
                    else Error `Runtime_mismatch)
-               ~state:port);
-       });
+               ~state:port)));
   Alcotest.(check (list string))
     "events"
     [
@@ -408,21 +389,18 @@ let test_refresh_demand_validation_failure_short_circuits () =
     make_timer "unreached" ~current:(inactive 0) ~effective:(inactive 0)
   in
   let port =
-    {
-      Timer.demand_collect_necessary = (fun () -> [ 1 ]);
-      demand_collect_timers = (fun () -> [ (1, bad); (2, unreached) ]);
-      demand_is_necessary =
-        (fun necessary id -> List.exists (( = ) id) necessary);
-      demand_validate_runtime = (fun _runtime _timer -> Error "runtime");
-      demand_effective_state = (fun timer -> timer.effective);
-      demand_current_state = (fun timer -> timer.current);
-      demand_set_current_state =
-        (fun _timer _state -> changed_state := true);
-      demand_start_effect =
-        (fun _timer ->
-          started := true;
-          "started");
-    }
+    Timer.demand_port ~collect_necessary:(fun () -> [ 1 ])
+      ~collect_timers:(fun () -> [ (1, bad); (2, unreached) ])
+      ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+      ~validate_runtime:(fun _runtime _timer -> Error "runtime")
+      ~state:
+        (Timer.state_port
+           ~effective:(fun timer -> timer.effective)
+           ~current:(fun timer -> timer.current)
+           ~set_current:(fun _timer _state -> changed_state := true))
+      ~start_effect:(fun _timer ->
+        started := true;
+        "started")
   in
   Alcotest.(check (result reject runtime_error))
     "runtime validation failure" (Error "runtime")
@@ -470,21 +448,19 @@ let test_rollback_unclaimed_start_attempts_hide_timer_pairing () =
   in
   let attempts, cancel_hooks =
     let port =
-      {
-        Timer.demand_collect_necessary = (fun () -> [ 1 ]);
-        demand_collect_timers = (fun () -> [ (1, starting) ]);
-        demand_is_necessary =
-          (fun necessary id -> List.exists (( = ) id) necessary);
-        demand_validate_runtime = (fun _runtime _timer -> Ok ());
-        demand_effective_state = (fun timer -> timer.effective);
-        demand_current_state = (fun timer -> timer.current);
-        demand_set_current_state =
-          (fun timer state ->
-            timer.current <- state;
-            timer.effective <- state;
-            record ("set:" ^ timer.name ^ ":" ^ state_label state));
-        demand_start_effect = (fun _timer -> "start-effect");
-      }
+      Timer.demand_port ~collect_necessary:(fun () -> [ 1 ])
+        ~collect_timers:(fun () -> [ (1, starting) ])
+        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+        ~validate_runtime:(fun _runtime _timer -> Ok ())
+        ~state:
+          (Timer.state_port
+             ~effective:(fun timer -> timer.effective)
+             ~current:(fun timer -> timer.current)
+             ~set_current:(fun timer state ->
+               timer.current <- state;
+               timer.effective <- state;
+               record ("set:" ^ timer.name ^ ":" ^ state_label state)))
+        ~start_effect:(fun _timer -> "start-effect")
     in
     match
       Timer.refresh_demand ~advance_generation:succ ~cancel_running:true
@@ -613,23 +589,19 @@ let test_due_lifecycle_transitions () =
     !events
 
 let timer_demand_access events =
-  {
-    Timer.demand_with_access =
-      (fun f ->
-        Eta.Effect.sync (fun () ->
-            append_event events "access";
-            f "capability")
-        |> Eta.Effect.flatten_result);
-  }
+  Timer.demand_effect_access ~with_access:(fun f ->
+      Eta.Effect.sync (fun () ->
+          append_event events "access";
+          f "capability")
+      |> Eta.Effect.flatten_result)
 
 let test_refresh_demand_effect_owns_adapter_bracketing () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
   run_ok runtime
     (Timer.refresh_demand_effect (timer_demand_access events)
-       {
-         Timer.demand_acquire =
-           (fun _runtime_contract capability ->
+       (Timer.demand_effect_port
+          ~acquire:(fun _runtime_contract capability ->
              append_event events ("acquire:" ^ capability);
              Ok
                {
@@ -639,26 +611,22 @@ let test_refresh_demand_effect_owns_adapter_bracketing () =
                      (fun () -> append_event events "cancel:acquire-a");
                      (fun () -> append_event events "cancel:acquire-b");
                    ];
-               });
-         demand_rollback_unclaimed =
-           (fun capability attempts ->
+               })
+          ~rollback_unclaimed:(fun capability attempts ->
              append_event events ("rollback:" ^ capability);
              List.iter
                (fun attempt ->
                  append_event events ("rollback-start:" ^ attempt))
                attempts;
-             Ok [ (fun () -> append_event events "cancel:rollback") ]);
-         demand_run_cancel_hooks =
-           (fun hooks ->
-             Eta.Effect.sync (fun () ->
-                 List.iter (fun hook -> hook ()) hooks));
-         demand_run_start_attempts =
-           (fun attempts ->
-             Eta.Effect.sync (fun () ->
-                 List.iter
-                   (fun attempt -> append_event events ("start:" ^ attempt))
-                   attempts));
-       });
+             Ok [ (fun () -> append_event events "cancel:rollback") ])
+          ~run_cancel_hooks:(fun hooks ->
+            Eta.Effect.sync (fun () ->
+                List.iter (fun hook -> hook ()) hooks))
+          ~run_start_attempts:(fun attempts ->
+            Eta.Effect.sync (fun () ->
+                List.iter
+                  (fun attempt -> append_event events ("start:" ^ attempt))
+                  attempts))));
   Alcotest.(check (list string))
     "events"
     [
@@ -682,22 +650,17 @@ let test_refresh_demand_effect_acquire_failure_skips_release () =
   let cause =
     run_error runtime
       (Timer.refresh_demand_effect (timer_demand_access events)
-         {
-           Timer.demand_acquire =
-             (fun _runtime_contract capability ->
+         (Timer.demand_effect_port
+            ~acquire:(fun _runtime_contract capability ->
                append_event events ("acquire:" ^ capability);
-               Error `Demand_failed);
-           demand_rollback_unclaimed =
-             (fun _capability _attempts ->
+               Error `Demand_failed)
+            ~rollback_unclaimed:(fun _capability _attempts ->
                append_event events "rollback";
-               Ok []);
-           demand_run_cancel_hooks =
-             (fun _hooks ->
-               Eta.Effect.sync (fun () -> append_event events "cancel"));
-           demand_run_start_attempts =
-             (fun _attempts ->
-               Eta.Effect.sync (fun () -> append_event events "start"));
-         })
+               Ok [])
+            ~run_cancel_hooks:(fun _hooks ->
+              Eta.Effect.sync (fun () -> append_event events "cancel"))
+            ~run_start_attempts:(fun _attempts ->
+              Eta.Effect.sync (fun () -> append_event events "start"))))
   in
   (match Eta.Cause.failures cause with
   | [ `Demand_failed ] -> ()
@@ -733,14 +696,12 @@ let test_start_daemon_wires_start_update_through_timer_port () =
       ~effective:(Timer_policy.starting_state ~generation:3)
   in
   let port =
-    {
-      Timer.state_effective = (fun timer -> timer.effective);
-      state_current = (fun timer -> timer.current);
-      state_set_current =
-        (fun timer state ->
-          timer.current <- state;
-          append_event events ("set:" ^ state_label state));
-    }
+    Timer.state_port
+      ~effective:(fun timer -> timer.effective)
+      ~current:(fun timer -> timer.current)
+      ~set_current:(fun timer state ->
+        timer.current <- state;
+        append_event events ("set:" ^ state_label state))
   in
   run_ok runtime
     (Timer.start_daemon
@@ -772,14 +733,12 @@ let test_create_daemon_node_owns_start_effect_generation () =
   let current = ref (Timer_policy.starting_state ~generation:6) in
   let effective = ref (Timer_policy.starting_state ~generation:6) in
   let port =
-    {
-      Timer.state_effective = (fun _timer -> !effective);
-      state_current = (fun _timer -> !current);
-      state_set_current =
-        (fun _timer state ->
-          current := state;
-          append_event events ("set:" ^ state_label state));
-    }
+    Timer.state_port
+      ~effective:(fun _timer -> !effective)
+      ~current:(fun _timer -> !current)
+      ~set_current:(fun _timer state ->
+        current := state;
+        append_event events ("set:" ^ state_label state))
   in
   let effect =
     Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node"

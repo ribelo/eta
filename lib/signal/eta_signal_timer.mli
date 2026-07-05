@@ -37,11 +37,13 @@ val start_effect : 'operation node -> (unit, 'err) Eta.Effect.t
 
 type ('timer, 'effect) start_attempt
 
-type 'timer state_port = {
-  state_effective : 'timer -> Eta_signal_timer_policy.state;
-  state_current : 'timer -> Eta_signal_timer_policy.state;
-  state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
-}
+type 'timer state_port
+
+val state_port :
+  effective:('timer -> Eta_signal_timer_policy.state) ->
+  current:('timer -> Eta_signal_timer_policy.state) ->
+  set_current:('timer -> Eta_signal_timer_policy.state -> unit) ->
+  'timer state_port
 
 type daemon_state_access
 
@@ -76,16 +78,16 @@ val daemon_context :
   hooks:daemon_hooks ->
   'timer daemon_context
 
-type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
-  demand_collect_necessary : unit -> 'necessary;
-  demand_collect_timers : unit -> ('id * 'timer) list;
-  demand_is_necessary : 'necessary -> 'id -> bool;
-  demand_validate_runtime : 'runtime -> 'timer -> (unit, 'error) result;
-  demand_effective_state : 'timer -> Eta_signal_timer_policy.state;
-  demand_current_state : 'timer -> Eta_signal_timer_policy.state;
-  demand_set_current_state : 'timer -> Eta_signal_timer_policy.state -> unit;
-  demand_start_effect : 'timer -> 'effect;
-}
+type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port
+
+val demand_port :
+  collect_necessary:(unit -> 'necessary) ->
+  collect_timers:(unit -> ('id * 'timer) list) ->
+  is_necessary:('necessary -> 'id -> bool) ->
+  validate_runtime:('runtime -> 'timer -> (unit, 'error) result) ->
+  state:'timer state_port ->
+  start_effect:('timer -> 'effect) ->
+  ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port
 
 type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan
 
@@ -97,38 +99,48 @@ val node_demand_plan :
   state:'operation node state_port ->
   ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan
 
-type ('capability, 'error) demand_effect_access = {
-  demand_with_access :
-    'a.
-    ('capability -> ('a, 'error) result) ->
-    ('a, 'error) Eta.Effect.t;
-}
+type ('capability, 'error) demand_effect_access
 
-type ('capability, 'start, 'error) demand_effect_port = {
-  demand_acquire :
-    Eta.Runtime_contract.t ->
+val demand_effect_access :
+  with_access:
+    ('a.
+     ('capability -> ('a, 'error) result) ->
+     ('a, 'error) Eta.Effect.t) ->
+  ('capability, 'error) demand_effect_access
+
+type ('capability, 'start, 'error) demand_effect_port
+
+val demand_effect_port :
+  acquire:
+    (Eta.Runtime_contract.t ->
     'capability ->
-    ('start demand_effects, 'error) result;
-  demand_rollback_unclaimed :
-    'capability -> 'start list -> ((unit -> unit) list, 'error) result;
-  demand_run_cancel_hooks :
-    (unit -> unit) list -> (unit, 'error) Eta.Effect.t;
-  demand_run_start_attempts :
-    'start list -> (unit, 'error) Eta.Effect.t;
-}
+    ('start demand_effects, 'error) result) ->
+  rollback_unclaimed:
+    ('capability -> 'start list -> ((unit -> unit) list, 'error) result) ->
+  run_cancel_hooks:
+    ((unit -> unit) list -> (unit, 'error) Eta.Effect.t) ->
+  run_start_attempts:('start list -> (unit, 'error) Eta.Effect.t) ->
+  ('capability, 'start, 'error) demand_effect_port
 
 type ('capability, 'id, 'necessary, 'operation, 'error)
-     node_demand_effect_port = {
-  node_demand_effect_plan :
-    Eta.Runtime_contract.t ->
+     node_demand_effect_port
+
+val node_demand_effect_port :
+  plan:
+    (Eta.Runtime_contract.t ->
     'capability ->
     ( 'id,
       'necessary,
       'operation,
       Eta.Runtime_contract.t,
       'error )
-    node_demand_plan;
-}
+    node_demand_plan) ->
+  ( 'capability,
+    'id,
+    'necessary,
+    'operation,
+    'error )
+  node_demand_effect_port
 
 val mark_unneeded :
   advance_generation:(int -> int) ->
