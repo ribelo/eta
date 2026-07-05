@@ -36,11 +36,15 @@ type ('queue_error, 'error) hooks = {
 let hooks ~metrics
     ?(after_try_send_before_ack = fun () -> Effect.unit)
     ?(after_drop_before_ack = fun () -> Effect.unit)
+    ?(after_drop_acknowledged = fun () -> ())
     ~on_closed_with_error () =
   {
     after_try_send_before_ack;
     after_drop_before_ack;
-    after_drop_acknowledged = (fun () -> record_drop metrics);
+    after_drop_acknowledged =
+      (fun () ->
+        record_drop metrics;
+        after_drop_acknowledged ());
     on_closed_with_error;
   }
 
@@ -49,14 +53,15 @@ type ('finish_reason, 'queue_error) finish_policy = {
   invalid_scope_error : 'queue_error;
 }
 
+let finish_policy ~is_invalid_scope ~invalid_scope_error =
+  { is_invalid_scope; invalid_scope_error }
+
 let observer_finish_policy =
-  {
-    is_invalid_scope =
-      (function
+  finish_policy
+    ~is_invalid_scope:(function
       | Observer_lifecycle.Finish_disposed -> false
-      | Observer_lifecycle.Finish_invalid_scope -> true);
-    invalid_scope_error = `Invalid_scope;
-  }
+      | Observer_lifecycle.Finish_invalid_scope -> true)
+    ~invalid_scope_error:`Invalid_scope
 
 let finish_hook ~queue ~policy reason =
   if policy.is_invalid_scope reason then

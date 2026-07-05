@@ -70,12 +70,12 @@ let observer_delivery ~token ~sent ~dropped value =
 let hooks ?(after_send = fun () -> Effect.unit)
     ?(after_drop = fun () -> Effect.unit)
     ?(after_drop_acknowledged = fun () -> ()) () =
-  {
-    Stream_bridge.after_try_send_before_ack = after_send;
-    after_drop_before_ack = after_drop;
-    after_drop_acknowledged;
-    on_closed_with_error = (fun `Invalid_scope -> Effect.fail `Invalid_scope);
-  }
+  Stream_bridge.hooks ~metrics:(Stream_bridge.create_metrics ())
+    ~after_try_send_before_ack:after_send ~after_drop_before_ack:after_drop
+    ~after_drop_acknowledged
+    ~on_closed_with_error:(fun `Invalid_scope ->
+      Effect.fail `Invalid_scope)
+    ()
 
 let test_metrics_hook_records_acknowledged_drops () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->

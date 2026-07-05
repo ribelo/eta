@@ -22,25 +22,23 @@ val create_stream :
 type ('token, 'update, 'error) observer_delivery =
   ('token, 'update, unit -> unit) Eta_signal_observer.Delivery_handle.t
 
-type ('queue_error, 'error) hooks = {
-  after_try_send_before_ack : unit -> (unit, 'error) Eta.Effect.t;
-  after_drop_before_ack : unit -> (unit, 'error) Eta.Effect.t;
-  after_drop_acknowledged : unit -> unit;
-  on_closed_with_error : 'queue_error -> (unit, 'error) Eta.Effect.t;
-}
+type ('queue_error, 'error) hooks
 
 val hooks :
   metrics:metrics ->
   ?after_try_send_before_ack:(unit -> (unit, 'error) Eta.Effect.t) ->
   ?after_drop_before_ack:(unit -> (unit, 'error) Eta.Effect.t) ->
+  ?after_drop_acknowledged:(unit -> unit) ->
   on_closed_with_error:('queue_error -> (unit, 'error) Eta.Effect.t) ->
   unit ->
   ('queue_error, 'error) hooks
 
-type ('finish_reason, 'queue_error) finish_policy = {
-  is_invalid_scope : 'finish_reason -> bool;
-  invalid_scope_error : 'queue_error;
-}
+type ('finish_reason, 'queue_error) finish_policy
+
+val finish_policy :
+  is_invalid_scope:('finish_reason -> bool) ->
+  invalid_scope_error:'queue_error ->
+  ('finish_reason, 'queue_error) finish_policy
 
 val finish_hook :
   queue:('update, 'queue_error) Eta.Queue.t ->
