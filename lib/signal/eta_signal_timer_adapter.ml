@@ -140,25 +140,27 @@ let acquire_demand access callbacks runtime_contract =
       callbacks.acquire_demand runtime_contract capability)
 
 let rollback_unclaimed_starts access callbacks start_attempts =
-  access.with_access (fun capability ->
-      callbacks.rollback_unclaimed_starts capability start_attempts)
-  |> Effect.bind callbacks.run_cancel_hooks
+  let open Syntax in
+  let* cancel_hooks =
+    access.with_access (fun capability ->
+        callbacks.rollback_unclaimed_starts capability start_attempts)
+  in
+  callbacks.run_cancel_hooks cancel_hooks
 
 let refresh_demand access callbacks =
-  current_runtime_contract ()
-  |> Effect.bind (fun runtime_contract ->
-         Effect.acquire_use_release
-           ~acquire:
-             (acquire_demand access callbacks runtime_contract
-             |> Effect.map (fun (start_attempts, cancel_hooks) ->
-                    (start_attempts, ref cancel_hooks)))
-           ~release:(fun (start_attempts, cancel_hooks_ref) ->
-             rollback_unclaimed_starts access callbacks start_attempts
-             |> Effect.bind (fun () ->
-                    run_pending_cancel_hooks callbacks cancel_hooks_ref))
-           (fun (start_attempts, cancel_hooks_ref) ->
-             run_pending_cancel_hooks callbacks cancel_hooks_ref
-             |> Effect.bind (fun () -> callbacks.run_start_attempts start_attempts)))
+  let open Syntax in
+  let* runtime_contract = current_runtime_contract () in
+  Effect.acquire_use_release
+    ~acquire:
+      (acquire_demand access callbacks runtime_contract
+      |> Effect.map (fun (start_attempts, cancel_hooks) ->
+             (start_attempts, ref cancel_hooks)))
+    ~release:(fun (start_attempts, cancel_hooks_ref) ->
+      let* () = rollback_unclaimed_starts access callbacks start_attempts in
+      run_pending_cancel_hooks callbacks cancel_hooks_ref)
+    (fun (start_attempts, cancel_hooks_ref) ->
+      let* () = run_pending_cancel_hooks callbacks cancel_hooks_ref in
+      callbacks.run_start_attempts start_attempts)
 
 let rec run_update_batch callbacks generation remaining ~missed =
   let open Syntax in
@@ -242,41 +244,38 @@ let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
 
 let start start_callbacks loop_callbacks ~generation ~interval_ms
     ~update_on_start ~catch_up_policy =
+  let open Syntax in
   let start_loop () =
-    Effect.now
-    |> Effect.bind (fun now_ms ->
-           let next_due_ms =
-             Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
-           in
-           start_callbacks.set_next_due ~generation ~next_due_ms
-           |> Effect.bind (function
-                | `Stop -> Effect.unit
-                | `Continue ->
-                    Effect.daemon
-                      (run_cancellable
-                         ~install_cancel:(fun ~cancel ->
-                           start_callbacks.install_cancel ~generation ~cancel)
-                         ~loop:
-                           (run_loop loop_callbacks ~generation ~interval_ms
-                              ~next_due_ms ~catch_up_policy
-                           |> Effect.on_exit
-                                (start_callbacks.cleanup_after_exit
-                                   ~generation)))))
+    let* now_ms = Effect.now in
+    let next_due_ms =
+      Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
+    in
+    let* status = start_callbacks.set_next_due ~generation ~next_due_ms in
+    match status with
+    | `Stop -> Effect.unit
+    | `Continue ->
+        Effect.daemon
+          (run_cancellable
+             ~install_cancel:(fun ~cancel ->
+               start_callbacks.install_cancel ~generation ~cancel)
+             ~loop:
+               (run_loop loop_callbacks ~generation ~interval_ms ~next_due_ms
+                  ~catch_up_policy
+               |> Effect.on_exit
+                    (start_callbacks.cleanup_after_exit ~generation)))
   in
   let start () =
     if update_on_start then
-      start_callbacks.construct_start_update ~generation ~missed:1
-      |> Effect.bind (fun () ->
-             start_callbacks.after_start_update ~generation
-             |> Effect.bind (function
-                  | `Continue -> start_loop ()
-                  | `Stop -> Effect.unit))
+      let* () = start_callbacks.construct_start_update ~generation ~missed:1 in
+      let* status = start_callbacks.after_start_update ~generation in
+      match status with
+      | `Continue -> start_loop ()
+      | `Stop -> Effect.unit
     else start_loop ()
   in
-  start_callbacks.begin_start ~generation
-  |> Effect.bind (function
-       | `Stop -> Effect.unit
-       | `Continue ->
-           start ()
-           |> Effect.on_exit
-                (start_callbacks.cleanup_failed_start ~generation))
+  let* status = start_callbacks.begin_start ~generation in
+  match status with
+  | `Stop -> Effect.unit
+  | `Continue ->
+      start ()
+      |> Effect.on_exit (start_callbacks.cleanup_failed_start ~generation)
