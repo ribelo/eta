@@ -487,6 +487,51 @@ let running_delivery_token_matches port observer token =
       Snapshot.running_delivery_token_matches ~token
         (port.delivery_snapshot live)
 
+type ('observer, 'a, 'callback, 'error) delivery_event_port = {
+  event_active : 'observer -> (bool, 'error) Eta.Effect.t;
+  event_construct :
+    'observer ->
+    Delivery.token ->
+    'a Update.t ->
+    ('callback option, 'error) Eta.Effect.t;
+  event_run_callback :
+    'observer ->
+    Delivery.token ->
+    'callback ->
+    (unit, 'error) Eta.Effect.t;
+}
+
+type 'error delivery_event_access = {
+  event_with_delivery_access :
+    'a. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+
+let make_delivery_event ~access delivery_port event_port ~observer ~token update =
+  Delivery_event.create
+    ~mark_pending:(fun () ->
+      match delivery_port.delivery_live observer with
+      | None -> ()
+      | Some live ->
+          delivery_port.delivery_set_snapshot live
+            (Snapshot.with_pending_delivery ~token update
+               (delivery_port.delivery_snapshot live)))
+    ~active:(fun () -> event_port.event_active observer)
+    ~claim:(fun () ->
+      access.event_with_delivery_access (fun () ->
+          claim_delivery delivery_port observer token))
+    ~construct:(fun () ->
+      event_port.event_construct observer token update)
+    ~run_callback:(fun callback ->
+      event_port.event_run_callback observer token callback)
+    ~acknowledge:(fun () ->
+      access.event_with_delivery_access (fun () ->
+          acknowledge_delivery delivery_port observer token update
+            ~after_ack:[]))
+    ~finish_error:(fun ~delivered ->
+      access.event_with_delivery_access (fun () ->
+          finish_delivery_after_error delivery_port observer token update
+            ~delivered))
+
 module Event = struct
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

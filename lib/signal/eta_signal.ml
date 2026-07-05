@@ -2008,28 +2008,6 @@ module Make (Observer_error : Observer_error) () = struct
     Observer_core.acknowledge_delivery (observer_delivery_port ()) observer
       token update ~after_ack
 
-  let acknowledge_event_delivery observer token update =
-    with_graph_lane_access (fun lane ->
-        acknowledge_event_delivery_unlocked lane observer token update
-          ~after_ack:[])
-
-  let claim_event_delivery_unlocked (_lane : graph_lane) observer token =
-    Observer_core.claim_delivery (observer_delivery_port ()) observer token
-
-  let claim_event_delivery observer token =
-    with_graph_lane_access (fun lane ->
-        claim_event_delivery_unlocked lane observer token)
-
-  let finish_event_delivery_after_error_unlocked (_lane : graph_lane) observer
-      token update ~delivered =
-    Observer_core.finish_delivery_after_error (observer_delivery_port ())
-      observer token update ~delivered
-
-  let finish_event_delivery_after_error observer token update ~delivered =
-    with_graph_lane_access (fun lane ->
-        finish_event_delivery_after_error_unlocked lane observer token update
-          ~delivered)
-
   let claimed_event_delivery_active observer token =
     Observer_core.running_delivery_token_matches (observer_delivery_port ())
       observer token
@@ -2081,23 +2059,25 @@ module Make (Observer_error : Observer_error) () = struct
         with Graph_error err -> Error (err :> stabilize_error))
     |> Effect.flatten_result
 
+  let observer_delivery_event_port () =
+    {
+      Observer_core.event_active = event_observer_active;
+      event_construct = construct_observer_effect;
+      event_run_callback =
+        (fun observer token observer_eff ->
+          run_observer_effect observer token observer_eff);
+    }
+
+  let observer_delivery_event_access =
+    {
+      Observer_core.event_with_delivery_access =
+        (fun f -> with_graph_lane_access (fun _lane -> f ()));
+    }
+
   let make_observer_event ~token observer update =
-    Observer_core.Delivery_event.create
-      ~mark_pending:(fun () ->
-        match observer_active_live_state observer with
-        | Some live ->
-            set_observer_current live
-              (Observer_snapshot.with_pending_delivery ~token update
-                 (observer_current_snapshot live))
-        | None -> ())
-      ~active:(fun () -> event_observer_active observer)
-      ~claim:(fun () -> claim_event_delivery observer token)
-      ~construct:(fun () -> construct_observer_effect observer token update)
-      ~run_callback:(fun observer_eff ->
-        run_observer_effect observer token observer_eff)
-      ~acknowledge:(fun () -> acknowledge_event_delivery observer token update)
-      ~finish_error:(fun ~delivered ->
-        finish_event_delivery_after_error observer token update ~delivered)
+    Observer_core.make_delivery_event ~access:observer_delivery_event_access
+      (observer_delivery_port ())
+      (observer_delivery_event_port ()) ~observer ~token update
 
   let collect_observer_event (O observer) =
     match observer_active_live_state observer with

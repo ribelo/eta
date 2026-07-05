@@ -308,6 +308,34 @@ val running_delivery_token_matches :
   Delivery.token ->
   bool
 
+type ('observer, 'a, 'callback, 'error) delivery_event_port = {
+  event_active : 'observer -> (bool, 'error) Eta.Effect.t;
+  event_construct :
+    'observer ->
+    Delivery.token ->
+    'a Update.t ->
+    ('callback option, 'error) Eta.Effect.t;
+  event_run_callback :
+    'observer ->
+    Delivery.token ->
+    'callback ->
+    (unit, 'error) Eta.Effect.t;
+}
+
+type 'error delivery_event_access = {
+  event_with_delivery_access :
+    'a. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+
+val make_delivery_event :
+  access:'error delivery_event_access ->
+  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('observer, 'a, 'callback, 'error) delivery_event_port ->
+  observer:'observer ->
+  token:Delivery.token ->
+  'a Update.t ->
+  ('callback, 'error) Delivery_event.t
+
 module Event : sig
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;
