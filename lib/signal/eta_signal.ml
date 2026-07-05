@@ -682,10 +682,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok value -> value
     | Error err -> raise (Graph_error err)
 
-  let next_signal_id () =
-    ensure_graph_context ();
-    graph_result_or_raise (Graph.next_signal_id graph)
-
   let next_var_id () =
     ensure_graph_context ();
     graph_result_or_raise (Graph.next_var_id graph)
@@ -894,16 +890,6 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (O observer) -> invalidate_observer_unlocked observer)
       observers
 
-  let signal_scope () =
-    match Graph.allocation_scope graph scope_ops with
-    | Ok scope -> scope
-    | Error err -> raise (Graph_error err)
-
-  let add_to_scope scope signal =
-    match scope with
-    | None -> ()
-    | Some scope -> Scope.add_node scope (P signal)
-
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
 
@@ -1019,33 +1005,32 @@ module Make (Observer_error : Observer_error) () = struct
       ~cancel_running timer_state_port timer
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
-    ensure_graph_context ();
-    List.iter validate_dependency dependencies;
-    let scope = signal_scope () in
-    let signal =
-      {
-        id = next_signal_id ();
-        equal = Option.value equal ~default:default_equal;
-        kind;
-        snapshot =
-          Transaction.create_staged Signal_snapshot.empty;
-        dirty;
-        dependencies = [];
-        dependents = [];
-        computing = false;
-        seen_generation = -1;
-        changed_seen = false;
-        computed_generation = -1;
-        scope;
-        valid = true;
-        timer = None;
-      }
-    in
-    List.iter (attach_packed_dependency signal) dependencies;
-    add_to_scope scope signal;
-    Graph.remember_live_node graph ~create_weak_node:weak_packed_signal
-      (P signal);
-    signal
+    graph_result_or_raise
+      (Graph.create_live_node graph scope_ops ~dependencies
+         ~validate_dependency
+         ~create_node:(fun ~id ~scope ->
+           {
+             id;
+             equal = Option.value equal ~default:default_equal;
+             kind;
+             snapshot =
+               Transaction.create_staged Signal_snapshot.empty;
+             dirty;
+             dependencies = [];
+             dependents = [];
+             computing = false;
+             seen_generation = -1;
+             changed_seen = false;
+             computed_generation = -1;
+             scope;
+             valid = true;
+             timer = None;
+           })
+         ~attach_dependency:(fun ~parent ~child ->
+           attach_packed_dependency parent child)
+         ~add_to_scope:(fun scope signal -> Scope.add_node scope (P signal))
+         ~pack_live_node:(fun signal -> P signal)
+         ~create_weak_node:weak_packed_signal)
 
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in
@@ -2923,7 +2908,8 @@ module Make (Observer_error : Observer_error) () = struct
     let construct_timer_signal f =
       with_graph_lane_sync (fun () ->
           try
-            ignore (signal_scope ());
+            ignore
+              (graph_result_or_raise (Graph.allocation_scope graph scope_ops));
             Ok (f ())
           with Graph_error err -> Error (err :> time_error))
       |> Effect.flatten_result

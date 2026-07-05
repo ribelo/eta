@@ -551,6 +551,19 @@ val remember_live_node :
   'node ->
   unit
 
+val create_live_node :
+  (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->
+  ('scope_context, 'scope) scope_ops ->
+  dependencies:'dependency list ->
+  validate_dependency:('dependency -> unit) ->
+  create_node:
+    (id:Eta_signal_id.signal -> scope:'scope option -> 'node) ->
+  attach_dependency:(parent:'node -> child:'dependency -> unit) ->
+  add_to_scope:('scope -> 'node -> unit) ->
+  pack_live_node:('node -> 'packed_node) ->
+  create_weak_node:('packed_node -> 'weak_node) ->
+  ('node, Eta_signal_error.graph_error) result
+
 val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   collect_live_nodes:

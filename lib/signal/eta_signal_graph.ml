@@ -519,6 +519,25 @@ let collect_live_node_registry t ~collect_live_nodes ~keep =
 let remember_live_node t ~create_weak_node node =
   t.all_nodes <- create_weak_node node :: t.all_nodes
 
+let create_live_node t scope_ops ~dependencies ~validate_dependency
+    ~create_node ~attach_dependency ~add_to_scope ~pack_live_node
+    ~create_weak_node =
+  ensure_context t;
+  List.iter validate_dependency dependencies;
+  match next_signal_id t with
+  | Error _ as error -> error
+  | Ok id -> (
+      match allocation_scope t scope_ops with
+      | Error _ as error -> error
+      | Ok scope ->
+          let node = create_node ~id ~scope in
+          List.iter
+            (fun child -> attach_dependency ~parent:node ~child)
+            dependencies;
+          Option.iter (fun scope -> add_to_scope scope node) scope;
+          remember_live_node t ~create_weak_node (pack_live_node node);
+          Ok node)
+
 let live_nodes t ~collect_live_nodes =
   collect_live_node_registry t ~collect_live_nodes ~keep:(fun _ -> true)
 
