@@ -197,6 +197,16 @@ let attach_dependency t ops ~parent ~child =
   if not (has_dependency t ops ~parent ~child) then
     ops.edge_set_dependencies parent (child :: ops.edge_dependencies parent)
 
+let detach_node_edges t ops node =
+  let dependencies = ops.edge_dependencies node in
+  let dependents = ops.edge_dependents node in
+  List.iter
+    (fun dependency -> remove_dependent t ops ~child:dependency ~parent:node)
+    dependencies;
+  ops.edge_set_dependencies node [];
+  ops.edge_set_dependents node [];
+  (dependencies, dependents)
+
 let mark_dirty _t ops node = ops.dirty_set node true
 
 let same_dirty_node ops node (candidate, _) =

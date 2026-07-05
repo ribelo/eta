@@ -150,13 +150,6 @@ val set_counter :
 val bump_counter :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
 
-val remove_dependent :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  ('id, 'node) edge_ops ->
-  child:'node ->
-  parent:'node ->
-  unit
-
 val detach_dependency :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   ('id, 'node) edge_ops ->
@@ -184,6 +177,12 @@ val attach_dependency :
   parent:'node ->
   child:'node ->
   unit
+
+val detach_node_edges :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  'node ->
+  'node list * 'node list
 
 val mark_dirty :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

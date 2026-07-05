@@ -697,9 +697,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let current_generation () = Graph.generation graph
 
-  let remove_dependent child parent =
-    Graph.remove_dependent graph edge_ops ~child:(P child) ~parent:(P parent)
-
   let detach_dependency parent child =
     Graph.detach_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
 
@@ -1096,8 +1093,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   and invalidate_node lane (P signal) =
     if signal.valid then (
-      let dependencies = signal.dependencies in
-      let dependents = signal.dependents in
       let timer_hooks =
         match signal.timer with
         | None -> []
@@ -1106,11 +1101,9 @@ module Make (Observer_error : Observer_error) () = struct
       signal.valid <- false;
       record_dead_node_unlocked (P signal);
       let observer_hooks = dispose_signal_observers signal in
-      List.iter
-        (fun (P dependency) -> remove_dependent dependency signal)
-        dependencies;
-      signal.dependencies <- [];
-      signal.dependents <- [];
+      let _dependencies, dependents =
+        Graph.detach_node_edges graph edge_ops (P signal)
+      in
       let dependent_hooks =
         List.concat_map (invalidate_node lane) dependents
       in
