@@ -1538,8 +1538,8 @@ module Make (Observer_error : Observer_error) () = struct
       bool ->
       value * bool =
    fun lane signal bind source_value source_changed ->
-    let eval =
-      Bind.dynamic_eval_context ~source_equal:bind.source.equal
+    let context =
+      Bind.dynamic_context ~source_equal:bind.source.equal
         ~source_dependency:(P bind.source)
         ~pack_inner:(fun inner -> P inner)
         ~new_scope:(fun _lane -> new_scope signal)
@@ -1557,15 +1557,9 @@ module Make (Observer_error : Observer_error) () = struct
             (signal_effective_snapshot signal))
         ~dependencies_changed:(fun _lane dependencies ->
           dependencies_changed signal dependencies)
-    in
-    let apply =
-      Bind.dynamic_apply_context
         ~current_value:(fun () ->
           Signal_snapshot.value (signal_effective_snapshot signal))
         ~cached_value:(fun () -> current_or_raise signal)
-        ~initialized:(fun () ->
-          Signal_snapshot.is_initialized
-            (signal_effective_snapshot signal))
         ~value_equal:signal.equal
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)
@@ -1575,10 +1569,8 @@ module Make (Observer_error : Observer_error) () = struct
         ~stage_value:(stage_signal lane signal)
     in
     match
-      Bind.run_dynamic
-        (Bind.dynamic_context ~eval ~apply)
-        lane
-        (bind_effective_snapshot bind) ~source_value ~source_changed
+      Bind.run_dynamic context lane (bind_effective_snapshot bind)
+        ~source_value ~source_changed
     with
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
     | Ok result -> result

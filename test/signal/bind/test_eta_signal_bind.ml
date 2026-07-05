@@ -241,8 +241,7 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   let with_scope, validate_inner, compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
-  let eval =
-    Bind.dynamic_eval_context ~source_equal:Int.equal
+  Bind.dynamic_context ~source_equal:Int.equal
       ~source_dependency:100
       ~pack_inner:(fun inner -> inner + 1000)
       ~new_scope:(fun cap ->
@@ -276,15 +275,12 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       ~dependencies_changed:(fun cap dependencies ->
         check_cap cap;
         dependencies_changed dependencies)
-  in
-  let apply =
-    Bind.dynamic_apply_context ~current_value:(fun () -> current)
+      ~current_value:(fun () -> current)
       ~cached_value:(fun () ->
         events := !events @ [ "cached" ];
         match current with
         | Some value -> value
         | None -> invalid_arg "missing current")
-      ~initialized:(fun () -> initialized)
       ~value_equal:Int.equal
       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
       ~stage_switch:(fun ~source_value ~inner ~scope ->
@@ -304,8 +300,6 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
             ])
       ~stage_value:(fun value ->
         events := !events @ [ "stage_value:" ^ string_of_int value ])
-  in
-  Bind.dynamic_context ~eval ~apply
 
 let run_dynamic context snapshot ~source_value ~source_changed =
   match

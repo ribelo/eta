@@ -106,8 +106,21 @@ let dynamic_apply_context ~current_value ~cached_value ~initialized ~value_equal
     apply_stage_value = stage_value;
   }
 
-let dynamic_context ~eval ~apply =
-  { dynamic_eval = eval; dynamic_apply = apply }
+let dynamic_context ~source_equal ~source_dependency ~pack_inner ~new_scope
+    ~selector ~with_scope ~validate_inner ~compute_inner ~on_switch_failure
+    ~dirty ~initialized ~dependencies_changed ~current_value ~cached_value
+    ~value_equal ~bump_recompute ~stage_switch ~stage_dependencies
+    ~stage_value =
+  {
+    dynamic_eval =
+      dynamic_eval_context ~source_equal ~source_dependency ~pack_inner
+        ~new_scope ~selector ~with_scope ~validate_inner ~compute_inner
+        ~on_switch_failure ~dirty ~initialized ~dependencies_changed;
+    dynamic_apply =
+      dynamic_apply_context ~current_value ~cached_value ~initialized
+        ~value_equal ~bump_recompute ~stage_switch ~stage_dependencies
+        ~stage_value;
+  }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
 
