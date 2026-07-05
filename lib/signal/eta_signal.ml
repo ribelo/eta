@@ -2028,54 +2028,38 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.run_stabilization graph lane
       (Graph.stabilization_ops ~errors ~pure ~rollback)
 
-  let finish_stabilize (_lane : graph_lane) delivering_token =
-    Graph.finish_stabilization graph delivering_token
-
   let mark_callback_delivery_complete () =
     with_graph_lane_access (fun lane ->
         Graph.bump_counter graph lane Graph.Callback_delivery_count)
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
-      finish_token_ref =
+      stabilization_finish =
     let result = begin_stabilize lane timer_refresh in
-    let hooks =
-      match result with
-      | Stabilization_pass.Pure_ok (hooks, _, _)
-      | Stabilization_pass.Pure_graph_error (hooks, _)
-      | Stabilization_pass.Pure_defect (hooks, _, _) ->
-          hooks
-    in
+    let hooks = Graph.record_stabilization_result stabilization_finish result in
     hooks_ref := hooks;
-    (match result with
-     | Stabilization_pass.Pure_ok (_, _, delivering_token) ->
-         finish_token_ref := Some delivering_token
-     | Stabilization_pass.Pure_graph_error _
-     | Stabilization_pass.Pure_defect _ -> ());
     result
 
-  let finish_recorded_stabilize finish_token_ref =
-    match !finish_token_ref with
-    | None -> Effect.unit
-    | Some delivering_token ->
-        with_graph_lane_access (fun lane ->
-            finish_stabilize lane delivering_token)
-        |> Effect.on_exit (fun _exit ->
-               Effect.sync (fun () -> finish_token_ref := None))
+  let finish_recorded_stabilize stabilization_finish =
+    if Graph.stabilization_finish_pending stabilization_finish then
+      with_graph_lane_access (fun _lane ->
+          Graph.finish_recorded_stabilization graph stabilization_finish)
+    else Effect.unit
 
-  let stabilization_delivery_ops hooks_ref refresh_timers finish_token_ref =
+  let stabilization_delivery_ops hooks_ref refresh_timers stabilization_finish =
     Stabilization_pass.delivery_ops
       ~run_pending_cleanup:(fun () ->
         run_pending_stabilize_cleanup hooks_ref refresh_timers)
       ~run_events ~mark_complete:mark_callback_delivery_complete
-      ~finish:(fun () -> finish_recorded_stabilize finish_token_ref)
+      ~finish:(fun () -> finish_recorded_stabilize stabilization_finish)
 
   let stabilize =
-    Effect.sync (fun () -> (ref [], ref false, ref None))
+    Effect.sync (fun () ->
+        (ref [], ref false, Graph.create_stabilization_finish ()))
     |> Effect.bind
-         (fun (hooks_ref, refresh_timers, finish_token_ref) ->
+         (fun (hooks_ref, refresh_timers, stabilization_finish) ->
            let delivery_ops =
              stabilization_delivery_ops hooks_ref refresh_timers
-               finish_token_ref
+               stabilization_finish
            in
            (current_runtime_contract ()
             |> Effect.bind (fun runtime_contract ->
@@ -2089,7 +2073,7 @@ module Make (Observer_error : Observer_error) () = struct
                                 ~now_ms:runtime_contract.Runtime_contract.now_ms)
                          in
                          begin_stabilize_with_pending_hooks lane timer_refresh
-                           hooks_ref finish_token_ref
+                           hooks_ref stabilization_finish
                        with Graph_error err ->
                          Stabilization_pass.Pure_graph_error ([], err))
                    |> Effect.bind (function

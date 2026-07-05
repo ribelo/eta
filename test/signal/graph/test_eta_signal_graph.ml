@@ -488,11 +488,16 @@ let test_observer_delivery_plan_owns_sorted_collection () =
     Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
       ~classify_graph_error:(fun _ -> None)
   in
-  match
+  let stabilization_finish = Graph.create_stabilization_finish () in
+  let result =
     Graph.run_stabilization graph capability
       (Graph.stabilization_ops ~errors ~pure ~rollback)
-  with
-  | Pass.Pure_ok (hooks, delivery_events, delivering_token) ->
+  in
+  let hooks =
+    Graph.record_stabilization_result stabilization_finish result
+  in
+  match result with
+  | Pass.Pure_ok (_hooks, delivery_events, _delivering_token) ->
       Alcotest.(check (list string)) "hooks" [] hooks;
       Alcotest.(check (list string))
         "delivery events"
@@ -517,7 +522,7 @@ let test_observer_delivery_plan_owns_sorted_collection () =
           "update_necessity";
         ]
         !events;
-      Graph.finish_stabilization graph delivering_token
+      Graph.finish_recorded_stabilization graph stabilization_finish
   | Pass.Pure_graph_error (_hooks, err) ->
       Alcotest.failf "unexpected graph error: %s"
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)

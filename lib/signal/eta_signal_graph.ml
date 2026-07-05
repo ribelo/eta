@@ -666,6 +666,33 @@ let finish_stabilization t delivering_token =
        delivering_token
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token)
 
+type 'owner stabilization_finish = {
+  mutable delivering_token :
+    ('owner, Eta_signal_stabilization.delivering)
+    Eta_signal_stabilization.token
+    option;
+}
+
+let create_stabilization_finish () = { delivering_token = None }
+
+let record_stabilization_result finish = function
+  | Eta_signal_stabilization_pass.Pure_ok (hooks, _events, delivering_token) ->
+      finish.delivering_token <- Some delivering_token;
+      hooks
+  | Eta_signal_stabilization_pass.Pure_graph_error (hooks, _)
+  | Eta_signal_stabilization_pass.Pure_defect (hooks, _, _) ->
+      hooks
+
+let stabilization_finish_pending finish =
+  Option.is_some finish.delivering_token
+
+let finish_recorded_stabilization t finish =
+  match finish.delivering_token with
+  | None -> ()
+  | Some delivering_token ->
+      finish.delivering_token <- None;
+      finish_stabilization t delivering_token
+
 let max_dead_node_tombstones = 1024
 
 let same_signal_id left right =

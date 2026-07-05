@@ -590,6 +590,50 @@ val finish_stabilization :
   Eta_signal_stabilization.token ->
   unit
 
+type 'owner stabilization_finish
+
+val create_stabilization_finish : unit -> 'owner stabilization_finish
+
+val record_stabilization_result :
+  'owner stabilization_finish ->
+  ('owner, 'hook, 'event, Eta_signal_error.graph_error)
+  Eta_signal_stabilization_pass.result ->
+  'hook list
+(** Remember the delivering token from a pure pass result and return the
+    cleanup hooks carried by that result. The graph owns the delivering-token
+    bookkeeping so callers do not need to inspect successful stabilization
+    results just to finish the graph phase later. *)
+
+val stabilization_finish_pending : 'owner stabilization_finish -> bool
+
+val finish_recorded_stabilization :
+  ( 'pending,
+    'bind,
+    'node,
+    'hook,
+    'timer,
+    'refresh,
+    'observer,
+    'weak_node,
+    'dead_node,
+    'scope_context,
+    'stream_metrics )
+  t ->
+  ( ( 'pending,
+      'bind,
+      'node,
+      'hook,
+      'timer,
+      'refresh,
+      'observer,
+      'weak_node,
+      'dead_node,
+      'scope_context,
+      'stream_metrics )
+    t )
+  stabilization_finish ->
+  unit
+
 val remember_live_node :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   create_weak_node:('node -> 'weak_node) ->
