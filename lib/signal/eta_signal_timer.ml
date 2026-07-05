@@ -285,11 +285,9 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
   with
   | Error _ as error -> error
   | Ok effects ->
-      Ok
-        (demand_effects
-           ~start_attempts:
-             effects.Eta_signal_timer_policy.demand_start_attempts
-           ~cancel_hooks:effects.Eta_signal_timer_policy.demand_cancel_hooks)
+      Eta_signal_timer_policy.demand_effects_result effects
+        ~plan:(fun ~start_attempts ~cancel_hooks ->
+          Ok (demand_effects ~start_attempts ~cancel_hooks))
 
 let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
   refresh_demand ~advance_generation ~cancel_running

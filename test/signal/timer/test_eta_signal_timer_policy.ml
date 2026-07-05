@@ -533,19 +533,21 @@ let test_apply_demand_plans_preserves_effect_order () =
         Timer_policy.Demand_plan_stop ("d", Some (stop_plan 4));
       ]
   in
-  Alcotest.(check (list string))
-    "start attempts"
-    [ "a:start:1"; "c:start:3" ]
-    effects.Timer_policy.demand_start_attempts;
-  Alcotest.(check (list string))
-    "cancel hooks"
-    [
-      "b:stop:2:first";
-      "b:stop:2:second";
-      "d:stop:4:first";
-      "d:stop:4:second";
-    ]
-    effects.Timer_policy.demand_cancel_hooks
+  Timer_policy.demand_effects_result effects
+    ~plan:(fun ~start_attempts ~cancel_hooks ->
+      Alcotest.(check (list string))
+        "start attempts"
+        [ "a:start:1"; "c:start:3" ]
+        start_attempts;
+      Alcotest.(check (list string))
+        "cancel hooks"
+        [
+          "b:stop:2:first";
+          "b:stop:2:second";
+          "d:stop:4:first";
+          "d:stop:4:second";
+        ]
+        cancel_hooks)
 
 let test_demand_effects_classifies_resources () =
   let inactive = timer_inactive 0 in
@@ -591,12 +593,12 @@ let test_demand_effects_classifies_resources () =
   | Ok effects ->
       Alcotest.(check (list string))
         "validated necessary timers" [ "start" ] !validated;
-      Alcotest.(check (list string))
-        "start attempts" [ "start:start:1" ]
-        effects.Timer_policy.demand_start_attempts;
-      Alcotest.(check (list string))
-        "cancel hooks" [ "stop:stop" ]
-        effects.Timer_policy.demand_cancel_hooks
+      Timer_policy.demand_effects_result effects
+        ~plan:(fun ~start_attempts ~cancel_hooks ->
+          Alcotest.(check (list string))
+            "start attempts" [ "start:start:1" ] start_attempts;
+          Alcotest.(check (list string))
+            "cancel hooks" [ "stop:stop" ] cancel_hooks)
 
 let test_demand_effects_validation_failure_short_circuits () =
   let started = ref false in
