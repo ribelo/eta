@@ -11,6 +11,19 @@ type 'hook reset = {
   clear_timer_refresh_staging : reset_context -> unit;
 }
 
+let reset_ops ~rollback_binds ~pure_disposal_hooks ~rollback_transaction
+    ~clear_computed_nodes ~clear_staged_binds ~clear_pure_disposal_hooks
+    ~clear_timer_refresh_staging =
+  {
+    rollback_binds;
+    pure_disposal_hooks;
+    rollback_transaction;
+    clear_computed_nodes;
+    clear_staged_binds;
+    clear_pure_disposal_hooks;
+    clear_timer_refresh_staging;
+  }
+
 let reset ops =
   let context = Reset_context in
   let rollback_hooks = ops.rollback_binds context in
@@ -39,6 +52,29 @@ type 'hook commit = {
   clear_timer_refresh_staged_timers : commit_context -> unit;
   commit_snapshot : commit_context -> unit;
 }
+
+let commit_ops ~preflight ~commit_binds ~remember_pure_disposal_hooks
+    ~prepare_signals ~commit_transaction ~commit_timer_refresh
+    ~commit_signals ~disposal_hooks ~clear_computed_nodes
+    ~clear_staged_binds ~clear_pure_disposal_hooks
+    ~clear_timer_refresh_disposal_hooks ~clear_timer_refresh_staged_timers
+    ~commit_snapshot =
+  {
+    preflight;
+    commit_binds;
+    remember_pure_disposal_hooks;
+    prepare_signals;
+    commit_transaction;
+    commit_timer_refresh;
+    commit_signals;
+    disposal_hooks;
+    clear_computed_nodes;
+    clear_staged_binds;
+    clear_pure_disposal_hooks;
+    clear_timer_refresh_disposal_hooks;
+    clear_timer_refresh_staged_timers;
+    commit_snapshot;
+  }
 
 let commit ops =
   let context = Commit_context in
