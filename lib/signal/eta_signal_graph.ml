@@ -56,9 +56,19 @@ let state t = t.state
 let current_scope t = t.current_scope
 let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t metrics = t.stream_bridge_metrics <- metrics
-let observers t = t.observers
 let add_observer t observer = t.observers <- observer :: t.observers
-let update_observers t f = t.observers <- f t.observers
+let remove_observers t ~keep = t.observers <- List.filter keep t.observers
+let matching_observers t ~selected = List.filter selected t.observers
+
+let count_observers t ~selected =
+  List.fold_left
+    (fun count observer ->
+      if selected observer then
+        if count = max_int then max_int else count + 1
+      else count)
+    0 t.observers
+
+let filter_map_observers t ~f = List.filter_map f t.observers
 
 let observer_delivery_plan t ~active ~compare ~collect_event ~mark_pending =
   let observers = List.filter active t.observers in

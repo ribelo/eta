@@ -890,10 +890,8 @@ module Make (Observer_error : Observer_error) () = struct
     observer_roots observer_active observers
 
   let remove_observer observer =
-    Graph.update_observers graph
-      (List.filter
-        (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
-      )
+    Graph.remove_observers graph ~keep:(fun (O candidate) ->
+        candidate.obs_id <> observer.obs_id)
 
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
@@ -920,9 +918,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dispose_signal_observers signal =
     let observers =
-      List.filter
+      Graph.matching_observers graph ~selected:
         (fun (O observer) -> observer.obs_signal.id = signal.id)
-        (Graph.observers graph)
     in
     List.concat_map
       (fun (O observer) -> invalidate_observer_unlocked observer)
@@ -2478,18 +2475,11 @@ module Make (Observer_error : Observer_error) () = struct
   let bind ?equal source selector = make_bind ?equal source selector
 
   let active_observer_count () =
-    List.fold_left
-      (fun count observer ->
-        if observer_active observer then saturating_succ count else count)
-      0 (Graph.observers graph)
+    Graph.count_observers graph ~selected:observer_active
 
   let invalid_observer_count () =
-    List.fold_left
-      (fun count (O observer) ->
-        if Observer_lifecycle.invalid_scope observer.obs_state then
-          saturating_succ count
-        else count)
-      0 (Graph.observers graph)
+    Graph.count_observers graph ~selected:(fun (O observer) ->
+        Observer_lifecycle.invalid_scope observer.obs_state)
 
   let necessary_node_count lane =
     Hashtbl.length (collect_necessary_node_ids lane)
@@ -2810,8 +2800,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let dot_observers =
       if options.dot_observers then
-        Graph.observers graph
-        |> List.filter_map (fun (O observer as packed) ->
+        Graph.filter_map_observers graph ~f:(fun (O observer as packed) ->
                if observer_selected ~include_invalid:include_dead_nodes packed
                then
                  let observed_signal_selected =

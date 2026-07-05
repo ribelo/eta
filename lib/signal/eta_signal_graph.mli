@@ -90,16 +90,31 @@ val stream_bridge_metrics :
 val set_stream_bridge_metrics :
   (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics -> unit
 
-val observers :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t -> 'observer list
-
 val add_observer :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t -> 'observer -> unit
 
-val update_observers :
+val remove_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
-  ('observer list -> 'observer list) ->
+  keep:('observer -> bool) ->
   unit
+
+val matching_observers :
+  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  selected:('observer -> bool) ->
+  'observer list
+
+val count_observers :
+  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  selected:('observer -> bool) ->
+  int
+
+val filter_map_observers :
+  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  f:('observer -> 'a option) ->
+  'a list
+(** Observer registry operations. The graph owns list traversal and mutation;
+    callers supply lifecycle predicates and projections for their concrete
+    observer representation. *)
 
 val observer_delivery_plan :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
