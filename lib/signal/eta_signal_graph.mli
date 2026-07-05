@@ -207,20 +207,6 @@ val detach_dependency :
   child:'node ->
   unit
 
-val has_dependency :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  ('id, 'node) edge_ops ->
-  parent:'node ->
-  child:'node ->
-  bool
-
-val has_dependent :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  ('id, 'node) edge_ops ->
-  child:'node ->
-  parent:'node ->
-  bool
-
 val attach_dependency :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->

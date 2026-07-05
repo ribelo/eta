@@ -700,12 +700,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.detach_dependency graph lane edge_ops ~parent:(P parent)
       ~child:(P child)
 
-  let has_dependency parent child =
-    Graph.has_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
-
-  let has_dependent child parent =
-    Graph.has_dependent graph edge_ops ~child:(P child) ~parent:(P parent)
-
   let attach_dependency lane parent child =
     Graph.attach_dependency graph lane edge_ops ~parent:(P parent)
       ~child:(P child)
