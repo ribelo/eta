@@ -108,23 +108,17 @@ let test_scope_ops =
 let live_nodes_from_cells _keep cells = (cells, cells)
 
 let compute_ops =
-  {
-    Graph.compute_node = (fun node -> node);
-    compute_pack = (fun node -> node);
-    compute_seen_generation = (fun node -> node.compute_seen_generation);
-    compute_set_seen_generation =
-      (fun node generation -> node.compute_seen_generation <- generation);
-    compute_changed_seen = (fun node -> node.compute_changed_seen);
-    compute_set_changed_seen =
-      (fun node changed -> node.compute_changed_seen <- changed);
-    compute_computing = (fun node -> node.compute_computing);
-    compute_set_computing =
-      (fun node computing -> node.compute_computing <- computing);
-    compute_computed_generation =
-      (fun node -> node.compute_computed_generation);
-    compute_set_computed_generation =
-      (fun node generation -> node.compute_computed_generation <- generation);
-  }
+  Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
+    ~seen_generation:(fun node -> node.compute_seen_generation)
+    ~set_seen_generation:(fun node generation ->
+      node.compute_seen_generation <- generation)
+    ~changed_seen:(fun node -> node.compute_changed_seen)
+    ~set_changed_seen:(fun node changed -> node.compute_changed_seen <- changed)
+    ~computing:(fun node -> node.compute_computing)
+    ~set_computing:(fun node computing -> node.compute_computing <- computing)
+    ~computed_generation:(fun node -> node.compute_computed_generation)
+    ~set_computed_generation:(fun node generation ->
+      node.compute_computed_generation <- generation)
 
 let invalidating_node ?kind_scope id =
   {
@@ -136,24 +130,19 @@ let invalidating_node ?kind_scope id =
   }
 
 let invalidating_edge_ops events =
-  {
-    Graph.edge_id = (fun node -> node.invalid_id);
-    edge_equal_id = Int.equal;
-    edge_dependencies = (fun node -> node.invalid_dependencies);
-    edge_set_dependencies =
-      (fun node dependencies ->
-        record events
-          ("dependencies:" ^ string_of_int node.invalid_id ^ ":"
-         ^ string_of_int (List.length dependencies));
-        node.invalid_dependencies <- dependencies);
-    edge_dependents = (fun node -> node.invalid_dependents);
-    edge_set_dependents =
-      (fun node dependents ->
-        record events
-          ("dependents:" ^ string_of_int node.invalid_id ^ ":"
-         ^ string_of_int (List.length dependents));
-        node.invalid_dependents <- dependents);
-  }
+  Graph.edge_ops ~id:(fun node -> node.invalid_id) ~equal_id:Int.equal
+    ~dependencies:(fun node -> node.invalid_dependencies)
+    ~set_dependencies:(fun node dependencies ->
+      record events
+        ("dependencies:" ^ string_of_int node.invalid_id ^ ":"
+       ^ string_of_int (List.length dependencies));
+      node.invalid_dependencies <- dependencies)
+    ~dependents:(fun node -> node.invalid_dependents)
+    ~set_dependents:(fun node dependents ->
+      record events
+        ("dependents:" ^ string_of_int node.invalid_id ^ ":"
+       ^ string_of_int (List.length dependents));
+      node.invalid_dependents <- dependents)
 
 let test_create_live_node_owns_lifecycle_context () =
   let events = ref [] in

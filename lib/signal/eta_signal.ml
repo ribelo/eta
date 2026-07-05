@@ -333,52 +333,39 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_edge_node signal = Graph_edge_node.Packed signal
 
   let edge_ops =
-    {
-      Graph.edge_id = (fun (P signal) -> signal.id);
-      edge_equal_id =
-        (fun left right -> signal_id_int left = signal_id_int right);
-      edge_dependencies = (fun (P signal) -> signal.dependencies);
-      edge_set_dependencies =
-        (fun (P signal) dependencies -> signal.dependencies <- dependencies);
-      edge_dependents = (fun (P signal) -> signal.dependents);
-      edge_set_dependents =
-        (fun (P signal) dependents -> signal.dependents <- dependents);
-    }
+    Graph.edge_ops ~id:(fun (P signal) -> signal.id)
+      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+      ~dependencies:(fun (P signal) -> signal.dependencies)
+      ~set_dependencies:(fun (P signal) dependencies ->
+        signal.dependencies <- dependencies)
+      ~dependents:(fun (P signal) -> signal.dependents)
+      ~set_dependents:(fun (P signal) dependents ->
+        signal.dependents <- dependents)
 
   let dirty_ops =
-    {
-      Graph.dirty_id = (fun (P signal) -> signal.id);
-      dirty_equal_id =
-        (fun left right -> signal_id_int left = signal_id_int right);
-      dirty = (fun (P signal) -> signal.dirty);
-      dirty_set = (fun (P signal) dirty -> signal.dirty <- dirty);
-    }
+    Graph.dirty_ops ~id:(fun (P signal) -> signal.id)
+      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+      ~dirty:(fun (P signal) -> signal.dirty)
+      ~set_dirty:(fun (P signal) dirty -> signal.dirty <- dirty)
 
   let compute_ops =
-    {
-      Graph.compute_node = (fun (P signal) -> graph_edge_node signal);
-      compute_pack = Graph_edge_node.pack;
-      compute_seen_generation =
-        (fun (Graph_edge_node.Packed signal) -> signal.seen_generation);
-      compute_set_seen_generation =
-        (fun (Graph_edge_node.Packed signal) generation ->
-          signal.seen_generation <- generation);
-      compute_changed_seen =
-        (fun (Graph_edge_node.Packed signal) -> signal.changed_seen);
-      compute_set_changed_seen =
-        (fun (Graph_edge_node.Packed signal) changed ->
-          signal.changed_seen <- changed);
-      compute_computing =
-        (fun (Graph_edge_node.Packed signal) -> signal.computing);
-      compute_set_computing =
-        (fun (Graph_edge_node.Packed signal) computing ->
-          signal.computing <- computing);
-      compute_computed_generation =
-        (fun (Graph_edge_node.Packed signal) -> signal.computed_generation);
-      compute_set_computed_generation =
-        (fun (Graph_edge_node.Packed signal) generation ->
-          signal.computed_generation <- generation);
-    }
+    Graph.compute_ops ~node:(fun (P signal) -> graph_edge_node signal)
+      ~pack:Graph_edge_node.pack
+      ~seen_generation:(fun (Graph_edge_node.Packed signal) ->
+        signal.seen_generation)
+      ~set_seen_generation:(fun (Graph_edge_node.Packed signal) generation ->
+        signal.seen_generation <- generation)
+      ~changed_seen:(fun (Graph_edge_node.Packed signal) ->
+        signal.changed_seen)
+      ~set_changed_seen:(fun (Graph_edge_node.Packed signal) changed ->
+        signal.changed_seen <- changed)
+      ~computing:(fun (Graph_edge_node.Packed signal) -> signal.computing)
+      ~set_computing:(fun (Graph_edge_node.Packed signal) computing ->
+        signal.computing <- computing)
+      ~computed_generation:(fun (Graph_edge_node.Packed signal) ->
+        signal.computed_generation)
+      ~set_computed_generation:(fun (Graph_edge_node.Packed signal) generation ->
+        signal.computed_generation <- generation)
 
   let publish_initial_current staged value =
     Transaction.publish_current Transaction.initialize_current staged value
@@ -614,12 +601,10 @@ module Make (Observer_error : Observer_error) () = struct
       signal.scope children
 
   let reachable_ops =
-    {
-      Graph.reachable_id = (fun (P signal) -> signal.id);
-      reachable_valid = (fun (P signal) -> signal.valid);
-      reachable_children =
-        (fun (P signal) -> children_with_scope_owner signal signal.dependencies);
-    }
+    Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
+      ~valid:(fun (P signal) -> signal.valid)
+      ~children:(fun (P signal) ->
+        children_with_scope_owner signal signal.dependencies)
 
   let source_watchers_unlocked source =
     let cells, watchers =
@@ -757,12 +742,9 @@ module Make (Observer_error : Observer_error) () = struct
     Signal_snapshot.version (signal_effective_snapshot signal)
 
   let version_ops =
-    {
-      Graph.version_id = (fun (P signal) -> signal.id);
-      version_equal_id =
-        (fun left right -> signal_id_int left = signal_id_int right);
-      version = (fun (P signal) -> effective_signal_version signal);
-    }
+    Graph.version_ops ~id:(fun (P signal) -> signal.id)
+      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+      ~version:(fun (P signal) -> effective_signal_version signal)
 
   let update_signal_staging signal f =
     Graph.update_cell graph signal.snapshot f
@@ -1268,26 +1250,22 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
     let reachable_ops =
-      {
-        Graph.reachable_id = (fun (P signal) -> signal.id);
-        reachable_valid =
-          (fun (P signal) ->
-            signal.valid && not (Hashtbl.mem invalidated_ids signal.id));
-        reachable_children =
-          (fun (P signal) ->
-            let signal_children =
-              match signal.kind with
-              | Bind bind ->
-                  Bind.dependencies ~source:(P bind.source)
-                    ~inner:
-                      (Option.map (fun inner -> P inner)
-                         (bind_effective_inner bind))
-              | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-              | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-                  signal.dependencies
-            in
-            children_with_scope_owner signal signal_children);
-      }
+      Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
+        ~valid:(fun (P signal) ->
+          signal.valid && not (Hashtbl.mem invalidated_ids signal.id))
+        ~children:(fun (P signal) ->
+          let signal_children =
+            match signal.kind with
+            | Bind bind ->
+                Bind.dependencies ~source:(P bind.source)
+                  ~inner:
+                    (Option.map (fun inner -> P inner)
+                       (bind_effective_inner bind))
+            | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+            | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+                signal.dependencies
+          in
+          children_with_scope_owner signal signal_children)
     in
     Graph.post_commit_necessary_timers graph
       ~collect_live_nodes:collect_live_weak_signals
@@ -1840,16 +1818,12 @@ module Make (Observer_error : Observer_error) () = struct
         signal.dependencies
 
   let order_ops =
-    {
-      Graph.order_id = (fun (P signal) -> signal.id);
-      order_equal_id =
-        (fun left right ->
-          Int.equal (signal_id_int left) (signal_id_int right));
-      order_compare_id =
-        (fun left right ->
-          Int.compare (signal_id_int left) (signal_id_int right));
-      order_children = (fun (P signal) -> observer_order_dependencies signal);
-    }
+    Graph.order_ops ~id:(fun (P signal) -> signal.id)
+      ~equal_id:(fun left right ->
+        Int.equal (signal_id_int left) (signal_id_int right))
+      ~compare_id:(fun left right ->
+        Int.compare (signal_id_int left) (signal_id_int right))
+      ~children:(fun (P signal) -> observer_order_dependencies signal)
 
   let compare_observer_graph_order (O left) (O right) =
     let signal_order =

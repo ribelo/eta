@@ -35,53 +35,65 @@ type counter =
 
 type staging
 
-type ('id, 'node) edge_ops = {
-  edge_id : 'node -> 'id;
-  edge_equal_id : 'id -> 'id -> bool;
-  edge_dependencies : 'node -> 'node list;
-  edge_set_dependencies : 'node -> 'node list -> unit;
-  edge_dependents : 'node -> 'node list;
-  edge_set_dependents : 'node -> 'node list -> unit;
-}
+type ('id, 'node) edge_ops
 
-type ('id, 'node) dirty_ops = {
-  dirty_id : 'node -> 'id;
-  dirty_equal_id : 'id -> 'id -> bool;
-  dirty : 'node -> bool;
-  dirty_set : 'node -> bool -> unit;
-}
+val edge_ops :
+  id:('node -> 'id) ->
+  equal_id:('id -> 'id -> bool) ->
+  dependencies:('node -> 'node list) ->
+  set_dependencies:('node -> 'node list -> unit) ->
+  dependents:('node -> 'node list) ->
+  set_dependents:('node -> 'node list -> unit) ->
+  ('id, 'node) edge_ops
 
-type ('node, 'compute_node) compute_ops = {
-  compute_node : 'node -> 'compute_node;
-  compute_pack : 'compute_node -> 'node;
-  compute_seen_generation : 'compute_node -> int;
-  compute_set_seen_generation : 'compute_node -> int -> unit;
-  compute_changed_seen : 'compute_node -> bool;
-  compute_set_changed_seen : 'compute_node -> bool -> unit;
-  compute_computing : 'compute_node -> bool;
-  compute_set_computing : 'compute_node -> bool -> unit;
-  compute_computed_generation : 'compute_node -> int;
-  compute_set_computed_generation : 'compute_node -> int -> unit;
-}
+type ('id, 'node) dirty_ops
 
-type ('id, 'node) version_ops = {
-  version_id : 'node -> 'id;
-  version_equal_id : 'id -> 'id -> bool;
-  version : 'node -> int;
-}
+val dirty_ops :
+  id:('node -> 'id) ->
+  equal_id:('id -> 'id -> bool) ->
+  dirty:('node -> bool) ->
+  set_dirty:('node -> bool -> unit) ->
+  ('id, 'node) dirty_ops
 
-type ('id, 'node) order_ops = {
-  order_id : 'node -> 'id;
-  order_equal_id : 'id -> 'id -> bool;
-  order_compare_id : 'id -> 'id -> int;
-  order_children : 'node -> 'node list;
-}
+type ('node, 'compute_node) compute_ops
 
-type ('id, 'node) reachable_ops = {
-  reachable_id : 'node -> 'id;
-  reachable_valid : 'node -> bool;
-  reachable_children : 'node -> 'node list;
-}
+val compute_ops :
+  node:('node -> 'compute_node) ->
+  pack:('compute_node -> 'node) ->
+  seen_generation:('compute_node -> int) ->
+  set_seen_generation:('compute_node -> int -> unit) ->
+  changed_seen:('compute_node -> bool) ->
+  set_changed_seen:('compute_node -> bool -> unit) ->
+  computing:('compute_node -> bool) ->
+  set_computing:('compute_node -> bool -> unit) ->
+  computed_generation:('compute_node -> int) ->
+  set_computed_generation:('compute_node -> int -> unit) ->
+  ('node, 'compute_node) compute_ops
+
+type ('id, 'node) version_ops
+
+val version_ops :
+  id:('node -> 'id) ->
+  equal_id:('id -> 'id -> bool) ->
+  version:('node -> int) ->
+  ('id, 'node) version_ops
+
+type ('id, 'node) order_ops
+
+val order_ops :
+  id:('node -> 'id) ->
+  equal_id:('id -> 'id -> bool) ->
+  compare_id:('id -> 'id -> int) ->
+  children:('node -> 'node list) ->
+  ('id, 'node) order_ops
+
+type ('id, 'node) reachable_ops
+
+val reachable_ops :
+  id:('node -> 'id) ->
+  valid:('node -> bool) ->
+  children:('node -> 'node list) ->
+  ('id, 'node) reachable_ops
 
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;

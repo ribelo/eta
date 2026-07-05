@@ -109,6 +109,55 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
+let edge_ops ~id ~equal_id ~dependencies ~set_dependencies ~dependents
+    ~set_dependents =
+  {
+    edge_id = id;
+    edge_equal_id = equal_id;
+    edge_dependencies = dependencies;
+    edge_set_dependencies = set_dependencies;
+    edge_dependents = dependents;
+    edge_set_dependents = set_dependents;
+  }
+
+let dirty_ops ~id ~equal_id ~dirty ~set_dirty =
+  {
+    dirty_id = id;
+    dirty_equal_id = equal_id;
+    dirty;
+    dirty_set = set_dirty;
+  }
+
+let compute_ops ~node ~pack ~seen_generation ~set_seen_generation
+    ~changed_seen ~set_changed_seen ~computing ~set_computing
+    ~computed_generation ~set_computed_generation =
+  {
+    compute_node = node;
+    compute_pack = pack;
+    compute_seen_generation = seen_generation;
+    compute_set_seen_generation = set_seen_generation;
+    compute_changed_seen = changed_seen;
+    compute_set_changed_seen = set_changed_seen;
+    compute_computing = computing;
+    compute_set_computing = set_computing;
+    compute_computed_generation = computed_generation;
+    compute_set_computed_generation = set_computed_generation;
+  }
+
+let version_ops ~id ~equal_id ~version =
+  { version_id = id; version_equal_id = equal_id; version }
+
+let order_ops ~id ~equal_id ~compare_id ~children =
+  {
+    order_id = id;
+    order_equal_id = equal_id;
+    order_compare_id = compare_id;
+    order_children = children;
+  }
+
+let reachable_ops ~id ~valid ~children =
+  { reachable_id = id; reachable_valid = valid; reachable_children = children }
+
 type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
   {
     node_validate_dependency : 'dependency -> unit;
