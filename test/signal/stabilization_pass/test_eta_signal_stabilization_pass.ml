@@ -44,6 +44,27 @@ let expect_effect_fail label eff =
   | Eta.Exit.Error _ -> Alcotest.failf "%s: expected Delivery_failed" label
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected failure" label
 
+let expect_pure_ok result f =
+  Pass.result result ~pure_ok:f
+    ~graph_error:(fun ~hooks:_ _ -> Alcotest.fail "unexpected graph error")
+    ~defect:(fun ~hooks:_ exn _ ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn))
+
+let expect_graph_error result f =
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "unexpected success")
+    ~graph_error:f
+    ~defect:(fun ~hooks:_ exn _ ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn))
+
+let expect_defect result f =
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "unexpected success")
+    ~graph_error:(fun ~hooks:_ _ -> Alcotest.fail "unexpected graph error")
+    ~defect:f
+
 type failure_slot =
   | Advance_generation
   | Begin_staging
@@ -248,8 +269,9 @@ let ops ?(stage_pending = fun _ -> ())
 let test_success_runs_pure_pass_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
-  match Pass.run state capability (ops state events) with
-  | Pass.Pure_ok (hooks, pass_events, delivering) ->
+  let result = Pass.run state capability (ops state events) in
+  expect_pure_ok result
+    (fun ~hooks ~events:pass_events ~delivering_token:delivering ->
       Alcotest.(check (list string))
         "callback order"
         [
@@ -273,53 +295,49 @@ let test_success_runs_pure_pass_in_order () =
         (match S.state state with
         | S.Delivering -> true
         | S.Idle | S.Pure | S.Committed -> false);
-      ignore (S.finish_delivering state delivering : S.idle token)
-  | Pass.Pure_graph_error _ -> Alcotest.fail "unexpected graph error"
-  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect"
+      ignore (S.finish_delivering state delivering : S.idle token))
 
 let test_graph_error_rolls_back_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
-  match
+  let result =
     Pass.run state capability
       (ops state events ~stage_pending:(fun _ -> raise Graph_failure))
-  with
-  | Pass.Pure_graph_error (hooks, `Graph) ->
-      Alcotest.(check (list string))
-        "callback order"
-        [
-          "advance_generation";
-          "begin_staging";
-          "drain_pending";
-          "release_pending_marks:pending";
-          "observer_plan";
-          "stage_pending:pending";
-          "rollback_staging";
-          "mark_observers_failed_without_current:observer";
-          "requeue_pending:pending";
-          "clear_timer_refresh";
-        ]
-        !events;
-      Alcotest.(check (list string)) "hooks" [ "rollback-hook" ] hooks;
-      Alcotest.(check bool) "idle" true
-        (match S.state state with
-        | S.Idle -> true
-        | S.Pure | S.Committed | S.Delivering -> false)
-  | Pass.Pure_graph_error (_, `Reentrant_stabilization) ->
-      Alcotest.fail "unexpected reentrant error"
-  | Pass.Pure_graph_error (_, `Delivery_failed) ->
-      Alcotest.fail "unexpected delivery error"
-  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
-  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect"
+  in
+  expect_graph_error result (fun ~hooks -> function
+    | `Graph ->
+        Alcotest.(check (list string))
+          "callback order"
+          [
+            "advance_generation";
+            "begin_staging";
+            "drain_pending";
+            "release_pending_marks:pending";
+            "observer_plan";
+            "stage_pending:pending";
+            "rollback_staging";
+            "mark_observers_failed_without_current:observer";
+            "requeue_pending:pending";
+            "clear_timer_refresh";
+          ]
+          !events;
+        Alcotest.(check (list string)) "hooks" [ "rollback-hook" ] hooks;
+        Alcotest.(check bool) "idle" true
+          (match S.state state with
+          | S.Idle -> true
+          | S.Pure | S.Committed | S.Delivering -> false)
+    | `Reentrant_stabilization ->
+        Alcotest.fail "unexpected reentrant error"
+    | `Delivery_failed -> Alcotest.fail "unexpected delivery error")
 
 let test_defect_rolls_back_in_order () =
   let events = ref [] in
   let state : test_error stabilization = S.create () in
-  match
+  let result =
     Pass.run state capability
       (ops state events ~commit_staging:(fun _ -> failwith "boom"))
-  with
-  | Pass.Pure_defect (hooks, _, _) ->
+  in
+  expect_defect result (fun ~hooks _ _ ->
       Alcotest.(check (list string))
         "callback order"
         [
@@ -342,9 +360,7 @@ let test_defect_rolls_back_in_order () =
       Alcotest.(check bool) "idle" true
         (match S.state state with
         | S.Idle -> true
-        | S.Pure | S.Committed | S.Delivering -> false)
-  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
-  | Pass.Pure_graph_error _ -> Alcotest.fail "unexpected graph error"
+        | S.Pure | S.Committed | S.Delivering -> false))
 
 let test_reentrant_begin_is_graph_error_without_callbacks () =
   let events = ref [] in
@@ -354,16 +370,13 @@ let test_reentrant_begin_is_graph_error_without_callbacks () =
     | Ok pure -> pure
     | Error `Reentrant_stabilization -> Alcotest.fail "expected first begin"
   in
-  (match Pass.run state capability (ops state events) with
-  | Pass.Pure_graph_error (hooks, `Reentrant_stabilization) ->
-      Alcotest.(check (list string)) "no hooks" [] hooks;
-      Alcotest.(check (list string)) "no callbacks" [] !events
-  | Pass.Pure_graph_error (_, `Graph) ->
-      Alcotest.fail "unexpected graph error"
-  | Pass.Pure_graph_error (_, `Delivery_failed) ->
-      Alcotest.fail "unexpected delivery error"
-  | Pass.Pure_ok _ -> Alcotest.fail "unexpected success"
-  | Pass.Pure_defect _ -> Alcotest.fail "unexpected defect");
+  let result = Pass.run state capability (ops state events) in
+  expect_graph_error result (fun ~hooks -> function
+    | `Reentrant_stabilization ->
+        Alcotest.(check (list string)) "no hooks" [] hooks;
+        Alcotest.(check (list string)) "no callbacks" [] !events
+    | `Graph -> Alcotest.fail "unexpected graph error"
+    | `Delivery_failed -> Alcotest.fail "unexpected delivery error");
   S.rollback_transaction state;
   ignore (S.rollback_to_idle state pure : S.idle token)
 
@@ -387,25 +400,23 @@ let check_failure_slot failure_kind slot =
     Pass.run state capability
       (ops state events ~fail_at:slot ~failure_kind)
   in
-  (match (failure_kind, result) with
-  | Graph_error, Pass.Pure_graph_error (hooks, `Graph) ->
-      Alcotest.(check (list string))
-        (label ^ ": hooks") (expected_failure_hooks slot) hooks
-  | Defect, Pass.Pure_defect (hooks, Defect_failure, _) ->
-      Alcotest.(check (list string))
-        (label ^ ": hooks") (expected_failure_hooks slot) hooks
-  | Graph_error, Pass.Pure_graph_error (_, `Reentrant_stabilization) ->
-      Alcotest.failf "%s: unexpected reentrant error" label
-  | Graph_error, Pass.Pure_graph_error (_, `Delivery_failed) ->
-      Alcotest.failf "%s: unexpected delivery error" label
-  | Defect, Pass.Pure_defect _ ->
-      Alcotest.failf "%s: unexpected defect" label
-  | Graph_error, Pass.Pure_ok _
-  | Defect, Pass.Pure_ok _ ->
-      Alcotest.failf "%s: unexpected success" label
-  | Graph_error, Pass.Pure_defect _
-  | Defect, Pass.Pure_graph_error _ ->
-      Alcotest.failf "%s: wrong failure classification" label);
+  (match failure_kind with
+  | Graph_error ->
+      expect_graph_error result (fun ~hooks -> function
+        | `Graph ->
+            Alcotest.(check (list string))
+              (label ^ ": hooks") (expected_failure_hooks slot) hooks
+        | `Reentrant_stabilization ->
+            Alcotest.failf "%s: unexpected reentrant error" label
+        | `Delivery_failed ->
+            Alcotest.failf "%s: unexpected delivery error" label)
+  | Defect ->
+      expect_defect result (fun ~hooks exn _ ->
+          match exn with
+          | Defect_failure ->
+              Alcotest.(check (list string))
+                (label ^ ": hooks") (expected_failure_hooks slot) hooks
+          | _ -> Alcotest.failf "%s: unexpected defect" label));
   Alcotest.(check (list string))
     (label ^ ": events") (expected_failure_events slot) !events;
   expect_idle label state

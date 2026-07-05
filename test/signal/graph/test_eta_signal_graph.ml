@@ -496,8 +496,8 @@ let test_observer_delivery_plan_owns_sorted_collection () =
   let hooks =
     Graph.record_stabilization_result stabilization_finish result
   in
-  match result with
-  | Pass.Pure_ok (_hooks, delivery_events, _delivering_token) ->
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
       Alcotest.(check (list string)) "hooks" [] hooks;
       Alcotest.(check (list string))
         "delivery events"
@@ -522,12 +522,12 @@ let test_observer_delivery_plan_owns_sorted_collection () =
           "update_necessity";
         ]
         !events;
-      Graph.finish_recorded_stabilization graph stabilization_finish
-  | Pass.Pure_graph_error (_hooks, err) ->
+      Graph.finish_recorded_stabilization graph stabilization_finish)
+    ~graph_error:(fun ~hooks:_ err ->
       Alcotest.failf "unexpected graph error: %s"
-        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
-  | Pass.Pure_defect (_hooks, exn, _backtrace) ->
-      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn)
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn))
 
 let test_timer_demand_plan_owns_live_pruning_and_roots () =
   let graph =

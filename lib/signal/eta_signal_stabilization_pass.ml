@@ -7,6 +7,16 @@ type ('owner, 'hook, 'event, 'error) result =
   | Pure_graph_error of 'hook list * 'error
   | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
 
+let graph_error ~hooks err =
+  Pure_graph_error (hooks, err)
+
+let result result ~pure_ok ~graph_error ~defect =
+  match result with
+  | Pure_ok (hooks, events, delivering_token) ->
+      pure_ok ~hooks ~events ~delivering_token
+  | Pure_graph_error (hooks, err) -> graph_error ~hooks err
+  | Pure_defect (hooks, exn, backtrace) -> defect ~hooks exn backtrace
+
 type 'error errors = {
   reentrant_stabilization : 'error;
   classify_graph_error : exn -> 'error option;

@@ -711,13 +711,13 @@ type 'owner stabilization_finish = {
 
 let create_stabilization_finish () = { delivering_token = None }
 
-let record_stabilization_result finish = function
-  | Eta_signal_stabilization_pass.Pure_ok (hooks, _events, delivering_token) ->
+let record_stabilization_result finish result =
+  Eta_signal_stabilization_pass.result result
+    ~pure_ok:(fun ~hooks ~events:_ ~delivering_token ->
       finish.delivering_token <- Some delivering_token;
-      hooks
-  | Eta_signal_stabilization_pass.Pure_graph_error (hooks, _)
-  | Eta_signal_stabilization_pass.Pure_defect (hooks, _, _) ->
-      hooks
+      hooks)
+    ~graph_error:(fun ~hooks _ -> hooks)
+    ~defect:(fun ~hooks _ _ -> hooks)
 
 let stabilization_finish_pending finish =
   Option.is_some finish.delivering_token

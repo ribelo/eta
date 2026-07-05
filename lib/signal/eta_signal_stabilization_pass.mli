@@ -1,13 +1,22 @@
 (** Pure stabilization pass orchestration for Eta_signal internals. *)
 
-type ('owner, 'hook, 'event, 'error) result =
-  | Pure_ok of
-      'hook list
-      * 'event list
-      * ('owner, Eta_signal_stabilization.delivering)
-        Eta_signal_stabilization.token
-  | Pure_graph_error of 'hook list * 'error
-  | Pure_defect of 'hook list * exn * Printexc.raw_backtrace
+type ('owner, 'hook, 'event, 'error) result
+
+val graph_error :
+  hooks:'hook list -> 'error -> ('owner, 'hook, 'event, 'error) result
+
+val result :
+  ('owner, 'hook, 'event, 'error) result ->
+  pure_ok:
+    (hooks:'hook list ->
+    events:'event list ->
+    delivering_token:
+      ('owner, Eta_signal_stabilization.delivering)
+      Eta_signal_stabilization.token ->
+    'a) ->
+  graph_error:(hooks:'hook list -> 'error -> 'a) ->
+  defect:(hooks:'hook list -> exn -> Printexc.raw_backtrace -> 'a) ->
+  'a
 
 type 'error errors
 

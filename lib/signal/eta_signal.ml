@@ -2033,18 +2033,21 @@ module Make (Observer_error : Observer_error) () = struct
                          begin_stabilize_with_pending_hooks lane timer_refresh
                            hooks_ref stabilization_finish
                        with Graph_error err ->
-                         Stabilization_pass.Pure_graph_error ([], err))
-                   |> Effect.bind (function
-                        | Stabilization_pass.Pure_graph_error (_, err) ->
-                            graph_error_with_pending_disposal_hooks hooks_ref err
-                        | Stabilization_pass.Pure_defect (_, exn, backtrace) ->
-                            defect_with_pending_disposal_hooks hooks_ref exn
-                              backtrace
-                        | Stabilization_pass.Pure_ok (_, events, _) ->
-                            refresh_timers := true;
-                            Stabilization_pass.deliver delivery_ops events)))
+                         Stabilization_pass.graph_error ~hooks:[] err)
+                   |> Effect.bind (fun result ->
+                          Stabilization_pass.result result
+                            ~graph_error:(fun ~hooks:_ err ->
+                              graph_error_with_pending_disposal_hooks hooks_ref
+                                err)
+                            ~defect:(fun ~hooks:_ exn backtrace ->
+                              defect_with_pending_disposal_hooks hooks_ref exn
+                                backtrace)
+                            ~pure_ok:
+                              (fun ~hooks:_ ~events ~delivering_token:_ ->
+                                refresh_timers := true;
+                                Stabilization_pass.deliver delivery_ops events)))
            |> Effect.on_exit (fun _exit ->
-                  Stabilization_pass.finish_delivery delivery_ops))
+                  Stabilization_pass.finish_delivery delivery_ops)))
 
   module Var = struct
     type 'a t = 'a var
