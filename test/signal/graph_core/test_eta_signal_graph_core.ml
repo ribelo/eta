@@ -66,29 +66,27 @@ let test_allocator_overflows_loudly () =
 let test_counters_saturate_and_can_be_seeded () =
   let core = Core.create () in
   with_lane core (fun lane ->
-      Core.bump_counter core lane Core.Recompute_count);
-  Alcotest.(check int) "bumped" 1
-    (Core.counter core Core.Recompute_count);
-  Core.set_counter core Core.Recompute_count max_int;
-  with_lane core (fun lane ->
-      Core.bump_counter core lane Core.Recompute_count);
-  Alcotest.(check int) "saturated" max_int
-    (Core.counter core Core.Recompute_count)
+      Core.bump_counter core lane Core.Recompute_count;
+      Alcotest.(check int) "bumped" 1
+        (Core.counter core Core.Recompute_count);
+      Core.set_counter core Core.Recompute_count max_int;
+      Core.bump_counter core lane Core.Recompute_count;
+      Alcotest.(check int) "saturated" max_int
+        (Core.counter core Core.Recompute_count))
 
 let test_necessary_id_updates_count_transitions () =
   let core = Core.create () in
   with_lane core (fun lane ->
-      Core.update_necessary_ids core lane (signal_set [ 1; 2 ]));
-  Alcotest.(check int) "became necessary first" 2
-    (Core.counter core Core.Nodes_became_necessary);
-  Alcotest.(check int) "became unnecessary first" 0
-    (Core.counter core Core.Nodes_became_unnecessary);
-  with_lane core (fun lane ->
-      Core.update_necessary_ids core lane (signal_set [ 2; 3; 4 ]));
-  Alcotest.(check int) "became necessary second" 4
-    (Core.counter core Core.Nodes_became_necessary);
-  Alcotest.(check int) "became unnecessary second" 1
-    (Core.counter core Core.Nodes_became_unnecessary)
+      Core.update_necessary_ids core lane (signal_set [ 1; 2 ]);
+      Alcotest.(check int) "became necessary first" 2
+        (Core.counter core Core.Nodes_became_necessary);
+      Alcotest.(check int) "became unnecessary first" 0
+        (Core.counter core Core.Nodes_became_unnecessary);
+      Core.update_necessary_ids core lane (signal_set [ 2; 3; 4 ]);
+      Alcotest.(check int) "became necessary second" 4
+        (Core.counter core Core.Nodes_became_necessary);
+      Alcotest.(check int) "became unnecessary second" 1
+        (Core.counter core Core.Nodes_became_unnecessary))
 
 let test_context_validation_is_owned_by_graph_core () =
   let core = Core.create () in

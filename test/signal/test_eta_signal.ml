@@ -3654,7 +3654,8 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
 
 let test_var_create_counter_overflow_raises_graph_error () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
-  Eta_signal_testable.Graph_core.set_next_node_id Overflow_signal.graph.core
+  Eta_signal_testable.Graph_core.set_next_node_id
+    (Eta_signal_testable.Graph.core Overflow_signal.graph)
     max_int;
   match Overflow_signal.Var.create 1 with
   | exception Overflow_signal.Graph_error (`Counter_overflow name)
@@ -3670,7 +3671,8 @@ let test_var_create_counter_overflow_raises_graph_error () =
 let test_stabilization_generation_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Eta_signal_testable.Graph_state.set_generation Overflow_signal.graph.state
+  Eta_signal_testable.Graph_state.set_generation
+    (Eta_signal_testable.Graph.state Overflow_signal.graph)
     max_int;
   expect_fail "stabilization generation overflow"
     (counter_overflow "stabilization generation")
@@ -3680,7 +3682,8 @@ let test_timer_refresh_token_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   Eta_signal_testable.Graph_state.set_next_timer_refresh_token
-    Overflow_signal.graph.state max_int;
+    (Eta_signal_testable.Graph.state Overflow_signal.graph)
+    max_int;
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
@@ -3706,28 +3709,35 @@ let test_stats_counter_saturation_is_typed_failure () =
   in
   check "stats pure_snapshot_commit_count" (fun value ->
       Eta_signal_testable.Graph_state.set_pure_snapshot_commit_count
-        Overflow_signal.graph.state value);
+        (Eta_signal_testable.Graph.state Overflow_signal.graph)
+        value);
   check "stats callback_delivery_count" (fun value ->
-      Eta_signal_testable.Graph_core.set_counter Overflow_signal.graph.core
+      Eta_signal_testable.Graph_core.set_counter
+        (Eta_signal_testable.Graph.core Overflow_signal.graph)
         Eta_signal_testable.Graph_core.Callback_delivery_count value);
   check_stats_count "stats total_node_count"
     Overflow_signal.Private_test_hooks.Stats_total_node_count;
   check "stats recompute_count" (fun value ->
-      Eta_signal_testable.Graph_core.set_counter Overflow_signal.graph.core
+      Eta_signal_testable.Graph_core.set_counter
+        (Eta_signal_testable.Graph.core Overflow_signal.graph)
         Eta_signal_testable.Graph_core.Recompute_count value);
   check "stats dynamic_scope_invalidations" (fun value ->
-      Eta_signal_testable.Graph_core.set_counter Overflow_signal.graph.core
+      Eta_signal_testable.Graph_core.set_counter
+        (Eta_signal_testable.Graph.core Overflow_signal.graph)
         Eta_signal_testable.Graph_core.Dynamic_scope_invalidations value);
   check "stats nodes_became_necessary" (fun value ->
-      Eta_signal_testable.Graph_core.set_counter Overflow_signal.graph.core
+      Eta_signal_testable.Graph_core.set_counter
+        (Eta_signal_testable.Graph.core Overflow_signal.graph)
         Eta_signal_testable.Graph_core.Nodes_became_necessary value);
   check "stats nodes_became_unnecessary" (fun value ->
-      Eta_signal_testable.Graph_core.set_counter Overflow_signal.graph.core
+      Eta_signal_testable.Graph_core.set_counter
+        (Eta_signal_testable.Graph.core Overflow_signal.graph)
         Eta_signal_testable.Graph_core.Nodes_became_unnecessary value);
   check "stats stream_bridge_drop_count" (fun value ->
-      Overflow_signal.graph.stream_bridge_metrics <-
-        Eta_signal_testable.Stream_bridge.create_metrics
-          ~drop_count:value ());
+      Eta_signal_testable.Graph.set_stream_bridge_metrics
+        Overflow_signal.graph
+        (Eta_signal_testable.Stream_bridge.create_metrics
+           ~drop_count:value ()));
   check_stats_count "stats necessary_node_count"
     Overflow_signal.Private_test_hooks.Stats_necessary_node_count;
   check_stats_count "stats dead_node_count"

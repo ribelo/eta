@@ -6,6 +6,7 @@ module Bind = Eta_signal_bind
 module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
+module Graph = Eta_signal_graph
 module Graph_core = Eta_signal_graph_core
 module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
@@ -569,35 +570,29 @@ module Make (Observer_error : Observer_error) () = struct
   type timer_refresh_context =
     (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
 
-  type graph = {
-    core : Graph_core.t;
-    stabilization : (graph, graph_error) Stabilization.t;
-    state :
-      ( packed_var,
-        packed_bind,
-        packed_signal,
-        disposal_hook,
-        timer_node,
-        timer_refresh_context )
-      Graph_state.t;
-    mutable observers : packed_observer list;
-    mutable all_nodes : weak_packed_signal list;
-    mutable dead_nodes : dead_signal list;
-    current_scope : (scope_id, packed_signal, packed_signal) Scope.context;
-    mutable stream_bridge_metrics : Stream_bridge.metrics;
-  }
+  type graph =
+    ( packed_var,
+      packed_bind,
+      packed_signal,
+      disposal_hook,
+      timer_node,
+      timer_refresh_context,
+      packed_observer,
+      weak_packed_signal,
+      dead_signal,
+      (scope_id, packed_signal, packed_signal) Scope.context,
+      Stream_bridge.metrics )
+    Graph.t
 
   let graph =
-    {
-      core = Graph_core.create ();
-      stabilization = Stabilization.create ();
-      state = Graph_state.create ();
-      observers = [];
-      all_nodes = [];
-      dead_nodes = [];
-      current_scope = Scope.create_context ();
-      stream_bridge_metrics = Stream_bridge.create_metrics ();
-    }
+    Graph.create ~create_scope_context:Scope.create_context
+      ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
+
+  let graph_core = Graph.core graph
+  let graph_state = Graph.state graph
+  let graph_stabilization = Graph.stabilization graph
+  let graph_current_scope = Graph.current_scope graph
+  let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
   let pack_weak_signal signal = P signal
   let weak_packed_signal (P signal) = Graph_algorithms.Weak_cell.create signal
@@ -608,12 +603,10 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_algorithms.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
   let all_nodes_unlocked () =
-    let cells, nodes = collect_live_weak_signals (fun _ -> true) graph.all_nodes in
-    graph.all_nodes <- cells;
-    nodes
+    Graph.collect_nodes graph (collect_live_weak_signals (fun _ -> true))
 
   let prune_all_nodes_unlocked () =
-    ignore (all_nodes_unlocked () : packed_signal list)
+    Graph.prune_nodes graph (collect_live_weak_signals (fun _ -> true))
 
   let children_with_scope_owner signal children =
     Scope.children_with_scope_owner
@@ -656,7 +649,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let graph_context_error_message = Graph_core.context_error_message
 
-  let ensure_graph_context () = Graph_core.ensure_context graph.core
+  let ensure_graph_context () = Graph_core.ensure_context graph_core
 
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
@@ -668,7 +661,7 @@ module Make (Observer_error : Observer_error) () = struct
     Observer_core.Delivery_event.t
 
   let with_graph_lane_access f =
-    Graph_core.with_lane_access graph.core
+    Graph_core.with_lane_access graph_core
       ~leaf_name:"Eta_signal.with_graph_lane_sync"
       ~depth_local:graph_lane_depth_local
       ~hooks:
@@ -694,22 +687,22 @@ module Make (Observer_error : Observer_error) () = struct
 
   let next_signal_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_signal_id graph.core)
+    graph_core_or_raise (Graph_core.next_signal_id graph_core)
 
   let next_var_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_var_id graph.core)
+    graph_core_or_raise (Graph_core.next_var_id graph_core)
 
   let next_observer_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_observer_id graph.core)
+    graph_core_or_raise (Graph_core.next_observer_id graph_core)
 
   let new_scope owner =
     Scope.create
-      ~id:(graph_core_or_raise (Graph_core.next_scope_id graph.core))
+      ~id:(graph_core_or_raise (Graph_core.next_scope_id graph_core))
       ~owner:(P owner) ~parent:owner.scope
 
-  let current_generation () = Graph_state.generation graph.state
+  let current_generation () = Graph_state.generation graph_state
 
   let remove_dependent child parent =
     Graph_edges.remove_dependent ~child:(graph_edge_node child)
@@ -738,7 +731,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_dirty.mark packed
 
   let mark_timer_refresh_dirty packed =
-    match Graph_state.active_timer_refresh graph.state with
+    match Graph_state.active_timer_refresh graph_state with
     | None -> Graph_dirty.mark packed
     | Some context ->
         Timer_policy.set_refresh_dirty_items context
@@ -756,10 +749,10 @@ module Make (Observer_error : Observer_error) () = struct
         source.watchers
 
   let active_transaction () =
-    Stabilization.active_transaction graph.stabilization
+    Stabilization.active_transaction graph_stabilization
 
   let active_staging () =
-    Graph_state.require_staging graph.state
+    Graph_state.require_staging graph_state
 
   let stage_var_graph_value (type a) (var : a var) value =
     Transaction.stage (active_transaction ()) var.graph_value value
@@ -768,13 +761,13 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage (active_transaction ()) var.source_value value
 
   let effective_var_value (type a) (var : a var) =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.read transaction var.graph_value
     | None -> Transaction.current var.graph_value
 
   let remember_computed (P signal) =
     let generation = current_generation () in
-    Graph_state.remember_computed graph.state (active_staging ()) ~generation
+    Graph_state.remember_computed graph_state (active_staging ()) ~generation
       (P signal)
       ~project:(fun (P signal) -> graph_edge_node signal)
       ~remember:(fun ~generation nodes node ->
@@ -784,7 +777,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current signal.snapshot
 
   let signal_effective_snapshot signal =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.read transaction signal.snapshot
     | None -> signal_current_snapshot signal
 
@@ -794,12 +787,12 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.stage transaction signal.snapshot (f snapshot)
 
   let signal_staged_in_active_transaction signal =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.staged transaction signal.snapshot
     | None -> false
 
   let discard_signal_staging signal =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.discard transaction signal.snapshot
     | None -> ()
 
@@ -860,7 +853,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current live.observer_snapshot
 
   let observer_effective_snapshot live =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.read transaction live.observer_snapshot
     | None -> observer_current_snapshot live
 
@@ -896,10 +889,10 @@ module Make (Observer_error : Observer_error) () = struct
     observer_roots observer_active observers
 
   let remove_observer observer =
-    graph.observers <-
-      List.filter
+    Graph.update_observers graph
+      (List.filter
         (fun (O candidate) -> candidate.obs_id <> observer.obs_id)
-        graph.observers
+      )
 
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
@@ -928,17 +921,17 @@ module Make (Observer_error : Observer_error) () = struct
     let observers =
       List.filter
         (fun (O observer) -> observer.obs_signal.id = signal.id)
-        graph.observers
+        (Graph.observers graph)
     in
     List.concat_map
       (fun (O observer) -> invalidate_observer_unlocked observer)
       observers
 
   let signal_scope () =
-    match Stabilization.state graph.stabilization with
-    | Idle -> Scope.current graph.current_scope
+    match Stabilization.state graph_stabilization with
+    | Idle -> Scope.current graph_current_scope
     | Pure -> (
-        match Scope.require_valid_current graph.current_scope with
+        match Scope.require_valid_current graph_current_scope with
         | Ok scope -> Some scope
         | Error `Ambiguous_scope -> raise (Graph_error `Ambiguous_scope))
     | Committed | Delivering -> raise (Graph_error `Ambiguous_scope)
@@ -957,7 +950,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current (Timer.snapshot_cell timer)
 
   let timer_effective_snapshot timer =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction ->
         Transaction.read transaction (Timer.snapshot_cell timer)
     | None -> timer_current_snapshot timer
@@ -985,7 +978,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_state_label = Timer_policy.state_label
 
   let timer_has_staged_refresh timer =
-    match Graph_state.active_timer_refresh graph.state with
+    match Graph_state.active_timer_refresh graph_state with
     | Some context ->
         Timer.staged_refresh_token timer = Timer_policy.refresh_token context
     | None -> false
@@ -1050,7 +1043,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_set_next_due_state = Timer_policy.state_set_next_due
 
   let remember_timer_refresh_timer timer =
-    match Graph_state.active_timer_refresh graph.state with
+    match Graph_state.active_timer_refresh graph_state with
     | None -> ()
     | Some context ->
         let timer_refresh_token = Timer_policy.refresh_token context in
@@ -1059,7 +1052,7 @@ module Make (Observer_error : Observer_error) () = struct
           update_timer_staging timer (fun snapshot ->
               Timer_policy.snapshot_with_on_demand_refresh_token snapshot
                 timer_refresh_token);
-          Graph_state.stage_timer_refresh_timer graph.state
+          Graph_state.stage_timer_refresh_timer graph_state
             (active_staging ()) timer)
 
   let stage_timer_state_unlocked timer state =
@@ -1097,7 +1090,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter (attach_packed_dependency signal) dependencies;
     add_to_scope scope signal;
-    graph.all_nodes <- weak_packed_signal (P signal) :: graph.all_nodes;
+    Graph.remember_node graph (weak_packed_signal (P signal));
     signal
 
   let new_const ?equal value =
@@ -1107,10 +1100,8 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let prune_invalid_nodes_unlocked () =
-    let cells, _ =
-      collect_live_weak_signals (fun (P signal) -> signal.valid) graph.all_nodes
-    in
-    graph.all_nodes <- cells
+    Graph.prune_nodes graph
+      (collect_live_weak_signals (fun (P signal) -> signal.valid))
 
   let max_dead_signal_tombstones = 1024
 
@@ -1149,17 +1140,16 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let record_dead_node_unlocked (P signal as packed) =
-    graph.dead_nodes <-
-      Debug.remember_latest ~max_count:max_dead_signal_tombstones
-        ~id:(fun tombstone -> tombstone.dead_id)
-        ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
-        (signal_tombstone packed) graph.dead_nodes
+    Graph.remember_dead_node graph ~max_count:max_dead_signal_tombstones
+      ~id:(fun tombstone -> tombstone.dead_id)
+      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+      (signal_tombstone packed)
 
   let rec invalidate_scope lane ?(prune = true) scope =
     match Scope.invalidate scope with
     | None -> []
     | Some nodes ->
-        Graph_core.bump_counter graph.core lane
+        Graph_core.bump_counter graph_core lane
           Graph_core.Dynamic_scope_invalidations;
         let hooks = List.concat_map (invalidate_node lane) nodes in
         if prune then prune_invalid_nodes_unlocked ();
@@ -1227,18 +1217,18 @@ module Make (Observer_error : Observer_error) () = struct
     if signal.valid then signal.dirty <- false
 
   let commit_transaction () =
-    match Stabilization.commit_transaction graph.stabilization with
+    match Stabilization.commit_transaction graph_stabilization with
     | Ok () -> ()
     | Error err -> raise (Graph_error err)
 
   let rollback_transaction () =
-    Stabilization.rollback_transaction graph.stabilization
+    Stabilization.rollback_transaction graph_stabilization
 
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
     Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
       ~remember:(fun () ->
-        Graph_state.stage_bind graph.state (active_staging ()) (B bind))
+        Graph_state.stage_bind graph_state (active_staging ()) (B bind))
       ~source_value ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
@@ -1266,7 +1256,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =
-    match Stabilization.transaction graph.stabilization with
+    match Stabilization.transaction graph_stabilization with
     | Some transaction -> Transaction.read transaction bind.snapshot
     | None -> bind_current_snapshot bind
 
@@ -1348,7 +1338,7 @@ module Make (Observer_error : Observer_error) () = struct
     match
       Bind.collect_staged_switch_invalidations
         ~init:(invalidated_ids, invalidated_nodes)
-        ~switches:(Graph_state.staged_binds graph.state)
+        ~switches:(Graph_state.staged_binds graph_state)
         ~staged_switch:packed_bind_staged_switch
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
           let P owner_signal = owner in
@@ -1386,7 +1376,7 @@ module Make (Observer_error : Observer_error) () = struct
         children_with_scope_owner signal signal_children
     end)
     in
-    Reachable.fold ~roots:(observer_demand_roots graph.observers)
+    Reachable.fold ~roots:(observer_demand_roots (Graph.observers graph))
       ~init:(Hashtbl.create 8)
       ~f:(fun timers (P signal) ->
         Option.iter (fun timer -> Hashtbl.replace timers signal.id timer)
@@ -1405,21 +1395,21 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
     List.iter (preflight_signal_commit invalidated_ids)
-      (Graph_state.computed_nodes graph.state);
+      (Graph_state.computed_nodes graph_state);
     preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks hooks =
-    Graph_state.remember_pure_disposal_hooks graph.state (active_staging ())
+    Graph_state.remember_pure_disposal_hooks graph_state (active_staging ())
       hooks
 
   let remember_timer_refresh_disposal_hooks hooks =
-    Graph_state.remember_timer_refresh_disposal_hooks graph.state
+    Graph_state.remember_timer_refresh_disposal_hooks graph_state
       (active_staging ()) hooks
 
   let queue_var_unlocked (type a) (source : a var) =
     if not source.queued then (
       source.queued <- true;
-      Graph_state.enqueue_pending graph.state (V source))
+      Graph_state.enqueue_pending graph_state (V source))
 
   let set_var_source_unlocked (type a) (source : a var) value =
     publish_source_current source.source_value value;
@@ -1481,7 +1471,7 @@ module Make (Observer_error : Observer_error) () = struct
     clear_timer_refresh_timer_staging timer
 
   let reset_staging lane staging =
-    Graph_state.reset_staging graph.state staging
+    Graph_state.reset_staging graph_state staging
       ~rollback_bind:(rollback_bind lane)
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
@@ -1490,7 +1480,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
   let commit_staging lane staging =
-    Graph_state.commit_staging graph.state staging
+    Graph_state.commit_staging graph_state staging
       ~preflight:(fun () -> preflight_commit_staging lane)
       ~commit_bind:(commit_bind lane)
       ~prepare_signal:prepare_signal_commit ~commit_transaction
@@ -1500,7 +1490,7 @@ module Make (Observer_error : Observer_error) () = struct
   let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (
       var.queued <- true;
-      Graph_state.enqueue_pending graph.state packed)
+      Graph_state.enqueue_pending graph_state packed)
 
   let mark_failed_without_current (_lane : graph_lane) (O observer) =
     match observer_active_live_state observer with
@@ -1513,7 +1503,7 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
 
   let next_timer_refresh_token_unlocked () =
-    Graph_state.next_timer_refresh_token graph.state
+    Graph_state.next_timer_refresh_token graph_state
       ~advance:(fun token -> checked_succ "timer refresh token" token)
 
   let stage_pending_var (_lane : graph_lane) (V var) =
@@ -1524,7 +1514,7 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter mark_self_dirty (source_watchers_unlocked var))
 
   let refresh_timer_source_for_compute signal =
-    match (Graph_state.active_timer_refresh graph.state, signal.timer) with
+    match (Graph_state.active_timer_refresh graph_state, signal.timer) with
     | Some timer_refresh, Some timer ->
         let timer_refresh_token = Timer_policy.refresh_token timer_refresh in
         ensure_timer_runtime timer
@@ -1557,7 +1547,7 @@ module Make (Observer_error : Observer_error) () = struct
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let recompute value =
-      Graph_core.bump_counter graph.core lane Graph_core.Recompute_count;
+      Graph_core.bump_counter graph_core lane Graph_core.Recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
@@ -1692,7 +1682,7 @@ module Make (Observer_error : Observer_error) () = struct
                context_selector = bind.selector;
                context_with_scope =
                  (fun _lane scope f ->
-                   Scope.with_current graph.current_scope scope f);
+                   Scope.with_current graph_current_scope scope f);
                context_validate_inner =
                  (fun _lane scope inner ->
                    Scope_validation.validate_inner ~scope (P inner));
@@ -1707,7 +1697,7 @@ module Make (Observer_error : Observer_error) () = struct
                  (fun _lane dependencies -> dependency_changed dependencies);
                context_mark_recomputed =
                  (fun lane ->
-                   Graph_core.bump_counter graph.core lane
+                   Graph_core.bump_counter graph_core lane
                      Graph_core.Recompute_count);
                context_value_changed =
                  (fun _lane next ->
@@ -1739,11 +1729,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_necessary_node_ids (_lane : graph_lane) =
     prune_all_nodes_unlocked ();
-    Graph_reachable_static.ids ~roots:(observer_demand_roots graph.observers)
+    Graph_reachable_static.ids
+      ~roots:(observer_demand_roots (Graph.observers graph))
 
   let update_necessity_counters_unlocked lane =
     let next = collect_necessary_node_ids lane in
-    Graph_core.update_necessary_ids graph.core lane next
+    Graph_core.update_necessary_ids graph_core lane next
 
   let all_timers (_lane : graph_lane) =
     List.filter_map
@@ -2108,7 +2099,7 @@ module Make (Observer_error : Observer_error) () = struct
     let timer_refresh_lane context =
       Stabilization_pass.timer_refresh_capability context
     in
-    Stabilization_pass.run graph.stabilization lane
+    Stabilization_pass.run graph_stabilization lane
       {
         errors =
           {
@@ -2123,17 +2114,17 @@ module Make (Observer_error : Observer_error) () = struct
             advance_generation =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.advance_generation graph.state
+                Graph_state.advance_generation graph_state
                   ~advance:(fun value ->
                     checked_succ "stabilization generation" value));
             begin_staging =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.begin_staging graph.state ~timer_refresh);
+                Graph_state.begin_staging graph_state ~timer_refresh);
             drain_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.drain_pending graph.state);
+                Graph_state.drain_pending graph_state);
             release_pending_marks =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
@@ -2142,7 +2133,7 @@ module Make (Observer_error : Observer_error) () = struct
             active_observers =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                graph.observers |> List.filter observer_active);
+                Graph.observers graph |> List.filter observer_active);
             stage_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
@@ -2208,20 +2199,20 @@ module Make (Observer_error : Observer_error) () = struct
                 (context :
                   graph_lane Stabilization_pass.timer_refresh_context) ->
                 let _lane = timer_refresh_lane context in
-                Graph_state.clear_active_timer_refresh graph.state);
+                Graph_state.clear_active_timer_refresh graph_state);
           };
       }
 
   let finish_stabilize (_lane : graph_lane) delivering_token =
-    Graph_state.clear_active_timer_refresh graph.state;
+    Graph_state.clear_active_timer_refresh graph_state;
     ignore
-      (Stabilization.finish_delivering graph.stabilization
+      (Stabilization.finish_delivering graph_stabilization
          delivering_token
         : (graph, Stabilization.idle) Stabilization.token)
 
   let mark_callback_delivery_complete () =
     with_graph_lane_access (fun lane ->
-        Graph_core.bump_counter graph.core lane
+        Graph_core.bump_counter graph_core lane
           Graph_core.Callback_delivery_count)
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
@@ -2311,7 +2302,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let value (source : 'a t) =
       ensure_graph_context ();
-      if Stabilization.is_pure graph.stabilization then
+      if Stabilization.is_pure graph_stabilization then
         raise (Graph_error `Ambiguous_scope);
       Transaction.current source.source_value
 
@@ -2416,7 +2407,7 @@ module Make (Observer_error : Observer_error) () = struct
                   obs_state = Observer_lifecycle.Registering live;
                 }
               in
-              graph.observers <- O observer :: graph.observers;
+              Graph.add_observer graph (O observer);
               update_necessity_counters_unlocked lane;
               Ok observer
           with Graph_error err -> Error err)
@@ -2508,7 +2499,7 @@ module Make (Observer_error : Observer_error) () = struct
     List.fold_left
       (fun count observer ->
         if observer_active observer then saturating_succ count else count)
-      0 graph.observers
+      0 (Graph.observers graph)
 
   let invalid_observer_count () =
     List.fold_left
@@ -2516,12 +2507,12 @@ module Make (Observer_error : Observer_error) () = struct
         if Observer_lifecycle.invalid_scope observer.obs_state then
           saturating_succ count
         else count)
-      0 graph.observers
+      0 (Graph.observers graph)
 
   let necessary_node_count lane =
     Hashtbl.length (collect_necessary_node_ids lane)
 
-  let dead_node_count () = List.length graph.dead_nodes
+  let dead_node_count () = Graph.dead_node_count graph
 
   let live_dirty_node_count all_nodes =
     List.fold_left
@@ -2545,10 +2536,10 @@ module Make (Observer_error : Observer_error) () = struct
             {
               pure_snapshot_commit_count =
                 stats_counter "stats pure_snapshot_commit_count"
-                  (Graph_state.pure_snapshot_commit_count graph.state);
+                  (Graph_state.pure_snapshot_commit_count graph_state);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
-                  (Graph_core.counter graph.core
+                  (Graph_core.counter graph_core
                      Graph_core.Callback_delivery_count);
               total_node_count =
                 stats_counter "stats total_node_count"
@@ -2573,30 +2564,30 @@ module Make (Observer_error : Observer_error) () = struct
                   (live_dirty_node_count all_nodes);
               recompute_count =
                 stats_counter "stats recompute_count"
-                  (Graph_core.counter graph.core Graph_core.Recompute_count);
+                  (Graph_core.counter graph_core Graph_core.Recompute_count);
               dynamic_scope_invalidations =
                 stats_counter "stats dynamic_scope_invalidations"
-                  (Graph_core.counter graph.core
+                  (Graph_core.counter graph_core
                      Graph_core.Dynamic_scope_invalidations);
               nodes_became_necessary =
                 stats_counter "stats nodes_became_necessary"
-                  (Graph_core.counter graph.core
+                  (Graph_core.counter graph_core
                      Graph_core.Nodes_became_necessary);
               nodes_became_unnecessary =
                 stats_counter "stats nodes_became_unnecessary"
-                  (Graph_core.counter graph.core
+                  (Graph_core.counter graph_core
                      Graph_core.Nodes_became_unnecessary);
               stream_bridge_drop_count =
                 stats_counter "stats stream_bridge_drop_count"
-                  (Stream_bridge.drop_count graph.stream_bridge_metrics);
+                  (Stream_bridge.drop_count (graph_stream_bridge_metrics ()));
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
-                  (Graph_core.lane_waiting_count graph.core);
+                  (Graph_core.lane_waiting_count graph_core);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (stats_count
                      Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Graph_core.lane_cancelled_count graph.core));
+                     (Graph_core.lane_cancelled_count graph_core));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
@@ -2782,7 +2773,7 @@ module Make (Observer_error : Observer_error) () = struct
     if include_dead_nodes then
       List.iter
         (fun tombstone -> Hashtbl.replace dead_ids tombstone.dead_id ())
-        graph.dead_nodes;
+        (Graph.dead_nodes graph);
     let selected_live_signal signal =
       selected signal
       && not
@@ -2832,12 +2823,12 @@ module Make (Observer_error : Observer_error) () = struct
                     else None)
                   tombstone.dead_dependency_ids;
             })
-          graph.dead_nodes
+          (Graph.dead_nodes graph)
       else []
     in
     let dot_observers =
       if options.dot_observers then
-        graph.observers
+        Graph.observers graph
         |> List.filter_map (fun (O observer as packed) ->
                if observer_selected ~include_invalid:include_dead_nodes packed
                then
@@ -3189,7 +3180,7 @@ module Make (Observer_error : Observer_error) () = struct
     let default_capacity = Stream_bridge.default_capacity
 
     let bridge_hooks () =
-      Stream_bridge.hooks ~metrics:graph.stream_bridge_metrics
+      Stream_bridge.hooks ~metrics:(graph_stream_bridge_metrics ())
         ~after_try_send_before_ack:(fun () ->
           Private_test_hooks.run After_stream_try_send_before_ack)
         ~after_drop_before_ack:(fun () ->
