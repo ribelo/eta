@@ -135,6 +135,12 @@ val mark_node_unneeded :
   'operation node ->
   (unit -> unit) list
 
+val preflight_start :
+  advance_generation:(int -> int) -> 'timer state_port -> 'timer -> unit
+
+val preflight_stop :
+  advance_generation:(int -> int) -> 'timer state_port -> 'timer -> unit
+
 val start_attempt_effects :
   ('timer, 'effect) start_attempt list -> 'effect list
 
@@ -222,6 +228,9 @@ val advance_next_due :
   expected:int ->
   next_due_ms:int ->
   [ `Advanced | `Stale | `Stop ]
+
+val finish_node :
+  advance_generation:(int -> int) -> 'timer state_port -> 'timer -> unit
 
 val finish_saturated :
   advance_generation:(int -> int) ->

@@ -263,6 +263,16 @@ let mark_unneeded ~advance_generation ~cancel_running port timer =
 
 let mark_node_unneeded = mark_unneeded
 
+let preflight_start ~advance_generation port timer =
+  Eta_signal_timer_policy.preflight_start ~advance_generation
+    ~effective_state:(port.state_effective timer)
+    ~current_state:(port.state_current timer)
+
+let preflight_stop ~advance_generation port timer =
+  Eta_signal_timer_policy.preflight_stop ~advance_generation
+    ~effective_state:(port.state_effective timer)
+    ~current_state:(port.state_current timer)
+
 let rollback_unclaimed_start ~advance_generation port timer =
   if Eta_signal_timer_policy.state_starting (port.state_current timer) then
     mark_unneeded ~advance_generation ~cancel_running:true port timer
@@ -428,6 +438,14 @@ let advance_next_due port timer ~generation ~expected ~next_due_ms =
       `Advanced
   | Eta_signal_timer_policy.Advance_next_due_stale -> `Stale
   | Eta_signal_timer_policy.Advance_next_due_stop -> `Stop
+
+let finish_node ~advance_generation port timer =
+  let plan =
+    Eta_signal_timer_policy.finish ~advance_generation
+      (port.state_current timer)
+  in
+  Eta_signal_timer_policy.finish_plan_result plan
+    ~plan:(fun ~state ~cancel_hooks:_ -> port.state_set_current timer state)
 
 let finish_saturated ~advance_generation port timer ~generation =
   Option.iter

@@ -1176,16 +1176,12 @@ module Make (Observer_error : Observer_error) () = struct
       collected scope
 
   let preflight_timer_invalidation timer =
-    Timer_policy.preflight_stop
-      ~advance_generation:(checked_succ "timer generation")
-      ~effective_state:(timer_effective_state timer)
-      ~current_state:(timer_current_state timer)
+    Timer.preflight_stop ~advance_generation:(checked_succ "timer generation")
+      timer_state_port timer
 
   let preflight_timer_start timer =
-    Timer_policy.preflight_start
-      ~advance_generation:(checked_succ "timer generation")
-      ~effective_state:(timer_effective_state timer)
-      ~current_state:(timer_current_state timer)
+    Timer.preflight_start ~advance_generation:(checked_succ "timer generation")
+      timer_state_port timer
 
   let preflight_signal_commit invalidated_ids (P signal) =
     if
@@ -1284,21 +1280,9 @@ module Make (Observer_error : Observer_error) () = struct
       stage_var_graph_value source value;
       List.iter mark_timer_refresh_dirty (source_watchers_unlocked source))
 
-  let timer_finish_plan state =
-    Timer_policy.finish
-      ~advance_generation:(checked_succ "timer generation")
-      state
-
   let timer_finish_unlocked timer =
-    let plan = timer_finish_plan (timer_current_state timer) in
-    Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks:_ ->
-        set_timer_current_state timer state)
-
-  let timer_finish_cancel_hooks_unlocked timer =
-    let plan = timer_finish_plan (timer_current_state timer) in
-    Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
-        set_timer_current_state timer state;
-        cancel_hooks)
+    Timer.finish_node ~advance_generation:(checked_succ "timer generation")
+      timer_state_port timer
 
   let stage_timer_transition timer = function
     | Set_source (source, value) ->

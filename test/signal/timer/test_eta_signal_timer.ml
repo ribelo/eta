@@ -573,6 +573,48 @@ let test_due_lifecycle_transitions () =
     ]
     !events
 
+let test_preflight_and_finish_node_own_state_port () =
+  let events = ref [] in
+  let record event = append_event events event in
+  let checked_succ generation =
+    if generation = max_int then
+      invalid_arg "timer generation"
+    else generation + 1
+  in
+  let running generation =
+    Timer_policy.running_state ~generation ~next_due_ms:None
+      ~cancel:(fun () -> record "cancel")
+  in
+  let starting =
+    make_timer "starting" ~current:(inactive 0)
+      ~effective:(Timer_policy.starting_state ~generation:0)
+  in
+  let finishing =
+    make_timer "finishing" ~current:(running 3) ~effective:(running 3)
+  in
+  let overflowing =
+    make_timer "overflow" ~current:(running max_int)
+      ~effective:(running max_int)
+  in
+  let port = state_port ~record () in
+  Timer.preflight_start ~advance_generation:checked_succ port starting;
+  Alcotest.(check string)
+    "start preflight does not mutate" "inactive:0"
+    (state_label starting.current);
+  Alcotest.check_raises "stop preflight overflows before mutation"
+    (Invalid_argument "timer generation")
+    (fun () ->
+      Timer.preflight_stop ~advance_generation:checked_succ port overflowing);
+  Alcotest.(check string)
+    "overflow preflight does not mutate"
+    ("running:" ^ string_of_int max_int)
+    (state_label overflowing.current);
+  Timer.finish_node ~advance_generation:checked_succ port finishing;
+  Alcotest.(check string) "finished" "finished:4"
+    (state_label finishing.current);
+  Alcotest.(check (list string))
+    "only finish mutates state" [ "set:finishing:finished:4" ] !events
+
 let daemon_context events port update =
   Timer.daemon_context ~advance_generation:succ
     ~state_access:
@@ -698,6 +740,8 @@ let () =
             test_daemon_lifecycle_transitions;
           Alcotest.test_case "due lifecycle transitions" `Quick
             test_due_lifecycle_transitions;
+          Alcotest.test_case "preflight and finish own state port" `Quick
+            test_preflight_and_finish_node_own_state_port;
           Alcotest.test_case "start daemon callback ownership" `Quick
             test_start_daemon_wires_start_update_through_timer_port;
           Alcotest.test_case "daemon node start ownership" `Quick
