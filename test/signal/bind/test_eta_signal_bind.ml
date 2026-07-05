@@ -233,7 +233,7 @@ let dynamic_common_callbacks ?(inner_changed = false)
   (with_scope, validate_inner, compute_inner, dependencies_changed)
 
 let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
-    ?(changed = true) ?(current = -1) events =
+    ?(dirty = false) ?(initialized = true) events =
   let with_scope, validate_inner, compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
@@ -267,72 +267,44 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         (fun cap _scope ->
           check_cap cap;
           Alcotest.fail "unexpected cleanup");
-      eval_dirty = false;
-      eval_initialized = true;
+      eval_dirty = dirty;
+      eval_initialized = initialized;
       eval_dependencies_changed =
         (fun cap dependencies ->
           check_cap cap;
           dependencies_changed dependencies);
     }
   in
-  let apply_context =
-    {
-      Bind.dynamic_mark_recomputed =
-        (fun cap ->
-          check_cap cap;
-          events := !events @ [ "mark_recomputed" ]);
-      dynamic_value_changed =
-        (fun cap value ->
-          check_cap cap;
-          events :=
-            !events @ [ "changed:" ^ string_of_int value ];
-          changed);
-      dynamic_stage_switch =
-        (fun cap ~source_value ~inner ~scope ->
-          check_cap cap;
-          events :=
-            !events
-            @ [
-                "stage_switch:"
-                ^ String.concat ":"
-                    (List.map string_of_int [ source_value; inner; scope ]);
-              ]);
-      dynamic_stage_dependencies =
-        (fun cap dependencies ->
-          check_cap cap;
-          events :=
-            !events
-            @ [
-                "stage_dependencies:"
-                ^ String.concat ","
-                    (List.map string_of_int dependencies);
-              ]);
-      dynamic_stage_value =
-        (fun cap value ->
-          check_cap cap;
-          events := !events @ [ "stage_value:" ^ string_of_int value ]);
-      dynamic_current_value =
-        (fun cap ->
-          check_cap cap;
-          events := !events @ [ "current" ];
-          current);
-    }
-  in
-  (eval_context, apply_context)
+  eval_context
 
-let test_compute_dynamic_switch_owns_eval_and_staging_order () =
+let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
   let events = ref [] in
-  let eval_context, apply_context = dynamic_contexts events in
-  let value, changed =
+  let eval_context = dynamic_contexts events in
+  let plan =
     match
-      Bind.compute_dynamic eval_context apply_context capability
-        Bind.empty ~source_value:3 ~source_changed:true
+      Bind.plan_dynamic eval_context capability Bind.empty ~source_value:3
+        ~source_changed:true
     with
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected valid switch"
   in
-  Alcotest.(check int) "value" 40 value;
-  Alcotest.(check bool) "changed" true changed;
+  (match plan with
+  | Bind.Dynamic_switch
+      {
+        dynamic_source_value;
+        dynamic_inner;
+        dynamic_scope;
+        dynamic_switch_dependencies;
+        dynamic_switch_value;
+      } ->
+      Alcotest.(check int) "source" 3 dynamic_source_value;
+      Alcotest.(check int) "inner" 4 dynamic_inner;
+      Alcotest.(check int) "scope" 7 dynamic_scope;
+      Alcotest.(check (list int))
+        "dependencies" [ 100; 1004 ] dynamic_switch_dependencies;
+      Alcotest.(check int) "value" 40 dynamic_switch_value
+  | Bind.Dynamic_reuse_cached | Bind.Dynamic_reuse_recompute _ ->
+      Alcotest.fail "expected dynamic switch");
   Alcotest.(check (list string))
     "events"
     [
@@ -341,88 +313,80 @@ let test_compute_dynamic_switch_owns_eval_and_staging_order () =
       "select:3";
       "validate:7:4";
       "compute:4";
-      "mark_recomputed";
-      "changed:40";
-      "stage_switch:3:4:7";
-      "stage_dependencies:100,1004";
-      "stage_value:40";
     ]
     !events
 
-let test_compute_dynamic_reuse_paths () =
+let test_plan_dynamic_reuse_paths () =
   let events = ref [] in
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
-  let cached_eval, cached_apply = dynamic_contexts ~current:12 events in
-  let cached_value, cached_changed =
+  let cached_eval = dynamic_contexts events in
+  let cached_plan =
     match
-      Bind.compute_dynamic cached_eval cached_apply capability snapshot
+      Bind.plan_dynamic cached_eval capability snapshot
         ~source_value:3 ~source_changed:false
     with
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected cached reuse"
   in
-  let recomputed_eval, recomputed_apply =
-    dynamic_contexts ~dependencies_changed:true events
-  in
-  let recomputed_value, recomputed_changed =
+  let recomputed_eval = dynamic_contexts ~dependencies_changed:true events in
+  let recomputed_plan =
     match
-      Bind.compute_dynamic recomputed_eval recomputed_apply capability
-        snapshot ~source_value:3 ~source_changed:false
+      Bind.plan_dynamic recomputed_eval capability snapshot ~source_value:3
+        ~source_changed:false
     with
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  Alcotest.(check int) "cached value" 12 cached_value;
-  Alcotest.(check bool) "cached changed" false cached_changed;
-  Alcotest.(check int) "recomputed value" 40 recomputed_value;
-  Alcotest.(check bool) "recomputed changed" true recomputed_changed;
+  (match cached_plan with
+  | Bind.Dynamic_reuse_cached -> ()
+  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_recompute _ ->
+      Alcotest.fail "expected cached reuse");
+  (match recomputed_plan with
+  | Bind.Dynamic_reuse_recompute
+      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+      Alcotest.(check (list int))
+        "recomputed dependencies" [ 100; 1004 ] dynamic_reuse_dependencies;
+      Alcotest.(check int) "recomputed value" 40 dynamic_reuse_value
+  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_cached ->
+      Alcotest.fail "expected recomputed reuse");
   Alcotest.(check (list string))
     "events"
     [
       "compute:4";
       "dependencies:100,1004";
-      "current";
       "compute:4";
       "dependencies:100,1004";
-      "stage_dependencies:100,1004";
-      "mark_recomputed";
-      "changed:40";
-      "stage_value:40";
     ]
     !events
 
-let test_compute_dynamic_reuse_recompute_uses_current_when_unchanged () =
+let test_plan_dynamic_dirty_reuse_recomputes () =
   let events = ref [] in
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
-  let eval_context, apply_context =
-    dynamic_contexts ~dependencies_changed:true ~changed:false ~current:12
-      events
-  in
-  let value, changed =
+  let eval_context = dynamic_contexts ~dirty:true events in
+  let plan =
     match
-      Bind.compute_dynamic eval_context apply_context capability snapshot
+      Bind.plan_dynamic eval_context capability snapshot
         ~source_value:3 ~source_changed:false
     with
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  Alcotest.(check int) "value" 12 value;
-  Alcotest.(check bool) "changed" false changed;
+  (match plan with
+  | Bind.Dynamic_reuse_recompute
+      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+      Alcotest.(check (list int))
+        "dependencies" [ 100; 1004 ] dynamic_reuse_dependencies;
+      Alcotest.(check int) "value" 40 dynamic_reuse_value
+  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_cached ->
+      Alcotest.fail "expected dirty reuse recompute");
   Alcotest.(check (list string))
     "events"
-    [
-      "compute:4";
-      "dependencies:100,1004";
-      "stage_dependencies:100,1004";
-      "mark_recomputed";
-      "changed:40";
-      "current";
-    ]
+    [ "compute:4" ]
     !events
 
-let test_compute_dynamic_validation_failure_runs_cleanup () =
+let test_plan_dynamic_validation_failure_runs_cleanup () =
   let events = ref [] in
-  let eval_context, apply_context = dynamic_contexts events in
+  let eval_context = dynamic_contexts events in
   let eval_context =
     {
       eval_context with
@@ -444,7 +408,7 @@ let test_compute_dynamic_validation_failure_runs_cleanup () =
     }
   in
   (match
-     Bind.compute_dynamic eval_context apply_context capability Bind.empty
+     Bind.plan_dynamic eval_context capability Bind.empty
        ~source_value:3 ~source_changed:true
    with
   | Error `Invalid_scope -> ()
@@ -486,13 +450,13 @@ let () =
             test_staged_switch_rejects_incomplete_staged_snapshot;
           Alcotest.test_case "dependencies include source and inner" `Quick
             test_dependencies_include_source_and_current_inner;
-          Alcotest.test_case "compute dynamic switch" `Quick
-            test_compute_dynamic_switch_owns_eval_and_staging_order;
-          Alcotest.test_case "compute dynamic reuse" `Quick
-            test_compute_dynamic_reuse_paths;
-          Alcotest.test_case "compute dynamic reuse unchanged" `Quick
-            test_compute_dynamic_reuse_recompute_uses_current_when_unchanged;
-          Alcotest.test_case "compute dynamic validation failure" `Quick
-            test_compute_dynamic_validation_failure_runs_cleanup;
+          Alcotest.test_case "plan dynamic switch" `Quick
+            test_plan_dynamic_switch_owns_eval_order_and_returns_plan;
+          Alcotest.test_case "plan dynamic reuse" `Quick
+            test_plan_dynamic_reuse_paths;
+          Alcotest.test_case "plan dynamic dirty reuse" `Quick
+            test_plan_dynamic_dirty_reuse_recomputes;
+          Alcotest.test_case "plan dynamic validation failure" `Quick
+            test_plan_dynamic_validation_failure_runs_cleanup;
         ] );
     ]

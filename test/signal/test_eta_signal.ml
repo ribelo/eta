@@ -3056,6 +3056,49 @@ let test_bind_can_select_initialized_external_bind () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
+let test_bind_reuse_recompute_respects_bind_cutoff () =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let array_equal left right =
+    Array.length left = Array.length right
+    && Array.for_all2 Int.equal left right
+  in
+  let selector = Signal.Var.create () in
+  let payload = Signal.Var.create 0 in
+  let inner_calls = ref 0 in
+  let selected =
+    Signal.bind ~equal:array_equal (Signal.Var.watch selector) (fun () ->
+        Signal.Var.watch payload
+        |> Signal.map (fun value ->
+               incr inner_calls;
+               Array.make 1 (value mod 2)))
+  in
+  let events = ref [] in
+  let callbacks = ref 0 in
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe selected (fun update ->
+           Effect.sync (fun () ->
+               incr callbacks;
+               events := update :: !events)))
+  in
+  run_ok rt Signal.stabilize;
+  let initial = run_ok rt (Signal.Observer.read observer) in
+  Alcotest.(check int) "initial inner recompute" 1 !inner_calls;
+  run_ok rt (Signal.Var.set payload 2);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "reused inner branch recomputed" 2 !inner_calls;
+  Alcotest.(check int) "structurally equal bind value emits no callback" 1
+    !callbacks;
+  Alcotest.(check bool) "bind current keeps previous block" true
+    (run_ok rt (Signal.Observer.read observer) == initial);
+  (match List.rev !events with
+   | [ Signal.Initialized initialized ] ->
+       Alcotest.(check (list int)) "initialized value" [ 0 ]
+         (Array.to_list initialized)
+   | _ -> Alcotest.fail "expected bind cutoff to suppress equal reuse value");
+  run_ok rt (Signal.Observer.dispose observer)
+
 let test_dynamic_list_bind_switches_dependency_set () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9659,6 +9702,8 @@ let () =
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
           Alcotest.test_case "bind can select initialized external bind" `Quick
             test_bind_can_select_initialized_external_bind;
+          Alcotest.test_case "bind reuse recompute respects bind cutoff" `Quick
+            test_bind_reuse_recompute_respects_bind_cutoff;
           Alcotest.test_case "dynamic list bind switches dependency set" `Quick
             test_dynamic_list_bind_switches_dependency_set;
           Alcotest.test_case "bind branch churn releases inactive scopes" `Quick

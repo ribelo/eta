@@ -2,16 +2,19 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('capability, 'source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
-  dynamic_mark_recomputed : 'capability -> unit;
-  dynamic_value_changed : 'capability -> 'value -> bool;
-  dynamic_stage_switch :
-    'capability ->
-    source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  dynamic_stage_dependencies : 'capability -> 'dependency list -> unit;
-  dynamic_stage_value : 'capability -> 'value -> unit;
-  dynamic_current_value : 'capability -> 'value;
-}
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan =
+  | Dynamic_switch of {
+      dynamic_source_value : 'source;
+      dynamic_inner : 'inner;
+      dynamic_scope : 'scope;
+      dynamic_switch_dependencies : 'dependency list;
+      dynamic_switch_value : 'value;
+    }
+  | Dynamic_reuse_cached
+  | Dynamic_reuse_recompute of {
+      dynamic_reuse_dependencies : 'dependency list;
+      dynamic_reuse_value : 'value;
+    }
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context = {
@@ -47,16 +50,14 @@ val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 val dependencies :
   source:'dependency -> inner:'dependency option -> 'dependency list
 
-val compute_dynamic :
+val plan_dynamic :
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   dynamic_eval_context ->
-  ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
-  dynamic_apply ->
   'capability ->
   ('source, 'inner, 'scope) snapshot ->
   source_value:'source ->
   source_changed:bool ->
-  ('value * bool, 'error) result
+  (('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan, 'error) result
 
 val stage_transaction_switch :
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->
