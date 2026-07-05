@@ -283,19 +283,28 @@ let test_delivery_finish_running_acknowledges_or_releases () =
      finish_running ~token:7 ~update:update_changed ~delivered:true
        ~after_ack:[ Extra ] running
    with
-  | Some (Finish_acknowledged (Observer_delivered 2, actions)) ->
-      Alcotest.(check (list after_ack_testable))
-        "ack actions" [ Extra; Stored ] actions
-  | Some (Finish_acknowledged _ | Finish_released _) | None ->
-      Alcotest.fail "expected acknowledged finish");
+  | Some finish ->
+      finish_result finish
+        ~acknowledged:(fun ~state ~after_ack ->
+          Alcotest.check delivery "state" (Observer_delivered 2) state;
+          Alcotest.(check (list after_ack_testable))
+            "ack actions" [ Extra; Stored ] after_ack)
+        ~released:(fun ~state:_ ->
+          Alcotest.fail "expected acknowledged finish")
+  | None -> Alcotest.fail "expected acknowledged finish");
   match
     finish_running ~token:7 ~update:update_changed ~delivered:false
       ~after_ack:[ Extra ] running
   with
-  | Some (Finish_released (Observer_delivery_pending (7, _, [ Stored ]))) ->
-      ()
-  | Some (Finish_acknowledged _ | Finish_released _) | None ->
-      Alcotest.fail "expected released finish"
+  | Some finish ->
+      finish_result finish
+        ~acknowledged:(fun ~state:_ ~after_ack:_ ->
+          Alcotest.fail "expected released finish")
+        ~released:(fun ~state ->
+          Alcotest.check delivery "state"
+            (Observer_delivery_pending (7, update_changed, [ Stored ]))
+            state)
+  | None -> Alcotest.fail "expected released finish"
 
 let test_delivery_ignores_stale_token () =
   let open Observer.Delivery in
@@ -544,15 +553,21 @@ let check_delivery_trace_step label model_state actual_state step op =
         (Option.is_some model_result)
         (Option.is_some actual_result);
       (match (model_result, actual_result) with
-      | Some (`Ack (model_state, model_actions)),
-        Some (Observer.Delivery.Finish_acknowledged
-                (actual_state, actual_actions)) ->
-          Alcotest.(check (list after_ack_testable))
-            (step_label ^ " finish actions") model_actions actual_actions;
-          (model_state, actual_state)
-      | Some (`Release model_state),
-        Some (Observer.Delivery.Finish_released actual_state) ->
-          (model_state, actual_state)
+      | Some (`Ack (model_state, model_actions)), Some finish ->
+          Observer.Delivery.finish_result finish
+            ~acknowledged:(fun ~state:actual_state ~after_ack:actual_actions ->
+              Alcotest.(check (list after_ack_testable))
+                (step_label ^ " finish actions") model_actions
+                actual_actions;
+              (model_state, actual_state))
+            ~released:(fun ~state:_ ->
+              Alcotest.failf "%s: inconsistent finish result" step_label)
+      | Some (`Release model_state), Some finish ->
+          Observer.Delivery.finish_result finish
+            ~acknowledged:(fun ~state:_ ~after_ack:_ ->
+              Alcotest.failf "%s: inconsistent finish result" step_label)
+            ~released:(fun ~state:actual_state ->
+              (model_state, actual_state))
       | None, None -> (model_state, actual_state)
       | _ -> Alcotest.failf "%s: inconsistent finish result" step_label)
   | Op_running_token_matches token ->
@@ -1102,23 +1117,29 @@ let test_snapshot_finish_running_delivery () =
      Observer.Snapshot.finish_running_delivery ~token:2 ~update:update_changed
        ~delivered:false ~after_ack:[ Extra ] running
    with
-  | Some (Observer.Snapshot.Finish_released snapshot) ->
-      Alcotest.(check string) "released" "pending"
-        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot))
-  | Some (Observer.Snapshot.Finish_acknowledged _) | None ->
-      Alcotest.fail "expected release");
+  | Some finish ->
+      Observer.Snapshot.finish_result finish
+        ~acknowledged:(fun ~snapshot:_ ~after_ack:_ ->
+          Alcotest.fail "expected release")
+        ~released:(fun ~snapshot ->
+          Alcotest.(check string) "released" "pending"
+            (Observer.Delivery.label (Observer.Snapshot.delivery snapshot)))
+  | None -> Alcotest.fail "expected release");
   match
     Observer.Snapshot.finish_running_delivery ~token:2 ~update:update_changed
       ~delivered:true ~after_ack:[ Extra ] running
   with
-  | Some (Observer.Snapshot.Finish_acknowledged (snapshot, ack_actions)) ->
-      Alcotest.(check string) "acknowledged" "delivered"
-        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
-      Alcotest.(check (list after_ack_testable))
-        "ack actions"
-        [ Extra; Stored ] ack_actions
-  | Some (Observer.Snapshot.Finish_released _) | None ->
-      Alcotest.fail "expected acknowledgement"
+  | Some finish ->
+      Observer.Snapshot.finish_result finish
+        ~acknowledged:(fun ~snapshot ~after_ack ->
+          Alcotest.(check string) "acknowledged" "delivered"
+            (Observer.Delivery.label (Observer.Snapshot.delivery snapshot));
+          Alcotest.(check (list after_ack_testable))
+            "ack actions"
+            [ Extra; Stored ] after_ack)
+        ~released:(fun ~snapshot:_ ->
+          Alcotest.fail "expected acknowledgement")
+  | None -> Alcotest.fail "expected acknowledgement"
 
 let observer_delivery_port events =
   Observer.delivery_port

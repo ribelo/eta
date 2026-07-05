@@ -283,6 +283,12 @@ module Delivery = struct
       | Some state -> Some (Finish_released state)
       | None -> None
 
+  let finish_result finish ~acknowledged ~released =
+    match finish with
+    | Finish_acknowledged (state, after_ack) ->
+        acknowledged ~state ~after_ack
+    | Finish_released state -> released ~state
+
   let running_token = function
     | Observer_delivery_running (token, _, _) -> Some token
     | Observer_never_delivered | Observer_delivered _
@@ -453,15 +459,21 @@ module Snapshot = struct
     |> Option.map (with_delivery snapshot)
 
   let finish_running_delivery ~token ~update ~delivered ~after_ack snapshot =
-    match
-      Delivery.finish_running ~token ~update ~delivered ~after_ack
-        snapshot.delivery
-    with
-    | Some (Delivery.Finish_acknowledged (delivery, after_ack)) ->
-        Some (Finish_acknowledged (with_delivery snapshot delivery, after_ack))
-    | Some (Delivery.Finish_released delivery) ->
-        Some (Finish_released (with_delivery snapshot delivery))
-    | None -> None
+    Delivery.finish_running ~token ~update ~delivered ~after_ack
+      snapshot.delivery
+    |> Option.map (fun finish ->
+           Delivery.finish_result finish
+             ~acknowledged:(fun ~state:delivery ~after_ack ->
+               Finish_acknowledged
+                 (with_delivery snapshot delivery, after_ack))
+             ~released:(fun ~state:delivery ->
+               Finish_released (with_delivery snapshot delivery)))
+
+  let finish_result finish ~acknowledged ~released =
+    match finish with
+    | Finish_acknowledged (snapshot, after_ack) ->
+        acknowledged ~snapshot ~after_ack
+    | Finish_released snapshot -> released ~snapshot
 
   let running_delivery_token_matches ~token snapshot =
     Delivery.running_token_matches ~token snapshot.delivery
@@ -531,11 +543,13 @@ let finish_delivery_after_error port capability observer token update ~delivered
         Snapshot.finish_running_delivery ~token ~update ~delivered
           ~after_ack:[] (port.delivery_snapshot capability live)
       with
-      | Some (Snapshot.Finish_acknowledged (snapshot, after_ack)) ->
-          port.delivery_set_snapshot capability live snapshot;
-          port.delivery_run_after_ack capability after_ack
-      | Some (Snapshot.Finish_released snapshot) ->
-          port.delivery_set_snapshot capability live snapshot
+      | Some finish ->
+          Snapshot.finish_result finish
+            ~acknowledged:(fun ~snapshot ~after_ack ->
+              port.delivery_set_snapshot capability live snapshot;
+              port.delivery_run_after_ack capability after_ack)
+            ~released:(fun ~snapshot ->
+              port.delivery_set_snapshot capability live snapshot)
       | None -> ())
 
 let running_delivery_token_matches port capability observer token =

@@ -155,9 +155,7 @@ module Delivery : sig
     | Observer_delivery_pending of token * 'a Update.t * 'after_ack list
     | Observer_delivery_running of token * 'a Update.t * 'after_ack list
 
-  type ('a, 'after_ack) finish =
-    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
-    | Finish_released of ('a, 'after_ack) t
+  type ('a, 'after_ack) finish
 
   val base : ('a, 'after_ack) t -> 'a option
   val pending : ('a, 'after_ack) t -> bool
@@ -185,6 +183,13 @@ module Delivery : sig
     after_ack:'after_ack list ->
     ('a, 'after_ack) t ->
     ('a, 'after_ack) finish option
+
+  val finish_result :
+    ('a, 'after_ack) finish ->
+    acknowledged:
+      (state:('a, 'after_ack) t -> after_ack:'after_ack list -> 'result) ->
+    released:(state:('a, 'after_ack) t -> 'result) ->
+    'result
 
   val running_token : ('a, 'after_ack) t -> token option
   val running_token_matches : token:token -> ('a, 'after_ack) t -> bool
@@ -242,9 +247,7 @@ end
 module Snapshot : sig
   type ('a, 'after_ack) t
 
-  type ('a, 'after_ack) finish =
-    | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
-    | Finish_released of ('a, 'after_ack) t
+  type ('a, 'after_ack) finish
 
   type ('a, 'after_ack) event_plan
 
@@ -294,6 +297,15 @@ module Snapshot : sig
     after_ack:'after_ack list ->
     ('a, 'after_ack) t ->
     ('a, 'after_ack) finish option
+
+  val finish_result :
+    ('a, 'after_ack) finish ->
+    acknowledged:
+      (snapshot:('a, 'after_ack) t ->
+      after_ack:'after_ack list ->
+      'result) ->
+    released:(snapshot:('a, 'after_ack) t -> 'result) ->
+    'result
 
   val running_delivery_token_matches :
     token:Delivery.token -> ('a, 'after_ack) t -> bool
