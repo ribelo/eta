@@ -5,6 +5,13 @@ type counter =
   | Nodes_became_necessary
   | Nodes_became_unnecessary
 
+type lane_access = Eta_signal_lane.access
+
+type lane_hooks = {
+  note_waiter_enqueued : unit -> unit;
+  note_waiter_compaction : unit -> unit;
+}
+
 type t = {
   lane : Eta_signal_lane.t;
   owner_domain : Domain.id;
@@ -32,8 +39,29 @@ let create () =
     necessary_node_ids = Hashtbl.create 16;
   }
 
-let lane t = t.lane
-let owner_domain t = t.owner_domain
+let context_error_message =
+  "Eta_signal: signal graph APIs must be called on the domain that created "
+  ^ "the graph and not from runtime worker callbacks"
+
+let ensure_context t =
+  if
+    Domain.self () <> t.owner_domain
+    || Eta.Runtime_contract.in_registered_worker_context ()
+  then invalid_arg context_error_message
+
+let lane_hooks hooks =
+  {
+    Eta_signal_lane.note_waiter_enqueued = hooks.note_waiter_enqueued;
+    note_waiter_compaction = hooks.note_waiter_compaction;
+  }
+
+let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
+  Eta_signal_lane.with_sync ~leaf_name ~depth_local
+    ~ensure_context:(fun () -> ensure_context t)
+    ~hooks:(lane_hooks hooks) ~after_acquired t.lane f
+
+let lane_waiting_count t = Eta_signal_lane.waiting_count t.lane
+let lane_cancelled_count t = Eta_signal_lane.cancelled_count t.lane
 
 let checked_succ name value =
   if value = max_int then Error (`Counter_overflow name)

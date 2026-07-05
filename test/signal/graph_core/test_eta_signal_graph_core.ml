@@ -18,6 +18,12 @@ let signal_set ids =
   List.iter (fun id -> Hashtbl.replace table (Id.signal id) ()) ids;
   table
 
+let worker_context_active = ref false
+
+let () =
+  Eta.Runtime_contract.register_worker_context_probe (fun () ->
+      !worker_context_active)
+
 let test_allocates_ids_from_graph_core () =
   let core = Core.create () in
   Alcotest.(check int) "signal id" 0
@@ -59,6 +65,19 @@ let test_necessary_id_updates_count_transitions () =
   Alcotest.(check int) "became unnecessary second" 1
     (Core.counter core Core.Nodes_became_unnecessary)
 
+let test_context_validation_is_owned_by_graph_core () =
+  let core = Core.create () in
+  Core.ensure_context core;
+  Fun.protect
+    ~finally:(fun () -> worker_context_active := false)
+    (fun () ->
+      worker_context_active := true;
+      match Core.ensure_context core with
+      | () -> Alcotest.fail "expected worker-context rejection"
+      | exception Invalid_argument message ->
+          Alcotest.(check string)
+            "context error" Core.context_error_message message)
+
 let () =
   Alcotest.run "eta_signal_graph_core"
     [
@@ -72,5 +91,7 @@ let () =
             test_counters_saturate_and_can_be_seeded;
           Alcotest.test_case "necessary id transitions" `Quick
             test_necessary_id_updates_count_transitions;
+          Alcotest.test_case "context validation" `Quick
+            test_context_validation_is_owned_by_graph_core;
         ] );
     ]

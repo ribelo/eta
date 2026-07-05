@@ -1,6 +1,12 @@
 (** Core graph identity, ID allocation, and counters for Eta_signal internals. *)
 
 type t
+type lane_access
+
+type lane_hooks = {
+  note_waiter_enqueued : unit -> unit;
+  note_waiter_compaction : unit -> unit;
+}
 
 type counter =
   | Callback_delivery_count
@@ -11,8 +17,20 @@ type counter =
 
 val create : unit -> t
 
-val lane : t -> Eta_signal_lane.t
-val owner_domain : t -> Domain.id
+val context_error_message : string
+val ensure_context : t -> unit
+
+val with_lane_access :
+  t ->
+  leaf_name:string ->
+  depth_local:int Eta.Runtime_contract.local ->
+  hooks:lane_hooks ->
+  after_acquired:(unit -> (unit, 'error) Eta.Effect.t) ->
+  (lane_access -> 'a) ->
+  ('a, 'error) Eta.Effect.t
+
+val lane_waiting_count : t -> int
+val lane_cancelled_count : t -> int
 
 val next_signal_id :
   t -> (Eta_signal_id.signal, Eta_signal_error.graph_error) result

@@ -11,7 +11,6 @@ module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
 module Graph_algorithms = Eta_signal_graph_algorithms
 module Signal_snapshot = Graph_algorithms.Snapshot
-module Lane = Eta_signal_lane
 module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
@@ -669,33 +668,29 @@ module Make (Observer_error : Observer_error) () = struct
     | All _ -> "all"
     | Bind _ -> "bind"
 
-  let graph_context_error_message =
-    "Eta_signal: signal graph APIs must be called on the domain that created "
-    ^ "the graph and not from runtime worker callbacks"
+  let graph_context_error_message = Graph_core.context_error_message
 
-  let ensure_graph_context () =
-    if
-      Domain.self () <> Graph_core.owner_domain graph.core
-      || Runtime_contract.in_registered_worker_context ()
-    then invalid_arg graph_context_error_message
+  let ensure_graph_context () = Graph_core.ensure_context graph.core
 
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
 
-  type graph_lane = Lane.access
+  type graph_lane = Graph_core.lane_access
 
   let with_graph_lane_access f =
-    Lane.with_sync ~leaf_name:"Eta_signal.with_graph_lane_sync"
-      ~depth_local:graph_lane_depth_local ~ensure_context:ensure_graph_context
+    Graph_core.with_lane_access graph.core
+      ~leaf_name:"Eta_signal.with_graph_lane_sync"
+      ~depth_local:graph_lane_depth_local
       ~hooks:
         {
-          note_waiter_enqueued = Private_test_hooks.note_lane_waiter_enqueued;
+          Graph_core.note_waiter_enqueued =
+            Private_test_hooks.note_lane_waiter_enqueued;
           note_waiter_compaction =
             Private_test_hooks.note_lane_waiter_compaction;
         }
       ~after_acquired:(fun () ->
         Private_test_hooks.run After_graph_lane_acquired)
-      (Graph_core.lane graph.core) f
+      f
 
   let with_graph_lane_sync f =
     with_graph_lane_access (fun _lane -> f ())
@@ -2564,12 +2559,12 @@ module Make (Observer_error : Observer_error) () = struct
                   (Stream_bridge.drop_count graph.stream_bridge_metrics);
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
-                  (Lane.waiting_count (Graph_core.lane graph.core));
+                  (Graph_core.lane_waiting_count graph.core);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (stats_count
                      Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Lane.cancelled_count (Graph_core.lane graph.core)));
+                     (Graph_core.lane_cancelled_count graph.core));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
