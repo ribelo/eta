@@ -102,34 +102,6 @@ val set_counter :
 val bump_counter :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
 
-val stabilization :
-  ( 'pending,
-    'bind,
-    'node,
-    'hook,
-    'timer,
-    'refresh,
-    'observer,
-    'weak_node,
-    'dead_node,
-    'scope_context,
-    'stream_metrics )
-  t ->
-  ( ( 'pending,
-      'bind,
-      'node,
-      'hook,
-      'timer,
-      'refresh,
-      'observer,
-      'weak_node,
-      'dead_node,
-      'scope_context,
-      'stream_metrics )
-    t,
-    Eta_signal_error.graph_error )
-  Eta_signal_stabilization.t
-
 val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 
 val set_generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
@@ -199,6 +171,12 @@ val active_pure_transaction :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_transaction.pure, Eta_signal_error.graph_error)
   Eta_signal_transaction.t
+
+val commit_transaction :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (unit, Eta_signal_error.graph_error) result
+
+val rollback_transaction : (_, _, _, _, _, _, _, _, _, _, _) t -> unit
 
 val read_effective :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

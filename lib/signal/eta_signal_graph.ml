@@ -113,7 +113,6 @@ let set_counter t target value =
 
 let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
-let stabilization t = t.stabilization
 let generation t = Eta_signal_graph_state.generation t.state
 let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation
 
@@ -170,6 +169,12 @@ let active_transaction t =
   Eta_signal_stabilization.active_transaction t.stabilization
 
 let active_pure_transaction = active_transaction
+
+let commit_transaction t =
+  Eta_signal_stabilization.commit_transaction t.stabilization
+
+let rollback_transaction t =
+  Eta_signal_stabilization.rollback_transaction t.stabilization
 
 let read_effective t cell =
   match Eta_signal_stabilization.transaction t.stabilization with

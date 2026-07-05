@@ -14,7 +14,6 @@ module Observer_core = Eta_signal_observer
 module Observer_snapshot = Observer_core.Snapshot
 module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
-module Stabilization = Eta_signal_stabilization
 module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
@@ -586,7 +585,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.create ~create_scope_context:Scope.create_context
       ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
 
-  let graph_stabilization = Graph.stabilization graph
   let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
   let scope_ops =
@@ -1186,12 +1184,12 @@ module Make (Observer_error : Observer_error) () = struct
     if signal.valid then signal.dirty <- false
 
   let commit_transaction () =
-    match Stabilization.commit_transaction graph_stabilization with
+    match Graph.commit_transaction graph with
     | Ok () -> ()
     | Error err -> raise (Graph_error err)
 
   let rollback_transaction () =
-    Stabilization.rollback_transaction graph_stabilization
+    Graph.rollback_transaction graph
 
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
