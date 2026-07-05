@@ -89,7 +89,7 @@ type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_start_effect : 'timer -> 'effect;
 }
 
-type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port = {
+type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan = {
   node_demand_necessary : 'necessary;
   node_demand_timers : ('id * 'operation node) list;
   node_demand_is_necessary : 'necessary -> 'id -> bool;
@@ -97,6 +97,16 @@ type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port = {
     'runtime -> 'operation node -> (unit, 'error) result;
   node_demand_state : 'operation node state_port;
 }
+
+let node_demand_plan ~necessary ~timers ~is_necessary ~validate_runtime
+    ~state =
+  {
+    node_demand_necessary = necessary;
+    node_demand_timers = timers;
+    node_demand_is_necessary = is_necessary;
+    node_demand_validate_runtime = validate_runtime;
+    node_demand_state = state;
+  }
 
 type ('capability, 'error) demand_effect_access = {
   demand_with_access :
@@ -118,15 +128,17 @@ type ('capability, 'start, 'error) demand_effect_port = {
     'start list -> (unit, 'error) Eta.Effect.t;
 }
 
-type ('capability, 'operation, 'error) node_demand_effect_port = {
-  node_demand_effect_acquire :
+type ('capability, 'id, 'necessary, 'operation, 'error)
+     node_demand_effect_port = {
+  node_demand_effect_plan :
     Eta.Runtime_contract.t ->
     'capability ->
-    (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
-     demand_effects,
-     'error)
-    result;
-  node_demand_effect_state : 'operation node state_port;
+    ( 'id,
+      'necessary,
+      'operation,
+      Eta.Runtime_contract.t,
+      'error )
+    node_demand_plan;
 }
 
 let start_attempt ~timer ~effect =
@@ -205,16 +217,16 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
             effects.Eta_signal_timer_policy.demand_cancel_hooks;
         }
 
-let refresh_node_demand ~advance_generation ~cancel_running port runtime =
+let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
   refresh_demand ~advance_generation ~cancel_running
     {
-      demand_collect_necessary = (fun () -> port.node_demand_necessary);
-      demand_collect_timers = (fun () -> port.node_demand_timers);
-      demand_is_necessary = port.node_demand_is_necessary;
-      demand_validate_runtime = port.node_demand_validate_runtime;
-      demand_effective_state = port.node_demand_state.state_effective;
-      demand_current_state = port.node_demand_state.state_current;
-      demand_set_current_state = port.node_demand_state.state_set_current;
+      demand_collect_necessary = (fun () -> plan.node_demand_necessary);
+      demand_collect_timers = (fun () -> plan.node_demand_timers);
+      demand_is_necessary = plan.node_demand_is_necessary;
+      demand_validate_runtime = plan.node_demand_validate_runtime;
+      demand_effective_state = plan.node_demand_state.state_effective;
+      demand_current_state = plan.node_demand_state.state_current;
+      demand_set_current_state = plan.node_demand_state.state_set_current;
       demand_start_effect = start_effect;
     }
     runtime
@@ -240,14 +252,24 @@ let refresh_demand_effect access port =
     }
 
 let refresh_node_demand_effect ~advance_generation access port =
+  let active_plan = ref None in
   refresh_demand_effect access
     {
-      demand_acquire = port.node_demand_effect_acquire;
+      demand_acquire =
+        (fun runtime capability ->
+          let plan = port.node_demand_effect_plan runtime capability in
+          active_plan := Some plan;
+          refresh_node_demand_plan ~advance_generation
+            ~cancel_running:true plan runtime);
       demand_rollback_unclaimed =
         (fun _capability attempts ->
-          Ok
-            (rollback_unclaimed_start_attempts ~advance_generation
-               port.node_demand_effect_state attempts));
+          match !active_plan with
+          | None -> Ok []
+          | Some plan ->
+              active_plan := None;
+              Ok
+                (rollback_unclaimed_start_attempts ~advance_generation
+                   plan.node_demand_state attempts));
       demand_run_cancel_hooks =
         (fun hooks ->
           Eta_signal_cleanup.run_hooks hooks |> Eta.Effect.uninterruptible);

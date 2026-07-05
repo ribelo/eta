@@ -1699,24 +1699,19 @@ module Make (Observer_error : Observer_error) () = struct
       ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
       ~timer:signal_timer
 
-  let refresh_timer_demand_unlocked lane runtime_contract =
+  let timer_demand_plan_unlocked lane =
     let demand = timer_demand_unlocked lane in
-    Timer.refresh_node_demand
-      ~advance_generation:(checked_succ "timer generation")
-      ~cancel_running:true
-      {
-        Timer.node_demand_necessary = demand.Graph.timer_demand_necessary_ids;
-        node_demand_timers = demand.Graph.timer_demand_timers;
-        node_demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
-        node_demand_validate_runtime =
-          (fun runtime_contract timer ->
-            match validate_timer_runtime timer runtime_contract with
-            | Ok () -> Ok ()
-            | Error `Runtime_mismatch ->
-                Error (`Runtime_mismatch : graph_error));
-        node_demand_state = timer_state_port;
-      }
-      runtime_contract
+    Timer.node_demand_plan
+      ~necessary:demand.Graph.timer_demand_necessary_ids
+      ~timers:demand.Graph.timer_demand_timers
+      ~is_necessary:(fun needed id -> Hashtbl.mem needed id)
+      ~validate_runtime:
+        (fun runtime_contract timer ->
+          match validate_timer_runtime timer runtime_contract with
+          | Ok () -> Ok ()
+          | Error `Runtime_mismatch ->
+              Error (`Runtime_mismatch : graph_error))
+      ~state:timer_state_port
 
   let current_runtime_contract () =
     Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
@@ -1736,10 +1731,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~advance_generation:(checked_succ "timer generation")
       timer_demand_access
       {
-        Timer.node_demand_effect_acquire =
-          (fun runtime_contract lane ->
-            refresh_timer_demand_unlocked lane runtime_contract);
-        node_demand_effect_state = timer_state_port;
+        Timer.node_demand_effect_plan =
+          (fun _runtime_contract lane -> timer_demand_plan_unlocked lane);
       }
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =

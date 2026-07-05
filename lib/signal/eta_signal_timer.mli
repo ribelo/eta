@@ -80,14 +80,15 @@ type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_start_effect : 'timer -> 'effect;
 }
 
-type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port = {
-  node_demand_necessary : 'necessary;
-  node_demand_timers : ('id * 'operation node) list;
-  node_demand_is_necessary : 'necessary -> 'id -> bool;
-  node_demand_validate_runtime :
-    'runtime -> 'operation node -> (unit, 'error) result;
-  node_demand_state : 'operation node state_port;
-}
+type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan
+
+val node_demand_plan :
+  necessary:'necessary ->
+  timers:('id * 'operation node) list ->
+  is_necessary:('necessary -> 'id -> bool) ->
+  validate_runtime:('runtime -> 'operation node -> (unit, 'error) result) ->
+  state:'operation node state_port ->
+  ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan
 
 type ('capability, 'error) demand_effect_access = {
   demand_with_access :
@@ -109,15 +110,17 @@ type ('capability, 'start, 'error) demand_effect_port = {
     'start list -> (unit, 'error) Eta.Effect.t;
 }
 
-type ('capability, 'operation, 'error) node_demand_effect_port = {
-  node_demand_effect_acquire :
+type ('capability, 'id, 'necessary, 'operation, 'error)
+     node_demand_effect_port = {
+  node_demand_effect_plan :
     Eta.Runtime_contract.t ->
     'capability ->
-    (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
-     demand_effects,
-     'error)
-    result;
-  node_demand_effect_state : 'operation node state_port;
+    ( 'id,
+      'necessary,
+      'operation,
+      Eta.Runtime_contract.t,
+      'error )
+    node_demand_plan;
 }
 
 val mark_unneeded :
@@ -149,10 +152,10 @@ val refresh_demand :
   'runtime ->
   (('timer, 'effect) start_attempt demand_effects, 'error) result
 
-val refresh_node_demand :
+val refresh_node_demand_plan :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
-  ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port ->
+  ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan ->
   'runtime ->
   (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
    demand_effects,
@@ -167,7 +170,12 @@ val refresh_demand_effect :
 val refresh_node_demand_effect :
   advance_generation:(int -> int) ->
   ('capability, 'error) demand_effect_access ->
-  ('capability, 'operation, 'error) node_demand_effect_port ->
+  ( 'capability,
+    'id,
+    'necessary,
+    'operation,
+    'error )
+  node_demand_effect_port ->
   (unit, 'error) Eta.Effect.t
 
 val begin_start :

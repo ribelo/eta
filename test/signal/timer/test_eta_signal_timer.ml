@@ -222,27 +222,24 @@ let test_refresh_node_demand_owns_node_start_wiring () =
     let start_node = make_node start in
     let stop_node = make_node stop in
     let idle_node = make_node idle in
+    let plan =
+      Timer.node_demand_plan ~necessary:[ 1 ]
+        ~timers:[ (1, start_node); (2, stop_node); (3, idle_node) ]
+        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+        ~validate_runtime:
+          (fun actual_runtime timer ->
+            let case = find_case timer in
+            record ("validate:" ^ case.case_name);
+            if
+              Eta.Runtime_contract.same_runtime actual_runtime
+                (Timer.runtime_contract timer)
+            then Ok ()
+            else Error `Runtime_mismatch)
+        ~state:port
+    in
     match
-      Timer.refresh_node_demand ~advance_generation:succ
-        ~cancel_running:true
-        {
-          Timer.node_demand_necessary = [ 1 ];
-          node_demand_timers =
-            [ (1, start_node); (2, stop_node); (3, idle_node) ];
-          node_demand_is_necessary =
-            (fun necessary id -> List.exists (( = ) id) necessary);
-          node_demand_validate_runtime =
-            (fun actual_runtime timer ->
-              let case = find_case timer in
-              record ("validate:" ^ case.case_name);
-              if
-                Eta.Runtime_contract.same_runtime actual_runtime
-                  (Timer.runtime_contract timer)
-              then Ok ()
-              else Error `Runtime_mismatch);
-          node_demand_state = port;
-        }
-        runtime_contract
+      Timer.refresh_node_demand_plan ~advance_generation:succ
+        ~cancel_running:true plan runtime_contract
     with
     | Error `Runtime_mismatch -> Alcotest.fail "unexpected runtime mismatch"
     | Ok effects ->
@@ -366,30 +363,24 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
              |> Eta.Effect.flatten_result);
        }
        {
-         Timer.node_demand_effect_acquire =
+         Timer.node_demand_effect_plan =
            (fun runtime_contract () ->
              record "acquire";
              let start_node, stop_node = nodes runtime_contract in
-             Timer.refresh_node_demand ~advance_generation:succ
-               ~cancel_running:true
-               {
-                 Timer.node_demand_necessary = [ 1 ];
-                 node_demand_timers = [ (1, start_node); (2, stop_node) ];
-                 node_demand_is_necessary =
-                   (fun necessary id -> List.exists (( = ) id) necessary);
-                 node_demand_validate_runtime =
-                   (fun actual_runtime timer ->
-                     let case = find_case timer in
-                     record ("validate:" ^ case.case_name);
-                     if
-                       Eta.Runtime_contract.same_runtime actual_runtime
-                         (Timer.runtime_contract timer)
-                     then Ok ()
-                     else Error `Runtime_mismatch);
-                 node_demand_state = port;
-               }
-               runtime_contract);
-         node_demand_effect_state = port;
+             Timer.node_demand_plan ~necessary:[ 1 ]
+               ~timers:[ (1, start_node); (2, stop_node) ]
+               ~is_necessary:(fun necessary id ->
+                 List.exists (( = ) id) necessary)
+               ~validate_runtime:
+                 (fun actual_runtime timer ->
+                   let case = find_case timer in
+                   record ("validate:" ^ case.case_name);
+                   if
+                     Eta.Runtime_contract.same_runtime actual_runtime
+                       (Timer.runtime_contract timer)
+                   then Ok ()
+                   else Error `Runtime_mismatch)
+               ~state:port);
        });
   Alcotest.(check (list string))
     "events"
