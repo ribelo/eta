@@ -3744,10 +3744,12 @@ let test_stats_counter_saturation_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let check name set_counter =
-    set_counter max_int;
+    with_test_graph_lane rt Overflow_signal.graph (fun lane ->
+        set_counter lane max_int);
     expect_fail (name ^ " saturation") (counter_overflow name)
       (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ())));
-    set_counter 0
+    with_test_graph_lane rt Overflow_signal.graph (fun lane ->
+        set_counter lane 0)
   in
   let check_stats_count name count =
     Fun.protect
@@ -3759,29 +3761,29 @@ let test_stats_counter_saturation_is_typed_failure () =
         expect_fail (name ^ " saturation") (counter_overflow name)
           (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ()))))
   in
-  check "stats pure_snapshot_commit_count" (fun value ->
+  check "stats pure_snapshot_commit_count" (fun lane value ->
       Eta_signal_testable.Graph.set_pure_snapshot_commit_count
-        Overflow_signal.graph value);
-  check "stats callback_delivery_count" (fun value ->
+        Overflow_signal.graph lane value);
+  check "stats callback_delivery_count" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
-        Eta_signal_testable.Graph.Callback_delivery_count value);
+        lane Eta_signal_testable.Graph.Callback_delivery_count value);
   check_stats_count "stats total_node_count"
     Overflow_signal.Private_test_hooks.Stats_total_node_count;
-  check "stats recompute_count" (fun value ->
+  check "stats recompute_count" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
-        Eta_signal_testable.Graph.Recompute_count value);
-  check "stats dynamic_scope_invalidations" (fun value ->
+        lane Eta_signal_testable.Graph.Recompute_count value);
+  check "stats dynamic_scope_invalidations" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
-        Eta_signal_testable.Graph.Dynamic_scope_invalidations value);
-  check "stats nodes_became_necessary" (fun value ->
+        lane Eta_signal_testable.Graph.Dynamic_scope_invalidations value);
+  check "stats nodes_became_necessary" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
-        Eta_signal_testable.Graph.Nodes_became_necessary value);
-  check "stats nodes_became_unnecessary" (fun value ->
+        lane Eta_signal_testable.Graph.Nodes_became_necessary value);
+  check "stats nodes_became_unnecessary" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
-        Eta_signal_testable.Graph.Nodes_became_unnecessary value);
-  check "stats stream_bridge_drop_count" (fun value ->
+        lane Eta_signal_testable.Graph.Nodes_became_unnecessary value);
+  check "stats stream_bridge_drop_count" (fun lane value ->
       Eta_signal_testable.Graph.set_stream_bridge_metrics
-        Overflow_signal.graph
+        Overflow_signal.graph lane
         (Eta_signal_testable.Stream_bridge.create_metrics
            ~drop_count:value ()));
   check_stats_count "stats necessary_node_count"

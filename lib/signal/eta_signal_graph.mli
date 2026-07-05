@@ -187,7 +187,7 @@ val set_next_scope_id : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
 val counter : (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int
 
 val set_counter :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int -> unit
 
 val bump_counter :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
@@ -401,7 +401,7 @@ val pure_snapshot_commit_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> int
 
 val set_pure_snapshot_commit_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val read_effective :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
@@ -497,7 +497,10 @@ val stream_bridge_metrics :
   (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics
 
 val set_stream_bridge_metrics :
-  (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics -> unit
+  (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t ->
+  lane_access ->
+  'stream_metrics ->
+  unit
 
 val add_observer :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

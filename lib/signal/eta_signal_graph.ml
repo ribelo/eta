@@ -264,7 +264,7 @@ let set_next_scope_id t next =
 
 let counter t target = Eta_signal_graph_core.counter t.core (core_counter target)
 
-let set_counter t target value =
+let set_counter t _lane target value =
   Eta_signal_graph_core.set_counter t.core (core_counter target) value
 
 let bump_counter t lane target =
@@ -566,7 +566,7 @@ let commit_staging t _lane staging context =
 let pure_snapshot_commit_count t =
   Eta_signal_graph_state.pure_snapshot_commit_count t.state
 
-let set_pure_snapshot_commit_count t count =
+let set_pure_snapshot_commit_count t _lane count =
   Eta_signal_graph_state.set_pure_snapshot_commit_count t.state count
 
 let active_transaction t =
@@ -660,7 +660,7 @@ let ensure_not_pure t =
   else Ok ()
 
 let stream_bridge_metrics t = t.stream_bridge_metrics
-let set_stream_bridge_metrics t metrics = t.stream_bridge_metrics <- metrics
+let set_stream_bridge_metrics t _lane metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
 let remove_observers t _lane ~keep = t.observers <- List.filter keep t.observers
 let matching_observers t _lane ~selected = List.filter selected t.observers
