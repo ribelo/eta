@@ -880,7 +880,7 @@ let create_live_node t scope_ops lifecycle ~dependencies =
             (lifecycle.node_pack node);
           Ok node)
 
-let rec invalidate_live_node t edge_ops lifecycle ~invalidate_scope node =
+let rec invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope node =
   if lifecycle.invalidation_valid node then (
     let timer_hooks = lifecycle.invalidation_timer_hooks node in
     lifecycle.invalidation_set_invalid node;
@@ -890,7 +890,7 @@ let rec invalidate_live_node t edge_ops lifecycle ~invalidate_scope node =
     let _dependencies, dependents = detach_node_edges t edge_ops node in
     let dependent_hooks =
       List.concat_map
-        (invalidate_live_node t edge_ops lifecycle ~invalidate_scope)
+        (invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope)
         dependents
     in
     let kind_hooks =

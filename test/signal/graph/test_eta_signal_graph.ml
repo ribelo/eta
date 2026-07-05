@@ -440,8 +440,9 @@ let test_invalidate_live_node_owns_lifecycle_order () =
     [ "scope-hook:" ^ string_of_int scope ]
   in
   let hooks =
-    Graph.invalidate_live_node graph (invalidating_edge_ops events)
-      lifecycle ~invalidate_scope root
+    with_graph_lane graph (fun lane ->
+        Graph.invalidate_live_node graph lane (invalidating_edge_ops events)
+          lifecycle ~invalidate_scope root)
   in
   Alcotest.(check (list string))
     "hooks"

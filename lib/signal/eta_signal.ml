@@ -1060,7 +1060,7 @@ module Make (Observer_error : Observer_error) () = struct
         hooks
 
   and invalidate_node lane packed =
-    Graph.invalidate_live_node graph edge_ops (node_invalidation lane)
+    Graph.invalidate_live_node graph lane edge_ops (node_invalidation lane)
       ~invalidate_scope:(invalidate_scope lane) packed
 
   let make_bind ?equal source selector =

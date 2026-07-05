@@ -678,6 +678,7 @@ val create_live_node :
 
 val invalidate_live_node :
   (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  lane_access ->
   ('id, 'node) edge_ops ->
   ('node, 'scope, 'hook, 'dead_node) node_invalidation ->
   invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
