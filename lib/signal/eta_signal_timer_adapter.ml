@@ -161,102 +161,84 @@ let refresh_demand access callbacks =
              |> Effect.bind (fun () -> callbacks.run_start_attempts start_attempts)))
 
 let rec run_update_batch callbacks generation remaining ~missed =
+  let open Syntax in
   if remaining <= 0 then Effect.pure `Continue
   else
-    callbacks.after_update_state ~generation
-    |> Effect.bind (function
-         | `Stop -> Effect.pure `Stop
-         | `Continue ->
-             Effect.sync (fun () ->
-                 callbacks.construct_update ~generation ~missed)
-             |> Effect.bind (fun update ->
-                    callbacks.after_update_constructed_before_run ()
-                    |> Effect.bind (fun () -> update))
-             |> Effect.bind (fun () ->
-                    run_update_batch callbacks generation (remaining - 1)
-                      ~missed))
+    let* status = callbacks.after_update_state ~generation in
+    match status with
+    | `Stop -> Effect.pure `Stop
+    | `Continue ->
+        let* update =
+          Effect.sync (fun () -> callbacks.construct_update ~generation ~missed)
+        in
+        let* () = callbacks.after_update_constructed_before_run () in
+        let* () = update in
+        run_update_batch callbacks generation (remaining - 1) ~missed
 
 let rec run_updates callbacks generation remaining ~missed =
+  let open Syntax in
   match Timer_policy.update_batch ~remaining with
   | None -> Effect.unit
   | Some batch ->
-      run_update_batch callbacks generation batch.update_batch_count ~missed
-      |> Effect.bind (function
-           | `Stop -> Effect.unit
-           | `Continue ->
-               if not batch.update_batch_yield then Effect.unit
-               else
-                 Effect.yield
-                 |> Effect.bind (fun () ->
-                        run_updates callbacks generation
-                          batch.update_batch_remaining ~missed))
+      Timer_policy.update_batch_result batch
+        ~plan:(fun ~count ~remaining ~yield ->
+          let* status = run_update_batch callbacks generation count ~missed in
+          match status with
+          | `Stop -> Effect.unit
+          | `Continue ->
+              if not yield then Effect.unit
+              else
+                let* () = Effect.yield in
+                run_updates callbacks generation remaining ~missed)
 
 let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
     ~catch_up_policy =
-  callbacks.read_next_due ~generation ~fallback:next_due_ms
-  |> Effect.bind (function
-       | None -> Effect.unit
-       | Some next_due_ms ->
-           Effect.now
-           |> Effect.bind (fun now_ms ->
-                  let delay_ms =
-                    Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms
-                  in
-                  Effect.sleep (Duration.ms delay_ms))
-           |> Effect.bind (fun () ->
-                  callbacks.read_next_due ~generation ~fallback:next_due_ms
-                  |> Effect.bind (function
-                       | None -> Effect.unit
-                       | Some due_ms ->
-                           Effect.now
-                           |> Effect.bind (fun now_ms ->
-                                  let wake =
-                                    Timer_policy.daemon_wake_plan
-                                      ~catch_up_policy ~interval_ms
-                                      ~next_due_ms:due_ms ~now_ms
-                                  in
-                                  let next_due_ms = wake.wake_next_due_ms in
-                                  let update_count = wake.wake_update_count in
-                                  let update_missed =
-                                    wake.wake_update_missed
-                                  in
-                                  let saturated_due =
-                                    wake.wake_saturated_due
-                                  in
-                                  let continue () =
-                                    run_loop callbacks ~generation ~interval_ms
-                                      ~next_due_ms ~catch_up_policy
-                                  in
-                                  callbacks.after_due_read_before_commit ()
-                                  |> Effect.bind (fun () ->
-                                         callbacks.advance_next_due ~generation
-                                           ~expected:due_ms ~next_due_ms
-                                         |> Effect.bind (function
-                                              | `Stop -> Effect.unit
-                                              | `Stale -> continue ()
-                                              | `Advanced ->
-                                                  run_updates callbacks
-                                                    generation update_count
-                                                    ~missed:update_missed
-                                                  |> Effect.bind (fun () ->
-                                                         (if saturated_due then
-                                                            callbacks
-                                                              .finish_saturated
-                                                              ~generation
-                                                          else Effect.unit)
-                                                         |> Effect.bind
-                                                              (fun () ->
-                                                                callbacks
-                                                                  .after_update_state
-                                                                  ~generation
-                                                                |> Effect.bind
-                                                                     (function
-                                                                     | `Continue ->
-                                                                         continue
-                                                                           ()
-                                                                     | `Stop ->
-                                                                         Effect
-                                                                           .unit)))))))))
+  let open Syntax in
+  let* next_due = callbacks.read_next_due ~generation ~fallback:next_due_ms in
+  match next_due with
+  | None -> Effect.unit
+  | Some next_due_ms ->
+      let* now_ms = Effect.now in
+      let delay_ms = Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms in
+      let* () = Effect.sleep (Duration.ms delay_ms) in
+      let* due = callbacks.read_next_due ~generation ~fallback:next_due_ms in
+      (match due with
+      | None -> Effect.unit
+      | Some due_ms ->
+          let* now_ms = Effect.now in
+          let wake =
+            Timer_policy.daemon_wake_plan ~catch_up_policy ~interval_ms
+              ~next_due_ms:due_ms ~now_ms
+          in
+          Timer_policy.wake_plan_result wake
+            ~plan:
+              (fun ~next_due_ms ~saturated_due ~update_count ~update_missed ->
+                let continue () =
+                  run_loop callbacks ~generation ~interval_ms ~next_due_ms
+                    ~catch_up_policy
+                in
+                let* () = callbacks.after_due_read_before_commit () in
+                let* advance =
+                  callbacks.advance_next_due ~generation ~expected:due_ms
+                    ~next_due_ms
+                in
+                match advance with
+                | `Stop -> Effect.unit
+                | `Stale -> continue ()
+                | `Advanced ->
+                    let* () =
+                      run_updates callbacks generation update_count
+                        ~missed:update_missed
+                    in
+                    let* () =
+                      if saturated_due then
+                        callbacks.finish_saturated ~generation
+                      else Effect.unit
+                    in
+                    let* status = callbacks.after_update_state ~generation in
+                    match status with
+                    | `Continue -> continue ()
+                    | `Stop -> Effect.unit))
 
 let start start_callbacks loop_callbacks ~generation ~interval_ms
     ~update_on_start ~catch_up_policy =

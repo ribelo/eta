@@ -76,6 +76,23 @@ let refresh_plan_finish plan =
   Timer_policy.refresh_plan_result plan
     ~plan:(fun ~value:_ ~next_due_ms:_ ~finish -> finish)
 
+let update_batch_values batch =
+  Timer_policy.update_batch_result batch
+    ~plan:(fun ~count ~remaining ~yield -> (count, remaining, yield))
+
+let wake_plan_values wake =
+  Timer_policy.wake_plan_result wake
+    ~plan:(fun ~next_due_ms ~saturated_due ~update_count ~update_missed ->
+      (next_due_ms, saturated_due, update_count, update_missed))
+
+let pp_wake_plan_values ppf
+    (next_due_ms, saturated_due, update_count, update_missed) =
+  Format.fprintf ppf "(%d,%b,%d,%d)" next_due_ms saturated_due
+    update_count update_missed
+
+let wake_plan_values_test =
+  Alcotest.testable pp_wake_plan_values (fun left right -> left = right)
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -218,21 +235,15 @@ let test_update_batch_policy () =
     (Option.is_none (Timer_policy.update_batch ~remaining:0));
   (match Timer_policy.update_batch ~remaining:3 with
   | Some batch ->
-      Alcotest.(check int) "small batch count" 3
-        batch.update_batch_count;
-      Alcotest.(check int) "small batch remaining" 0
-        batch.update_batch_remaining;
-      Alcotest.(check bool) "small batch no yield" false
-        batch.update_batch_yield
+      Alcotest.(check (triple int int bool))
+        "small batch" (3, 0, false)
+        (update_batch_values batch)
   | None -> Alcotest.fail "expected small batch");
   (match Timer_policy.update_batch ~remaining:65 with
   | Some batch ->
-      Alcotest.(check int) "large batch count" 64
-        batch.update_batch_count;
-      Alcotest.(check int) "large batch remaining" 1
-        batch.update_batch_remaining;
-      Alcotest.(check bool) "large batch yields" true
-        batch.update_batch_yield
+      Alcotest.(check (triple int int bool))
+        "large batch" (64, 1, true)
+        (update_batch_values batch)
   | None -> Alcotest.fail "expected large batch")
 
 let test_daemon_wake_plan () =
@@ -240,34 +251,30 @@ let test_daemon_wake_plan () =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
   in
-  Alcotest.(check int) "every next due" 90 every.wake_next_due_ms;
-  Alcotest.(check bool) "every not saturated" false
-    every.wake_saturated_due;
-  Alcotest.(check int) "every update count" 4 every.wake_update_count;
-  Alcotest.(check int) "every update missed" 1 every.wake_update_missed;
+  Alcotest.(check wake_plan_values_test)
+    "every wake" (90, false, 4, 1)
+    (wake_plan_values every);
   let coalesced =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_coalesced
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:85
   in
-  Alcotest.(check int) "coalesced update count" 1
-    coalesced.wake_update_count;
-  Alcotest.(check int) "coalesced update missed" 4
-    coalesced.wake_update_missed;
+  Alcotest.(check wake_plan_values_test)
+    "coalesced wake" (90, false, 1, 4)
+    (wake_plan_values coalesced);
   let not_due =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_every_cadence
       ~interval_ms:10 ~next_due_ms:50 ~now_ms:49
   in
-  Alcotest.(check int) "not due unchanged" 50 not_due.wake_next_due_ms;
-  Alcotest.(check int) "not due no updates" 0 not_due.wake_update_count;
-  Alcotest.(check int) "not due missed unused" 0 not_due.wake_update_missed;
+  Alcotest.(check wake_plan_values_test)
+    "not due wake" (50, false, 0, 0)
+    (wake_plan_values not_due);
   let saturated =
     Timer_policy.daemon_wake_plan ~catch_up_policy:Catch_up_once_per_wake
       ~interval_ms:10 ~next_due_ms:max_int ~now_ms:max_int
   in
-  Alcotest.(check int) "saturated due" max_int
-    saturated.wake_next_due_ms;
-  Alcotest.(check bool) "saturated finishes" true
-    saturated.wake_saturated_due
+  Alcotest.(check wake_plan_values_test)
+    "saturated wake" (max_int, true, 1, 1)
+    (wake_plan_values saturated)
 
 let noop () = ()
 

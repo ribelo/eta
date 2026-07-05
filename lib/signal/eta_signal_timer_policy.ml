@@ -288,6 +288,10 @@ let update_batch ~remaining =
         update_batch_yield = update_batch_remaining > 0;
       }
 
+let update_batch_result batch ~plan =
+  plan ~count:batch.update_batch_count
+    ~remaining:batch.update_batch_remaining ~yield:batch.update_batch_yield
+
 let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
   let missed = missed_cadences ~interval_ms ~next_due_ms ~now_ms in
   let wake_next_due_ms = advance_due next_due_ms interval_ms missed in
@@ -301,6 +305,12 @@ let daemon_wake_plan ~catch_up_policy ~interval_ms ~next_due_ms ~now_ms =
       (if wake_update_count <= 0 then 0
        else catch_up_update_missed catch_up_policy missed);
   }
+
+let wake_plan_result wake ~plan =
+  plan ~next_due_ms:wake.wake_next_due_ms
+    ~saturated_due:wake.wake_saturated_due
+    ~update_count:wake.wake_update_count
+    ~update_missed:wake.wake_update_missed
 
 let state_generation = function
   | Timer_inactive generation

@@ -54,18 +54,9 @@ type daemon_exit =
   | Daemon_ok
   | Daemon_error
 
-type wake_plan = {
-  wake_next_due_ms : int;
-  wake_saturated_due : bool;
-  wake_update_count : int;
-  wake_update_missed : int;
-}
+type wake_plan
 
-type update_batch = {
-  update_batch_count : int;
-  update_batch_remaining : int;
-  update_batch_yield : bool;
-}
+type update_batch
 
 type stop_plan
 
@@ -126,12 +117,27 @@ val catch_up_update_missed : catch_up_policy -> int -> int
 
 val update_batch : remaining:int -> update_batch option
 
+val update_batch_result :
+  update_batch ->
+  plan:(count:int -> remaining:int -> yield:bool -> 'a) ->
+  'a
+
 val daemon_wake_plan :
   catch_up_policy:catch_up_policy ->
   interval_ms:int ->
   next_due_ms:int ->
   now_ms:int ->
   wake_plan
+
+val wake_plan_result :
+  wake_plan ->
+  plan:
+    (next_due_ms:int ->
+    saturated_due:bool ->
+    update_count:int ->
+    update_missed:int ->
+    'a) ->
+  'a
 
 val state_generation : state -> int
 val state_with_generation : state -> int -> state
