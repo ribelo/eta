@@ -513,37 +513,39 @@ type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
   staging_commit_preflight : unit -> unit;
   staging_commit_bind : 'bind -> 'hook list;
   staging_commit_prepare_signal : 'node -> unit;
-  staging_commit_transaction : unit -> unit;
   staging_commit_timer_refresh : 'timer -> unit;
   staging_commit_signal : 'node -> unit;
   staging_commit_advance_snapshot : int -> int;
 }
 
 let staging_commit_context ~preflight ~commit_bind ~prepare_signal
-    ~commit_transaction ~commit_timer_refresh ~commit_signal
-    ~advance_snapshot =
+    ~commit_timer_refresh ~commit_signal ~advance_snapshot =
   {
     staging_commit_preflight = preflight;
     staging_commit_bind = commit_bind;
     staging_commit_prepare_signal = prepare_signal;
-    staging_commit_transaction = commit_transaction;
     staging_commit_timer_refresh = commit_timer_refresh;
     staging_commit_signal = commit_signal;
     staging_commit_advance_snapshot = advance_snapshot;
   }
 
 let commit_staging t staging context =
+  let exception Commit_error of Eta_signal_error.graph_error in
   let state_context =
     Eta_signal_graph_state.commit_context
       ~preflight:context.staging_commit_preflight
       ~commit_bind:context.staging_commit_bind
       ~prepare_signal:context.staging_commit_prepare_signal
-      ~commit_transaction:context.staging_commit_transaction
+      ~commit_transaction:(fun () ->
+        match Eta_signal_stabilization.commit_transaction t.stabilization with
+        | Ok () -> ()
+        | Error err -> raise (Commit_error err))
       ~commit_timer_refresh:context.staging_commit_timer_refresh
       ~commit_signal:context.staging_commit_signal
       ~advance_snapshot:context.staging_commit_advance_snapshot
   in
-  Eta_signal_graph_state.commit_staging t.state staging state_context
+  try Ok (Eta_signal_graph_state.commit_staging t.state staging state_context)
+  with Commit_error err -> Error err
 
 let pure_snapshot_commit_count t =
   Eta_signal_graph_state.pure_snapshot_commit_count t.state
@@ -555,9 +557,6 @@ let active_transaction t =
   Eta_signal_stabilization.active_transaction t.stabilization
 
 let active_pure_transaction = active_transaction
-
-let commit_transaction t =
-  Eta_signal_stabilization.commit_transaction t.stabilization
 
 let read_effective t cell =
   match Eta_signal_stabilization.transaction t.stabilization with

@@ -1086,11 +1086,6 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_signal (P signal) =
     if signal.valid then signal.dirty <- false
 
-  let commit_transaction () =
-    match Graph.commit_transaction graph with
-    | Ok () -> ()
-    | Error err -> raise (Graph_error err)
-
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
     Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
@@ -1326,11 +1321,13 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.staging_commit_context
         ~preflight:(fun () -> preflight_commit_staging lane)
         ~commit_bind:(commit_bind lane)
-        ~prepare_signal:prepare_signal_commit ~commit_transaction
+        ~prepare_signal:prepare_signal_commit
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
         ~advance_snapshot:saturating_succ
     in
-    Graph.commit_staging graph staging context
+    match Graph.commit_staging graph staging context with
+    | Ok hooks -> hooks
+    | Error err -> raise (Graph_error err)
 
   let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (

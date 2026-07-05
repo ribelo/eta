@@ -371,7 +371,6 @@ val staging_commit_context :
   preflight:(unit -> unit) ->
   commit_bind:('bind -> 'hook list) ->
   prepare_signal:('node -> unit) ->
-  commit_transaction:(unit -> unit) ->
   commit_timer_refresh:('timer -> unit) ->
   commit_signal:('node -> unit) ->
   advance_snapshot:(int -> int) ->
@@ -381,7 +380,7 @@ val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
   staging ->
   ('bind, 'node, 'hook, 'timer) staging_commit_context ->
-  'hook list
+  ('hook list, Eta_signal_error.graph_error) result
 
 val pure_snapshot_commit_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> int
@@ -393,10 +392,6 @@ val active_pure_transaction :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_transaction.pure, Eta_signal_error.graph_error)
   Eta_signal_transaction.t
-
-val commit_transaction :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (unit, Eta_signal_error.graph_error) result
 
 val read_effective :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

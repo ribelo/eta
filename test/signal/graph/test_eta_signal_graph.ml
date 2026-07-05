@@ -86,13 +86,6 @@ let update_label = function
       "changed:" ^ string_of_int old_value ^ "->"
       ^ string_of_int new_value
 
-let commit_transaction graph =
-  match Graph.commit_transaction graph with
-  | Ok () -> ()
-  | Error err ->
-      Alcotest.failf "unexpected graph error: %s"
-        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
-
 let scoped_graph scope_context =
   Graph.create ~create_scope_context:(fun () -> scope_context)
     ~create_stream_bridge_metrics:(fun () -> ()) ()
@@ -465,12 +458,16 @@ let test_observer_delivery_plan_uses_collection_order () =
             ~preflight:(fun () -> record events "preflight")
             ~commit_bind:(fun _bind -> [])
             ~prepare_signal:(fun _node -> ())
-            ~commit_transaction:(fun () -> commit_transaction graph)
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
             ~advance_snapshot:(fun value -> value + 1)
         in
-        Graph.commit_staging graph staging commit_context)
+        match Graph.commit_staging graph staging commit_context with
+        | Ok hooks -> hooks
+        | Error err ->
+            Alcotest.failf "unexpected graph error: %s"
+              (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+                 err))
       ~update_necessity:(fun context ->
         check_cap (Pass.pure_capability context);
         record events "update_necessity")
