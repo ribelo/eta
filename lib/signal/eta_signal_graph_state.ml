@@ -125,14 +125,15 @@ let reset_staging t staging ~rollback_bind ~rollback_transaction
     Eta_signal_staging.reset
     {
       rollback_binds =
-        (fun () -> List.concat_map rollback_bind t.staged_binds);
-      pure_disposal_hooks = (fun () -> t.pure_disposal_hooks);
-      rollback_transaction;
-      clear_computed_nodes = (fun () -> t.computed_nodes <- []);
-      clear_staged_binds = (fun () -> t.staged_binds <- []);
-      clear_pure_disposal_hooks = (fun () -> t.pure_disposal_hooks <- []);
+        (fun _context -> List.concat_map rollback_bind t.staged_binds);
+      pure_disposal_hooks = (fun _context -> t.pure_disposal_hooks);
+      rollback_transaction = (fun _context -> rollback_transaction ());
+      clear_computed_nodes = (fun _context -> t.computed_nodes <- []);
+      clear_staged_binds = (fun _context -> t.staged_binds <- []);
+      clear_pure_disposal_hooks =
+        (fun _context -> t.pure_disposal_hooks <- []);
       clear_timer_refresh_staging =
-        (fun () ->
+        (fun _context ->
           clear_timer_refresh_staging t
             ~rollback_dirty:rollback_timer_refresh_dirty
             ~clear_timer:clear_timer_refresh_timer);
@@ -148,28 +149,32 @@ let commit_staging t staging ~preflight ~commit_bind ~prepare_signal
   let hooks =
     Eta_signal_staging.commit
     {
-      preflight;
+      preflight = (fun _context -> preflight ());
       commit_binds =
-        (fun () -> List.concat_map commit_bind t.staged_binds);
-      remember_pure_disposal_hooks = remember_pure_disposal_hooks t staging;
+        (fun _context -> List.concat_map commit_bind t.staged_binds);
+      remember_pure_disposal_hooks =
+        (fun _context hooks -> remember_pure_disposal_hooks t staging hooks);
       prepare_signals =
-        (fun () -> List.iter prepare_signal t.computed_nodes);
-      commit_transaction;
+        (fun _context -> List.iter prepare_signal t.computed_nodes);
+      commit_transaction = (fun _context -> commit_transaction ());
       commit_timer_refresh =
-        (fun () -> List.iter commit_timer_refresh t.timer_refresh_staged_timers);
-      commit_signals = (fun () -> List.iter commit_signal t.computed_nodes);
+        (fun _context ->
+          List.iter commit_timer_refresh t.timer_refresh_staged_timers);
+      commit_signals =
+        (fun _context -> List.iter commit_signal t.computed_nodes);
       disposal_hooks =
-        (fun () ->
+        (fun _context ->
           t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks);
-      clear_computed_nodes = (fun () -> t.computed_nodes <- []);
-      clear_staged_binds = (fun () -> t.staged_binds <- []);
-      clear_pure_disposal_hooks = (fun () -> t.pure_disposal_hooks <- []);
+      clear_computed_nodes = (fun _context -> t.computed_nodes <- []);
+      clear_staged_binds = (fun _context -> t.staged_binds <- []);
+      clear_pure_disposal_hooks =
+        (fun _context -> t.pure_disposal_hooks <- []);
       clear_timer_refresh_disposal_hooks =
-        (fun () -> t.timer_refresh_disposal_hooks <- []);
+        (fun _context -> t.timer_refresh_disposal_hooks <- []);
       clear_timer_refresh_staged_timers =
-        (fun () -> t.timer_refresh_staged_timers <- []);
+        (fun _context -> t.timer_refresh_staged_timers <- []);
       commit_snapshot =
-        (fun () ->
+        (fun _context ->
           t.pure_snapshot_commit_count <-
             advance_snapshot t.pure_snapshot_commit_count);
     }
