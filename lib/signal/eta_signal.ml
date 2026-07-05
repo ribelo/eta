@@ -1158,16 +1158,17 @@ module Make (Observer_error : Observer_error) () = struct
         ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
         (signal_tombstone packed) graph.dead_nodes
 
-  let rec invalidate_scope ?(prune = true) scope =
+  let rec invalidate_scope lane ?(prune = true) scope =
     match Scope.invalidate scope with
     | None -> []
     | Some nodes ->
-        Graph_core.bump_counter graph.core Graph_core.Dynamic_scope_invalidations;
-        let hooks = List.concat_map invalidate_node nodes in
+        Graph_core.bump_counter graph.core lane
+          Graph_core.Dynamic_scope_invalidations;
+        let hooks = List.concat_map (invalidate_node lane) nodes in
         if prune then prune_invalid_nodes_unlocked ();
         hooks
 
-  and invalidate_node (P signal) =
+  and invalidate_node lane (P signal) =
     if signal.valid then (
       let dependencies = signal.dependencies in
       let dependents = signal.dependents in
@@ -1184,7 +1185,9 @@ module Make (Observer_error : Observer_error) () = struct
         dependencies;
       signal.dependencies <- [];
       signal.dependents <- [];
-      let dependent_hooks = List.concat_map invalidate_node dependents in
+      let dependent_hooks =
+        List.concat_map (invalidate_node lane) dependents
+      in
       let kind_hooks =
         match signal.kind with
         | Var source ->
@@ -1193,7 +1196,7 @@ module Make (Observer_error : Observer_error) () = struct
         | Bind bind -> (
             match Bind.inner_scope (Transaction.current bind.snapshot) with
             | None -> []
-            | Some scope -> invalidate_scope ~prune:false scope)
+            | Some scope -> invalidate_scope lane ~prune:false scope)
         | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
         | Map7 _ | Map8 _ | Map9 _ | All _ ->
             []
@@ -1296,20 +1299,20 @@ module Make (Observer_error : Observer_error) () = struct
         staged = bind_staged_snapshot bind;
       }
 
-  let commit_bind (B bind) =
+  let commit_bind lane (B bind) =
     match
       Bind.commit_staged_switch (bind_staged_switch bind)
         ~detach_old_inner:detach_dependency
-        ~invalidate_old_scope:invalidate_scope
+        ~invalidate_old_scope:(invalidate_scope lane)
         ~attach_new_inner:attach_dependency
     with
     | Ok hooks -> hooks
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
-  let rollback_bind (B bind) =
+  let rollback_bind lane (B bind) =
     match
       Bind.rollback_staged_switch ~staged:(bind_staged_snapshot bind)
-        ~invalidate_new_scope:invalidate_scope
+        ~invalidate_new_scope:(invalidate_scope lane)
     with
     | Ok hooks -> hooks
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
@@ -1480,8 +1483,9 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
 
-  let reset_staging (_lane : graph_lane) staging =
-    Graph_state.reset_staging graph.state staging ~rollback_bind
+  let reset_staging lane staging =
+    Graph_state.reset_staging graph.state staging
+      ~rollback_bind:(rollback_bind lane)
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
         Graph_dirty.restore (Timer_policy.refresh_dirty_items context);
@@ -1490,7 +1494,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_staging lane staging =
     Graph_state.commit_staging graph.state staging
-      ~preflight:(fun () -> preflight_commit_staging lane) ~commit_bind
+      ~preflight:(fun () -> preflight_commit_staging lane)
+      ~commit_bind:(commit_bind lane)
       ~prepare_signal:prepare_signal_commit ~commit_transaction
       ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
       ~advance_snapshot:saturating_succ
@@ -1555,7 +1560,7 @@ module Make (Observer_error : Observer_error) () = struct
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let recompute value =
-      Graph_core.bump_counter graph.core Graph_core.Recompute_count;
+      Graph_core.bump_counter graph.core lane Graph_core.Recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
@@ -1696,15 +1701,17 @@ module Make (Observer_error : Observer_error) () = struct
                    Scope_validation.validate_inner ~scope (P inner));
                context_compute_inner = compute;
                context_on_switch_failure =
-                 (fun _lane scope ->
-                   remember_pure_disposal_hooks (invalidate_scope scope));
+                 (fun lane scope ->
+                   remember_pure_disposal_hooks
+                     (invalidate_scope lane scope));
                context_dirty = signal.dirty;
                context_initialized = signal_initialized ();
                context_dependencies_changed =
                  (fun _lane dependencies -> dependency_changed dependencies);
                context_mark_recomputed =
-                 (fun _lane ->
-                   Graph_core.bump_counter graph.core Graph_core.Recompute_count);
+                 (fun lane ->
+                   Graph_core.bump_counter graph.core lane
+                     Graph_core.Recompute_count);
                context_value_changed =
                  (fun _lane next ->
                    let snapshot = signal_effective_snapshot signal in
@@ -1739,7 +1746,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_necessity_counters_unlocked lane =
     let next = collect_necessary_node_ids lane in
-    Graph_core.update_necessary_ids graph.core next
+    Graph_core.update_necessary_ids graph.core lane next
 
   let all_timers (_lane : graph_lane) =
     List.filter_map
@@ -2216,8 +2223,9 @@ module Make (Observer_error : Observer_error) () = struct
         : (graph, Stabilization.idle) Stabilization.token)
 
   let mark_callback_delivery_complete () =
-    with_graph_lane_sync (fun () ->
-        Graph_core.bump_counter graph.core Graph_core.Callback_delivery_count)
+    with_graph_lane_access (fun lane ->
+        Graph_core.bump_counter graph.core lane
+          Graph_core.Callback_delivery_count)
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       finish_token_ref =

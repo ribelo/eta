@@ -48,6 +48,7 @@ val set_next_scope_id : t -> int -> unit
 
 val counter : t -> counter -> int
 val set_counter : t -> counter -> int -> unit
-val bump_counter : t -> counter -> unit
+val bump_counter : t -> lane_access -> counter -> unit
 
-val update_necessary_ids : t -> (Eta_signal_id.signal, unit) Hashtbl.t -> unit
+val update_necessary_ids :
+  t -> lane_access -> (Eta_signal_id.signal, unit) Hashtbl.t -> unit

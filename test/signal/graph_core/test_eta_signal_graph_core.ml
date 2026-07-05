@@ -18,6 +18,27 @@ let signal_set ids =
   List.iter (fun id -> Hashtbl.replace table (Id.signal id) ()) ids;
   table
 
+let with_lane core f =
+  match
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    let runtime =
+      Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+    in
+    Eta.Runtime.run runtime
+      (Core.with_lane_access core ~leaf_name:"test_eta_signal_graph_core"
+         ~depth_local:(Eta.Runtime_contract.create_local ())
+         ~hooks:
+           {
+             Core.note_waiter_enqueued = ignore;
+             note_waiter_compaction = ignore;
+         }
+         ~after_acquired:(fun () -> Eta.Effect.unit)
+         f)
+  with
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected lane access failure"
+
 let worker_context_active = ref false
 
 let () =
@@ -44,22 +65,26 @@ let test_allocator_overflows_loudly () =
 
 let test_counters_saturate_and_can_be_seeded () =
   let core = Core.create () in
-  Core.bump_counter core Core.Recompute_count;
+  with_lane core (fun lane ->
+      Core.bump_counter core lane Core.Recompute_count);
   Alcotest.(check int) "bumped" 1
     (Core.counter core Core.Recompute_count);
   Core.set_counter core Core.Recompute_count max_int;
-  Core.bump_counter core Core.Recompute_count;
+  with_lane core (fun lane ->
+      Core.bump_counter core lane Core.Recompute_count);
   Alcotest.(check int) "saturated" max_int
     (Core.counter core Core.Recompute_count)
 
 let test_necessary_id_updates_count_transitions () =
   let core = Core.create () in
-  Core.update_necessary_ids core (signal_set [ 1; 2 ]);
+  with_lane core (fun lane ->
+      Core.update_necessary_ids core lane (signal_set [ 1; 2 ]));
   Alcotest.(check int) "became necessary first" 2
     (Core.counter core Core.Nodes_became_necessary);
   Alcotest.(check int) "became unnecessary first" 0
     (Core.counter core Core.Nodes_became_unnecessary);
-  Core.update_necessary_ids core (signal_set [ 2; 3; 4 ]);
+  with_lane core (fun lane ->
+      Core.update_necessary_ids core lane (signal_set [ 2; 3; 4 ]));
   Alcotest.(check int) "became necessary second" 4
     (Core.counter core Core.Nodes_became_necessary);
   Alcotest.(check int) "became unnecessary second" 1

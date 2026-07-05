@@ -113,10 +113,10 @@ let add_int_capped left right =
   else if left > max_int - right then max_int
   else left + right
 
-let bump_counter t target =
+let bump_counter t (_lane : lane_access) target =
   set_counter t target (saturating_succ (counter t target))
 
-let update_necessary_ids t next =
+let update_necessary_ids t (_lane : lane_access) next =
   let summary =
     Eta_signal_graph_algorithms.Demand.summarize_diff
       ~previous:t.necessary_node_ids ~next
