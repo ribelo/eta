@@ -325,25 +325,26 @@ module Make (Observer_error : Observer_error) () = struct
   end)
 
   module Graph_edge_node = struct
-    type id = signal_id
     type nonrec packed = packed_signal
     type t = Packed : 'a signal -> t
 
     let pack (Packed signal) = P signal
-    let unpack (P signal) = Packed signal
-    let id (Packed signal) = signal.id
-    let equal_id left right = signal_id_int left = signal_id_int right
-    let dependencies (Packed signal) = signal.dependencies
-    let set_dependencies (Packed signal) dependencies =
-      signal.dependencies <- dependencies
-    let dependents (Packed signal) = signal.dependents
-    let set_dependents (Packed signal) dependents =
-      signal.dependents <- dependents
   end
 
-  module Graph_edges = Graph_algorithms.Make_edges (Graph_edge_node)
-
   let graph_edge_node signal = Graph_edge_node.Packed signal
+
+  let edge_ops =
+    {
+      Graph.edge_id = (fun (P signal) -> signal.id);
+      edge_equal_id =
+        (fun left right -> signal_id_int left = signal_id_int right);
+      edge_dependencies = (fun (P signal) -> signal.dependencies);
+      edge_set_dependencies =
+        (fun (P signal) dependencies -> signal.dependencies <- dependencies);
+      edge_dependents = (fun (P signal) -> signal.dependents);
+      edge_set_dependents =
+        (fun (P signal) dependents -> signal.dependents <- dependents);
+    }
 
   module Graph_dirty = Graph_algorithms.Make_dirty (struct
     type id = signal_id
@@ -706,27 +707,22 @@ module Make (Observer_error : Observer_error) () = struct
   let current_generation () = Graph.generation graph
 
   let remove_dependent child parent =
-    Graph_edges.remove_dependent ~child:(graph_edge_node child)
-      ~parent:(graph_edge_node parent)
+    Graph.remove_dependent graph edge_ops ~child:(P child) ~parent:(P parent)
 
   let detach_dependency parent child =
-    Graph_edges.detach_dependency ~parent:(graph_edge_node parent)
-      ~child:(graph_edge_node child)
+    Graph.detach_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
 
   let has_dependency parent child =
-    Graph_edges.has_dependency ~parent:(graph_edge_node parent)
-      ~child:(graph_edge_node child)
+    Graph.has_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
 
   let has_dependent child parent =
-    Graph_edges.has_dependent ~child:(graph_edge_node child)
-      ~parent:(graph_edge_node parent)
+    Graph.has_dependent graph edge_ops ~child:(P child) ~parent:(P parent)
 
   let attach_dependency parent child =
-    Graph_edges.attach_dependency ~parent:(graph_edge_node parent)
-      ~child:(graph_edge_node child)
+    Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
 
   let attach_packed_dependency parent child =
-    Graph_edges.attach_packed_dependency ~parent:(graph_edge_node parent) child
+    Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child
 
   let mark_self_dirty packed =
     Graph_dirty.mark packed

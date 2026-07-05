@@ -54,6 +54,15 @@ type counter =
 
 type staging = Eta_signal_graph_state.staging
 
+type ('id, 'node) edge_ops = {
+  edge_id : 'node -> 'id;
+  edge_equal_id : 'id -> 'id -> bool;
+  edge_dependencies : 'node -> 'node list;
+  edge_set_dependencies : 'node -> 'node list -> unit;
+  edge_dependents : 'node -> 'node list;
+  edge_set_dependents : 'node -> 'node list -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -113,6 +122,42 @@ let set_counter t target value =
 
 let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
+
+let remove_by_id ops id node =
+  not (ops.edge_equal_id (ops.edge_id node) id)
+
+let has_id ops id node =
+  ops.edge_equal_id (ops.edge_id node) id
+
+let remove_dependent _t ops ~child ~parent =
+  ops.edge_set_dependents child
+    (List.filter
+       (remove_by_id ops (ops.edge_id parent))
+       (ops.edge_dependents child))
+
+let detach_dependency t ops ~parent ~child =
+  remove_dependent t ops ~child ~parent;
+  ops.edge_set_dependencies parent
+    (List.filter
+       (remove_by_id ops (ops.edge_id child))
+       (ops.edge_dependencies parent))
+
+let has_dependency _t ops ~parent ~child =
+  List.exists
+    (has_id ops (ops.edge_id child))
+    (ops.edge_dependencies parent)
+
+let has_dependent _t ops ~child ~parent =
+  List.exists
+    (has_id ops (ops.edge_id parent))
+    (ops.edge_dependents child)
+
+let attach_dependency t ops ~parent ~child =
+  if not (has_dependent t ops ~child ~parent) then
+    ops.edge_set_dependents child (parent :: ops.edge_dependents child);
+  if not (has_dependency t ops ~parent ~child) then
+    ops.edge_set_dependencies parent (child :: ops.edge_dependencies parent)
+
 let generation t = Eta_signal_graph_state.generation t.state
 let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation
 

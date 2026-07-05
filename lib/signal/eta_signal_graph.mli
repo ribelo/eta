@@ -35,6 +35,15 @@ type counter =
 
 type staging
 
+type ('id, 'node) edge_ops = {
+  edge_id : 'node -> 'id;
+  edge_equal_id : 'id -> 'id -> bool;
+  edge_dependencies : 'node -> 'node list;
+  edge_set_dependencies : 'node -> 'node list -> unit;
+  edge_dependents : 'node -> 'node list;
+  edge_set_dependents : 'node -> 'node list -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -101,6 +110,41 @@ val set_counter :
 
 val bump_counter :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
+
+val remove_dependent :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  child:'node ->
+  parent:'node ->
+  unit
+
+val detach_dependency :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  parent:'node ->
+  child:'node ->
+  unit
+
+val has_dependency :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  parent:'node ->
+  child:'node ->
+  bool
+
+val has_dependent :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  child:'node ->
+  parent:'node ->
+  bool
+
+val attach_dependency :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) edge_ops ->
+  parent:'node ->
+  child:'node ->
+  unit
 
 val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 
