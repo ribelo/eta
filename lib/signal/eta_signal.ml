@@ -1524,30 +1524,9 @@ module Make (Observer_error : Observer_error) () = struct
       bool ->
       value * bool =
    fun lane signal bind source_value source_changed ->
-    let apply_plan :
-        (source, value signal, scope, packed_signal, value) Bind.dynamic_plan ->
-        value * bool =
-     fun plan ->
-      Bind.apply_dynamic_plan
-        (Bind.dynamic_apply_context
-           ~current_value:(fun () ->
-             Signal_snapshot.value (signal_effective_snapshot signal))
-           ~cached_value:(fun () -> current_or_raise signal)
-           ~initialized:(fun () ->
-             Signal_snapshot.is_initialized
-               (signal_effective_snapshot signal))
-           ~equal:signal.equal
-           ~bump_recompute:(fun () ->
-             Graph.bump_counter graph lane Graph.Recompute_count)
-           ~stage_switch:(fun ~source_value ~inner ~scope ->
-             stage_bind_switch bind source_value inner scope)
-           ~stage_dependencies:(stage_dependency_versions signal)
-           ~stage_value:(stage_signal signal))
-        plan
-    in
     match
-      Bind.plan_dynamic
-        (Bind.dynamic_eval_context ~equal:bind.source.equal
+      Bind.run_dynamic
+        (Bind.dynamic_context ~source_equal:bind.source.equal
            ~source_dependency:(P bind.source)
            ~pack_inner:(fun inner -> P inner)
            ~new_scope:(fun _lane -> new_scope signal)
@@ -1560,16 +1539,26 @@ module Make (Observer_error : Observer_error) () = struct
            ~on_switch_failure:(fun lane scope ->
              remember_pure_disposal_hooks (invalidate_scope lane scope))
            ~dirty:signal.dirty
-           ~initialized:
-             (Signal_snapshot.is_initialized
-                (signal_effective_snapshot signal))
+           ~initialized:(fun () ->
+             Signal_snapshot.is_initialized
+               (signal_effective_snapshot signal))
            ~dependencies_changed:(fun _lane dependencies ->
-             dependencies_changed signal dependencies))
+             dependencies_changed signal dependencies)
+           ~current_value:(fun () ->
+             Signal_snapshot.value (signal_effective_snapshot signal))
+           ~cached_value:(fun () -> current_or_raise signal)
+           ~value_equal:signal.equal
+           ~bump_recompute:(fun () ->
+             Graph.bump_counter graph lane Graph.Recompute_count)
+           ~stage_switch:(fun ~source_value ~inner ~scope ->
+             stage_bind_switch bind source_value inner scope)
+           ~stage_dependencies:(stage_dependency_versions signal)
+           ~stage_value:(stage_signal signal))
         lane
         (bind_effective_snapshot bind) ~source_value ~source_changed
     with
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
-    | Ok plan -> apply_plan plan
+    | Ok result -> result
 
   let collect_necessary_node_ids (_lane : graph_lane) =
     Graph.necessary_ids graph

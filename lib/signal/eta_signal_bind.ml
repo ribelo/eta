@@ -50,7 +50,7 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   eval_compute_inner : 'capability -> 'inner -> 'value * bool;
   eval_on_switch_failure : 'capability -> 'scope -> unit;
   eval_dirty : bool;
-  eval_initialized : bool;
+  eval_initialized : unit -> bool;
   eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
@@ -64,6 +64,15 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context = {
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
   apply_stage_dependencies : 'dependency list -> unit;
   apply_stage_value : 'value -> unit;
+}
+
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+     dynamic_context = {
+  dynamic_eval :
+    ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+    dynamic_eval_context;
+  dynamic_apply :
+    ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context;
 }
 
 let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
@@ -95,6 +104,23 @@ let dynamic_apply_context ~current_value ~cached_value ~initialized ~equal
     apply_stage_switch = stage_switch;
     apply_stage_dependencies = stage_dependencies;
     apply_stage_value = stage_value;
+  }
+
+let dynamic_context ~source_equal ~source_dependency ~pack_inner
+    ~new_scope ~selector ~with_scope ~validate_inner ~compute_inner
+    ~on_switch_failure ~dirty ~initialized ~dependencies_changed
+    ~current_value ~cached_value ~value_equal ~bump_recompute ~stage_switch
+    ~stage_dependencies ~stage_value =
+  {
+    dynamic_eval =
+      dynamic_eval_context ~equal:source_equal ~source_dependency
+        ~pack_inner ~new_scope ~selector ~with_scope ~validate_inner
+        ~compute_inner ~on_switch_failure ~dirty ~initialized
+        ~dependencies_changed;
+    dynamic_apply =
+      dynamic_apply_context ~current_value ~cached_value ~initialized
+        ~equal:value_equal ~bump_recompute ~stage_switch
+        ~stage_dependencies ~stage_value;
   }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -208,7 +234,7 @@ let plan_dynamic eval_context capability snapshot ~source_value ~source_changed 
     ~compute_inner:eval_context.eval_compute_inner
     ~on_switch_failure:eval_context.eval_on_switch_failure
     ~dirty:eval_context.eval_dirty
-    ~initialized:eval_context.eval_initialized
+    ~initialized:(eval_context.eval_initialized ())
     ~dependencies_changed:eval_context.eval_dependencies_changed
 
 let value_changed context value =
@@ -249,6 +275,14 @@ let apply_dynamic_plan context plan =
       let changed = computed_value_changed context dynamic_reuse_value in
       context.apply_stage_dependencies dynamic_reuse_dependencies;
       publish_computed_value context dynamic_reuse_value changed
+
+let run_dynamic context capability snapshot ~source_value ~source_changed =
+  match
+    plan_dynamic context.dynamic_eval capability snapshot ~source_value
+      ~source_changed
+  with
+  | Error _ as error -> error
+  | Ok plan -> Ok (apply_dynamic_plan context.dynamic_apply plan)
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

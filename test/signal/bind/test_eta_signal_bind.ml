@@ -236,12 +236,12 @@ let dynamic_common_callbacks ?(inner_changed = false)
   (with_scope, validate_inner, compute_inner, dependencies_changed)
 
 let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
-    ?(dirty = false) ?(initialized = true) ?validate_inner_override
-    ?on_switch_failure_override events =
+    ?(dirty = false) ?(initialized = true) ?(current = Some (-1))
+    ?validate_inner_override ?on_switch_failure_override events =
   let with_scope, validate_inner, compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
-  Bind.dynamic_eval_context ~equal:Int.equal ~source_dependency:100
+  Bind.dynamic_context ~source_equal:Int.equal ~source_dependency:100
     ~pack_inner:(fun inner -> inner + 1000)
     ~new_scope:(fun cap ->
       check_cap cap;
@@ -270,57 +270,49 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
           fun cap _scope ->
             check_cap cap;
             Alcotest.fail "unexpected cleanup")
-    ~dirty ~initialized
+    ~dirty ~initialized:(fun () -> initialized)
     ~dependencies_changed:(fun cap dependencies ->
       check_cap cap;
       dependencies_changed dependencies)
+    ~current_value:(fun () -> current)
+    ~cached_value:(fun () ->
+      events := !events @ [ "cached" ];
+      match current with
+      | Some value -> value
+      | None -> invalid_arg "missing current")
+    ~value_equal:Int.equal
+    ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
+    ~stage_switch:(fun ~source_value ~inner ~scope ->
+      events :=
+        !events
+        @ [
+            "switch:"
+            ^ String.concat ":"
+                (List.map string_of_int [ source_value; inner; scope ]);
+          ])
+    ~stage_dependencies:(fun dependencies ->
+      events :=
+        !events
+        @ [
+            "stage_dependencies:"
+            ^ String.concat "," (List.map string_of_int dependencies);
+          ])
+    ~stage_value:(fun value ->
+      events := !events @ [ "stage_value:" ^ string_of_int value ])
 
-let apply_dynamic_plan ?(current = Some (-1)) ?(initialized = true)
-    events plan =
-  Bind.apply_dynamic_plan
-    (Bind.dynamic_apply_context
-       ~current_value:(fun () -> current)
-       ~cached_value:(fun () ->
-         events := !events @ [ "cached" ];
-         match current with
-         | Some value -> value
-         | None -> invalid_arg "missing current")
-       ~initialized:(fun () -> initialized)
-       ~equal:Int.equal
-       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
-       ~stage_switch:(fun ~source_value ~inner ~scope ->
-         events :=
-           !events
-           @ [
-               "switch:"
-               ^ String.concat ":"
-                  (List.map string_of_int [ source_value; inner; scope ]);
-             ])
-       ~stage_dependencies:(fun dependencies ->
-         events :=
-           !events
-           @ [
-               "stage_dependencies:"
-               ^ String.concat ","
-                  (List.map string_of_int dependencies);
-             ])
-       ~stage_value:(fun value ->
-         events := !events @ [ "stage_value:" ^ string_of_int value ]))
-    plan
+let run_dynamic context snapshot ~source_value ~source_changed =
+  match
+    Bind.run_dynamic context capability snapshot ~source_value
+      ~source_changed
+  with
+  | Ok result -> result
+  | Error `Invalid_scope -> Alcotest.fail "expected valid dynamic bind"
 
-let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
+let test_run_dynamic_switch_owns_eval_and_apply_order () =
   let events = ref [] in
-  let eval_context = dynamic_contexts events in
-  let plan =
-    match
-      Bind.plan_dynamic eval_context capability Bind.empty ~source_value:3
-        ~source_changed:true
-    with
-    | Ok result -> result
-    | Error `Invalid_scope -> Alcotest.fail "expected valid switch"
-  in
+  let context = dynamic_contexts events in
   Alcotest.(check (pair int bool)) "result" (40, true)
-    (apply_dynamic_plan events plan);
+    (run_dynamic context Bind.empty ~source_value:3 ~source_changed:true);
   Alcotest.(check (list string))
     "events"
     [
@@ -336,64 +328,47 @@ let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
     ]
     !events
 
-let test_plan_dynamic_reuse_paths () =
+let test_run_dynamic_reuse_paths () =
   let events = ref [] in
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
-  let cached_eval = dynamic_contexts events in
-  let cached_plan =
-    match
-      Bind.plan_dynamic cached_eval capability snapshot
-        ~source_value:3 ~source_changed:false
-    with
-    | Ok result -> result
-    | Error `Invalid_scope -> Alcotest.fail "expected cached reuse"
-  in
-  let recomputed_eval = dynamic_contexts ~dependencies_changed:true events in
-  let recomputed_plan =
-    match
-      Bind.plan_dynamic recomputed_eval capability snapshot ~source_value:3
-        ~source_changed:false
-    with
-    | Ok result -> result
-    | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
-  in
+  let cached = dynamic_contexts events in
+  let recomputed = dynamic_contexts ~dependencies_changed:true events in
+  let missing_current = dynamic_contexts ~current:None events in
   Alcotest.(check (pair int bool))
-    "cached result" (-1, false) (apply_dynamic_plan events cached_plan);
+    "cached result" (-1, false)
+    (run_dynamic cached snapshot ~source_value:3 ~source_changed:false);
   Alcotest.(check (pair int bool))
     "recomputed result" (40, true)
-    (apply_dynamic_plan events recomputed_plan);
+    (run_dynamic recomputed snapshot ~source_value:3 ~source_changed:false);
   Alcotest.check_raises "cached missing current"
     (Invalid_argument "missing current")
-    (fun () -> ignore (apply_dynamic_plan ~current:None events cached_plan));
+    (fun () ->
+      ignore
+        (run_dynamic missing_current snapshot ~source_value:3
+           ~source_changed:false));
   Alcotest.(check (list string))
     "events"
     [
       "compute:4";
       "dependencies:100,1004";
+      "cached";
       "compute:4";
       "dependencies:100,1004";
-      "cached";
       "bump";
       "stage_dependencies:100,1004";
       "stage_value:40";
+      "compute:4";
+      "dependencies:100,1004";
       "cached";
     ]
     !events
 
-let test_plan_dynamic_dirty_reuse_recomputes_with_cutoff () =
+let test_run_dynamic_dirty_reuse_recomputes_with_cutoff () =
   let events = ref [] in
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
-  let eval_context = dynamic_contexts ~dirty:true events in
-  let plan =
-    match
-      Bind.plan_dynamic eval_context capability snapshot
-        ~source_value:3 ~source_changed:false
-    with
-    | Ok result -> result
-    | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
-  in
+  let context = dynamic_contexts ~dirty:true ~current:(Some 40) events in
   Alcotest.(check (pair int bool)) "result" (40, false)
-    (apply_dynamic_plan ~current:(Some 40) events plan);
+    (run_dynamic context snapshot ~source_value:3 ~source_changed:false);
   Alcotest.(check (list string))
     "events"
     [
@@ -404,9 +379,9 @@ let test_plan_dynamic_dirty_reuse_recomputes_with_cutoff () =
     ]
     !events
 
-let test_plan_dynamic_validation_failure_runs_cleanup () =
+let test_run_dynamic_validation_failure_runs_cleanup () =
   let events = ref [] in
-  let eval_context =
+  let context =
     dynamic_contexts events
       ~validate_inner_override:(fun cap scope inner ->
         check_cap cap;
@@ -422,7 +397,7 @@ let test_plan_dynamic_validation_failure_runs_cleanup () =
         events := !events @ [ "cleanup:" ^ string_of_int scope ])
   in
   (match
-     Bind.plan_dynamic eval_context capability Bind.empty
+     Bind.run_dynamic context capability Bind.empty
        ~source_value:3 ~source_changed:true
    with
   | Error `Invalid_scope -> ()
@@ -464,13 +439,13 @@ let () =
             test_staged_switch_rejects_incomplete_staged_snapshot;
           Alcotest.test_case "dependencies include source and inner" `Quick
             test_dependencies_include_source_and_current_inner;
-          Alcotest.test_case "plan dynamic switch" `Quick
-            test_plan_dynamic_switch_owns_eval_order_and_returns_plan;
-          Alcotest.test_case "plan dynamic reuse" `Quick
-            test_plan_dynamic_reuse_paths;
-          Alcotest.test_case "plan dynamic dirty reuse" `Quick
-            test_plan_dynamic_dirty_reuse_recomputes_with_cutoff;
-          Alcotest.test_case "plan dynamic validation failure" `Quick
-            test_plan_dynamic_validation_failure_runs_cleanup;
+          Alcotest.test_case "run dynamic switch" `Quick
+            test_run_dynamic_switch_owns_eval_and_apply_order;
+          Alcotest.test_case "run dynamic reuse" `Quick
+            test_run_dynamic_reuse_paths;
+          Alcotest.test_case "run dynamic dirty reuse" `Quick
+            test_run_dynamic_dirty_reuse_recomputes_with_cutoff;
+          Alcotest.test_case "run dynamic validation failure" `Quick
+            test_run_dynamic_validation_failure_runs_cleanup;
         ] );
     ]

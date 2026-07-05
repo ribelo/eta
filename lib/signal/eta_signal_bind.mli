@@ -2,16 +2,12 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan
-
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
-
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_eval_context
+     dynamic_context
   constraint 'error = [> `Invalid_scope ]
 
-val dynamic_eval_context :
-  equal:('source -> 'source -> bool) ->
+val dynamic_context :
+  source_equal:('source -> 'source -> bool) ->
   source_dependency:'dependency ->
   pack_inner:('inner -> 'dependency) ->
   new_scope:('capability -> 'scope) ->
@@ -25,10 +21,18 @@ val dynamic_eval_context :
   compute_inner:('capability -> 'inner -> 'value * bool) ->
   on_switch_failure:('capability -> 'scope -> unit) ->
   dirty:bool ->
-  initialized:bool ->
+  initialized:(unit -> bool) ->
   dependencies_changed:('capability -> 'dependency list -> bool) ->
+  current_value:(unit -> 'value option) ->
+  cached_value:(unit -> 'value) ->
+  value_equal:('value -> 'value -> bool) ->
+  bump_recompute:(unit -> unit) ->
+  stage_switch:
+    (source_value:'source -> inner:'inner -> scope:'scope -> unit) ->
+  stage_dependencies:('dependency list -> unit) ->
+  stage_value:('value -> unit) ->
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-  dynamic_eval_context
+  dynamic_context
 
 val empty : ('source, 'inner, 'scope) snapshot
 
@@ -44,31 +48,14 @@ val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 val dependencies :
   source:'dependency -> inner:'dependency option -> 'dependency list
 
-val plan_dynamic :
+val run_dynamic :
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-  dynamic_eval_context ->
+  dynamic_context ->
   'capability ->
   ('source, 'inner, 'scope) snapshot ->
   source_value:'source ->
   source_changed:bool ->
-  (('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan, 'error) result
-
-val dynamic_apply_context :
-  current_value:(unit -> 'value option) ->
-  cached_value:(unit -> 'value) ->
-  initialized:(unit -> bool) ->
-  equal:('value -> 'value -> bool) ->
-  bump_recompute:(unit -> unit) ->
-  stage_switch:
-    (source_value:'source -> inner:'inner -> scope:'scope -> unit) ->
-  stage_dependencies:('dependency list -> unit) ->
-  stage_value:('value -> unit) ->
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
-
-val apply_dynamic_plan :
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context ->
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan ->
-  'value * bool
+  ('value * bool, 'error) result
 
 val stage_transaction_switch :
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->
