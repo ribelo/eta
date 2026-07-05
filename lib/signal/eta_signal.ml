@@ -1242,7 +1242,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~collect_timers:(fun ~roots ->
-        Graph.fold_reachable graph reachable_ops ~roots ~init:(Hashtbl.create 8)
+        Graph.fold_reachable graph lane reachable_ops ~roots
+          ~init:(Hashtbl.create 8)
           ~f:(fun timers (P signal) ->
             Option.iter
               (fun timer -> Hashtbl.replace timers signal.id timer)
@@ -1580,14 +1581,14 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.necessary_ids graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
-      ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
+      ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
 
   let update_necessity_counters_unlocked lane =
     ignore
       (Graph.update_necessity graph lane
          ~collect_live_nodes:collect_live_weak_signals
          ~root:observer_demand_root
-         ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
+         ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
         : (signal_id, unit) Hashtbl.t)
 
   let signal_timer (P signal) =
@@ -1604,7 +1605,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.timer_demand graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
-      ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
+      ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
       ~timer:signal_timer
 
   let timer_demand_plan_unlocked lane =
@@ -1761,9 +1762,9 @@ module Make (Observer_error : Observer_error) () = struct
         Int.compare (signal_id_int left) (signal_id_int right))
       ~children:(fun (P signal) -> observer_order_dependencies signal)
 
-  let compare_observer_graph_order (O left) (O right) =
+  let compare_observer_graph_order lane (O left) (O right) =
     let signal_order =
-      Graph.compare_order graph order_ops (P left.obs_signal)
+      Graph.compare_order graph lane order_ops (P left.obs_signal)
         (P right.obs_signal)
     in
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
@@ -1771,7 +1772,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_observed_bind_nodes lane observers =
     prune_all_nodes_unlocked lane;
-    Graph.fold_reachable graph reachable_ops
+    Graph.fold_reachable graph lane reachable_ops
       ~roots:(observer_active_roots observers) ~init:[]
       ~f:(fun binds (P signal as packed) ->
         match signal.kind with
@@ -1872,10 +1873,10 @@ module Make (Observer_error : Observer_error) () = struct
           (fun (_lane : graph_lane) pending ->
             List.iter (fun (V var) -> var.queued <- false) pending)
         ~observer_plan:
-          (fun (_lane : graph_lane) ->
+          (fun lane ->
             let delivery =
               Observer_core.delivery_event_collection ~active:observer_active
-                ~compare:compare_observer_graph_order
+                ~compare:(compare_observer_graph_order lane)
                 ~collect_event:collect_observer_event
             in
             Graph.observer_delivery_plan graph delivery)

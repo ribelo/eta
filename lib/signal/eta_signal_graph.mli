@@ -309,6 +309,7 @@ val versions_changed :
 
 val compare_order :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) order_ops ->
   'node ->
   'node ->
@@ -316,6 +317,7 @@ val compare_order :
 
 val fold_reachable :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) reachable_ops ->
   roots:'node list ->
   init:'acc ->
@@ -324,6 +326,7 @@ val fold_reachable :
 
 val reachable_ids :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) reachable_ops ->
   roots:'node list ->
   ('id, unit) Hashtbl.t

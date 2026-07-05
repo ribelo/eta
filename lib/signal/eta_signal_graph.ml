@@ -434,13 +434,13 @@ let order_depends_on ops node dependency =
   in
   List.exists visit (ops.order_children node)
 
-let compare_order _t ops left right =
+let compare_order _t _lane ops left right =
   if same_order_node ops left right then 0
   else if order_depends_on ops left right then 1
   else if order_depends_on ops right left then -1
   else ops.order_compare_id (ops.order_id left) (ops.order_id right)
 
-let fold_reachable _t ops ~roots ~init ~f =
+let fold_reachable _t _lane ops ~roots ~init ~f =
   let seen = Hashtbl.create 16 in
   let rec visit acc node =
     let id = ops.reachable_id node in
@@ -451,8 +451,8 @@ let fold_reachable _t ops ~roots ~init ~f =
   in
   List.fold_left visit init roots
 
-let reachable_ids t ops ~roots =
-  fold_reachable t ops ~roots ~init:(Hashtbl.create 16)
+let reachable_ids t lane ops ~roots =
+  fold_reachable t lane ops ~roots ~init:(Hashtbl.create 16)
     ~f:(fun seen node ->
       Hashtbl.replace seen (ops.reachable_id node) ();
       seen)
