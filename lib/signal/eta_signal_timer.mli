@@ -11,6 +11,30 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+type 'operation node
+
+type 'operation start = {
+  run : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
+}
+
+val create_node :
+  runtime_contract:Eta.Runtime_contract.t ->
+  refresh_when_inactive:bool ->
+  refresh_operation:'operation option ->
+  start:'operation start ->
+  'operation node
+
+val snapshot_cell :
+  'operation node ->
+  Eta_signal_timer_policy.snapshot Eta_signal_transaction.staged
+
+val staged_refresh_token : _ node -> int
+val set_staged_refresh_token : _ node -> int -> unit
+val runtime_contract : _ node -> Eta.Runtime_contract.t
+val refresh_when_inactive : _ node -> bool
+val refresh_operation : 'operation node -> 'operation option
+val start_effect : 'operation node -> (unit, 'err) Eta.Effect.t
+
 type ('timer, 'effect) start_attempt
 
 type 'timer state_port = {

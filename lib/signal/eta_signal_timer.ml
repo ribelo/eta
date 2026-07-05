@@ -3,6 +3,44 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+type 'operation node = {
+  timer_snapshot :
+    Eta_signal_timer_policy.snapshot Eta_signal_transaction.staged;
+  mutable timer_staged_refresh_token : int;
+  timer_runtime_contract : Eta.Runtime_contract.t;
+  timer_refresh_when_inactive : bool;
+  timer_refresh_operation : 'operation option;
+  timer_start : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
+}
+
+type 'operation start = {
+  run : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
+}
+
+let create_node ~runtime_contract ~refresh_when_inactive
+    ~refresh_operation ~start =
+  {
+    timer_snapshot =
+      Eta_signal_transaction.create_staged
+        Eta_signal_timer_policy.initial_snapshot;
+    timer_staged_refresh_token = -1;
+    timer_runtime_contract = runtime_contract;
+    timer_refresh_when_inactive = refresh_when_inactive;
+    timer_refresh_operation = refresh_operation;
+    timer_start = start.run;
+  }
+
+let snapshot_cell timer = timer.timer_snapshot
+let staged_refresh_token timer = timer.timer_staged_refresh_token
+
+let set_staged_refresh_token timer token =
+  timer.timer_staged_refresh_token <- token
+
+let runtime_contract timer = timer.timer_runtime_contract
+let refresh_when_inactive timer = timer.timer_refresh_when_inactive
+let refresh_operation timer = timer.timer_refresh_operation
+let start_effect timer = timer.timer_start timer
+
 type ('timer, 'effect) start_attempt = {
   attempt_timer : 'timer;
   attempt_effect : 'effect;

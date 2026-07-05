@@ -34,6 +34,18 @@
  (action
   (copy %{deps} %{target})))
 
+(rule
+ (target eta_signal_transaction.ml)
+ (deps ../../../lib/signal/eta_signal_transaction.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_transaction.mli)
+ (deps ../../../lib/signal/eta_signal_transaction.mli)
+ (action
+  (copy %{deps} %{target})))
+
 (test
  (name test_eta_signal_timer_policy)
  (modules test_eta_signal_timer_policy eta_signal_timer_policy)
@@ -45,7 +57,8 @@
   test_eta_signal_timer
   eta_signal_timer
   eta_signal_timer_adapter
-  eta_signal_timer_policy)
+  eta_signal_timer_policy
+  eta_signal_transaction)
  (libraries eta eta_eio eta_test alcotest eio_main))
 
 (test

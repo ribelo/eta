@@ -275,14 +275,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Advance_due of int
     | Finish of Timer_policy.finish_plan
 
-  and timer_node = {
-    timer_snapshot : Timer_policy.snapshot Transaction.staged;
-    mutable timer_staged_refresh_token : int;
-    timer_runtime_contract : Runtime_contract.t;
-    timer_refresh_when_inactive : bool;
-    timer_refresh_operation : timer_refresh_operation option;
-    timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
-  }
+  and timer_node = timer_refresh_operation Timer.node
 
   and timer_update = {
     timer_catch_up_policy : timer_catch_up_policy;
@@ -516,8 +509,9 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
-          let snapshot = Transaction.current timer.timer_snapshot in
-          publish_timer_current timer.timer_snapshot
+          let snapshot_cell = Timer.snapshot_cell timer in
+          let snapshot = Transaction.current snapshot_cell in
+          publish_timer_current snapshot_cell
             (Timer_policy.snapshot_with_generation snapshot generation)
 
     let set_timer_next_due signal next_due_ms =
@@ -525,11 +519,11 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer -> (
-          let snapshot = Transaction.current timer.timer_snapshot in
+          let snapshot_cell = Timer.snapshot_cell timer in
+          let snapshot = Transaction.current snapshot_cell in
           match Timer_policy.snapshot_with_next_due snapshot next_due_ms with
           | Some snapshot ->
-              publish_timer_current timer.timer_snapshot
-                snapshot
+              publish_timer_current snapshot_cell snapshot
           | None ->
               invalid_arg
                 "Eta_signal.Private_test_hooks: expected active timer state")
@@ -539,9 +533,10 @@ module Make (Observer_error : Observer_error) () = struct
       | None ->
           invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
       | Some timer ->
+          let snapshot_cell = Timer.snapshot_cell timer in
           Timer_policy.state_label
             (Timer_policy.snapshot_state
-               (Transaction.current timer.timer_snapshot))
+               (Transaction.current snapshot_cell))
 
     let set_observer_on_finish observer hooks =
       let live =
@@ -959,15 +954,16 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_state_generation = Timer_policy.state_generation
 
   let timer_current_snapshot timer =
-    Transaction.current timer.timer_snapshot
+    Transaction.current (Timer.snapshot_cell timer)
 
   let timer_effective_snapshot timer =
     match Stabilization.transaction graph.stabilization with
-    | Some transaction -> Transaction.read transaction timer.timer_snapshot
+    | Some transaction ->
+        Transaction.read transaction (Timer.snapshot_cell timer)
     | None -> timer_current_snapshot timer
 
   let set_timer_current_snapshot timer snapshot =
-    publish_timer_current timer.timer_snapshot snapshot
+    publish_timer_current (Timer.snapshot_cell timer) snapshot
 
   let set_timer_current_state timer timer_state =
     let snapshot = timer_current_snapshot timer in
@@ -976,8 +972,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_timer_staging timer f =
     let transaction = active_transaction () in
-    let snapshot = Transaction.read transaction timer.timer_snapshot in
-    Transaction.stage transaction timer.timer_snapshot (f snapshot)
+    let snapshot_cell = Timer.snapshot_cell timer in
+    let snapshot = Transaction.read transaction snapshot_cell in
+    Transaction.stage transaction snapshot_cell (f snapshot)
 
   let timer_current_state timer =
     Timer_policy.snapshot_state (timer_current_snapshot timer)
@@ -990,7 +987,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_has_staged_refresh timer =
     match Graph_state.active_timer_refresh graph.state with
     | Some context ->
-        timer.timer_staged_refresh_token = Timer_policy.refresh_token context
+        Timer.staged_refresh_token timer = Timer_policy.refresh_token context
     | None -> false
 
   let timer_effective_state timer =
@@ -1020,7 +1017,7 @@ module Make (Observer_error : Observer_error) () = struct
   let validate_timer_runtime timer runtime_contract =
     match
       Timer_policy.validate_runtime ~same_runtime:Runtime_contract.same_runtime
-        ~expected:timer.timer_runtime_contract ~actual:runtime_contract
+        ~expected:(Timer.runtime_contract timer) ~actual:runtime_contract
     with
     | Ok () -> Ok ()
     | Error `Runtime_mismatch ->
@@ -1034,12 +1031,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_can_refresh_on_demand token timer =
     Timer_policy.can_refresh_on_demand
-      ~refresh_operation:(Option.is_some timer.timer_refresh_operation)
+      ~refresh_operation:(Option.is_some (Timer.refresh_operation timer))
       ~current_token:
         (Timer_policy.snapshot_on_demand_refresh_token
            (timer_current_snapshot timer))
-      ~staged_token:timer.timer_staged_refresh_token ~token
-      ~refresh_when_inactive:timer.timer_refresh_when_inactive
+      ~staged_token:(Timer.staged_refresh_token timer) ~token
+      ~refresh_when_inactive:(Timer.refresh_when_inactive timer)
       ~active:(timer_active timer) ~finished:(timer_finished timer)
 
   let timer_running_generation timer =
@@ -1057,8 +1054,8 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
     | Some context ->
         let timer_refresh_token = Timer_policy.refresh_token context in
-        if timer.timer_staged_refresh_token <> timer_refresh_token then (
-          timer.timer_staged_refresh_token <- timer_refresh_token;
+        if Timer.staged_refresh_token timer <> timer_refresh_token then (
+          Timer.set_staged_refresh_token timer timer_refresh_token;
           update_timer_staging timer (fun snapshot ->
               Timer_policy.snapshot_with_on_demand_refresh_token snapshot
                 timer_refresh_token);
@@ -1478,7 +1475,7 @@ module Make (Observer_error : Observer_error) () = struct
       (timer_refresh_plan timer now_ms operation)
 
   let clear_timer_refresh_timer_staging timer =
-    timer.timer_staged_refresh_token <- -1
+    Timer.set_staged_refresh_token timer (-1)
 
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
@@ -1535,7 +1532,7 @@ module Make (Observer_error : Observer_error) () = struct
         if timer_can_refresh_on_demand timer_refresh_token timer then (
           remember_timer_refresh_timer timer;
           let now_ms = Timer_policy.refresh_sample_now_ms timer_refresh in
-          match timer.timer_refresh_operation with
+          match Timer.refresh_operation timer with
           | None -> ()
           | Some operation -> stage_timer_refresh_operation timer now_ms operation)
     | None, _ | Some _, None -> ()
@@ -1778,7 +1775,7 @@ module Make (Observer_error : Observer_error) () = struct
         demand_effective_state = timer_effective_state;
         demand_current_state = timer_current_state;
         demand_set_current_state = set_timer_current_state;
-        demand_start_effect = (fun timer -> timer.timer_start timer);
+        demand_start_effect = Timer.start_effect;
       }
       runtime_contract
 
@@ -2980,23 +2977,20 @@ module Make (Observer_error : Observer_error) () = struct
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
       let timer =
-        {
-          timer_snapshot =
-            Transaction.create_staged Timer_policy.initial_snapshot;
-          timer_staged_refresh_token = -1;
-          timer_runtime_contract = runtime_contract;
-          timer_refresh_when_inactive = refresh_when_inactive;
-          timer_refresh_operation = refresh_operation;
-          timer_start =
-            (fun timer ->
-              let generation = timer_generation timer in
-              let interval_ms = Duration.to_ms interval in
-              Timer_adapter.start
-                (timer_start_callbacks timer update)
-                (timer_loop_callbacks timer update)
-                ~generation ~interval_ms ~update_on_start
-                ~catch_up_policy:update.timer_catch_up_policy);
-        }
+        Timer.create_node ~runtime_contract ~refresh_when_inactive
+          ~refresh_operation
+          ~start:
+            {
+              Timer.run =
+                (fun timer ->
+                  let generation = timer_generation timer in
+                  let interval_ms = Duration.to_ms interval in
+                  Timer_adapter.start
+                    (timer_start_callbacks timer update)
+                    (timer_loop_callbacks timer update)
+                    ~generation ~interval_ms ~update_on_start
+                    ~catch_up_policy:update.timer_catch_up_policy);
+            }
       in
       signal.timer <- Some timer;
       signal
