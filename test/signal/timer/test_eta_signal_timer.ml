@@ -3,6 +3,31 @@ module Timer_policy = Eta_signal_timer_policy
 
 let inactive generation = Timer_policy.inactive_state ~generation
 
+let pp_hidden ppf _ = Format.pp_print_string ppf "<timer-error>"
+
+let run_ok runtime effect =
+  match Eta_eio.Runtime.run runtime effect with
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
+
+let run_error runtime effect =
+  match Eta_eio.Runtime.run runtime effect with
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected Error, got Ok"
+  | Eta.Exit.Error cause -> cause
+
+let with_runtime f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
+  in
+  f runtime
+
 type timer = {
   name : string;
   mutable current : Timer_policy.state;
@@ -18,6 +43,8 @@ let state_label state =
   ^ ":"
   ^ string_of_int (Timer_policy.state_generation state)
 
+let append_event events event = events := !events @ [ event ]
+
 let state_port ?(record = fun _ -> ()) () =
   {
     Timer.state_effective = (fun timer -> timer.effective);
@@ -31,7 +58,7 @@ let state_port ?(record = fun _ -> ()) () =
 
 let test_refresh_demand_classifies_and_orders_effects () =
   let events = ref [] in
-  let record event = events := !events @ [ event ] in
+  let record event = append_event events event in
   let running generation label =
     Timer_policy.running_state ~generation ~next_due_ms:(Some 10)
       ~cancel:(fun () -> record ("cancel:" ^ label))
@@ -144,7 +171,7 @@ let test_refresh_demand_validation_failure_short_circuits () =
 
 let test_rollback_unclaimed_start_marks_starting_unneeded () =
   let events = ref [] in
-  let record event = events := !events @ [ event ] in
+  let record event = append_event events event in
   let starting =
     make_timer "starting"
       ~current:(Timer_policy.starting_state ~generation:4)
@@ -172,7 +199,7 @@ let test_rollback_unclaimed_start_marks_starting_unneeded () =
 
 let test_daemon_lifecycle_transitions () =
   let events = ref [] in
-  let record event = events := !events @ [ event ] in
+  let record event = append_event events event in
   let cancelled = ref false in
   let timer =
     make_timer "daemon"
@@ -219,7 +246,7 @@ let test_daemon_lifecycle_transitions () =
 
 let test_due_lifecycle_transitions () =
   let events = ref [] in
-  let record event = events := !events @ [ event ] in
+  let record event = append_event events event in
   let timer =
     make_timer "due"
       ~current:
@@ -272,6 +299,103 @@ let test_due_lifecycle_transitions () =
     ]
     !events
 
+let timer_demand_access events =
+  {
+    Timer.demand_with_access =
+      (fun f ->
+        Eta.Effect.sync (fun () ->
+            append_event events "access";
+            f "capability")
+        |> Eta.Effect.flatten_result);
+  }
+
+let test_refresh_demand_effect_owns_adapter_bracketing () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  run_ok runtime
+    (Timer.refresh_demand_effect (timer_demand_access events)
+       {
+         Timer.demand_acquire =
+           (fun _runtime_contract capability ->
+             append_event events ("acquire:" ^ capability);
+             Ok
+               {
+                 Timer.demand_start_attempts = [ "start-a"; "start-b" ];
+                 demand_cancel_hooks =
+                   [
+                     (fun () -> append_event events "cancel:acquire-a");
+                     (fun () -> append_event events "cancel:acquire-b");
+                   ];
+               });
+         demand_rollback_unclaimed =
+           (fun capability attempts ->
+             append_event events ("rollback:" ^ capability);
+             List.iter
+               (fun attempt ->
+                 append_event events ("rollback-start:" ^ attempt))
+               attempts;
+             Ok [ (fun () -> append_event events "cancel:rollback") ]);
+         demand_run_cancel_hooks =
+           (fun hooks ->
+             Eta.Effect.sync (fun () ->
+                 List.iter (fun hook -> hook ()) hooks));
+         demand_run_start_attempts =
+           (fun attempts ->
+             Eta.Effect.sync (fun () ->
+                 List.iter
+                   (fun attempt -> append_event events ("start:" ^ attempt))
+                   attempts));
+       });
+  Alcotest.(check (list string))
+    "events"
+    [
+      "access";
+      "acquire:capability";
+      "cancel:acquire-a";
+      "cancel:acquire-b";
+      "start:start-a";
+      "start:start-b";
+      "access";
+      "rollback:capability";
+      "rollback-start:start-a";
+      "rollback-start:start-b";
+      "cancel:rollback";
+    ]
+    !events
+
+let test_refresh_demand_effect_acquire_failure_skips_release () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let cause =
+    run_error runtime
+      (Timer.refresh_demand_effect (timer_demand_access events)
+         {
+           Timer.demand_acquire =
+             (fun _runtime_contract capability ->
+               append_event events ("acquire:" ^ capability);
+               Error `Demand_failed);
+           demand_rollback_unclaimed =
+             (fun _capability _attempts ->
+               append_event events "rollback";
+               Ok []);
+           demand_run_cancel_hooks =
+             (fun _hooks ->
+               Eta.Effect.sync (fun () -> append_event events "cancel"));
+           demand_run_start_attempts =
+             (fun _attempts ->
+               Eta.Effect.sync (fun () -> append_event events "start"));
+         })
+  in
+  (match Eta.Cause.failures cause with
+  | [ `Demand_failed ] -> ()
+  | _ ->
+      Alcotest.failf "expected Demand_failed, got %a"
+        (Eta.Cause.pp (fun ppf `Demand_failed ->
+             Format.pp_print_string ppf "Demand_failed"))
+        cause);
+  Alcotest.(check (list string))
+    "events" [ "access"; "acquire:capability" ] !events
+
 let () =
   Alcotest.run "eta_signal_timer"
     [
@@ -287,5 +411,9 @@ let () =
             test_daemon_lifecycle_transitions;
           Alcotest.test_case "due lifecycle transitions" `Quick
             test_due_lifecycle_transitions;
+          Alcotest.test_case "effect bracketing" `Quick
+            test_refresh_demand_effect_owns_adapter_bracketing;
+          Alcotest.test_case "effect acquire failure skips release" `Quick
+            test_refresh_demand_effect_acquire_failure_skips_release;
         ] );
     ]

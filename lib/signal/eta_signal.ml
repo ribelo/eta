@@ -1762,30 +1762,27 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.fail (err :> stabilize_error))
 
   let refresh_timer_demand_unlocked runtime_contract =
-    match
-      Timer.refresh_demand
-        ~advance_generation:(checked_succ "timer generation")
-        ~cancel_running:true
-        {
-          Timer.demand_collect_necessary = collect_necessary_node_ids;
-          demand_collect_timers = all_timers;
-          demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
-          demand_validate_runtime =
-            (fun runtime_contract timer ->
-              validate_timer_runtime timer runtime_contract);
-          demand_effective_state = timer_effective_state;
-          demand_current_state = timer_current_state;
-          demand_set_current_state = set_timer_current_state;
-          demand_start_attempt =
-            (fun timer ->
-              { start_timer = timer; start_effect = timer.timer_start timer });
-        }
-        runtime_contract
-    with
-    | Ok demand_effects ->
-        ( demand_effects.Timer.demand_start_attempts,
-          demand_effects.Timer.demand_cancel_hooks )
-    | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
+    Timer.refresh_demand
+      ~advance_generation:(checked_succ "timer generation")
+      ~cancel_running:true
+      {
+        Timer.demand_collect_necessary = collect_necessary_node_ids;
+        demand_collect_timers = all_timers;
+        demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
+        demand_validate_runtime =
+          (fun runtime_contract timer ->
+            match validate_timer_runtime timer runtime_contract with
+            | Ok () -> Ok ()
+            | Error `Runtime_mismatch ->
+                Error (`Runtime_mismatch : graph_error));
+        demand_effective_state = timer_effective_state;
+        demand_current_state = timer_current_state;
+        demand_set_current_state = set_timer_current_state;
+        demand_start_attempt =
+          (fun timer ->
+            { start_timer = timer; start_effect = timer.timer_start timer });
+      }
+      runtime_contract
 
   let rollback_unclaimed_timer_starts_unlocked attempts =
     List.concat_map
@@ -1805,7 +1802,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_demand_access =
     {
-      Timer_adapter.with_access =
+      Timer.demand_with_access =
         (fun f ->
           with_graph_lane_access (fun lane ->
               try f lane with Graph_error err -> Error err)
@@ -1813,16 +1810,16 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let refresh_timer_demand () =
-    Timer_adapter.refresh_demand timer_demand_access
+    Timer.refresh_demand_effect timer_demand_access
       {
-        Timer_adapter.acquire_demand =
+        Timer.demand_acquire =
           (fun runtime_contract (_lane : graph_lane) ->
-            Ok (refresh_timer_demand_unlocked runtime_contract));
-        rollback_unclaimed_starts =
+            refresh_timer_demand_unlocked runtime_contract);
+        demand_rollback_unclaimed =
           (fun (_lane : graph_lane) attempts ->
             Ok (rollback_unclaimed_timer_starts_unlocked attempts));
-        run_cancel_hooks = run_timer_cancel_hooks;
-        run_start_attempts = run_timer_start_attempts;
+        demand_run_cancel_hooks = run_timer_cancel_hooks;
+        demand_run_start_attempts = run_timer_start_attempts;
       }
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =

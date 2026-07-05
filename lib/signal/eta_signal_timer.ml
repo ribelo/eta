@@ -20,6 +20,26 @@ type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
   demand_start_attempt : 'timer -> 'start;
 }
 
+type ('capability, 'error) demand_effect_access = {
+  demand_with_access :
+    'a.
+    ('capability -> ('a, 'error) result) ->
+    ('a, 'error) Eta.Effect.t;
+}
+
+type ('capability, 'start, 'error) demand_effect_port = {
+  demand_acquire :
+    Eta.Runtime_contract.t ->
+    'capability ->
+    ('start demand_effects, 'error) result;
+  demand_rollback_unclaimed :
+    'capability -> 'start list -> ((unit -> unit) list, 'error) result;
+  demand_run_cancel_hooks :
+    (unit -> unit) list -> (unit, 'error) Eta.Effect.t;
+  demand_run_start_attempts :
+    'start list -> (unit, 'error) Eta.Effect.t;
+}
+
 let apply_start_plan ~set_current_state ~start_attempt timer plan =
   set_current_state timer plan.Eta_signal_timer_policy.start_state;
   start_attempt timer
@@ -80,6 +100,26 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
           demand_cancel_hooks =
             effects.Eta_signal_timer_policy.demand_cancel_hooks;
         }
+
+let refresh_demand_effect access port =
+  Eta_signal_timer_adapter.refresh_demand
+    {
+      Eta_signal_timer_adapter.with_access =
+        (fun f -> access.demand_with_access f);
+    }
+    {
+      Eta_signal_timer_adapter.acquire_demand =
+        (fun runtime_contract capability ->
+          match port.demand_acquire runtime_contract capability with
+          | Error _ as error -> error
+          | Ok effects ->
+              Ok
+                ( effects.demand_start_attempts,
+                  effects.demand_cancel_hooks ));
+      rollback_unclaimed_starts = port.demand_rollback_unclaimed;
+      run_cancel_hooks = port.demand_run_cancel_hooks;
+      run_start_attempts = port.demand_run_start_attempts;
+    }
 
 let begin_start port timer ~generation =
   match

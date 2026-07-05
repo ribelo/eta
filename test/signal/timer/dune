@@ -41,8 +41,12 @@
 
 (test
  (name test_eta_signal_timer)
- (modules test_eta_signal_timer eta_signal_timer eta_signal_timer_policy)
- (libraries alcotest))
+ (modules
+  test_eta_signal_timer
+  eta_signal_timer
+  eta_signal_timer_adapter
+  eta_signal_timer_policy)
+ (libraries eta eta_eio eta_test alcotest eio_main))
 
 (test
  (name test_eta_signal_timer_adapter)
