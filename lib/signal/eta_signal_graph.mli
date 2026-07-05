@@ -701,10 +701,7 @@ val update_necessity :
 (** Recompute necessary nodes and update graph-core transition counters from
     the same snapshot. *)
 
-type ('id, 'timer) timer_demand = {
-  timer_demand_necessary_ids : (Eta_signal_id.signal, unit) Hashtbl.t;
-  timer_demand_timers : ('id * 'timer) list;
-}
+type ('id, 'timer) timer_demand
 
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
@@ -718,6 +715,16 @@ val timer_demand :
 (** Snapshot graph demand inputs for the timer subsystem. The graph owns the
     live-node registry traversal and observer-root necessary set; the caller
     supplies graph-shape projections for reachability and timer extraction. *)
+
+val timer_demand_plan :
+  ('id, 'timer) timer_demand ->
+  plan:
+    (necessary:(Eta_signal_id.signal, unit) Hashtbl.t ->
+    timers:('id * 'timer) list ->
+    'plan) ->
+  'plan
+(** Convert a graph-owned timer-demand snapshot into a caller-owned timer
+    plan without exposing the snapshot representation. *)
 
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->

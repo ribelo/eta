@@ -50,6 +50,12 @@ type dead_node = {
   dead_label : string;
 }
 
+type demand_node = {
+  demand_id : Id.signal;
+  demand_live : bool;
+  demand_timer : string option;
+}
+
 let capability = "graph-lane"
 
 let record events event =
@@ -103,6 +109,26 @@ let test_scope_ops =
       Fun.protect ~finally:(fun () -> context.current_scope <- previous) f)
 
 let live_nodes_from_cells _keep cells = (cells, cells)
+
+let collect_demand_live_nodes keep cells =
+  let cells = List.filter (fun node -> node.demand_live && keep node) cells in
+  (cells, cells)
+
+let demand_node ?timer ?(live = true) id =
+  { demand_id = Id.signal id; demand_live = live; demand_timer = timer }
+
+let demand_reachable_ids ~roots =
+  let table = Hashtbl.create 8 in
+  List.iter
+    (fun node -> Hashtbl.replace table node.demand_id ())
+    roots;
+  table
+
+let sorted_signal_ids table =
+  Hashtbl.to_seq_keys table
+  |> List.of_seq
+  |> List.map Id.signal_int
+  |> List.sort Int.compare
 
 let compute_ops =
   Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
@@ -503,6 +529,48 @@ let test_observer_delivery_plan_owns_sorted_collection () =
   | Pass.Pure_defect (_hooks, exn, _backtrace) ->
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn)
 
+let test_timer_demand_plan_owns_live_pruning_and_roots () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let live_root = demand_node ~timer:"root" 1 in
+  let live_timer = demand_node ~timer:"leaf" 2 in
+  let live_without_timer = demand_node 3 in
+  let stale_timer = demand_node ~live:false ~timer:"stale" 4 in
+  List.iter
+    (Graph.remember_live_node graph ~create_weak_node:Fun.id)
+    [ live_root; live_timer; live_without_timer; stale_timer ];
+  Graph.add_observer graph None;
+  Graph.add_observer graph (Some live_root);
+  let demand =
+    Graph.timer_demand graph ~collect_live_nodes:collect_demand_live_nodes
+      ~root:Fun.id ~reachable_ids:demand_reachable_ids
+      ~timer:(fun node ->
+        Option.map
+          (fun timer -> (node.demand_id, timer))
+          node.demand_timer)
+  in
+  let necessary_ids, timers =
+    Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
+        ( sorted_signal_ids necessary,
+          timers
+          |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
+          |> List.sort compare ))
+  in
+  Alcotest.(check (list int)) "necessary ids" [ 1 ] necessary_ids;
+  Alcotest.(check (list (pair int string)))
+    "live timer candidates"
+    [ (1, "root"); (2, "leaf") ]
+    timers;
+  let remaining_live_ids =
+    Graph.live_nodes graph ~collect_live_nodes:collect_demand_live_nodes
+    |> List.map (fun node -> Id.signal_int node.demand_id)
+    |> List.sort Int.compare
+  in
+  Alcotest.(check (list int))
+    "live registry pruned" [ 1; 2; 3 ] remaining_live_ids
+
 let () =
   Alcotest.run "eta_signal_graph"
     [
@@ -522,5 +590,10 @@ let () =
         [
           Alcotest.test_case "sorted collection" `Quick
             test_observer_delivery_plan_owns_sorted_collection;
+        ] );
+      ( "timer demand",
+        [
+          Alcotest.test_case "plan bridge" `Quick
+            test_timer_demand_plan_owns_live_pruning_and_roots;
         ] );
     ]

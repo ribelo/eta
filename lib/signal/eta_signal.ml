@@ -1648,17 +1648,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_demand_plan_unlocked lane =
     let demand = timer_demand_unlocked lane in
-    Timer.node_demand_plan
-      ~necessary:demand.Graph.timer_demand_necessary_ids
-      ~timers:demand.Graph.timer_demand_timers
-      ~is_necessary:(fun needed id -> Hashtbl.mem needed id)
-      ~validate_runtime:
-        (fun runtime_contract timer ->
-          match validate_timer_runtime timer runtime_contract with
-          | Ok () -> Ok ()
-          | Error `Runtime_mismatch ->
-              Error (`Runtime_mismatch : graph_error))
-      ~state:timer_state_port
+    Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
+        Timer.node_demand_plan ~necessary ~timers
+          ~is_necessary:(fun needed id -> Hashtbl.mem needed id)
+          ~validate_runtime:
+            (fun runtime_contract timer ->
+              match validate_timer_runtime timer runtime_contract with
+              | Ok () -> Ok ()
+              | Error `Runtime_mismatch ->
+                  Error (`Runtime_mismatch : graph_error))
+          ~state:timer_state_port)
 
   let current_runtime_contract () =
     Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"

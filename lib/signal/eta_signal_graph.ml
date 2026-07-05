@@ -814,6 +814,10 @@ let timer_demand t ~collect_live_nodes ~root ~reachable_ids ~timer =
     timer_demand_timers = List.filter_map timer nodes;
   }
 
+let timer_demand_plan demand ~plan =
+  plan ~necessary:demand.timer_demand_necessary_ids
+    ~timers:demand.timer_demand_timers
+
 let post_commit_necessary_timers t ~collect_live_nodes ~root ~collect_timers =
   ignore (live_nodes t ~collect_live_nodes : _ list);
   collect_timers ~roots:(List.filter_map root t.observers)
