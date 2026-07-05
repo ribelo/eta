@@ -488,7 +488,7 @@ let rollback_staged_bind_switch ~staged ~invalidate_new_scope =
   Eta_signal_bind.rollback_staged_switch ~staged ~invalidate_new_scope
   |> map_bind_switch_result
 
-let collect_staged_bind_switch_invalidations t ~init ~staged_switch
+let collect_staged_bind_switch_invalidations t _lane ~init ~staged_switch
     ~collect_old_scope =
   Eta_signal_bind.collect_staged_switch_invalidations ~init
     ~switches:(Eta_signal_graph_state.staged_binds t.state) ~staged_switch

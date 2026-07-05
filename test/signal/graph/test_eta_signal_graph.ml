@@ -619,7 +619,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       (Bind.inner_scope snapshot);
     let collected =
       match
-        Graph.collect_staged_bind_switch_invalidations graph ~init:[]
+        Graph.collect_staged_bind_switch_invalidations graph lane ~init:[]
           ~staged_switch:(fun bind ->
             Alcotest.(check string) "bind" "bind" bind;
             Bind.staged_switch ~owner:(Some "owner")
@@ -637,7 +637,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Alcotest.(check (list (pair string int)))
       "old scope invalidation" [ ("owner", 1) ] collected;
     match
-      Graph.collect_staged_bind_switch_invalidations graph ~init:[]
+      Graph.collect_staged_bind_switch_invalidations graph lane ~init:[]
         ~staged_switch:(fun _bind ->
           Bind.staged_switch ~owner:None ~current:(Transaction.current staged)
             ~staged:(Graph.staged_value graph staged)

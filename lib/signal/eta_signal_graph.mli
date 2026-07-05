@@ -362,6 +362,7 @@ val rollback_staged_bind_switch :
 
 val collect_staged_bind_switch_invalidations :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   init:'acc ->
   staged_switch:
     ('bind -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->

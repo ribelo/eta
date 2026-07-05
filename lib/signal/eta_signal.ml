@@ -1202,11 +1202,11 @@ module Make (Observer_error : Observer_error) () = struct
         ~advance_version:(checked_succ "signal version")
         ~current ~staged
 
-  let collect_staged_bind_invalidations () =
+  let collect_staged_bind_invalidations lane =
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
     match
-      Graph.collect_staged_bind_switch_invalidations graph
+      Graph.collect_staged_bind_switch_invalidations graph lane
         ~init:(invalidated_ids, invalidated_nodes)
         ~staged_switch:packed_bind_staged_switch
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
@@ -1256,7 +1256,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let preflight_commit_staging lane =
     let invalidated_ids, invalidated_nodes =
-      collect_staged_bind_invalidations ()
+      collect_staged_bind_invalidations lane
     in
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
@@ -1782,9 +1782,8 @@ module Make (Observer_error : Observer_error) () = struct
             binds)
     |> List.sort compare_signal_scope_then_id
 
-  let signal_will_be_invalidated_by_staged_bind (_lane : graph_lane) (P signal)
-      =
-    let invalidated_ids, _ = collect_staged_bind_invalidations () in
+  let signal_will_be_invalidated_by_staged_bind lane (P signal) =
+    let invalidated_ids, _ = collect_staged_bind_invalidations lane in
     Hashtbl.mem invalidated_ids signal.id
 
   let plan_staged_bind_switches lane observers =
