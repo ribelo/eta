@@ -241,10 +241,7 @@ module Snapshot : sig
     | Finish_acknowledged of ('a, 'after_ack) t * 'after_ack list
     | Finish_released of ('a, 'after_ack) t
 
-  type ('a, 'after_ack) event_plan = {
-    snapshot : ('a, 'after_ack) t;
-    update : 'a Update.t option;
-  }
+  type ('a, 'after_ack) event_plan
 
   val initial : ('a, 'after_ack) t
 
@@ -302,6 +299,12 @@ module Snapshot : sig
     value:'a ->
     ('a, 'after_ack) t ->
     ('a, 'after_ack) event_plan
+
+  val event_plan :
+    ('a, 'after_ack) event_plan ->
+    plan:
+      (snapshot:('a, 'after_ack) t -> update:'a Update.t option -> 'result) ->
+    'result
 end
 
 type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port
@@ -415,11 +418,7 @@ val collect_event :
   'event option
 
 module Event : sig
-  type ('a, 'after_ack) plan = {
-    value : 'a Value.t;
-    update : 'a Update.t option;
-    delivery : ('a, 'after_ack) Delivery.t option;
-  }
+  type ('a, 'after_ack) plan
 
   val plan :
     equal:('a -> 'a -> bool) ->
@@ -427,4 +426,13 @@ module Event : sig
     value:'a ->
     ('a, 'after_ack) Delivery.t ->
     ('a, 'after_ack) plan
+
+  val plan_result :
+    ('a, 'after_ack) plan ->
+    result:
+      (value:'a Value.t ->
+      update:'a Update.t option ->
+      delivery:('a, 'after_ack) Delivery.t option ->
+      'result) ->
+    'result
 end

@@ -473,6 +473,9 @@ module Snapshot = struct
       | Some delivery -> with_delivery snapshot delivery
     in
     { snapshot; update }
+
+  let event_plan event_plan ~plan =
+    plan ~snapshot:event_plan.snapshot ~update:event_plan.update
 end
 
 type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port = {
@@ -677,10 +680,11 @@ let collect_event port capability observer =
         Snapshot.plan_event ~equal:(port.collection_equal observer)
           ~changed ~value snapshot
       in
-      port.collection_stage_snapshot capability live event_plan.snapshot;
-      Option.map
-        (port.collection_make_event capability observer)
-        event_plan.update
+      Snapshot.event_plan event_plan ~plan:(fun ~snapshot ~update ->
+          port.collection_stage_snapshot capability live snapshot;
+          Option.map
+            (port.collection_make_event capability observer)
+            update)
 
 module Event = struct
   type ('a, 'after_ack) plan = {
@@ -694,4 +698,7 @@ module Event = struct
       plan_event_parts ~equal ~changed ~value delivery
     in
     { value; update; delivery }
+
+  let plan_result plan ~result =
+    result ~value:plan.value ~update:plan.update ~delivery:plan.delivery
 end

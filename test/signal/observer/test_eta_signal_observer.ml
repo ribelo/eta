@@ -1427,11 +1427,12 @@ let test_snapshot_event_plan () =
     Observer.Snapshot.plan_event ~equal:Int.equal ~changed:true ~value:1
       initial
   in
-  Alcotest.(check (option update)) "initialized update"
-    (Some update_initialized) initialized.update;
-  Alcotest.(check string) "initialized value" "current"
-    (Observer.Value.label
-       (Observer.Snapshot.value initialized.snapshot));
+  Observer.Snapshot.event_plan initialized
+    ~plan:(fun ~snapshot ~update:planned_update ->
+      Alcotest.(check (option update)) "initialized update"
+        (Some update_initialized) planned_update;
+      Alcotest.(check string) "initialized value" "current"
+        (Observer.Value.label (Observer.Snapshot.value snapshot)));
   let pending_equal =
     Observer.Snapshot.create ~value:(Observer.Value.current 1)
       ~delivery:
@@ -1442,25 +1443,28 @@ let test_snapshot_event_plan () =
     Observer.Snapshot.plan_event ~equal:Int.equal ~changed:false ~value:1
       pending_equal
   in
-  Alcotest.(check (option update)) "suppressed update" None
-    suppressed.update;
-  Alcotest.(check string) "suppressed delivery" "delivered"
-    (Observer.Delivery.label
-       (Observer.Snapshot.delivery suppressed.snapshot))
+  Observer.Snapshot.event_plan suppressed
+    ~plan:(fun ~snapshot ~update:planned_update ->
+      Alcotest.(check (option update)) "suppressed update" None planned_update;
+      Alcotest.(check string) "suppressed delivery" "delivered"
+        (Observer.Delivery.label (Observer.Snapshot.delivery snapshot)))
 
 let check_event_plan label ~expected_value ~expected_update ~expected_delivery
     plan =
-  Alcotest.(check (option update)) (label ^ " update") expected_update
-    plan.Observer.Event.update;
-  Alcotest.(check (option delivery))
-    (label ^ " delivery") expected_delivery plan.delivery;
-  Alcotest.(check int)
-    (label ^ " current value")
-    expected_value
-    (match plan.value with
-    | Observer.Value.Current value -> value
-    | Observer.Value.Uninitialized | Observer.Value.Failed_without_current ->
-        Alcotest.fail "expected current observer value")
+  Observer.Event.plan_result plan
+    ~result:(fun ~value:planned_value ~update:planned_update
+                 ~delivery:planned_delivery ->
+      Alcotest.(check (option update)) (label ^ " update") expected_update
+        planned_update;
+      Alcotest.(check (option delivery))
+        (label ^ " delivery") expected_delivery planned_delivery;
+      Alcotest.(check int)
+        (label ^ " current value")
+        expected_value
+        (match planned_value with
+        | Observer.Value.Current value -> value
+        | Observer.Value.Uninitialized | Observer.Value.Failed_without_current ->
+            Alcotest.fail "expected current observer value"))
 
 let test_event_plan_initializes_and_suppresses_unchanged () =
   let open Observer.Delivery in
