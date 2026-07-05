@@ -258,7 +258,7 @@ val restore_dirty :
   ('node * bool) list ->
   unit
 
-val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val set_generation :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit

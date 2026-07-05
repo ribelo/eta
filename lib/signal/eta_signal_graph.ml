@@ -336,7 +336,7 @@ let mark_dirty_recording_previous t lane ops entries node =
 let restore_dirty _t _lane ops entries =
   List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
-let generation t = Eta_signal_graph_state.generation t.state
+let generation t _lane = Eta_signal_graph_state.generation t.state
 let set_generation t _lane generation =
   Eta_signal_graph_state.set_generation t.state generation
 
@@ -364,21 +364,21 @@ let remember_compute ops ~generation computed node =
     ops.compute_set_computed_generation node generation;
     ops.compute_pack node :: computed)
 
-let remember_computed t _lane ops node =
+let remember_computed t lane ops node =
   Eta_signal_graph_state.remember_computed t.state (active_staging t)
-    ~generation:(generation t) node ~project:ops.compute_node
+    ~generation:(generation t lane) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
 
 let iter_computed t ~f =
   List.iter f (Eta_signal_graph_state.computed_nodes t.state)
 
-let compute_seen t ops node =
-  Int.equal (ops.compute_seen_generation node) (generation t)
+let compute_seen t lane ops node =
+  Int.equal (ops.compute_seen_generation node) (generation t lane)
 
 let compute_changed_seen _t ops node = ops.compute_changed_seen node
 
-let compute_run t ops node ~cycle ~compute =
-  let generation = generation t in
+let compute_run t lane ops node ~cycle ~compute =
+  let generation = generation t lane in
   if ops.compute_computing node then cycle ()
   else (
     ops.compute_set_computing node true;
@@ -392,12 +392,12 @@ let compute_run t ops node ~cycle ~compute =
         ops.compute_set_changed_seen node changed;
         (value, changed))
 
-let compute_cached t _lane ops node ~current ~cycle ~compute =
+let compute_cached t lane ops node ~current ~cycle ~compute =
   let compute_node = ops.compute_node node in
-  if compute_seen t ops compute_node then
+  if compute_seen t lane ops compute_node then
     (current compute_node, compute_changed_seen t ops compute_node)
   else
-    compute_run t ops compute_node
+    compute_run t lane ops compute_node
       ~cycle:(fun () -> cycle compute_node)
       ~compute:(fun () -> compute compute_node)
 

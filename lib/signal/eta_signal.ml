@@ -694,7 +694,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~id:(graph_result_or_raise (Graph.next_scope_id graph))
       ~owner:(P owner) ~parent:owner.scope
 
-  let current_generation () = Graph.generation graph
+  let current_generation lane = Graph.generation graph lane
 
   let detach_dependency lane parent child =
     Graph.detach_dependency graph lane edge_ops ~parent:(P parent)
@@ -1852,8 +1852,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~stage_snapshot:(fun lane live snapshot ->
         Graph.stage_cell graph lane live.observer_snapshot snapshot)
       ~equal:(fun observer -> observer.obs_equal)
-      ~make_event:(fun _lane observer update ->
-        make_observer_event ~token:(current_generation ()) observer update)
+      ~make_event:(fun lane observer update ->
+        make_observer_event ~token:(current_generation lane) observer update)
 
   let collect_observer_event lane (O observer) =
     Observer_core.collect_event (observer_collection_port ()) lane observer

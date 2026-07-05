@@ -554,7 +554,9 @@ let test_generation_owned_by_graph () =
     Graph.create ~create_scope_context:(fun () -> ())
       ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
-  Alcotest.(check int) "initial generation" 0 (Graph.generation graph);
+  Alcotest.(check int)
+    "initial generation" 0
+    (with_graph_lane graph (fun lane -> Graph.generation graph lane));
   let finish = Graph.create_stabilization_finish () in
   let result = run_empty_stabilization graph in
   let hooks =
@@ -572,7 +574,9 @@ let test_generation_owned_by_graph () =
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
     ~defect:(fun ~hooks:_ exn _backtrace ->
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
-  Alcotest.(check int) "advanced generation" 1 (Graph.generation graph);
+  Alcotest.(check int)
+    "advanced generation" 1
+    (with_graph_lane graph (fun lane -> Graph.generation graph lane));
   with_graph_lane graph (fun lane -> Graph.set_generation graph lane max_int);
   let result = run_empty_stabilization graph in
   Pass.result result
@@ -591,7 +595,7 @@ let test_generation_owned_by_graph () =
     ~defect:(fun ~hooks:_ exn _backtrace ->
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
   Alcotest.(check int) "overflow preserves generation" max_int
-    (Graph.generation graph)
+    (with_graph_lane graph (fun lane -> Graph.generation graph lane))
 
 let test_stage_bind_switch_owns_transaction_staging () =
   let events = ref [] in
