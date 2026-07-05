@@ -590,6 +590,36 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           finish_delivery_after_error delivery_port capability observer token
             update ~delivered))
 
+type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
+     collection_port = {
+  collection_live : 'capability -> 'observer -> 'live option;
+  collection_skip : 'capability -> 'observer -> bool;
+  collection_compute : 'capability -> 'observer -> 'a * bool;
+  collection_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
+  collection_stage_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  collection_equal : 'observer -> 'a -> 'a -> bool;
+  collection_make_event :
+    'capability -> 'observer -> 'a Update.t -> 'event;
+}
+
+let collect_event port capability observer =
+  match port.collection_live capability observer with
+  | None -> None
+  | Some _ when port.collection_skip capability observer -> None
+  | Some live ->
+      let value, changed = port.collection_compute capability observer in
+      let snapshot = port.collection_snapshot capability live in
+      let event_plan =
+        Snapshot.plan_event ~equal:(port.collection_equal observer)
+          ~changed ~value snapshot
+      in
+      port.collection_stage_snapshot capability live event_plan.snapshot;
+      Option.map
+        (port.collection_make_event capability observer)
+        event_plan.update
+
 module Event = struct
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

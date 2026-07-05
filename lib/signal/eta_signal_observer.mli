@@ -378,6 +378,27 @@ val make_delivery_event :
   'a Update.t ->
   ('capability, 'callback, 'error) Delivery_event.t
 
+type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
+     collection_port = {
+  collection_live : 'capability -> 'observer -> 'live option;
+  collection_skip : 'capability -> 'observer -> bool;
+  collection_compute : 'capability -> 'observer -> 'a * bool;
+  collection_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
+  collection_stage_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  collection_equal : 'observer -> 'a -> 'a -> bool;
+  collection_make_event :
+    'capability -> 'observer -> 'a Update.t -> 'event;
+}
+
+val collect_event :
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
+  collection_port ->
+  'capability ->
+  'observer ->
+  'event option
+
 module Event : sig
   type ('a, 'after_ack) plan = {
     value : 'a Value.t;

@@ -687,6 +687,108 @@ let test_delivery_port_marks_failed_without_current () =
     | Ok value -> value
     | Error _ -> Alcotest.fail "expected current value")
 
+type observer_live = {
+  mutable snapshot : (int, after_ack) Observer.Snapshot.t;
+}
+
+type observer_ref = { mutable live : observer_live option }
+
+let observer_capability = "observer-capability"
+
+let check_observer_capability capability =
+  Alcotest.(check string) "observer capability" observer_capability capability
+
+let test_collect_event_stages_snapshot_and_constructs_event () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:Observer.Value.uninitialized
+          ~delivery:Observer.Delivery.Observer_never_delivered;
+    }
+  in
+  let observer = { live = Some live } in
+  let port =
+    {
+      Observer.collection_live =
+        (fun capability observer ->
+          check_observer_capability capability;
+          observer.live);
+      collection_skip =
+        (fun capability _observer ->
+          check_observer_capability capability;
+          false);
+      collection_compute =
+        (fun capability _observer ->
+          check_observer_capability capability;
+          record events "compute";
+          (1, true));
+      collection_snapshot =
+        (fun capability live ->
+          check_observer_capability capability;
+          live.snapshot);
+      collection_stage_snapshot =
+        (fun capability live snapshot ->
+          check_observer_capability capability;
+          live.snapshot <- snapshot;
+          record events
+            ("stage:"
+            ^ Observer.Value.label (Observer.Snapshot.value snapshot)));
+      collection_equal = (fun _observer -> Int.equal);
+      collection_make_event =
+        (fun capability _observer update ->
+          check_observer_capability capability;
+          record events "event";
+          update);
+    }
+  in
+  Alcotest.(check (option update))
+    "event" (Some (Observer.Update.Initialized 1))
+    (Observer.collect_event port observer_capability observer);
+  Alcotest.(check string) "snapshot value" "current"
+    (Observer.Value.label (Observer.Snapshot.value live.snapshot));
+  Alcotest.(check (list string))
+    "events" [ "compute"; "stage:current"; "event" ] !events
+
+let test_collect_event_skips_inactive_and_invalidated_observers () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:(Observer.Delivery.Observer_delivered 1);
+    }
+  in
+  let inactive = { live = None } in
+  let skipped = { live = Some live } in
+  let port =
+    {
+      Observer.collection_live =
+        (fun _capability observer -> observer.live);
+      collection_skip =
+        (fun _capability observer -> observer == skipped);
+      collection_compute =
+        (fun _capability _observer ->
+          record events "compute";
+          (2, true));
+      collection_snapshot = (fun _capability live -> live.snapshot);
+      collection_stage_snapshot =
+        (fun _capability live snapshot ->
+          live.snapshot <- snapshot;
+          record events "stage");
+      collection_equal = (fun _observer -> Int.equal);
+      collection_make_event =
+        (fun _capability _observer update ->
+          record events "event";
+          update);
+    }
+  in
+  Alcotest.(check (option update)) "inactive" None
+    (Observer.collect_event port observer_capability inactive);
+  Alcotest.(check (option update)) "invalidated" None
+    (Observer.collect_event port observer_capability skipped);
+  Alcotest.(check (list string)) "no collection work" [] !events
+
 let delivery_runner_ops ?(active = fun _ -> true) ?(claim = fun _ -> true)
     ?(construct = fun event -> Some ("callback:" ^ event))
     ?(run_callback = fun _event _callback -> Ok ())
@@ -1037,17 +1139,6 @@ let test_snapshot_finish_running_delivery () =
         [ Extra; Stored ] ack_actions
   | Some (Observer.Snapshot.Finish_released _) | None ->
       Alcotest.fail "expected acknowledgement"
-
-type observer_live = {
-  mutable snapshot : (int, after_ack) Observer.Snapshot.t;
-}
-
-type observer_ref = { mutable live : observer_live option }
-
-let observer_capability = "observer-capability"
-
-let check_observer_capability capability =
-  Alcotest.(check string) "observer capability" observer_capability capability
 
 let observer_delivery_port events =
   {
@@ -1458,6 +1549,10 @@ let () =
             test_delivery_port_ignores_missing_or_stale_delivery;
           Alcotest.test_case "port marks failed without current" `Quick
             test_delivery_port_marks_failed_without_current;
+          Alcotest.test_case "collect event stages snapshot" `Quick
+            test_collect_event_stages_snapshot_and_constructs_event;
+          Alcotest.test_case "collect event skips inactive" `Quick
+            test_collect_event_skips_inactive_and_invalidated_observers;
           Alcotest.test_case "make event success transitions" `Quick
             test_make_delivery_event_owns_success_transitions;
           Alcotest.test_case "make event releases claim on failure" `Quick
