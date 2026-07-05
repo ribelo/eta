@@ -519,23 +519,48 @@ val observer_delivery_plan :
     owns registry traversal; the observer subsystem owns active filtering,
     delivery ordering, event collection, and pending-state marking. *)
 
-type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+type ('capability, 'pending, 'observer, 'event, 'hook)
+     stabilization_pure
+
+val stabilization_pure_ops :
+  release_pending_marks:
+    ('capability Eta_signal_stabilization_pass.pure_context ->
+    'pending list ->
+    unit) ->
+  observer_plan:
+    ('capability Eta_signal_stabilization_pass.pure_context ->
+    ('capability, 'observer, 'event)
+    Eta_signal_stabilization_pass.observer_plan) ->
+  stage_pending:
+    ('capability Eta_signal_stabilization_pass.pure_context ->
+    'pending list ->
+    unit) ->
+  plan_staged_binds:
+    ('capability Eta_signal_stabilization_pass.pure_context ->
+    'observer list ->
+    unit) ->
+  commit_staging:
+    ('capability Eta_signal_stabilization_pass.pure_context ->
+    staging ->
+    'hook list) ->
+  update_necessity:
+    ('capability Eta_signal_stabilization_pass.pure_context -> unit) ->
+  ('capability, 'pending, 'observer, 'event, 'hook)
+  stabilization_pure
+
+type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_ops
 
 val stabilization_ops :
-  errors:Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors ->
+  reentrant_stabilization:Eta_signal_error.graph_error ->
+  classify_graph_error:(exn -> Eta_signal_error.graph_error option) ->
   pure:
-    ( 'capability,
-      'pending,
-      'observer,
-      'event,
-      'hook,
-      'staging )
-    Eta_signal_stabilization_pass.pure ->
+    ('capability, 'pending, 'observer, 'event, 'hook)
+    stabilization_pure ->
   rollback:
-    ('capability, 'pending, 'observer, 'hook, 'staging)
+    ('capability, 'pending, 'observer, 'hook, staging)
     Eta_signal_stabilization_pass.rollback ->
-  ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+  ('capability, 'pending, 'observer, 'event, 'hook)
   stabilization_ops
 
 val run_stabilization :
@@ -552,12 +577,12 @@ val run_stabilization :
     'stream_metrics )
   t ->
   'capability ->
+  timer_refresh:'refresh option ->
   ( 'capability,
     'pending,
     'observer,
     'event,
-    'hook,
-    'staging )
+    'hook )
   stabilization_ops ->
   ( ( 'pending,
       'bind,
@@ -576,8 +601,10 @@ val run_stabilization :
     Eta_signal_error.graph_error )
   Eta_signal_stabilization_pass.result
 (** Run the graph stabilization pass with graph-owned phase state and
-    timer-refresh cleanup. Callers provide graph-specific pure/rollback plans;
-    this module owns the stabilization object and graph-state finalizer. *)
+    timer-refresh cleanup. This module owns graph generation advancement,
+    staging setup, pending draining, the stabilization object, and the
+    graph-state finalizer; callers provide the remaining graph-specific
+    pure/rollback plans. *)
 
 val finish_stabilization :
   ( 'pending,

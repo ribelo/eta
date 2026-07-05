@@ -678,33 +678,98 @@ let observer_delivery_plan t delivery =
     ~capability:Eta_signal_stabilization_pass.pure_capability
     ~make_plan:Eta_signal_stabilization_pass.observer_plan
 
-type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+type ('capability, 'pending, 'observer, 'event, 'hook)
+     stabilization_pure =
+  {
+    release_pending_marks :
+      'capability Eta_signal_stabilization_pass.pure_context ->
+      'pending list ->
+      unit;
+    observer_plan :
+      'capability Eta_signal_stabilization_pass.pure_context ->
+      ( 'capability,
+        'observer,
+        'event )
+      Eta_signal_stabilization_pass.observer_plan;
+    stage_pending :
+      'capability Eta_signal_stabilization_pass.pure_context ->
+      'pending list ->
+      unit;
+    plan_staged_binds :
+      'capability Eta_signal_stabilization_pass.pure_context ->
+      'observer list ->
+      unit;
+    commit_staging :
+      'capability Eta_signal_stabilization_pass.pure_context ->
+      staging ->
+      'hook list;
+    update_necessity :
+      'capability Eta_signal_stabilization_pass.pure_context -> unit;
+  }
+
+let stabilization_pure_ops ~release_pending_marks ~observer_plan
+    ~stage_pending ~plan_staged_binds ~commit_staging ~update_necessity =
+  {
+    release_pending_marks;
+    observer_plan;
+    stage_pending;
+    plan_staged_binds;
+    commit_staging;
+    update_necessity;
+  }
+
+type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_ops =
   {
-    errors : Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors;
+    reentrant_stabilization : Eta_signal_error.graph_error;
+    classify_graph_error : exn -> Eta_signal_error.graph_error option;
     pure :
       ( 'capability,
         'pending,
         'observer,
         'event,
-        'hook,
-        'staging )
-      Eta_signal_stabilization_pass.pure;
+        'hook )
+      stabilization_pure;
     rollback :
-      ('capability, 'pending, 'observer, 'hook, 'staging)
+      ('capability, 'pending, 'observer, 'hook, staging)
       Eta_signal_stabilization_pass.rollback;
   }
 
-let stabilization_ops ~errors ~pure ~rollback =
-  { errors; pure; rollback }
+let stabilization_ops ~reentrant_stabilization ~classify_graph_error ~pure
+    ~rollback =
+  { reentrant_stabilization; classify_graph_error; pure; rollback }
+
+exception Graph_phase_error of Eta_signal_error.graph_error
+
+let pass_errors ops =
+  Eta_signal_stabilization_pass.errors
+    ~reentrant_stabilization:ops.reentrant_stabilization
+    ~classify_graph_error:(function
+      | Graph_phase_error err -> Some err
+      | exn -> ops.classify_graph_error exn)
+
+let pass_pure t timer_refresh pure =
+  Eta_signal_stabilization_pass.pure_ops
+    ~advance_generation:(fun _context ->
+      match advance_generation t with
+      | Ok () -> ()
+      | Error err -> raise (Graph_phase_error err))
+    ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
+    ~drain_pending:(fun _context -> drain_pending t)
+    ~release_pending_marks:pure.release_pending_marks
+    ~observer_plan:pure.observer_plan
+    ~stage_pending:pure.stage_pending
+    ~plan_staged_binds:pure.plan_staged_binds
+    ~commit_staging:pure.commit_staging
+    ~update_necessity:pure.update_necessity
 
 let clear_timer_refresh t _context =
   Eta_signal_graph_state.clear_active_timer_refresh t.state
 
-let run_stabilization t capability ops =
+let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_stabilization_pass.run t.stabilization capability
-    (Eta_signal_stabilization_pass.pass_ops ~errors:ops.errors
-       ~pure:ops.pure ~rollback:ops.rollback
+    (Eta_signal_stabilization_pass.pass_ops ~errors:(pass_errors ops)
+       ~pure:(pass_pure t timer_refresh ops.pure) ~rollback:ops.rollback
        ~timer_refresh:
          (Eta_signal_stabilization_pass.timer_refresh_ops
             ~clear_active_timer_refresh:(clear_timer_refresh t)))

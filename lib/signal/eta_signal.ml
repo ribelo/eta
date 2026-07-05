@@ -1852,29 +1852,8 @@ module Make (Observer_error : Observer_error) () = struct
     let rollback_lane context =
       Stabilization_pass.rollback_capability context
     in
-    let errors =
-      Stabilization_pass.errors
-        ~reentrant_stabilization:`Reentrant_stabilization
-        ~classify_graph_error:(function
-          | Graph_error err -> Some err
-          | _ -> None)
-    in
     let pure =
-      Stabilization_pass.pure_ops
-        ~advance_generation:
-          (fun (context : graph_lane Stabilization_pass.pure_context) ->
-            let _lane = pure_lane context in
-            match Graph.advance_generation graph with
-            | Ok () -> ()
-            | Error err -> raise (Graph_error err))
-        ~begin_staging:
-          (fun (context : graph_lane Stabilization_pass.pure_context) ->
-            let _lane = pure_lane context in
-            Graph.begin_staging graph ~timer_refresh)
-        ~drain_pending:
-          (fun (context : graph_lane Stabilization_pass.pure_context) ->
-            let _lane = pure_lane context in
-            Graph.drain_pending graph)
+      Graph.stabilization_pure_ops
         ~release_pending_marks:
           (fun (context : graph_lane Stabilization_pass.pure_context)
                pending ->
@@ -1929,8 +1908,13 @@ module Make (Observer_error : Observer_error) () = struct
             let lane = rollback_lane context in
             List.iter (requeue_if_needed lane) pending)
     in
-    Graph.run_stabilization graph lane
-      (Graph.stabilization_ops ~errors ~pure ~rollback)
+    Graph.run_stabilization graph lane ~timer_refresh
+      (Graph.stabilization_ops
+         ~reentrant_stabilization:`Reentrant_stabilization
+         ~classify_graph_error:(function
+           | Graph_error err -> Some err
+           | _ -> None)
+         ~pure ~rollback)
 
   let mark_callback_delivery_complete () =
     with_graph_lane_access (fun lane ->

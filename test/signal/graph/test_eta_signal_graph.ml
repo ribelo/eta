@@ -459,11 +459,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~mark_events_pending:(fun _context _events -> ())
   in
   let pure =
-    Pass.pure_ops
-      ~advance_generation:(fun _context -> ())
-      ~begin_staging:(fun _context ->
-        Graph.begin_staging graph ~timer_refresh:None)
-      ~drain_pending:(fun _context -> [])
+    Graph.stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
       ~stage_pending:(fun _context _pending -> stage_twice ())
@@ -493,14 +489,13 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
   in
-  let errors =
-    Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
-      ~classify_graph_error:(fun _ -> None)
-  in
   let finish = Graph.create_stabilization_finish () in
   let result =
-    Graph.run_stabilization graph capability
-      (Graph.stabilization_ops ~errors ~pure ~rollback)
+    Graph.run_stabilization graph capability ~timer_refresh:None
+      (Graph.stabilization_ops
+         ~reentrant_stabilization:`Reentrant_stabilization
+         ~classify_graph_error:(fun _ -> None)
+         ~pure ~rollback)
   in
   let hooks = Graph.record_stabilization_result finish result in
   Pass.result result
@@ -565,15 +560,7 @@ let test_observer_delivery_plan_uses_collection_order () =
     Observer.collect_event collection cap observer
   in
   let pure =
-    Pass.pure_ops
-      ~advance_generation:(fun context ->
-        check_cap (Pass.pure_capability context))
-      ~begin_staging:(fun context ->
-        check_cap (Pass.pure_capability context);
-        Graph.begin_staging graph ~timer_refresh:None)
-      ~drain_pending:(fun context ->
-        check_cap (Pass.pure_capability context);
-        [])
+    Graph.stabilization_pure_ops
       ~release_pending_marks:(fun context _pending ->
         check_cap (Pass.pure_capability context))
       ~observer_plan:(fun context ->
@@ -628,14 +615,13 @@ let test_observer_delivery_plan_uses_collection_order () =
       ~requeue_pending:(fun context _pending ->
         check_cap (Pass.rollback_capability context))
   in
-  let errors =
-    Pass.errors ~reentrant_stabilization:`Reentrant_stabilization
-      ~classify_graph_error:(fun _ -> None)
-  in
   let stabilization_finish = Graph.create_stabilization_finish () in
   let result =
-    Graph.run_stabilization graph capability
-      (Graph.stabilization_ops ~errors ~pure ~rollback)
+    Graph.run_stabilization graph capability ~timer_refresh:None
+      (Graph.stabilization_ops
+         ~reentrant_stabilization:`Reentrant_stabilization
+         ~classify_graph_error:(fun _ -> None)
+         ~pure ~rollback)
   in
   let hooks =
     Graph.record_stabilization_result stabilization_finish result
