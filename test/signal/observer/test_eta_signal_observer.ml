@@ -597,6 +597,96 @@ let test_delivery_labels () =
 
 let record events event = events := !events @ [ event ]
 
+let finish_reason_label = function
+  | Observer.Lifecycle.Finish_disposed -> "disposed"
+  | Observer.Lifecycle.Finish_invalid_scope -> "invalid_scope"
+
+let test_lifecycle_port_owns_activation_finish_and_removal () =
+  let events = ref [] in
+  let state =
+    ref
+      (Observer.Lifecycle.Registering "live"
+        : (string, int Observer.Value.t) Observer.Lifecycle.t)
+  in
+  let removed = ref false in
+  let port =
+    {
+      Observer.lifecycle_state = (fun _observer -> !state);
+      lifecycle_set_state =
+        (fun _observer next ->
+          state := next;
+          record events ("state:" ^ Observer.Lifecycle.label next));
+      lifecycle_value =
+        (fun live -> Observer.Value.current (String.length live));
+      lifecycle_finish_hooks =
+        (fun live reason ->
+          [
+            (fun () ->
+              record events
+                ("hook:" ^ live ^ ":" ^ finish_reason_label reason));
+          ]);
+      lifecycle_remove =
+        (fun _observer ->
+          removed := true;
+          record events "remove");
+    }
+  in
+  (match Observer.activate_observer port "observer" with
+  | Ok _ -> ()
+  | Error `Invalid_scope -> Alcotest.fail "expected activation");
+  (match !state with
+  | Observer.Lifecycle.Active "live" -> ()
+  | _ -> Alcotest.fail "expected active observer");
+  let hooks = Observer.invalidate_observer port "observer" in
+  (match !state with
+  | Observer.Lifecycle.Invalid_scope (Observer.Value.Current 4) -> ()
+  | _ -> Alcotest.fail "expected invalid observer");
+  Alcotest.(check bool) "invalidated observer retained" false !removed;
+  List.iter (fun hook -> hook ()) hooks;
+  let hooks = Observer.dispose_observer port "observer" in
+  (match !state with
+  | Observer.Lifecycle.Disposed (Observer.Value.Current 4) -> ()
+  | _ -> Alcotest.fail "expected disposed observer");
+  Alcotest.(check int) "disposed invalid observer has no hook" 0
+    (List.length hooks);
+  Alcotest.(check bool) "disposed observer removed" true !removed;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "state:active";
+      "state:invalid_scope";
+      "hook:live:invalid_scope";
+      "state:disposed";
+      "remove";
+    ]
+    !events
+
+let test_delivery_port_marks_failed_without_current () =
+  let snapshot : (int, after_ack) Observer.Snapshot.t ref =
+    ref Observer.Snapshot.initial
+  in
+  let port =
+    {
+      Observer.delivery_live = (fun () () -> Some ());
+      delivery_snapshot = (fun () () -> !snapshot);
+      delivery_set_snapshot = (fun () () next -> snapshot := next);
+      delivery_run_after_ack = (fun () _actions -> ());
+    }
+  in
+  Observer.mark_failed_without_current port () ();
+  (match Observer.Value.read (Observer.Snapshot.value !snapshot) with
+  | Error `No_current_value -> ()
+  | Ok _ | Error `Uninitialized_observer ->
+      Alcotest.fail "expected no current value");
+  snapshot :=
+    Observer.Snapshot.create ~value:(Observer.Value.current 7)
+      ~delivery:Observer.Delivery.Observer_never_delivered;
+  Observer.mark_failed_without_current port () ();
+  Alcotest.(check int) "current value preserved" 7
+    (match Observer.Value.read (Observer.Snapshot.value !snapshot) with
+    | Ok value -> value
+    | Error _ -> Alcotest.fail "expected current value")
+
 let delivery_runner_ops ?(active = fun _ -> true) ?(claim = fun _ -> true)
     ?(construct = fun event -> Some ("callback:" ^ event))
     ?(run_callback = fun _event _callback -> Ok ())
@@ -1330,6 +1420,8 @@ let () =
             test_lifecycle_diagnostic_visibility;
           Alcotest.test_case "activate" `Quick test_lifecycle_activate;
           Alcotest.test_case "finish" `Quick test_lifecycle_finish;
+          Alcotest.test_case "port activation and finish" `Quick
+            test_lifecycle_port_owns_activation_finish_and_removal;
           Alcotest.test_case "read value" `Quick test_lifecycle_read_value;
           Alcotest.test_case "unsafe read value" `Quick
             test_lifecycle_unsafe_read_value_exn;
@@ -1364,6 +1456,8 @@ let () =
             test_delivery_port_claim_acknowledge_and_finish;
           Alcotest.test_case "port ignores stale delivery" `Quick
             test_delivery_port_ignores_missing_or_stale_delivery;
+          Alcotest.test_case "port marks failed without current" `Quick
+            test_delivery_port_marks_failed_without_current;
           Alcotest.test_case "make event success transitions" `Quick
             test_make_delivery_event_owns_success_transitions;
           Alcotest.test_case "make event releases claim on failure" `Quick

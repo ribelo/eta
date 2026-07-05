@@ -110,6 +110,36 @@ module Lifecycle : sig
     value_of_live:('live -> 'a Value.t) -> ('live, 'a Value.t) t -> 'a
 end
 
+type ('observer, 'live, 'value, 'hook) lifecycle_port = {
+  lifecycle_state : 'observer -> ('live, 'value) Lifecycle.t;
+  lifecycle_set_state :
+    'observer -> ('live, 'value) Lifecycle.t -> unit;
+  lifecycle_value : 'live -> 'value;
+  lifecycle_finish_hooks : 'live -> Lifecycle.finish_reason -> 'hook list;
+  lifecycle_remove : 'observer -> unit;
+}
+
+val activate_observer :
+  ('observer, 'live, 'value, 'hook) lifecycle_port ->
+  'observer ->
+  ('observer, [> `Invalid_scope ]) result
+
+val finish_observer :
+  ('observer, 'live, 'value, 'hook) lifecycle_port ->
+  'observer ->
+  Lifecycle.finish_reason ->
+  'hook list
+
+val dispose_observer :
+  ('observer, 'live, 'value, 'hook) lifecycle_port ->
+  'observer ->
+  'hook list
+
+val invalidate_observer :
+  ('observer, 'live, 'value, 'hook) lifecycle_port ->
+  'observer ->
+  'hook list
+
 module Delivery : sig
   type token = int
 
@@ -312,6 +342,12 @@ val running_delivery_token_matches :
   'observer ->
   Delivery.token ->
   bool
+
+val mark_failed_without_current :
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  'capability ->
+  'observer ->
+  unit
 
 type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
   event_active : 'capability -> 'observer -> bool;

@@ -800,19 +800,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
-  let observer_live_state observer =
-    Observer_lifecycle.live observer.obs_state
-
   let observer_active_live_state observer =
     Observer_lifecycle.active_live observer.obs_state
-
-  let live_state_or_invalid_arg observer operation =
-    match observer_live_state observer with
-    | Some live -> live
-    | None ->
-        invalid_arg
-          ("Eta_signal: cannot " ^ operation
-         ^ " a disposed or invalid observer")
 
   let observer_current_snapshot live =
     Transaction.current live.observer_snapshot
@@ -820,16 +809,8 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_effective_snapshot live =
     Graph.read_effective graph live.observer_snapshot
 
-  let update_observer_staging live f =
-    Graph.update_cell graph live.observer_snapshot f
-
   let set_observer_current live snapshot =
     publish_observer_current live.observer_snapshot snapshot
-
-  let set_observer_current_delivery live observer_delivery =
-    let snapshot = observer_current_snapshot live in
-    set_observer_current live
-      (Observer_snapshot.with_delivery snapshot observer_delivery)
 
   let observer_active (O observer) =
     Observer_lifecycle.active observer.obs_state
@@ -857,25 +838,40 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
 
-  let observer_value_of_live live =
-    Observer_snapshot.value (observer_current_snapshot live)
+  let observer_lifecycle_port () =
+    {
+      Observer_core.lifecycle_state = (fun observer -> observer.obs_state);
+      lifecycle_set_state =
+        (fun observer state -> observer.obs_state <- state);
+      lifecycle_value =
+        (fun live -> Observer_snapshot.value (observer_current_snapshot live));
+      lifecycle_finish_hooks = observer_finish_hooks;
+      lifecycle_remove = remove_observer;
+    }
 
-  let finish_observer_unlocked observer reason =
-    let finish =
-      Observer_lifecycle.finish ~value_of_live:observer_value_of_live reason
-        observer.obs_state
-    in
-    observer.obs_state <- finish.state;
-    if finish.remove then remove_observer observer;
-    match finish.hook_live with
-    | None -> []
-    | Some live -> observer_finish_hooks live reason
+  let run_after_ack_actions_unlocked actions =
+    List.iter (fun action -> action ()) actions
+
+  let observer_delivery_port () =
+    {
+      Observer_core.delivery_live =
+        (fun (_lane : graph_lane) observer ->
+          observer_active_live_state observer);
+      delivery_snapshot =
+        (fun (_lane : graph_lane) live -> observer_current_snapshot live);
+      delivery_set_snapshot =
+        (fun (_lane : graph_lane) live snapshot ->
+          set_observer_current live snapshot);
+      delivery_run_after_ack =
+        (fun (_lane : graph_lane) actions ->
+          run_after_ack_actions_unlocked actions);
+    }
 
   let dispose_observer_unlocked observer =
-    finish_observer_unlocked observer Observer_lifecycle.Finish_disposed
+    Observer_core.dispose_observer (observer_lifecycle_port ()) observer
 
   let invalidate_observer_unlocked observer =
-    finish_observer_unlocked observer Observer_lifecycle.Finish_invalid_scope
+    Observer_core.invalidate_observer (observer_lifecycle_port ()) observer
 
   let dispose_signal_observers signal =
     let observers =
@@ -1414,15 +1410,9 @@ module Make (Observer_error : Observer_error) () = struct
       var.queued <- true;
       Graph.enqueue_pending graph packed)
 
-  let mark_failed_without_current (_lane : graph_lane) (O observer) =
-    match observer_active_live_state observer with
-    | Some live ->
-        let snapshot = observer_current_snapshot live in
-        set_observer_current live
-          (Observer_snapshot.with_value snapshot
-             (Observer_core.Value.mark_failed_without_current
-                (Observer_snapshot.value snapshot)))
-    | None -> ()
+  let mark_failed_without_current (lane : graph_lane) (O observer) =
+    Observer_core.mark_failed_without_current (observer_delivery_port ()) lane
+      observer
 
   let next_timer_refresh_token_unlocked () =
     Graph.next_timer_refresh_token graph
@@ -1910,24 +1900,6 @@ module Make (Observer_error : Observer_error) () = struct
               ())
       (collect_observed_bind_nodes lane observers)
 
-  let run_after_ack_actions_unlocked actions =
-    List.iter (fun action -> action ()) actions
-
-  let observer_delivery_port () =
-    {
-      Observer_core.delivery_live =
-        (fun (_lane : graph_lane) observer ->
-          observer_active_live_state observer);
-      delivery_snapshot =
-        (fun (_lane : graph_lane) live -> observer_current_snapshot live);
-      delivery_set_snapshot =
-        (fun (_lane : graph_lane) live snapshot ->
-          set_observer_current live snapshot);
-      delivery_run_after_ack =
-        (fun (_lane : graph_lane) actions ->
-          run_after_ack_actions_unlocked actions);
-    }
-
   let acknowledge_event_delivery_unlocked lane observer token
       update ~after_ack =
     Observer_core.acknowledge_delivery (observer_delivery_port ()) lane observer
@@ -2280,11 +2252,8 @@ module Make (Observer_error : Observer_error) () = struct
          window between the final state check and returning the handle. *)
       Effect.sync (fun () ->
           ensure_graph_context ();
-          match Observer_lifecycle.activate observer.obs_state with
-          | Ok state ->
-              observer.obs_state <- state;
-              Ok observer
-          | Error `Invalid_scope -> Error `Invalid_scope)
+          Observer_core.activate_observer (observer_lifecycle_port ())
+            observer)
       |> Effect.flatten_result
 
     let observe_with_hooks_delivery_callback ?(equal = default_equal)

@@ -170,6 +170,39 @@ module Lifecycle = struct
     | Active live -> Value.unsafe_read_exn (value_of_live live)
 end
 
+type ('observer, 'live, 'value, 'hook) lifecycle_port = {
+  lifecycle_state : 'observer -> ('live, 'value) Lifecycle.t;
+  lifecycle_set_state :
+    'observer -> ('live, 'value) Lifecycle.t -> unit;
+  lifecycle_value : 'live -> 'value;
+  lifecycle_finish_hooks : 'live -> Lifecycle.finish_reason -> 'hook list;
+  lifecycle_remove : 'observer -> unit;
+}
+
+let activate_observer port observer =
+  match Lifecycle.activate (port.lifecycle_state observer) with
+  | Ok state ->
+      port.lifecycle_set_state observer state;
+      Ok observer
+  | Error `Invalid_scope -> Error `Invalid_scope
+
+let finish_observer port observer reason =
+  let finish =
+    Lifecycle.finish ~value_of_live:port.lifecycle_value reason
+      (port.lifecycle_state observer)
+  in
+  port.lifecycle_set_state observer finish.state;
+  if finish.remove then port.lifecycle_remove observer;
+  match finish.hook_live with
+  | None -> []
+  | Some live -> port.lifecycle_finish_hooks live reason
+
+let dispose_observer port observer =
+  finish_observer port observer Lifecycle.Finish_disposed
+
+let invalidate_observer port observer =
+  finish_observer port observer Lifecycle.Finish_invalid_scope
+
 module Delivery = struct
   type token = int
 
@@ -487,6 +520,15 @@ let running_delivery_token_matches port capability observer token =
   | Some live ->
       Snapshot.running_delivery_token_matches ~token
         (port.delivery_snapshot capability live)
+
+let mark_failed_without_current port capability observer =
+  match port.delivery_live capability observer with
+  | None -> ()
+  | Some live ->
+      let snapshot = port.delivery_snapshot capability live in
+      port.delivery_set_snapshot capability live
+        (Snapshot.with_value snapshot
+           (Value.mark_failed_without_current (Snapshot.value snapshot)))
 
 type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
   event_active : 'capability -> 'observer -> bool;
