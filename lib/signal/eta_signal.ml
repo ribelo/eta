@@ -1370,7 +1370,7 @@ module Make (Observer_error : Observer_error) () = struct
         (invalidated_ids, !invalidated_nodes)
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
-  let collect_post_commit_necessary_timers invalidated_ids =
+  let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
     prune_all_nodes_unlocked ();
     let module Reachable = Graph_algorithms.Make_reachable (struct
       type id = signal_id
@@ -1403,11 +1403,11 @@ module Make (Observer_error : Observer_error) () = struct
           signal.timer;
         timers)
 
-  let preflight_post_commit_timer_starts invalidated_ids =
-    collect_post_commit_necessary_timers invalidated_ids
+  let preflight_post_commit_timer_starts lane invalidated_ids =
+    collect_post_commit_necessary_timers lane invalidated_ids
     |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
 
-  let preflight_commit_staging () =
+  let preflight_commit_staging lane =
     let invalidated_ids, invalidated_nodes =
       collect_staged_bind_invalidations ()
     in
@@ -1416,7 +1416,7 @@ module Make (Observer_error : Observer_error) () = struct
       invalidated_nodes;
     List.iter (preflight_signal_commit invalidated_ids)
       (Graph_state.computed_nodes graph.state);
-    preflight_post_commit_timer_starts invalidated_ids
+    preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks hooks =
     Graph_state.remember_pure_disposal_hooks graph.state (active_staging ())
@@ -1490,7 +1490,7 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
 
-  let reset_staging staging =
+  let reset_staging (_lane : graph_lane) staging =
     Graph_state.reset_staging graph.state staging ~rollback_bind
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
@@ -1498,19 +1498,19 @@ module Make (Observer_error : Observer_error) () = struct
         Timer_policy.clear_refresh_dirty_items context)
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
-  let commit_staging staging =
+  let commit_staging lane staging =
     Graph_state.commit_staging graph.state staging
-      ~preflight:preflight_commit_staging ~commit_bind
+      ~preflight:(fun () -> preflight_commit_staging lane) ~commit_bind
       ~prepare_signal:prepare_signal_commit ~commit_transaction
       ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
       ~advance_snapshot:saturating_succ
 
-  let requeue_if_needed (V var as packed) =
+  let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (
       var.queued <- true;
       Graph_state.enqueue_pending graph.state packed)
 
-  let mark_failed_without_current (O observer) =
+  let mark_failed_without_current (_lane : graph_lane) (O observer) =
     match observer_active_live_state observer with
     | Some live ->
         let snapshot = observer_current_snapshot live in
@@ -1524,7 +1524,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_state.next_timer_refresh_token graph.state
       ~advance:(fun token -> checked_succ "timer refresh token" token)
 
-  let stage_pending_var (V var) =
+  let stage_pending_var (_lane : graph_lane) (V var) =
     let graph_value = Transaction.current var.graph_value in
     let source_value = Transaction.current var.source_value in
     if not (var.var_equal graph_value source_value) then (
@@ -1734,15 +1734,15 @@ module Make (Observer_error : Observer_error) () = struct
     with_graph_lane_sync (fun () ->
         Timer.begin_start timer_state_port timer ~generation)
 
-  let collect_necessary_node_ids () =
+  let collect_necessary_node_ids (_lane : graph_lane) =
     prune_all_nodes_unlocked ();
     Graph_reachable_static.ids ~roots:(observer_demand_roots graph.observers)
 
-  let update_necessity_counters_unlocked () =
-    let next = collect_necessary_node_ids () in
+  let update_necessity_counters_unlocked lane =
+    let next = collect_necessary_node_ids lane in
     Graph_core.update_necessary_ids graph.core next
 
-  let all_timers () =
+  let all_timers (_lane : graph_lane) =
     List.filter_map
       (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
       (all_nodes_unlocked ())
@@ -1754,13 +1754,14 @@ module Make (Observer_error : Observer_error) () = struct
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
-  let refresh_timer_demand_unlocked runtime_contract =
+  let refresh_timer_demand_unlocked lane runtime_contract =
     Timer.refresh_demand
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running:true
       {
-        Timer.demand_collect_necessary = collect_necessary_node_ids;
-        demand_collect_timers = all_timers;
+        Timer.demand_collect_necessary =
+          (fun () -> collect_necessary_node_ids lane);
+        demand_collect_timers = (fun () -> all_timers lane);
         demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
         demand_validate_runtime =
           (fun runtime_contract timer ->
@@ -1806,8 +1807,8 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.refresh_demand_effect timer_demand_access
       {
         Timer.demand_acquire =
-          (fun runtime_contract (_lane : graph_lane) ->
-            refresh_timer_demand_unlocked runtime_contract);
+          (fun runtime_contract lane ->
+            refresh_timer_demand_unlocked lane runtime_contract);
         demand_rollback_unclaimed =
           (fun (_lane : graph_lane) attempts ->
             Ok (rollback_unclaimed_timer_starts_unlocked attempts));
@@ -1872,8 +1873,8 @@ module Make (Observer_error : Observer_error) () = struct
   let dispose_observer_with_cleanup cleanup observer =
     let hooks_ref = ref [] in
     let refresh_timers = ref false in
-    with_graph_lane_sync
-      (fun () ->
+    with_graph_lane_access
+      (fun lane ->
         (match observer.obs_state with
          | Observer_lifecycle.Disposed _ -> ()
          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
@@ -1881,7 +1882,7 @@ module Make (Observer_error : Observer_error) () = struct
           let hooks = dispose_observer_unlocked observer in
           hooks_ref := hooks;
           refresh_timers := true;
-          update_necessity_counters_unlocked ()))
+          update_necessity_counters_unlocked lane))
     |> Effect.bind (fun () ->
            cleanup hooks_ref refresh_timers)
     |> Effect.on_exit (fun _exit ->
@@ -1899,15 +1900,15 @@ module Make (Observer_error : Observer_error) () = struct
     let run_cleanup () =
       run_pending_registration_abort_cleanup hooks_ref refresh_timers
     in
-    with_graph_lane_sync
-      (fun () ->
+    with_graph_lane_access
+      (fun lane ->
         match observer.obs_state with
         | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
         | Observer_lifecycle.Invalid_scope _ ->
             let hooks = dispose_observer_unlocked observer in
             hooks_ref := hooks;
             refresh_timers := true;
-            update_necessity_counters_unlocked ();
+            update_necessity_counters_unlocked lane;
             true
         | Observer_lifecycle.Disposed _ -> false)
     |> Effect.bind (function
@@ -1953,7 +1954,7 @@ module Make (Observer_error : Observer_error) () = struct
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order
 
-  let collect_observed_bind_nodes observers =
+  let collect_observed_bind_nodes (_lane : graph_lane) observers =
     prune_all_nodes_unlocked ();
     Graph_reachable_static.fold ~roots:(observer_active_roots observers) ~init:[]
       ~f:(fun binds (P signal as packed) ->
@@ -1964,23 +1965,24 @@ module Make (Observer_error : Observer_error) () = struct
             binds)
     |> List.sort compare_signal_scope_then_id
 
-  let signal_will_be_invalidated_by_staged_bind (P signal) =
+  let signal_will_be_invalidated_by_staged_bind (_lane : graph_lane) (P signal)
+      =
     let invalidated_ids, _ = collect_staged_bind_invalidations () in
     Hashtbl.mem invalidated_ids signal.id
 
-  let plan_staged_bind_switches observers =
+  let plan_staged_bind_switches lane observers =
     List.iter
       (fun (P signal as packed) ->
         if
           signal.valid
-          && not (signal_will_be_invalidated_by_staged_bind packed)
+          && not (signal_will_be_invalidated_by_staged_bind lane packed)
         then
           match signal.kind with
           | Bind _ -> ignore (compute signal : _ * bool)
           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
               ())
-      (collect_observed_bind_nodes observers)
+      (collect_observed_bind_nodes lane observers)
 
   let run_after_ack_actions_unlocked actions =
     List.iter (fun action -> action ()) actions
@@ -2069,11 +2071,12 @@ module Make (Observer_error : Observer_error) () = struct
       (observer_delivery_port ())
       (observer_delivery_event_port ()) ~observer ~token update
 
-  let collect_observer_event (O observer) =
+  let collect_observer_event lane (O observer) =
     match observer_active_live_state observer with
     | None -> None
     | Some live
-      when signal_will_be_invalidated_by_staged_bind (P observer.obs_signal) ->
+      when signal_will_be_invalidated_by_staged_bind lane
+             (P observer.obs_signal) ->
         None
     | Some live ->
       let value, changed = compute observer.obs_signal in
@@ -2096,6 +2099,15 @@ module Make (Observer_error : Observer_error) () = struct
       events
 
   let begin_stabilize lane timer_refresh =
+    let pure_lane context =
+      Stabilization_pass.pure_capability context
+    in
+    let rollback_lane context =
+      Stabilization_pass.rollback_capability context
+    in
+    let timer_refresh_lane context =
+      Stabilization_pass.timer_refresh_capability context
+    in
     Stabilization_pass.run graph.stabilization lane
       {
         errors =
@@ -2109,74 +2121,91 @@ module Make (Observer_error : Observer_error) () = struct
         pure =
           {
             advance_generation =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+              (fun (context : graph_lane Stabilization_pass.pure_context) ->
+                let _lane = pure_lane context in
                 Graph_state.advance_generation graph.state
                   ~advance:(fun value ->
                     checked_succ "stabilization generation" value));
             begin_staging =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+              (fun (context : graph_lane Stabilization_pass.pure_context) ->
+                let _lane = pure_lane context in
                 Graph_state.begin_staging graph.state ~timer_refresh);
             drain_pending =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+              (fun (context : graph_lane Stabilization_pass.pure_context) ->
+                let _lane = pure_lane context in
                 Graph_state.drain_pending graph.state);
             release_pending_marks =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
+                let _lane = pure_lane context in
                 List.iter (fun (V var) -> var.queued <- false) pending);
             active_observers =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+              (fun (context : graph_lane Stabilization_pass.pure_context) ->
+                let _lane = pure_lane context in
                 graph.observers |> List.filter observer_active);
             stage_pending =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
-                List.iter stage_pending_var pending);
+                let lane = pure_lane context in
+                List.iter (stage_pending_var lane) pending);
             plan_staged_binds =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    observers ->
-                plan_staged_bind_switches observers);
+                let lane = pure_lane context in
+                plan_staged_bind_switches lane observers);
             sort_delivery_observers =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    observers ->
+                let _lane = pure_lane context in
                 List.sort compare_observer_graph_order observers);
             collect_events =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    observers ->
-                List.filter_map collect_observer_event observers);
+                let lane = pure_lane context in
+                List.filter_map (collect_observer_event lane) observers);
             commit_staging =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    staging ->
-                commit_staging staging);
+                let lane = pure_lane context in
+                commit_staging lane staging);
             mark_events_pending =
-              (fun (_context : graph_lane Stabilization_pass.pure_context)
+              (fun (context : graph_lane Stabilization_pass.pure_context)
                    events ->
+                let _lane = pure_lane context in
                 List.iter Observer_core.Delivery_event.mark_pending events);
             update_necessity =
-              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
-                update_necessity_counters_unlocked ());
+              (fun (context : graph_lane Stabilization_pass.pure_context) ->
+                let lane = pure_lane context in
+                update_necessity_counters_unlocked lane);
           };
         rollback =
           {
             rollback_staging =
               (fun
-                (_context : graph_lane Stabilization_pass.rollback_context)
-                staging -> reset_staging staging);
+                (context : graph_lane Stabilization_pass.rollback_context)
+                staging ->
+                let lane = rollback_lane context in
+                reset_staging lane staging);
             mark_observers_failed_without_current =
               (fun
-                (_context : graph_lane Stabilization_pass.rollback_context)
+                (context : graph_lane Stabilization_pass.rollback_context)
                 observers ->
-                List.iter mark_failed_without_current observers);
+                let lane = rollback_lane context in
+                List.iter (mark_failed_without_current lane) observers);
             requeue_pending =
               (fun
-                (_context : graph_lane Stabilization_pass.rollback_context)
+                (context : graph_lane Stabilization_pass.rollback_context)
                 pending ->
-                List.iter requeue_if_needed pending);
+                let lane = rollback_lane context in
+                List.iter (requeue_if_needed lane) pending);
           };
         timer_refresh =
           {
             clear_active_timer_refresh =
               (fun
-                (_context :
+                (context :
                   graph_lane Stabilization_pass.timer_refresh_context) ->
+                let _lane = timer_refresh_lane context in
                 Graph_state.clear_active_timer_refresh graph.state);
           };
       }
@@ -2363,7 +2392,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let observe_with_hooks_delivery_callback ?(equal = default_equal)
         ?(on_finish = []) signal callback =
-      with_graph_lane_sync (fun () ->
+      with_graph_lane_access (fun lane ->
           try
             if not signal.valid then Error `Invalid_scope
             else
@@ -2385,7 +2414,7 @@ module Make (Observer_error : Observer_error) () = struct
                 }
               in
               graph.observers <- O observer :: graph.observers;
-              update_necessity_counters_unlocked ();
+              update_necessity_counters_unlocked lane;
               Ok observer
           with Graph_error err -> Error err)
       |> Effect.flatten_result
@@ -2486,8 +2515,8 @@ module Make (Observer_error : Observer_error) () = struct
         else count)
       0 graph.observers
 
-  let necessary_node_count () =
-    Hashtbl.length (collect_necessary_node_ids ())
+  let necessary_node_count lane =
+    Hashtbl.length (collect_necessary_node_ids lane)
 
   let dead_node_count () = List.length graph.dead_nodes
 
@@ -2506,7 +2535,7 @@ module Make (Observer_error : Observer_error) () = struct
     Option.value (Private_test_hooks.stats_count_override count) ~default:actual
 
   let stats () =
-    with_graph_lane_sync (fun () ->
+    with_graph_lane_access (fun lane ->
         try
           let all_nodes = all_nodes_unlocked () in
           Ok
@@ -2531,7 +2560,7 @@ module Make (Observer_error : Observer_error) () = struct
               necessary_node_count =
                 stats_counter "stats necessary_node_count"
                   (stats_count Private_test_hooks.Stats_necessary_node_count
-                     (necessary_node_count ()));
+                     (necessary_node_count lane));
               dead_node_count =
                 stats_counter "stats dead_node_count"
                   (stats_count Private_test_hooks.Stats_dead_node_count
@@ -2736,8 +2765,8 @@ module Make (Observer_error : Observer_error) () = struct
     Observer_lifecycle.diagnostic_visible ~include_invalid observer.obs_state
 
   let to_dot ?(options = default_dot_options) () =
-    with_graph_lane_sync @@ fun () ->
-    let necessary = collect_necessary_node_ids () in
+    with_graph_lane_access @@ fun lane ->
+    let necessary = collect_necessary_node_ids lane in
     let all_nodes = all_nodes_unlocked () in
     let selected signal = signal_selected options necessary signal in
     let include_dead_nodes =
