@@ -1598,48 +1598,45 @@ module Make (Observer_error : Observer_error) () = struct
     match
       Bind.compute_dynamic
         {
-          Bind.context_equal = bind.source.equal;
-          context_source_dependency = P bind.source;
-          context_pack_inner = (fun inner -> P inner);
-          context_new_scope = (fun _lane -> new_scope signal);
-          context_selector = bind.selector;
-          context_with_scope =
+          Bind.eval_equal = bind.source.equal;
+          eval_source_dependency = P bind.source;
+          eval_pack_inner = (fun inner -> P inner);
+          eval_new_scope = (fun _lane -> new_scope signal);
+          eval_selector = bind.selector;
+          eval_with_scope =
             (fun _lane scope f ->
               Graph.with_current_scope graph scope_ops scope f);
-          context_validate_inner =
+          eval_validate_inner =
             (fun _lane scope inner ->
               Scope_validation.validate_inner ~scope (P inner));
-          context_compute_inner = compute;
-          context_on_switch_failure =
+          eval_compute_inner = compute;
+          eval_on_switch_failure =
             (fun lane scope ->
               remember_pure_disposal_hooks (invalidate_scope lane scope));
-          context_dirty = signal.dirty;
-          context_initialized =
+          eval_dirty = signal.dirty;
+          eval_initialized =
             Signal_snapshot.is_initialized
               (signal_effective_snapshot signal);
-          context_dependencies_changed =
+          eval_dependencies_changed =
             (fun _lane dependencies -> dependencies_changed signal dependencies);
-          context_apply =
-            {
-              Bind.dynamic_mark_recomputed =
-                (fun lane ->
-                  Graph.bump_counter graph lane Graph.Recompute_count);
-              dynamic_value_changed =
-                (fun _lane next ->
-                  let snapshot = signal_effective_snapshot signal in
-                  Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
-                    ~initialized:(Signal_snapshot.is_initialized snapshot)
-                    ~current:(Signal_snapshot.value snapshot) ~next);
-              dynamic_stage_switch =
-                (fun _lane ~source_value ~inner ~scope ->
-                  stage_bind_switch bind source_value inner scope);
-              dynamic_stage_dependencies =
-                (fun _lane dependencies ->
-                  stage_dependency_versions signal dependencies);
-              dynamic_stage_value =
-                (fun _lane value -> stage_signal signal value);
-              dynamic_current_value = (fun _lane -> current_or_raise signal);
-            };
+        }
+        {
+          Bind.dynamic_mark_recomputed =
+            (fun lane -> Graph.bump_counter graph lane Graph.Recompute_count);
+          dynamic_value_changed =
+            (fun _lane next ->
+              let snapshot = signal_effective_snapshot signal in
+              Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
+                ~initialized:(Signal_snapshot.is_initialized snapshot)
+                ~current:(Signal_snapshot.value snapshot) ~next);
+          dynamic_stage_switch =
+            (fun _lane ~source_value ~inner ~scope ->
+              stage_bind_switch bind source_value inner scope);
+          dynamic_stage_dependencies =
+            (fun _lane dependencies ->
+              stage_dependency_versions signal dependencies);
+          dynamic_stage_value = (fun _lane value -> stage_signal signal value);
+          dynamic_current_value = (fun _lane -> current_or_raise signal);
         }
         lane
         (bind_effective_snapshot bind) ~source_value ~source_changed

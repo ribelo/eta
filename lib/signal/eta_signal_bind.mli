@@ -14,26 +14,23 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value) dynamic_apply =
 }
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_context = {
-  context_equal : 'source -> 'source -> bool;
-  context_source_dependency : 'dependency;
-  context_pack_inner : 'inner -> 'dependency;
-  context_new_scope : 'capability -> 'scope;
-  context_selector : 'source -> 'inner;
-  context_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
-  context_validate_inner :
+     dynamic_eval_context = {
+  eval_equal : 'source -> 'source -> bool;
+  eval_source_dependency : 'dependency;
+  eval_pack_inner : 'inner -> 'dependency;
+  eval_new_scope : 'capability -> 'scope;
+  eval_selector : 'source -> 'inner;
+  eval_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
+  eval_validate_inner :
     'capability ->
     'scope ->
     'inner ->
     (unit, ([> `Invalid_scope ] as 'error)) result;
-  context_compute_inner : 'capability -> 'inner -> 'value * bool;
-  context_on_switch_failure : 'capability -> 'scope -> unit;
-  context_dirty : bool;
-  context_initialized : bool;
-  context_dependencies_changed : 'capability -> 'dependency list -> bool;
-  context_apply :
-    ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
-    dynamic_apply;
+  eval_compute_inner : 'capability -> 'inner -> 'value * bool;
+  eval_on_switch_failure : 'capability -> 'scope -> unit;
+  eval_dirty : bool;
+  eval_initialized : bool;
+  eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
 val empty : ('source, 'inner, 'scope) snapshot
@@ -52,7 +49,9 @@ val dependencies :
 
 val compute_dynamic :
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-  dynamic_context ->
+  dynamic_eval_context ->
+  ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
+  dynamic_apply ->
   'capability ->
   ('source, 'inner, 'scope) snapshot ->
   source_value:'source ->

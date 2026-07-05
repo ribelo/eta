@@ -46,26 +46,23 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value) dynamic_apply =
 }
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_context = {
-  context_equal : 'source -> 'source -> bool;
-  context_source_dependency : 'dependency;
-  context_pack_inner : 'inner -> 'dependency;
-  context_new_scope : 'capability -> 'scope;
-  context_selector : 'source -> 'inner;
-  context_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
-  context_validate_inner :
+     dynamic_eval_context = {
+  eval_equal : 'source -> 'source -> bool;
+  eval_source_dependency : 'dependency;
+  eval_pack_inner : 'inner -> 'dependency;
+  eval_new_scope : 'capability -> 'scope;
+  eval_selector : 'source -> 'inner;
+  eval_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
+  eval_validate_inner :
     'capability ->
     'scope ->
     'inner ->
     (unit, ([> `Invalid_scope ] as 'error)) result;
-  context_compute_inner : 'capability -> 'inner -> 'value * bool;
-  context_on_switch_failure : 'capability -> 'scope -> unit;
-  context_dirty : bool;
-  context_initialized : bool;
-  context_dependencies_changed : 'capability -> 'dependency list -> bool;
-  context_apply :
-    ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
-    dynamic_apply;
+  eval_compute_inner : 'capability -> 'inner -> 'value * bool;
+  eval_on_switch_failure : 'capability -> 'scope -> unit;
+  eval_dirty : bool;
+  eval_initialized : bool;
+  eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -203,25 +200,26 @@ let apply_dynamic_eval callbacks capability = function
       apply_value callbacks capability dynamic_reuse_value
   | Dynamic_reuse_cached -> (callbacks.dynamic_current_value capability, false)
 
-let compute_dynamic context capability snapshot ~source_value ~source_changed =
+let compute_dynamic eval_context apply_context capability snapshot
+    ~source_value ~source_changed =
   match
-    eval_dynamic ~capability ~equal:context.context_equal snapshot ~source_value
-      ~source_dependency:context.context_source_dependency
-      ~pack_inner:context.context_pack_inner
+    eval_dynamic ~capability ~equal:eval_context.eval_equal snapshot
+      ~source_value ~source_dependency:eval_context.eval_source_dependency
+      ~pack_inner:eval_context.eval_pack_inner
       ~source_changed
-      ~new_scope:context.context_new_scope
-      ~selector:context.context_selector
-      ~with_scope:context.context_with_scope
-      ~validate_inner:context.context_validate_inner
-      ~compute_inner:context.context_compute_inner
-      ~on_switch_failure:context.context_on_switch_failure
-      ~dirty:context.context_dirty
-      ~initialized:context.context_initialized
-      ~dependencies_changed:context.context_dependencies_changed
+      ~new_scope:eval_context.eval_new_scope
+      ~selector:eval_context.eval_selector
+      ~with_scope:eval_context.eval_with_scope
+      ~validate_inner:eval_context.eval_validate_inner
+      ~compute_inner:eval_context.eval_compute_inner
+      ~on_switch_failure:eval_context.eval_on_switch_failure
+      ~dirty:eval_context.eval_dirty
+      ~initialized:eval_context.eval_initialized
+      ~dependencies_changed:eval_context.eval_dependencies_changed
   with
   | Error _ as error -> error
   | Ok eval ->
-      Ok (apply_dynamic_eval context.context_apply capability eval)
+      Ok (apply_dynamic_eval apply_context capability eval)
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
