@@ -20,6 +20,13 @@ type ('capability, 'error) access = {
     'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Effect.t;
 }
 
+let access :
+    type capability error.
+    with_access:
+      ('a. (capability -> ('a, error) result) -> ('a, error) Effect.t) ->
+    (capability, error) access =
+ fun ~with_access -> { with_access }
+
 type 'error callbacks = {
   read_next_due :
     generation:int -> fallback:int -> (int option, 'error) Effect.t;
@@ -34,6 +41,19 @@ type 'error callbacks = {
   after_due_read_before_commit : unit -> (unit, 'error) Effect.t;
   after_update_constructed_before_run : unit -> (unit, 'error) Effect.t;
 }
+
+let callbacks ~read_next_due ~advance_next_due ~after_update_state
+    ~finish_saturated ~construct_update ~after_due_read_before_commit
+    ~after_update_constructed_before_run =
+  {
+    read_next_due;
+    advance_next_due;
+    after_update_state;
+    finish_saturated;
+    construct_update;
+    after_due_read_before_commit;
+    after_update_constructed_before_run;
+  }
 
 type 'error start_callbacks = {
   begin_start : generation:int -> (continue, 'error) Effect.t;
@@ -50,6 +70,19 @@ type 'error start_callbacks = {
     generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
 }
 
+let start_callbacks ~begin_start ~set_next_due ~after_start_update
+    ~construct_start_update ~install_cancel ~cleanup_after_exit
+    ~cleanup_failed_start =
+  {
+    begin_start;
+    set_next_due;
+    after_start_update;
+    construct_start_update;
+    install_cancel;
+    cleanup_after_exit;
+    cleanup_failed_start;
+  }
+
 type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
   acquire_demand :
     Runtime_contract.t ->
@@ -60,6 +93,15 @@ type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
   run_cancel_hooks : 'cancel_hook list -> (unit, 'error) Effect.t;
   run_start_attempts : 'attempt list -> (unit, 'error) Effect.t;
 }
+
+let demand_callbacks ~acquire_demand ~rollback_unclaimed_starts
+    ~run_cancel_hooks ~run_start_attempts =
+  {
+    acquire_demand;
+    rollback_unclaimed_starts;
+    run_cancel_hooks;
+    run_start_attempts;
+  }
 
 let run_cancellable ~install_cancel ~loop =
   Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->

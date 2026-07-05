@@ -16,62 +16,72 @@ type advance =
   | `Stop
   ]
 
-type ('capability, 'error) access = {
-  with_access :
-    'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t;
-}
+type ('capability, 'error) access
 
-type 'error callbacks = {
-  read_next_due :
-    generation:int -> fallback:int -> (int option, 'error) Eta.Effect.t;
-  advance_next_due :
-    generation:int ->
+val access :
+  with_access:
+    ('a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t) ->
+  ('capability, 'error) access
+
+type 'error callbacks
+
+val callbacks :
+  read_next_due:
+    (generation:int -> fallback:int -> (int option, 'error) Eta.Effect.t) ->
+  advance_next_due:
+    (generation:int ->
     expected:int ->
     next_due_ms:int ->
-    (advance, 'error) Eta.Effect.t;
-  after_update_state :
-    generation:int -> (continue, 'error) Eta.Effect.t;
-  finish_saturated : generation:int -> (unit, 'error) Eta.Effect.t;
-  construct_update :
-    generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
-  after_due_read_before_commit : unit -> (unit, 'error) Eta.Effect.t;
-  after_update_constructed_before_run : unit -> (unit, 'error) Eta.Effect.t;
-}
+    (advance, 'error) Eta.Effect.t) ->
+  after_update_state:
+    (generation:int -> (continue, 'error) Eta.Effect.t) ->
+  finish_saturated:(generation:int -> (unit, 'error) Eta.Effect.t) ->
+  construct_update:
+    (generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
+  after_due_read_before_commit:(unit -> (unit, 'error) Eta.Effect.t) ->
+  after_update_constructed_before_run:
+    (unit -> (unit, 'error) Eta.Effect.t) ->
+  'error callbacks
 
-type 'error start_callbacks = {
-  begin_start : generation:int -> (continue, 'error) Eta.Effect.t;
-  set_next_due :
-    generation:int -> next_due_ms:int -> (continue, 'error) Eta.Effect.t;
-  after_start_update :
-    generation:int -> (continue, 'error) Eta.Effect.t;
-  construct_start_update :
-    generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
-  install_cancel :
-    generation:int ->
+type 'error start_callbacks
+
+val start_callbacks :
+  begin_start:(generation:int -> (continue, 'error) Eta.Effect.t) ->
+  set_next_due:
+    (generation:int ->
+    next_due_ms:int ->
+    (continue, 'error) Eta.Effect.t) ->
+  after_start_update:
+    (generation:int -> (continue, 'error) Eta.Effect.t) ->
+  construct_start_update:
+    (generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
+  install_cancel:
+    (generation:int ->
     cancel:(unit -> unit) ->
-    (continue, 'error) Eta.Effect.t;
-  cleanup_after_exit :
-    generation:int ->
+    (continue, 'error) Eta.Effect.t) ->
+  cleanup_after_exit:
+    (generation:int ->
     (unit, 'error) Eta.Exit.t ->
-    (unit, 'error) Eta.Effect.t;
-  cleanup_failed_start :
-    generation:int ->
+    (unit, 'error) Eta.Effect.t) ->
+  cleanup_failed_start:
+    (generation:int ->
     (unit, 'error) Eta.Exit.t ->
-    (unit, 'error) Eta.Effect.t;
-}
+    (unit, 'error) Eta.Effect.t) ->
+  'error start_callbacks
 
-type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
-  acquire_demand :
-    Eta.Runtime_contract.t ->
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks
+
+val demand_callbacks :
+  acquire_demand:
+    (Eta.Runtime_contract.t ->
     'capability ->
-    ('attempt list * 'cancel_hook list, 'error) result;
-  rollback_unclaimed_starts :
-    'capability -> 'attempt list -> ('cancel_hook list, 'error) result;
-  run_cancel_hooks :
-    'cancel_hook list -> (unit, 'error) Eta.Effect.t;
-  run_start_attempts :
-    'attempt list -> (unit, 'error) Eta.Effect.t;
-}
+    ('attempt list * 'cancel_hook list, 'error) result) ->
+  rollback_unclaimed_starts:
+    ('capability -> 'attempt list -> ('cancel_hook list, 'error) result) ->
+  run_cancel_hooks:
+    ('cancel_hook list -> (unit, 'error) Eta.Effect.t) ->
+  run_start_attempts:('attempt list -> (unit, 'error) Eta.Effect.t) ->
+  ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks
 
 val run_cancellable :
   install_cancel:

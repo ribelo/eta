@@ -233,23 +233,18 @@ let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
 
 let refresh_demand_effect access port =
   Eta_signal_timer_adapter.refresh_demand
-    {
-      Eta_signal_timer_adapter.with_access =
-        (fun f -> access.demand_with_access f);
-    }
-    {
-      Eta_signal_timer_adapter.acquire_demand =
-        (fun runtime_contract capability ->
-          match port.demand_acquire runtime_contract capability with
-          | Error _ as error -> error
-          | Ok effects ->
-              Ok
-                ( effects.demand_start_attempts,
-                  effects.demand_cancel_hooks ));
-      rollback_unclaimed_starts = port.demand_rollback_unclaimed;
-      run_cancel_hooks = port.demand_run_cancel_hooks;
-      run_start_attempts = port.demand_run_start_attempts;
-    }
+    (Eta_signal_timer_adapter.access ~with_access:(fun f ->
+         access.demand_with_access f))
+    (Eta_signal_timer_adapter.demand_callbacks
+       ~acquire_demand:(fun runtime_contract capability ->
+         match port.demand_acquire runtime_contract capability with
+         | Error _ as error -> error
+         | Ok effects ->
+             Ok
+               (effects.demand_start_attempts, effects.demand_cancel_hooks))
+       ~rollback_unclaimed_starts:port.demand_rollback_unclaimed
+       ~run_cancel_hooks:port.demand_run_cancel_hooks
+       ~run_start_attempts:port.demand_run_start_attempts)
 
 let refresh_node_demand_effect ~advance_generation access port =
   let active_plan = ref None in
@@ -389,50 +384,37 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
     with_state (fun () -> after_update_state port timer ~generation)
   in
   let loop_callbacks =
-    {
-      Eta_signal_timer_adapter.read_next_due =
-        (fun ~generation ~fallback ->
-          with_state (fun () ->
-              read_next_due port timer ~generation ~fallback));
-      advance_next_due =
-        (fun ~generation ~expected ~next_due_ms ->
-          with_state (fun () ->
-              advance_next_due port timer ~generation ~expected
-                ~next_due_ms));
-      after_update_state;
-      finish_saturated =
-        (fun ~generation ->
-          with_state (fun () ->
-              finish_saturated ~advance_generation port timer ~generation));
-      construct_update =
-        (fun ~generation ~missed ->
-          update.daemon_update timer ~generation ~missed);
-      after_due_read_before_commit =
-        hooks.daemon_after_due_read_before_commit;
-      after_update_constructed_before_run =
-        hooks.daemon_after_update_constructed_before_run;
-    }
+    Eta_signal_timer_adapter.callbacks
+      ~read_next_due:(fun ~generation ~fallback ->
+        with_state (fun () ->
+            read_next_due port timer ~generation ~fallback))
+      ~advance_next_due:(fun ~generation ~expected ~next_due_ms ->
+        with_state (fun () ->
+            advance_next_due port timer ~generation ~expected ~next_due_ms))
+      ~after_update_state
+      ~finish_saturated:(fun ~generation ->
+        with_state (fun () ->
+            finish_saturated ~advance_generation port timer ~generation))
+      ~construct_update:(fun ~generation ~missed ->
+        update.daemon_update timer ~generation ~missed)
+      ~after_due_read_before_commit:hooks.daemon_after_due_read_before_commit
+      ~after_update_constructed_before_run:
+        hooks.daemon_after_update_constructed_before_run
   in
   let start_callbacks =
-    {
-      Eta_signal_timer_adapter.begin_start =
-        (fun ~generation ->
-          with_state (fun () -> begin_start port timer ~generation));
-      set_next_due =
-        (fun ~generation ~next_due_ms ->
-          with_state (fun () ->
-              set_next_due port timer ~generation ~next_due_ms));
-      after_start_update = after_update_state;
-      construct_start_update =
-        (fun ~generation ~missed ->
-          update.daemon_update timer ~generation ~missed);
-      install_cancel =
-        (fun ~generation ~cancel ->
-          with_state (fun () ->
-              install_cancel port timer ~generation ~cancel));
-      cleanup_after_exit;
-      cleanup_failed_start;
-    }
+    Eta_signal_timer_adapter.start_callbacks
+      ~begin_start:(fun ~generation ->
+        with_state (fun () -> begin_start port timer ~generation))
+      ~set_next_due:(fun ~generation ~next_due_ms ->
+        with_state (fun () ->
+            set_next_due port timer ~generation ~next_due_ms))
+      ~after_start_update:after_update_state
+      ~construct_start_update:(fun ~generation ~missed ->
+        update.daemon_update timer ~generation ~missed)
+      ~install_cancel:(fun ~generation ~cancel ->
+        with_state (fun () ->
+            install_cancel port timer ~generation ~cancel))
+      ~cleanup_after_exit ~cleanup_failed_start
   in
   Eta_signal_timer_adapter.start start_callbacks loop_callbacks ~generation
     ~interval_ms ~update_on_start ~catch_up_policy

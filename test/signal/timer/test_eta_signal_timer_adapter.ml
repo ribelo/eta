@@ -36,10 +36,8 @@ let check_cap cap =
   Alcotest.(check string) "capability" capability cap
 
 let adapter_access =
-  {
-    Adapter.with_access =
-      (fun f -> Effect.sync (fun () -> f capability) |> Effect.flatten_result);
-  }
+  Adapter.access ~with_access:(fun f ->
+      Effect.sync (fun () -> f capability) |> Effect.flatten_result)
 
 let check_demand_failed cause =
   match Cause.failures cause with
@@ -68,30 +66,25 @@ let test_refresh_demand_orders_cancel_start_and_rollback () =
   let events = ref [] in
   run_ok runtime
     (Adapter.refresh_demand adapter_access
-       {
-         Adapter.acquire_demand =
-           (fun _runtime_contract cap ->
-             check_cap cap;
-             record events "acquire";
-             Ok ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ]));
-         rollback_unclaimed_starts =
-           (fun cap attempts ->
-             check_cap cap;
-             List.iter
-               (fun attempt -> record events ("rollback:" ^ attempt))
-               attempts;
-             Ok [ "rollback-cancel" ]);
-         run_cancel_hooks =
-           (fun hooks ->
-             Effect.sync (fun () ->
-                 List.iter (fun hook -> record events ("cancel:" ^ hook)) hooks));
-         run_start_attempts =
-           (fun attempts ->
-             Effect.sync (fun () ->
-                 List.iter
-                   (fun attempt -> record events ("start:" ^ attempt))
-                   attempts));
-       });
+       (Adapter.demand_callbacks
+          ~acquire_demand:(fun _runtime_contract cap ->
+            check_cap cap;
+            record events "acquire";
+            Ok ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ]))
+          ~rollback_unclaimed_starts:(fun cap attempts ->
+            check_cap cap;
+            List.iter
+              (fun attempt -> record events ("rollback:" ^ attempt))
+              attempts;
+            Ok [ "rollback-cancel" ])
+          ~run_cancel_hooks:(fun hooks ->
+            Effect.sync (fun () ->
+                List.iter (fun hook -> record events ("cancel:" ^ hook)) hooks))
+          ~run_start_attempts:(fun attempts ->
+            Effect.sync (fun () ->
+                List.iter
+                  (fun attempt -> record events ("start:" ^ attempt))
+                  attempts))));
   Alcotest.(check (list string))
     "events"
     [
@@ -112,33 +105,28 @@ let test_refresh_demand_release_does_not_rerun_cancel_hooks () =
   let cause =
     run_error runtime
       (Adapter.refresh_demand adapter_access
-         {
-           Adapter.acquire_demand =
-             (fun _runtime_contract cap ->
-               check_cap cap;
-               record events "acquire";
-               Ok ([ "start" ], [ "cancel" ]));
-           rollback_unclaimed_starts =
-             (fun cap attempts ->
-               check_cap cap;
-               List.iter
-                 (fun attempt -> record events ("rollback:" ^ attempt))
-                 attempts;
-               Ok []);
-           run_cancel_hooks =
-             (fun hooks ->
-               Effect.sync (fun () ->
-                   List.iter
-                     (fun hook -> record events ("cancel:" ^ hook))
-                     hooks));
-           run_start_attempts =
-             (fun attempts ->
-               Effect.sync (fun () ->
-                   List.iter
-                     (fun attempt -> record events ("start:" ^ attempt))
-                     attempts)
-               |> Effect.bind (fun () -> Effect.fail `Demand_failed));
-         })
+         (Adapter.demand_callbacks
+            ~acquire_demand:(fun _runtime_contract cap ->
+              check_cap cap;
+              record events "acquire";
+              Ok ([ "start" ], [ "cancel" ]))
+            ~rollback_unclaimed_starts:(fun cap attempts ->
+              check_cap cap;
+              List.iter
+                (fun attempt -> record events ("rollback:" ^ attempt))
+                attempts;
+              Ok [])
+            ~run_cancel_hooks:(fun hooks ->
+              Effect.sync (fun () ->
+                  List.iter
+                    (fun hook -> record events ("cancel:" ^ hook))
+                    hooks))
+            ~run_start_attempts:(fun attempts ->
+              Effect.sync (fun () ->
+                  List.iter
+                    (fun attempt -> record events ("start:" ^ attempt))
+                    attempts)
+              |> Effect.bind (fun () -> Effect.fail `Demand_failed))))
   in
   check_demand_failed cause;
   Alcotest.(check (list string))
@@ -152,22 +140,19 @@ let test_refresh_demand_acquire_failure_skips_use_and_release () =
   let cause =
     run_error runtime
       (Adapter.refresh_demand adapter_access
-         {
-           Adapter.acquire_demand =
-             (fun _runtime_contract cap ->
-               check_cap cap;
-               record events "acquire";
-               Error `Demand_failed);
-           rollback_unclaimed_starts =
-             (fun cap _attempts ->
-               check_cap cap;
-               record events "rollback";
-               Ok []);
-           run_cancel_hooks =
-             (fun _hooks -> Effect.sync (fun () -> record events "cancel"));
-           run_start_attempts =
-             (fun _attempts -> Effect.sync (fun () -> record events "start"));
-         })
+         (Adapter.demand_callbacks
+            ~acquire_demand:(fun _runtime_contract cap ->
+              check_cap cap;
+              record events "acquire";
+              Error `Demand_failed)
+            ~rollback_unclaimed_starts:(fun cap _attempts ->
+              check_cap cap;
+              record events "rollback";
+              Ok [])
+            ~run_cancel_hooks:(fun _hooks ->
+              Effect.sync (fun () -> record events "cancel"))
+            ~run_start_attempts:(fun _attempts ->
+              Effect.sync (fun () -> record events "start"))))
   in
   check_demand_failed cause;
   Alcotest.(check (list string)) "events" [ "acquire" ] !events
@@ -177,43 +162,37 @@ let test_loop_orders_due_advance_and_update () =
   let events = ref [] in
   let updates = ref 0 in
   let callbacks =
-    {
-      Adapter.read_next_due =
-        (fun ~generation ~fallback ->
-          Effect.sync (fun () ->
-              record events
-                ("read:" ^ string_of_int generation ^ ":"
-               ^ string_of_int fallback);
-              Some fallback));
-      advance_next_due =
-        (fun ~generation ~expected ~next_due_ms ->
-          Effect.sync (fun () ->
-              record events
-                ("advance:" ^ string_of_int generation ^ ":"
-               ^ string_of_int expected ^ ":" ^ string_of_int next_due_ms);
-              `Advanced));
-      after_update_state =
-        (fun ~generation ->
-          Effect.sync (fun () ->
-              record events ("state:" ^ string_of_int generation);
-              if !updates = 0 then `Continue else `Stop));
-      finish_saturated =
-        (fun ~generation ->
-          Effect.sync (fun () ->
-              record events ("finish:" ^ string_of_int generation)));
-      construct_update =
-        (fun ~generation ~missed ->
-          record events
-            ("construct:" ^ string_of_int generation ^ ":"
-           ^ string_of_int missed);
-          Effect.sync (fun () ->
-              incr updates;
-              record events "run"));
-      after_due_read_before_commit =
-        (fun () -> Effect.sync (fun () -> record events "due_hook"));
-      after_update_constructed_before_run =
-        (fun () -> Effect.sync (fun () -> record events "after_construct"));
-    }
+    Adapter.callbacks
+      ~read_next_due:(fun ~generation ~fallback ->
+        Effect.sync (fun () ->
+            record events
+              ("read:" ^ string_of_int generation ^ ":"
+             ^ string_of_int fallback);
+            Some fallback))
+      ~advance_next_due:(fun ~generation ~expected ~next_due_ms ->
+        Effect.sync (fun () ->
+            record events
+              ("advance:" ^ string_of_int generation ^ ":"
+             ^ string_of_int expected ^ ":" ^ string_of_int next_due_ms);
+            `Advanced))
+      ~after_update_state:(fun ~generation ->
+        Effect.sync (fun () ->
+            record events ("state:" ^ string_of_int generation);
+            if !updates = 0 then `Continue else `Stop))
+      ~finish_saturated:(fun ~generation ->
+        Effect.sync (fun () ->
+            record events ("finish:" ^ string_of_int generation)))
+      ~construct_update:(fun ~generation ~missed ->
+        record events
+          ("construct:" ^ string_of_int generation ^ ":"
+         ^ string_of_int missed);
+        Effect.sync (fun () ->
+            incr updates;
+            record events "run"))
+      ~after_due_read_before_commit:(fun () ->
+        Effect.sync (fun () -> record events "due_hook"))
+      ~after_update_constructed_before_run:(fun () ->
+        Effect.sync (fun () -> record events "after_construct"))
   in
   run_ok runtime
     (Adapter.run_loop callbacks ~generation:7 ~interval_ms:10 ~next_due_ms:0
@@ -238,58 +217,49 @@ let test_start_runs_update_before_initial_due () =
   let events = ref [] in
   let fail_effect label = Effect.sync (fun () -> Alcotest.fail label) in
   let loop_callbacks =
-    {
-      Adapter.read_next_due =
-        (fun ~generation:_ ~fallback:_ -> fail_effect "read_next_due");
-      advance_next_due =
-        (fun ~generation:_ ~expected:_ ~next_due_ms:_ ->
-          fail_effect "advance_next_due");
-      after_update_state =
-        (fun ~generation:_ -> fail_effect "after_update_state");
-      finish_saturated =
-        (fun ~generation:_ -> fail_effect "finish_saturated");
-      construct_update =
-        (fun ~generation:_ ~missed:_ -> fail_effect "construct_update");
-      after_due_read_before_commit =
-        (fun () -> fail_effect "after_due_read_before_commit");
-      after_update_constructed_before_run =
-        (fun () -> fail_effect "after_update_constructed_before_run");
-    }
+    Adapter.callbacks
+      ~read_next_due:(fun ~generation:_ ~fallback:_ ->
+        fail_effect "read_next_due")
+      ~advance_next_due:(fun ~generation:_ ~expected:_ ~next_due_ms:_ ->
+        fail_effect "advance_next_due")
+      ~after_update_state:(fun ~generation:_ ->
+        fail_effect "after_update_state")
+      ~finish_saturated:(fun ~generation:_ -> fail_effect "finish_saturated")
+      ~construct_update:(fun ~generation:_ ~missed:_ ->
+        fail_effect "construct_update")
+      ~after_due_read_before_commit:(fun () ->
+        fail_effect "after_due_read_before_commit")
+      ~after_update_constructed_before_run:(fun () ->
+        fail_effect "after_update_constructed_before_run")
   in
   let start_callbacks =
-    {
-      Adapter.begin_start =
-        (fun ~generation ->
-          Effect.sync (fun () ->
-              record events ("begin:" ^ string_of_int generation);
-              `Continue));
-      set_next_due =
-        (fun ~generation ~next_due_ms ->
-          Effect.sync (fun () ->
-              record events
-                ("set_due:" ^ string_of_int generation ^ ":"
-               ^ string_of_int next_due_ms);
-              `Stop));
-      after_start_update =
-        (fun ~generation ->
-          Effect.sync (fun () ->
-              record events ("after_update:" ^ string_of_int generation);
-              `Continue));
-      construct_start_update =
-        (fun ~generation ~missed ->
-          record events
-            ("construct_start:" ^ string_of_int generation ^ ":"
-           ^ string_of_int missed);
-          Effect.sync (fun () -> record events "run_start"));
-      install_cancel =
-        (fun ~generation:_ ~cancel:_ -> fail_effect "install_cancel");
-      cleanup_after_exit =
-        (fun ~generation:_ _exit -> fail_effect "cleanup_after_exit");
-      cleanup_failed_start =
-        (fun ~generation _exit ->
-          Effect.sync (fun () ->
-              record events ("cleanup_failed:" ^ string_of_int generation)));
-    }
+    Adapter.start_callbacks
+      ~begin_start:(fun ~generation ->
+        Effect.sync (fun () ->
+            record events ("begin:" ^ string_of_int generation);
+            `Continue))
+      ~set_next_due:(fun ~generation ~next_due_ms ->
+        Effect.sync (fun () ->
+            record events
+              ("set_due:" ^ string_of_int generation ^ ":"
+             ^ string_of_int next_due_ms);
+            `Stop))
+      ~after_start_update:(fun ~generation ->
+        Effect.sync (fun () ->
+            record events ("after_update:" ^ string_of_int generation);
+            `Continue))
+      ~construct_start_update:(fun ~generation ~missed ->
+        record events
+          ("construct_start:" ^ string_of_int generation ^ ":"
+         ^ string_of_int missed);
+        Effect.sync (fun () -> record events "run_start"))
+      ~install_cancel:(fun ~generation:_ ~cancel:_ ->
+        fail_effect "install_cancel")
+      ~cleanup_after_exit:(fun ~generation:_ _exit ->
+        fail_effect "cleanup_after_exit")
+      ~cleanup_failed_start:(fun ~generation _exit ->
+        Effect.sync (fun () ->
+            record events ("cleanup_failed:" ^ string_of_int generation)))
   in
   run_ok runtime
     (Adapter.start start_callbacks loop_callbacks ~generation:3 ~interval_ms:10
