@@ -263,9 +263,6 @@ let next_scope_id t = Eta_signal_graph_core.next_scope_id t.core
 let set_next_node_id t _lane next =
   Eta_signal_graph_core.set_next_node_id t.core next
 
-let set_next_scope_id t _lane next =
-  Eta_signal_graph_core.set_next_scope_id t.core next
-
 let counter t _lane target =
   Eta_signal_graph_core.counter t.core (core_counter target)
 
@@ -473,10 +470,6 @@ let graph_error_of_bind_switch_error = function
 let map_bind_switch_result = function
   | Ok _ as ok -> ok
   | Error err -> Error (graph_error_of_bind_switch_error err)
-
-let preflight_staged_bind_switch switch ~collect_old_scope =
-  Eta_signal_bind.preflight_staged_switch switch ~collect_old_scope
-  |> map_bind_switch_result
 
 let commit_staged_bind_switch switch ~detach_old_inner
     ~invalidate_old_scope ~attach_new_inner =

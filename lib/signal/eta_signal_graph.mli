@@ -168,10 +168,6 @@ val lane_waiting_count :
 val lane_cancelled_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
-val next_signal_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (Eta_signal_id.signal, Eta_signal_error.graph_error) result
-
 val next_var_id :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_id.var, Eta_signal_error.graph_error) result
@@ -185,9 +181,6 @@ val next_scope_id :
   (Eta_signal_id.scope, Eta_signal_error.graph_error) result
 
 val set_next_node_id :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
-
-val set_next_scope_id :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val counter :
@@ -214,13 +207,6 @@ val attach_dependency :
   parent:'node ->
   child:'node ->
   unit
-
-val detach_node_edges :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  lane_access ->
-  ('id, 'node) edge_ops ->
-  'node ->
-  'node list * 'node list
 
 val mark_dirty :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
@@ -327,11 +313,6 @@ val stage_bind_switch :
   inner:'inner ->
   scope:'scope ->
   unit
-
-val preflight_staged_bind_switch :
-  ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
-  collect_old_scope:('owner -> 'scope -> unit) ->
-  (unit, Eta_signal_error.graph_error) result
 
 val commit_staged_bind_switch :
   ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
