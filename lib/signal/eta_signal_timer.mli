@@ -46,6 +46,19 @@ val can_refresh_on_demand :
   _ node ->
   bool
 
+val refresh_node_on_demand :
+  validate_runtime:
+    ('operation node ->
+    Eta.Runtime_contract.t ->
+    (unit, 'error) result) ->
+  current_snapshot:('operation node -> Eta_signal_timer_policy.snapshot) ->
+  effective_state:('operation node -> Eta_signal_timer_policy.state) ->
+  remember:('operation node -> unit) ->
+  run_operation:('operation node -> now_ms:int -> 'operation -> unit) ->
+  (Eta.Runtime_contract.t, 'dirty) Eta_signal_timer_policy.refresh_context ->
+  'operation node ->
+  (unit, 'error) result
+
 type ('timer, 'effect) start_attempt
 
 type 'timer state_port

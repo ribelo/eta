@@ -918,12 +918,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok () -> ()
     | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
-  let timer_can_refresh_on_demand token timer =
-    Timer.can_refresh_on_demand ~token
-      ~current_snapshot:(timer_current_snapshot timer)
-      ~effective_state:(timer_effective_state timer)
-      timer
-
   let timer_running_generation timer =
     Timer_policy.state_running_generation (timer_effective_state timer)
 
@@ -1366,15 +1360,19 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.with_timer_refresh_timer graph signal.timer
       ~none:(fun () -> ())
       ~some:(fun timer_refresh timer ->
-        let timer_refresh_token = Timer_policy.refresh_token timer_refresh in
-        ensure_timer_runtime timer
-          (Timer_policy.refresh_runtime_contract timer_refresh);
-        if timer_can_refresh_on_demand timer_refresh_token timer then (
-          remember_timer_refresh_timer timer;
-          let now_ms = Timer_policy.refresh_sample_now_ms timer_refresh in
-          match Timer.refresh_operation timer with
-          | None -> ()
-          | Some operation -> stage_timer_refresh_operation timer now_ms operation))
+        match
+          Timer.refresh_node_on_demand
+            ~validate_runtime:(fun timer runtime_contract ->
+              validate_timer_runtime timer runtime_contract)
+            ~current_snapshot:timer_current_snapshot
+            ~effective_state:timer_effective_state
+            ~remember:remember_timer_refresh_timer
+            ~run_operation:(fun timer ~now_ms operation ->
+              stage_timer_refresh_operation timer now_ms operation)
+            timer_refresh timer
+        with
+        | Ok () -> ()
+        | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch))
 
   let rec compute : type a. graph_lane -> a signal -> a * bool =
    fun lane signal ->

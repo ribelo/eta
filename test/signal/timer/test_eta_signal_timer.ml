@@ -331,6 +331,109 @@ let test_node_can_refresh_on_demand_uses_node_metadata () =
   Alcotest.(check bool)
     "inactive without permission" false inactive_without_permission
 
+let test_refresh_node_on_demand_owns_validation_and_token_order () =
+  with_runtime @@ fun runtime ->
+  let active =
+    Timer_policy.running_uncancellable_state ~generation:1
+      ~next_due_ms:None
+  in
+  let inactive = inactive 1 in
+  let cases =
+    [
+      ( "allowed active",
+        Some "op",
+        false,
+        0,
+        -1,
+        active,
+        true,
+        Ok (),
+        [ "validate"; "remember"; "now"; "run:op:42" ] );
+      ("no operation", None, true, 0, -1, active, true, Ok (), [ "validate" ]);
+      ( "inactive without permission",
+        Some "op",
+        false,
+        0,
+        -1,
+        inactive,
+        true,
+        Ok (),
+        [ "validate" ] );
+      ( "stale current token",
+        Some "op",
+        true,
+        1,
+        -1,
+        active,
+        true,
+        Ok (),
+        [ "validate" ] );
+      ( "runtime failure",
+        Some "op",
+        true,
+        0,
+        -1,
+        active,
+        false,
+        Error "runtime",
+        [ "validate" ] );
+    ]
+  in
+  List.iter
+    (fun
+      ( name,
+        operation,
+        refresh_when_inactive,
+        current_token,
+        staged_token,
+        effective_state,
+        validate_ok,
+        expected_result,
+        expected_events )
+    ->
+      let events = ref [] in
+      let record event = append_event events event in
+      let result =
+        run_ok runtime
+          (Eta.Effect.Expert.make
+             ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
+          @@ fun context ->
+            let runtime_contract = Eta.Effect.Expert.contract context in
+            let node =
+              Timer.create_node ~runtime_contract
+                ~refresh_when_inactive ~refresh_operation:operation
+                ~start:(Timer.start ~run:(fun _timer -> Eta.Effect.unit))
+            in
+            Timer.set_staged_refresh_token node staged_token;
+            let refresh_context =
+              Timer_policy.create_refresh_context ~token:1
+                ~runtime_contract
+                ~now_ms:(fun () ->
+                  record "now";
+                  42)
+            in
+            Eta.Exit.Ok
+              (Timer.refresh_node_on_demand
+                 ~validate_runtime:(fun _timer _runtime_contract ->
+                   record "validate";
+                   if validate_ok then Ok () else Error "runtime")
+                 ~current_snapshot:(fun _timer ->
+                   Timer_policy.snapshot
+                     ~state:(Timer_policy.inactive_state ~generation:0)
+                     ~on_demand_refresh_token:current_token)
+                 ~effective_state:(fun _timer -> effective_state)
+                 ~remember:(fun _timer -> record "remember")
+                 ~run_operation:(fun _timer ~now_ms operation ->
+                   record
+                     ("run:" ^ operation ^ ":" ^ string_of_int now_ms))
+                 refresh_context node))
+      in
+      Alcotest.(check (result unit string))
+        (name ^ " result") expected_result result;
+      Alcotest.(check (list string))
+        (name ^ " events") expected_events !events)
+    cases
+
 let test_refresh_node_demand_validation_failure_short_circuits () =
   with_runtime @@ fun runtime ->
   let changed_state = ref false in
@@ -732,6 +835,8 @@ let () =
             test_refresh_node_demand_effect_owns_node_bracketing;
           Alcotest.test_case "node refresh policy" `Quick
             test_node_can_refresh_on_demand_uses_node_metadata;
+          Alcotest.test_case "node refresh demand order" `Quick
+            test_refresh_node_on_demand_owns_validation_and_token_order;
           Alcotest.test_case "validation failure short-circuits" `Quick
             test_refresh_node_demand_validation_failure_short_circuits;
           Alcotest.test_case "marks unneeded node inactive" `Quick

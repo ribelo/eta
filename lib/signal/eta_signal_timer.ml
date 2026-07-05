@@ -66,6 +66,32 @@ let can_refresh_on_demand ~token ~current_snapshot ~effective_state timer =
     ~active:(Eta_signal_timer_policy.state_active effective_state)
     ~finished:(Eta_signal_timer_policy.state_finished effective_state)
 
+let refresh_node_on_demand ~validate_runtime ~current_snapshot
+    ~effective_state ~remember ~run_operation context timer =
+  match
+    validate_runtime timer
+      (Eta_signal_timer_policy.refresh_runtime_contract context)
+  with
+  | Error _ as error -> error
+  | Ok () -> (
+      let token = Eta_signal_timer_policy.refresh_token context in
+      if
+        can_refresh_on_demand ~token
+          ~current_snapshot:(current_snapshot timer)
+          ~effective_state:(effective_state timer)
+          timer
+      then (
+        remember timer;
+        match timer.timer_refresh_operation with
+        | None -> Ok ()
+        | Some operation ->
+            let now_ms =
+              Eta_signal_timer_policy.refresh_sample_now_ms context
+            in
+            run_operation timer ~now_ms operation;
+            Ok ())
+      else Ok ())
+
 type ('timer, 'effect) start_attempt = {
   attempt_timer : 'timer;
   attempt_effect : 'effect;
