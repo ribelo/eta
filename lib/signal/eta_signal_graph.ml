@@ -661,9 +661,9 @@ let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
 let remove_observers t _lane ~keep = t.observers <- List.filter keep t.observers
-let matching_observers t ~selected = List.filter selected t.observers
+let matching_observers t _lane ~selected = List.filter selected t.observers
 
-let count_observers t ~selected =
+let count_observers t _lane ~selected =
   List.fold_left
     (fun count observer ->
       if selected observer then
@@ -671,7 +671,7 @@ let count_observers t ~selected =
       else count)
     0 t.observers
 
-let filter_map_observers t ~f = List.filter_map f t.observers
+let filter_map_observers t _lane ~f = List.filter_map f t.observers
 
 let observer_delivery_plan t delivery =
   Eta_signal_observer.delivery_plan delivery ~observers:t.observers

@@ -486,16 +486,19 @@ val remove_observers :
 
 val matching_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
   selected:('observer -> bool) ->
   'observer list
 
 val count_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
   selected:('observer -> bool) ->
   int
 
 val filter_map_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
   f:('observer -> 'a option) ->
   'a list
 (** Observer registry operations. The graph owns list traversal and mutation;

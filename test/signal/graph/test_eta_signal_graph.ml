@@ -220,6 +220,31 @@ let create_observer ?(active = true) id =
         };
   }
 
+let test_observer_registry_traversal_uses_lane () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let first = create_observer 1 in
+  let inactive = create_observer ~active:false 0 in
+  let second = create_observer 2 in
+  let active_ids, active_count, even_ids =
+    with_graph_lane graph (fun lane ->
+        Graph.add_observer graph lane second;
+        Graph.add_observer graph lane inactive;
+        Graph.add_observer graph lane first;
+        ( Graph.matching_observers graph lane ~selected:(fun observer ->
+              observer.active)
+          |> List.map (fun observer -> observer.id),
+          Graph.count_observers graph lane ~selected:(fun observer ->
+              observer.active),
+          Graph.filter_map_observers graph lane ~f:(fun observer ->
+              if observer.id mod 2 = 0 then Some observer.id else None) ))
+  in
+  Alcotest.(check (list int)) "active ids" [ 1; 2 ] active_ids;
+  Alcotest.(check int) "active count" 2 active_count;
+  Alcotest.(check (list int)) "even ids" [ 0; 2 ] even_ids
+
 let update_label = function
   | Observer.Update.Initialized value ->
       "initialized:" ^ string_of_int value
@@ -948,6 +973,8 @@ let () =
         ] );
       ( "observer delivery",
         [
+          Alcotest.test_case "lane-scoped registry traversal" `Quick
+            test_observer_registry_traversal_uses_lane;
           Alcotest.test_case "sorted collection" `Quick
             test_observer_delivery_plan_uses_collection_order;
         ] );
