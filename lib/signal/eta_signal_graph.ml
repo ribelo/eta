@@ -678,21 +678,20 @@ let observer_delivery_plan t delivery =
     ~capability:Eta_signal_stabilization_pass.pure_capability
     ~make_plan:Eta_signal_stabilization_pass.observer_plan
 
-type ('capability, 'pending, 'observer, 'event, 'hook)
-     stabilization_pure =
+type ('pending, 'observer, 'event, 'hook) stabilization_pure =
   {
     release_pending_marks :
-      'capability -> 'pending list -> unit;
+      lane_access -> 'pending list -> unit;
     observer_plan :
-      'capability ->
-      ( 'capability,
+      lane_access ->
+      ( lane_access,
         'observer,
         'event )
       Eta_signal_stabilization_pass.observer_plan;
-    stage_pending : 'capability -> 'pending list -> unit;
-    plan_staged_binds : 'capability -> 'observer list -> unit;
-    commit_staging : 'capability -> staging -> 'hook list;
-    update_necessity : 'capability -> unit;
+    stage_pending : lane_access -> 'pending list -> unit;
+    plan_staged_binds : lane_access -> 'observer list -> unit;
+    commit_staging : lane_access -> staging -> 'hook list;
+    update_necessity : lane_access -> unit;
   }
 
 let stabilization_pure_ops ~release_pending_marks ~observer_plan
@@ -706,13 +705,13 @@ let stabilization_pure_ops ~release_pending_marks ~observer_plan
     update_necessity;
   }
 
-type ('capability, 'pending, 'observer, 'hook) stabilization_rollback =
+type ('pending, 'observer, 'hook) stabilization_rollback =
   {
     rollback_staging :
-      'capability -> staging -> 'hook list;
+      lane_access -> staging -> 'hook list;
     mark_observers_failed_without_current :
-      'capability -> 'observer list -> unit;
-    requeue_pending : 'capability -> 'pending list -> unit;
+      lane_access -> 'observer list -> unit;
+    requeue_pending : lane_access -> 'pending list -> unit;
   }
 
 let stabilization_rollback_ops ~rollback_staging
@@ -723,19 +722,17 @@ let stabilization_rollback_ops ~rollback_staging
     requeue_pending;
   }
 
-type ('capability, 'pending, 'observer, 'event, 'hook)
-     stabilization_ops =
+type ('pending, 'observer, 'event, 'hook) stabilization_ops =
   {
     classify_graph_error : exn -> Eta_signal_error.graph_error option;
     pure :
-      ( 'capability,
-        'pending,
+      ( 'pending,
         'observer,
         'event,
         'hook )
       stabilization_pure;
     rollback :
-      ('capability, 'pending, 'observer, 'hook) stabilization_rollback;
+      ('pending, 'observer, 'hook) stabilization_rollback;
   }
 
 let stabilization_ops ~classify_graph_error ~pure ~rollback =

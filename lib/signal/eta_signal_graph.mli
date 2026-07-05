@@ -507,43 +507,36 @@ val observer_delivery_plan :
     owns registry traversal; the observer subsystem owns active filtering,
     delivery ordering, event collection, and pending-state marking. *)
 
-type ('capability, 'pending, 'observer, 'event, 'hook)
-     stabilization_pure
+type ('pending, 'observer, 'event, 'hook) stabilization_pure
 
 val stabilization_pure_ops :
-  release_pending_marks:('capability -> 'pending list -> unit) ->
+  release_pending_marks:(lane_access -> 'pending list -> unit) ->
   observer_plan:
-    ('capability ->
-    ('capability, 'observer, 'event)
+    (lane_access ->
+    (lane_access, 'observer, 'event)
     Eta_signal_stabilization_pass.observer_plan) ->
-  stage_pending:('capability -> 'pending list -> unit) ->
-  plan_staged_binds:('capability -> 'observer list -> unit) ->
-  commit_staging:('capability -> staging -> 'hook list) ->
-  update_necessity:('capability -> unit) ->
-  ('capability, 'pending, 'observer, 'event, 'hook)
-  stabilization_pure
+  stage_pending:(lane_access -> 'pending list -> unit) ->
+  plan_staged_binds:(lane_access -> 'observer list -> unit) ->
+  commit_staging:(lane_access -> staging -> 'hook list) ->
+  update_necessity:(lane_access -> unit) ->
+  ('pending, 'observer, 'event, 'hook) stabilization_pure
 
-type ('capability, 'pending, 'observer, 'hook) stabilization_rollback
+type ('pending, 'observer, 'hook) stabilization_rollback
 
 val stabilization_rollback_ops :
-  rollback_staging:('capability -> staging -> 'hook list) ->
-  mark_observers_failed_without_current:
-    ('capability -> 'observer list -> unit) ->
-  requeue_pending:('capability -> 'pending list -> unit) ->
-  ('capability, 'pending, 'observer, 'hook) stabilization_rollback
+  rollback_staging:(lane_access -> staging -> 'hook list) ->
+  mark_observers_failed_without_current:(lane_access -> 'observer list -> unit) ->
+  requeue_pending:(lane_access -> 'pending list -> unit) ->
+  ('pending, 'observer, 'hook) stabilization_rollback
 
-type ('capability, 'pending, 'observer, 'event, 'hook)
-     stabilization_ops
+type ('pending, 'observer, 'event, 'hook) stabilization_ops
 
 val stabilization_ops :
   classify_graph_error:(exn -> Eta_signal_error.graph_error option) ->
   pure:
-    ('capability, 'pending, 'observer, 'event, 'hook)
-    stabilization_pure ->
-  rollback:
-    ('capability, 'pending, 'observer, 'hook) stabilization_rollback ->
-  ('capability, 'pending, 'observer, 'event, 'hook)
-  stabilization_ops
+    ('pending, 'observer, 'event, 'hook) stabilization_pure ->
+  rollback:('pending, 'observer, 'hook) stabilization_rollback ->
+  ('pending, 'observer, 'event, 'hook) stabilization_ops
 
 val run_stabilization :
   ( 'pending,
@@ -558,10 +551,9 @@ val run_stabilization :
     'scope_context,
     'stream_metrics )
   t ->
-  'capability ->
+  lane_access ->
   timer_refresh:'refresh option ->
-  ( 'capability,
-    'pending,
+  ( 'pending,
     'observer,
     'event,
     'hook )

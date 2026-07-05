@@ -5,6 +5,89 @@ module Observer = Eta_signal_testable.Observer_core
 module Pass = Eta_signal_testable.Stabilization_pass
 module Transaction = Eta_signal_testable.Transaction
 
+module Direct_runtime = struct
+  type scope = unit
+  type cancel_context = unit
+  type 'a promise = 'a option ref
+  type 'a resolver = 'a option ref
+  type 'a stream = 'a Stdlib.Queue.t
+
+  let root_scope = ()
+  let now_ms () = 0
+  let sleep _duration = ()
+  let protect f = f ()
+  let run_scope ?name:_ f = f ()
+  let fail_scope ?bt:_ () exn = raise exn
+  let fork () f = f ()
+  let fork_daemon () f = ignore (f () : [ `Stop_daemon ])
+  let await_cancel () = failwith "Direct_runtime.await_cancel"
+  let yield () = ()
+  let check () = ()
+
+  let create_promise () =
+    let cell = ref None in
+    (cell, cell)
+
+  let resolve_promise resolver value =
+    match !resolver with
+    | Some _ -> invalid_arg "Direct_runtime.resolve_promise: already resolved"
+    | None -> resolver := Some value
+
+  let await_promise promise =
+    match !promise with
+    | Some value -> value
+    | None -> failwith "Direct_runtime.await_promise: unresolved"
+
+  let create_stream _capacity = Stdlib.Queue.create ()
+  let stream_add stream value = Stdlib.Queue.add value stream
+
+  let stream_take stream =
+    if Stdlib.Queue.is_empty stream then
+      failwith "Direct_runtime.stream_take: empty"
+    else Stdlib.Queue.take stream
+
+  let stream_take_nonblocking stream =
+    if Stdlib.Queue.is_empty stream then None else Some (Stdlib.Queue.take stream)
+
+  let with_worker_context f = f ()
+  let in_worker_context () = false
+  let cancellation_reason _ = None
+  let multiple_exceptions _ = None
+  let cancel_sub f = f ()
+  let cancel () exn = raise exn
+  let current_fiber_id () = 0
+  let with_fiber_identity f = f ()
+
+  let locals : (int, Eta.Runtime_contract.local_binding list) Hashtbl.t =
+    Hashtbl.create 8
+
+  let local_get local =
+    match
+      Hashtbl.find_opt locals
+        (Eta.Runtime_contract.Backend.local_id local)
+    with
+    | None -> None
+    | Some bindings ->
+        List.find_map
+          (Eta.Runtime_contract.Backend.local_binding_value local)
+          bindings
+
+  let local_with_binding local value f =
+    let id = Eta.Runtime_contract.Backend.local_id local in
+    let previous = Hashtbl.find_opt locals id in
+    let stack = Option.value previous ~default:[] in
+    Hashtbl.replace locals id
+      (Eta.Runtime_contract.Local_binding (local, value) :: stack);
+    Fun.protect
+      ~finally:(fun () ->
+        match previous with
+        | Some stack -> Hashtbl.replace locals id stack
+        | None -> Hashtbl.remove locals id)
+      f
+end
+
+module Direct = Eta.Runtime.Make (Direct_runtime)
+
 type live = {
   mutable snapshot : (int, unit) Observer.Snapshot.t;
 }
@@ -58,13 +141,26 @@ type demand_node = {
   demand_timer : string option;
 }
 
-let capability = "graph-lane"
-
 let record events event =
   events := !events @ [ event ]
 
-let check_cap cap =
-  Alcotest.(check string) "capability" capability cap
+let check_cap (_ : Graph.lane_access) = ()
+
+let with_graph_lane graph f =
+  let runtime = Direct.create () in
+  match
+    Direct.run runtime
+      (Graph.with_lane_access graph
+         ~leaf_name:"test_eta_signal_graph"
+         ~depth_local:(Eta.Runtime_contract.create_local ())
+         ~hooks:
+           (Graph.lane_hooks ~note_waiter_enqueued:ignore
+              ~note_waiter_compaction:ignore)
+         ~after_acquired:(fun () -> Eta.Effect.unit)
+         f)
+  with
+  | Eta.Exit.Ok value -> value
+  | Eta.Exit.Error _ -> Alcotest.fail "unexpected lane access failure"
 
 let empty_stabilization_ops graph =
   let observer_plan _context =
@@ -106,8 +202,9 @@ let empty_stabilization_ops graph =
     ~pure ~rollback
 
 let run_empty_stabilization graph =
-  Graph.run_stabilization graph capability ~timer_refresh:None
-    (empty_stabilization_ops graph)
+  with_graph_lane graph (fun lane ->
+      Graph.run_stabilization graph lane ~timer_refresh:None
+        (empty_stabilization_ops graph))
 
 let create_observer ?(active = true) id =
   {
@@ -550,10 +647,11 @@ let test_stage_bind_switch_owns_transaction_staging () =
   in
   let finish = Graph.create_stabilization_finish () in
   let result =
-    Graph.run_stabilization graph capability ~timer_refresh:None
-      (Graph.stabilization_ops
-         ~classify_graph_error:(fun _ -> None)
-         ~pure ~rollback)
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
   in
   let hooks = Graph.record_stabilization_result finish result in
   Pass.result result
@@ -672,10 +770,11 @@ let test_observer_delivery_plan_uses_collection_order () =
   in
   let stabilization_finish = Graph.create_stabilization_finish () in
   let result =
-    Graph.run_stabilization graph capability ~timer_refresh:None
-      (Graph.stabilization_ops
-         ~classify_graph_error:(fun _ -> None)
-         ~pure ~rollback)
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
   in
   let hooks =
     Graph.record_stabilization_result stabilization_finish result
