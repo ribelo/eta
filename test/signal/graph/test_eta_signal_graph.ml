@@ -66,6 +66,50 @@ let record events event =
 let check_cap cap =
   Alcotest.(check string) "capability" capability cap
 
+let empty_stabilization_ops graph =
+  let observer_plan _context =
+    Pass.observer_plan ~observers:[]
+      ~collect_events:(fun _context _observers -> [])
+      ~mark_events_pending:(fun _context _events -> ())
+  in
+  let pure =
+    Graph.stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~observer_plan
+      ~stage_pending:(fun _context _pending -> ())
+      ~plan_staged_binds:(fun _context _observers -> ())
+      ~commit_staging:(fun _context staging ->
+        let commit_context =
+          Graph.staging_commit_context
+            ~preflight:(fun () -> ())
+            ~commit_bind:(fun _bind -> [])
+            ~prepare_signal:(fun _node -> ())
+            ~commit_timer_refresh:(fun _timer -> ())
+            ~commit_signal:(fun _node -> ())
+        in
+        match Graph.commit_staging graph staging commit_context with
+        | Ok hooks -> hooks
+        | Error err ->
+            Alcotest.failf "unexpected graph error: %s"
+              (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+                 err))
+      ~update_necessity:(fun _context -> ())
+  in
+  let rollback =
+    Pass.rollback_ops
+      ~rollback_staging:(fun _context _staging -> [])
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  Graph.stabilization_ops
+    ~reentrant_stabilization:`Reentrant_stabilization
+    ~classify_graph_error:(fun _ -> None)
+    ~pure ~rollback
+
+let run_empty_stabilization graph =
+  Graph.run_stabilization graph capability ~timer_refresh:None
+    (empty_stabilization_ops graph)
+
 let create_observer ?(active = true) id =
   {
     id;
@@ -382,21 +426,37 @@ let test_generation_owned_by_graph () =
       ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
   Alcotest.(check int) "initial generation" 0 (Graph.generation graph);
-  (match Graph.advance_generation graph with
-  | Ok () -> ()
-  | Error err ->
+  let finish = Graph.create_stabilization_finish () in
+  let result = run_empty_stabilization graph in
+  let hooks = Graph.record_stabilization_result finish result in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "events" [] events;
+      Graph.finish_recorded_stabilization graph finish)
+    ~graph_error:(fun ~hooks:_ err ->
       Alcotest.failf "unexpected graph error: %s"
-        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err));
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
   Alcotest.(check int) "advanced generation" 1 (Graph.generation graph);
   Graph.set_generation graph max_int;
-  (match Graph.advance_generation graph with
-  | Error (`Counter_overflow name)
-    when String.equal name "stabilization generation" ->
-      ()
-  | Error err ->
-      Alcotest.failf "unexpected graph error: %s"
-        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
-  | Ok () -> Alcotest.fail "expected generation overflow");
+  let result = run_empty_stabilization graph in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "expected generation overflow")
+    ~graph_error:(fun ~hooks err ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      match err with
+      | `Counter_overflow name
+        when String.equal name "stabilization generation" ->
+          ()
+      | err ->
+          Alcotest.failf "unexpected graph error: %s"
+            (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+               err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
   Alcotest.(check int) "overflow preserves generation" max_int
     (Graph.generation graph)
 

@@ -249,18 +249,6 @@ val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 
 val set_generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
 
-val advance_generation :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  (unit, Eta_signal_error.graph_error) result
-
-val begin_staging :
-  ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
-  timer_refresh:'refresh option ->
-  staging
-
-val drain_pending :
-  ('pending, _, _, _, _, _, _, _, _, _, _) t -> 'pending list
-
 val enqueue_pending :
   ('pending, _, _, _, _, _, _, _, _, _, _) t -> 'pending -> unit
 
