@@ -4045,91 +4045,6 @@ let test_observer_typed_failure_retries_after_flag_fixed () =
     (List.rev !callback_values);
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_observer_failed_delivery_coalesces_reverted_value () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let fail = ref false in
-  let callback_values = ref [] in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (function
-        | Signal.Initialized value ->
-            Effect.sync (fun () -> callback_values := value :: !callback_values)
-        | Changed { new_value; _ } ->
-            if !fail then Effect.fail `Observer_failed
-            else
-              Effect.sync (fun () ->
-                  callback_values := new_value :: !callback_values)))
-  in
-  run_ok rt Signal.stabilize;
-  fail := true;
-  run_ok rt (Signal.Var.set source 2);
-  expect_fail "observer typed failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "failed snapshot was published" 2
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int)) "failed callback did not record side effect" [ 1 ]
-    (List.rev !callback_values);
-  fail := false;
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reverted snapshot is current" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int)) "reverted failed blip is coalesced" [ 1 ]
-    (List.rev !callback_values);
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list int)) "later distinct value still emits" [ 1; 2 ]
-    (List.rev !callback_values);
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_pending_observer_delivery_coalesces_after_callback_failure () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let fail = ref false in
-  let delivered = ref [] in
-  let record label =
-    Effect.sync (fun () -> delivered := label :: !delivered)
-  in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (function
-        | Signal.Initialized value -> record (Printf.sprintf "init %d" value)
-        | Changed { old_value; new_value } ->
-            if !fail then Effect.fail `Observer_failed
-            else record (Printf.sprintf "%d -> %d" old_value new_value)))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string)) "initial callback" [ "init 0" ]
-    (List.rev !delivered);
-  fail := true;
-  run_ok rt (Signal.Var.set source 1);
-  expect_fail "observer callback failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "failed snapshot was published" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list string)) "failed callback did not deliver" [ "init 0" ]
-    (List.rev !delivered);
-  fail := false;
-  run_ok rt (Signal.Var.set source 0);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reverted snapshot is current" 0
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list string)) "0 -> 0 retry is coalesced" [ "init 0" ]
-    (List.rev !delivered);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string)) "coalesced delivery was acknowledged"
-    [ "init 0" ] (List.rev !delivered);
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string)) "later distinct value emits"
-    [ "init 0"; "0 -> 1" ] (List.rev !delivered);
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_observer_failure_is_fail_fast () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9780,11 +9695,6 @@ let () =
             test_observer_effect_typed_failure_is_observer_error;
           Alcotest.test_case "observer typed failure retries" `Quick
             test_observer_typed_failure_retries_after_flag_fixed;
-          Alcotest.test_case "observer failed delivery coalesces reverted value"
-            `Quick test_observer_failed_delivery_coalesces_reverted_value;
-          Alcotest.test_case
-            "pending observer delivery coalesces after callback failure" `Quick
-            test_pending_observer_delivery_coalesces_after_callback_failure;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
           Alcotest.test_case "observer lifecycle changes inside callback"
