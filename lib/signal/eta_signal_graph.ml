@@ -136,6 +136,19 @@ let update_necessity t lane ~collect_live_nodes ~root ~reachable_ids =
   Eta_signal_graph_core.update_necessary_ids t.core lane next;
   next
 
+type ('id, 'timer) timer_demand = {
+  timer_demand_necessary_ids : (Eta_signal_id.signal, unit) Hashtbl.t;
+  timer_demand_timers : ('id * 'timer) list;
+}
+
+let timer_demand t ~collect_live_nodes ~root ~reachable_ids ~timer =
+  let nodes = collect_nodes t collect_live_nodes in
+  {
+    timer_demand_necessary_ids =
+      reachable_ids ~roots:(List.filter_map root t.observers);
+    timer_demand_timers = List.filter_map timer nodes;
+  }
+
 let dead_nodes t = t.dead_nodes
 let dead_node_count t = List.length t.dead_nodes
 

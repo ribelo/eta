@@ -1744,10 +1744,8 @@ module Make (Observer_error : Observer_error) () = struct
          ~reachable_ids:Graph_reachable_static.ids
         : (signal_id, unit) Hashtbl.t)
 
-  let all_timers (_lane : graph_lane) =
-    List.filter_map
-      (fun (P signal) -> Option.map (fun timer -> (signal.id, timer)) signal.timer)
-      (all_nodes_unlocked ())
+  let signal_timer (P signal) =
+    Option.map (fun timer -> (signal.id, timer)) signal.timer
 
   let fail_with_pending_disposal_hooks hooks_ref eff =
     Cleanup.fail_with_pending hooks_ref eff
@@ -1756,14 +1754,21 @@ module Make (Observer_error : Observer_error) () = struct
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
+  let timer_demand_unlocked (_lane : graph_lane) =
+    Graph.timer_demand graph
+      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
+      ~timer:signal_timer
+
   let refresh_timer_demand_unlocked lane runtime_contract =
+    let demand = timer_demand_unlocked lane in
     Timer.refresh_demand
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running:true
       {
         Timer.demand_collect_necessary =
-          (fun () -> collect_necessary_node_ids lane);
-        demand_collect_timers = (fun () -> all_timers lane);
+          (fun () -> demand.Graph.timer_demand_necessary_ids);
+        demand_collect_timers = (fun () -> demand.Graph.timer_demand_timers);
         demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
         demand_validate_runtime =
           (fun runtime_contract timer ->
