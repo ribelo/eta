@@ -101,6 +101,17 @@ type ('capability, 'start, 'error) demand_effect_port = {
     'start list -> (unit, 'error) Eta.Effect.t;
 }
 
+type ('capability, 'operation, 'error) node_demand_effect_port = {
+  node_demand_effect_acquire :
+    Eta.Runtime_contract.t ->
+    'capability ->
+    (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
+     demand_effects,
+     'error)
+    result;
+  node_demand_effect_state : 'operation node state_port;
+}
+
 val mark_unneeded :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
@@ -143,6 +154,12 @@ val refresh_node_demand :
 val refresh_demand_effect :
   ('capability, 'error) demand_effect_access ->
   ('capability, 'start, 'error) demand_effect_port ->
+  (unit, 'error) Eta.Effect.t
+
+val refresh_node_demand_effect :
+  advance_generation:(int -> int) ->
+  ('capability, 'error) demand_effect_access ->
+  ('capability, 'operation, 'error) node_demand_effect_port ->
   (unit, 'error) Eta.Effect.t
 
 val begin_start :

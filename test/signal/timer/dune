@@ -1,4 +1,16 @@
 (rule
+ (target eta_signal_cleanup.ml)
+ (deps ../../../lib/signal/eta_signal_cleanup.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_cleanup.mli)
+ (deps ../../../lib/signal/eta_signal_cleanup.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
  (target eta_signal_timer_policy.ml)
  (deps ../../../lib/signal/eta_signal_timer_policy.ml)
  (action
@@ -55,6 +67,7 @@
  (name test_eta_signal_timer)
  (modules
   test_eta_signal_timer
+  eta_signal_cleanup
   eta_signal_timer
   eta_signal_timer_adapter
   eta_signal_timer_policy

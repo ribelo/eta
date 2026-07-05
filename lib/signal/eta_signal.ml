@@ -1692,17 +1692,6 @@ module Make (Observer_error : Observer_error) () = struct
       }
       runtime_contract
 
-  let rollback_unclaimed_timer_starts_unlocked attempts =
-    Timer.rollback_unclaimed_start_attempts
-      ~advance_generation:(checked_succ "timer generation")
-      timer_state_port attempts
-
-  let run_timer_start_attempts attempts =
-    Effect.concat (Timer.start_attempt_effects attempts)
-
-  let run_timer_cancel_hooks hooks =
-    Cleanup.run_hooks hooks |> Effect.uninterruptible
-
   let current_runtime_contract () =
     Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
       (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
@@ -1717,16 +1706,14 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let refresh_timer_demand () =
-    Timer.refresh_demand_effect timer_demand_access
+    Timer.refresh_node_demand_effect
+      ~advance_generation:(checked_succ "timer generation")
+      timer_demand_access
       {
-        Timer.demand_acquire =
+        Timer.node_demand_effect_acquire =
           (fun runtime_contract lane ->
             refresh_timer_demand_unlocked lane runtime_contract);
-        demand_rollback_unclaimed =
-          (fun (_lane : graph_lane) attempts ->
-            Ok (rollback_unclaimed_timer_starts_unlocked attempts));
-        demand_run_cancel_hooks = run_timer_cancel_hooks;
-        demand_run_start_attempts = run_timer_start_attempts;
+        node_demand_effect_state = timer_state_port;
       }
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =

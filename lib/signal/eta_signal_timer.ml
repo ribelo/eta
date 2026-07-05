@@ -110,6 +110,17 @@ type ('capability, 'start, 'error) demand_effect_port = {
     'start list -> (unit, 'error) Eta.Effect.t;
 }
 
+type ('capability, 'operation, 'error) node_demand_effect_port = {
+  node_demand_effect_acquire :
+    Eta.Runtime_contract.t ->
+    'capability ->
+    (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
+     demand_effects,
+     'error)
+    result;
+  node_demand_effect_state : 'operation node state_port;
+}
+
 let start_attempt ~timer ~effect =
   { attempt_timer = timer; attempt_effect = effect }
 
@@ -218,6 +229,22 @@ let refresh_demand_effect access port =
       rollback_unclaimed_starts = port.demand_rollback_unclaimed;
       run_cancel_hooks = port.demand_run_cancel_hooks;
       run_start_attempts = port.demand_run_start_attempts;
+    }
+
+let refresh_node_demand_effect ~advance_generation access port =
+  refresh_demand_effect access
+    {
+      demand_acquire = port.node_demand_effect_acquire;
+      demand_rollback_unclaimed =
+        (fun _capability attempts ->
+          Ok
+            (rollback_unclaimed_start_attempts ~advance_generation
+               port.node_demand_effect_state attempts));
+      demand_run_cancel_hooks =
+        (fun hooks ->
+          Eta_signal_cleanup.run_hooks hooks |> Eta.Effect.uninterruptible);
+      demand_run_start_attempts =
+        (fun attempts -> Eta.Effect.concat (start_attempt_effects attempts));
     }
 
 let begin_start port timer ~generation =
