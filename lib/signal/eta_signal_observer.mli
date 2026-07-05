@@ -74,11 +74,7 @@ module Lifecycle : sig
     | Disposed of 'value
     | Invalid_scope of 'value
 
-  type ('live, 'value) finish = {
-    state : ('live, 'value) t;
-    hook_live : 'live option;
-    remove : bool;
-  }
+  type ('live, 'value) finish
 
   val live : ('live, 'value) t -> 'live option
   val active_live : ('live, 'value) t -> 'live option
@@ -98,6 +94,15 @@ module Lifecycle : sig
     finish_reason ->
     ('live, 'value) t ->
     ('live, 'value) finish
+
+  val finish_result :
+    ('live, 'value) finish ->
+    plan:
+      (state:('live, 'value) t ->
+      hook_live:'live option ->
+      remove:bool ->
+      'a) ->
+    'a
 
   val read_value :
     value_of_live:('live -> 'a Value.t) ->

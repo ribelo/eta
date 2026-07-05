@@ -169,11 +169,12 @@ let test_lifecycle_finish () =
   let value_of_live = String.length in
   let check_finish label expected_state expected_hook_live expected_remove
       finish =
-    Alcotest.check lifecycle_state (label ^ " state") expected_state
-      finish.state;
-    Alcotest.(check (option string))
-      (label ^ " hook live") expected_hook_live finish.hook_live;
-    Alcotest.(check bool) (label ^ " remove") expected_remove finish.remove
+    finish_result finish ~plan:(fun ~state ~hook_live ~remove ->
+        Alcotest.check lifecycle_state (label ^ " state") expected_state
+          state;
+        Alcotest.(check (option string))
+          (label ^ " hook live") expected_hook_live hook_live;
+        Alcotest.(check bool) (label ^ " remove") expected_remove remove)
   in
   check_finish "registering dispose" (Disposed 4) (Some "live") true
     (finish ~value_of_live Finish_disposed (Registering "live"));

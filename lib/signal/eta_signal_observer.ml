@@ -154,6 +154,9 @@ module Lifecycle = struct
     | Disposed _, _ | Invalid_scope _, Finish_invalid_scope ->
         { state; hook_live = None; remove = false }
 
+  let finish_result finish ~plan =
+    plan ~state:finish.state ~hook_live:finish.hook_live ~remove:finish.remove
+
   let read_value ~value_of_live = function
     | Registering _ -> Error `Uninitialized_observer
     | Disposed _ -> Error `Disposed_observer
@@ -200,11 +203,12 @@ let finish_observer port observer reason =
     Lifecycle.finish ~value_of_live:port.lifecycle_value reason
       (port.lifecycle_state observer)
   in
-  port.lifecycle_set_state observer finish.state;
-  if finish.remove then port.lifecycle_remove observer;
-  match finish.hook_live with
-  | None -> []
-  | Some live -> port.lifecycle_finish_hooks live reason
+  Lifecycle.finish_result finish ~plan:(fun ~state ~hook_live ~remove ->
+      port.lifecycle_set_state observer state;
+      if remove then port.lifecycle_remove observer;
+      match hook_live with
+      | None -> []
+      | Some live -> port.lifecycle_finish_hooks live reason)
 
 let dispose_observer port observer =
   finish_observer port observer Lifecycle.Finish_disposed
