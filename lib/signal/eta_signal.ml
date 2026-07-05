@@ -1888,7 +1888,7 @@ module Make (Observer_error : Observer_error) () = struct
             update_necessity_counters_unlocked lane)
     in
     let rollback =
-      Stabilization_pass.rollback_ops
+      Graph.stabilization_rollback_ops
         ~rollback_staging:
           (fun
             (context : graph_lane Stabilization_pass.rollback_context)

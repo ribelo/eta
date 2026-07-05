@@ -96,7 +96,7 @@ let empty_stabilization_ops graph =
       ~update_necessity:(fun _context -> ())
   in
   let rollback =
-    Pass.rollback_ops
+    Graph.stabilization_rollback_ops
       ~rollback_staging:(fun _context _staging -> [])
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
@@ -544,7 +544,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~update_necessity:(fun _context -> record events "update_necessity")
   in
   let rollback =
-    Pass.rollback_ops
+    Graph.stabilization_rollback_ops
       ~rollback_staging:(fun _context _staging -> [])
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
@@ -666,7 +666,7 @@ let test_observer_delivery_plan_uses_collection_order () =
         record events "update_necessity")
   in
   let rollback =
-    Pass.rollback_ops
+    Graph.stabilization_rollback_ops
       ~rollback_staging:(fun context _staging ->
         check_cap (Pass.rollback_capability context);
         [])

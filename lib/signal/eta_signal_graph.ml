@@ -718,6 +718,30 @@ let stabilization_pure_ops ~release_pending_marks ~observer_plan
     update_necessity;
   }
 
+type ('capability, 'pending, 'observer, 'hook) stabilization_rollback =
+  {
+    rollback_staging :
+      'capability Eta_signal_stabilization_pass.rollback_context ->
+      staging ->
+      'hook list;
+    mark_observers_failed_without_current :
+      'capability Eta_signal_stabilization_pass.rollback_context ->
+      'observer list ->
+      unit;
+    requeue_pending :
+      'capability Eta_signal_stabilization_pass.rollback_context ->
+      'pending list ->
+      unit;
+  }
+
+let stabilization_rollback_ops ~rollback_staging
+    ~mark_observers_failed_without_current ~requeue_pending =
+  {
+    rollback_staging;
+    mark_observers_failed_without_current;
+    requeue_pending;
+  }
+
 type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_ops =
   {
@@ -731,8 +755,7 @@ type ('capability, 'pending, 'observer, 'event, 'hook)
         'hook )
       stabilization_pure;
     rollback :
-      ('capability, 'pending, 'observer, 'hook, staging)
-      Eta_signal_stabilization_pass.rollback;
+      ('capability, 'pending, 'observer, 'hook) stabilization_rollback;
   }
 
 let stabilization_ops ~reentrant_stabilization ~classify_graph_error ~pure
@@ -763,13 +786,21 @@ let pass_pure t timer_refresh pure =
     ~commit_staging:pure.commit_staging
     ~update_necessity:pure.update_necessity
 
+let pass_rollback rollback =
+  Eta_signal_stabilization_pass.rollback_ops
+    ~rollback_staging:rollback.rollback_staging
+    ~mark_observers_failed_without_current:
+      rollback.mark_observers_failed_without_current
+    ~requeue_pending:rollback.requeue_pending
+
 let clear_timer_refresh t _context =
   Eta_signal_graph_state.clear_active_timer_refresh t.state
 
 let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_stabilization_pass.run t.stabilization capability
     (Eta_signal_stabilization_pass.pass_ops ~errors:(pass_errors ops)
-       ~pure:(pass_pure t timer_refresh ops.pure) ~rollback:ops.rollback
+       ~pure:(pass_pure t timer_refresh ops.pure)
+       ~rollback:(pass_rollback ops.rollback)
        ~timer_refresh:
          (Eta_signal_stabilization_pass.timer_refresh_ops
             ~clear_active_timer_refresh:(clear_timer_refresh t)))
