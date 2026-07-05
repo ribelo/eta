@@ -14,7 +14,6 @@
   eta_signal_lane
   eta_signal_observer
   eta_signal_scope
-  eta_signal_staging
   eta_signal_stabilization_pass
   eta_signal_stream_bridge
   eta_signal_timer
@@ -196,18 +195,6 @@
 (rule
  (target eta_signal_scope.mli)
  (deps ../../lib/signal/eta_signal_scope.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_staging.ml)
- (deps ../../lib/signal/eta_signal_staging.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_staging.mli)
- (deps ../../lib/signal/eta_signal_staging.mli)
  (action
   (copy %{deps} %{target})))
 
