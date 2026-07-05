@@ -124,6 +124,17 @@ type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
   demand_plan_stop : 'timer -> stop_plan -> 'hook list;
 }
 
+let demand_context ~necessary ~validate ~effective_state ~current_state
+    ~start ~stop =
+  {
+    demand_resource_necessary = necessary;
+    demand_resource_validate = validate;
+    demand_resource_effective_state = effective_state;
+    demand_resource_current_state = current_state;
+    demand_plan_start = start;
+    demand_plan_stop = stop;
+  }
+
 type 'a demand_plan =
   | Demand_plan_start of 'a * start_plan
   | Demand_plan_stop of 'a * stop_plan option

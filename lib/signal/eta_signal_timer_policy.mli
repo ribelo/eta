@@ -80,14 +80,7 @@ type stop_plan
 
 type start_plan
 
-type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
-  demand_resource_necessary : 'id -> bool;
-  demand_resource_validate : 'timer -> (unit, 'error) result;
-  demand_resource_effective_state : 'timer -> state;
-  demand_resource_current_state : 'timer -> state;
-  demand_plan_start : 'timer -> start_plan -> 'start;
-  demand_plan_stop : 'timer -> stop_plan -> 'hook list;
-}
+type ('id, 'timer, 'start, 'hook, 'error) demand_context
 
 type 'a demand_plan =
   | Demand_plan_start of 'a * start_plan
@@ -207,6 +200,15 @@ val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
 
 val demand_resource : id:'id -> 'timer -> ('id, 'timer) demand_resource
+
+val demand_context :
+  necessary:('id -> bool) ->
+  validate:('timer -> (unit, 'error) result) ->
+  effective_state:('timer -> state) ->
+  current_state:('timer -> state) ->
+  start:('timer -> start_plan -> 'start) ->
+  stop:('timer -> stop_plan -> 'hook list) ->
+  ('id, 'timer, 'start, 'hook, 'error) demand_context
 
 val classify_demand :
   ('id, 'timer, _, _, 'error) demand_context ->

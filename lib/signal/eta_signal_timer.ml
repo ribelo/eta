@@ -269,19 +269,16 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
            Eta_signal_timer_policy.demand_resource ~id timer)
   in
   let context =
-    {
-      Eta_signal_timer_policy.demand_resource_necessary =
-        port.demand_is_necessary necessary;
-      demand_resource_validate = port.demand_validate_runtime runtime;
-      demand_resource_effective_state = port.demand_state.state_effective;
-      demand_resource_current_state = port.demand_state.state_current;
-      demand_plan_start =
-        apply_start_plan
-          ~set_current_state:port.demand_state.state_set_current
-          ~start_effect:port.demand_start_effect;
-      demand_plan_stop =
-        apply_stop_plan port.demand_state;
-    }
+    Eta_signal_timer_policy.demand_context
+      ~necessary:(port.demand_is_necessary necessary)
+      ~validate:(port.demand_validate_runtime runtime)
+      ~effective_state:port.demand_state.state_effective
+      ~current_state:port.demand_state.state_current
+      ~start:
+        (apply_start_plan
+           ~set_current_state:port.demand_state.state_set_current
+           ~start_effect:port.demand_start_effect)
+      ~stop:(apply_stop_plan port.demand_state)
   in
   match
     Eta_signal_timer_policy.demand_effects ~advance_generation ~cancel_running

@@ -617,23 +617,21 @@ let test_demand_effects_classifies_resources () =
     ]
   in
   let context =
-    {
-      Timer_policy.demand_resource_necessary = (fun id -> id = 1);
-      demand_resource_validate =
+    Timer_policy.demand_context
+      ~necessary:(fun id -> id = 1)
+      ~validate:
         (fun timer ->
           validated := timer :: !validated;
-          Ok ());
-      demand_resource_effective_state = state;
-      demand_resource_current_state = state;
-      demand_plan_start =
+          Ok ())
+      ~effective_state:state ~current_state:state
+      ~start:
         (fun timer plan ->
           timer ^ ":start:"
-          ^ string_of_int (start_plan_generation plan));
-      demand_plan_stop =
+          ^ string_of_int (start_plan_generation plan))
+      ~stop:
         (fun timer plan ->
           if List.length (stop_plan_cancel_hooks plan) = 0 then []
-          else [ timer ^ ":stop" ]);
-    }
+          else [ timer ^ ":stop" ])
   in
   match
     Timer_policy.demand_effects ~advance_generation:succ
@@ -656,23 +654,22 @@ let test_demand_effects_validation_failure_short_circuits () =
   let validated = ref [] in
   let inactive = timer_inactive 0 in
   let context =
-    {
-      Timer_policy.demand_resource_necessary = (fun _id -> true);
-      demand_resource_validate =
+    Timer_policy.demand_context
+      ~necessary:(fun _id -> true)
+      ~validate:
         (fun timer ->
           validated := timer :: !validated;
-          Error `Runtime_mismatch);
-      demand_resource_effective_state = (fun _timer -> inactive);
-      demand_resource_current_state = (fun _timer -> inactive);
-      demand_plan_start =
+          Error `Runtime_mismatch)
+      ~effective_state:(fun _timer -> inactive)
+      ~current_state:(fun _timer -> inactive)
+      ~start:
         (fun _timer _plan ->
           started := true;
-          "started");
-      demand_plan_stop =
+          "started")
+      ~stop:
         (fun _timer _plan ->
           stopped := true;
-          [ "stopped" ]);
-    }
+          [ "stopped" ])
   in
   let resources =
     [
