@@ -624,6 +624,11 @@ let demand_plans ~advance_generation ~cancel_running items =
                    item.demand_current_state )))
     items
 
+let demand_plan_result demand_plan ~start ~stop =
+  match demand_plan with
+  | Demand_plan_start (item, plan) -> start ~item ~plan
+  | Demand_plan_stop (item, plan) -> stop ~item ~plan
+
 let apply_demand_plans ~start ~stop plans =
   let start_attempts = ref [] in
   let cancel_hooks = ref [] in

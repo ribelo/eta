@@ -500,12 +500,13 @@ let test_demand_policy () =
 
 let demand_plan_values plans =
   List.map
-    (function
-      | Timer_policy.Demand_plan_start (item, plan) ->
-          (item, start_plan_label plan)
-      | Timer_policy.Demand_plan_stop (item, None) -> (item, "stop:none")
-      | Timer_policy.Demand_plan_stop (item, Some plan) ->
-          (item, stop_plan_label plan))
+    (fun demand_plan ->
+      Timer_policy.demand_plan_result demand_plan
+        ~start:(fun ~item ~plan -> (item, start_plan_label plan))
+        ~stop:(fun ~item ~plan ->
+          match plan with
+          | None -> (item, "stop:none")
+          | Some plan -> (item, stop_plan_label plan)))
     plans
 
 let test_demand_plans_policy () =
@@ -541,25 +542,7 @@ let test_demand_plans_policy () =
     plans
 
 let test_apply_demand_plans_preserves_effect_order () =
-  let start_plan generation =
-    match
-      Timer_policy.start
-        ~advance_generation:(fun _ -> generation)
-        ~effective_state:(timer_inactive 0)
-        ~current_state:(timer_inactive 0)
-    with
-    | Some plan -> plan
-    | None -> Alcotest.fail "expected synthetic start plan"
-  in
-  let stop_plan generation =
-    match
-      Timer_policy.stop
-        ~advance_generation:(fun _ -> generation)
-        ~cancel_running:false (timer_starting 0)
-    with
-    | Some plan -> plan
-    | None -> Alcotest.fail "expected synthetic stop plan"
-  in
+  let running = timer_running 1 (Some 10) noop in
   let effects =
     Timer_policy.apply_demand_plans
       ~start:(fun item plan ->
@@ -572,13 +555,22 @@ let test_apply_demand_plans_preserves_effect_order () =
           item ^ ":stop:" ^ string_of_int generation ^ ":first";
           item ^ ":stop:" ^ string_of_int generation ^ ":second";
         ])
-      [
-        Timer_policy.Demand_plan_start ("a", start_plan 1);
-        Timer_policy.Demand_plan_stop ("b", Some (stop_plan 2));
-        Timer_policy.Demand_plan_stop ("ignored", None);
-        Timer_policy.Demand_plan_start ("c", start_plan 3);
-        Timer_policy.Demand_plan_stop ("d", Some (stop_plan 4));
-      ]
+      (Timer_policy.demand_plans ~advance_generation:succ
+         ~cancel_running:false
+         [
+           Timer_policy.demand_item ~item:"a" ~necessary:true
+             ~effective_state:(timer_inactive 0)
+             ~current_state:(timer_inactive 0);
+           Timer_policy.demand_item ~item:"b" ~necessary:false
+             ~effective_state:running ~current_state:(timer_starting 1);
+           Timer_policy.demand_item ~item:"ignored" ~necessary:false
+             ~effective_state:running ~current_state:(timer_inactive 0);
+           Timer_policy.demand_item ~item:"c" ~necessary:true
+             ~effective_state:(timer_inactive 0)
+             ~current_state:(timer_inactive 2);
+           Timer_policy.demand_item ~item:"d" ~necessary:false
+             ~effective_state:running ~current_state:(timer_starting 3);
+         ])
   in
   Timer_policy.demand_effects_result effects
     ~plan:(fun ~start_attempts ~cancel_hooks ->

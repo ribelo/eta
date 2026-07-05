@@ -52,9 +52,7 @@ type start_plan
 
 type ('id, 'timer, 'start, 'hook, 'error) demand_context
 
-type 'a demand_plan =
-  | Demand_plan_start of 'a * start_plan
-  | Demand_plan_stop of 'a * stop_plan option
+type 'a demand_plan
 
 type ('start, 'hook) demand_effects
 
@@ -254,6 +252,12 @@ val demand_plans :
   cancel_running:bool ->
   'a demand_item list ->
   'a demand_plan list
+
+val demand_plan_result :
+  'a demand_plan ->
+  start:(item:'a -> plan:start_plan -> 'result) ->
+  stop:(item:'a -> plan:stop_plan option -> 'result) ->
+  'result
 
 val apply_demand_plans :
   start:('timer -> start_plan -> 'start) ->
