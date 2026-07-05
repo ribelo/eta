@@ -996,33 +996,39 @@ module Make (Observer_error : Observer_error) () = struct
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running timer_state_port timer
 
+  let node_lifecycle ?equal ~dirty kind =
+    {
+      Graph.node_validate_dependency = validate_dependency;
+      node_create =
+        (fun ~id ~scope ->
+          {
+            id;
+            equal = Option.value equal ~default:default_equal;
+            kind;
+            snapshot = Transaction.create_staged Signal_snapshot.empty;
+            dirty;
+            dependencies = [];
+            dependents = [];
+            computing = false;
+            seen_generation = -1;
+            changed_seen = false;
+            computed_generation = -1;
+            scope;
+            valid = true;
+            timer = None;
+          });
+      node_attach_dependency =
+        (fun ~parent ~child -> attach_packed_dependency parent child);
+      node_add_to_scope = (fun scope signal -> Scope.add_node scope (P signal));
+      node_pack = (fun signal -> P signal);
+      node_create_weak = weak_packed_signal;
+    }
+
   let new_signal ?(dirty = true) ?equal kind dependencies =
     graph_result_or_raise
-      (Graph.create_live_node graph scope_ops ~dependencies
-         ~validate_dependency
-         ~create_node:(fun ~id ~scope ->
-           {
-             id;
-             equal = Option.value equal ~default:default_equal;
-             kind;
-             snapshot =
-               Transaction.create_staged Signal_snapshot.empty;
-             dirty;
-             dependencies = [];
-             dependents = [];
-             computing = false;
-             seen_generation = -1;
-             changed_seen = false;
-             computed_generation = -1;
-             scope;
-             valid = true;
-             timer = None;
-           })
-         ~attach_dependency:(fun ~parent ~child ->
-           attach_packed_dependency parent child)
-         ~add_to_scope:(fun scope signal -> Scope.add_node scope (P signal))
-         ~pack_live_node:(fun signal -> P signal)
-         ~create_weak_node:weak_packed_signal)
+      (Graph.create_live_node graph scope_ops
+         (node_lifecycle ?equal ~dirty kind)
+         ~dependencies)
 
   let new_const ?equal value =
     let signal = new_signal ?equal ~dirty:false (Const value) [] in

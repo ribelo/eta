@@ -90,6 +90,16 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
+type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
+  {
+    node_validate_dependency : 'dependency -> unit;
+    node_create : id:Eta_signal_id.signal -> scope:'scope option -> 'node;
+    node_attach_dependency : parent:'node -> child:'dependency -> unit;
+    node_add_to_scope : 'scope -> 'node -> unit;
+    node_pack : 'node -> 'packed_node;
+    node_create_weak : 'packed_node -> 'weak_node;
+  }
+
 val create :
   create_scope_context:(unit -> 'scope_context) ->
   create_stream_bridge_metrics:(unit -> 'stream_metrics) ->
@@ -559,14 +569,8 @@ val remember_live_node :
 val create_live_node :
   (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->
   ('scope_context, 'scope) scope_ops ->
+  ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle ->
   dependencies:'dependency list ->
-  validate_dependency:('dependency -> unit) ->
-  create_node:
-    (id:Eta_signal_id.signal -> scope:'scope option -> 'node) ->
-  attach_dependency:(parent:'node -> child:'dependency -> unit) ->
-  add_to_scope:('scope -> 'node -> unit) ->
-  pack_live_node:('node -> 'packed_node) ->
-  create_weak_node:('packed_node -> 'weak_node) ->
   ('node, Eta_signal_error.graph_error) result
 
 val live_nodes :

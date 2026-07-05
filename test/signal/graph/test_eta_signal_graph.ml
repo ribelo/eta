@@ -1,4 +1,5 @@
 module Graph = Eta_signal_testable.Graph
+module Id = Eta_signal_testable.Id
 module Observer = Eta_signal_testable.Observer_core
 module Pass = Eta_signal_testable.Stabilization_pass
 
@@ -10,6 +11,21 @@ type observer = {
   id : int;
   active : bool;
   mutable live : live option;
+}
+
+type scope = {
+  scope_id : int;
+  mutable scope_nodes : int list;
+}
+
+type scope_context = {
+  mutable current_scope : scope option;
+}
+
+type node = {
+  node_id : int;
+  node_scope : scope option;
+  mutable node_dependencies : int list;
 }
 
 let capability = "graph-lane"
@@ -47,6 +63,103 @@ let commit_transaction graph =
   | Error err ->
       Alcotest.failf "unexpected graph error: %s"
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+
+let scoped_graph scope_context =
+  Graph.create ~create_scope_context:(fun () -> scope_context)
+    ~create_stream_bridge_metrics:(fun () -> ()) ()
+
+let test_scope_ops =
+  {
+    Graph.scope_current = (fun context -> context.current_scope);
+    scope_require_valid_current =
+      (fun context ->
+        match context.current_scope with
+        | Some scope -> Ok scope
+        | None -> Error `Ambiguous_scope);
+    scope_with_current =
+      (fun context scope f ->
+        let previous = context.current_scope in
+        context.current_scope <- Some scope;
+        Fun.protect ~finally:(fun () -> context.current_scope <- previous) f);
+  }
+
+let live_nodes_from_cells _keep cells = (cells, cells)
+
+let test_create_live_node_owns_lifecycle_context () =
+  let events = ref [] in
+  let scope = { scope_id = 42; scope_nodes = [] } in
+  let graph = scoped_graph { current_scope = Some scope } in
+  let lifecycle =
+    {
+      Graph.node_validate_dependency =
+        (fun dependency ->
+          record events ("validate:" ^ string_of_int dependency));
+      node_create =
+        (fun ~id ~scope ->
+          let id = Id.signal_int id in
+          let scope_label =
+            match scope with
+            | Some scope -> "scope:" ^ string_of_int scope.scope_id
+            | None -> "no_scope"
+          in
+          record events
+            ("create:" ^ string_of_int id ^ ":" ^ scope_label);
+          { node_id = id; node_scope = scope; node_dependencies = [] });
+      node_attach_dependency =
+        (fun ~parent ~child ->
+          record events
+            ("attach:" ^ string_of_int parent.node_id ^ "<-"
+           ^ string_of_int child);
+          parent.node_dependencies <- parent.node_dependencies @ [ child ]);
+      node_add_to_scope =
+        (fun scope node ->
+          record events
+            ("scope:" ^ string_of_int scope.scope_id ^ ":"
+           ^ string_of_int node.node_id);
+          scope.scope_nodes <- scope.scope_nodes @ [ node.node_id ]);
+      node_pack =
+        (fun node ->
+          record events ("pack:" ^ string_of_int node.node_id);
+          node);
+      node_create_weak =
+        (fun node ->
+          record events ("weak:" ^ string_of_int node.node_id);
+          node);
+    }
+  in
+  let node =
+    match Graph.create_live_node graph test_scope_ops lifecycle
+            ~dependencies:[ 7; 9 ] with
+    | Ok node -> node
+    | Error err ->
+        Alcotest.failf "unexpected graph error: %s"
+          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  in
+  Alcotest.(check int) "node id" 0 node.node_id;
+  Alcotest.(check (option int))
+    "node scope" (Some 42)
+    (Option.map (fun scope -> scope.scope_id) node.node_scope);
+  Alcotest.(check (list int)) "dependencies" [ 7; 9 ]
+    node.node_dependencies;
+  Alcotest.(check (list int)) "scope nodes" [ 0 ] scope.scope_nodes;
+  let live_node_ids =
+    Graph.live_nodes graph ~collect_live_nodes:live_nodes_from_cells
+    |> List.map (fun node -> node.node_id)
+  in
+  Alcotest.(check (list int)) "live nodes" [ 0 ] live_node_ids;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "validate:7";
+      "validate:9";
+      "create:0:scope:42";
+      "attach:0<-7";
+      "attach:0<-9";
+      "scope:42:0";
+      "pack:0";
+      "weak:0";
+    ]
+    !events
 
 let test_observer_delivery_plan_owns_sorted_collection () =
   let events = ref [] in
@@ -218,6 +331,11 @@ let test_observer_delivery_plan_owns_sorted_collection () =
 let () =
   Alcotest.run "eta_signal_graph"
     [
+      ( "node lifecycle",
+        [
+          Alcotest.test_case "context owns creation" `Quick
+            test_create_live_node_owns_lifecycle_context;
+        ] );
       ( "observer delivery",
         [
           Alcotest.test_case "sorted collection" `Quick

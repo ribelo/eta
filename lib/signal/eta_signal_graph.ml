@@ -109,6 +109,16 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
+type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
+  {
+    node_validate_dependency : 'dependency -> unit;
+    node_create : id:Eta_signal_id.signal -> scope:'scope option -> 'node;
+    node_attach_dependency : parent:'node -> child:'dependency -> unit;
+    node_add_to_scope : 'scope -> 'node -> unit;
+    node_pack : 'node -> 'packed_node;
+    node_create_weak : 'packed_node -> 'weak_node;
+  }
+
 let core_counter = function
   | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
   | Recompute_count -> Eta_signal_graph_core.Recompute_count
@@ -536,23 +546,24 @@ let collect_live_node_registry t ~collect_live_nodes ~keep =
 let remember_live_node t ~create_weak_node node =
   t.all_nodes <- create_weak_node node :: t.all_nodes
 
-let create_live_node t scope_ops ~dependencies ~validate_dependency
-    ~create_node ~attach_dependency ~add_to_scope ~pack_live_node
-    ~create_weak_node =
+let create_live_node t scope_ops lifecycle ~dependencies =
   ensure_context t;
-  List.iter validate_dependency dependencies;
+  List.iter lifecycle.node_validate_dependency dependencies;
   match next_signal_id t with
   | Error _ as error -> error
   | Ok id -> (
       match allocation_scope t scope_ops with
       | Error _ as error -> error
       | Ok scope ->
-          let node = create_node ~id ~scope in
+          let node = lifecycle.node_create ~id ~scope in
           List.iter
-            (fun child -> attach_dependency ~parent:node ~child)
+            (fun child ->
+              lifecycle.node_attach_dependency ~parent:node ~child)
             dependencies;
-          Option.iter (fun scope -> add_to_scope scope node) scope;
-          remember_live_node t ~create_weak_node (pack_live_node node);
+          Option.iter (fun scope -> lifecycle.node_add_to_scope scope node) scope;
+          remember_live_node t
+            ~create_weak_node:lifecycle.node_create_weak
+            (lifecycle.node_pack node);
           Ok node)
 
 let live_nodes t ~collect_live_nodes =
