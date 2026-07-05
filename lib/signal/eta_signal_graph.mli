@@ -213,8 +213,11 @@ val finish_stabilization :
   Eta_signal_stabilization.token ->
   unit
 
-val remember_node :
-  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t -> 'weak_node -> unit
+val remember_live_node :
+  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
+  create_weak_node:('node -> 'weak_node) ->
+  'node ->
+  unit
 
 val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->

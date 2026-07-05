@@ -132,7 +132,8 @@ let collect_live_node_registry t ~collect_live_nodes ~keep =
   t.all_nodes <- cells;
   nodes
 
-let remember_node t node = t.all_nodes <- node :: t.all_nodes
+let remember_live_node t ~create_weak_node node =
+  t.all_nodes <- create_weak_node node :: t.all_nodes
 
 let live_nodes t ~collect_live_nodes =
   collect_live_node_registry t ~collect_live_nodes ~keep:(fun _ -> true)

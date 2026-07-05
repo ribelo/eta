@@ -1089,7 +1089,8 @@ module Make (Observer_error : Observer_error) () = struct
     in
     List.iter (attach_packed_dependency signal) dependencies;
     add_to_scope scope signal;
-    Graph.remember_node graph (weak_packed_signal (P signal));
+    Graph.remember_live_node graph ~create_weak_node:weak_packed_signal
+      (P signal);
     signal
 
   let new_const ?equal value =
