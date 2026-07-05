@@ -181,8 +181,11 @@ val next_scope_id :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   (Eta_signal_id.scope, Eta_signal_error.graph_error) result
 
-val set_next_node_id : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
-val set_next_scope_id : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+val set_next_node_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
+
+val set_next_scope_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val counter : (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int
 

@@ -257,9 +257,10 @@ let next_signal_id t = Eta_signal_graph_core.next_signal_id t.core
 let next_var_id t = Eta_signal_graph_core.next_var_id t.core
 let next_observer_id t = Eta_signal_graph_core.next_observer_id t.core
 let next_scope_id t = Eta_signal_graph_core.next_scope_id t.core
-let set_next_node_id t next = Eta_signal_graph_core.set_next_node_id t.core next
+let set_next_node_id t _lane next =
+  Eta_signal_graph_core.set_next_node_id t.core next
 
-let set_next_scope_id t next =
+let set_next_scope_id t _lane next =
   Eta_signal_graph_core.set_next_scope_id t.core next
 
 let counter t target = Eta_signal_graph_core.counter t.core (core_counter target)

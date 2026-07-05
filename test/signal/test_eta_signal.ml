@@ -3708,7 +3708,10 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
 
 let test_var_create_counter_overflow_raises_graph_error () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
-  Eta_signal_testable.Graph.set_next_node_id Overflow_signal.graph max_int;
+  with_runtime @@ fun rt ->
+  with_test_graph_lane rt Overflow_signal.graph (fun lane ->
+      Eta_signal_testable.Graph.set_next_node_id Overflow_signal.graph lane
+        max_int);
   match Overflow_signal.Var.create 1 with
   | exception Overflow_signal.Graph_error (`Counter_overflow name)
     when String.equal name "node id" ->
