@@ -2170,7 +2170,7 @@ module Make (Observer_error : Observer_error) () = struct
   let necessary_node_count lane =
     Hashtbl.length (collect_necessary_node_ids lane)
 
-  let dead_node_count () = Graph.dead_node_count graph
+  let dead_node_count lane = Graph.dead_node_count graph lane
 
   let live_dirty_node_count all_nodes =
     List.fold_left
@@ -2215,7 +2215,7 @@ module Make (Observer_error : Observer_error) () = struct
               dead_node_count =
                 stats_counter "stats dead_node_count"
                   (stats_count Private_test_hooks.Stats_dead_node_count
-                     (dead_node_count ()));
+                     (dead_node_count lane));
               live_dirty_node_count =
                 stats_counter "stats live_dirty_node_count"
                   (live_dirty_node_count all_nodes);
@@ -2428,7 +2428,7 @@ module Make (Observer_error : Observer_error) () = struct
     let live_ids = Hashtbl.create 16 in
     let dead_ids = Hashtbl.create 16 in
     if include_dead_nodes then
-      Graph.iter_dead_nodes graph ~f:(fun tombstone ->
+      Graph.iter_dead_nodes graph lane ~f:(fun tombstone ->
           Hashtbl.replace dead_ids tombstone.dead_id ());
     let selected_live_signal signal =
       selected signal
@@ -2466,7 +2466,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let dead_dot_nodes =
       if include_dead_nodes then
-        Graph.map_dead_nodes graph ~f:(fun tombstone ->
+        Graph.map_dead_nodes graph lane ~f:(fun tombstone ->
             {
               Debug.dot_node_id = dead_signal_id_label tombstone.dead_id;
               dot_node_label = dead_signal_label options tombstone;

@@ -484,11 +484,13 @@ let test_invalidate_live_node_owns_lifecycle_order () =
   Alcotest.(check (list int))
     "root dependencies cleared" []
     (List.map (fun node -> node.invalid_id) root.invalid_dependencies);
-  Alcotest.(check int) "dead count" 2 (Graph.dead_node_count graph);
+  Alcotest.(check int) "dead count" 2
+    (with_graph_lane graph (fun lane -> Graph.dead_node_count graph lane));
   Alcotest.(check (list string))
     "dead nodes"
     [ "dead:2"; "dead:1" ]
-    (Graph.map_dead_nodes graph ~f:(fun dead -> dead.dead_label))
+    (with_graph_lane graph (fun lane ->
+         Graph.map_dead_nodes graph lane ~f:(fun dead -> dead.dead_label)))
 
 let test_compute_cached_owns_cache_and_cycle_dispatch () =
   let events = ref [] in

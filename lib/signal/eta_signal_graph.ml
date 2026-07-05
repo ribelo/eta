@@ -846,7 +846,7 @@ let max_dead_node_tombstones = 1024
 let same_signal_id left right =
   Eta_signal_id.signal_int left = Eta_signal_id.signal_int right
 
-let remember_dead_node t ~id dead_node =
+let remember_dead_node t _lane ~id dead_node =
   t.dead_nodes <-
     Eta_signal_debug.remember_latest
       ~max_count:max_dead_node_tombstones
@@ -885,7 +885,7 @@ let rec invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope node =
     let timer_hooks = lifecycle.invalidation_timer_hooks node in
     lifecycle.invalidation_set_invalid node;
     let tombstone = lifecycle.invalidation_tombstone node in
-    remember_dead_node t ~id:lifecycle.invalidation_tombstone_id tombstone;
+    remember_dead_node t lane ~id:lifecycle.invalidation_tombstone_id tombstone;
     let observer_hooks = lifecycle.invalidation_observer_hooks node in
     let _dependencies, dependents = detach_node_edges t edge_ops node in
     let dependent_hooks =
@@ -936,6 +936,6 @@ let post_commit_necessary_timers t lane ~collect_live_nodes ~root
   ignore (live_nodes t lane ~collect_live_nodes : _ list);
   collect_timers ~roots:(List.filter_map root t.observers)
 
-let dead_node_count t = List.length t.dead_nodes
-let iter_dead_nodes t ~f = List.iter f t.dead_nodes
-let map_dead_nodes t ~f = List.map f t.dead_nodes
+let dead_node_count t _lane = List.length t.dead_nodes
+let iter_dead_nodes t _lane ~f = List.iter f t.dead_nodes
+let map_dead_nodes t _lane ~f = List.map f t.dead_nodes
