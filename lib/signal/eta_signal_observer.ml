@@ -705,3 +705,28 @@ let collect_event port capability observer =
           Option.map
             (port.collection_make_event capability observer)
             update)
+
+type ('capability, 'observer, 'event) delivery_collection = {
+  delivery_active : 'observer -> bool;
+  delivery_compare : 'observer -> 'observer -> int;
+  delivery_collect_event : 'capability -> 'observer -> 'event option;
+  delivery_mark_pending : 'capability -> 'event -> unit;
+}
+
+let delivery_collection ~active ~compare ~collect_event ~mark_pending =
+  {
+    delivery_active = active;
+    delivery_compare = compare;
+    delivery_collect_event = collect_event;
+    delivery_mark_pending = mark_pending;
+  }
+
+let active_delivery_observers collection observers =
+  List.filter collection.delivery_active observers
+
+let collect_delivery_events collection capability observers =
+  observers |> List.sort collection.delivery_compare
+  |> List.filter_map (collection.delivery_collect_event capability)
+
+let mark_delivery_events_pending collection capability events =
+  List.iter (collection.delivery_mark_pending capability) events

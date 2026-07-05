@@ -433,3 +433,29 @@ val collect_event :
   'capability ->
   'observer ->
   'event option
+
+type ('capability, 'observer, 'event) delivery_collection
+
+val delivery_collection :
+  active:('observer -> bool) ->
+  compare:('observer -> 'observer -> int) ->
+  collect_event:('capability -> 'observer -> 'event option) ->
+  mark_pending:('capability -> 'event -> unit) ->
+  ('capability, 'observer, 'event) delivery_collection
+
+val active_delivery_observers :
+  ('capability, 'observer, 'event) delivery_collection ->
+  'observer list ->
+  'observer list
+
+val collect_delivery_events :
+  ('capability, 'observer, 'event) delivery_collection ->
+  'capability ->
+  'observer list ->
+  'event list
+
+val mark_delivery_events_pending :
+  ('capability, 'observer, 'event) delivery_collection ->
+  'capability ->
+  'event list ->
+  unit

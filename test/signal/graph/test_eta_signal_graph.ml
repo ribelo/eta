@@ -438,7 +438,7 @@ let test_observer_delivery_plan_owns_sorted_collection () =
       ~observer_plan:(fun context ->
         check_cap (Pass.pure_capability context);
         let delivery =
-          Graph.observer_delivery_context
+          Observer.delivery_collection
             ~active:(fun observer -> observer.active)
             ~compare:(fun left right -> Int.compare left.id right.id)
             ~collect_event

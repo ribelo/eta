@@ -1934,7 +1934,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~observer_plan:
           (fun (_context : graph_lane Stabilization_pass.pure_context) ->
             let delivery =
-              Graph.observer_delivery_context ~active:observer_active
+              Observer_core.delivery_collection ~active:observer_active
                 ~compare:compare_observer_graph_order
                 ~collect_event:collect_observer_event
                 ~mark_pending:Observer_core.Delivery_event.mark_pending
