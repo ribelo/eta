@@ -407,12 +407,14 @@ val read_effective :
 
 val stage_cell :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'a Eta_signal_transaction.staged ->
   'a ->
   unit
 
 val update_cell :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'a Eta_signal_transaction.staged ->
   ('a -> 'a) ->
   unit
@@ -429,6 +431,7 @@ val staged_value :
 
 val discard_staging :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   'a Eta_signal_transaction.staged ->
   unit
 
@@ -455,6 +458,7 @@ val timer_has_staged_refresh :
 
 val remember_timer_refresh_timer :
   (_, _, _, _, 'timer, 'refresh, _, _, _, _, _) t ->
+  lane_access ->
   'timer ->
   refresh_token:('refresh -> int) ->
   staged_token:('timer -> int) ->

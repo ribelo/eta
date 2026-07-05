@@ -734,11 +734,11 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
-  let stage_var_graph_value (type a) (var : a var) value =
-    Graph.stage_cell graph var.graph_value value
+  let stage_var_graph_value (type a) lane (var : a var) value =
+    Graph.stage_cell graph lane var.graph_value value
 
-  let stage_var_source_value (type a) (var : a var) value =
-    Graph.stage_cell graph var.source_value value
+  let stage_var_source_value (type a) lane (var : a var) value =
+    Graph.stage_cell graph lane var.source_value value
 
   let effective_var_value (type a) (var : a var) =
     Graph.read_effective graph var.graph_value
@@ -760,17 +760,17 @@ module Make (Observer_error : Observer_error) () = struct
       ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
       ~version:(fun (P signal) -> effective_signal_version signal)
 
-  let update_signal_staging signal f =
-    Graph.update_cell graph signal.snapshot f
+  let update_signal_staging lane signal f =
+    Graph.update_cell graph lane signal.snapshot f
 
   let signal_staged_in_active_transaction signal =
     Graph.staged_in_active_transaction graph signal.snapshot
 
-  let discard_signal_staging signal =
-    Graph.discard_staging graph signal.snapshot
+  let discard_signal_staging lane signal =
+    Graph.discard_staging graph lane signal.snapshot
 
-  let stage_signal signal value =
-    update_signal_staging signal (fun snapshot ->
+  let stage_signal lane signal value =
+    update_signal_staging lane signal (fun snapshot ->
         let current = signal_current_snapshot signal in
         Signal_snapshot.publish
           ~advance_version:(checked_succ "signal version")
@@ -786,8 +786,8 @@ module Make (Observer_error : Observer_error) () = struct
            (signal_current_snapshot signal))
       dependencies
 
-  let stage_dependency_versions signal dependencies =
-    update_signal_staging signal (fun snapshot ->
+  let stage_dependency_versions lane signal dependencies =
+    update_signal_staging lane signal (fun snapshot ->
         Signal_snapshot.with_dependency_versions snapshot
           (dependency_versions dependencies))
 
@@ -895,9 +895,9 @@ module Make (Observer_error : Observer_error) () = struct
     set_timer_current_snapshot timer
       (Timer_policy.snapshot_with_state snapshot timer_state)
 
-  let update_timer_staging timer f =
+  let update_timer_staging lane timer f =
     let snapshot_cell = Timer.snapshot_cell timer in
-    Graph.update_cell graph snapshot_cell f
+    Graph.update_cell graph lane snapshot_cell f
 
   let timer_current_state timer =
     Timer_policy.snapshot_state (timer_current_snapshot timer)
@@ -950,18 +950,18 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_set_next_due_state = Timer_policy.state_set_next_due
 
-  let remember_timer_refresh_timer timer =
-    Graph.remember_timer_refresh_timer graph timer
+  let remember_timer_refresh_timer lane timer =
+    Graph.remember_timer_refresh_timer graph lane timer
       ~refresh_token:Timer_policy.refresh_token
       ~staged_token:Timer.staged_refresh_token
       ~set_staged_token:Timer.set_staged_refresh_token
       ~stage_refresh_token:(fun timer token ->
-        update_timer_staging timer (fun snapshot ->
+        update_timer_staging lane timer (fun snapshot ->
             Timer_policy.snapshot_with_on_demand_refresh_token snapshot token))
 
-  let stage_timer_state_unlocked timer state =
-    remember_timer_refresh_timer timer;
-    update_timer_staging timer (fun snapshot ->
+  let stage_timer_state_unlocked lane timer state =
+    remember_timer_refresh_timer lane timer;
+    update_timer_staging lane timer (fun snapshot ->
         Timer_policy.snapshot_with_state snapshot state)
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
@@ -1101,9 +1101,9 @@ module Make (Observer_error : Observer_error) () = struct
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
-  let prepare_signal_commit (P signal) =
+  let prepare_signal_commit lane (P signal) =
     if (not signal.valid) && signal_staged_in_active_transaction signal then
-      discard_signal_staging signal
+      discard_signal_staging lane signal
 
   let commit_signal (P signal) =
     if signal.valid then signal.dirty <- false
@@ -1280,9 +1280,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let stage_timer_source_value (type a) lane (source : a var) value =
     let graph_value = effective_var_value source in
-    stage_var_source_value source value;
+    stage_var_source_value lane source value;
     if not (source.var_equal graph_value value) then (
-      stage_var_graph_value source value;
+      stage_var_graph_value lane source value;
       List.iter
         (mark_timer_refresh_dirty lane)
         (source_watchers_unlocked source))
@@ -1295,12 +1295,12 @@ module Make (Observer_error : Observer_error) () = struct
     | Set_source (source, value) ->
         stage_timer_source_value lane source value
     | Advance_due next_due_ms ->
-        stage_timer_state_unlocked timer
+        stage_timer_state_unlocked lane timer
           (timer_set_next_due_state (timer_effective_state timer)
              (Some next_due_ms))
     | Finish plan ->
         Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
-            stage_timer_state_unlocked timer state;
+            stage_timer_state_unlocked lane timer state;
             remember_timer_refresh_disposal_hooks lane cancel_hooks)
 
   let timer_refresh_action source = function
@@ -1342,7 +1342,7 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.staging_commit_context
         ~preflight:(fun () -> preflight_commit_staging lane)
         ~commit_bind:(commit_bind lane)
-        ~prepare_signal:prepare_signal_commit
+        ~prepare_signal:(prepare_signal_commit lane)
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
     in
     match Graph.commit_staging graph staging context with
@@ -1367,7 +1367,7 @@ module Make (Observer_error : Observer_error) () = struct
     let graph_value = Transaction.current var.graph_value in
     let source_value = Transaction.current var.source_value in
     if not (var.var_equal graph_value source_value) then (
-      stage_var_graph_value var source_value;
+      stage_var_graph_value lane var source_value;
       List.iter (mark_self_dirty lane) (source_watchers_unlocked var))
 
   let refresh_timer_source_for_compute lane signal =
@@ -1380,7 +1380,7 @@ module Make (Observer_error : Observer_error) () = struct
               validate_timer_runtime timer runtime_contract)
             ~current_snapshot:timer_current_snapshot
             ~effective_state:timer_effective_state
-            ~remember:remember_timer_refresh_timer
+            ~remember:(remember_timer_refresh_timer lane)
             ~run_operation:(fun timer ~now_ms operation ->
               stage_timer_refresh_operation lane timer now_ms operation)
             timer_refresh timer
@@ -1411,7 +1411,7 @@ module Make (Observer_error : Observer_error) () = struct
           ~initialized:(Signal_snapshot.is_initialized snapshot)
           ~current:(Signal_snapshot.value snapshot) ~next:value
       in
-      if changed then stage_signal signal value;
+      if changed then stage_signal lane signal value;
       (if changed then value else current_or_raise signal), changed
     in
     let use_cached () = (current_or_raise signal, false) in
@@ -1419,7 +1419,7 @@ module Make (Observer_error : Observer_error) () = struct
       dependencies_changed signal dependencies
     in
     let recompute_with_dependencies dependencies value =
-      stage_dependency_versions signal dependencies;
+      stage_dependency_versions lane signal dependencies;
       recompute value
     in
     let static_child child_signal =
@@ -1571,8 +1571,8 @@ module Make (Observer_error : Observer_error) () = struct
           Graph.bump_counter graph lane Graph.Recompute_count)
         ~stage_switch:(fun ~source_value ~inner ~scope ->
           stage_bind_switch lane bind source_value inner scope)
-        ~stage_dependencies:(stage_dependency_versions signal)
-        ~stage_value:(stage_signal signal)
+        ~stage_dependencies:(stage_dependency_versions lane signal)
+        ~stage_value:(stage_signal lane signal)
     in
     match
       Bind.run_dynamic
@@ -1857,8 +1857,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~compute:(fun lane observer -> compute lane observer.obs_signal)
       ~snapshot:(fun (_lane : graph_lane) live ->
         observer_effective_snapshot live)
-      ~stage_snapshot:(fun (_lane : graph_lane) live snapshot ->
-        Graph.stage_cell graph live.observer_snapshot snapshot)
+      ~stage_snapshot:(fun lane live snapshot ->
+        Graph.stage_cell graph lane live.observer_snapshot snapshot)
       ~equal:(fun observer -> observer.obs_equal)
       ~make_event:(fun _lane observer update ->
         make_observer_event ~token:(current_generation ()) observer update)

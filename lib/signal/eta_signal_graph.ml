@@ -576,10 +576,10 @@ let read_effective t cell =
   | Some transaction -> Eta_signal_transaction.read transaction cell
   | None -> Eta_signal_transaction.current cell
 
-let stage_cell t cell value =
+let stage_cell t _lane cell value =
   Eta_signal_transaction.stage (active_transaction t) cell value
 
-let update_cell t cell f =
+let update_cell t _lane cell f =
   let transaction = active_transaction t in
   let value = Eta_signal_transaction.read transaction cell in
   Eta_signal_transaction.stage transaction cell (f value)
@@ -595,7 +595,7 @@ let staged_value t cell =
       Some (Eta_signal_transaction.read transaction cell)
   | Some _ | None -> None
 
-let discard_staging t cell =
+let discard_staging t _lane cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction -> Eta_signal_transaction.discard transaction cell
   | None -> ()
@@ -623,7 +623,7 @@ let timer_has_staged_refresh t timer ~refresh_token ~staged_token =
   | Some refresh -> staged_token timer = refresh_token refresh
   | None -> false
 
-let remember_timer_refresh_timer t timer ~refresh_token ~staged_token
+let remember_timer_refresh_timer t _lane timer ~refresh_token ~staged_token
     ~set_staged_token ~stage_refresh_token =
   match Eta_signal_graph_state.active_timer_refresh t.state with
   | None -> ()
