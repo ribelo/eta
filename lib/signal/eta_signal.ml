@@ -1524,31 +1524,25 @@ module Make (Observer_error : Observer_error) () = struct
       bool ->
       value * bool =
    fun lane signal bind source_value source_changed ->
-    let value_changed next =
-      let snapshot = signal_effective_snapshot signal in
-      Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
-        ~initialized:(Signal_snapshot.is_initialized snapshot)
-        ~current:(Signal_snapshot.value snapshot) ~next
-    in
-    let prepare_value value =
-      Graph.bump_counter graph lane Graph.Recompute_count;
-      let changed = value_changed value in
-      (value, changed)
-    in
-    let finish_value (value, changed) =
-      if changed then stage_signal signal value;
-      ((if changed then value else current_or_raise signal), changed)
-    in
     let apply_plan :
         (source, value signal, scope, packed_signal, value) Bind.dynamic_plan ->
         value * bool =
      fun plan ->
       Bind.apply_dynamic_plan
-        (Bind.dynamic_apply_context ~prepare_value ~finish_value
+        (Bind.dynamic_apply_context
+           ~current_value:(fun () ->
+             Signal_snapshot.value (signal_effective_snapshot signal))
+           ~cached_value:(fun () -> current_or_raise signal)
+           ~initialized:(fun () ->
+             Signal_snapshot.is_initialized
+               (signal_effective_snapshot signal))
+           ~equal:signal.equal
+           ~bump_recompute:(fun () ->
+             Graph.bump_counter graph lane Graph.Recompute_count)
            ~stage_switch:(fun ~source_value ~inner ~scope ->
              stage_bind_switch bind source_value inner scope)
            ~stage_dependencies:(stage_dependency_versions signal)
-           ~use_cached:(fun () -> (current_or_raise signal, false)))
+           ~stage_value:(stage_signal signal))
         plan
     in
     match

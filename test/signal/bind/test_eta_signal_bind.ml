@@ -275,22 +275,26 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       check_cap cap;
       dependencies_changed dependencies)
 
-let apply_dynamic_plan ?(cached = -1) events plan =
+let apply_dynamic_plan ?(current = Some (-1)) ?(initialized = true)
+    events plan =
   Bind.apply_dynamic_plan
     (Bind.dynamic_apply_context
-       ~prepare_value:(fun value ->
-         events := !events @ [ "prepare:" ^ string_of_int value ];
-         value)
-       ~finish_value:(fun value ->
-         events := !events @ [ "finish:" ^ string_of_int value ];
-         value)
+       ~current_value:(fun () -> current)
+       ~cached_value:(fun () ->
+         events := !events @ [ "cached" ];
+         match current with
+         | Some value -> value
+         | None -> invalid_arg "missing current")
+       ~initialized:(fun () -> initialized)
+       ~equal:Int.equal
+       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
        ~stage_switch:(fun ~source_value ~inner ~scope ->
          events :=
            !events
            @ [
                "switch:"
                ^ String.concat ":"
-                   (List.map string_of_int [ source_value; inner; scope ]);
+                  (List.map string_of_int [ source_value; inner; scope ]);
              ])
        ~stage_dependencies:(fun dependencies ->
          events :=
@@ -298,11 +302,10 @@ let apply_dynamic_plan ?(cached = -1) events plan =
            @ [
                "stage_dependencies:"
                ^ String.concat ","
-                   (List.map string_of_int dependencies);
+                  (List.map string_of_int dependencies);
              ])
-       ~use_cached:(fun () ->
-         events := !events @ [ "cached" ];
-         cached))
+       ~stage_value:(fun value ->
+         events := !events @ [ "stage_value:" ^ string_of_int value ]))
     plan
 
 let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
@@ -316,7 +319,8 @@ let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected valid switch"
   in
-  Alcotest.(check int) "result" 40 (apply_dynamic_plan events plan);
+  Alcotest.(check (pair int bool)) "result" (40, true)
+    (apply_dynamic_plan events plan);
   Alcotest.(check (list string))
     "events"
     [
@@ -325,10 +329,10 @@ let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
       "select:3";
       "validate:7:4";
       "compute:4";
-      "prepare:40";
+      "bump";
       "switch:3:4:7";
       "stage_dependencies:100,1004";
-      "finish:40";
+      "stage_value:40";
     ]
     !events
 
@@ -353,10 +357,14 @@ let test_plan_dynamic_reuse_paths () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  Alcotest.(check int)
-    "cached result" (-1) (apply_dynamic_plan events cached_plan);
-  Alcotest.(check int)
-    "recomputed result" 40 (apply_dynamic_plan events recomputed_plan);
+  Alcotest.(check (pair int bool))
+    "cached result" (-1, false) (apply_dynamic_plan events cached_plan);
+  Alcotest.(check (pair int bool))
+    "recomputed result" (40, true)
+    (apply_dynamic_plan events recomputed_plan);
+  Alcotest.check_raises "cached missing current"
+    (Invalid_argument "missing current")
+    (fun () -> ignore (apply_dynamic_plan ~current:None events cached_plan));
   Alcotest.(check (list string))
     "events"
     [
@@ -365,13 +373,14 @@ let test_plan_dynamic_reuse_paths () =
       "compute:4";
       "dependencies:100,1004";
       "cached";
+      "bump";
       "stage_dependencies:100,1004";
-      "prepare:40";
-      "finish:40";
+      "stage_value:40";
+      "cached";
     ]
     !events
 
-let test_plan_dynamic_dirty_reuse_recomputes () =
+let test_plan_dynamic_dirty_reuse_recomputes_with_cutoff () =
   let events = ref [] in
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
   let eval_context = dynamic_contexts ~dirty:true events in
@@ -383,14 +392,15 @@ let test_plan_dynamic_dirty_reuse_recomputes () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  Alcotest.(check int) "result" 40 (apply_dynamic_plan events plan);
+  Alcotest.(check (pair int bool)) "result" (40, false)
+    (apply_dynamic_plan ~current:(Some 40) events plan);
   Alcotest.(check (list string))
     "events"
     [
       "compute:4";
+      "bump";
       "stage_dependencies:100,1004";
-      "prepare:40";
-      "finish:40";
+      "cached";
     ]
     !events
 
@@ -459,7 +469,7 @@ let () =
           Alcotest.test_case "plan dynamic reuse" `Quick
             test_plan_dynamic_reuse_paths;
           Alcotest.test_case "plan dynamic dirty reuse" `Quick
-            test_plan_dynamic_dirty_reuse_recomputes;
+            test_plan_dynamic_dirty_reuse_recomputes_with_cutoff;
           Alcotest.test_case "plan dynamic validation failure" `Quick
             test_plan_dynamic_validation_failure_runs_cleanup;
         ] );

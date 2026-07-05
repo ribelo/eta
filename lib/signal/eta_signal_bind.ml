@@ -54,14 +54,16 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
-type ('source, 'inner, 'scope, 'dependency, 'value, 'prepared, 'result)
-     dynamic_apply_context = {
-  apply_prepare_value : 'value -> 'prepared;
-  apply_finish_value : 'prepared -> 'result;
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context = {
+  apply_current_value : unit -> 'value option;
+  apply_cached_value : unit -> 'value;
+  apply_initialized : unit -> bool;
+  apply_equal : 'value -> 'value -> bool;
+  apply_bump_recompute : unit -> unit;
   apply_stage_switch :
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
   apply_stage_dependencies : 'dependency list -> unit;
-  apply_use_cached : unit -> 'result;
+  apply_stage_value : 'value -> unit;
 }
 
 let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
@@ -82,14 +84,17 @@ let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
     eval_dependencies_changed = dependencies_changed;
   }
 
-let dynamic_apply_context ~prepare_value ~finish_value ~stage_switch
-    ~stage_dependencies ~use_cached =
+let dynamic_apply_context ~current_value ~cached_value ~initialized ~equal
+    ~bump_recompute ~stage_switch ~stage_dependencies ~stage_value =
   {
-    apply_prepare_value = prepare_value;
-    apply_finish_value = finish_value;
+    apply_current_value = current_value;
+    apply_cached_value = cached_value;
+    apply_initialized = initialized;
+    apply_equal = equal;
+    apply_bump_recompute = bump_recompute;
     apply_stage_switch = stage_switch;
     apply_stage_dependencies = stage_dependencies;
-    apply_use_cached = use_cached;
+    apply_stage_value = stage_value;
   }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -206,8 +211,22 @@ let plan_dynamic eval_context capability snapshot ~source_value ~source_changed 
     ~initialized:eval_context.eval_initialized
     ~dependencies_changed:eval_context.eval_dependencies_changed
 
-let finish_prepared_value context value =
-  context.apply_finish_value (context.apply_prepare_value value)
+let value_changed context value =
+  (not (context.apply_initialized ()))
+  ||
+  match context.apply_current_value () with
+  | None -> true
+  | Some current -> not (context.apply_equal current value)
+
+let computed_value_changed context value =
+  context.apply_bump_recompute ();
+  value_changed context value
+
+let publish_computed_value context value changed =
+  if changed then (
+    context.apply_stage_value value;
+    (value, true))
+  else (context.apply_cached_value (), false)
 
 let apply_dynamic_plan context plan =
   match plan with
@@ -219,16 +238,17 @@ let apply_dynamic_plan context plan =
         dynamic_switch_dependencies;
         dynamic_switch_value;
       } ->
-      let prepared = context.apply_prepare_value dynamic_switch_value in
+      let changed = computed_value_changed context dynamic_switch_value in
       context.apply_stage_switch ~source_value:dynamic_source_value
         ~inner:dynamic_inner ~scope:dynamic_scope;
       context.apply_stage_dependencies dynamic_switch_dependencies;
-      context.apply_finish_value prepared
-  | Dynamic_reuse_cached -> context.apply_use_cached ()
+      publish_computed_value context dynamic_switch_value changed
+  | Dynamic_reuse_cached -> (context.apply_cached_value (), false)
   | Dynamic_reuse_recompute
       { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+      let changed = computed_value_changed context dynamic_reuse_value in
       context.apply_stage_dependencies dynamic_reuse_dependencies;
-      finish_prepared_value context dynamic_reuse_value
+      publish_computed_value context dynamic_reuse_value changed
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
