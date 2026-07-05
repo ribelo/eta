@@ -743,8 +743,8 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_var_value (type a) (var : a var) =
     Graph.read_effective graph var.graph_value
 
-  let remember_computed (P signal) =
-    Graph.remember_computed graph compute_ops (P signal)
+  let remember_computed lane (P signal) =
+    Graph.remember_computed graph lane compute_ops (P signal)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -1392,14 +1392,14 @@ module Make (Observer_error : Observer_error) () = struct
    fun lane signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute lane signal;
-    Graph.compute_cached graph compute_ops (P signal)
+    Graph.compute_cached graph lane compute_ops (P signal)
       ~current:(fun _compute_node -> effective_signal_value signal)
       ~cycle:(fun _compute_node -> raise (Graph_error `Cycle))
       ~compute:(fun _compute_node -> compute_uncached lane signal)
 
   and compute_uncached : type a. graph_lane -> a signal -> a * bool =
    fun lane signal ->
-    remember_computed (P signal);
+    remember_computed lane (P signal);
     let signal_initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in

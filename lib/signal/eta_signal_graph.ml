@@ -358,7 +358,7 @@ let remember_compute ops ~generation computed node =
     ops.compute_set_computed_generation node generation;
     ops.compute_pack node :: computed)
 
-let remember_computed t ops node =
+let remember_computed t _lane ops node =
   Eta_signal_graph_state.remember_computed t.state (active_staging t)
     ~generation:(generation t) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
@@ -386,7 +386,7 @@ let compute_run t ops node ~cycle ~compute =
         ops.compute_set_changed_seen node changed;
         (value, changed))
 
-let compute_cached t ops node ~current ~cycle ~compute =
+let compute_cached t _lane ops node ~current ~cycle ~compute =
   let compute_node = ops.compute_node node in
   if compute_seen t ops compute_node then
     (current compute_node, compute_changed_seen t ops compute_node)

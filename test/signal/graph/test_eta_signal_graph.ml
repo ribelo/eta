@@ -522,20 +522,24 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
     (node.compute_current, true)
   in
   Graph.set_generation graph 1;
-  Alcotest.(check (pair int bool))
-    "first compute" (10, true)
-    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
-  Alcotest.(check int) "seen generation" 1 node.compute_seen_generation;
-  Alcotest.(check bool) "changed seen" true node.compute_changed_seen;
-  Alcotest.(check bool) "guard cleared" false node.compute_computing;
-  Alcotest.(check (pair int bool))
-    "cached compute" (10, true)
-    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
-  node.compute_computing <- true;
-  Graph.set_generation graph 2;
-  Alcotest.(check (pair int bool))
-    "cycle result" (10, false)
-    (Graph.compute_cached graph compute_ops node ~current ~cycle ~compute);
+  with_graph_lane graph (fun lane ->
+      Alcotest.(check (pair int bool))
+        "first compute" (10, true)
+        (Graph.compute_cached graph lane compute_ops node ~current ~cycle
+           ~compute);
+      Alcotest.(check int) "seen generation" 1 node.compute_seen_generation;
+      Alcotest.(check bool) "changed seen" true node.compute_changed_seen;
+      Alcotest.(check bool) "guard cleared" false node.compute_computing;
+      Alcotest.(check (pair int bool))
+        "cached compute" (10, true)
+        (Graph.compute_cached graph lane compute_ops node ~current ~cycle
+           ~compute);
+      node.compute_computing <- true;
+      Graph.set_generation graph 2;
+      Alcotest.(check (pair int bool))
+        "cycle result" (10, false)
+        (Graph.compute_cached graph lane compute_ops node ~current ~cycle
+           ~compute));
   Alcotest.(check int)
     "cycle does not publish generation" 1 node.compute_seen_generation;
   Alcotest.(check bool)
