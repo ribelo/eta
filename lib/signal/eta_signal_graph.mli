@@ -644,8 +644,6 @@ val map_dead_nodes :
 
 val remember_dead_node :
   (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
-  max_count:int ->
-  id:('dead_node -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
+  id:('dead_node -> Eta_signal_id.signal) ->
   'dead_node ->
   unit

@@ -1040,8 +1040,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~collect_live_nodes:collect_live_weak_signals
       ~keep:(fun (P signal) -> signal.valid)
 
-  let max_dead_signal_tombstones = 1024
-
   let timer_debug_snapshot timer =
     let snapshot = Timer_policy.debug_snapshot (timer_effective_state timer) in
     { snapshot with debug_generation = timer_generation timer }
@@ -1077,9 +1075,8 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let record_dead_node_unlocked (P signal as packed) =
-    Graph.remember_dead_node graph ~max_count:max_dead_signal_tombstones
+    Graph.remember_dead_node graph
       ~id:(fun tombstone -> tombstone.dead_id)
-      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
       (signal_tombstone packed)
 
   let rec invalidate_scope lane ?(prune = true) scope =

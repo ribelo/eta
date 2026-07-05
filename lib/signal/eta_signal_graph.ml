@@ -584,7 +584,13 @@ let dead_node_count t = List.length t.dead_nodes
 let iter_dead_nodes t ~f = List.iter f t.dead_nodes
 let map_dead_nodes t ~f = List.map f t.dead_nodes
 
-let remember_dead_node t ~max_count ~id ~equal_id dead_node =
+let max_dead_node_tombstones = 1024
+
+let same_signal_id left right =
+  Eta_signal_id.signal_int left = Eta_signal_id.signal_int right
+
+let remember_dead_node t ~id dead_node =
   t.dead_nodes <-
-    Eta_signal_debug.remember_latest ~max_count ~id ~equal_id dead_node
-      t.dead_nodes
+    Eta_signal_debug.remember_latest
+      ~max_count:max_dead_node_tombstones
+      ~id ~equal_id:same_signal_id dead_node t.dead_nodes
