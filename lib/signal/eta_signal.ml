@@ -1884,24 +1884,22 @@ module Make (Observer_error : Observer_error) () = struct
     | Map7 _ | Map8 _ | Map9 _ | All _ ->
         signal.dependencies
 
-  module Graph_signal_order = Graph_algorithms.Make_order (struct
-    type id = signal_id
-    type t = packed_signal
-
-    let id (P signal) = signal.id
-
-    let equal_id left right =
-      Int.equal (signal_id_int left) (signal_id_int right)
-
-    let compare_id left right =
-      Int.compare (signal_id_int left) (signal_id_int right)
-
-    let children (P signal) = observer_order_dependencies signal
-  end)
+  let order_ops =
+    {
+      Graph.order_id = (fun (P signal) -> signal.id);
+      order_equal_id =
+        (fun left right ->
+          Int.equal (signal_id_int left) (signal_id_int right));
+      order_compare_id =
+        (fun left right ->
+          Int.compare (signal_id_int left) (signal_id_int right));
+      order_children = (fun (P signal) -> observer_order_dependencies signal);
+    }
 
   let compare_observer_graph_order (O left) (O right) =
     let signal_order =
-      Graph_signal_order.compare (P left.obs_signal) (P right.obs_signal)
+      Graph.compare_order graph order_ops (P left.obs_signal)
+        (P right.obs_signal)
     in
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order

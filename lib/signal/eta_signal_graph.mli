@@ -70,6 +70,13 @@ type ('id, 'node) version_ops = {
   version : 'node -> int;
 }
 
+type ('id, 'node) order_ops = {
+  order_id : 'node -> 'id;
+  order_equal_id : 'id -> 'id -> bool;
+  order_compare_id : 'id -> 'id -> int;
+  order_children : 'node -> 'node list;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -249,6 +256,13 @@ val versions_changed :
   current:('id * int) list ->
   'node list ->
   bool
+
+val compare_order :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) order_ops ->
+  'node ->
+  'node ->
+  int
 
 val remember_staged_bind :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind -> unit

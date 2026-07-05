@@ -89,6 +89,13 @@ type ('id, 'node) version_ops = {
   version : 'node -> int;
 }
 
+type ('id, 'node) order_ops = {
+  order_id : 'node -> 'id;
+  order_equal_id : 'id -> 'id -> bool;
+  order_compare_id : 'id -> 'id -> int;
+  order_children : 'node -> 'node list;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -262,6 +269,28 @@ let rec same_version_snapshot ops left right =
 
 let versions_changed t ops ~current nodes =
   not (same_version_snapshot ops current (version_snapshot t ops nodes))
+
+let same_order_node ops left right =
+  ops.order_equal_id (ops.order_id left) (ops.order_id right)
+
+let order_depends_on ops node dependency =
+  let target_id = ops.order_id dependency in
+  let seen = Hashtbl.create 16 in
+  let rec visit candidate =
+    let candidate_id = ops.order_id candidate in
+    if ops.order_equal_id candidate_id target_id then true
+    else if Hashtbl.mem seen candidate_id then false
+    else (
+      Hashtbl.add seen candidate_id ();
+      List.exists visit (ops.order_children candidate))
+  in
+  List.exists visit (ops.order_children node)
+
+let compare_order _t ops left right =
+  if same_order_node ops left right then 0
+  else if order_depends_on ops left right then 1
+  else if order_depends_on ops right left then -1
+  else ops.order_compare_id (ops.order_id left) (ops.order_id right)
 
 let remember_staged_bind t bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
