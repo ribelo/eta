@@ -2,6 +2,17 @@
 
 type ('source, 'inner, 'scope) snapshot
 
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
+  dynamic_mark_recomputed : 'capability -> unit;
+  dynamic_value_changed : 'capability -> 'value -> bool;
+  dynamic_stage_switch :
+    'capability ->
+    source_value:'source -> inner:'inner -> scope:'scope -> unit;
+  dynamic_stage_dependencies : 'capability -> 'dependency list -> unit;
+  dynamic_stage_value : 'capability -> 'value -> unit;
+  dynamic_current_value : 'capability -> 'value;
+}
+
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_context = {
   context_equal : 'source -> 'source -> bool;
@@ -20,14 +31,9 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   context_dirty : bool;
   context_initialized : bool;
   context_dependencies_changed : 'capability -> 'dependency list -> bool;
-  context_mark_recomputed : 'capability -> unit;
-  context_value_changed : 'capability -> 'value -> bool;
-  context_stage_switch :
-    'capability ->
-    source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  context_stage_dependencies : 'capability -> 'dependency list -> unit;
-  context_stage_value : 'capability -> 'value -> unit;
-  context_current_value : 'capability -> 'value;
+  context_apply :
+    ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
+    dynamic_apply;
 }
 
 val empty : ('source, 'inner, 'scope) snapshot

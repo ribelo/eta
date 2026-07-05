@@ -1619,22 +1619,27 @@ module Make (Observer_error : Observer_error) () = struct
               (signal_effective_snapshot signal);
           context_dependencies_changed =
             (fun _lane dependencies -> dependencies_changed signal dependencies);
-          context_mark_recomputed =
-            (fun lane -> Graph.bump_counter graph lane Graph.Recompute_count);
-          context_value_changed =
-            (fun _lane next ->
-              let snapshot = signal_effective_snapshot signal in
-              Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
-                ~initialized:(Signal_snapshot.is_initialized snapshot)
-                ~current:(Signal_snapshot.value snapshot) ~next);
-          context_stage_switch =
-            (fun _lane ~source_value ~inner ~scope ->
-              stage_bind_switch bind source_value inner scope);
-          context_stage_dependencies =
-            (fun _lane dependencies ->
-              stage_dependency_versions signal dependencies);
-          context_stage_value = (fun _lane value -> stage_signal signal value);
-          context_current_value = (fun _lane -> current_or_raise signal);
+          context_apply =
+            {
+              Bind.dynamic_mark_recomputed =
+                (fun lane ->
+                  Graph.bump_counter graph lane Graph.Recompute_count);
+              dynamic_value_changed =
+                (fun _lane next ->
+                  let snapshot = signal_effective_snapshot signal in
+                  Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
+                    ~initialized:(Signal_snapshot.is_initialized snapshot)
+                    ~current:(Signal_snapshot.value snapshot) ~next);
+              dynamic_stage_switch =
+                (fun _lane ~source_value ~inner ~scope ->
+                  stage_bind_switch bind source_value inner scope);
+              dynamic_stage_dependencies =
+                (fun _lane dependencies ->
+                  stage_dependency_versions signal dependencies);
+              dynamic_stage_value =
+                (fun _lane value -> stage_signal signal value);
+              dynamic_current_value = (fun _lane -> current_or_raise signal);
+            };
         }
         lane
         (bind_effective_snapshot bind) ~source_value ~source_changed

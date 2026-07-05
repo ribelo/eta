@@ -63,14 +63,9 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   context_dirty : bool;
   context_initialized : bool;
   context_dependencies_changed : 'capability -> 'dependency list -> bool;
-  context_mark_recomputed : 'capability -> unit;
-  context_value_changed : 'capability -> 'value -> bool;
-  context_stage_switch :
-    'capability ->
-    source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  context_stage_dependencies : 'capability -> 'dependency list -> unit;
-  context_stage_value : 'capability -> 'value -> unit;
-  context_current_value : 'capability -> 'value;
+  context_apply :
+    ('capability, 'source, 'inner, 'scope, 'dependency, 'value)
+    dynamic_apply;
 }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -226,18 +221,7 @@ let compute_dynamic context capability snapshot ~source_value ~source_changed =
   with
   | Error _ as error -> error
   | Ok eval ->
-      Ok
-        (apply_dynamic_eval
-           {
-             dynamic_mark_recomputed = context.context_mark_recomputed;
-             dynamic_value_changed = context.context_value_changed;
-             dynamic_stage_switch = context.context_stage_switch;
-             dynamic_stage_dependencies = context.context_stage_dependencies;
-             dynamic_stage_value = context.context_stage_value;
-             dynamic_current_value = context.context_current_value;
-           }
-           capability
-           eval)
+      Ok (apply_dynamic_eval context.context_apply capability eval)
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with

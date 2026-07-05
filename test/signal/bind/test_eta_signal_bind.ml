@@ -272,45 +272,49 @@ let dynamic_context ?(inner_changed = false) ?(dependencies_changed = false)
       (fun cap dependencies ->
         check_cap cap;
         dependencies_changed dependencies);
-    context_mark_recomputed =
-      (fun cap ->
-        check_cap cap;
-        events := !events @ [ "mark_recomputed" ]);
-    context_value_changed =
-      (fun cap value ->
-        check_cap cap;
-        events :=
-          !events @ [ "changed:" ^ string_of_int value ];
-        changed);
-    context_stage_switch =
-      (fun cap ~source_value ~inner ~scope ->
-        check_cap cap;
-        events :=
-          !events
-          @ [
-              "stage_switch:"
-              ^ String.concat ":"
-                  (List.map string_of_int [ source_value; inner; scope ]);
-            ]);
-    context_stage_dependencies =
-      (fun cap dependencies ->
-        check_cap cap;
-        events :=
-          !events
-          @ [
-              "stage_dependencies:"
-              ^ String.concat ","
-                  (List.map string_of_int dependencies);
-            ]);
-    context_stage_value =
-      (fun cap value ->
-        check_cap cap;
-        events := !events @ [ "stage_value:" ^ string_of_int value ]);
-    context_current_value =
-      (fun cap ->
-        check_cap cap;
-        events := !events @ [ "current" ];
-        current);
+    context_apply =
+      {
+        Bind.dynamic_mark_recomputed =
+          (fun cap ->
+            check_cap cap;
+            events := !events @ [ "mark_recomputed" ]);
+        dynamic_value_changed =
+          (fun cap value ->
+            check_cap cap;
+            events :=
+              !events @ [ "changed:" ^ string_of_int value ];
+            changed);
+        dynamic_stage_switch =
+          (fun cap ~source_value ~inner ~scope ->
+            check_cap cap;
+            events :=
+              !events
+              @ [
+                  "stage_switch:"
+                  ^ String.concat ":"
+                      (List.map string_of_int
+                         [ source_value; inner; scope ]);
+                ]);
+        dynamic_stage_dependencies =
+          (fun cap dependencies ->
+            check_cap cap;
+            events :=
+              !events
+              @ [
+                  "stage_dependencies:"
+                  ^ String.concat ","
+                      (List.map string_of_int dependencies);
+                ]);
+        dynamic_stage_value =
+          (fun cap value ->
+            check_cap cap;
+            events := !events @ [ "stage_value:" ^ string_of_int value ]);
+        dynamic_current_value =
+          (fun cap ->
+            check_cap cap;
+            events := !events @ [ "current" ];
+            current);
+      };
   }
 
 let test_compute_dynamic_switch_owns_eval_and_staging_order () =
