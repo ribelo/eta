@@ -446,6 +446,65 @@ let test_refresh_demand_effect_acquire_failure_skips_release () =
   Alcotest.(check (list string))
     "events" [ "access"; "acquire:capability" ] !events
 
+let test_start_daemon_wires_start_update_through_timer_port () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let timer =
+    make_timer "daemon"
+      ~current:(Timer_policy.starting_state ~generation:3)
+      ~effective:(Timer_policy.starting_state ~generation:3)
+  in
+  let port =
+    {
+      Timer.state_effective = (fun timer -> timer.effective);
+      state_current = (fun timer -> timer.current);
+      state_set_current =
+        (fun timer state ->
+          timer.current <- state;
+          append_event events ("set:" ^ state_label state));
+    }
+  in
+  run_ok runtime
+    (Timer.start_daemon ~advance_generation:succ
+       {
+         Timer.daemon_with_state =
+           (fun f ->
+             Eta.Effect.sync (fun () ->
+                 append_event events "access";
+                 f ()));
+       }
+       port timer
+       {
+         Timer.daemon_update =
+           (fun _timer ~generation ~missed ->
+             Eta.Effect.sync (fun () ->
+                 append_event events
+                   ("update:" ^ string_of_int generation ^ ":"
+                  ^ string_of_int missed)));
+       }
+       {
+         Timer.daemon_after_due_read_before_commit =
+           (fun () ->
+             Eta.Effect.sync (fun () -> append_event events "due_hook"));
+         daemon_after_update_constructed_before_run =
+           (fun () ->
+             Eta.Effect.sync (fun () -> append_event events "after_update"));
+       }
+       ~generation:3 ~interval_ms:10 ~update_on_start:true
+       ~catch_up_policy:Timer_policy.Catch_up_coalesced);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "access";
+      "set:running_uncancellable:3";
+      "update:3:1";
+      "access";
+      "access";
+    ]
+    !events;
+  Alcotest.(check string) "state" "running_uncancellable:3"
+    (state_label timer.current)
+
 let () =
   Alcotest.run "eta_signal_timer"
     [
@@ -467,5 +526,7 @@ let () =
             test_refresh_demand_effect_owns_adapter_bracketing;
           Alcotest.test_case "effect acquire failure skips release" `Quick
             test_refresh_demand_effect_acquire_failure_skips_release;
+          Alcotest.test_case "start daemon callback ownership" `Quick
+            test_start_daemon_wires_start_update_through_timer_port;
         ] );
     ]

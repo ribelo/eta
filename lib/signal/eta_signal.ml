@@ -18,7 +18,6 @@ module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
 module Test_hooks = Eta_signal_test_hooks
 module Timer = Eta_signal_timer
-module Timer_adapter = Eta_signal_timer_adapter
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
 
@@ -1645,10 +1644,6 @@ module Make (Observer_error : Observer_error) () = struct
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
         | Ok result -> result)
 
-  let timer_begin_start timer generation =
-    with_graph_lane_sync (fun () ->
-        Timer.begin_start timer_state_port timer ~generation)
-
   let collect_necessary_node_ids (_lane : graph_lane) =
     Graph.necessary_ids graph
       ~collect_live_nodes:collect_live_weak_signals
@@ -2752,27 +2747,7 @@ module Make (Observer_error : Observer_error) () = struct
     let validate_positive_duration duration =
       Timer_policy.validate_positive_duration_ms (Duration.to_ms duration)
 
-    let install_timer_cancel timer generation cancel =
-      with_graph_lane_sync (fun () ->
-          Timer.install_cancel timer_state_port timer ~generation ~cancel)
-
-    let timer_daemon_exit = function
-      | Eta.Exit.Ok _ -> Timer_policy.Daemon_ok
-      | Eta.Exit.Error _ -> Timer_policy.Daemon_error
-
-    let timer_cleanup_after_exit timer generation exit =
-      with_graph_lane_sync (fun () ->
-          Timer.cleanup_after_exit
-            ~advance_generation:(checked_succ "timer generation")
-            timer_state_port timer ~generation (timer_daemon_exit exit))
-
-    let timer_cleanup_failed_start timer generation exit =
-      with_graph_lane_sync (fun () ->
-          Timer.cleanup_failed_start
-            ~advance_generation:(checked_succ "timer generation")
-            timer_state_port timer ~generation (timer_daemon_exit exit))
-
-    let timer_after_update_state timer generation =
+    let timer_continue_after_update timer generation =
       with_graph_lane_sync (fun () ->
           Timer.after_update_state timer_state_port timer ~generation)
 
@@ -2785,70 +2760,29 @@ module Make (Observer_error : Observer_error) () = struct
 
     let add_relative_deadline = Timer_policy.add_relative_deadline
 
-    let timer_read_next_due timer generation fallback =
-      with_graph_lane_sync (fun () ->
-          Timer.read_next_due timer_state_port timer ~generation ~fallback)
-
-    let timer_set_next_due timer generation next_due_ms =
-      with_graph_lane_sync (fun () ->
-          Timer.set_next_due timer_state_port timer ~generation ~next_due_ms)
-
-    let timer_advance_next_due timer generation ~expected next_due_ms =
-      with_graph_lane_sync (fun () ->
-          Timer.advance_next_due timer_state_port timer ~generation
-            ~expected ~next_due_ms)
-
-    let timer_finish_saturated timer generation =
-      with_graph_lane_sync (fun () ->
-          Timer.finish_saturated
-            ~advance_generation:(checked_succ "timer generation")
-            timer_state_port timer ~generation)
-
-    let timer_loop_callbacks timer update =
-      {
-        Timer_adapter.read_next_due =
-          (fun ~generation ~fallback ->
-            timer_read_next_due timer generation fallback);
-        advance_next_due =
-          (fun ~generation ~expected ~next_due_ms ->
-            timer_advance_next_due timer generation ~expected next_due_ms);
-        after_update_state =
-          (fun ~generation -> timer_after_update_state timer generation);
-        finish_saturated =
-          (fun ~generation -> timer_finish_saturated timer generation);
-        construct_update =
-          (fun ~generation ~missed ->
-            update.timer_update timer generation ~missed);
-        after_due_read_before_commit =
-          (fun () ->
-            Private_test_hooks.run After_timer_due_read_before_commit);
-        after_update_constructed_before_run =
-          (fun () ->
-            Private_test_hooks.run After_timer_update_constructed_before_run);
-      }
-
-    let timer_start_callbacks timer update =
-      {
-        Timer_adapter.begin_start =
-          (fun ~generation -> timer_begin_start timer generation);
-        set_next_due =
-          (fun ~generation ~next_due_ms ->
-            timer_set_next_due timer generation next_due_ms);
-        after_start_update =
-          (fun ~generation -> timer_after_update_state timer generation);
-        construct_start_update =
-          (fun ~generation ~missed ->
-            update.timer_update timer generation ~missed);
-        install_cancel =
-          (fun ~generation ~cancel ->
-            install_timer_cancel timer generation cancel);
-        cleanup_after_exit =
-          (fun ~generation exit ->
-            timer_cleanup_after_exit timer generation exit);
-        cleanup_failed_start =
-          (fun ~generation exit ->
-            timer_cleanup_failed_start timer generation exit);
-      }
+    let start_timer_daemon interval ~update_on_start update timer =
+      let generation = timer_generation timer in
+      let interval_ms = Duration.to_ms interval in
+      Timer.start_daemon
+        ~advance_generation:(checked_succ "timer generation")
+        { Timer.daemon_with_state = (fun f -> with_graph_lane_sync f) }
+        timer_state_port timer
+        {
+          Timer.daemon_update =
+            (fun timer ~generation ~missed ->
+              update.timer_update timer generation ~missed);
+        }
+        {
+          Timer.daemon_after_due_read_before_commit =
+            (fun () ->
+              Private_test_hooks.run After_timer_due_read_before_commit);
+          daemon_after_update_constructed_before_run =
+            (fun () ->
+              Private_test_hooks.run
+                After_timer_update_constructed_before_run);
+        }
+        ~generation ~interval_ms ~update_on_start
+        ~catch_up_policy:update.timer_catch_up_policy
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
@@ -2859,13 +2793,7 @@ module Make (Observer_error : Observer_error) () = struct
             {
               Timer.run =
                 (fun timer ->
-                  let generation = timer_generation timer in
-                  let interval_ms = Duration.to_ms interval in
-                  Timer_adapter.start
-                    (timer_start_callbacks timer update)
-                    (timer_loop_callbacks timer update)
-                    ~generation ~interval_ms ~update_on_start
-                    ~catch_up_policy:update.timer_catch_up_policy);
+                  start_timer_daemon interval ~update_on_start update timer);
             }
       in
       signal.timer <- Some timer;
@@ -3016,7 +2944,7 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
-                                timer_after_update_state timer generation
+                                timer_continue_after_update timer generation
                                 |> Effect.bind (function
                                      | `Stop -> Effect.unit
                                      | `Continue ->
@@ -3044,7 +2972,7 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed:_ source ->
-                                timer_after_update_state timer generation
+                                timer_continue_after_update timer generation
                                 |> Effect.bind (function
                                      | `Stop -> Effect.unit
                                      | `Continue ->
