@@ -2063,7 +2063,7 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_delivery_event_access =
     {
       Observer_core.event_with_delivery_access =
-        (fun f -> with_graph_lane_access (fun _lane -> f ()));
+        (fun f -> with_graph_lane_access (fun lane -> f lane));
     }
 
   let make_observer_event ~token observer update =

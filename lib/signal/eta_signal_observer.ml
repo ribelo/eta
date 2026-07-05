@@ -501,9 +501,9 @@ type ('observer, 'a, 'callback, 'error) delivery_event_port = {
     (unit, 'error) Eta.Effect.t;
 }
 
-type 'error delivery_event_access = {
+type ('capability, 'error) delivery_event_access = {
   event_with_delivery_access :
-    'a. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+    'a. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
 let make_delivery_event ~access delivery_port event_port ~observer ~token update =
@@ -517,18 +517,18 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
                (delivery_port.delivery_snapshot live)))
     ~active:(fun () -> event_port.event_active observer)
     ~claim:(fun () ->
-      access.event_with_delivery_access (fun () ->
+      access.event_with_delivery_access (fun _capability ->
           claim_delivery delivery_port observer token))
     ~construct:(fun () ->
       event_port.event_construct observer token update)
     ~run_callback:(fun callback ->
       event_port.event_run_callback observer token callback)
     ~acknowledge:(fun () ->
-      access.event_with_delivery_access (fun () ->
+      access.event_with_delivery_access (fun _capability ->
           acknowledge_delivery delivery_port observer token update
             ~after_ack:[]))
     ~finish_error:(fun ~delivered ->
-      access.event_with_delivery_access (fun () ->
+      access.event_with_delivery_access (fun _capability ->
           finish_delivery_after_error delivery_port observer token update
             ~delivered))
 
