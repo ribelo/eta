@@ -972,32 +972,29 @@ module Make (Observer_error : Observer_error) () = struct
       ~cancel_running timer_state_port timer
 
   let node_lifecycle ?equal ~dirty kind =
-    {
-      Graph.node_validate_dependency = validate_dependency;
-      node_create =
-        (fun ~id ~scope ->
-          {
-            id;
-            equal = Option.value equal ~default:default_equal;
-            kind;
-            snapshot = Transaction.create_staged Signal_snapshot.empty;
-            dirty;
-            dependencies = [];
-            dependents = [];
-            computing = false;
-            seen_generation = -1;
-            changed_seen = false;
-            computed_generation = -1;
-            scope;
-            valid = true;
-            timer = None;
-          });
-      node_attach_dependency =
-        (fun ~parent ~child -> attach_packed_dependency parent child);
-      node_add_to_scope = (fun scope signal -> Scope.add_node scope (P signal));
-      node_pack = (fun signal -> P signal);
-      node_create_weak = weak_packed_signal;
-    }
+    Graph.node_lifecycle ~validate_dependency
+      ~create:(fun ~id ~scope ->
+        {
+          id;
+          equal = Option.value equal ~default:default_equal;
+          kind;
+          snapshot = Transaction.create_staged Signal_snapshot.empty;
+          dirty;
+          dependencies = [];
+          dependents = [];
+          computing = false;
+          seen_generation = -1;
+          changed_seen = false;
+          computed_generation = -1;
+          scope;
+          valid = true;
+          timer = None;
+        })
+      ~attach_dependency:(fun ~parent ~child ->
+        attach_packed_dependency parent child)
+      ~add_to_scope:(fun scope signal -> Scope.add_node scope (P signal))
+      ~pack:(fun signal -> P signal)
+      ~create_weak:weak_packed_signal
 
   let new_signal ?(dirty = true) ?equal kind dependencies =
     graph_result_or_raise
@@ -1051,32 +1048,28 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
   let node_invalidation =
-    {
-      Graph.invalidation_valid = (fun (P signal) -> signal.valid);
-      invalidation_set_invalid = (fun (P signal) -> signal.valid <- false);
-      invalidation_timer_hooks =
-        (fun (P signal) ->
-          match signal.timer with
-          | None -> []
-          | Some timer -> timer_mark_unneeded_unlocked timer);
-      invalidation_tombstone = signal_tombstone;
-      invalidation_tombstone_id = (fun tombstone -> tombstone.dead_id);
-      invalidation_observer_hooks =
-        (fun (P signal) -> dispose_signal_observers signal);
-      invalidation_kind_hooks =
-        (fun ~invalidate_scope (P signal) ->
-          match signal.kind with
-          | Var source ->
-              remove_var_watcher source signal;
-              []
-          | Bind bind -> (
-              match Bind.inner_scope (Transaction.current bind.snapshot) with
-              | None -> []
-              | Some scope -> invalidate_scope ~prune:false scope)
-          | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-          | Map7 _ | Map8 _ | Map9 _ | All _ ->
-              []);
-    }
+    Graph.node_invalidation
+      ~valid:(fun (P signal) -> signal.valid)
+      ~set_invalid:(fun (P signal) -> signal.valid <- false)
+      ~timer_hooks:(fun (P signal) ->
+        match signal.timer with
+        | None -> []
+        | Some timer -> timer_mark_unneeded_unlocked timer)
+      ~tombstone:signal_tombstone
+      ~tombstone_id:(fun tombstone -> tombstone.dead_id)
+      ~observer_hooks:(fun (P signal) -> dispose_signal_observers signal)
+      ~kind_hooks:(fun ~invalidate_scope (P signal) ->
+        match signal.kind with
+        | Var source ->
+            remove_var_watcher source signal;
+            []
+        | Bind bind -> (
+            match Bind.inner_scope (Transaction.current bind.snapshot) with
+            | None -> []
+            | Some scope -> invalidate_scope ~prune:false scope)
+        | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+        | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            [])
 
   let rec invalidate_scope lane ?(prune = true) scope =
     match Scope.invalidate scope with

@@ -149,42 +149,34 @@ let test_create_live_node_owns_lifecycle_context () =
   let scope = { scope_id = 42; scope_nodes = [] } in
   let graph = scoped_graph { current_scope = Some scope } in
   let lifecycle =
-    {
-      Graph.node_validate_dependency =
-        (fun dependency ->
-          record events ("validate:" ^ string_of_int dependency));
-      node_create =
-        (fun ~id ~scope ->
-          let id = Id.signal_int id in
-          let scope_label =
-            match scope with
-            | Some scope -> "scope:" ^ string_of_int scope.scope_id
-            | None -> "no_scope"
-          in
-          record events
-            ("create:" ^ string_of_int id ^ ":" ^ scope_label);
-          { node_id = id; node_scope = scope; node_dependencies = [] });
-      node_attach_dependency =
-        (fun ~parent ~child ->
-          record events
-            ("attach:" ^ string_of_int parent.node_id ^ "<-"
-           ^ string_of_int child);
-          parent.node_dependencies <- parent.node_dependencies @ [ child ]);
-      node_add_to_scope =
-        (fun scope node ->
-          record events
-            ("scope:" ^ string_of_int scope.scope_id ^ ":"
-           ^ string_of_int node.node_id);
-          scope.scope_nodes <- scope.scope_nodes @ [ node.node_id ]);
-      node_pack =
-        (fun node ->
-          record events ("pack:" ^ string_of_int node.node_id);
-          node);
-      node_create_weak =
-        (fun node ->
-          record events ("weak:" ^ string_of_int node.node_id);
-          node);
-    }
+    Graph.node_lifecycle
+      ~validate_dependency:(fun dependency ->
+        record events ("validate:" ^ string_of_int dependency))
+      ~create:(fun ~id ~scope ->
+        let id = Id.signal_int id in
+        let scope_label =
+          match scope with
+          | Some scope -> "scope:" ^ string_of_int scope.scope_id
+          | None -> "no_scope"
+        in
+        record events ("create:" ^ string_of_int id ^ ":" ^ scope_label);
+        { node_id = id; node_scope = scope; node_dependencies = [] })
+      ~attach_dependency:(fun ~parent ~child ->
+        record events
+          ("attach:" ^ string_of_int parent.node_id ^ "<-"
+         ^ string_of_int child);
+        parent.node_dependencies <- parent.node_dependencies @ [ child ])
+      ~add_to_scope:(fun scope node ->
+        record events
+          ("scope:" ^ string_of_int scope.scope_id ^ ":"
+         ^ string_of_int node.node_id);
+        scope.scope_nodes <- scope.scope_nodes @ [ node.node_id ])
+      ~pack:(fun node ->
+        record events ("pack:" ^ string_of_int node.node_id);
+        node)
+      ~create_weak:(fun node ->
+        record events ("weak:" ^ string_of_int node.node_id);
+        node)
   in
   let node =
     match Graph.create_live_node graph test_scope_ops lifecycle
@@ -234,35 +226,29 @@ let test_invalidate_live_node_owns_lifecycle_order () =
   root.invalid_dependents <- [ dependent ];
   dependent.invalid_dependencies <- [ root ];
   let lifecycle =
-    {
-      Graph.invalidation_valid = (fun node -> node.invalid_valid);
-      invalidation_set_invalid =
-        (fun node ->
-          record events ("invalid:" ^ string_of_int node.invalid_id);
-          node.invalid_valid <- false);
-      invalidation_timer_hooks =
-        (fun node ->
-          record events ("timer:" ^ string_of_int node.invalid_id);
-          [ "timer-hook:" ^ string_of_int node.invalid_id ]);
-      invalidation_tombstone =
-        (fun node ->
-          record events ("tombstone:" ^ string_of_int node.invalid_id);
-          {
-            dead_id = Id.signal node.invalid_id;
-            dead_label = "dead:" ^ string_of_int node.invalid_id;
-          });
-      invalidation_tombstone_id = (fun dead -> dead.dead_id);
-      invalidation_observer_hooks =
-        (fun node ->
-          record events ("observer:" ^ string_of_int node.invalid_id);
-          [ "observer-hook:" ^ string_of_int node.invalid_id ]);
-      invalidation_kind_hooks =
-        (fun ~invalidate_scope node ->
-          record events ("kind:" ^ string_of_int node.invalid_id);
-          match node.invalid_kind_scope with
-          | None -> []
-          | Some scope -> invalidate_scope ~prune:false scope);
-    }
+    Graph.node_invalidation
+      ~valid:(fun node -> node.invalid_valid)
+      ~set_invalid:(fun node ->
+        record events ("invalid:" ^ string_of_int node.invalid_id);
+        node.invalid_valid <- false)
+      ~timer_hooks:(fun node ->
+        record events ("timer:" ^ string_of_int node.invalid_id);
+        [ "timer-hook:" ^ string_of_int node.invalid_id ])
+      ~tombstone:(fun node ->
+        record events ("tombstone:" ^ string_of_int node.invalid_id);
+        {
+          dead_id = Id.signal node.invalid_id;
+          dead_label = "dead:" ^ string_of_int node.invalid_id;
+        })
+      ~tombstone_id:(fun dead -> dead.dead_id)
+      ~observer_hooks:(fun node ->
+        record events ("observer:" ^ string_of_int node.invalid_id);
+        [ "observer-hook:" ^ string_of_int node.invalid_id ])
+      ~kind_hooks:(fun ~invalidate_scope node ->
+        record events ("kind:" ^ string_of_int node.invalid_id);
+        match node.invalid_kind_scope with
+        | None -> []
+        | Some scope -> invalidate_scope ~prune:false scope)
   in
   let invalidate_scope ?(prune = true) scope =
     record events

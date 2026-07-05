@@ -181,6 +181,29 @@ type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
     'hook list;
 }
 
+let node_lifecycle ~validate_dependency ~create ~attach_dependency
+    ~add_to_scope ~pack ~create_weak =
+  {
+    node_validate_dependency = validate_dependency;
+    node_create = create;
+    node_attach_dependency = attach_dependency;
+    node_add_to_scope = add_to_scope;
+    node_pack = pack;
+    node_create_weak = create_weak;
+  }
+
+let node_invalidation ~valid ~set_invalid ~timer_hooks ~tombstone
+    ~tombstone_id ~observer_hooks ~kind_hooks =
+  {
+    invalidation_valid = valid;
+    invalidation_set_invalid = set_invalid;
+    invalidation_timer_hooks = timer_hooks;
+    invalidation_tombstone = tombstone;
+    invalidation_tombstone_id = tombstone_id;
+    invalidation_observer_hooks = observer_hooks;
+    invalidation_kind_hooks = kind_hooks;
+  }
+
 let core_counter = function
   | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
   | Recompute_count -> Eta_signal_graph_core.Recompute_count

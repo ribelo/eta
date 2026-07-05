@@ -102,28 +102,31 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
-type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
-  {
-    node_validate_dependency : 'dependency -> unit;
-    node_create : id:Eta_signal_id.signal -> scope:'scope option -> 'node;
-    node_attach_dependency : parent:'node -> child:'dependency -> unit;
-    node_add_to_scope : 'scope -> 'node -> unit;
-    node_pack : 'node -> 'packed_node;
-    node_create_weak : 'packed_node -> 'weak_node;
-  }
+type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle
 
-type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
-  invalidation_valid : 'node -> bool;
-  invalidation_set_invalid : 'node -> unit;
-  invalidation_timer_hooks : 'node -> 'hook list;
-  invalidation_tombstone : 'node -> 'dead_node;
-  invalidation_tombstone_id : 'dead_node -> Eta_signal_id.signal;
-  invalidation_observer_hooks : 'node -> 'hook list;
-  invalidation_kind_hooks :
-    invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+val node_lifecycle :
+  validate_dependency:('dependency -> unit) ->
+  create:(id:Eta_signal_id.signal -> scope:'scope option -> 'node) ->
+  attach_dependency:(parent:'node -> child:'dependency -> unit) ->
+  add_to_scope:('scope -> 'node -> unit) ->
+  pack:('node -> 'packed_node) ->
+  create_weak:('packed_node -> 'weak_node) ->
+  ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle
+
+type ('node, 'scope, 'hook, 'dead_node) node_invalidation
+
+val node_invalidation :
+  valid:('node -> bool) ->
+  set_invalid:('node -> unit) ->
+  timer_hooks:('node -> 'hook list) ->
+  tombstone:('node -> 'dead_node) ->
+  tombstone_id:('dead_node -> Eta_signal_id.signal) ->
+  observer_hooks:('node -> 'hook list) ->
+  kind_hooks:
+    (invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
     'node ->
-    'hook list;
-}
+    'hook list) ->
+  ('node, 'scope, 'hook, 'dead_node) node_invalidation
 
 val create :
   create_scope_context:(unit -> 'scope_context) ->
