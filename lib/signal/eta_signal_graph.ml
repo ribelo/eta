@@ -347,7 +347,8 @@ let begin_staging t ~timer_refresh =
   Eta_signal_graph_state.begin_staging t.state ~timer_refresh
 
 let drain_pending t = Eta_signal_graph_state.drain_pending t.state
-let enqueue_pending t pending = Eta_signal_graph_state.enqueue_pending t.state pending
+let enqueue_pending t _lane pending =
+  Eta_signal_graph_state.enqueue_pending t.state pending
 
 let active_staging t = Eta_signal_graph_state.require_staging t.state
 

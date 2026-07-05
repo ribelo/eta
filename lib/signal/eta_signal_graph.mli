@@ -250,7 +250,10 @@ val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 val set_generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
 
 val enqueue_pending :
-  ('pending, _, _, _, _, _, _, _, _, _, _) t -> 'pending -> unit
+  ('pending, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  'pending ->
+  unit
 
 val remember_computed :
   (_, _, 'node, _, _, _, _, _, _, _, _) t ->

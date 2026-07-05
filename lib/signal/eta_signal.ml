@@ -1249,14 +1249,14 @@ module Make (Observer_error : Observer_error) () = struct
   let remember_timer_refresh_disposal_hooks hooks =
     Graph.remember_timer_refresh_disposal_hooks graph hooks
 
-  let queue_var_unlocked (type a) (source : a var) =
+  let queue_var_unlocked (type a) lane (source : a var) =
     if not source.queued then (
       source.queued <- true;
-      Graph.enqueue_pending graph (V source))
+      Graph.enqueue_pending graph lane (V source))
 
-  let set_var_source_unlocked (type a) (source : a var) value =
+  let set_var_source_unlocked (type a) lane (source : a var) value =
     publish_source_current source.source_value value;
-    queue_var_unlocked source
+    queue_var_unlocked lane source
 
   let stage_timer_source_value (type a) (source : a var) value =
     let graph_value = effective_var_value source in
@@ -1327,10 +1327,10 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)
 
-  let requeue_if_needed (_lane : graph_lane) (V var as packed) =
+  let requeue_if_needed lane (V var as packed) =
     if not var.queued then (
       var.queued <- true;
-      Graph.enqueue_pending graph packed)
+      Graph.enqueue_pending graph lane packed)
 
   let mark_failed_without_current (lane : graph_lane) (O observer) =
     Observer_core.mark_failed_without_current (observer_delivery_port ()) lane
@@ -1982,22 +1982,22 @@ module Make (Observer_error : Observer_error) () = struct
       source.watchers <- weak_packed_signal (P signal) :: source.watchers;
       signal
 
-    let queue_var (source : 'a t) = queue_var_unlocked source
+    let queue_var lane (source : 'a t) = queue_var_unlocked lane source
 
-    let set_unlocked (source : 'a t) value =
-      set_var_source_unlocked source value
+    let set_unlocked lane (source : 'a t) value =
+      set_var_source_unlocked lane source value
 
     let set (source : 'a t) value =
-      with_graph_lane_sync (fun () ->
+      with_graph_lane_access (fun lane ->
           if source.updating then Error `Reentrant_update
           else (
-            set_unlocked source value;
+            set_unlocked lane source value;
             Ok ()))
       |> Effect.flatten_result
 
     let set_from_update (source : 'a t) value =
-      with_graph_lane_sync (fun () ->
-          set_unlocked source value;
+      with_graph_lane_access (fun lane ->
+          set_unlocked lane source value;
           value)
 
     let release_update (source : 'a t) =
@@ -2525,11 +2525,11 @@ module Make (Observer_error : Observer_error) () = struct
           Timer.after_update_state timer_state_port timer ~generation)
 
     let timer_set_source timer generation (source : 'a var) value =
-      with_graph_lane_sync (fun () ->
+      with_graph_lane_access (fun lane ->
           Timer.publish_if_running timer_state_port timer ~generation
             ~publish:(fun () ->
               publish_source_current source.source_value value;
-              Var.queue_var source))
+              Var.queue_var lane source))
 
     let add_relative_deadline = Timer_policy.add_relative_deadline
 
