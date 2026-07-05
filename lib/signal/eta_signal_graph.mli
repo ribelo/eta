@@ -690,12 +690,14 @@ val invalidate_live_node :
 
 val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   'node list
 
 val prune_live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   keep:('node -> bool) ->

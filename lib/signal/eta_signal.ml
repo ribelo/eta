@@ -585,11 +585,11 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_live_weak_signals keep cells =
     Graph_algorithms.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
-  let all_nodes_unlocked () =
-    Graph.live_nodes graph ~collect_live_nodes:collect_live_weak_signals
+  let all_nodes_unlocked lane =
+    Graph.live_nodes graph lane ~collect_live_nodes:collect_live_weak_signals
 
-  let prune_all_nodes_unlocked () =
-    Graph.prune_live_nodes graph
+  let prune_all_nodes_unlocked lane =
+    Graph.prune_live_nodes graph lane
       ~collect_live_nodes:collect_live_weak_signals ~keep:(fun _ -> true)
 
   let children_with_scope_owner signal children =
@@ -986,8 +986,8 @@ module Make (Observer_error : Observer_error) () = struct
       (Signal_snapshot.initialized value);
     signal
 
-  let prune_invalid_nodes_unlocked () =
-    Graph.prune_live_nodes graph
+  let prune_invalid_nodes_unlocked lane =
+    Graph.prune_live_nodes graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~keep:(fun (P signal) -> signal.valid)
 
@@ -1056,7 +1056,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Some nodes ->
         Graph.bump_counter graph lane Graph.Dynamic_scope_invalidations;
         let hooks = List.concat_map (invalidate_node lane) nodes in
-        if prune then prune_invalid_nodes_unlocked ();
+        if prune then prune_invalid_nodes_unlocked lane;
         hooks
 
   and invalidate_node lane packed =
@@ -1754,8 +1754,8 @@ module Make (Observer_error : Observer_error) () = struct
     if signal_order = 0 then compare_observer_id left.obs_id right.obs_id
     else signal_order
 
-  let collect_observed_bind_nodes (_lane : graph_lane) observers =
-    prune_all_nodes_unlocked ();
+  let collect_observed_bind_nodes lane observers =
+    prune_all_nodes_unlocked lane;
     Graph.fold_reachable graph reachable_ops
       ~roots:(observer_active_roots observers) ~init:[]
       ~f:(fun binds (P signal as packed) ->
@@ -2189,7 +2189,7 @@ module Make (Observer_error : Observer_error) () = struct
   let stats () =
     with_graph_lane_access (fun lane ->
         try
-          let all_nodes = all_nodes_unlocked () in
+          let all_nodes = all_nodes_unlocked lane in
           Ok
             {
               pure_snapshot_commit_count =
@@ -2418,7 +2418,7 @@ module Make (Observer_error : Observer_error) () = struct
   let to_dot ?(options = default_dot_options) () =
     with_graph_lane_access @@ fun lane ->
     let necessary = collect_necessary_node_ids lane in
-    let all_nodes = all_nodes_unlocked () in
+    let all_nodes = all_nodes_unlocked lane in
     let selected signal = signal_selected options necessary signal in
     let include_dead_nodes =
       match options.dot_scope with

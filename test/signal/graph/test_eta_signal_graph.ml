@@ -377,7 +377,8 @@ let test_create_live_node_owns_lifecycle_context () =
     node.node_dependencies;
   Alcotest.(check (list int)) "scope nodes" [ 0 ] scope.scope_nodes;
   let live_node_ids =
-    Graph.live_nodes graph ~collect_live_nodes:live_nodes_from_cells
+    with_graph_lane graph (fun lane ->
+        Graph.live_nodes graph lane ~collect_live_nodes:live_nodes_from_cells)
     |> List.map (fun node -> node.node_id)
   in
   Alcotest.(check (list int)) "live nodes" [ 0 ] live_node_ids;
@@ -876,7 +877,9 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     [ (1, "root"); (2, "leaf") ]
     timers;
   let remaining_live_ids =
-    Graph.live_nodes graph ~collect_live_nodes:collect_demand_live_nodes
+    with_graph_lane graph (fun lane ->
+        Graph.live_nodes graph lane
+          ~collect_live_nodes:collect_demand_live_nodes)
     |> List.map (fun node -> Id.signal_int node.demand_id)
     |> List.sort Int.compare
   in
