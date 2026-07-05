@@ -182,6 +182,41 @@ val discard_staging :
   'a Eta_signal_transaction.staged ->
   unit
 
+val next_timer_refresh_token :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> advance:(int -> int) -> int
+
+val set_next_timer_refresh_token :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+
+val mark_timer_refresh_dirty :
+  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  mark:(unit -> unit) ->
+  record:('refresh -> unit) ->
+  unit
+
+val timer_has_staged_refresh :
+  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  'timer ->
+  refresh_token:('refresh -> int) ->
+  staged_token:('timer -> int) ->
+  bool
+
+val remember_timer_refresh_timer :
+  (_, _, _, _, 'timer, 'refresh, _, _, _, _, _) t ->
+  'timer ->
+  refresh_token:('refresh -> int) ->
+  staged_token:('timer -> int) ->
+  set_staged_token:('timer -> int -> unit) ->
+  stage_refresh_token:('timer -> int -> unit) ->
+  unit
+
+val with_timer_refresh_timer :
+  (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  'timer option ->
+  none:(unit -> 'a) ->
+  some:('refresh -> 'timer -> 'a) ->
+  'a
+
 val allocation_scope :
   (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
   ('scope_context, 'scope) scope_ops ->

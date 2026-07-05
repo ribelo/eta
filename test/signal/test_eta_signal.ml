@@ -3679,9 +3679,8 @@ let test_stabilization_generation_overflow_is_typed_failure () =
 let test_timer_refresh_token_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Eta_signal_testable.Graph_state.set_next_timer_refresh_token
-    (Eta_signal_testable.Graph.state Overflow_signal.graph)
-    max_int;
+  Eta_signal_testable.Graph.set_next_timer_refresh_token
+    Overflow_signal.graph max_int;
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))

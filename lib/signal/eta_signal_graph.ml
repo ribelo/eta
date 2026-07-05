@@ -149,6 +149,40 @@ let discard_staging t cell =
   | Some transaction -> Eta_signal_transaction.discard transaction cell
   | None -> ()
 
+let next_timer_refresh_token t ~advance =
+  Eta_signal_graph_state.next_timer_refresh_token t.state ~advance
+
+let set_next_timer_refresh_token t token =
+  Eta_signal_graph_state.set_next_timer_refresh_token t.state token
+
+let mark_timer_refresh_dirty t ~mark ~record =
+  match Eta_signal_graph_state.active_timer_refresh t.state with
+  | None -> mark ()
+  | Some refresh -> record refresh
+
+let timer_has_staged_refresh t timer ~refresh_token ~staged_token =
+  match Eta_signal_graph_state.active_timer_refresh t.state with
+  | Some refresh -> staged_token timer = refresh_token refresh
+  | None -> false
+
+let remember_timer_refresh_timer t timer ~refresh_token ~staged_token
+    ~set_staged_token ~stage_refresh_token =
+  match Eta_signal_graph_state.active_timer_refresh t.state with
+  | None -> ()
+  | Some refresh ->
+      let token = refresh_token refresh in
+      if staged_token timer <> token then (
+        set_staged_token timer token;
+        stage_refresh_token timer token;
+        Eta_signal_graph_state.stage_timer_refresh_timer t.state
+          (Eta_signal_graph_state.require_staging t.state)
+          timer)
+
+let with_timer_refresh_timer t timer ~none ~some =
+  match (Eta_signal_graph_state.active_timer_refresh t.state, timer) with
+  | Some refresh, Some timer -> some refresh timer
+  | None, _ | Some _, None -> none ()
+
 let allocation_scope t ops =
   match Eta_signal_stabilization.state t.stabilization with
   | Idle -> Ok (ops.scope_current t.current_scope)

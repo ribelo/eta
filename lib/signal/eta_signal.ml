@@ -736,13 +736,13 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_dirty.mark packed
 
   let mark_timer_refresh_dirty packed =
-    match Graph_state.active_timer_refresh graph_state with
-    | None -> Graph_dirty.mark packed
-    | Some context ->
+    Graph.mark_timer_refresh_dirty graph
+      ~mark:(fun () -> Graph_dirty.mark packed)
+      ~record:(fun context ->
         Timer_policy.set_refresh_dirty_items context
           (Graph_dirty.mark_recording_previous
              (Timer_policy.refresh_dirty_items context)
-             packed)
+             packed))
 
   let remove_var_watcher source signal =
     source.watchers <-
@@ -958,10 +958,9 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_state_label = Timer_policy.state_label
 
   let timer_has_staged_refresh timer =
-    match Graph_state.active_timer_refresh graph_state with
-    | Some context ->
-        Timer.staged_refresh_token timer = Timer_policy.refresh_token context
-    | None -> false
+    Graph.timer_has_staged_refresh graph timer
+      ~refresh_token:Timer_policy.refresh_token
+      ~staged_token:Timer.staged_refresh_token
 
   let timer_effective_state timer =
     if timer_has_staged_refresh timer then
@@ -1023,17 +1022,13 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_set_next_due_state = Timer_policy.state_set_next_due
 
   let remember_timer_refresh_timer timer =
-    match Graph_state.active_timer_refresh graph_state with
-    | None -> ()
-    | Some context ->
-        let timer_refresh_token = Timer_policy.refresh_token context in
-        if Timer.staged_refresh_token timer <> timer_refresh_token then (
-          Timer.set_staged_refresh_token timer timer_refresh_token;
-          update_timer_staging timer (fun snapshot ->
-              Timer_policy.snapshot_with_on_demand_refresh_token snapshot
-                timer_refresh_token);
-          Graph_state.stage_timer_refresh_timer graph_state
-            (active_staging ()) timer)
+    Graph.remember_timer_refresh_timer graph timer
+      ~refresh_token:Timer_policy.refresh_token
+      ~staged_token:Timer.staged_refresh_token
+      ~set_staged_token:Timer.set_staged_refresh_token
+      ~stage_refresh_token:(fun timer token ->
+        update_timer_staging timer (fun snapshot ->
+            Timer_policy.snapshot_with_on_demand_refresh_token snapshot token))
 
   let stage_timer_state_unlocked timer state =
     remember_timer_refresh_timer timer;
@@ -1482,7 +1477,7 @@ module Make (Observer_error : Observer_error) () = struct
     | None -> ()
 
   let next_timer_refresh_token_unlocked () =
-    Graph_state.next_timer_refresh_token graph_state
+    Graph.next_timer_refresh_token graph
       ~advance:(fun token -> checked_succ "timer refresh token" token)
 
   let stage_pending_var (_lane : graph_lane) (V var) =
@@ -1493,8 +1488,9 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter mark_self_dirty (source_watchers_unlocked var))
 
   let refresh_timer_source_for_compute signal =
-    match (Graph_state.active_timer_refresh graph_state, signal.timer) with
-    | Some timer_refresh, Some timer ->
+    Graph.with_timer_refresh_timer graph signal.timer
+      ~none:(fun () -> ())
+      ~some:(fun timer_refresh timer ->
         let timer_refresh_token = Timer_policy.refresh_token timer_refresh in
         ensure_timer_runtime timer
           (Timer_policy.refresh_runtime_contract timer_refresh);
@@ -1503,8 +1499,7 @@ module Make (Observer_error : Observer_error) () = struct
           let now_ms = Timer_policy.refresh_sample_now_ms timer_refresh in
           match Timer.refresh_operation timer with
           | None -> ()
-          | Some operation -> stage_timer_refresh_operation timer now_ms operation)
-    | None, _ | Some _, None -> ()
+          | Some operation -> stage_timer_refresh_operation timer now_ms operation))
 
   let rec compute : type a. graph_lane -> a signal -> a * bool =
    fun lane signal ->
