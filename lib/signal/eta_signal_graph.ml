@@ -38,6 +38,28 @@ type
     mutable stream_bridge_metrics : 'stream_metrics;
   }
 
+type lane_access = Eta_signal_graph_core.lane_access
+
+type lane_hooks = {
+  note_waiter_enqueued : unit -> unit;
+  note_waiter_compaction : unit -> unit;
+}
+
+type counter =
+  | Callback_delivery_count
+  | Recompute_count
+  | Dynamic_scope_invalidations
+  | Nodes_became_necessary
+  | Nodes_became_unnecessary
+
+let core_counter = function
+  | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
+  | Recompute_count -> Eta_signal_graph_core.Recompute_count
+  | Dynamic_scope_invalidations ->
+      Eta_signal_graph_core.Dynamic_scope_invalidations
+  | Nodes_became_necessary -> Eta_signal_graph_core.Nodes_became_necessary
+  | Nodes_became_unnecessary -> Eta_signal_graph_core.Nodes_became_unnecessary
+
 let create ~create_scope_context ~create_stream_bridge_metrics () =
   {
     core = Eta_signal_graph_core.create ();
@@ -50,7 +72,38 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
     stream_bridge_metrics = create_stream_bridge_metrics ();
   }
 
-let core t = t.core
+let context_error_message = Eta_signal_graph_core.context_error_message
+let ensure_context t = Eta_signal_graph_core.ensure_context t.core
+
+let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
+  let hooks =
+    {
+      Eta_signal_graph_core.note_waiter_enqueued =
+        hooks.note_waiter_enqueued;
+      note_waiter_compaction = hooks.note_waiter_compaction;
+    }
+  in
+  Eta_signal_graph_core.with_lane_access t.core ~leaf_name ~depth_local
+    ~hooks ~after_acquired f
+
+let lane_waiting_count t = Eta_signal_graph_core.lane_waiting_count t.core
+let lane_cancelled_count t = Eta_signal_graph_core.lane_cancelled_count t.core
+let next_signal_id t = Eta_signal_graph_core.next_signal_id t.core
+let next_var_id t = Eta_signal_graph_core.next_var_id t.core
+let next_observer_id t = Eta_signal_graph_core.next_observer_id t.core
+let next_scope_id t = Eta_signal_graph_core.next_scope_id t.core
+let set_next_node_id t next = Eta_signal_graph_core.set_next_node_id t.core next
+
+let set_next_scope_id t next =
+  Eta_signal_graph_core.set_next_scope_id t.core next
+
+let counter t target = Eta_signal_graph_core.counter t.core (core_counter target)
+
+let set_counter t target value =
+  Eta_signal_graph_core.set_counter t.core (core_counter target) value
+
+let bump_counter t lane target =
+  Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
 let stabilization t = t.stabilization
 let state t = t.state
 let current_scope t = t.current_scope

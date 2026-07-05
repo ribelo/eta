@@ -19,6 +19,20 @@ type
     'stream_metrics )
   t
 
+type lane_access
+
+type lane_hooks = {
+  note_waiter_enqueued : unit -> unit;
+  note_waiter_compaction : unit -> unit;
+}
+
+type counter =
+  | Callback_delivery_count
+  | Recompute_count
+  | Dynamic_scope_invalidations
+  | Nodes_became_necessary
+  | Nodes_became_unnecessary
+
 val create :
   create_scope_context:(unit -> 'scope_context) ->
   create_stream_bridge_metrics:(unit -> 'stream_metrics) ->
@@ -36,7 +50,48 @@ val create :
     'stream_metrics )
   t
 
-val core : (_, _, _, _, _, _, _, _, _, _, _) t -> Eta_signal_graph_core.t
+val context_error_message : string
+
+val ensure_context : (_, _, _, _, _, _, _, _, _, _, _) t -> unit
+
+val with_lane_access :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  leaf_name:string ->
+  depth_local:int Eta.Runtime_contract.local ->
+  hooks:lane_hooks ->
+  after_acquired:(unit -> (unit, 'error) Eta.Effect.t) ->
+  (lane_access -> 'a) ->
+  ('a, 'error) Eta.Effect.t
+
+val lane_waiting_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+val lane_cancelled_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+
+val next_signal_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (Eta_signal_id.signal, Eta_signal_error.graph_error) result
+
+val next_var_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (Eta_signal_id.var, Eta_signal_error.graph_error) result
+
+val next_observer_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (Eta_signal_id.observer, Eta_signal_error.graph_error) result
+
+val next_scope_id :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (Eta_signal_id.scope, Eta_signal_error.graph_error) result
+
+val set_next_node_id : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+val set_next_scope_id : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+
+val counter : (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int
+
+val set_counter :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int -> unit
+
+val bump_counter :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> unit
 
 val stabilization :
   ( 'pending,
@@ -246,7 +301,7 @@ val necessary_ids :
 
 val update_necessity :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
-  Eta_signal_graph_core.lane_access ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->

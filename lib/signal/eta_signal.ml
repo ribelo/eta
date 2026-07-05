@@ -7,7 +7,6 @@ module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Graph = Eta_signal_graph
-module Graph_core = Eta_signal_graph_core
 module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
 module Graph_algorithms = Eta_signal_graph_algorithms
@@ -588,7 +587,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.create ~create_scope_context:Scope.create_context
       ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
 
-  let graph_core = Graph.core graph
   let graph_state = Graph.state graph
   let graph_stabilization = Graph.stabilization graph
   let graph_current_scope = Graph.current_scope graph
@@ -648,26 +646,26 @@ module Make (Observer_error : Observer_error) () = struct
     | All _ -> "all"
     | Bind _ -> "bind"
 
-  let graph_context_error_message = Graph_core.context_error_message
+  let graph_context_error_message = Graph.context_error_message
 
-  let ensure_graph_context () = Graph_core.ensure_context graph_core
+  let ensure_graph_context () = Graph.ensure_context graph
 
   let graph_lane_depth_local : int Runtime_contract.local =
     Runtime_contract.create_local ()
 
-  type graph_lane = Graph_core.lane_access
+  type graph_lane = Graph.lane_access
 
   type event =
     (graph_lane, (unit, observer_error) Effect.t, stabilize_error)
     Observer_core.Delivery_event.t
 
   let with_graph_lane_access f =
-    Graph_core.with_lane_access graph_core
+    Graph.with_lane_access graph
       ~leaf_name:"Eta_signal.with_graph_lane_sync"
       ~depth_local:graph_lane_depth_local
       ~hooks:
         {
-          Graph_core.note_waiter_enqueued =
+          Graph.note_waiter_enqueued =
             Private_test_hooks.note_lane_waiter_enqueued;
           note_waiter_compaction =
             Private_test_hooks.note_lane_waiter_compaction;
@@ -682,25 +680,25 @@ module Make (Observer_error : Observer_error) () = struct
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
      effectful public operations must use [with_graph_lane_sync]. *)
-  let graph_core_or_raise = function
+  let graph_result_or_raise = function
     | Ok value -> value
     | Error err -> raise (Graph_error err)
 
   let next_signal_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_signal_id graph_core)
+    graph_result_or_raise (Graph.next_signal_id graph)
 
   let next_var_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_var_id graph_core)
+    graph_result_or_raise (Graph.next_var_id graph)
 
   let next_observer_id () =
     ensure_graph_context ();
-    graph_core_or_raise (Graph_core.next_observer_id graph_core)
+    graph_result_or_raise (Graph.next_observer_id graph)
 
   let new_scope owner =
     Scope.create
-      ~id:(graph_core_or_raise (Graph_core.next_scope_id graph_core))
+      ~id:(graph_result_or_raise (Graph.next_scope_id graph))
       ~owner:(P owner) ~parent:owner.scope
 
   let current_generation () = Graph_state.generation graph_state
@@ -1150,8 +1148,7 @@ module Make (Observer_error : Observer_error) () = struct
     match Scope.invalidate scope with
     | None -> []
     | Some nodes ->
-        Graph_core.bump_counter graph_core lane
-          Graph_core.Dynamic_scope_invalidations;
+        Graph.bump_counter graph lane Graph.Dynamic_scope_invalidations;
         let hooks = List.concat_map (invalidate_node lane) nodes in
         if prune then prune_invalid_nodes_unlocked ();
         hooks
@@ -1551,7 +1548,7 @@ module Make (Observer_error : Observer_error) () = struct
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let recompute value =
-      Graph_core.bump_counter graph_core lane Graph_core.Recompute_count;
+      Graph.bump_counter graph lane Graph.Recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
@@ -1701,8 +1698,7 @@ module Make (Observer_error : Observer_error) () = struct
                  (fun _lane dependencies -> dependency_changed dependencies);
                context_mark_recomputed =
                  (fun lane ->
-                   Graph_core.bump_counter graph_core lane
-                     Graph_core.Recompute_count);
+                   Graph.bump_counter graph lane Graph.Recompute_count);
                context_value_changed =
                  (fun _lane next ->
                    let snapshot = signal_effective_snapshot signal in
@@ -2194,8 +2190,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let mark_callback_delivery_complete () =
     with_graph_lane_access (fun lane ->
-        Graph_core.bump_counter graph_core lane
-          Graph_core.Callback_delivery_count)
+        Graph.bump_counter graph lane Graph.Callback_delivery_count)
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       finish_token_ref =
@@ -2514,8 +2509,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (Graph_state.pure_snapshot_commit_count graph_state);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
-                  (Graph_core.counter graph_core
-                     Graph_core.Callback_delivery_count);
+                  (Graph.counter graph Graph.Callback_delivery_count);
               total_node_count =
                 stats_counter "stats total_node_count"
                   (stats_count Private_test_hooks.Stats_total_node_count
@@ -2539,30 +2533,27 @@ module Make (Observer_error : Observer_error) () = struct
                   (live_dirty_node_count all_nodes);
               recompute_count =
                 stats_counter "stats recompute_count"
-                  (Graph_core.counter graph_core Graph_core.Recompute_count);
+                  (Graph.counter graph Graph.Recompute_count);
               dynamic_scope_invalidations =
                 stats_counter "stats dynamic_scope_invalidations"
-                  (Graph_core.counter graph_core
-                     Graph_core.Dynamic_scope_invalidations);
+                  (Graph.counter graph Graph.Dynamic_scope_invalidations);
               nodes_became_necessary =
                 stats_counter "stats nodes_became_necessary"
-                  (Graph_core.counter graph_core
-                     Graph_core.Nodes_became_necessary);
+                  (Graph.counter graph Graph.Nodes_became_necessary);
               nodes_became_unnecessary =
                 stats_counter "stats nodes_became_unnecessary"
-                  (Graph_core.counter graph_core
-                     Graph_core.Nodes_became_unnecessary);
+                  (Graph.counter graph Graph.Nodes_became_unnecessary);
               stream_bridge_drop_count =
                 stats_counter "stats stream_bridge_drop_count"
                   (Stream_bridge.drop_count (graph_stream_bridge_metrics ()));
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
-                  (Graph_core.lane_waiting_count graph_core);
+                  (Graph.lane_waiting_count graph);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (stats_count
                      Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Graph_core.lane_cancelled_count graph_core));
+                     (Graph.lane_cancelled_count graph));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
