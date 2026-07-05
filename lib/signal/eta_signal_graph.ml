@@ -488,11 +488,11 @@ let collect_staged_bind_switch_invalidations t ~init ~staged_switch
     ~collect_old_scope
   |> map_bind_switch_result
 
-let remember_pure_disposal_hooks t hooks =
+let remember_pure_disposal_hooks t _lane hooks =
   Eta_signal_graph_state.remember_pure_disposal_hooks t.state
     (active_staging t) hooks
 
-let remember_timer_refresh_disposal_hooks t hooks =
+let remember_timer_refresh_disposal_hooks t _lane hooks =
   Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state
     (active_staging t) hooks
 

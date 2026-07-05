@@ -353,10 +353,16 @@ val collect_staged_bind_switch_invalidations :
   ('acc, Eta_signal_error.graph_error) result
 
 val remember_pure_disposal_hooks :
-  (_, _, _, 'hook, _, _, _, _, _, _, _) t -> 'hook list -> unit
+  (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  'hook list ->
+  unit
 
 val remember_timer_refresh_disposal_hooks :
-  (_, _, _, 'hook, _, _, _, _, _, _, _) t -> 'hook list -> unit
+  (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  'hook list ->
+  unit
 
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 

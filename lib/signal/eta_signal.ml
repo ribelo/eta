@@ -1263,11 +1263,11 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.iter_computed graph ~f:(preflight_signal_commit invalidated_ids);
     preflight_post_commit_timer_starts lane invalidated_ids
 
-  let remember_pure_disposal_hooks hooks =
-    Graph.remember_pure_disposal_hooks graph hooks
+  let remember_pure_disposal_hooks lane hooks =
+    Graph.remember_pure_disposal_hooks graph lane hooks
 
-  let remember_timer_refresh_disposal_hooks hooks =
-    Graph.remember_timer_refresh_disposal_hooks graph hooks
+  let remember_timer_refresh_disposal_hooks lane hooks =
+    Graph.remember_timer_refresh_disposal_hooks graph lane hooks
 
   let queue_var_unlocked (type a) lane (source : a var) =
     if not source.queued then (
@@ -1301,7 +1301,7 @@ module Make (Observer_error : Observer_error) () = struct
     | Finish plan ->
         Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
             stage_timer_state_unlocked timer state;
-            remember_timer_refresh_disposal_hooks cancel_hooks)
+            remember_timer_refresh_disposal_hooks lane cancel_hooks)
 
   let timer_refresh_action source = function
     | Timer_policy.Refresh_set value -> Set_source (source, value)
@@ -1550,7 +1550,7 @@ module Make (Observer_error : Observer_error) () = struct
           Scope_validation.validate_inner ~scope (P inner))
         ~compute_inner:compute
         ~on_switch_failure:(fun lane scope ->
-          remember_pure_disposal_hooks (invalidate_scope lane scope))
+          remember_pure_disposal_hooks lane (invalidate_scope lane scope))
         ~dirty:signal.dirty
         ~initialized:(fun () ->
           Signal_snapshot.is_initialized
