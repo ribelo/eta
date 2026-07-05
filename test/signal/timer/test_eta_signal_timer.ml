@@ -11,11 +11,6 @@ let run_ok runtime effect =
   | Eta.Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
 
-let run_error runtime effect =
-  match Eta_eio.Runtime.run runtime effect with
-  | Eta.Exit.Ok _ -> Alcotest.fail "expected Error, got Ok"
-  | Eta.Exit.Error cause -> cause
-
 let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -51,8 +46,6 @@ let make_node_demand_case case_name ~current ~effective =
     case_node = None;
   }
 
-let runtime_error = Alcotest.testable Format.pp_print_string String.equal
-
 let state_label state =
   Timer_policy.state_label state
   ^ ":"
@@ -72,81 +65,6 @@ let state_port ?(record = fun _ -> ()) () =
 let demand_effect_parts effects =
   Timer.demand_effects_plan effects ~plan:(fun ~start_attempts
       ~cancel_hooks -> (start_attempts, cancel_hooks))
-
-let test_refresh_demand_classifies_and_orders_effects () =
-  let events = ref [] in
-  let record event = append_event events event in
-  let running generation label =
-    Timer_policy.running_state ~generation ~next_due_ms:(Some 10)
-      ~cancel:(fun () -> record ("cancel:" ^ label))
-  in
-  let start =
-    make_timer "start" ~current:(inactive 0) ~effective:(inactive 0)
-  in
-  let stop =
-    make_timer "stop" ~current:(running 1 "stop")
-      ~effective:(running 1 "stop")
-  in
-  let idle =
-    make_timer "idle" ~current:(inactive 0) ~effective:(inactive 0)
-  in
-  let port =
-    Timer.demand_port
-      ~collect_necessary:(fun () ->
-        record "collect_necessary";
-        [ 1 ])
-      ~collect_timers:(fun () ->
-        record "collect_timers";
-        [ (1, start); (2, stop); (3, idle) ])
-      ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
-      ~validate_runtime:(fun runtime timer ->
-        record ("validate:" ^ runtime ^ ":" ^ timer.name);
-        Ok ())
-      ~state:
-        (Timer.state_port
-           ~effective:(fun timer -> timer.effective)
-           ~current:(fun timer -> timer.current)
-           ~set_current:(fun timer state ->
-             timer.current <- state;
-             record ("set:" ^ timer.name ^ ":" ^ state_label state)))
-      ~start_effect:(fun timer ->
-        record ("start:" ^ timer.name ^ ":" ^ state_label timer.current);
-        timer.name ^ ":start")
-  in
-  match
-    Timer.refresh_demand ~advance_generation:succ ~cancel_running:true port
-      "rt"
-  with
-  | Error error -> Alcotest.failf "unexpected error %s" error
-  | Ok effects ->
-      let start_attempts, cancel_hooks = demand_effect_parts effects in
-      Alcotest.(check (list string))
-        "events"
-        [
-          "collect_necessary";
-          "collect_timers";
-          "validate:rt:start";
-          "set:start:starting:1";
-          "start:start:starting:1";
-          "set:stop:inactive:2";
-        ]
-        !events;
-      Alcotest.(check (list string))
-        "starts" [ "start:start" ]
-        (Timer.start_attempt_effects start_attempts);
-      List.iter (fun hook -> hook ()) cancel_hooks;
-      Alcotest.(check (list string))
-        "hooks"
-        [
-          "collect_necessary";
-          "collect_timers";
-          "validate:rt:start";
-          "set:start:starting:1";
-          "start:start:starting:1";
-          "set:stop:inactive:2";
-          "cancel:stop";
-        ]
-        !events
 
 let test_refresh_node_demand_owns_node_start_wiring () =
   with_runtime @@ fun runtime ->
@@ -374,111 +292,145 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
     ]
     !events
 
-let test_refresh_demand_validation_failure_short_circuits () =
+let test_refresh_node_demand_validation_failure_short_circuits () =
+  with_runtime @@ fun runtime ->
   let changed_state = ref false in
   let started = ref false in
   let bad =
-    make_timer "bad" ~current:(inactive 0) ~effective:(inactive 0)
+    make_node_demand_case "bad" ~current:(inactive 0)
+      ~effective:(inactive 0)
   in
   let unreached =
-    make_timer "unreached" ~current:(inactive 0) ~effective:(inactive 0)
+    make_node_demand_case "unreached" ~current:(inactive 0)
+      ~effective:(inactive 0)
   in
-  let port =
-    Timer.demand_port ~collect_necessary:(fun () -> [ 1 ])
-      ~collect_timers:(fun () -> [ (1, bad); (2, unreached) ])
-      ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
-      ~validate_runtime:(fun _runtime _timer -> Error "runtime")
-      ~state:
-        (Timer.state_port
-           ~effective:(fun timer -> timer.effective)
-           ~current:(fun timer -> timer.current)
-           ~set_current:(fun _timer _state -> changed_state := true))
-      ~start_effect:(fun _timer ->
-        started := true;
-        "started")
+  let cases = [ bad; unreached ] in
+  let find_case timer =
+    match
+      List.find_opt
+        (fun case ->
+          match case.case_node with
+          | Some node -> node == timer
+          | None -> false)
+        cases
+    with
+    | Some case -> case
+    | None -> Alcotest.fail "unknown timer node"
   in
-  Alcotest.(check (result reject runtime_error))
-    "runtime validation failure" (Error "runtime")
-    (Timer.refresh_demand ~advance_generation:succ ~cancel_running:true port
-       "rt");
+  let effect =
+    Eta.Effect.Expert.make
+      ~leaf_name:"eta_signal.timer.test_node_validation" @@ fun context ->
+    let runtime_contract = Eta.Effect.Expert.contract context in
+    let make_node case =
+      let node =
+        Timer.create_node ~runtime_contract
+          ~refresh_when_inactive:true ~refresh_operation:None
+          ~start:
+            (Timer.start ~run:(fun _timer ->
+                 started := true;
+                 Eta.Effect.unit))
+      in
+      case.case_node <- Some node;
+      node
+    in
+    let bad_node = make_node bad in
+    let unreached_node = make_node unreached in
+    let plan =
+      Timer.node_demand_plan ~necessary:[ 1 ]
+        ~timers:[ (1, bad_node); (2, unreached_node) ]
+        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+        ~validate_runtime:(fun _runtime _timer -> Error "runtime")
+        ~state:
+          (Timer.state_port
+             ~effective:(fun timer -> (find_case timer).case_effective)
+             ~current:(fun timer -> (find_case timer).case_current)
+             ~set_current:(fun _timer _state -> changed_state := true))
+    in
+    match
+      Timer.refresh_node_demand_plan ~advance_generation:succ
+        ~cancel_running:true plan runtime_contract
+    with
+    | Error "runtime" -> Eta.Exit.Ok ()
+    | Error error -> Alcotest.failf "unexpected error %s" error
+    | Ok _ -> Alcotest.fail "expected runtime validation failure"
+  in
+  run_ok runtime effect;
   Alcotest.(check bool) "no state changes" false !changed_state;
   Alcotest.(check bool) "no start effects" false !started;
   Alcotest.(check string) "bad state unchanged" "inactive:0"
-    (state_label bad.current)
+    (state_label bad.case_current)
 
-let test_rollback_unclaimed_start_marks_starting_unneeded () =
+let test_mark_node_unneeded_marks_starting_inactive () =
+  with_runtime @@ fun runtime ->
   let events = ref [] in
   let record event = append_event events event in
   let starting =
-    make_timer "starting"
+    make_node_demand_case "starting"
       ~current:(Timer_policy.starting_state ~generation:4)
       ~effective:(Timer_policy.starting_state ~generation:4)
   in
   let inactive_timer =
-    make_timer "inactive" ~current:(inactive 9) ~effective:(inactive 9)
+    make_node_demand_case "inactive" ~current:(inactive 9)
+      ~effective:(inactive 9)
   in
-  let starting_hooks =
-    Timer.rollback_unclaimed_start ~advance_generation:succ
-      (state_port ~record ()) starting
+  let cases = [ starting; inactive_timer ] in
+  let find_case timer =
+    match
+      List.find_opt
+        (fun case ->
+          match case.case_node with
+          | Some node -> node == timer
+          | None -> false)
+        cases
+    with
+    | Some case -> case
+    | None -> Alcotest.fail "unknown timer node"
   in
-  let inactive_hooks =
-    Timer.rollback_unclaimed_start ~advance_generation:succ
-      (state_port ~record ()) inactive_timer
+  let starting_hooks, inactive_hooks =
+    run_ok runtime
+      (Eta.Effect.Expert.make
+         ~leaf_name:"eta_signal.timer.test_mark_node_unneeded"
+       @@ fun context ->
+         let runtime_contract = Eta.Effect.Expert.contract context in
+         let make_node case =
+           let node =
+             Timer.create_node ~runtime_contract
+               ~refresh_when_inactive:true ~refresh_operation:None
+               ~start:(Timer.start ~run:(fun _timer -> Eta.Effect.unit))
+           in
+           case.case_node <- Some node;
+           node
+         in
+         let starting_node = make_node starting in
+         let inactive_node = make_node inactive_timer in
+         let port =
+           Timer.state_port
+             ~effective:(fun timer -> (find_case timer).case_effective)
+             ~current:(fun timer -> (find_case timer).case_current)
+             ~set_current:(fun timer state ->
+               let case = find_case timer in
+               case.case_current <- state;
+               case.case_effective <- state;
+               record ("set:" ^ case.case_name ^ ":" ^ state_label state))
+         in
+         let starting_hooks =
+           Timer.mark_node_unneeded ~advance_generation:succ
+             ~cancel_running:true port starting_node
+         in
+         let inactive_hooks =
+           Timer.mark_node_unneeded ~advance_generation:succ
+             ~cancel_running:true port inactive_node
+         in
+         Eta.Exit.Ok (starting_hooks, inactive_hooks))
   in
   Alcotest.(check (list string))
     "events" [ "set:starting:inactive:5" ] !events;
   Alcotest.(check int) "starting hooks" 0 (List.length starting_hooks);
   Alcotest.(check int) "inactive hooks" 0 (List.length inactive_hooks);
   Alcotest.(check string) "starting state" "inactive:5"
-    (state_label starting.current);
+    (state_label starting.case_current);
   Alcotest.(check string) "inactive state" "inactive:9"
-    (state_label inactive_timer.current)
-
-let test_rollback_unclaimed_start_attempts_hide_timer_pairing () =
-  let events = ref [] in
-  let record event = append_event events event in
-  let starting =
-    make_timer "starting"
-      ~current:(inactive 4) ~effective:(inactive 4)
-  in
-  let attempts, cancel_hooks =
-    let port =
-      Timer.demand_port ~collect_necessary:(fun () -> [ 1 ])
-        ~collect_timers:(fun () -> [ (1, starting) ])
-        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
-        ~validate_runtime:(fun _runtime _timer -> Ok ())
-        ~state:
-          (Timer.state_port
-             ~effective:(fun timer -> timer.effective)
-             ~current:(fun timer -> timer.current)
-             ~set_current:(fun timer state ->
-               timer.current <- state;
-               timer.effective <- state;
-               record ("set:" ^ timer.name ^ ":" ^ state_label state)))
-        ~start_effect:(fun _timer -> "start-effect")
-    in
-    match
-      Timer.refresh_demand ~advance_generation:succ ~cancel_running:true
-        port "rt"
-    with
-    | Error error -> Alcotest.failf "unexpected error %s" error
-    | Ok effects ->
-        demand_effect_parts effects
-  in
-  let hooks =
-    Timer.rollback_unclaimed_start_attempts ~advance_generation:succ
-      (state_port ~record ()) attempts
-  in
-  Alcotest.(check (list string))
-    "effects" [ "start-effect" ]
-    (Timer.start_attempt_effects attempts);
-  Alcotest.(check (list string))
-    "events" [ "set:starting:starting:5"; "set:starting:inactive:6" ]
-    !events;
-  Alcotest.(check int) "refresh hooks" 0 (List.length cancel_hooks);
-  Alcotest.(check int) "hooks" 0 (List.length hooks);
-  Alcotest.(check string) "starting state" "inactive:6"
-    (state_label starting.current)
+    (state_label inactive_timer.case_current)
 
 let test_daemon_lifecycle_transitions () =
   let events = ref [] in
@@ -581,89 +533,6 @@ let test_due_lifecycle_transitions () =
       "set:due:finished:3";
     ]
     !events
-
-let timer_demand_access events =
-  Timer.demand_effect_access ~with_access:(fun f ->
-      Eta.Effect.sync (fun () ->
-          append_event events "access";
-          f "capability")
-      |> Eta.Effect.flatten_result)
-
-let test_refresh_demand_effect_owns_adapter_bracketing () =
-  with_runtime @@ fun runtime ->
-  let events = ref [] in
-  run_ok runtime
-    (Timer.refresh_demand_effect (timer_demand_access events)
-       (Timer.demand_effect_port
-          ~acquire:(fun _runtime_contract capability ->
-             append_event events ("acquire:" ^ capability);
-             Ok
-               (Timer.demand_effects
-                  ~start_attempts:[ "start-a"; "start-b" ]
-                  ~cancel_hooks:
-                    [
-                      (fun () -> append_event events "cancel:acquire-a");
-                      (fun () -> append_event events "cancel:acquire-b");
-                    ]))
-          ~rollback_unclaimed:(fun capability attempts ->
-             append_event events ("rollback:" ^ capability);
-             List.iter
-               (fun attempt ->
-                 append_event events ("rollback-start:" ^ attempt))
-               attempts;
-             Ok [ (fun () -> append_event events "cancel:rollback") ])
-          ~run_cancel_hooks:(fun hooks ->
-            Eta.Effect.sync (fun () ->
-                List.iter (fun hook -> hook ()) hooks))
-          ~run_start_attempts:(fun attempts ->
-            Eta.Effect.sync (fun () ->
-                List.iter
-                  (fun attempt -> append_event events ("start:" ^ attempt))
-                  attempts))));
-  Alcotest.(check (list string))
-    "events"
-    [
-      "access";
-      "acquire:capability";
-      "cancel:acquire-a";
-      "cancel:acquire-b";
-      "start:start-a";
-      "start:start-b";
-      "access";
-      "rollback:capability";
-      "rollback-start:start-a";
-      "rollback-start:start-b";
-      "cancel:rollback";
-    ]
-    !events
-
-let test_refresh_demand_effect_acquire_failure_skips_release () =
-  with_runtime @@ fun runtime ->
-  let events = ref [] in
-  let cause =
-    run_error runtime
-      (Timer.refresh_demand_effect (timer_demand_access events)
-         (Timer.demand_effect_port
-            ~acquire:(fun _runtime_contract capability ->
-               append_event events ("acquire:" ^ capability);
-               Error `Demand_failed)
-            ~rollback_unclaimed:(fun _capability _attempts ->
-               append_event events "rollback";
-               Ok [])
-            ~run_cancel_hooks:(fun _hooks ->
-              Eta.Effect.sync (fun () -> append_event events "cancel"))
-            ~run_start_attempts:(fun _attempts ->
-              Eta.Effect.sync (fun () -> append_event events "start"))))
-  in
-  (match Eta.Cause.failures cause with
-  | [ `Demand_failed ] -> ()
-  | _ ->
-      Alcotest.failf "expected Demand_failed, got %a"
-        (Eta.Cause.pp (fun ppf `Demand_failed ->
-             Format.pp_print_string ppf "Demand_failed"))
-        cause);
-  Alcotest.(check (list string))
-    "events" [ "access"; "acquire:capability" ] !events
 
 let daemon_context events port update =
   Timer.daemon_context ~advance_generation:succ
@@ -776,26 +645,18 @@ let () =
     [
       ( "demand",
         [
-          Alcotest.test_case "classifies and orders effects" `Quick
-            test_refresh_demand_classifies_and_orders_effects;
           Alcotest.test_case "node helper owns start wiring" `Quick
             test_refresh_node_demand_owns_node_start_wiring;
           Alcotest.test_case "node effect helper owns bracketing" `Quick
             test_refresh_node_demand_effect_owns_node_bracketing;
           Alcotest.test_case "validation failure short-circuits" `Quick
-            test_refresh_demand_validation_failure_short_circuits;
-          Alcotest.test_case "rolls back unclaimed starts" `Quick
-            test_rollback_unclaimed_start_marks_starting_unneeded;
-          Alcotest.test_case "rolls back start attempts" `Quick
-            test_rollback_unclaimed_start_attempts_hide_timer_pairing;
+            test_refresh_node_demand_validation_failure_short_circuits;
+          Alcotest.test_case "marks unneeded node inactive" `Quick
+            test_mark_node_unneeded_marks_starting_inactive;
           Alcotest.test_case "daemon lifecycle transitions" `Quick
             test_daemon_lifecycle_transitions;
           Alcotest.test_case "due lifecycle transitions" `Quick
             test_due_lifecycle_transitions;
-          Alcotest.test_case "effect bracketing" `Quick
-            test_refresh_demand_effect_owns_adapter_bracketing;
-          Alcotest.test_case "effect acquire failure skips release" `Quick
-            test_refresh_demand_effect_acquire_failure_skips_release;
           Alcotest.test_case "start daemon callback ownership" `Quick
             test_start_daemon_wires_start_update_through_timer_port;
           Alcotest.test_case "daemon node start ownership" `Quick

@@ -961,7 +961,7 @@ module Make (Observer_error : Observer_error) () = struct
         Timer_policy.snapshot_with_state snapshot state)
 
   let timer_mark_unneeded_unlocked ?(cancel_running = true) timer =
-    Timer.mark_unneeded
+    Timer.mark_node_unneeded
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running timer_state_port timer
 

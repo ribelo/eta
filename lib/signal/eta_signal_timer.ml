@@ -250,6 +250,8 @@ let mark_unneeded ~advance_generation ~cancel_running port timer =
   | None -> []
   | Some plan -> apply_stop_plan port timer plan
 
+let mark_node_unneeded = mark_unneeded
+
 let rollback_unclaimed_start ~advance_generation port timer =
   if Eta_signal_timer_policy.state_starting (port.state_current timer) then
     mark_unneeded ~advance_generation ~cancel_running:true port timer

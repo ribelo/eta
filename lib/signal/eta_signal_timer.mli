@@ -8,11 +8,6 @@
 
 type 'start demand_effects
 
-val demand_effects :
-  start_attempts:'start list ->
-  cancel_hooks:(unit -> unit) list ->
-  'start demand_effects
-
 val demand_effects_plan :
   'start demand_effects ->
   plan:(start_attempts:'start list -> cancel_hooks:(unit -> unit) list -> 'a) ->
@@ -87,17 +82,6 @@ val daemon_context :
   hooks:daemon_hooks ->
   'timer daemon_context
 
-type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port
-
-val demand_port :
-  collect_necessary:(unit -> 'necessary) ->
-  collect_timers:(unit -> ('id * 'timer) list) ->
-  is_necessary:('necessary -> 'id -> bool) ->
-  validate_runtime:('runtime -> 'timer -> (unit, 'error) result) ->
-  state:'timer state_port ->
-  start_effect:('timer -> 'effect) ->
-  ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port
-
 type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan
 
 val node_demand_plan :
@@ -116,20 +100,6 @@ val demand_effect_access :
      ('capability -> ('a, 'error) result) ->
      ('a, 'error) Eta.Effect.t) ->
   ('capability, 'error) demand_effect_access
-
-type ('capability, 'start, 'error) demand_effect_port
-
-val demand_effect_port :
-  acquire:
-    (Eta.Runtime_contract.t ->
-    'capability ->
-    ('start demand_effects, 'error) result) ->
-  rollback_unclaimed:
-    ('capability -> 'start list -> ((unit -> unit) list, 'error) result) ->
-  run_cancel_hooks:
-    ((unit -> unit) list -> (unit, 'error) Eta.Effect.t) ->
-  run_start_attempts:('start list -> (unit, 'error) Eta.Effect.t) ->
-  ('capability, 'start, 'error) demand_effect_port
 
 type ('capability, 'id, 'necessary, 'operation, 'error)
      node_demand_effect_port
@@ -151,34 +121,15 @@ val node_demand_effect_port :
     'error )
   node_demand_effect_port
 
-val mark_unneeded :
+val mark_node_unneeded :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
-  'timer state_port ->
-  'timer ->
-  (unit -> unit) list
-
-val rollback_unclaimed_start :
-  advance_generation:(int -> int) ->
-  'timer state_port ->
-  'timer ->
+  'operation node state_port ->
+  'operation node ->
   (unit -> unit) list
 
 val start_attempt_effects :
   ('timer, 'effect) start_attempt list -> 'effect list
-
-val rollback_unclaimed_start_attempts :
-  advance_generation:(int -> int) ->
-  'timer state_port ->
-  ('timer, 'effect) start_attempt list ->
-  (unit -> unit) list
-
-val refresh_demand :
-  advance_generation:(int -> int) ->
-  cancel_running:bool ->
-  ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port ->
-  'runtime ->
-  (('timer, 'effect) start_attempt demand_effects, 'error) result
 
 val refresh_node_demand_plan :
   advance_generation:(int -> int) ->
@@ -189,11 +140,6 @@ val refresh_node_demand_plan :
    demand_effects,
    'error)
   result
-
-val refresh_demand_effect :
-  ('capability, 'error) demand_effect_access ->
-  ('capability, 'start, 'error) demand_effect_port ->
-  (unit, 'error) Eta.Effect.t
 
 val refresh_node_demand_effect :
   advance_generation:(int -> int) ->
