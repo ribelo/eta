@@ -2021,31 +2021,24 @@ module Make (Observer_error : Observer_error) () = struct
     | Graph_error err -> Some err
     | _ -> None
 
-  let run_observer_effect observer token observer_eff =
+  let run_observer_effect _observer _token observer_eff =
     Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
     try
-      if not (claimed_event_delivery_active observer token) then Eta.Exit.Ok ()
-      else
-        match Effect.Expert.eval context observer_eff with
-        | Eta.Exit.Ok () -> Eta.Exit.Ok ()
-        | Eta.Exit.Error cause ->
-            Eta.Exit.Error
-              (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
+      match Effect.Expert.eval context observer_eff with
+      | Eta.Exit.Ok () -> Eta.Exit.Ok ()
+      | Eta.Exit.Error cause ->
+          Eta.Exit.Error
+            (Error.observer_cause_to_stabilize ~graph_error_of_die cause)
     with
     | Graph_error err ->
         Eta.Exit.Error (Eta.Cause.Fail (err :> stabilize_error))
 
-  let event_observer_active observer =
-    with_graph_lane_sync (fun () -> observer_active (O observer))
+  let event_observer_active (_lane : graph_lane) observer =
+    observer_active (O observer)
 
-  let construct_observer_effect observer token update =
-    Effect.sync (fun () ->
-        try
-          if claimed_event_delivery_active observer token then
-            Ok (Some (observer.obs_callback token update))
-          else Ok None
-        with Graph_error err -> Error (err :> stabilize_error))
-    |> Effect.flatten_result
+  let construct_observer_effect (_lane : graph_lane) observer token update =
+    try Ok (Some (observer.obs_callback token update))
+    with Graph_error err -> Error (err :> stabilize_error)
 
   let observer_delivery_event_port () =
     {

@@ -308,13 +308,14 @@ val running_delivery_token_matches :
   Delivery.token ->
   bool
 
-type ('observer, 'a, 'callback, 'error) delivery_event_port = {
-  event_active : 'observer -> (bool, 'error) Eta.Effect.t;
+type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
+  event_active : 'capability -> 'observer -> bool;
   event_construct :
+    'capability ->
     'observer ->
     Delivery.token ->
     'a Update.t ->
-    ('callback option, 'error) Eta.Effect.t;
+    ('callback option, 'error) result;
   event_run_callback :
     'observer ->
     Delivery.token ->
@@ -330,7 +331,7 @@ type ('capability, 'error) delivery_event_access = {
 val make_delivery_event :
   access:('capability, 'error) delivery_event_access ->
   ('observer, 'live, 'a, 'after_ack) delivery_port ->
-  ('observer, 'a, 'callback, 'error) delivery_event_port ->
+  ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
   observer:'observer ->
   token:Delivery.token ->
   'a Update.t ->

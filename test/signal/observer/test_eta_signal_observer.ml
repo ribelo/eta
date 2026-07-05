@@ -1045,19 +1045,24 @@ let test_delivery_port_ignores_missing_or_stale_delivery () =
   Alcotest.(check string) "state unchanged" "pending"
     (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot))
 
+let observer_capability = "observer-capability"
+
+let check_observer_capability capability =
+  Alcotest.(check string) "observer capability" observer_capability capability
+
 let observer_event_port ?(run_callback = fun _observer _token _callback ->
     Eta.Effect.unit) events =
   {
     Observer.event_active =
-      (fun observer ->
-        Eta.Effect.sync (fun () ->
-            record events "active";
-            Option.is_some observer.live));
+      (fun capability observer ->
+        check_observer_capability capability;
+        record events "active";
+        Option.is_some observer.live);
     event_construct =
-      (fun _observer token _update ->
-        Eta.Effect.sync (fun () ->
-            record events ("construct:" ^ string_of_int token);
-            Some "callback"));
+      (fun capability _observer token _update ->
+        check_observer_capability capability;
+        record events ("construct:" ^ string_of_int token);
+        Ok (Some "callback"));
     event_run_callback =
       (fun observer token callback ->
         Eta.Effect.sync (fun () ->
@@ -1073,7 +1078,7 @@ let observer_event_access events =
       (fun f ->
         Eta.Effect.sync (fun () ->
             record events "access";
-            f ()));
+            f observer_capability));
   }
 
 let test_make_delivery_event_owns_success_transitions () =
@@ -1105,11 +1110,14 @@ let test_make_delivery_event_owns_success_transitions () =
     "events"
     [
       "set:pending";
+      "access";
       "active";
       "access";
       "set:running";
       "after_claim";
+      "access";
       "construct:7";
+      "access";
       "run:7:callback";
       "access";
       "set:delivered";
@@ -1147,14 +1155,57 @@ let test_make_delivery_event_releases_claim_on_failure () =
   Alcotest.(check (list string))
     "events"
     [
+      "access";
       "active";
       "access";
       "set:running";
       "after_claim";
+      "access";
       "construct:8";
+      "access";
       "run:8:callback";
       "access";
       "set:pending";
+    ]
+    !events
+
+let test_make_delivery_event_skips_stale_claim_before_construct () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:
+            (Observer.Delivery.Observer_delivery_pending
+               (9, update_changed, []));
+    }
+  in
+  let observer = { live = Some live } in
+  let event =
+    Observer.make_delivery_event ~access:(observer_event_access events)
+      (observer_delivery_port events)
+      (observer_event_port events) ~observer ~token:9 update_changed
+  in
+  expect_effect_ok "stale delivery event"
+    (Observer.Delivery_event.run
+       ~after_claim:(fun () ->
+         Eta.Effect.sync (fun () ->
+             record events "after_claim";
+             live.snapshot <-
+               Observer.Snapshot.with_delivery live.snapshot
+                 (Observer.Delivery.Observer_delivered 2)))
+       [ event ]);
+  Alcotest.(check string) "stale delivered" "delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
+  Alcotest.(check (list string))
+    "events"
+    [
+      "access";
+      "active";
+      "access";
+      "set:running";
+      "after_claim";
+      "access";
     ]
     !events
 
@@ -1307,6 +1358,8 @@ let () =
             test_make_delivery_event_owns_success_transitions;
           Alcotest.test_case "make event releases claim on failure" `Quick
             test_make_delivery_event_releases_claim_on_failure;
+          Alcotest.test_case "make event skips stale construct" `Quick
+            test_make_delivery_event_skips_stale_claim_before_construct;
         ] );
       ( "snapshot",
         [

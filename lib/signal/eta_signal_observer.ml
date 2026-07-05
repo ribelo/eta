@@ -487,13 +487,14 @@ let running_delivery_token_matches port observer token =
       Snapshot.running_delivery_token_matches ~token
         (port.delivery_snapshot live)
 
-type ('observer, 'a, 'callback, 'error) delivery_event_port = {
-  event_active : 'observer -> (bool, 'error) Eta.Effect.t;
+type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
+  event_active : 'capability -> 'observer -> bool;
   event_construct :
+    'capability ->
     'observer ->
     Delivery.token ->
     'a Update.t ->
-    ('callback option, 'error) Eta.Effect.t;
+    ('callback option, 'error) result;
   event_run_callback :
     'observer ->
     Delivery.token ->
@@ -515,14 +516,24 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           delivery_port.delivery_set_snapshot live
             (Snapshot.with_pending_delivery ~token update
                (delivery_port.delivery_snapshot live)))
-    ~active:(fun () -> event_port.event_active observer)
+    ~active:(fun () ->
+      access.event_with_delivery_access (fun capability ->
+          event_port.event_active capability observer))
     ~claim:(fun () ->
       access.event_with_delivery_access (fun _capability ->
           claim_delivery delivery_port observer token))
     ~construct:(fun () ->
-      event_port.event_construct observer token update)
+      access.event_with_delivery_access (fun capability ->
+          if running_delivery_token_matches delivery_port observer token then
+            event_port.event_construct capability observer token update
+          else Ok None)
+      |> Eta.Effect.flatten_result)
     ~run_callback:(fun callback ->
-      event_port.event_run_callback observer token callback)
+      access.event_with_delivery_access (fun _capability ->
+          running_delivery_token_matches delivery_port observer token)
+      |> Eta.Effect.bind (function
+           | false -> Eta.Effect.unit
+           | true -> event_port.event_run_callback observer token callback))
     ~acknowledge:(fun () ->
       access.event_with_delivery_access (fun _capability ->
           acknowledge_delivery delivery_port observer token update
