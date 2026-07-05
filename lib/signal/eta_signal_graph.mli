@@ -44,6 +44,13 @@ type ('id, 'node) edge_ops = {
   edge_set_dependents : 'node -> 'node list -> unit;
 }
 
+type ('id, 'node) dirty_ops = {
+  dirty_id : 'node -> 'id;
+  dirty_equal_id : 'id -> 'id -> bool;
+  dirty : 'node -> bool;
+  dirty_set : 'node -> bool -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -144,6 +151,25 @@ val attach_dependency :
   ('id, 'node) edge_ops ->
   parent:'node ->
   child:'node ->
+  unit
+
+val mark_dirty :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) dirty_ops ->
+  'node ->
+  unit
+
+val mark_dirty_recording_previous :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) dirty_ops ->
+  ('node * bool) list ->
+  'node ->
+  ('node * bool) list
+
+val restore_dirty :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) dirty_ops ->
+  ('node * bool) list ->
   unit
 
 val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int

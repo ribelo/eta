@@ -63,6 +63,13 @@ type ('id, 'node) edge_ops = {
   edge_set_dependents : 'node -> 'node list -> unit;
 }
 
+type ('id, 'node) dirty_ops = {
+  dirty_id : 'node -> 'id;
+  dirty_equal_id : 'id -> 'id -> bool;
+  dirty : 'node -> bool;
+  dirty_set : 'node -> bool -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -157,6 +164,22 @@ let attach_dependency t ops ~parent ~child =
     ops.edge_set_dependents child (parent :: ops.edge_dependents child);
   if not (has_dependency t ops ~parent ~child) then
     ops.edge_set_dependencies parent (child :: ops.edge_dependencies parent)
+
+let mark_dirty _t ops node = ops.dirty_set node true
+
+let same_dirty_node ops node (candidate, _) =
+  ops.dirty_equal_id (ops.dirty_id node) (ops.dirty_id candidate)
+
+let mark_dirty_recording_previous t ops entries node =
+  let entries =
+    if List.exists (same_dirty_node ops node) entries then entries
+    else (node, ops.dirty node) :: entries
+  in
+  mark_dirty t ops node;
+  entries
+
+let restore_dirty _t ops entries =
+  List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
 let generation t = Eta_signal_graph_state.generation t.state
 let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation

@@ -346,15 +346,14 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (P signal) dependents -> signal.dependents <- dependents);
     }
 
-  module Graph_dirty = Graph_algorithms.Make_dirty (struct
-    type id = signal_id
-    type nonrec packed = packed_signal
-
-    let id (P signal) = signal.id
-    let equal_id left right = signal_id_int left = signal_id_int right
-    let dirty (P signal) = signal.dirty
-    let set_dirty (P signal) dirty = signal.dirty <- dirty
-  end)
+  let dirty_ops =
+    {
+      Graph.dirty_id = (fun (P signal) -> signal.id);
+      dirty_equal_id =
+        (fun left right -> signal_id_int left = signal_id_int right);
+      dirty = (fun (P signal) -> signal.dirty);
+      dirty_set = (fun (P signal) dirty -> signal.dirty <- dirty);
+    }
 
   module Graph_compute = Graph_algorithms.Make_compute (struct
     type nonrec packed = packed_signal
@@ -725,14 +724,14 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child
 
   let mark_self_dirty packed =
-    Graph_dirty.mark packed
+    Graph.mark_dirty graph dirty_ops packed
 
   let mark_timer_refresh_dirty packed =
     Graph.mark_timer_refresh_dirty graph
-      ~mark:(fun () -> Graph_dirty.mark packed)
+      ~mark:(fun () -> Graph.mark_dirty graph dirty_ops packed)
       ~record:(fun context ->
         Timer_policy.set_refresh_dirty_items context
-          (Graph_dirty.mark_recording_previous
+          (Graph.mark_dirty_recording_previous graph dirty_ops
              (Timer_policy.refresh_dirty_items context)
              packed))
 
@@ -1433,7 +1432,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~rollback_bind:(rollback_bind lane)
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
-        Graph_dirty.restore (Timer_policy.refresh_dirty_items context);
+        Graph.restore_dirty graph dirty_ops
+          (Timer_policy.refresh_dirty_items context);
         Timer_policy.clear_refresh_dirty_items context)
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
