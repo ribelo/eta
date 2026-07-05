@@ -36,6 +36,21 @@ let finish_plan_label plan =
       ^ ":"
       ^ string_of_int (List.length cancel_hooks))
 
+let stop_plan_state plan =
+  Timer_policy.stop_plan_result plan ~plan:(fun ~state ~cancel_hooks:_ ->
+      state)
+
+let stop_plan_cancel_hooks plan =
+  Timer_policy.stop_plan_result plan ~plan:(fun ~state:_ ~cancel_hooks ->
+      cancel_hooks)
+
+let stop_plan_label plan =
+  Timer_policy.stop_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
+      "stop:"
+      ^ string_of_int (Timer_policy.state_generation state)
+      ^ ":"
+      ^ string_of_int (List.length cancel_hooks))
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -462,12 +477,7 @@ let demand_plan_values plans =
             ^ Timer_policy.state_label plan.Timer_policy.start_state )
       | Timer_policy.Demand_plan_stop (item, None) -> (item, "stop:none")
       | Timer_policy.Demand_plan_stop (item, Some plan) ->
-          ( item,
-            "stop:"
-            ^ string_of_int
-                (Timer_policy.state_generation plan.Timer_policy.stop_state)
-            ^ ":"
-            ^ string_of_int (List.length plan.Timer_policy.stop_cancel_hooks) ))
+          (item, stop_plan_label plan))
     plans
 
 let test_demand_plans_policy () =
@@ -530,14 +540,22 @@ let test_apply_demand_plans_preserves_effect_order () =
     }
   in
   let stop_plan generation =
-    { Timer_policy.stop_state = timer_inactive generation; stop_cancel_hooks = [] }
+    match
+      Timer_policy.stop
+        ~advance_generation:(fun _ -> generation)
+        ~cancel_running:false (timer_starting 0)
+    with
+    | Some plan -> plan
+    | None -> Alcotest.fail "expected synthetic stop plan"
   in
   let effects =
     Timer_policy.apply_demand_plans
       ~start:(fun item plan ->
         item ^ ":start:" ^ string_of_int plan.Timer_policy.start_generation)
       ~stop:(fun item plan ->
-        let generation = Timer_policy.state_generation plan.Timer_policy.stop_state in
+        let generation =
+          Timer_policy.state_generation (stop_plan_state plan)
+        in
         [
           item ^ ":stop:" ^ string_of_int generation ^ ":first";
           item ^ ":stop:" ^ string_of_int generation ^ ":second";
@@ -598,7 +616,7 @@ let test_demand_effects_classifies_resources () =
           ^ string_of_int plan.Timer_policy.start_generation);
       demand_plan_stop =
         (fun timer plan ->
-          if List.length plan.Timer_policy.stop_cancel_hooks = 0 then []
+          if List.length (stop_plan_cancel_hooks plan) = 0 then []
           else [ timer ^ ":stop" ]);
     }
   in
@@ -994,37 +1012,37 @@ let test_stop_policy () =
   let inactive = timer_inactive 3 in
   (match
      Timer_policy.stop ~advance_generation:succ ~cancel_running:true starting
-   with
+  with
   | Some plan ->
       Alcotest.(check int) "starting stop generation" 8
-        (Timer_policy.state_generation plan.stop_state);
+        (Timer_policy.state_generation (stop_plan_state plan));
       Alcotest.(check int) "starting no cancel" 0
-        (List.length plan.stop_cancel_hooks)
+        (List.length (stop_plan_cancel_hooks plan))
   | None -> Alcotest.fail "expected starting stop plan");
   (match
      Timer_policy.stop ~advance_generation:succ ~cancel_running:true
        running_uncancellable
-   with
+  with
   | Some plan ->
       Alcotest.(check int) "uncancellable stop generation" 9
-        (Timer_policy.state_generation plan.stop_state);
+        (Timer_policy.state_generation (stop_plan_state plan));
       Alcotest.(check int) "uncancellable no cancel" 0
-        (List.length plan.stop_cancel_hooks)
+        (List.length (stop_plan_cancel_hooks plan))
   | None -> Alcotest.fail "expected uncancellable stop plan");
   (match Timer_policy.stop ~advance_generation:succ ~cancel_running:true running with
   | Some plan ->
       Alcotest.(check int) "running stop generation" 9
-        (Timer_policy.state_generation plan.stop_state);
+        (Timer_policy.state_generation (stop_plan_state plan));
       Alcotest.(check int) "running cancel" 1
-        (List.length plan.stop_cancel_hooks);
-      List.iter (fun hook -> hook ()) plan.stop_cancel_hooks;
+        (List.length (stop_plan_cancel_hooks plan));
+      List.iter (fun hook -> hook ()) (stop_plan_cancel_hooks plan);
       Alcotest.(check bool) "cancelled" true !cancelled
   | None -> Alcotest.fail "expected running stop plan");
   cancelled := false;
   (match Timer_policy.stop ~advance_generation:succ ~cancel_running:false running with
   | Some plan ->
       Alcotest.(check int) "suppressed cancel" 0
-        (List.length plan.stop_cancel_hooks);
+        (List.length (stop_plan_cancel_hooks plan));
       Alcotest.(check bool) "not cancelled" false !cancelled
   | None -> Alcotest.fail "expected running stop plan");
   Alcotest.(check bool) "inactive no plan" true

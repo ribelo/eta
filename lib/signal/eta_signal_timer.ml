@@ -235,8 +235,10 @@ let apply_start_plan ~set_current_state ~start_effect timer plan =
   start_attempt ~timer ~effect:(start_effect timer)
 
 let apply_stop_plan port timer plan =
-  port.state_set_current timer plan.Eta_signal_timer_policy.stop_state;
-  plan.Eta_signal_timer_policy.stop_cancel_hooks
+  Eta_signal_timer_policy.stop_plan_result plan
+    ~plan:(fun ~state ~cancel_hooks ->
+      port.state_set_current timer state;
+      cancel_hooks)
 
 let mark_unneeded ~advance_generation ~cancel_running port timer =
   match

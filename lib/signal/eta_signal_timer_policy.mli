@@ -76,10 +76,7 @@ type update_batch = {
   update_batch_yield : bool;
 }
 
-type stop_plan = {
-  stop_state : state;
-  stop_cancel_hooks : (unit -> unit) list;
-}
+type stop_plan
 
 type start_plan = {
   start_state : state;
@@ -248,6 +245,11 @@ val apply_demand_plans :
   stop:('timer -> stop_plan -> 'hook list) ->
   'timer demand_plan list ->
   ('start, 'hook) demand_effects
+
+val stop_plan_result :
+  stop_plan ->
+  plan:(state:state -> cancel_hooks:(unit -> unit) list -> 'a) ->
+  'a
 
 val demand_effects_result :
   ('start, 'hook) demand_effects ->
