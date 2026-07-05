@@ -447,6 +447,33 @@ let remember_staged_bind t bind =
 
 let staged_binds t = Eta_signal_graph_state.staged_binds t.state
 
+let graph_error_of_bind_switch_error = function
+  | `Invalid_scope -> (`Invalid_scope : Eta_signal_error.graph_error)
+
+let map_bind_switch_result = function
+  | Ok _ as ok -> ok
+  | Error err -> Error (graph_error_of_bind_switch_error err)
+
+let preflight_staged_bind_switch switch ~collect_old_scope =
+  Eta_signal_bind.preflight_staged_switch switch ~collect_old_scope
+  |> map_bind_switch_result
+
+let commit_staged_bind_switch switch ~detach_old_inner
+    ~invalidate_old_scope ~attach_new_inner =
+  Eta_signal_bind.commit_staged_switch switch ~detach_old_inner
+    ~invalidate_old_scope ~attach_new_inner
+  |> map_bind_switch_result
+
+let rollback_staged_bind_switch ~staged ~invalidate_new_scope =
+  Eta_signal_bind.rollback_staged_switch ~staged ~invalidate_new_scope
+  |> map_bind_switch_result
+
+let collect_staged_bind_switch_invalidations ~init ~switches
+    ~staged_switch ~collect_old_scope =
+  Eta_signal_bind.collect_staged_switch_invalidations ~init ~switches
+    ~staged_switch ~collect_old_scope
+  |> map_bind_switch_result
+
 let remember_pure_disposal_hooks t hooks =
   Eta_signal_graph_state.remember_pure_disposal_hooks t.state
     (active_staging t) hooks

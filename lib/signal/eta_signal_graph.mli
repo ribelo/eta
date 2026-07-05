@@ -319,6 +319,32 @@ val remember_staged_bind :
 
 val staged_binds : (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind list
 
+val preflight_staged_bind_switch :
+  ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
+  collect_old_scope:('owner -> 'scope -> unit) ->
+  (unit, Eta_signal_error.graph_error) result
+
+val commit_staged_bind_switch :
+  ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
+  detach_old_inner:('owner -> 'inner -> unit) ->
+  invalidate_old_scope:('scope -> 'hook list) ->
+  attach_new_inner:('owner -> 'inner -> unit) ->
+  ('hook list, Eta_signal_error.graph_error) result
+
+val rollback_staged_bind_switch :
+  staged:
+    ('source, 'inner, 'scope) Eta_signal_bind.snapshot option ->
+  invalidate_new_scope:('scope -> 'hook list) ->
+  ('hook list, Eta_signal_error.graph_error) result
+
+val collect_staged_bind_switch_invalidations :
+  init:'acc ->
+  switches:'switch list ->
+  staged_switch:
+    ('switch -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->
+  collect_old_scope:('acc -> owner:'owner -> 'scope -> 'acc) ->
+  ('acc, Eta_signal_error.graph_error) result
+
 val remember_pure_disposal_hooks :
   (_, _, _, 'hook, _, _, _, _, _, _, _) t -> 'hook list -> unit
 

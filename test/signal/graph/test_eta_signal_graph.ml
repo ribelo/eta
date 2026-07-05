@@ -1,4 +1,5 @@
 module Graph = Eta_signal_testable.Graph
+module Bind = Eta_signal_testable.Bind
 module Id = Eta_signal_testable.Id
 module Observer = Eta_signal_testable.Observer_core
 module Pass = Eta_signal_testable.Stabilization_pass
@@ -571,6 +572,80 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
   Alcotest.(check (list int))
     "live registry pruned" [ 1; 2; 3 ] remaining_live_ids
 
+let test_staged_bind_switch_protocol_maps_graph_errors () =
+  let events = ref [] in
+  let current = Bind.switch ~source_value:0 ~inner:10 ~scope:1 in
+  let staged = Bind.switch ~source_value:1 ~inner:20 ~scope:2 in
+  let switch =
+    Bind.staged_switch ~owner:(Some 99) ~current ~staged:(Some staged)
+  in
+  let hooks =
+    match
+      Graph.commit_staged_bind_switch switch
+        ~detach_old_inner:(fun owner inner ->
+          record events
+            ("detach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+        ~invalidate_old_scope:(fun scope ->
+          record events ("invalidate:" ^ string_of_int scope);
+          [ "hook:" ^ string_of_int scope ])
+        ~attach_new_inner:(fun owner inner ->
+          record events
+            ("attach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+    with
+    | Ok hooks -> hooks
+    | Error err ->
+        Alcotest.failf "unexpected graph error: %s"
+          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  in
+  Alcotest.(check (list string))
+    "commit events"
+    [ "detach:99:10"; "invalidate:1"; "attach:99:20" ]
+    !events;
+  Alcotest.(check (list string)) "commit hooks" [ "hook:1" ] hooks;
+  let rollback_hooks =
+    match
+      Graph.rollback_staged_bind_switch ~staged:(Some staged)
+        ~invalidate_new_scope:(fun scope ->
+          record events ("rollback:" ^ string_of_int scope);
+          [ "rollback-hook:" ^ string_of_int scope ])
+    with
+    | Ok hooks -> hooks
+    | Error err ->
+        Alcotest.failf "unexpected graph error: %s"
+          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  in
+  Alcotest.(check (list string))
+    "rollback hooks" [ "rollback-hook:2" ] rollback_hooks;
+  let collected =
+    match
+      Graph.collect_staged_bind_switch_invalidations
+        ~init:[]
+        ~switches:[ Bind.pack_staged_switch switch ]
+        ~staged_switch:Fun.id
+        ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
+    with
+    | Ok collected -> collected
+    | Error err ->
+        Alcotest.failf "unexpected graph error: %s"
+          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  in
+  Alcotest.(check (list (pair int int)))
+    "old scope invalidation" [ (99, 1) ] collected;
+  let invalid_switch =
+    Bind.staged_switch ~owner:None ~current ~staged:(Some staged)
+    |> Bind.pack_staged_switch
+  in
+  match
+    Graph.collect_staged_bind_switch_invalidations
+      ~init:[] ~switches:[ invalid_switch ] ~staged_switch:Fun.id
+      ~collect_old_scope:(fun acc ~owner:_ _scope -> acc)
+  with
+  | Error `Invalid_scope -> ()
+  | Ok _ -> Alcotest.fail "expected invalid scope"
+  | Error err ->
+      Alcotest.failf "expected invalid scope, got %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+
 let () =
   Alcotest.run "eta_signal_graph"
     [
@@ -585,6 +660,11 @@ let () =
         [
           Alcotest.test_case "cached dispatch" `Quick
             test_compute_cached_owns_cache_and_cycle_dispatch;
+        ] );
+      ( "bind switch",
+        [
+          Alcotest.test_case "graph error boundary" `Quick
+            test_staged_bind_switch_protocol_maps_graph_errors;
         ] );
       ( "observer delivery",
         [

@@ -1155,21 +1155,21 @@ module Make (Observer_error : Observer_error) () = struct
 
   let commit_bind lane (B bind) =
     match
-      Bind.commit_staged_switch (bind_staged_switch bind)
+      Graph.commit_staged_bind_switch (bind_staged_switch bind)
         ~detach_old_inner:detach_dependency
         ~invalidate_old_scope:(invalidate_scope lane)
         ~attach_new_inner:attach_dependency
     with
     | Ok hooks -> hooks
-    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+    | Error err -> raise (Graph_error err)
 
   let rollback_bind lane (B bind) =
     match
-      Bind.rollback_staged_switch ~staged:(bind_staged_snapshot bind)
+      Graph.rollback_staged_bind_switch ~staged:(bind_staged_snapshot bind)
         ~invalidate_new_scope:(invalidate_scope lane)
     with
     | Ok hooks -> hooks
-    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+    | Error err -> raise (Graph_error err)
 
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
     Scope_invalidation.collect ?exclude_node_id:exclude_signal_id seen
@@ -1203,7 +1203,7 @@ module Make (Observer_error : Observer_error) () = struct
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
     match
-      Bind.collect_staged_switch_invalidations
+      Graph.collect_staged_bind_switch_invalidations
         ~init:(invalidated_ids, invalidated_nodes)
         ~switches:(Graph.staged_binds graph)
         ~staged_switch:packed_bind_staged_switch
@@ -1215,7 +1215,7 @@ module Make (Observer_error : Observer_error) () = struct
     with
     | Ok (invalidated_ids, invalidated_nodes) ->
         (invalidated_ids, !invalidated_nodes)
-    | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
+    | Error err -> raise (Graph_error err)
 
   let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
     let reachable_ops =
