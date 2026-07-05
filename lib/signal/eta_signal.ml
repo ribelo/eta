@@ -1009,7 +1009,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_debug_snapshot timer =
     let snapshot = Timer_policy.debug_snapshot (timer_effective_state timer) in
-    { snapshot with debug_generation = timer_generation timer }
+    Timer_policy.debug_snapshot_with_generation snapshot
+      (timer_generation timer)
 
   let timer_tombstone timer = timer_debug_snapshot timer
 
@@ -2390,13 +2391,16 @@ module Make (Observer_error : Observer_error) () = struct
           }
 
   let debug_timer_snapshot (timer : Timer_policy.debug_snapshot) =
-    {
-      Debug.timer_active = timer.debug_active;
-      timer_running_generation = timer.debug_running_generation;
-      timer_has_cancel = timer.debug_has_cancel;
-      timer_finished = timer.debug_finished;
-      timer_generation = timer.debug_generation;
-    }
+    Timer_policy.debug_snapshot_result timer
+      ~plan:(fun ~state_label:_ ~active ~running_generation ~has_cancel
+                 ~finished ~generation ->
+        {
+          Debug.timer_active = active;
+          timer_running_generation = running_generation;
+          timer_has_cancel = has_cancel;
+          timer_finished = finished;
+          timer_generation = generation;
+        })
 
   let signal_timer_fields : type a. a signal -> string list =
    fun signal ->

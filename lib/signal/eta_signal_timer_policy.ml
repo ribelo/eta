@@ -482,6 +482,17 @@ let debug_snapshot state =
     debug_generation = state_generation state;
   }
 
+let debug_snapshot_with_generation snapshot generation =
+  { snapshot with debug_generation = generation }
+
+let debug_snapshot_result snapshot ~plan =
+  plan ~state_label:snapshot.debug_state_label
+    ~active:snapshot.debug_active
+    ~running_generation:snapshot.debug_running_generation
+    ~has_cancel:snapshot.debug_has_cancel
+    ~finished:snapshot.debug_finished
+    ~generation:snapshot.debug_generation
+
 let daemon_status state ~generation =
   if state_running_current state generation then Daemon_continue
   else Daemon_stop

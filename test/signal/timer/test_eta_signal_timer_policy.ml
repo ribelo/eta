@@ -93,6 +93,22 @@ let pp_wake_plan_values ppf
 let wake_plan_values_test =
   Alcotest.testable pp_wake_plan_values (fun left right -> left = right)
 
+let debug_snapshot_label snapshot =
+  Timer_policy.debug_snapshot_result snapshot
+    ~plan:(fun ~state_label ~active ~running_generation ~has_cancel
+               ~finished ~generation ->
+      String.concat ":"
+        [
+          state_label;
+          string_of_bool active;
+          (match running_generation with
+          | None -> "none"
+          | Some generation -> string_of_int generation);
+          string_of_bool has_cancel;
+          string_of_bool finished;
+          string_of_int generation;
+        ])
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -320,36 +336,14 @@ let test_debug_snapshot () =
   let running = timer_running 7 (Some 10) noop in
   let running_snapshot = Timer_policy.debug_snapshot running in
   Alcotest.(check string)
-    "running label"
-    "running"
-    running_snapshot.debug_state_label;
-  Alcotest.(check bool) "running active" true
-    running_snapshot.debug_active;
-  Alcotest.(check (option int)) "running generation" (Some 7)
-    running_snapshot.debug_running_generation;
-  Alcotest.(check bool) "running cancel" true
-    running_snapshot.debug_has_cancel;
-  Alcotest.(check bool) "running finished" false
-    running_snapshot.debug_finished;
-  Alcotest.(check int) "running state generation" 7
-    running_snapshot.debug_generation;
+    "running snapshot" "running:true:7:true:false:7"
+    (debug_snapshot_label running_snapshot);
   let finished_snapshot =
     Timer_policy.debug_snapshot (timer_finished 8)
   in
   Alcotest.(check string)
-    "finished label"
-    "finished"
-    finished_snapshot.debug_state_label;
-  Alcotest.(check bool) "finished active" false
-    finished_snapshot.debug_active;
-  Alcotest.(check (option int)) "finished generation" None
-    finished_snapshot.debug_running_generation;
-  Alcotest.(check bool) "finished cancel" false
-    finished_snapshot.debug_has_cancel;
-  Alcotest.(check bool) "finished state" true
-    finished_snapshot.debug_finished;
-  Alcotest.(check int) "finished state generation" 8
-    finished_snapshot.debug_generation
+    "finished snapshot" "finished:false:none:false:true:8"
+    (debug_snapshot_label finished_snapshot)
 
 let test_snapshot_policy () =
   let initial = Timer_policy.initial_snapshot in
