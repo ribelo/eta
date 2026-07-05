@@ -7,7 +7,6 @@ module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
 module Graph = Eta_signal_graph
-module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
 module Graph_algorithms = Eta_signal_graph_algorithms
 module Signal_snapshot = Graph_algorithms.Snapshot
@@ -587,7 +586,6 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.create ~create_scope_context:Scope.create_context
       ~create_stream_bridge_metrics:Stream_bridge.create_metrics ()
 
-  let graph_state = Graph.state graph
   let graph_stabilization = Graph.stabilization graph
   let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
@@ -753,9 +751,6 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
-  let active_staging () =
-    Graph_state.require_staging graph_state
-
   let active_transaction () =
     Graph.active_pure_transaction graph
 
@@ -769,9 +764,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.read_effective graph var.graph_value
 
   let remember_computed (P signal) =
-    let generation = current_generation () in
-    Graph_state.remember_computed graph_state (active_staging ()) ~generation
-      (P signal)
+    Graph.remember_computed graph (P signal)
       ~project:(fun (P signal) -> graph_edge_node signal)
       ~remember:(fun ~generation nodes node ->
         Graph_compute.remember ~generation nodes node)
@@ -1203,8 +1196,7 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_bind_switch (type a b) (bind : (a, b) bind) source_value inner
       scope =
     Bind.stage_transaction_switch (active_transaction ()) bind.snapshot
-      ~remember:(fun () ->
-        Graph_state.stage_bind graph_state (active_staging ()) (B bind))
+      ~remember:(fun () -> Graph.remember_staged_bind graph (B bind))
       ~source_value ~inner ~scope
 
   let bind_current_snapshot (type a b) (bind : (a, b) bind) :
@@ -1309,7 +1301,7 @@ module Make (Observer_error : Observer_error) () = struct
     match
       Bind.collect_staged_switch_invalidations
         ~init:(invalidated_ids, invalidated_nodes)
-        ~switches:(Graph_state.staged_binds graph_state)
+        ~switches:(Graph.staged_binds graph)
         ~staged_switch:packed_bind_staged_switch
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
           let P owner_signal = owner in
@@ -1369,21 +1361,19 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
     List.iter (preflight_signal_commit invalidated_ids)
-      (Graph_state.computed_nodes graph_state);
+      (Graph.computed_nodes graph);
     preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks hooks =
-    Graph_state.remember_pure_disposal_hooks graph_state (active_staging ())
-      hooks
+    Graph.remember_pure_disposal_hooks graph hooks
 
   let remember_timer_refresh_disposal_hooks hooks =
-    Graph_state.remember_timer_refresh_disposal_hooks graph_state
-      (active_staging ()) hooks
+    Graph.remember_timer_refresh_disposal_hooks graph hooks
 
   let queue_var_unlocked (type a) (source : a var) =
     if not source.queued then (
       source.queued <- true;
-      Graph_state.enqueue_pending graph_state (V source))
+      Graph.enqueue_pending graph (V source))
 
   let set_var_source_unlocked (type a) (source : a var) value =
     publish_source_current source.source_value value;
@@ -1445,7 +1435,7 @@ module Make (Observer_error : Observer_error) () = struct
     clear_timer_refresh_timer_staging timer
 
   let reset_staging lane staging =
-    Graph_state.reset_staging graph_state staging
+    Graph.reset_staging graph staging
       ~rollback_bind:(rollback_bind lane)
       ~rollback_transaction
       ~rollback_timer_refresh_dirty:(fun context ->
@@ -1454,7 +1444,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
   let commit_staging lane staging =
-    Graph_state.commit_staging graph_state staging
+    Graph.commit_staging graph staging
       ~preflight:(fun () -> preflight_commit_staging lane)
       ~commit_bind:(commit_bind lane)
       ~prepare_signal:prepare_signal_commit ~commit_transaction
@@ -1464,7 +1454,7 @@ module Make (Observer_error : Observer_error) () = struct
   let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (
       var.queued <- true;
-      Graph_state.enqueue_pending graph_state packed)
+      Graph.enqueue_pending graph packed)
 
   let mark_failed_without_current (_lane : graph_lane) (O observer) =
     match observer_active_live_state observer with
@@ -2092,17 +2082,17 @@ module Make (Observer_error : Observer_error) () = struct
             advance_generation =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.advance_generation graph_state
+                Graph.advance_generation graph
                   ~advance:(fun value ->
                     checked_succ "stabilization generation" value));
             begin_staging =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.begin_staging graph_state ~timer_refresh);
+                Graph.begin_staging graph ~timer_refresh);
             drain_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let _lane = pure_lane context in
-                Graph_state.drain_pending graph_state);
+                Graph.drain_pending graph);
             release_pending_marks =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
@@ -2479,7 +2469,7 @@ module Make (Observer_error : Observer_error) () = struct
             {
               pure_snapshot_commit_count =
                 stats_counter "stats pure_snapshot_commit_count"
-                  (Graph_state.pure_snapshot_commit_count graph_state);
+                  (Graph.pure_snapshot_commit_count graph);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
                   (Graph.counter graph Graph.Callback_delivery_count);

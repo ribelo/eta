@@ -52,6 +52,8 @@ type counter =
   | Nodes_became_necessary
   | Nodes_became_unnecessary
 
+type staging = Eta_signal_graph_state.staging
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -112,8 +114,57 @@ let set_counter t target value =
 let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
 let stabilization t = t.stabilization
-let state t = t.state
 let generation t = Eta_signal_graph_state.generation t.state
+let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation
+
+let advance_generation t ~advance =
+  Eta_signal_graph_state.advance_generation t.state ~advance
+
+let begin_staging t ~timer_refresh =
+  Eta_signal_graph_state.begin_staging t.state ~timer_refresh
+
+let drain_pending t = Eta_signal_graph_state.drain_pending t.state
+let enqueue_pending t pending = Eta_signal_graph_state.enqueue_pending t.state pending
+
+let active_staging t = Eta_signal_graph_state.require_staging t.state
+
+let remember_computed t node ~project ~remember =
+  Eta_signal_graph_state.remember_computed t.state (active_staging t)
+    ~generation:(generation t) node ~project ~remember
+
+let computed_nodes t = Eta_signal_graph_state.computed_nodes t.state
+
+let remember_staged_bind t bind =
+  Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
+
+let staged_binds t = Eta_signal_graph_state.staged_binds t.state
+
+let remember_pure_disposal_hooks t hooks =
+  Eta_signal_graph_state.remember_pure_disposal_hooks t.state
+    (active_staging t) hooks
+
+let remember_timer_refresh_disposal_hooks t hooks =
+  Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state
+    (active_staging t) hooks
+
+let reset_staging t staging ~rollback_bind ~rollback_transaction
+    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
+  Eta_signal_graph_state.reset_staging t.state staging ~rollback_bind
+    ~rollback_transaction ~rollback_timer_refresh_dirty
+    ~clear_timer_refresh_timer
+
+let commit_staging t staging ~preflight ~commit_bind ~prepare_signal
+    ~commit_transaction ~commit_timer_refresh ~commit_signal
+    ~advance_snapshot =
+  Eta_signal_graph_state.commit_staging t.state staging ~preflight
+    ~commit_bind ~prepare_signal ~commit_transaction ~commit_timer_refresh
+    ~commit_signal ~advance_snapshot
+
+let pure_snapshot_commit_count t =
+  Eta_signal_graph_state.pure_snapshot_commit_count t.state
+
+let set_pure_snapshot_commit_count t count =
+  Eta_signal_graph_state.set_pure_snapshot_commit_count t.state count
 
 let active_transaction t =
   Eta_signal_stabilization.active_transaction t.stabilization
