@@ -111,6 +111,93 @@ val observer_delivery_plan :
 (** Capture active observers and defer graph-ordered delivery event planning
     until the stabilization pass reaches the event collection phase. *)
 
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+     stabilization_ops =
+  {
+    errors : Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors;
+    pure :
+      ( 'capability,
+        'pending,
+        'observer,
+        'event,
+        'hook,
+        'staging )
+      Eta_signal_stabilization_pass.pure;
+    rollback :
+      ('capability, 'pending, 'observer, 'hook, 'staging)
+      Eta_signal_stabilization_pass.rollback;
+  }
+
+val run_stabilization :
+  ( 'pending,
+    'bind,
+    'node,
+    'hook,
+    'timer,
+    'refresh,
+    'observer,
+    'weak_node,
+    'dead_node,
+    'scope_context,
+    'stream_metrics )
+  t ->
+  'capability ->
+  ( 'capability,
+    'pending,
+    'observer,
+    'event,
+    'hook,
+    'staging )
+  stabilization_ops ->
+  ( ( 'pending,
+      'bind,
+      'node,
+      'hook,
+      'timer,
+      'refresh,
+      'observer,
+      'weak_node,
+      'dead_node,
+      'scope_context,
+      'stream_metrics )
+    t,
+    'hook,
+    'event,
+    Eta_signal_error.graph_error )
+  Eta_signal_stabilization_pass.result
+(** Run the graph stabilization pass with graph-owned phase state and
+    timer-refresh cleanup. Callers provide graph-specific pure/rollback plans;
+    this module owns the stabilization object and graph-state finalizer. *)
+
+val finish_stabilization :
+  ( 'pending,
+    'bind,
+    'node,
+    'hook,
+    'timer,
+    'refresh,
+    'observer,
+    'weak_node,
+    'dead_node,
+    'scope_context,
+    'stream_metrics )
+  t ->
+  ( ( 'pending,
+      'bind,
+      'node,
+      'hook,
+      'timer,
+      'refresh,
+      'observer,
+      'weak_node,
+      'dead_node,
+      'scope_context,
+      'stream_metrics )
+    t,
+    Eta_signal_stabilization.delivering )
+  Eta_signal_stabilization.token ->
+  unit
+
 val collect_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   ('weak_node list -> 'weak_node list * 'node list) ->

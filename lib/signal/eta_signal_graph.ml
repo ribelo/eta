@@ -77,6 +77,46 @@ let observer_delivery_plan t ~active ~compare ~collect_event ~mark_pending =
         in
         List.iter (mark_pending capability) events)
 
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
+     stabilization_ops =
+  {
+    errors : Eta_signal_error.graph_error Eta_signal_stabilization_pass.errors;
+    pure :
+      ( 'capability,
+        'pending,
+        'observer,
+        'event,
+        'hook,
+        'staging )
+      Eta_signal_stabilization_pass.pure;
+    rollback :
+      ('capability, 'pending, 'observer, 'hook, 'staging)
+      Eta_signal_stabilization_pass.rollback;
+  }
+
+let clear_timer_refresh t _context =
+  Eta_signal_graph_state.clear_active_timer_refresh t.state
+
+let run_stabilization t capability ops =
+  Eta_signal_stabilization_pass.run t.stabilization capability
+    {
+      errors = ops.errors;
+      pure = ops.pure;
+      rollback = ops.rollback;
+      timer_refresh =
+        {
+          Eta_signal_stabilization_pass.clear_active_timer_refresh =
+            clear_timer_refresh t;
+        };
+    }
+
+let finish_stabilization t delivering_token =
+  Eta_signal_graph_state.clear_active_timer_refresh t.state;
+  ignore
+    (Eta_signal_stabilization.finish_delivering t.stabilization
+       delivering_token
+      : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token)
+
 let collect_nodes t collect =
   let cells, nodes = collect t.all_nodes in
   t.all_nodes <- cells;

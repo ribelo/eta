@@ -2096,10 +2096,7 @@ module Make (Observer_error : Observer_error) () = struct
     let rollback_lane context =
       Stabilization_pass.rollback_capability context
     in
-    let timer_refresh_lane context =
-      Stabilization_pass.timer_refresh_capability context
-    in
-    Stabilization_pass.run graph_stabilization lane
+    Graph.run_stabilization graph lane
       {
         errors =
           {
@@ -2177,23 +2174,10 @@ module Make (Observer_error : Observer_error) () = struct
                 let lane = rollback_lane context in
                 List.iter (requeue_if_needed lane) pending);
           };
-        timer_refresh =
-          {
-            clear_active_timer_refresh =
-              (fun
-                (context :
-                  graph_lane Stabilization_pass.timer_refresh_context) ->
-                let _lane = timer_refresh_lane context in
-                Graph_state.clear_active_timer_refresh graph_state);
-          };
       }
 
   let finish_stabilize (_lane : graph_lane) delivering_token =
-    Graph_state.clear_active_timer_refresh graph_state;
-    ignore
-      (Stabilization.finish_delivering graph_stabilization
-         delivering_token
-        : (graph, Stabilization.idle) Stabilization.token)
+    Graph.finish_stabilization graph delivering_token
 
   let mark_callback_delivery_complete () =
     with_graph_lane_access (fun lane ->
