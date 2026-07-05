@@ -6,6 +6,7 @@
   eta_signal_cleanup
   eta_signal_debug
   eta_signal_error
+  eta_signal_graph_core
   eta_signal_graph_state
   eta_signal_id
   eta_signal_graph_algorithms
@@ -74,6 +75,18 @@
 (rule
  (target eta_signal_error.mli)
  (deps ../../lib/signal/eta_signal_error.mli)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_graph_core.ml)
+ (deps ../../lib/signal/eta_signal_graph_core.ml)
+ (action
+  (copy %{deps} %{target})))
+
+(rule
+ (target eta_signal_graph_core.mli)
+ (deps ../../lib/signal/eta_signal_graph_core.mli)
  (action
   (copy %{deps} %{target})))
 

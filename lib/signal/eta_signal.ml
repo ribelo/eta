@@ -6,6 +6,7 @@ module Bind = Eta_signal_bind
 module Cleanup = Eta_signal_cleanup
 module Debug = Eta_signal_debug
 module Error = Eta_signal_error
+module Graph_core = Eta_signal_graph_core
 module Graph_state = Eta_signal_graph_state
 module Id = Eta_signal_id
 module Graph_algorithms = Eta_signal_graph_algorithms
@@ -584,10 +585,7 @@ module Make (Observer_error : Observer_error) () = struct
     (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
 
   type graph = {
-    lane : Lane.t;
-    owner_domain : Domain.id;
-    mutable next_id : int;
-    mutable next_scope_id : int;
+    core : Graph_core.t;
     stabilization : (graph, graph_error) Stabilization.t;
     state :
       ( packed_var,
@@ -601,35 +599,19 @@ module Make (Observer_error : Observer_error) () = struct
     mutable all_nodes : weak_packed_signal list;
     mutable dead_nodes : dead_signal list;
     current_scope : (scope_id, packed_signal, packed_signal) Scope.context;
-    mutable callback_delivery_count : int;
-    mutable recompute_count : int;
-    mutable dynamic_scope_invalidations : int;
-    mutable nodes_became_necessary : int;
-    mutable nodes_became_unnecessary : int;
     mutable stream_bridge_metrics : Stream_bridge.metrics;
-    mutable necessary_node_ids : (signal_id, unit) Hashtbl.t;
   }
 
   let graph =
     {
-      lane =
-        Lane.create ();
-      owner_domain = Domain.self ();
-      next_id = 0;
-      next_scope_id = 1;
+      core = Graph_core.create ();
       stabilization = Stabilization.create ();
       state = Graph_state.create ();
       observers = [];
       all_nodes = [];
       dead_nodes = [];
       current_scope = Scope.create_context ();
-      callback_delivery_count = 0;
-      recompute_count = 0;
-      dynamic_scope_invalidations = 0;
-      nodes_became_necessary = 0;
-      nodes_became_unnecessary = 0;
       stream_bridge_metrics = Stream_bridge.create_metrics ();
-      necessary_node_ids = Hashtbl.create 16;
     }
 
   let pack_weak_signal signal = P signal
@@ -693,7 +675,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let ensure_graph_context () =
     if
-      Domain.self () <> graph.owner_domain
+      Domain.self () <> Graph_core.owner_domain graph.core
       || Runtime_contract.in_registered_worker_context ()
     then invalid_arg graph_context_error_message
 
@@ -713,7 +695,7 @@ module Make (Observer_error : Observer_error) () = struct
         }
       ~after_acquired:(fun () ->
         Private_test_hooks.run After_graph_lane_acquired)
-      graph.lane f
+      (Graph_core.lane graph.core) f
 
   let with_graph_lane_sync f =
     with_graph_lane_access (fun _lane -> f ())
@@ -721,20 +703,26 @@ module Make (Observer_error : Observer_error) () = struct
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
      effectful public operations must use [with_graph_lane_sync]. *)
-  let next_id () =
-    ensure_graph_context ();
-    let id = graph.next_id in
-    graph.next_id <- checked_succ "node id" id;
-    id
+  let graph_core_or_raise = function
+    | Ok value -> value
+    | Error err -> raise (Graph_error err)
 
-  let next_signal_id () = Id.signal (next_id ())
-  let next_var_id () = Id.var (next_id ())
-  let next_observer_id () = Id.observer (next_id ())
+  let next_signal_id () =
+    ensure_graph_context ();
+    graph_core_or_raise (Graph_core.next_signal_id graph.core)
+
+  let next_var_id () =
+    ensure_graph_context ();
+    graph_core_or_raise (Graph_core.next_var_id graph.core)
+
+  let next_observer_id () =
+    ensure_graph_context ();
+    graph_core_or_raise (Graph_core.next_observer_id graph.core)
 
   let new_scope owner =
-    let id = graph.next_scope_id in
-    graph.next_scope_id <- checked_succ "scope id" id;
-    Scope.create ~id:(Id.scope id) ~owner:(P owner) ~parent:owner.scope
+    Scope.create
+      ~id:(graph_core_or_raise (Graph_core.next_scope_id graph.core))
+      ~owner:(P owner) ~parent:owner.scope
 
   let current_generation () = Graph_state.generation graph.state
 
@@ -1189,8 +1177,7 @@ module Make (Observer_error : Observer_error) () = struct
     match Scope.invalidate scope with
     | None -> []
     | Some nodes ->
-        graph.dynamic_scope_invalidations <-
-          saturating_succ graph.dynamic_scope_invalidations;
+        Graph_core.bump_counter graph.core Graph_core.Dynamic_scope_invalidations;
         let hooks = List.concat_map invalidate_node nodes in
         if prune then prune_invalid_nodes_unlocked ();
         hooks
@@ -1583,7 +1570,7 @@ module Make (Observer_error : Observer_error) () = struct
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let recompute value =
-      graph.recompute_count <- saturating_succ graph.recompute_count;
+      Graph_core.bump_counter graph.core Graph_core.Recompute_count;
       let snapshot = signal_effective_snapshot signal in
       let changed =
         Graph_algorithms.Value_cutoff.changed ~equal:signal.equal
@@ -1728,8 +1715,7 @@ module Make (Observer_error : Observer_error) () = struct
                context_dependencies_changed = dependency_changed;
                context_mark_recomputed =
                  (fun () ->
-                   graph.recompute_count <-
-                     saturating_succ graph.recompute_count);
+                   Graph_core.bump_counter graph.core Graph_core.Recompute_count);
                context_switch_changed =
                  (fun next ->
                    let snapshot = signal_effective_snapshot signal in
@@ -1761,14 +1747,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let update_necessity_counters_unlocked () =
     let next = collect_necessary_node_ids () in
-    let summary =
-      Graph_algorithms.Demand.summarize_diff ~previous:graph.necessary_node_ids ~next
-    in
-    graph.nodes_became_necessary <-
-      add_int_capped graph.nodes_became_necessary summary.became_necessary;
-    graph.nodes_became_unnecessary <-
-      add_int_capped graph.nodes_became_unnecessary summary.became_unnecessary;
-    graph.necessary_node_ids <- next
+    Graph_core.update_necessary_ids graph.core next
 
   let all_timers () =
     List.filter_map
@@ -2241,8 +2220,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let mark_callback_delivery_complete () =
     with_graph_lane_sync (fun () ->
-        graph.callback_delivery_count <-
-          saturating_succ graph.callback_delivery_count)
+        Graph_core.bump_counter graph.core Graph_core.Callback_delivery_count)
 
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       finish_token_ref =
@@ -2568,7 +2546,8 @@ module Make (Observer_error : Observer_error) () = struct
                   (Graph_state.pure_snapshot_commit_count graph.state);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
-                  graph.callback_delivery_count;
+                  (Graph_core.counter graph.core
+                     Graph_core.Callback_delivery_count);
               total_node_count =
                 stats_counter "stats total_node_count"
                   (stats_count Private_test_hooks.Stats_total_node_count
@@ -2591,27 +2570,31 @@ module Make (Observer_error : Observer_error) () = struct
                 stats_counter "stats live_dirty_node_count"
                   (live_dirty_node_count all_nodes);
               recompute_count =
-                stats_counter "stats recompute_count" graph.recompute_count;
+                stats_counter "stats recompute_count"
+                  (Graph_core.counter graph.core Graph_core.Recompute_count);
               dynamic_scope_invalidations =
                 stats_counter "stats dynamic_scope_invalidations"
-                  graph.dynamic_scope_invalidations;
+                  (Graph_core.counter graph.core
+                     Graph_core.Dynamic_scope_invalidations);
               nodes_became_necessary =
                 stats_counter "stats nodes_became_necessary"
-                  graph.nodes_became_necessary;
+                  (Graph_core.counter graph.core
+                     Graph_core.Nodes_became_necessary);
               nodes_became_unnecessary =
                 stats_counter "stats nodes_became_unnecessary"
-                  graph.nodes_became_unnecessary;
+                  (Graph_core.counter graph.core
+                     Graph_core.Nodes_became_unnecessary);
               stream_bridge_drop_count =
                 stats_counter "stats stream_bridge_drop_count"
                   (Stream_bridge.drop_count graph.stream_bridge_metrics);
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
-                  (Lane.waiting_count graph.lane);
+                  (Lane.waiting_count (Graph_core.lane graph.core));
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (stats_count
                      Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Lane.cancelled_count graph.lane));
+                     (Lane.cancelled_count (Graph_core.lane graph.core)));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result
