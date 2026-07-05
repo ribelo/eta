@@ -75,11 +75,11 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
     ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context;
 }
 
-let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
+let dynamic_eval_context ~source_equal ~source_dependency ~pack_inner ~new_scope
     ~selector ~with_scope ~validate_inner ~compute_inner ~on_switch_failure
     ~dirty ~initialized ~dependencies_changed =
   {
-    eval_equal = equal;
+    eval_equal = source_equal;
     eval_source_dependency = source_dependency;
     eval_pack_inner = pack_inner;
     eval_new_scope = new_scope;
@@ -93,35 +93,21 @@ let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
     eval_dependencies_changed = dependencies_changed;
   }
 
-let dynamic_apply_context ~current_value ~cached_value ~initialized ~equal
+let dynamic_apply_context ~current_value ~cached_value ~initialized ~value_equal
     ~bump_recompute ~stage_switch ~stage_dependencies ~stage_value =
   {
     apply_current_value = current_value;
     apply_cached_value = cached_value;
     apply_initialized = initialized;
-    apply_equal = equal;
+    apply_equal = value_equal;
     apply_bump_recompute = bump_recompute;
     apply_stage_switch = stage_switch;
     apply_stage_dependencies = stage_dependencies;
     apply_stage_value = stage_value;
   }
 
-let dynamic_context ~source_equal ~source_dependency ~pack_inner
-    ~new_scope ~selector ~with_scope ~validate_inner ~compute_inner
-    ~on_switch_failure ~dirty ~initialized ~dependencies_changed
-    ~current_value ~cached_value ~value_equal ~bump_recompute ~stage_switch
-    ~stage_dependencies ~stage_value =
-  {
-    dynamic_eval =
-      dynamic_eval_context ~equal:source_equal ~source_dependency
-        ~pack_inner ~new_scope ~selector ~with_scope ~validate_inner
-        ~compute_inner ~on_switch_failure ~dirty ~initialized
-        ~dependencies_changed;
-    dynamic_apply =
-      dynamic_apply_context ~current_value ~cached_value ~initialized
-        ~equal:value_equal ~bump_recompute ~stage_switch
-        ~stage_dependencies ~stage_value;
-  }
+let dynamic_context ~eval ~apply =
+  { dynamic_eval = eval; dynamic_apply = apply }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
 

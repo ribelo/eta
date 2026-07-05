@@ -3,10 +3,10 @@
 type ('source, 'inner, 'scope) snapshot
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_context
+     dynamic_eval_context
   constraint 'error = [> `Invalid_scope ]
 
-val dynamic_context :
+val dynamic_eval_context :
   source_equal:('source -> 'source -> bool) ->
   source_dependency:'dependency ->
   pack_inner:('inner -> 'dependency) ->
@@ -23,14 +23,32 @@ val dynamic_context :
   dirty:bool ->
   initialized:(unit -> bool) ->
   dependencies_changed:('capability -> 'dependency list -> bool) ->
+  ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+  dynamic_eval_context
+
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
+
+val dynamic_apply_context :
   current_value:(unit -> 'value option) ->
   cached_value:(unit -> 'value) ->
+  initialized:(unit -> bool) ->
   value_equal:('value -> 'value -> bool) ->
   bump_recompute:(unit -> unit) ->
   stage_switch:
     (source_value:'source -> inner:'inner -> scope:'scope -> unit) ->
   stage_dependencies:('dependency list -> unit) ->
   stage_value:('value -> unit) ->
+  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
+
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+     dynamic_context
+  constraint 'error = [> `Invalid_scope ]
+
+val dynamic_context :
+  eval:
+    ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+    dynamic_eval_context ->
+  apply:('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context ->
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   dynamic_context
 

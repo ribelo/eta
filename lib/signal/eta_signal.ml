@@ -1524,36 +1524,45 @@ module Make (Observer_error : Observer_error) () = struct
       bool ->
       value * bool =
    fun lane signal bind source_value source_changed ->
+    let eval =
+      Bind.dynamic_eval_context ~source_equal:bind.source.equal
+        ~source_dependency:(P bind.source)
+        ~pack_inner:(fun inner -> P inner)
+        ~new_scope:(fun _lane -> new_scope signal)
+        ~selector:bind.selector
+        ~with_scope:(fun _lane scope f ->
+          Graph.with_current_scope graph scope_ops scope f)
+        ~validate_inner:(fun _lane scope inner ->
+          Scope_validation.validate_inner ~scope (P inner))
+        ~compute_inner:compute
+        ~on_switch_failure:(fun lane scope ->
+          remember_pure_disposal_hooks (invalidate_scope lane scope))
+        ~dirty:signal.dirty
+        ~initialized:(fun () ->
+          Signal_snapshot.is_initialized
+            (signal_effective_snapshot signal))
+        ~dependencies_changed:(fun _lane dependencies ->
+          dependencies_changed signal dependencies)
+    in
+    let apply =
+      Bind.dynamic_apply_context
+        ~current_value:(fun () ->
+          Signal_snapshot.value (signal_effective_snapshot signal))
+        ~cached_value:(fun () -> current_or_raise signal)
+        ~initialized:(fun () ->
+          Signal_snapshot.is_initialized
+            (signal_effective_snapshot signal))
+        ~value_equal:signal.equal
+        ~bump_recompute:(fun () ->
+          Graph.bump_counter graph lane Graph.Recompute_count)
+        ~stage_switch:(fun ~source_value ~inner ~scope ->
+          stage_bind_switch bind source_value inner scope)
+        ~stage_dependencies:(stage_dependency_versions signal)
+        ~stage_value:(stage_signal signal)
+    in
     match
       Bind.run_dynamic
-        (Bind.dynamic_context ~source_equal:bind.source.equal
-           ~source_dependency:(P bind.source)
-           ~pack_inner:(fun inner -> P inner)
-           ~new_scope:(fun _lane -> new_scope signal)
-           ~selector:bind.selector
-           ~with_scope:(fun _lane scope f ->
-             Graph.with_current_scope graph scope_ops scope f)
-           ~validate_inner:(fun _lane scope inner ->
-             Scope_validation.validate_inner ~scope (P inner))
-           ~compute_inner:compute
-           ~on_switch_failure:(fun lane scope ->
-             remember_pure_disposal_hooks (invalidate_scope lane scope))
-           ~dirty:signal.dirty
-           ~initialized:(fun () ->
-             Signal_snapshot.is_initialized
-               (signal_effective_snapshot signal))
-           ~dependencies_changed:(fun _lane dependencies ->
-             dependencies_changed signal dependencies)
-           ~current_value:(fun () ->
-             Signal_snapshot.value (signal_effective_snapshot signal))
-           ~cached_value:(fun () -> current_or_raise signal)
-           ~value_equal:signal.equal
-           ~bump_recompute:(fun () ->
-             Graph.bump_counter graph lane Graph.Recompute_count)
-           ~stage_switch:(fun ~source_value ~inner ~scope ->
-             stage_bind_switch bind source_value inner scope)
-           ~stage_dependencies:(stage_dependency_versions signal)
-           ~stage_value:(stage_signal signal))
+        (Bind.dynamic_context ~eval ~apply)
         lane
         (bind_effective_snapshot bind) ~source_value ~source_changed
     with
