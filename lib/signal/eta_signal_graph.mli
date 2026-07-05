@@ -250,7 +250,8 @@ val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 val set_generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
 
 val advance_generation :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> advance:(int -> int) -> unit
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (unit, Eta_signal_error.graph_error) result
 
 val begin_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->

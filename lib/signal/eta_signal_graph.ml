@@ -334,8 +334,14 @@ let restore_dirty _t ops entries =
 let generation t = Eta_signal_graph_state.generation t.state
 let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation
 
-let advance_generation t ~advance =
-  Eta_signal_graph_state.advance_generation t.state ~advance
+let advance_generation t =
+  let exception Overflow in
+  match
+    Eta_signal_graph_state.advance_generation t.state ~advance:(fun generation ->
+        if generation = max_int then raise Overflow else generation + 1)
+  with
+  | () -> Ok ()
+  | exception Overflow -> Error (`Counter_overflow "stabilization generation")
 
 let begin_staging t ~timer_refresh =
   Eta_signal_graph_state.begin_staging t.state ~timer_refresh

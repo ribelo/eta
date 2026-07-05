@@ -1864,9 +1864,9 @@ module Make (Observer_error : Observer_error) () = struct
         ~advance_generation:
           (fun (context : graph_lane Stabilization_pass.pure_context) ->
             let _lane = pure_lane context in
-            Graph.advance_generation graph
-              ~advance:(fun value ->
-                checked_succ "stabilization generation" value))
+            match Graph.advance_generation graph with
+            | Ok () -> ()
+            | Error err -> raise (Graph_error err))
         ~begin_staging:
           (fun (context : graph_lane Stabilization_pass.pure_context) ->
             let _lane = pure_lane context in

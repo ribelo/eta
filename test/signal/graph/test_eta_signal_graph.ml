@@ -376,6 +376,30 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
     [ "compute:1"; "current:10"; "cycle:1" ]
     !events
 
+let test_generation_owned_by_graph () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  Alcotest.(check int) "initial generation" 0 (Graph.generation graph);
+  (match Graph.advance_generation graph with
+  | Ok () -> ()
+  | Error err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err));
+  Alcotest.(check int) "advanced generation" 1 (Graph.generation graph);
+  Graph.set_generation graph max_int;
+  (match Graph.advance_generation graph with
+  | Error (`Counter_overflow name)
+    when String.equal name "stabilization generation" ->
+      ()
+  | Error err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  | Ok () -> Alcotest.fail "expected generation overflow");
+  Alcotest.(check int) "overflow preserves generation" max_int
+    (Graph.generation graph)
+
 let test_stage_bind_switch_owns_transaction_staging () =
   let events = ref [] in
   let graph =
@@ -769,6 +793,8 @@ let () =
         [
           Alcotest.test_case "cached dispatch" `Quick
             test_compute_cached_owns_cache_and_cycle_dispatch;
+          Alcotest.test_case "generation ownership" `Quick
+            test_generation_owned_by_graph;
         ] );
       ( "bind switch",
         [
