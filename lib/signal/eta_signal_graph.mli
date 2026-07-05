@@ -276,9 +276,17 @@ val post_commit_necessary_timers :
     callers supply the post-commit reachability rules because staged bind
     invalidation is graph-shape specific. *)
 
-val dead_nodes : (_, _, _, _, _, _, _, _, 'dead_node, _, _) t -> 'dead_node list
-
 val dead_node_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+
+val iter_dead_nodes :
+  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  f:('dead_node -> unit) ->
+  unit
+
+val map_dead_nodes :
+  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  f:('dead_node -> 'a) ->
+  'a list
 
 val remember_dead_node :
   (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->

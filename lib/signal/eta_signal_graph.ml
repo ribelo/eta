@@ -163,8 +163,9 @@ let post_commit_necessary_timers t ~collect_live_nodes ~root ~collect_timers =
   ignore (collect_nodes t collect_live_nodes : _ list);
   collect_timers ~roots:(List.filter_map root t.observers)
 
-let dead_nodes t = t.dead_nodes
 let dead_node_count t = List.length t.dead_nodes
+let iter_dead_nodes t ~f = List.iter f t.dead_nodes
+let map_dead_nodes t ~f = List.map f t.dead_nodes
 
 let remember_dead_node t ~max_count ~id ~equal_id dead_node =
   t.dead_nodes <-

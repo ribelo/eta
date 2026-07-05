@@ -2743,9 +2743,8 @@ module Make (Observer_error : Observer_error) () = struct
     let live_ids = Hashtbl.create 16 in
     let dead_ids = Hashtbl.create 16 in
     if include_dead_nodes then
-      List.iter
-        (fun tombstone -> Hashtbl.replace dead_ids tombstone.dead_id ())
-        (Graph.dead_nodes graph);
+      Graph.iter_dead_nodes graph ~f:(fun tombstone ->
+          Hashtbl.replace dead_ids tombstone.dead_id ());
     let selected_live_signal signal =
       selected signal
       && not
@@ -2782,8 +2781,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let dead_dot_nodes =
       if include_dead_nodes then
-        List.map
-          (fun tombstone ->
+        Graph.map_dead_nodes graph ~f:(fun tombstone ->
             {
               Debug.dot_node_id = dead_signal_id_label tombstone.dead_id;
               dot_node_label = dead_signal_label options tombstone;
@@ -2795,7 +2793,6 @@ module Make (Observer_error : Observer_error) () = struct
                     else None)
                   tombstone.dead_dependency_ids;
             })
-          (Graph.dead_nodes graph)
       else []
     in
     let dot_observers =
