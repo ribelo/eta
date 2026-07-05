@@ -369,7 +369,7 @@ let remember_computed t lane ops node =
     ~generation:(generation t lane) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
 
-let iter_computed t ~f =
+let iter_computed t _lane ~f =
   List.iter f (Eta_signal_graph_state.computed_nodes t.state)
 
 let compute_seen t lane ops node =

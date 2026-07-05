@@ -277,7 +277,10 @@ val remember_computed :
   unit
 
 val iter_computed :
-  (_, _, 'node, _, _, _, _, _, _, _, _) t -> f:('node -> unit) -> unit
+  (_, _, 'node, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  f:('node -> unit) ->
+  unit
 
 val compute_cached :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

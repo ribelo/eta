@@ -1260,7 +1260,8 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
-    Graph.iter_computed graph ~f:(preflight_signal_commit invalidated_ids);
+    Graph.iter_computed graph lane
+      ~f:(preflight_signal_commit invalidated_ids);
     preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks lane hooks =
