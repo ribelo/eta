@@ -286,22 +286,16 @@ let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected valid switch"
   in
-  (match plan with
-  | Bind.Dynamic_switch
-      {
-        dynamic_source_value;
-        dynamic_inner;
-        dynamic_scope;
-        dynamic_switch_dependencies;
-        dynamic_switch_value;
-      } ->
-      Alcotest.(check int) "source" 3 dynamic_source_value;
-      Alcotest.(check int) "inner" 4 dynamic_inner;
-      Alcotest.(check int) "scope" 7 dynamic_scope;
+  Bind.dynamic_plan_result plan
+    ~switch:(fun ~source_value ~inner ~scope ~dependencies ~value ->
+      Alcotest.(check int) "source" 3 source_value;
+      Alcotest.(check int) "inner" 4 inner;
+      Alcotest.(check int) "scope" 7 scope;
       Alcotest.(check (list int))
-        "dependencies" [ 100; 1004 ] dynamic_switch_dependencies;
-      Alcotest.(check int) "value" 40 dynamic_switch_value
-  | Bind.Dynamic_reuse_cached | Bind.Dynamic_reuse_recompute _ ->
+        "dependencies" [ 100; 1004 ] dependencies;
+      Alcotest.(check int) "value" 40 value)
+    ~reuse_cached:(fun () -> Alcotest.fail "expected dynamic switch")
+    ~reuse_recompute:(fun ~dependencies:_ ~value:_ ->
       Alcotest.fail "expected dynamic switch");
   Alcotest.(check (list string))
     "events"
@@ -335,18 +329,20 @@ let test_plan_dynamic_reuse_paths () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  (match cached_plan with
-  | Bind.Dynamic_reuse_cached -> ()
-  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_recompute _ ->
+  Bind.dynamic_plan_result cached_plan
+    ~switch:(fun ~source_value:_ ~inner:_ ~scope:_ ~dependencies:_ ~value:_ ->
+      Alcotest.fail "expected cached reuse")
+    ~reuse_cached:(fun () -> ())
+    ~reuse_recompute:(fun ~dependencies:_ ~value:_ ->
       Alcotest.fail "expected cached reuse");
-  (match recomputed_plan with
-  | Bind.Dynamic_reuse_recompute
-      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+  Bind.dynamic_plan_result recomputed_plan
+    ~switch:(fun ~source_value:_ ~inner:_ ~scope:_ ~dependencies:_ ~value:_ ->
+      Alcotest.fail "expected recomputed reuse")
+    ~reuse_cached:(fun () -> Alcotest.fail "expected recomputed reuse")
+    ~reuse_recompute:(fun ~dependencies ~value ->
       Alcotest.(check (list int))
-        "recomputed dependencies" [ 100; 1004 ] dynamic_reuse_dependencies;
-      Alcotest.(check int) "recomputed value" 40 dynamic_reuse_value
-  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_cached ->
-      Alcotest.fail "expected recomputed reuse");
+        "recomputed dependencies" [ 100; 1004 ] dependencies;
+      Alcotest.(check int) "recomputed value" 40 value);
   Alcotest.(check (list string))
     "events"
     [
@@ -369,14 +365,14 @@ let test_plan_dynamic_dirty_reuse_recomputes () =
     | Ok result -> result
     | Error `Invalid_scope -> Alcotest.fail "expected recomputed reuse"
   in
-  (match plan with
-  | Bind.Dynamic_reuse_recompute
-      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+  Bind.dynamic_plan_result plan
+    ~switch:(fun ~source_value:_ ~inner:_ ~scope:_ ~dependencies:_ ~value:_ ->
+      Alcotest.fail "expected dirty reuse recompute")
+    ~reuse_cached:(fun () -> Alcotest.fail "expected dirty reuse recompute")
+    ~reuse_recompute:(fun ~dependencies ~value ->
       Alcotest.(check (list int))
-        "dependencies" [ 100; 1004 ] dynamic_reuse_dependencies;
-      Alcotest.(check int) "value" 40 dynamic_reuse_value
-  | Bind.Dynamic_switch _ | Bind.Dynamic_reuse_cached ->
-      Alcotest.fail "expected dirty reuse recompute");
+        "dependencies" [ 100; 1004 ] dependencies;
+      Alcotest.(check int) "value" 40 value);
   Alcotest.(check (list string))
     "events"
     [ "compute:4" ]

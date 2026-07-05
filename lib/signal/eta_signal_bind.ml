@@ -186,6 +186,25 @@ let plan_dynamic eval_context capability snapshot ~source_value ~source_changed 
     ~initialized:eval_context.eval_initialized
     ~dependencies_changed:eval_context.eval_dependencies_changed
 
+let dynamic_plan_result plan ~switch ~reuse_cached ~reuse_recompute =
+  match plan with
+  | Dynamic_switch
+      {
+        dynamic_source_value;
+        dynamic_inner;
+        dynamic_scope;
+        dynamic_switch_dependencies;
+        dynamic_switch_value;
+      } ->
+      switch ~source_value:dynamic_source_value ~inner:dynamic_inner
+        ~scope:dynamic_scope ~dependencies:dynamic_switch_dependencies
+        ~value:dynamic_switch_value
+  | Dynamic_reuse_cached -> reuse_cached ()
+  | Dynamic_reuse_recompute
+      { dynamic_reuse_dependencies; dynamic_reuse_value } ->
+      reuse_recompute ~dependencies:dynamic_reuse_dependencies
+        ~value:dynamic_reuse_value
+
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
   | Some source_value, Some inner, Some scope -> Some (source_value, inner, scope)

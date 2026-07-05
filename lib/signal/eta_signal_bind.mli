@@ -2,19 +2,7 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan =
-  | Dynamic_switch of {
-      dynamic_source_value : 'source;
-      dynamic_inner : 'inner;
-      dynamic_scope : 'scope;
-      dynamic_switch_dependencies : 'dependency list;
-      dynamic_switch_value : 'value;
-    }
-  | Dynamic_reuse_cached
-  | Dynamic_reuse_recompute of {
-      dynamic_reuse_dependencies : 'dependency list;
-      dynamic_reuse_value : 'value;
-    }
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context
@@ -62,6 +50,19 @@ val plan_dynamic :
   source_value:'source ->
   source_changed:bool ->
   (('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan, 'error) result
+
+val dynamic_plan_result :
+  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan ->
+  switch:
+    (source_value:'source ->
+    inner:'inner ->
+    scope:'scope ->
+    dependencies:'dependency list ->
+    value:'value ->
+    'result) ->
+  reuse_cached:(unit -> 'result) ->
+  reuse_recompute:(dependencies:'dependency list -> value:'value -> 'result) ->
+  'result
 
 val stage_transaction_switch :
   (Eta_signal_transaction.pure, 'error) Eta_signal_transaction.t ->

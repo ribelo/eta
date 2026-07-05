@@ -1566,27 +1566,20 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let apply_plan :
         (source, value signal, scope, packed_signal, value) Bind.dynamic_plan ->
-        value * bool = function
-      | Bind.Dynamic_switch
-          {
-            dynamic_source_value;
-            dynamic_inner;
-            dynamic_scope;
-            dynamic_switch_dependencies;
-            dynamic_switch_value;
-          } ->
+        value * bool =
+     fun plan ->
+      Bind.dynamic_plan_result plan
+        ~switch:(fun ~source_value ~inner ~scope ~dependencies ~value ->
           Graph.bump_counter graph lane Graph.Recompute_count;
-          let changed = value_changed dynamic_switch_value in
-          stage_bind_switch bind dynamic_source_value dynamic_inner dynamic_scope;
-          stage_dependency_versions signal dynamic_switch_dependencies;
-          if changed then stage_signal signal dynamic_switch_value;
-          ( (if changed then dynamic_switch_value else current_or_raise signal),
-            changed )
-      | Bind.Dynamic_reuse_recompute
-          { dynamic_reuse_dependencies; dynamic_reuse_value } ->
-          stage_dependency_versions signal dynamic_reuse_dependencies;
-          stage_value dynamic_reuse_value
-      | Bind.Dynamic_reuse_cached -> (current_or_raise signal, false)
+          let changed = value_changed value in
+          stage_bind_switch bind source_value inner scope;
+          stage_dependency_versions signal dependencies;
+          if changed then stage_signal signal value;
+          ((if changed then value else current_or_raise signal), changed))
+        ~reuse_recompute:(fun ~dependencies ~value ->
+          stage_dependency_versions signal dependencies;
+          stage_value value)
+        ~reuse_cached:(fun () -> (current_or_raise signal, false))
     in
     match
       Bind.plan_dynamic
