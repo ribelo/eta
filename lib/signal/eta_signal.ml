@@ -573,11 +573,9 @@ module Make (Observer_error : Observer_error) () = struct
   let graph_stream_bridge_metrics () = Graph.stream_bridge_metrics graph
 
   let scope_ops =
-    {
-      Graph.scope_current = Scope.current;
-      scope_require_valid_current = Scope.require_valid_current;
-      scope_with_current = Scope.with_current;
-    }
+    Graph.scope_ops ~current:Scope.current
+      ~require_valid_current:Scope.require_valid_current
+      ~with_current:Scope.with_current
 
   let pack_weak_signal signal = P signal
   let weak_packed_signal (P signal) = Graph_algorithms.Weak_cell.create signal

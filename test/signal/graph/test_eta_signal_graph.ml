@@ -91,19 +91,16 @@ let scoped_graph scope_context =
     ~create_stream_bridge_metrics:(fun () -> ()) ()
 
 let test_scope_ops =
-  {
-    Graph.scope_current = (fun context -> context.current_scope);
-    scope_require_valid_current =
-      (fun context ->
-        match context.current_scope with
-        | Some scope -> Ok scope
-        | None -> Error `Ambiguous_scope);
-    scope_with_current =
-      (fun context scope f ->
-        let previous = context.current_scope in
-        context.current_scope <- Some scope;
-        Fun.protect ~finally:(fun () -> context.current_scope <- previous) f);
-  }
+  Graph.scope_ops
+    ~current:(fun context -> context.current_scope)
+    ~require_valid_current:(fun context ->
+      match context.current_scope with
+      | Some scope -> Ok scope
+      | None -> Error `Ambiguous_scope)
+    ~with_current:(fun context scope f ->
+      let previous = context.current_scope in
+      context.current_scope <- Some scope;
+      Fun.protect ~finally:(fun () -> context.current_scope <- previous) f)
 
 let live_nodes_from_cells _keep cells = (cells, cells)
 

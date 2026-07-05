@@ -109,6 +109,18 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
+let scope_ops (type scope_context scope)
+    ~(current : scope_context -> scope option)
+    ~(require_valid_current :
+       scope_context -> (scope, [ `Ambiguous_scope ]) result)
+    ~(with_current :
+       'a. scope_context -> scope -> (unit -> 'a) -> 'a) =
+  {
+    scope_current = current;
+    scope_require_valid_current = require_valid_current;
+    scope_with_current = with_current;
+  }
+
 let edge_ops ~id ~equal_id ~dependencies ~set_dependencies ~dependents
     ~set_dependents =
   {

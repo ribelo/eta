@@ -95,12 +95,14 @@ val reachable_ops :
   children:('node -> 'node list) ->
   ('id, 'node) reachable_ops
 
-type ('scope_context, 'scope) scope_ops = {
-  scope_current : 'scope_context -> 'scope option;
-  scope_require_valid_current :
-    'scope_context -> ('scope, [ `Ambiguous_scope ]) result;
-  scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
-}
+type ('scope_context, 'scope) scope_ops
+
+val scope_ops :
+  current:('scope_context -> 'scope option) ->
+  require_valid_current:
+    ('scope_context -> ('scope, [ `Ambiguous_scope ]) result) ->
+  with_current:('a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a) ->
+  ('scope_context, 'scope) scope_ops
 
 type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle
 
