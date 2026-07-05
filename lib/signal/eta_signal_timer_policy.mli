@@ -30,12 +30,7 @@ type _ refresh_spec =
   | Refresh_deadline : int -> bool refresh_spec
   | Refresh_interval : int -> int refresh_spec
 
-type 'a source_policy = {
-  source_update_on_start : bool;
-  source_catch_up_policy : catch_up_policy;
-  source_refresh_when_inactive : bool;
-  source_refresh_on_demand : 'a refresh_spec option;
-}
+type 'a source_policy
 
 type demand_action =
   | Demand_none
@@ -111,6 +106,16 @@ val deadline_source_policy : deadline_ms:int -> bool source_policy
 val interval_source_policy : interval_ms:int -> int source_policy
 val step_source_policy : unit -> 'a source_policy
 val step_replay_source_policy : unit -> 'a source_policy
+
+val source_policy_result :
+  'a source_policy ->
+  plan:
+    (update_on_start:bool ->
+    catch_up_policy:catch_up_policy ->
+    refresh_when_inactive:bool ->
+    refresh_on_demand:'a refresh_spec option ->
+    'b) ->
+  'b
 
 val catch_up_update_count : catch_up_policy -> int -> int
 val catch_up_update_missed : catch_up_policy -> int -> int

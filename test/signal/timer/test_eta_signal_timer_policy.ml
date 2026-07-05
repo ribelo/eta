@@ -193,13 +193,17 @@ let refresh_spec_label : type a. a Timer_policy.refresh_spec option -> string =
       "interval:" ^ string_of_int interval_ms
 
 let source_policy_label policy =
-  String.concat ":"
-    [
-      string_of_bool policy.Timer_policy.source_update_on_start;
-      catch_up_policy_label policy.Timer_policy.source_catch_up_policy;
-      string_of_bool policy.Timer_policy.source_refresh_when_inactive;
-      refresh_spec_label policy.Timer_policy.source_refresh_on_demand;
-    ]
+  Timer_policy.source_policy_result policy
+    ~plan:
+      (fun ~update_on_start ~catch_up_policy ~refresh_when_inactive
+           ~refresh_on_demand ->
+        String.concat ":"
+          [
+            string_of_bool update_on_start;
+            catch_up_policy_label catch_up_policy;
+            string_of_bool refresh_when_inactive;
+            refresh_spec_label refresh_on_demand;
+          ])
 
 let test_source_policy_defaults () =
   Alcotest.(check string)

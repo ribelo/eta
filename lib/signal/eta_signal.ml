@@ -2656,22 +2656,21 @@ module Make (Observer_error : Observer_error) () = struct
         source_policy update =
       let source = Var.create ?equal initial in
       let signal = Var.watch source in
-      let refresh_operation =
-        Option.map (timer_refresh_operation source)
-          source_policy.Timer_policy.source_refresh_on_demand
-      in
-      attach_timer
-        ~update_on_start:source_policy.Timer_policy.source_update_on_start
-        ~refresh_when_inactive:
-          source_policy.Timer_policy.source_refresh_when_inactive
-        ?refresh_operation ~runtime_contract signal interval
-        {
-          timer_catch_up_policy =
-            source_policy.Timer_policy.source_catch_up_policy;
-          timer_update =
-            (fun timer generation ~missed ->
-              update.source_timer_update timer generation ~missed source);
-        }
+      Timer_policy.source_policy_result source_policy
+        ~plan:
+          (fun ~update_on_start ~catch_up_policy ~refresh_when_inactive
+               ~refresh_on_demand ->
+            let refresh_operation =
+              Option.map (timer_refresh_operation source) refresh_on_demand
+            in
+            attach_timer ~update_on_start ~refresh_when_inactive
+              ?refresh_operation ~runtime_contract signal interval
+              {
+                timer_catch_up_policy = catch_up_policy;
+                timer_update =
+                  (fun timer generation ~missed ->
+                    update.source_timer_update timer generation ~missed source);
+              })
 
     let construct_timer_signal f =
       with_graph_lane_sync (fun () ->

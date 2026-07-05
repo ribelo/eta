@@ -263,6 +263,12 @@ let step_replay_source_policy () =
     ~catch_up_policy:Catch_up_every_cadence
     ~refresh_when_inactive:false ~refresh_on_demand:None
 
+let source_policy_result policy ~plan =
+  plan ~update_on_start:policy.source_update_on_start
+    ~catch_up_policy:policy.source_catch_up_policy
+    ~refresh_when_inactive:policy.source_refresh_when_inactive
+    ~refresh_on_demand:policy.source_refresh_on_demand
+
 let catch_up_update_count policy missed =
   match policy with
   | Catch_up_every_cadence -> missed
