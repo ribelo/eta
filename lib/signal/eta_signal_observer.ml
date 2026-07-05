@@ -648,12 +648,14 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           else Ok None)
       |> Eta.Effect.flatten_result)
     ~run_callback:(fun callback ->
-      access.event_with_delivery_access (fun capability ->
-          running_delivery_token_matches delivery_port capability observer
-            token)
-      |> Eta.Effect.bind (function
-           | false -> Eta.Effect.unit
-           | true -> event_port.event_run_callback observer token callback))
+      let open Eta.Syntax in
+      let* current =
+        access.event_with_delivery_access (fun capability ->
+            running_delivery_token_matches delivery_port capability observer
+              token)
+      in
+      if current then event_port.event_run_callback observer token callback
+      else Eta.Effect.unit)
     ~acknowledge:(fun () ->
       access.event_with_delivery_access (fun capability ->
           acknowledge_delivery delivery_port capability observer token update
