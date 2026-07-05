@@ -269,7 +269,8 @@ val remember_computed :
   'node ->
   unit
 
-val computed_nodes : (_, _, 'node, _, _, _, _, _, _, _, _) t -> 'node list
+val iter_computed :
+  (_, _, 'node, _, _, _, _, _, _, _, _) t -> f:('node -> unit) -> unit
 
 val compute_cached :
   (_, _, _, _, _, _, _, _, _, _, _) t ->

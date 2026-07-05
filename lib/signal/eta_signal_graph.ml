@@ -356,7 +356,8 @@ let remember_computed t ops node =
     ~generation:(generation t) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
 
-let computed_nodes t = Eta_signal_graph_state.computed_nodes t.state
+let iter_computed t ~f =
+  List.iter f (Eta_signal_graph_state.computed_nodes t.state)
 
 let compute_seen t ops node =
   Int.equal (ops.compute_seen_generation node) (generation t)
