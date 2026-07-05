@@ -113,6 +113,41 @@ let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
 let stabilization t = t.stabilization
 let state t = t.state
+let generation t = Eta_signal_graph_state.generation t.state
+
+let active_transaction t =
+  Eta_signal_stabilization.active_transaction t.stabilization
+
+let active_pure_transaction = active_transaction
+
+let read_effective t cell =
+  match Eta_signal_stabilization.transaction t.stabilization with
+  | Some transaction -> Eta_signal_transaction.read transaction cell
+  | None -> Eta_signal_transaction.current cell
+
+let stage_cell t cell value =
+  Eta_signal_transaction.stage (active_transaction t) cell value
+
+let update_cell t cell f =
+  let transaction = active_transaction t in
+  let value = Eta_signal_transaction.read transaction cell in
+  Eta_signal_transaction.stage transaction cell (f value)
+
+let staged_in_active_transaction t cell =
+  match Eta_signal_stabilization.transaction t.stabilization with
+  | Some transaction -> Eta_signal_transaction.staged transaction cell
+  | None -> false
+
+let staged_value t cell =
+  match Eta_signal_stabilization.transaction t.stabilization with
+  | Some transaction when Eta_signal_transaction.staged transaction cell ->
+      Some (Eta_signal_transaction.read transaction cell)
+  | Some _ | None -> None
+
+let discard_staging t cell =
+  match Eta_signal_stabilization.transaction t.stabilization with
+  | Some transaction -> Eta_signal_transaction.discard transaction cell
+  | None -> ()
 
 let allocation_scope t ops =
   match Eta_signal_stabilization.state t.stabilization with

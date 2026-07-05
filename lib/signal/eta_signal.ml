@@ -707,7 +707,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~id:(graph_result_or_raise (Graph.next_scope_id graph))
       ~owner:(P owner) ~parent:owner.scope
 
-  let current_generation () = Graph_state.generation graph_state
+  let current_generation () = Graph.generation graph
 
   let remove_dependent child parent =
     Graph_edges.remove_dependent ~child:(graph_edge_node child)
@@ -753,22 +753,20 @@ module Make (Observer_error : Observer_error) () = struct
           | Some (P candidate) -> candidate.valid && candidate.id <> signal.id)
         source.watchers
 
-  let active_transaction () =
-    Stabilization.active_transaction graph_stabilization
-
   let active_staging () =
     Graph_state.require_staging graph_state
 
+  let active_transaction () =
+    Graph.active_pure_transaction graph
+
   let stage_var_graph_value (type a) (var : a var) value =
-    Transaction.stage (active_transaction ()) var.graph_value value
+    Graph.stage_cell graph var.graph_value value
 
   let stage_var_source_value (type a) (var : a var) value =
-    Transaction.stage (active_transaction ()) var.source_value value
+    Graph.stage_cell graph var.source_value value
 
   let effective_var_value (type a) (var : a var) =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.read transaction var.graph_value
-    | None -> Transaction.current var.graph_value
+    Graph.read_effective graph var.graph_value
 
   let remember_computed (P signal) =
     let generation = current_generation () in
@@ -782,24 +780,16 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current signal.snapshot
 
   let signal_effective_snapshot signal =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.read transaction signal.snapshot
-    | None -> signal_current_snapshot signal
+    Graph.read_effective graph signal.snapshot
 
   let update_signal_staging signal f =
-    let transaction = active_transaction () in
-    let snapshot = Transaction.read transaction signal.snapshot in
-    Transaction.stage transaction signal.snapshot (f snapshot)
+    Graph.update_cell graph signal.snapshot f
 
   let signal_staged_in_active_transaction signal =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.staged transaction signal.snapshot
-    | None -> false
+    Graph.staged_in_active_transaction graph signal.snapshot
 
   let discard_signal_staging signal =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.discard transaction signal.snapshot
-    | None -> ()
+    Graph.discard_staging graph signal.snapshot
 
   let stage_signal signal value =
     update_signal_staging signal (fun snapshot ->
@@ -858,14 +848,10 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current live.observer_snapshot
 
   let observer_effective_snapshot live =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.read transaction live.observer_snapshot
-    | None -> observer_current_snapshot live
+    Graph.read_effective graph live.observer_snapshot
 
   let update_observer_staging live f =
-    let transaction = active_transaction () in
-    let snapshot = Transaction.read transaction live.observer_snapshot in
-    Transaction.stage transaction live.observer_snapshot (f snapshot)
+    Graph.update_cell graph live.observer_snapshot f
 
   let set_observer_current live snapshot =
     publish_observer_current live.observer_snapshot snapshot
@@ -949,10 +935,7 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.current (Timer.snapshot_cell timer)
 
   let timer_effective_snapshot timer =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction ->
-        Transaction.read transaction (Timer.snapshot_cell timer)
-    | None -> timer_current_snapshot timer
+    Graph.read_effective graph (Timer.snapshot_cell timer)
 
   let set_timer_current_snapshot timer snapshot =
     publish_timer_current (Timer.snapshot_cell timer) snapshot
@@ -963,10 +946,8 @@ module Make (Observer_error : Observer_error) () = struct
       (Timer_policy.snapshot_with_state snapshot timer_state)
 
   let update_timer_staging timer f =
-    let transaction = active_transaction () in
     let snapshot_cell = Timer.snapshot_cell timer in
-    let snapshot = Transaction.read transaction snapshot_cell in
-    Transaction.stage transaction snapshot_cell (f snapshot)
+    Graph.update_cell graph snapshot_cell f
 
   let timer_current_state timer =
     Timer_policy.snapshot_state (timer_current_snapshot timer)
@@ -1256,19 +1237,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let bind_effective_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot =
-    match Stabilization.transaction graph_stabilization with
-    | Some transaction -> Transaction.read transaction bind.snapshot
-    | None -> bind_current_snapshot bind
+    Graph.read_effective graph bind.snapshot
 
   let bind_effective_inner bind =
     Bind.inner (bind_effective_snapshot bind)
 
   let bind_staged_snapshot (type a b) (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot option =
-    let transaction = active_transaction () in
-    if Transaction.staged transaction bind.snapshot then
-      Some (Transaction.read transaction bind.snapshot)
-    else None
+    Graph.staged_value graph bind.snapshot
 
   let bind_staged_switch (type a b) (bind : (a, b) bind) :
       (a, b signal, scope, b signal) Bind.staged_switch =
@@ -2087,8 +2063,7 @@ module Make (Observer_error : Observer_error) () = struct
         Observer_snapshot.plan_event ~equal:observer.obs_equal ~changed
           ~value snapshot
       in
-      Transaction.stage (active_transaction ()) live.observer_snapshot
-        event_plan.snapshot;
+      Graph.stage_cell graph live.observer_snapshot event_plan.snapshot;
       Option.map
         (fun update ->
           make_observer_event ~token:(current_generation ()) observer update)

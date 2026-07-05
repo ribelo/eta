@@ -143,6 +143,45 @@ val state :
   t ->
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) Eta_signal_graph_state.t
 
+val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+
+val active_pure_transaction :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (Eta_signal_transaction.pure, Eta_signal_error.graph_error)
+  Eta_signal_transaction.t
+
+val read_effective :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  'a
+
+val stage_cell :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  'a ->
+  unit
+
+val update_cell :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  ('a -> 'a) ->
+  unit
+
+val staged_in_active_transaction :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  bool
+
+val staged_value :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  'a option
+
+val discard_staging :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  'a Eta_signal_transaction.staged ->
+  unit
+
 val allocation_scope :
   (_, _, _, _, _, _, _, _, _, 'scope_context, _) t ->
   ('scope_context, 'scope) scope_ops ->
