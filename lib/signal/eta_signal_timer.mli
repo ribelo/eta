@@ -6,16 +6,25 @@
     that need runtime ownership, update current timer state, and assemble
     start/cancel effects in policy order. *)
 
-type 'start demand_effects = {
-  demand_start_attempts : 'start list;
-  demand_cancel_hooks : (unit -> unit) list;
-}
+type 'start demand_effects
+
+val demand_effects :
+  start_attempts:'start list ->
+  cancel_hooks:(unit -> unit) list ->
+  'start demand_effects
+
+val demand_effects_plan :
+  'start demand_effects ->
+  plan:(start_attempts:'start list -> cancel_hooks:(unit -> unit) list -> 'a) ->
+  'a
 
 type 'operation node
 
-type 'operation start = {
-  run : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
-}
+type 'operation start
+
+val start :
+  run:('err. 'operation node -> (unit, 'err) Eta.Effect.t) ->
+  'operation start
 
 val create_node :
   runtime_contract:Eta.Runtime_contract.t ->

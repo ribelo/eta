@@ -69,6 +69,10 @@ let state_port ?(record = fun _ -> ()) () =
       timer.effective <- state;
       record ("set:" ^ timer.name ^ ":" ^ state_label state))
 
+let demand_effect_parts effects =
+  Timer.demand_effects_plan effects ~plan:(fun ~start_attempts
+      ~cancel_hooks -> (start_attempts, cancel_hooks))
+
 let test_refresh_demand_classifies_and_orders_effects () =
   let events = ref [] in
   let record event = append_event events event in
@@ -115,6 +119,7 @@ let test_refresh_demand_classifies_and_orders_effects () =
   with
   | Error error -> Alcotest.failf "unexpected error %s" error
   | Ok effects ->
+      let start_attempts, cancel_hooks = demand_effect_parts effects in
       Alcotest.(check (list string))
         "events"
         [
@@ -128,8 +133,8 @@ let test_refresh_demand_classifies_and_orders_effects () =
         !events;
       Alcotest.(check (list string))
         "starts" [ "start:start" ]
-        (Timer.start_attempt_effects effects.Timer.demand_start_attempts);
-      List.iter (fun hook -> hook ()) effects.Timer.demand_cancel_hooks;
+        (Timer.start_attempt_effects start_attempts);
+      List.iter (fun hook -> hook ()) cancel_hooks;
       Alcotest.(check (list string))
         "hooks"
         [
@@ -195,15 +200,12 @@ let test_refresh_node_demand_owns_node_start_wiring () =
         Timer.create_node ~runtime_contract
           ~refresh_when_inactive:true ~refresh_operation:None
           ~start:
-            {
-              Timer.run =
-                (fun _timer ->
-                  record
-                    ("start:" ^ case.case_name ^ ":"
-                   ^ state_label case.case_current);
-                  Eta.Effect.sync (fun () ->
-                      record ("run:" ^ case.case_name)));
-            }
+            (Timer.start ~run:(fun _timer ->
+                 record
+                   ("start:" ^ case.case_name ^ ":"
+                  ^ state_label case.case_current);
+                 Eta.Effect.sync (fun () ->
+                     record ("run:" ^ case.case_name))))
       in
       case.case_node <- Some node;
       node
@@ -232,6 +234,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
     with
     | Error `Runtime_mismatch -> Alcotest.fail "unexpected runtime mismatch"
     | Ok effects ->
+        let start_attempts, cancel_hooks = demand_effect_parts effects in
         Alcotest.(check (list string))
           "construction events"
           [
@@ -243,18 +246,13 @@ let test_refresh_node_demand_owns_node_start_wiring () =
           !events;
         Alcotest.(check int)
           "start attempts" 1
-          (List.length
-             (Timer.start_attempt_effects
-                effects.Timer.demand_start_attempts));
+          (List.length (Timer.start_attempt_effects start_attempts));
         Alcotest.(check int)
-          "cancel hooks" 1
-          (List.length effects.Timer.demand_cancel_hooks);
-        List.iter (fun hook -> hook ()) effects.Timer.demand_cancel_hooks;
+          "cancel hooks" 1 (List.length cancel_hooks);
+        List.iter (fun hook -> hook ()) cancel_hooks;
         (match
            Eta.Effect.Expert.eval context
-             (Eta.Effect.concat
-                (Timer.start_attempt_effects
-                   effects.Timer.demand_start_attempts))
+             (Eta.Effect.concat (Timer.start_attempt_effects start_attempts))
          with
         | Eta.Exit.Ok () ->
             Alcotest.(check (list string))
@@ -317,15 +315,12 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
       Timer.create_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
         ~start:
-          {
-            Timer.run =
-              (fun _timer ->
-                record
-                  ("start:" ^ case.case_name ^ ":"
-                 ^ state_label case.case_current);
-                Eta.Effect.sync (fun () ->
-                    record ("run:" ^ case.case_name)));
-          }
+          (Timer.start ~run:(fun _timer ->
+               record
+                 ("start:" ^ case.case_name ^ ":"
+                ^ state_label case.case_current);
+               Eta.Effect.sync (fun () ->
+                   record ("run:" ^ case.case_name))))
     in
     case.case_node <- Some node;
     node
@@ -468,8 +463,7 @@ let test_rollback_unclaimed_start_attempts_hide_timer_pairing () =
     with
     | Error error -> Alcotest.failf "unexpected error %s" error
     | Ok effects ->
-        ( effects.Timer.demand_start_attempts,
-          effects.Timer.demand_cancel_hooks )
+        demand_effect_parts effects
   in
   let hooks =
     Timer.rollback_unclaimed_start_attempts ~advance_generation:succ
@@ -604,14 +598,13 @@ let test_refresh_demand_effect_owns_adapter_bracketing () =
           ~acquire:(fun _runtime_contract capability ->
              append_event events ("acquire:" ^ capability);
              Ok
-               {
-                 Timer.demand_start_attempts = [ "start-a"; "start-b" ];
-                 demand_cancel_hooks =
-                   [
-                     (fun () -> append_event events "cancel:acquire-a");
-                     (fun () -> append_event events "cancel:acquire-b");
-                   ];
-               })
+               (Timer.demand_effects
+                  ~start_attempts:[ "start-a"; "start-b" ]
+                  ~cancel_hooks:
+                    [
+                      (fun () -> append_event events "cancel:acquire-a");
+                      (fun () -> append_event events "cancel:acquire-b");
+                    ]))
           ~rollback_unclaimed:(fun capability attempts ->
              append_event events ("rollback:" ^ capability);
              List.iter

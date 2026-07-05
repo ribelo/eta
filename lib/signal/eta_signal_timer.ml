@@ -3,6 +3,16 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+let demand_effects ~start_attempts ~cancel_hooks =
+  {
+    demand_start_attempts = start_attempts;
+    demand_cancel_hooks = cancel_hooks;
+  }
+
+let demand_effects_plan effects ~plan =
+  plan ~start_attempts:effects.demand_start_attempts
+    ~cancel_hooks:effects.demand_cancel_hooks
+
 type 'operation node = {
   timer_snapshot :
     Eta_signal_timer_policy.snapshot Eta_signal_transaction.staged;
@@ -16,6 +26,10 @@ type 'operation node = {
 type 'operation start = {
   run : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
 }
+
+let start (type operation)
+    ~(run : 'err. operation node -> (unit, 'err) Eta.Effect.t) =
+  { run }
 
 let create_node ~runtime_contract ~refresh_when_inactive
     ~refresh_operation ~start =
@@ -272,12 +286,10 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
   | Error _ as error -> error
   | Ok effects ->
       Ok
-        {
-          demand_start_attempts =
-            effects.Eta_signal_timer_policy.demand_start_attempts;
-          demand_cancel_hooks =
-            effects.Eta_signal_timer_policy.demand_cancel_hooks;
-        }
+        (demand_effects
+           ~start_attempts:
+             effects.Eta_signal_timer_policy.demand_start_attempts
+           ~cancel_hooks:effects.Eta_signal_timer_policy.demand_cancel_hooks)
 
 let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
   refresh_demand ~advance_generation ~cancel_running
@@ -298,8 +310,8 @@ let refresh_demand_effect access port =
          match port.demand_acquire runtime_contract capability with
          | Error _ as error -> error
          | Ok effects ->
-             Ok
-               (effects.demand_start_attempts, effects.demand_cancel_hooks))
+             demand_effects_plan effects ~plan:(fun ~start_attempts
+                 ~cancel_hooks -> Ok (start_attempts, cancel_hooks)))
        ~rollback_unclaimed_starts:port.demand_rollback_unclaimed
        ~run_cancel_hooks:port.demand_run_cancel_hooks
        ~run_start_attempts:port.demand_run_start_attempts)
@@ -478,13 +490,10 @@ let create_daemon_node ~runtime_contract ~refresh_when_inactive
     ~catch_up_policy =
   create_node ~runtime_contract ~refresh_when_inactive ~refresh_operation
     ~start:
-      {
-        run =
-          (fun timer ->
-            let generation =
-              Eta_signal_timer_policy.state_generation
-                (context.daemon_state.state_current timer)
-            in
-            start_daemon context timer ~generation ~interval_ms
-              ~update_on_start ~catch_up_policy);
-      }
+      (start ~run:(fun timer ->
+           let generation =
+             Eta_signal_timer_policy.state_generation
+               (context.daemon_state.state_current timer)
+           in
+           start_daemon context timer ~generation ~interval_ms
+             ~update_on_start ~catch_up_policy))
