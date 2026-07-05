@@ -96,6 +96,12 @@ type ('id, 'node) order_ops = {
   order_children : 'node -> 'node list;
 }
 
+type ('id, 'node) reachable_ops = {
+  reachable_id : 'node -> 'id;
+  reachable_valid : 'node -> bool;
+  reachable_children : 'node -> 'node list;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -291,6 +297,23 @@ let compare_order _t ops left right =
   else if order_depends_on ops left right then 1
   else if order_depends_on ops right left then -1
   else ops.order_compare_id (ops.order_id left) (ops.order_id right)
+
+let fold_reachable _t ops ~roots ~init ~f =
+  let seen = Hashtbl.create 16 in
+  let rec visit acc node =
+    let id = ops.reachable_id node in
+    if (not (ops.reachable_valid node)) || Hashtbl.mem seen id then acc
+    else (
+      Hashtbl.add seen id ();
+      List.fold_left visit (f acc node) (ops.reachable_children node))
+  in
+  List.fold_left visit init roots
+
+let reachable_ids t ops ~roots =
+  fold_reachable t ops ~roots ~init:(Hashtbl.create 16)
+    ~f:(fun seen node ->
+      Hashtbl.replace seen (ops.reachable_id node) ();
+      seen)
 
 let remember_staged_bind t bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind

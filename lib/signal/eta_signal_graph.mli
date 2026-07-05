@@ -77,6 +77,12 @@ type ('id, 'node) order_ops = {
   order_children : 'node -> 'node list;
 }
 
+type ('id, 'node) reachable_ops = {
+  reachable_id : 'node -> 'id;
+  reachable_valid : 'node -> bool;
+  reachable_children : 'node -> 'node list;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -263,6 +269,20 @@ val compare_order :
   'node ->
   'node ->
   int
+
+val fold_reachable :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) reachable_ops ->
+  roots:'node list ->
+  init:'acc ->
+  f:('acc -> 'node -> 'acc) ->
+  'acc
+
+val reachable_ids :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) reachable_ops ->
+  roots:'node list ->
+  ('id, unit) Hashtbl.t
 
 val remember_staged_bind :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind -> unit

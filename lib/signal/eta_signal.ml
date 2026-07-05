@@ -614,16 +614,13 @@ module Make (Observer_error : Observer_error) () = struct
       ~owner_node:(fun owner -> owner)
       signal.scope children
 
-  module Graph_reachable_static = Graph_algorithms.Make_reachable (struct
-    type id = signal_id
-    type nonrec packed = packed_signal
-
-    let id (P signal) = signal.id
-    let valid (P signal) = signal.valid
-
-    let children (P signal) =
-      children_with_scope_owner signal signal.dependencies
-  end)
+  let reachable_ops =
+    {
+      Graph.reachable_id = (fun (P signal) -> signal.id);
+      reachable_valid = (fun (P signal) -> signal.valid);
+      reachable_children =
+        (fun (P signal) -> children_with_scope_owner signal signal.dependencies);
+    }
 
   let source_watchers_unlocked source =
     let cells, watchers =
@@ -1302,35 +1299,33 @@ module Make (Observer_error : Observer_error) () = struct
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
-    let module Reachable = Graph_algorithms.Make_reachable (struct
-      type id = signal_id
-      type nonrec packed = packed_signal
-
-      let id (P signal) = signal.id
-
-      let valid (P signal) =
-        signal.valid && not (Hashtbl.mem invalidated_ids signal.id)
-
-      let children (P signal) =
-        let signal_children =
-          match signal.kind with
-          | Bind bind ->
-              Bind.dependencies ~source:(P bind.source)
-                ~inner:
-                  (Option.map (fun inner -> P inner)
-                     (bind_effective_inner bind))
-          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-              signal.dependencies
-        in
-        children_with_scope_owner signal signal_children
-    end)
+    let reachable_ops =
+      {
+        Graph.reachable_id = (fun (P signal) -> signal.id);
+        reachable_valid =
+          (fun (P signal) ->
+            signal.valid && not (Hashtbl.mem invalidated_ids signal.id));
+        reachable_children =
+          (fun (P signal) ->
+            let signal_children =
+              match signal.kind with
+              | Bind bind ->
+                  Bind.dependencies ~source:(P bind.source)
+                    ~inner:
+                      (Option.map (fun inner -> P inner)
+                         (bind_effective_inner bind))
+              | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+              | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+                  signal.dependencies
+            in
+            children_with_scope_owner signal signal_children);
+      }
     in
     Graph.post_commit_necessary_timers graph
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~collect_timers:(fun ~roots ->
-        Reachable.fold ~roots ~init:(Hashtbl.create 8)
+        Graph.fold_reachable graph reachable_ops ~roots ~init:(Hashtbl.create 8)
           ~f:(fun timers (P signal) ->
             Option.iter
               (fun timer -> Hashtbl.replace timers signal.id timer)
@@ -1682,14 +1677,15 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_necessary_node_ids (_lane : graph_lane) =
     Graph.necessary_ids graph
       ~collect_live_nodes:collect_live_weak_signals
-      ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
+      ~root:observer_demand_root
+      ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
 
   let update_necessity_counters_unlocked lane =
     ignore
       (Graph.update_necessity graph lane
          ~collect_live_nodes:collect_live_weak_signals
          ~root:observer_demand_root
-         ~reachable_ids:Graph_reachable_static.ids
+         ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
         : (signal_id, unit) Hashtbl.t)
 
   let signal_timer (P signal) =
@@ -1705,7 +1701,8 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_demand_unlocked (_lane : graph_lane) =
     Graph.timer_demand graph
       ~collect_live_nodes:collect_live_weak_signals
-      ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
+      ~root:observer_demand_root
+      ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
       ~timer:signal_timer
 
   let refresh_timer_demand_unlocked lane runtime_contract =
@@ -1906,7 +1903,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_observed_bind_nodes (_lane : graph_lane) observers =
     prune_all_nodes_unlocked ();
-    Graph_reachable_static.fold ~roots:(observer_active_roots observers) ~init:[]
+    Graph.fold_reachable graph reachable_ops
+      ~roots:(observer_active_roots observers) ~init:[]
       ~f:(fun binds (P signal as packed) ->
         match signal.kind with
         | Bind _ -> packed :: binds
