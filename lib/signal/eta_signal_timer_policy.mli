@@ -46,12 +46,7 @@ type demand_action =
   | Demand_start
   | Demand_stop
 
-type 'a demand_item = {
-  demand_item : 'a;
-  demand_necessary : bool;
-  demand_effective_state : state;
-  demand_current_state : state;
-}
+type 'a demand_item
 
 type ('id, 'timer) demand_resource
 
@@ -200,6 +195,13 @@ val demand_action :
   necessary:bool -> effective_state:state -> current_state:state -> demand_action
 
 val demand_resource : id:'id -> 'timer -> ('id, 'timer) demand_resource
+
+val demand_item :
+  item:'a ->
+  necessary:bool ->
+  effective_state:state ->
+  current_state:state ->
+  'a demand_item
 
 val demand_context :
   necessary:('id -> bool) ->

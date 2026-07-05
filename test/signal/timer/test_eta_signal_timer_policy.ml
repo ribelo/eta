@@ -501,36 +501,16 @@ let test_demand_plans_policy () =
   let plans =
     Timer_policy.demand_plans ~advance_generation:succ ~cancel_running:true
       [
-        {
-          Timer_policy.demand_item = "start";
-          demand_necessary = true;
-          demand_effective_state = inactive;
-          demand_current_state = inactive;
-        };
-        {
-          Timer_policy.demand_item = "keep-running";
-          demand_necessary = true;
-          demand_effective_state = running;
-          demand_current_state = running;
-        };
-        {
-          Timer_policy.demand_item = "stop";
-          demand_necessary = false;
-          demand_effective_state = running;
-          demand_current_state = running;
-        };
-        {
-          Timer_policy.demand_item = "staged-stop";
-          demand_necessary = false;
-          demand_effective_state = running_uncancellable;
-          demand_current_state = inactive;
-        };
-        {
-          Timer_policy.demand_item = "finished";
-          demand_necessary = true;
-          demand_effective_state = finished;
-          demand_current_state = finished;
-        };
+        Timer_policy.demand_item ~item:"start" ~necessary:true
+          ~effective_state:inactive ~current_state:inactive;
+        Timer_policy.demand_item ~item:"keep-running" ~necessary:true
+          ~effective_state:running ~current_state:running;
+        Timer_policy.demand_item ~item:"stop" ~necessary:false
+          ~effective_state:running ~current_state:running;
+        Timer_policy.demand_item ~item:"staged-stop" ~necessary:false
+          ~effective_state:running_uncancellable ~current_state:inactive;
+        Timer_policy.demand_item ~item:"finished" ~necessary:true
+          ~effective_state:finished ~current_state:finished;
       ]
     |> demand_plan_values
   in

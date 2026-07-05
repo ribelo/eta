@@ -92,6 +92,14 @@ type 'a demand_item = {
   demand_current_state : state;
 }
 
+let demand_item ~item ~necessary ~effective_state ~current_state =
+  {
+    demand_item = item;
+    demand_necessary = necessary;
+    demand_effective_state = effective_state;
+    demand_current_state = current_state;
+  }
+
 type ('id, 'timer) demand_resource = {
   demand_resource_id : 'id;
   demand_resource_timer : 'timer;
@@ -483,14 +491,10 @@ let classify_demand context resources =
         let necessary = context.demand_resource_necessary resource.demand_resource_id in
         let continue () =
           loop
-            ({
-               demand_item = timer;
-               demand_necessary = necessary;
-               demand_effective_state =
-                 context.demand_resource_effective_state timer;
-               demand_current_state =
-                 context.demand_resource_current_state timer;
-             }
+            (demand_item ~item:timer ~necessary
+               ~effective_state:
+                 (context.demand_resource_effective_state timer)
+               ~current_state:(context.demand_resource_current_state timer)
               :: items)
             resources
         in
