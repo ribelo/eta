@@ -39,6 +39,13 @@ val refresh_when_inactive : _ node -> bool
 val refresh_operation : 'operation node -> 'operation option
 val start_effect : 'operation node -> (unit, 'err) Eta.Effect.t
 
+val can_refresh_on_demand :
+  token:int ->
+  current_snapshot:Eta_signal_timer_policy.snapshot ->
+  effective_state:Eta_signal_timer_policy.state ->
+  _ node ->
+  bool
+
 type ('timer, 'effect) start_attempt
 
 type 'timer state_port

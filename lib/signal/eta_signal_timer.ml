@@ -55,6 +55,17 @@ let refresh_when_inactive timer = timer.timer_refresh_when_inactive
 let refresh_operation timer = timer.timer_refresh_operation
 let start_effect timer = timer.timer_start timer
 
+let can_refresh_on_demand ~token ~current_snapshot ~effective_state timer =
+  Eta_signal_timer_policy.can_refresh_on_demand
+    ~refresh_operation:(Option.is_some timer.timer_refresh_operation)
+    ~current_token:
+      (Eta_signal_timer_policy.snapshot_on_demand_refresh_token
+         current_snapshot)
+    ~staged_token:timer.timer_staged_refresh_token ~token
+    ~refresh_when_inactive:timer.timer_refresh_when_inactive
+    ~active:(Eta_signal_timer_policy.state_active effective_state)
+    ~finished:(Eta_signal_timer_policy.state_finished effective_state)
+
 type ('timer, 'effect) start_attempt = {
   attempt_timer : 'timer;
   attempt_effect : 'effect;

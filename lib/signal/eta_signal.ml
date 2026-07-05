@@ -899,14 +899,6 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.state_port ~effective:timer_effective_state
       ~current:timer_current_state ~set_current:set_timer_current_state
 
-  let timer_active_state = Timer_policy.state_active
-
-  let timer_active timer = timer_active_state (timer_effective_state timer)
-
-  let timer_finished_state = Timer_policy.state_finished
-
-  let timer_finished timer = timer_finished_state (timer_effective_state timer)
-
   let timer_needs_start timer =
     Timer_policy.needs_start ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
@@ -927,14 +919,10 @@ module Make (Observer_error : Observer_error) () = struct
     | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
 
   let timer_can_refresh_on_demand token timer =
-    Timer_policy.can_refresh_on_demand
-      ~refresh_operation:(Option.is_some (Timer.refresh_operation timer))
-      ~current_token:
-        (Timer_policy.snapshot_on_demand_refresh_token
-           (timer_current_snapshot timer))
-      ~staged_token:(Timer.staged_refresh_token timer) ~token
-      ~refresh_when_inactive:(Timer.refresh_when_inactive timer)
-      ~active:(timer_active timer) ~finished:(timer_finished timer)
+    Timer.can_refresh_on_demand ~token
+      ~current_snapshot:(timer_current_snapshot timer)
+      ~effective_state:(timer_effective_state timer)
+      timer
 
   let timer_running_generation timer =
     Timer_policy.state_running_generation (timer_effective_state timer)
