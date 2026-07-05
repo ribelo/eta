@@ -464,22 +464,29 @@ let count_observers t ~selected =
 
 let filter_map_observers t ~f = List.filter_map f t.observers
 
-let observer_delivery_plan t ~active ~compare ~collect_event ~mark_pending =
-  let observers = List.filter active t.observers in
+type ('capability, 'observer, 'event) observer_delivery = {
+  observer_active : 'observer -> bool;
+  observer_compare : 'observer -> 'observer -> int;
+  observer_collect_event : 'capability -> 'observer -> 'event option;
+  observer_mark_pending : 'capability -> 'event -> unit;
+}
+
+let observer_delivery_plan t delivery =
+  let observers = List.filter delivery.observer_active t.observers in
   Eta_signal_stabilization_pass.observer_plan ~observers
     ~collect_events:
       (fun context observers ->
         let capability =
           Eta_signal_stabilization_pass.pure_capability context
         in
-        observers |> List.sort compare
-        |> List.filter_map (collect_event capability))
+        observers |> List.sort delivery.observer_compare
+        |> List.filter_map (delivery.observer_collect_event capability))
     ~mark_events_pending:
       (fun context events ->
         let capability =
           Eta_signal_stabilization_pass.pure_capability context
         in
-        List.iter (mark_pending capability) events)
+        List.iter (delivery.observer_mark_pending capability) events)
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
      stabilization_ops =

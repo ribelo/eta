@@ -447,15 +447,21 @@ val filter_map_observers :
     callers supply lifecycle predicates and projections for their concrete
     observer representation. *)
 
+type ('capability, 'observer, 'event) observer_delivery = {
+  observer_active : 'observer -> bool;
+  observer_compare : 'observer -> 'observer -> int;
+  observer_collect_event : 'capability -> 'observer -> 'event option;
+  observer_mark_pending : 'capability -> 'event -> unit;
+}
+
 val observer_delivery_plan :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
-  active:('observer -> bool) ->
-  compare:('observer -> 'observer -> int) ->
-  collect_event:('capability -> 'observer -> 'event option) ->
-  mark_pending:('capability -> 'event -> unit) ->
+  ('capability, 'observer, 'event) observer_delivery ->
   ('capability, 'observer, 'event) Eta_signal_stabilization_pass.observer_plan
-(** Capture active observers and defer graph-ordered delivery event planning
-    until the stabilization pass reaches the event collection phase. *)
+(** Capture active observers and defer graph-ordered delivery event collection
+    until the stabilization pass reaches the event collection phase. The graph
+    owns registry traversal and delivery ordering; callers provide the
+    observer-specific collection transition behind one typed context. *)
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging)
      stabilization_ops =
