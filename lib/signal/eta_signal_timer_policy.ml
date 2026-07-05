@@ -68,6 +68,13 @@ type 'a refresh_plan = {
   refresh_finish : bool;
 }
 
+let refresh_plan ~value ~next_due_ms ~finish =
+  {
+    refresh_value = value;
+    refresh_next_due_ms = next_due_ms;
+    refresh_finish = finish;
+  }
+
 type _ refresh_spec =
   | Refresh_current_time : int refresh_spec
   | Refresh_deadline : int -> bool refresh_spec
@@ -701,6 +708,10 @@ let finish ~advance_generation state =
 let finish_plan_result plan ~plan:result =
   result ~state:plan.finish_state ~cancel_hooks:plan.finish_cancel_hooks
 
+let refresh_plan_result refresh ~plan =
+  plan ~value:refresh.refresh_value
+    ~next_due_ms:refresh.refresh_next_due_ms ~finish:refresh.refresh_finish
+
 let due_refresh state ~interval_ms ~now_ms =
   match state_next_due state with
   | None -> { missed = 0; saturated_due = false; next_due_ms = None }
@@ -730,11 +741,7 @@ let interval_refresh ~state ~interval_ms ~current_value ~now_ms =
   }
 
 let current_time_refresh_plan ~now_ms =
-  {
-    refresh_value = Some now_ms;
-    refresh_next_due_ms = None;
-    refresh_finish = false;
-  }
+  refresh_plan ~value:(Some now_ms) ~next_due_ms:None ~finish:false
 
 let refresh_actions ~advance_generation ~state refresh =
   let due_transitions =
@@ -755,19 +762,13 @@ let refresh_actions ~advance_generation ~state refresh =
 
 let deadline_refresh_plan ~now_ms ~deadline_ms =
   let refresh = deadline_refresh ~now_ms ~deadline_ms in
-  {
-    refresh_value = Some refresh.deadline_value;
-    refresh_next_due_ms = None;
-    refresh_finish = refresh.deadline_finish;
-  }
+  refresh_plan ~value:(Some refresh.deadline_value) ~next_due_ms:None
+    ~finish:refresh.deadline_finish
 
 let interval_refresh_plan ~state ~interval_ms ~current_value ~now_ms =
   let refresh = interval_refresh ~state ~interval_ms ~current_value ~now_ms in
-  {
-    refresh_value = refresh.interval_value;
-    refresh_next_due_ms = refresh.interval_next_due_ms;
-    refresh_finish = refresh.interval_finish;
-  }
+  refresh_plan ~value:refresh.interval_value
+    ~next_due_ms:refresh.interval_next_due_ms ~finish:refresh.interval_finish
 
 let refresh_plan_for_spec : type a.
     state:state -> current_value:a -> now_ms:int -> a refresh_spec -> a refresh_plan =

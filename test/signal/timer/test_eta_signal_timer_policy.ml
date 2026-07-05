@@ -64,6 +64,18 @@ let start_plan_label plan =
       "start:" ^ string_of_int generation ^ ":"
       ^ Timer_policy.state_label state)
 
+let refresh_plan_value plan =
+  Timer_policy.refresh_plan_result plan
+    ~plan:(fun ~value ~next_due_ms:_ ~finish:_ -> value)
+
+let refresh_plan_next_due_ms plan =
+  Timer_policy.refresh_plan_result plan
+    ~plan:(fun ~value:_ ~next_due_ms ~finish:_ -> next_due_ms)
+
+let refresh_plan_finish plan =
+  Timer_policy.refresh_plan_result plan
+    ~plan:(fun ~value:_ ~next_due_ms:_ ~finish -> finish)
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -1049,49 +1061,54 @@ let test_refresh_plans () =
       ~now_ms:85 Timer_policy.Refresh_current_time
   in
   Alcotest.(check (option int)) "current value" (Some 85)
-    current.refresh_value;
-  Alcotest.(check (option int)) "current spec value" current.refresh_value
-    current_from_spec.refresh_value;
+    (refresh_plan_value current);
+  Alcotest.(check (option int)) "current spec value"
+    (refresh_plan_value current)
+    (refresh_plan_value current_from_spec);
   Alcotest.(check (option int)) "current next due" None
-    current.refresh_next_due_ms;
+    (refresh_plan_next_due_ms current);
   Alcotest.(check bool) "current does not finish" false
-    current.refresh_finish;
+    (refresh_plan_finish current);
   let interval =
     Timer_policy.interval_refresh_plan ~state:running ~interval_ms:10
       ~current_value:3 ~now_ms:85
   in
   Alcotest.(check (option int)) "interval value" (Some 7)
-    interval.refresh_value;
+    (refresh_plan_value interval);
   Alcotest.(check (option int)) "interval due" (Some 90)
-    interval.refresh_next_due_ms;
-  Alcotest.(check bool) "interval finish" false interval.refresh_finish;
+    (refresh_plan_next_due_ms interval);
+  Alcotest.(check bool) "interval finish" false
+    (refresh_plan_finish interval);
   let interval_from_spec =
     Timer_policy.refresh_plan_for_spec ~state:running ~current_value:3
       ~now_ms:85 (Timer_policy.Refresh_interval 10)
   in
   Alcotest.(check (option int)) "interval spec value"
-    interval.refresh_value interval_from_spec.refresh_value;
+    (refresh_plan_value interval) (refresh_plan_value interval_from_spec);
   Alcotest.(check (option int)) "interval spec due"
-    interval.refresh_next_due_ms interval_from_spec.refresh_next_due_ms;
+    (refresh_plan_next_due_ms interval)
+    (refresh_plan_next_due_ms interval_from_spec);
   let saturated =
     Timer_policy.interval_refresh_plan
       ~state:(timer_running_uncancellable 1 (Some max_int))
       ~interval_ms:10 ~current_value:3 ~now_ms:max_int
   in
   Alcotest.(check bool) "saturated interval finishes" true
-    saturated.refresh_finish;
+    (refresh_plan_finish saturated);
   let deadline = Timer_policy.deadline_refresh_plan ~now_ms:100 ~deadline_ms:99 in
   Alcotest.(check (option bool)) "deadline value" (Some true)
-    deadline.refresh_value;
-  Alcotest.(check bool) "deadline finish" true deadline.refresh_finish;
+    (refresh_plan_value deadline);
+  Alcotest.(check bool) "deadline finish" true
+    (refresh_plan_finish deadline);
   let deadline_from_spec =
     Timer_policy.refresh_plan_for_spec ~state:running ~current_value:false
       ~now_ms:100 (Timer_policy.Refresh_deadline 99)
   in
   Alcotest.(check (option bool)) "deadline spec value"
-    deadline.refresh_value deadline_from_spec.refresh_value;
-  Alcotest.(check bool) "deadline spec finish" deadline.refresh_finish
-    deadline_from_spec.refresh_finish
+    (refresh_plan_value deadline) (refresh_plan_value deadline_from_spec);
+  Alcotest.(check bool) "deadline spec finish"
+    (refresh_plan_finish deadline)
+    (refresh_plan_finish deadline_from_spec)
 
 let test_refresh_actions () =
   let action_labels =
@@ -1115,11 +1132,8 @@ let test_refresh_actions () =
   in
   let finish_actions =
     Timer_policy.refresh_actions ~advance_generation:succ ~state:running
-      {
-        Timer_policy.refresh_value = Some 7;
-        refresh_next_due_ms = Some 90;
-        refresh_finish = true;
-      }
+      (Timer_policy.refresh_plan ~value:(Some 7) ~next_due_ms:(Some 90)
+         ~finish:true)
   in
   Alcotest.(check (list string))
     "advance set finish order"
@@ -1151,11 +1165,8 @@ let test_refresh_actions () =
     (action_labels
        (Timer_policy.refresh_actions ~advance_generation:succ
           ~state:(timer_inactive 0)
-          {
-            Timer_policy.refresh_value = None;
-            refresh_next_due_ms = None;
-            refresh_finish = false;
-          }))
+          (Timer_policy.refresh_plan ~value:None ~next_due_ms:None
+             ~finish:false)))
 
 let test_finish_policy () =
   let cancelled = ref false in

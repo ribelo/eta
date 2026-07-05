@@ -23,11 +23,7 @@ type debug_snapshot = {
   debug_generation : int;
 }
 
-type 'a refresh_plan = {
-  refresh_value : 'a option;
-  refresh_next_due_ms : int option;
-  refresh_finish : bool;
-}
+type 'a refresh_plan
 
 type _ refresh_spec =
   | Refresh_current_time : int refresh_spec
@@ -345,6 +341,17 @@ val finish_plan_result :
   finish_plan ->
   plan:(state:state -> cancel_hooks:(unit -> unit) list -> 'a) ->
   'a
+
+val refresh_plan :
+  value:'a option ->
+  next_due_ms:int option ->
+  finish:bool ->
+  'a refresh_plan
+
+val refresh_plan_result :
+  'a refresh_plan ->
+  plan:(value:'a option -> next_due_ms:int option -> finish:bool -> 'b) ->
+  'b
 
 val current_time_refresh_plan : now_ms:int -> int refresh_plan
 val refresh_actions :
