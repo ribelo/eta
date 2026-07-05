@@ -1194,7 +1194,7 @@ module Make (Observer_error : Observer_error) () = struct
         (invalidated_ids, !invalidated_nodes)
     | Error err -> raise (Graph_error err)
 
-  let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
+  let collect_post_commit_necessary_timers lane invalidated_ids =
     let reachable_ops =
       Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
         ~valid:(fun (P signal) ->
@@ -1213,7 +1213,7 @@ module Make (Observer_error : Observer_error) () = struct
           in
           children_with_scope_owner signal signal_children)
     in
-    Graph.post_commit_necessary_timers graph
+    Graph.post_commit_necessary_timers graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~collect_timers:(fun ~roots ->
@@ -1556,8 +1556,8 @@ module Make (Observer_error : Observer_error) () = struct
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
     | Ok result -> result
 
-  let collect_necessary_node_ids (_lane : graph_lane) =
-    Graph.necessary_ids graph
+  let collect_necessary_node_ids lane =
+    Graph.necessary_ids graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~reachable_ids:(Graph.reachable_ids graph reachable_ops)
@@ -1580,8 +1580,8 @@ module Make (Observer_error : Observer_error) () = struct
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.fail (err :> stabilize_error))
 
-  let timer_demand_unlocked (_lane : graph_lane) =
-    Graph.timer_demand graph
+  let timer_demand_unlocked lane =
+    Graph.timer_demand graph lane
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~reachable_ids:(Graph.reachable_ids graph reachable_ops)

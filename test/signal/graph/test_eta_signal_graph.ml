@@ -827,12 +827,14 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
   Graph.add_observer graph None;
   Graph.add_observer graph (Some live_root);
   let demand =
-    Graph.timer_demand graph ~collect_live_nodes:collect_demand_live_nodes
-      ~root:Fun.id ~reachable_ids:demand_reachable_ids
-      ~timer:(fun node ->
-        Option.map
-          (fun timer -> (node.demand_id, timer))
-          node.demand_timer)
+    with_graph_lane graph (fun lane ->
+        Graph.timer_demand graph lane
+          ~collect_live_nodes:collect_demand_live_nodes
+          ~root:Fun.id ~reachable_ids:demand_reachable_ids
+          ~timer:(fun node ->
+            Option.map
+              (fun timer -> (node.demand_id, timer))
+              node.demand_timer))
   in
   let necessary_ids, timers =
     Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->

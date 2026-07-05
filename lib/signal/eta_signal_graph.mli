@@ -693,6 +693,7 @@ val prune_live_nodes :
 
 val necessary_ids :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
@@ -719,6 +720,7 @@ type ('id, 'timer) timer_demand
 
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
@@ -742,6 +744,7 @@ val timer_demand_plan :
 
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
