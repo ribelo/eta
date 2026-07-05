@@ -17,24 +17,28 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan =
     }
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_eval_context = {
-  eval_equal : 'source -> 'source -> bool;
-  eval_source_dependency : 'dependency;
-  eval_pack_inner : 'inner -> 'dependency;
-  eval_new_scope : 'capability -> 'scope;
-  eval_selector : 'source -> 'inner;
-  eval_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
-  eval_validate_inner :
-    'capability ->
+     dynamic_eval_context
+  constraint 'error = [> `Invalid_scope ]
+
+val dynamic_eval_context :
+  equal:('source -> 'source -> bool) ->
+  source_dependency:'dependency ->
+  pack_inner:('inner -> 'dependency) ->
+  new_scope:('capability -> 'scope) ->
+  selector:('source -> 'inner) ->
+  with_scope:('capability -> 'scope -> (unit -> 'inner) -> 'inner) ->
+  validate_inner:
+    ('capability ->
     'scope ->
     'inner ->
-    (unit, ([> `Invalid_scope ] as 'error)) result;
-  eval_compute_inner : 'capability -> 'inner -> 'value * bool;
-  eval_on_switch_failure : 'capability -> 'scope -> unit;
-  eval_dirty : bool;
-  eval_initialized : bool;
-  eval_dependencies_changed : 'capability -> 'dependency list -> bool;
-}
+    (unit, ([> `Invalid_scope ] as 'error)) result) ->
+  compute_inner:('capability -> 'inner -> 'value * bool) ->
+  on_switch_failure:('capability -> 'scope -> unit) ->
+  dirty:bool ->
+  initialized:bool ->
+  dependencies_changed:('capability -> 'dependency list -> bool) ->
+  ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+  dynamic_eval_context
 
 val empty : ('source, 'inner, 'scope) snapshot
 
@@ -68,11 +72,13 @@ val stage_transaction_switch :
   scope:'scope ->
   unit
 
-type ('source, 'inner, 'scope, 'owner) staged_switch = {
-  owner : 'owner option;
-  current : ('source, 'inner, 'scope) snapshot;
-  staged : ('source, 'inner, 'scope) snapshot option;
-}
+type ('source, 'inner, 'scope, 'owner) staged_switch
+
+val staged_switch :
+  owner:'owner option ->
+  current:('source, 'inner, 'scope) snapshot ->
+  staged:('source, 'inner, 'scope) snapshot option ->
+  ('source, 'inner, 'scope, 'owner) staged_switch
 
 type ('scope, 'owner) packed_staged_switch =
   | Packed_staged_switch :

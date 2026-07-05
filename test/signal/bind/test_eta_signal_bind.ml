@@ -44,7 +44,9 @@ let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
   let effects = ref [] in
   let record effect = effects := !effects @ [ effect ] in
-  let switch = { Bind.owner = Some "owner"; current; staged = Some staged } in
+  let switch = Bind.staged_switch ~owner:(Some "owner") ~current
+      ~staged:(Some staged)
+  in
   match
     Bind.commit_staged_switch switch
       ~detach_old_inner:(fun owner inner ->
@@ -70,7 +72,7 @@ let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
 let test_staged_switch_no_staged_snapshot_is_noop () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let effects = ref [] in
-  let switch = { Bind.owner = None; current; staged = None } in
+  let switch = Bind.staged_switch ~owner:None ~current ~staged:None in
   (match
      Bind.commit_staged_switch switch
        ~detach_old_inner:(fun _ _ -> effects := "detach" :: !effects)
@@ -99,7 +101,9 @@ let test_staged_switch_no_staged_snapshot_is_noop () =
 let test_staged_switch_rejects_missing_owner () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
-  let switch = { Bind.owner = None; current; staged = Some staged } in
+  let switch =
+    Bind.staged_switch ~owner:None ~current ~staged:(Some staged)
+  in
   Alcotest.(check bool) "commit rejected" true
     (Result.is_error
        (Bind.commit_staged_switch switch
@@ -115,7 +119,9 @@ let test_staged_switch_preflight_uses_owner_for_old_scope () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
   let collected = ref [] in
-  let switch = { Bind.owner = Some "owner"; current; staged = Some staged } in
+  let switch = Bind.staged_switch ~owner:(Some "owner") ~current
+      ~staged:(Some staged)
+  in
   match
     Bind.preflight_staged_switch switch ~collect_old_scope:(fun owner scope ->
         collected := (owner, scope) :: !collected)
@@ -129,25 +135,23 @@ let packed_staged_switch switch = Bind.Packed_staged_switch switch
 
 let test_collect_staged_switch_invalidations_collects_old_scopes () =
   let first =
-    {
-      Bind.owner = Some "first";
-      current = Bind.switch ~source_value:0 ~inner:"old-first" ~scope:1;
-      staged = Some (Bind.switch ~source_value:1 ~inner:"new-first" ~scope:10);
-    }
+    Bind.staged_switch ~owner:(Some "first")
+      ~current:(Bind.switch ~source_value:0 ~inner:"old-first" ~scope:1)
+      ~staged:
+        (Some
+           (Bind.switch ~source_value:1 ~inner:"new-first" ~scope:10))
   in
   let unstaged =
-    {
-      Bind.owner = Some "unstaged";
-      current = Bind.switch ~source_value:0 ~inner:"old-unstaged" ~scope:2;
-      staged = None;
-    }
+    Bind.staged_switch ~owner:(Some "unstaged")
+      ~current:(Bind.switch ~source_value:0 ~inner:"old-unstaged" ~scope:2)
+      ~staged:None
   in
   let second =
-    {
-      Bind.owner = Some "second";
-      current = Bind.switch ~source_value:0 ~inner:"old-second" ~scope:3;
-      staged = Some (Bind.switch ~source_value:1 ~inner:"new-second" ~scope:30);
-    }
+    Bind.staged_switch ~owner:(Some "second")
+      ~current:(Bind.switch ~source_value:0 ~inner:"old-second" ~scope:3)
+      ~staged:
+        (Some
+           (Bind.switch ~source_value:1 ~inner:"new-second" ~scope:30))
   in
   match
     Bind.collect_staged_switch_invalidations ~init:[]
@@ -162,11 +166,9 @@ let test_collect_staged_switch_invalidations_collects_old_scopes () =
 
 let test_collect_staged_switch_invalidations_rejects_missing_owner () =
   let missing_owner =
-    {
-      Bind.owner = None;
-      current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1;
-      staged = Some (Bind.switch ~source_value:1 ~inner:"new" ~scope:2);
-    }
+    Bind.staged_switch ~owner:None
+      ~current:(Bind.switch ~source_value:0 ~inner:"old" ~scope:1)
+      ~staged:(Some (Bind.switch ~source_value:1 ~inner:"new" ~scope:2))
   in
   Alcotest.(check bool)
     "missing owner rejected" true
@@ -179,7 +181,8 @@ let test_collect_staged_switch_invalidations_rejects_missing_owner () =
 let test_staged_switch_rejects_incomplete_staged_snapshot () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let switch =
-    { Bind.owner = Some "owner"; current; staged = Some Bind.empty }
+    Bind.staged_switch ~owner:(Some "owner") ~current
+      ~staged:(Some Bind.empty)
   in
   Alcotest.(check bool) "commit rejected" true
     (Result.is_error
@@ -233,49 +236,44 @@ let dynamic_common_callbacks ?(inner_changed = false)
   (with_scope, validate_inner, compute_inner, dependencies_changed)
 
 let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
-    ?(dirty = false) ?(initialized = true) events =
+    ?(dirty = false) ?(initialized = true) ?validate_inner_override
+    ?on_switch_failure_override events =
   let with_scope, validate_inner, compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
-  let eval_context =
-    {
-      Bind.eval_equal = Int.equal;
-      eval_source_dependency = 100;
-      eval_pack_inner = (fun inner -> inner + 1000);
-      eval_new_scope =
-        (fun cap ->
-          check_cap cap;
-          events := !events @ [ "new_scope" ];
-          7);
-      eval_selector =
-        (fun source ->
-          events := !events @ [ "select:" ^ string_of_int source ];
-          source + 1);
-      eval_with_scope =
-        (fun cap scope f ->
-          check_cap cap;
-          with_scope scope f);
-      eval_validate_inner =
-        (fun cap scope inner ->
-          check_cap cap;
-          validate_inner scope inner);
-      eval_compute_inner =
-        (fun cap inner ->
-          check_cap cap;
-          compute_inner inner);
-      eval_on_switch_failure =
-        (fun cap _scope ->
-          check_cap cap;
-          Alcotest.fail "unexpected cleanup");
-      eval_dirty = dirty;
-      eval_initialized = initialized;
-      eval_dependencies_changed =
-        (fun cap dependencies ->
-          check_cap cap;
-          dependencies_changed dependencies);
-    }
-  in
-  eval_context
+  Bind.dynamic_eval_context ~equal:Int.equal ~source_dependency:100
+    ~pack_inner:(fun inner -> inner + 1000)
+    ~new_scope:(fun cap ->
+      check_cap cap;
+      events := !events @ [ "new_scope" ];
+      7)
+    ~selector:(fun source ->
+      events := !events @ [ "select:" ^ string_of_int source ];
+      source + 1)
+    ~with_scope:(fun cap scope f ->
+      check_cap cap;
+      with_scope scope f)
+    ~validate_inner:
+      (match validate_inner_override with
+      | Some validate_inner -> validate_inner
+      | None ->
+          fun cap scope inner ->
+            check_cap cap;
+            validate_inner scope inner)
+    ~compute_inner:(fun cap inner ->
+      check_cap cap;
+      compute_inner inner)
+    ~on_switch_failure:
+      (match on_switch_failure_override with
+      | Some on_switch_failure -> on_switch_failure
+      | None ->
+          fun cap _scope ->
+            check_cap cap;
+            Alcotest.fail "unexpected cleanup")
+    ~dirty ~initialized
+    ~dependencies_changed:(fun cap dependencies ->
+      check_cap cap;
+      dependencies_changed dependencies)
 
 let test_plan_dynamic_switch_owns_eval_order_and_returns_plan () =
   let events = ref [] in
@@ -386,26 +384,20 @@ let test_plan_dynamic_dirty_reuse_recomputes () =
 
 let test_plan_dynamic_validation_failure_runs_cleanup () =
   let events = ref [] in
-  let eval_context = dynamic_contexts events in
   let eval_context =
-    {
-      eval_context with
-      Bind.eval_validate_inner =
-        (fun cap scope inner ->
-          check_cap cap;
-          events :=
-            !events
-            @ [
-                "validate:"
-                ^ String.concat ":"
-                    (List.map string_of_int [ scope; inner ]);
-              ];
-          Error `Invalid_scope);
-      eval_on_switch_failure =
-        (fun cap scope ->
-          check_cap cap;
-          events := !events @ [ "cleanup:" ^ string_of_int scope ]);
-    }
+    dynamic_contexts events
+      ~validate_inner_override:(fun cap scope inner ->
+        check_cap cap;
+        events :=
+          !events
+          @ [
+              "validate:"
+              ^ String.concat ":" (List.map string_of_int [ scope; inner ]);
+            ];
+        Error `Invalid_scope)
+      ~on_switch_failure_override:(fun cap scope ->
+        check_cap cap;
+        events := !events @ [ "cleanup:" ^ string_of_int scope ])
   in
   (match
      Bind.plan_dynamic eval_context capability Bind.empty

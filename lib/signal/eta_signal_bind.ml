@@ -54,6 +54,24 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
+let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
+    ~selector ~with_scope ~validate_inner ~compute_inner ~on_switch_failure
+    ~dirty ~initialized ~dependencies_changed =
+  {
+    eval_equal = equal;
+    eval_source_dependency = source_dependency;
+    eval_pack_inner = pack_inner;
+    eval_new_scope = new_scope;
+    eval_selector = selector;
+    eval_with_scope = with_scope;
+    eval_validate_inner = validate_inner;
+    eval_compute_inner = compute_inner;
+    eval_on_switch_failure = on_switch_failure;
+    eval_dirty = dirty;
+    eval_initialized = initialized;
+    eval_dependencies_changed = dependencies_changed;
+  }
+
 let empty = { source_value = None; inner = None; inner_scope = None }
 
 let switch ~source_value ~inner ~scope =
@@ -215,6 +233,8 @@ type ('source, 'inner, 'scope, 'owner) staged_switch = {
   current : ('source, 'inner, 'scope) snapshot;
   staged : ('source, 'inner, 'scope) snapshot option;
 }
+
+let staged_switch ~owner ~current ~staged = { owner; current; staged }
 
 type ('scope, 'owner) packed_staged_switch =
   | Packed_staged_switch :

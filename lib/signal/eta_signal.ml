@@ -1191,19 +1191,16 @@ module Make (Observer_error : Observer_error) () = struct
 
   let bind_staged_switch (type a b) (bind : (a, b) bind) :
       (a, b signal, scope, b signal) Bind.staged_switch =
-    {
-      Bind.owner = bind.owner;
-      current = bind_current_snapshot bind;
-      staged = bind_staged_snapshot bind;
-    }
+    Bind.staged_switch ~owner:bind.owner
+      ~current:(bind_current_snapshot bind)
+      ~staged:(bind_staged_snapshot bind)
 
   let packed_bind_staged_switch (B bind) =
     Bind.Packed_staged_switch
-      {
-        Bind.owner = Option.map (fun owner -> P owner) bind.owner;
-        current = bind_current_snapshot bind;
-        staged = bind_staged_snapshot bind;
-      }
+      (Bind.staged_switch
+         ~owner:(Option.map (fun owner -> P owner) bind.owner)
+         ~current:(bind_current_snapshot bind)
+         ~staged:(bind_staged_snapshot bind))
 
   let commit_bind lane (B bind) =
     match
@@ -1635,29 +1632,24 @@ module Make (Observer_error : Observer_error) () = struct
     in
     match
       Bind.plan_dynamic
-        {
-          Bind.eval_equal = bind.source.equal;
-          eval_source_dependency = P bind.source;
-          eval_pack_inner = (fun inner -> P inner);
-          eval_new_scope = (fun _lane -> new_scope signal);
-          eval_selector = bind.selector;
-          eval_with_scope =
-            (fun _lane scope f ->
-              Graph.with_current_scope graph scope_ops scope f);
-          eval_validate_inner =
-            (fun _lane scope inner ->
-              Scope_validation.validate_inner ~scope (P inner));
-          eval_compute_inner = compute;
-          eval_on_switch_failure =
-            (fun lane scope ->
-              remember_pure_disposal_hooks (invalidate_scope lane scope));
-          eval_dirty = signal.dirty;
-          eval_initialized =
-            Signal_snapshot.is_initialized
-              (signal_effective_snapshot signal);
-          eval_dependencies_changed =
-            (fun _lane dependencies -> dependencies_changed signal dependencies);
-        }
+        (Bind.dynamic_eval_context ~equal:bind.source.equal
+           ~source_dependency:(P bind.source)
+           ~pack_inner:(fun inner -> P inner)
+           ~new_scope:(fun _lane -> new_scope signal)
+           ~selector:bind.selector
+           ~with_scope:(fun _lane scope f ->
+             Graph.with_current_scope graph scope_ops scope f)
+           ~validate_inner:(fun _lane scope inner ->
+             Scope_validation.validate_inner ~scope (P inner))
+           ~compute_inner:compute
+           ~on_switch_failure:(fun lane scope ->
+             remember_pure_disposal_hooks (invalidate_scope lane scope))
+           ~dirty:signal.dirty
+           ~initialized:
+             (Signal_snapshot.is_initialized
+                (signal_effective_snapshot signal))
+           ~dependencies_changed:(fun _lane dependencies ->
+             dependencies_changed signal dependencies))
         lane
         (bind_effective_snapshot bind) ~source_value ~source_changed
     with
