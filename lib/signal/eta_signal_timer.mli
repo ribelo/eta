@@ -11,13 +11,15 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+type ('timer, 'effect) start_attempt
+
 type 'timer state_port = {
   state_effective : 'timer -> Eta_signal_timer_policy.state;
   state_current : 'timer -> Eta_signal_timer_policy.state;
   state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
 }
 
-type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
+type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
   demand_is_necessary : 'necessary -> 'id -> bool;
@@ -25,7 +27,7 @@ type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
   demand_effective_state : 'timer -> Eta_signal_timer_policy.state;
   demand_current_state : 'timer -> Eta_signal_timer_policy.state;
   demand_set_current_state : 'timer -> Eta_signal_timer_policy.state -> unit;
-  demand_start_attempt : 'timer -> 'start;
+  demand_start_effect : 'timer -> 'effect;
 }
 
 type ('capability, 'error) demand_effect_access = {
@@ -61,12 +63,21 @@ val rollback_unclaimed_start :
   'timer ->
   (unit -> unit) list
 
+val start_attempt_effects :
+  ('timer, 'effect) start_attempt list -> 'effect list
+
+val rollback_unclaimed_start_attempts :
+  advance_generation:(int -> int) ->
+  'timer state_port ->
+  ('timer, 'effect) start_attempt list ->
+  (unit -> unit) list
+
 val refresh_demand :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
-  ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port ->
+  ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port ->
   'runtime ->
-  ('start demand_effects, 'error) result
+  (('timer, 'effect) start_attempt demand_effects, 'error) result
 
 val refresh_demand_effect :
   ('capability, 'error) demand_effect_access ->

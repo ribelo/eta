@@ -95,7 +95,7 @@ let test_refresh_demand_classifies_and_orders_effects () =
         (fun timer state ->
           timer.current <- state;
           record ("set:" ^ timer.name ^ ":" ^ state_label state));
-      demand_start_attempt =
+      demand_start_effect =
         (fun timer ->
           record ("start:" ^ timer.name ^ ":" ^ state_label timer.current);
           timer.name ^ ":start");
@@ -119,7 +119,8 @@ let test_refresh_demand_classifies_and_orders_effects () =
         ]
         !events;
       Alcotest.(check (list string))
-        "starts" [ "start:start" ] effects.Timer.demand_start_attempts;
+        "starts" [ "start:start" ]
+        (Timer.start_attempt_effects effects.Timer.demand_start_attempts);
       List.iter (fun hook -> hook ()) effects.Timer.demand_cancel_hooks;
       Alcotest.(check (list string))
         "hooks"
@@ -154,7 +155,7 @@ let test_refresh_demand_validation_failure_short_circuits () =
       demand_current_state = (fun timer -> timer.current);
       demand_set_current_state =
         (fun _timer _state -> changed_state := true);
-      demand_start_attempt =
+      demand_start_effect =
         (fun _timer ->
           started := true;
           "started");
@@ -196,6 +197,55 @@ let test_rollback_unclaimed_start_marks_starting_unneeded () =
     (state_label starting.current);
   Alcotest.(check string) "inactive state" "inactive:9"
     (state_label inactive_timer.current)
+
+let test_rollback_unclaimed_start_attempts_hide_timer_pairing () =
+  let events = ref [] in
+  let record event = append_event events event in
+  let starting =
+    make_timer "starting"
+      ~current:(inactive 4) ~effective:(inactive 4)
+  in
+  let attempts, cancel_hooks =
+    let port =
+      {
+        Timer.demand_collect_necessary = (fun () -> [ 1 ]);
+        demand_collect_timers = (fun () -> [ (1, starting) ]);
+        demand_is_necessary =
+          (fun necessary id -> List.exists (( = ) id) necessary);
+        demand_validate_runtime = (fun _runtime _timer -> Ok ());
+        demand_effective_state = (fun timer -> timer.effective);
+        demand_current_state = (fun timer -> timer.current);
+        demand_set_current_state =
+          (fun timer state ->
+            timer.current <- state;
+            timer.effective <- state;
+            record ("set:" ^ timer.name ^ ":" ^ state_label state));
+        demand_start_effect = (fun _timer -> "start-effect");
+      }
+    in
+    match
+      Timer.refresh_demand ~advance_generation:succ ~cancel_running:true
+        port "rt"
+    with
+    | Error error -> Alcotest.failf "unexpected error %s" error
+    | Ok effects ->
+        ( effects.Timer.demand_start_attempts,
+          effects.Timer.demand_cancel_hooks )
+  in
+  let hooks =
+    Timer.rollback_unclaimed_start_attempts ~advance_generation:succ
+      (state_port ~record ()) attempts
+  in
+  Alcotest.(check (list string))
+    "effects" [ "start-effect" ]
+    (Timer.start_attempt_effects attempts);
+  Alcotest.(check (list string))
+    "events" [ "set:starting:starting:5"; "set:starting:inactive:6" ]
+    !events;
+  Alcotest.(check int) "refresh hooks" 0 (List.length cancel_hooks);
+  Alcotest.(check int) "hooks" 0 (List.length hooks);
+  Alcotest.(check string) "starting state" "inactive:6"
+    (state_label starting.current)
 
 let test_daemon_lifecycle_transitions () =
   let events = ref [] in
@@ -407,6 +457,8 @@ let () =
             test_refresh_demand_validation_failure_short_circuits;
           Alcotest.test_case "rolls back unclaimed starts" `Quick
             test_rollback_unclaimed_start_marks_starting_unneeded;
+          Alcotest.test_case "rolls back start attempts" `Quick
+            test_rollback_unclaimed_start_attempts_hide_timer_pairing;
           Alcotest.test_case "daemon lifecycle transitions" `Quick
             test_daemon_lifecycle_transitions;
           Alcotest.test_case "due lifecycle transitions" `Quick

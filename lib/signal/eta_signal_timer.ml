@@ -3,13 +3,18 @@ type 'start demand_effects = {
   demand_cancel_hooks : (unit -> unit) list;
 }
 
+type ('timer, 'effect) start_attempt = {
+  attempt_timer : 'timer;
+  attempt_effect : 'effect;
+}
+
 type 'timer state_port = {
   state_effective : 'timer -> Eta_signal_timer_policy.state;
   state_current : 'timer -> Eta_signal_timer_policy.state;
   state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
 }
 
-type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
+type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
   demand_is_necessary : 'necessary -> 'id -> bool;
@@ -17,7 +22,7 @@ type ('id, 'necessary, 'runtime, 'timer, 'start, 'error) demand_port = {
   demand_effective_state : 'timer -> Eta_signal_timer_policy.state;
   demand_current_state : 'timer -> Eta_signal_timer_policy.state;
   demand_set_current_state : 'timer -> Eta_signal_timer_policy.state -> unit;
-  demand_start_attempt : 'timer -> 'start;
+  demand_start_effect : 'timer -> 'effect;
 }
 
 type ('capability, 'error) demand_effect_access = {
@@ -40,9 +45,18 @@ type ('capability, 'start, 'error) demand_effect_port = {
     'start list -> (unit, 'error) Eta.Effect.t;
 }
 
-let apply_start_plan ~set_current_state ~start_attempt timer plan =
+let start_attempt ~timer ~effect =
+  { attempt_timer = timer; attempt_effect = effect }
+
+let start_attempt_effect attempt =
+  attempt.attempt_effect
+
+let start_attempt_effects attempts =
+  List.map start_attempt_effect attempts
+
+let apply_start_plan ~set_current_state ~start_effect timer plan =
   set_current_state timer plan.Eta_signal_timer_policy.start_state;
-  start_attempt timer
+  start_attempt ~timer ~effect:(start_effect timer)
 
 let apply_stop_plan port timer plan =
   port.state_set_current timer plan.Eta_signal_timer_policy.stop_state;
@@ -61,6 +75,12 @@ let rollback_unclaimed_start ~advance_generation port timer =
     mark_unneeded ~advance_generation ~cancel_running:true port timer
   else []
 
+let rollback_unclaimed_start_attempts ~advance_generation port attempts =
+  List.concat_map
+    (fun attempt ->
+      rollback_unclaimed_start ~advance_generation port attempt.attempt_timer)
+    attempts
+
 let refresh_demand ~advance_generation ~cancel_running port runtime =
   let necessary = port.demand_collect_necessary () in
   let resources =
@@ -77,7 +97,7 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
       demand_resource_current_state = port.demand_current_state;
       demand_plan_start =
         apply_start_plan ~set_current_state:port.demand_set_current_state
-          ~start_attempt:port.demand_start_attempt;
+          ~start_effect:port.demand_start_effect;
       demand_plan_stop =
         apply_stop_plan
           {

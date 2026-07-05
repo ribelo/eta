@@ -284,11 +284,6 @@ module Make (Observer_error : Observer_error) () = struct
     timer_start : 'err. timer_node -> (unit, 'err) Effect.t;
   }
 
-  and 'err timer_start_attempt = {
-    start_timer : timer_node;
-    start_effect : (unit, 'err) Effect.t;
-  }
-
   and timer_update = {
     timer_catch_up_policy : timer_catch_up_policy;
     timer_update : 'err. timer_node -> int -> missed:int -> (unit, 'err) Effect.t;
@@ -1080,11 +1075,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running timer_state_port timer
 
-  let timer_rollback_unclaimed_start_unlocked timer =
-    Timer.rollback_unclaimed_start
-      ~advance_generation:(checked_succ "timer generation")
-      timer_state_port timer
-
   let new_signal ?(dirty = true) ?equal kind dependencies =
     ensure_graph_context ();
     List.iter validate_dependency dependencies;
@@ -1781,20 +1771,17 @@ module Make (Observer_error : Observer_error) () = struct
         demand_effective_state = timer_effective_state;
         demand_current_state = timer_current_state;
         demand_set_current_state = set_timer_current_state;
-        demand_start_attempt =
-          (fun timer ->
-            { start_timer = timer; start_effect = timer.timer_start timer });
+        demand_start_effect = (fun timer -> timer.timer_start timer);
       }
       runtime_contract
 
   let rollback_unclaimed_timer_starts_unlocked attempts =
-    List.concat_map
-      (fun attempt ->
-        timer_rollback_unclaimed_start_unlocked attempt.start_timer)
-      attempts
+    Timer.rollback_unclaimed_start_attempts
+      ~advance_generation:(checked_succ "timer generation")
+      timer_state_port attempts
 
   let run_timer_start_attempts attempts =
-    Effect.concat (List.map (fun attempt -> attempt.start_effect) attempts)
+    Effect.concat (Timer.start_attempt_effects attempts)
 
   let run_timer_cancel_hooks hooks =
     Cleanup.run_hooks hooks |> Effect.uninterruptible
