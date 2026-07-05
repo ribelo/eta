@@ -2743,41 +2743,30 @@ module Make (Observer_error : Observer_error) () = struct
 
     let add_relative_deadline = Timer_policy.add_relative_deadline
 
-    let start_timer_daemon interval ~update_on_start update timer =
-      let generation = timer_generation timer in
-      let interval_ms = Duration.to_ms interval in
-      Timer.start_daemon
-        ~advance_generation:(checked_succ "timer generation")
-        { Timer.daemon_with_state = (fun f -> with_graph_lane_sync f) }
-        timer_state_port timer
-        {
-          Timer.daemon_update =
-            (fun timer ~generation ~missed ->
-              update.timer_update timer generation ~missed);
-        }
-        {
-          Timer.daemon_after_due_read_before_commit =
-            (fun () ->
-              Private_test_hooks.run After_timer_due_read_before_commit);
-          daemon_after_update_constructed_before_run =
-            (fun () ->
-              Private_test_hooks.run
-                After_timer_update_constructed_before_run);
-        }
-        ~generation ~interval_ms ~update_on_start
-        ~catch_up_policy:update.timer_catch_up_policy
-
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
       let timer =
-        Timer.create_node ~runtime_contract ~refresh_when_inactive
+        Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive
           ~refresh_operation
-          ~start:
-            {
-              Timer.run =
-                (fun timer ->
-                  start_timer_daemon interval ~update_on_start update timer);
-            }
+          ~advance_generation:(checked_succ "timer generation")
+          { Timer.daemon_with_state = (fun f -> with_graph_lane_sync f) }
+          timer_state_port
+          {
+            Timer.daemon_update =
+              (fun timer ~generation ~missed ->
+                update.timer_update timer generation ~missed);
+          }
+          {
+            Timer.daemon_after_due_read_before_commit =
+              (fun () ->
+                Private_test_hooks.run After_timer_due_read_before_commit);
+            daemon_after_update_constructed_before_run =
+              (fun () ->
+                Private_test_hooks.run
+                  After_timer_update_constructed_before_run);
+          }
+          ~interval_ms:(Duration.to_ms interval) ~update_on_start
+          ~catch_up_policy:update.timer_catch_up_policy
       in
       signal.timer <- Some timer;
       signal

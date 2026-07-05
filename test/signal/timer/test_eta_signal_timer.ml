@@ -505,6 +505,77 @@ let test_start_daemon_wires_start_update_through_timer_port () =
   Alcotest.(check string) "state" "running_uncancellable:3"
     (state_label timer.current)
 
+let test_create_daemon_node_owns_start_effect_generation () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let current = ref (Timer_policy.starting_state ~generation:6) in
+  let effective = ref (Timer_policy.starting_state ~generation:6) in
+  let port =
+    {
+      Timer.state_effective = (fun _timer -> !effective);
+      state_current = (fun _timer -> !current);
+      state_set_current =
+        (fun _timer state ->
+          current := state;
+          append_event events ("set:" ^ state_label state));
+    }
+  in
+  let effect =
+    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node"
+    @@ fun context ->
+    let runtime_contract = Eta.Effect.Expert.contract context in
+    let timer =
+      Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
+        ~refresh_operation:None ~advance_generation:succ
+        {
+          Timer.daemon_with_state =
+            (fun f ->
+              Eta.Effect.sync (fun () ->
+                  append_event events "access";
+                  f ()));
+        }
+        port
+        {
+          Timer.daemon_update =
+            (fun _timer ~generation ~missed ->
+              Eta.Effect.sync (fun () ->
+                  append_event events
+                    ("update:" ^ string_of_int generation ^ ":"
+                   ^ string_of_int missed)));
+        }
+        {
+          Timer.daemon_after_due_read_before_commit =
+            (fun () ->
+              Eta.Effect.sync (fun () -> append_event events "due_hook"));
+          daemon_after_update_constructed_before_run =
+            (fun () ->
+              Eta.Effect.sync (fun () -> append_event events "after_update"));
+        }
+        ~interval_ms:10 ~update_on_start:true
+        ~catch_up_policy:Timer_policy.Catch_up_coalesced
+    in
+    Alcotest.(check bool)
+      "runtime contract"
+      true
+      (Eta.Runtime_contract.same_runtime
+         (Timer.runtime_contract timer)
+         runtime_contract);
+    Eta.Effect.Expert.eval context (Timer.start_effect timer)
+  in
+  run_ok runtime effect;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "access";
+      "set:running_uncancellable:6";
+      "update:6:1";
+      "access";
+      "access";
+    ]
+    !events;
+  Alcotest.(check string) "state" "running_uncancellable:6"
+    (state_label !current)
+
 let () =
   Alcotest.run "eta_signal_timer"
     [
@@ -528,5 +599,7 @@ let () =
             test_refresh_demand_effect_acquire_failure_skips_release;
           Alcotest.test_case "start daemon callback ownership" `Quick
             test_start_daemon_wires_start_update_through_timer_port;
+          Alcotest.test_case "daemon node start ownership" `Quick
+            test_create_daemon_node_owns_start_effect_generation;
         ] );
     ]

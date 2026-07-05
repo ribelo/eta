@@ -52,20 +52,22 @@ type 'timer state_port = {
   state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
 }
 
-type 'error daemon_state_access = {
-  daemon_with_state : 'a. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+type daemon_state_access = {
+  daemon_with_state :
+    'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
-type ('timer, 'error) daemon_update = {
+type 'timer daemon_update = {
   daemon_update :
+    'error.
     'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
 }
 
-type 'error daemon_hooks = {
+type daemon_hooks = {
   daemon_after_due_read_before_commit :
-    unit -> (unit, 'error) Eta.Effect.t;
+    'error. unit -> (unit, 'error) Eta.Effect.t;
   daemon_after_update_constructed_before_run :
-    unit -> (unit, 'error) Eta.Effect.t;
+    'error. unit -> (unit, 'error) Eta.Effect.t;
 }
 
 type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
@@ -350,3 +352,19 @@ let start_daemon ~advance_generation access port timer update hooks
   in
   Eta_signal_timer_adapter.start start_callbacks loop_callbacks ~generation
     ~interval_ms ~update_on_start ~catch_up_policy
+
+let create_daemon_node ~runtime_contract ~refresh_when_inactive
+    ~refresh_operation ~advance_generation access port update hooks
+    ~interval_ms ~update_on_start ~catch_up_policy =
+  create_node ~runtime_contract ~refresh_when_inactive ~refresh_operation
+    ~start:
+      {
+        run =
+          (fun timer ->
+            let generation =
+              Eta_signal_timer_policy.state_generation
+                (port.state_current timer)
+            in
+            start_daemon ~advance_generation access port timer update hooks
+              ~generation ~interval_ms ~update_on_start ~catch_up_policy);
+      }
