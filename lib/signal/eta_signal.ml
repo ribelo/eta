@@ -342,6 +342,24 @@ module Make (Observer_error : Observer_error) () = struct
       ~set_dependents:(fun (P signal) dependents ->
         signal.dependents <- dependents)
 
+  module Initial_edges = Graph_algorithms.Make_edges (struct
+    type id = signal_id
+    type nonrec packed = packed_signal
+    type nonrec t = packed_signal
+
+    let pack packed = packed
+    let unpack packed = packed
+    let id = packed_signal_id
+    let equal_id left right = signal_id_int left = signal_id_int right
+    let dependencies (P signal) = signal.dependencies
+    let set_dependencies (P signal) dependencies =
+      signal.dependencies <- dependencies
+
+    let dependents (P signal) = signal.dependents
+    let set_dependents (P signal) dependents =
+      signal.dependents <- dependents
+  end)
+
   let dirty_ops =
     Graph.dirty_ops ~id:(fun (P signal) -> signal.id)
       ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
@@ -678,8 +696,9 @@ module Make (Observer_error : Observer_error) () = struct
 
   let current_generation () = Graph.generation graph
 
-  let detach_dependency parent child =
-    Graph.detach_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
+  let detach_dependency lane parent child =
+    Graph.detach_dependency graph lane edge_ops ~parent:(P parent)
+      ~child:(P child)
 
   let has_dependency parent child =
     Graph.has_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
@@ -687,11 +706,12 @@ module Make (Observer_error : Observer_error) () = struct
   let has_dependent child parent =
     Graph.has_dependent graph edge_ops ~child:(P child) ~parent:(P parent)
 
-  let attach_dependency parent child =
-    Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child:(P child)
+  let attach_dependency lane parent child =
+    Graph.attach_dependency graph lane edge_ops ~parent:(P parent)
+      ~child:(P child)
 
-  let attach_packed_dependency parent child =
-    Graph.attach_dependency graph edge_ops ~parent:(P parent) ~child
+  let attach_initial_packed_dependency parent child =
+    Initial_edges.attach_dependency ~parent:(P parent) ~child
 
   let mark_self_dirty lane packed =
     Graph.mark_dirty graph lane dirty_ops packed
@@ -969,7 +989,7 @@ module Make (Observer_error : Observer_error) () = struct
           timer = None;
         })
       ~attach_dependency:(fun ~parent ~child ->
-        attach_packed_dependency parent child)
+        attach_initial_packed_dependency parent child)
       ~add_to_scope:(fun scope signal -> Scope.add_node scope (P signal))
       ~pack:(fun signal -> P signal)
       ~create_weak:weak_packed_signal
@@ -1143,9 +1163,9 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_bind lane (B bind) =
     match
       Graph.commit_staged_bind_switch (bind_staged_switch bind)
-        ~detach_old_inner:detach_dependency
+        ~detach_old_inner:(detach_dependency lane)
         ~invalidate_old_scope:(invalidate_scope lane)
-        ~attach_new_inner:attach_dependency
+        ~attach_new_inner:(attach_dependency lane)
     with
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)

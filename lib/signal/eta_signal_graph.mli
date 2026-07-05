@@ -194,6 +194,7 @@ val bump_counter :
 
 val detach_dependency :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) edge_ops ->
   parent:'node ->
   child:'node ->
@@ -215,6 +216,7 @@ val has_dependent :
 
 val attach_dependency :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) edge_ops ->
   parent:'node ->
   child:'node ->
@@ -222,6 +224,7 @@ val attach_dependency :
 
 val detach_node_edges :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) edge_ops ->
   'node ->
   'node list * 'node list

@@ -282,7 +282,7 @@ let remove_dependent _t ops ~child ~parent =
        (remove_by_id ops (ops.edge_id parent))
        (ops.edge_dependents child))
 
-let detach_dependency t ops ~parent ~child =
+let detach_dependency t _lane ops ~parent ~child =
   remove_dependent t ops ~child ~parent;
   ops.edge_set_dependencies parent
     (List.filter
@@ -299,13 +299,13 @@ let has_dependent _t ops ~child ~parent =
     (has_id ops (ops.edge_id parent))
     (ops.edge_dependents child)
 
-let attach_dependency t ops ~parent ~child =
+let attach_dependency t _lane ops ~parent ~child =
   if not (has_dependent t ops ~child ~parent) then
     ops.edge_set_dependents child (parent :: ops.edge_dependents child);
   if not (has_dependency t ops ~parent ~child) then
     ops.edge_set_dependencies parent (child :: ops.edge_dependencies parent)
 
-let detach_node_edges t ops node =
+let detach_node_edges t _lane ops node =
   let dependencies = ops.edge_dependencies node in
   let dependents = ops.edge_dependents node in
   List.iter
@@ -887,7 +887,7 @@ let rec invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope node =
     let tombstone = lifecycle.invalidation_tombstone node in
     remember_dead_node t lane ~id:lifecycle.invalidation_tombstone_id tombstone;
     let observer_hooks = lifecycle.invalidation_observer_hooks node in
-    let _dependencies, dependents = detach_node_edges t edge_ops node in
+    let _dependencies, dependents = detach_node_edges t lane edge_ops node in
     let dependent_hooks =
       List.concat_map
         (invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope)
