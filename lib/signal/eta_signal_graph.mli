@@ -211,6 +211,28 @@ val prune_nodes :
   ('weak_node list -> 'weak_node list * 'node list) ->
   unit
 
+val necessary_ids :
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  root:('observer -> 'node option) ->
+  reachable_ids:
+    (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
+  (Eta_signal_id.signal, unit) Hashtbl.t
+(** Recompute the current necessary node set from graph-owned observer and
+    weak-node registries. The graph owns registry traversal and pruning; the
+    caller supplies graph-shape projection and reachability. *)
+
+val update_necessity :
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  Eta_signal_graph_core.lane_access ->
+  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  root:('observer -> 'node option) ->
+  reachable_ids:
+    (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
+  (Eta_signal_id.signal, unit) Hashtbl.t
+(** Recompute necessary nodes and update graph-core transition counters from
+    the same snapshot. *)
+
 val dead_nodes : (_, _, _, _, _, _, _, _, 'dead_node, _, _) t -> 'dead_node list
 
 val dead_node_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int

@@ -885,6 +885,10 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_demand_roots observers =
     observer_roots observer_demands_signal observers
 
+  let observer_demand_root (O observer as packed) =
+    if observer_demands_signal packed then Some (P observer.obs_signal)
+    else None
+
   let observer_active_roots observers =
     observer_roots observer_active observers
 
@@ -1728,13 +1732,17 @@ module Make (Observer_error : Observer_error) () = struct
         Timer.begin_start timer_state_port timer ~generation)
 
   let collect_necessary_node_ids (_lane : graph_lane) =
-    prune_all_nodes_unlocked ();
-    Graph_reachable_static.ids
-      ~roots:(observer_demand_roots (Graph.observers graph))
+    Graph.necessary_ids graph
+      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
 
   let update_necessity_counters_unlocked lane =
-    let next = collect_necessary_node_ids lane in
-    Graph_core.update_necessary_ids graph_core lane next
+    ignore
+      (Graph.update_necessity graph lane
+         ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+         ~root:observer_demand_root
+         ~reachable_ids:Graph_reachable_static.ids
+        : (signal_id, unit) Hashtbl.t)
 
   let all_timers (_lane : graph_lane) =
     List.filter_map

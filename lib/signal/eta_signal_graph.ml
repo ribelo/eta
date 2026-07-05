@@ -127,6 +127,15 @@ let remember_node t node = t.all_nodes <- node :: t.all_nodes
 let prune_nodes t collect =
   ignore (collect_nodes t collect : _ list)
 
+let necessary_ids t ~collect_live_nodes ~root ~reachable_ids =
+  ignore (collect_nodes t collect_live_nodes : _ list);
+  reachable_ids ~roots:(List.filter_map root t.observers)
+
+let update_necessity t lane ~collect_live_nodes ~root ~reachable_ids =
+  let next = necessary_ids t ~collect_live_nodes ~root ~reachable_ids in
+  Eta_signal_graph_core.update_necessary_ids t.core lane next;
+  next
+
 let dead_nodes t = t.dead_nodes
 let dead_node_count t = List.length t.dead_nodes
 
