@@ -63,12 +63,14 @@ val clear_timer_refresh_staging :
   clear_timer:('timer -> unit) ->
   unit
 
-type ('bind, 'hook, 'timer, 'refresh) reset_context = {
-  reset_rollback_bind : 'bind -> 'hook list;
-  reset_rollback_transaction : unit -> unit;
-  reset_rollback_timer_refresh_dirty : 'refresh -> unit;
-  reset_clear_timer_refresh_timer : 'timer -> unit;
-}
+type ('bind, 'hook, 'timer, 'refresh) reset_context
+
+val reset_context :
+  rollback_bind:('bind -> 'hook list) ->
+  rollback_transaction:(unit -> unit) ->
+  rollback_timer_refresh_dirty:('refresh -> unit) ->
+  clear_timer_refresh_timer:('timer -> unit) ->
+  ('bind, 'hook, 'timer, 'refresh) reset_context
 
 val reset_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
@@ -76,15 +78,17 @@ val reset_staging :
   ('bind, 'hook, 'timer, 'refresh) reset_context ->
   'hook list
 
-type ('bind, 'node, 'hook, 'timer) commit_context = {
-  commit_preflight : unit -> unit;
-  commit_bind : 'bind -> 'hook list;
-  commit_prepare_signal : 'node -> unit;
-  commit_transaction : unit -> unit;
-  commit_timer_refresh : 'timer -> unit;
-  commit_signal : 'node -> unit;
-  commit_advance_snapshot : int -> int;
-}
+type ('bind, 'node, 'hook, 'timer) commit_context
+
+val commit_context :
+  preflight:(unit -> unit) ->
+  commit_bind:('bind -> 'hook list) ->
+  prepare_signal:('node -> unit) ->
+  commit_transaction:(unit -> unit) ->
+  commit_timer_refresh:('timer -> unit) ->
+  commit_signal:('node -> unit) ->
+  advance_snapshot:(int -> int) ->
+  ('bind, 'node, 'hook, 'timer) commit_context
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->

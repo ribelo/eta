@@ -26,12 +26,10 @@ let test_generation_pending_and_active_refresh () =
     (State.active_timer_refresh state)
 
 let noop_reset_context =
-  {
-    State.reset_rollback_bind = (fun _ -> []);
-    reset_rollback_transaction = (fun () -> ());
-    reset_rollback_timer_refresh_dirty = (fun _ -> ());
-    reset_clear_timer_refresh_timer = (fun _ -> ());
-  }
+  State.reset_context ~rollback_bind:(fun _ -> [])
+    ~rollback_transaction:(fun () -> ())
+    ~rollback_timer_refresh_dirty:(fun _ -> ())
+    ~clear_timer_refresh_timer:(fun _ -> ())
 
 let test_reset_staging_owns_state_cleanup_order () =
   let state = create () in
@@ -42,18 +40,16 @@ let test_reset_staging_owns_state_cleanup_order () =
   State.stage_timer_refresh_timer state staging "timer";
   let hooks =
     State.reset_staging state staging
-      {
-        State.reset_rollback_bind =
-          (fun bind ->
-            record events ("rollback_bind:" ^ bind);
-            [ "bind-hook" ]);
-        reset_rollback_transaction =
-          (fun () -> record events "rollback_transaction");
-        reset_rollback_timer_refresh_dirty =
-          (fun refresh -> record events ("rollback_dirty:" ^ refresh));
-        reset_clear_timer_refresh_timer =
-          (fun timer -> record events ("clear_timer:" ^ timer));
-      }
+      (State.reset_context
+         ~rollback_bind:(fun bind ->
+           record events ("rollback_bind:" ^ bind);
+           [ "bind-hook" ])
+         ~rollback_transaction:(fun () ->
+           record events "rollback_transaction")
+         ~rollback_timer_refresh_dirty:(fun refresh ->
+           record events ("rollback_dirty:" ^ refresh))
+         ~clear_timer_refresh_timer:(fun timer ->
+           record events ("clear_timer:" ^ timer)))
   in
   Alcotest.(check string_list)
     "events"
@@ -82,20 +78,17 @@ let test_commit_staging_owns_state_cleanup_order () =
   State.stage_timer_refresh_timer state staging "timer";
   let hooks =
     State.commit_staging state staging
-      {
-        State.commit_preflight = (fun () -> record events "preflight");
-        commit_bind =
-          (fun bind ->
-            record events ("commit_bind:" ^ bind);
-            [ "bind-hook" ]);
-        commit_prepare_signal =
-          (fun node -> record events ("prepare:" ^ node));
-        commit_transaction = (fun () -> record events "commit_transaction");
-        commit_timer_refresh =
-          (fun timer -> record events ("commit_timer:" ^ timer));
-        commit_signal = (fun node -> record events ("commit_signal:" ^ node));
-        commit_advance_snapshot = (fun value -> value + 1);
-      }
+      (State.commit_context
+         ~preflight:(fun () -> record events "preflight")
+         ~commit_bind:(fun bind ->
+           record events ("commit_bind:" ^ bind);
+           [ "bind-hook" ])
+         ~prepare_signal:(fun node -> record events ("prepare:" ^ node))
+         ~commit_transaction:(fun () -> record events "commit_transaction")
+         ~commit_timer_refresh:(fun timer ->
+           record events ("commit_timer:" ^ timer))
+         ~commit_signal:(fun node -> record events ("commit_signal:" ^ node))
+         ~advance_snapshot:(fun value -> value + 1))
   in
   Alcotest.(check string_list)
     "events"

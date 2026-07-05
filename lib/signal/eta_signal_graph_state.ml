@@ -125,6 +125,15 @@ type ('bind, 'hook, 'timer, 'refresh) reset_context = {
   reset_clear_timer_refresh_timer : 'timer -> unit;
 }
 
+let reset_context ~rollback_bind ~rollback_transaction
+    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
+  {
+    reset_rollback_bind = rollback_bind;
+    reset_rollback_transaction = rollback_transaction;
+    reset_rollback_timer_refresh_dirty = rollback_timer_refresh_dirty;
+    reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
+  }
+
 let reset_staging t staging context =
   validate_staging t staging;
   let hooks =
@@ -159,6 +168,19 @@ type ('bind, 'node, 'hook, 'timer) commit_context = {
   commit_signal : 'node -> unit;
   commit_advance_snapshot : int -> int;
 }
+
+let commit_context ~preflight ~commit_bind ~prepare_signal
+    ~commit_transaction ~commit_timer_refresh ~commit_signal
+    ~advance_snapshot =
+  {
+    commit_preflight = preflight;
+    commit_bind;
+    commit_prepare_signal = prepare_signal;
+    commit_transaction;
+    commit_timer_refresh;
+    commit_signal;
+    commit_advance_snapshot = advance_snapshot;
+  }
 
 let commit_staging t staging context =
   validate_staging t staging;
