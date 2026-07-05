@@ -732,3 +732,13 @@ let collect_delivery_events collection capability observers =
 
 let mark_delivery_events_pending collection capability events =
   List.iter (collection.delivery_mark_pending capability) events
+
+let delivery_plan ~capability ~make_plan collection ~observers =
+  let observers = active_delivery_observers collection observers in
+  make_plan ~observers
+    ~collect_events:(fun context observers ->
+      let capability = capability context in
+      collect_delivery_events collection capability observers)
+    ~mark_events_pending:(fun context events ->
+      let capability = capability context in
+      mark_delivery_events_pending collection capability events)

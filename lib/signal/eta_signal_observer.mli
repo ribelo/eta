@@ -459,3 +459,14 @@ val mark_delivery_events_pending :
   'capability ->
   'event list ->
   unit
+
+val delivery_plan :
+  capability:('context -> 'capability) ->
+  make_plan:
+    (observers:'observer list ->
+    collect_events:('context -> 'observer list -> 'event list) ->
+    mark_events_pending:('context -> 'event list -> unit) ->
+    'plan) ->
+  ('capability, 'observer, 'event) delivery_collection ->
+  observers:'observer list ->
+  'plan

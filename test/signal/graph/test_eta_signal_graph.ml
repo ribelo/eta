@@ -382,7 +382,7 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
     [ "compute:1"; "current:10"; "cycle:1" ]
     !events
 
-let test_observer_delivery_plan_owns_sorted_collection () =
+let test_observer_delivery_plan_uses_collection_order () =
   let events = ref [] in
   let graph =
     Graph.create ~create_scope_context:(fun () -> ())
@@ -669,7 +669,7 @@ let () =
       ( "observer delivery",
         [
           Alcotest.test_case "sorted collection" `Quick
-            test_observer_delivery_plan_owns_sorted_collection;
+            test_observer_delivery_plan_uses_collection_order;
         ] );
       ( "timer demand",
         [
