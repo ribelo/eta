@@ -51,6 +51,19 @@ type ('id, 'node) dirty_ops = {
   dirty_set : 'node -> bool -> unit;
 }
 
+type ('node, 'compute_node) compute_ops = {
+  compute_node : 'node -> 'compute_node;
+  compute_pack : 'compute_node -> 'node;
+  compute_seen_generation : 'compute_node -> int;
+  compute_set_seen_generation : 'compute_node -> int -> unit;
+  compute_changed_seen : 'compute_node -> bool;
+  compute_set_changed_seen : 'compute_node -> bool -> unit;
+  compute_computing : 'compute_node -> bool;
+  compute_set_computing : 'compute_node -> bool -> unit;
+  compute_computed_generation : 'compute_node -> int;
+  compute_set_computed_generation : 'compute_node -> int -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -192,12 +205,31 @@ val enqueue_pending :
 
 val remember_computed :
   (_, _, 'node, _, _, _, _, _, _, _, _) t ->
+  ('node, 'compute_node) compute_ops ->
   'node ->
-  project:('node -> 'compute_node) ->
-  remember:(generation:int -> 'node list -> 'compute_node -> 'node list) ->
   unit
 
 val computed_nodes : (_, _, 'node, _, _, _, _, _, _, _, _) t -> 'node list
+
+val compute_seen :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'compute_node) compute_ops ->
+  'compute_node ->
+  bool
+
+val compute_changed_seen :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'compute_node) compute_ops ->
+  'compute_node ->
+  bool
+
+val compute_run :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (_, 'compute_node) compute_ops ->
+  'compute_node ->
+  cycle:(unit -> 'a * bool) ->
+  compute:(unit -> 'a * bool) ->
+  'a * bool
 
 val remember_staged_bind :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind -> unit

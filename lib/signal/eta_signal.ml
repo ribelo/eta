@@ -355,32 +355,31 @@ module Make (Observer_error : Observer_error) () = struct
       dirty_set = (fun (P signal) dirty -> signal.dirty <- dirty);
     }
 
-  module Graph_compute = Graph_algorithms.Make_compute (struct
-    type nonrec packed = packed_signal
-    type t = Graph_edge_node.t
-
-    let pack = Graph_edge_node.pack
-    let seen_generation (Graph_edge_node.Packed signal) = signal.seen_generation
-
-    let set_seen_generation (Graph_edge_node.Packed signal) generation =
-      signal.seen_generation <- generation
-
-    let changed_seen (Graph_edge_node.Packed signal) = signal.changed_seen
-
-    let set_changed_seen (Graph_edge_node.Packed signal) changed =
-      signal.changed_seen <- changed
-
-    let computing (Graph_edge_node.Packed signal) = signal.computing
-
-    let set_computing (Graph_edge_node.Packed signal) computing =
-      signal.computing <- computing
-
-    let computed_generation (Graph_edge_node.Packed signal) =
-      signal.computed_generation
-
-    let set_computed_generation (Graph_edge_node.Packed signal) generation =
-      signal.computed_generation <- generation
-  end)
+  let compute_ops =
+    {
+      Graph.compute_node = (fun (P signal) -> graph_edge_node signal);
+      compute_pack = Graph_edge_node.pack;
+      compute_seen_generation =
+        (fun (Graph_edge_node.Packed signal) -> signal.seen_generation);
+      compute_set_seen_generation =
+        (fun (Graph_edge_node.Packed signal) generation ->
+          signal.seen_generation <- generation);
+      compute_changed_seen =
+        (fun (Graph_edge_node.Packed signal) -> signal.changed_seen);
+      compute_set_changed_seen =
+        (fun (Graph_edge_node.Packed signal) changed ->
+          signal.changed_seen <- changed);
+      compute_computing =
+        (fun (Graph_edge_node.Packed signal) -> signal.computing);
+      compute_set_computing =
+        (fun (Graph_edge_node.Packed signal) computing ->
+          signal.computing <- computing);
+      compute_computed_generation =
+        (fun (Graph_edge_node.Packed signal) -> signal.computed_generation);
+      compute_set_computed_generation =
+        (fun (Graph_edge_node.Packed signal) generation ->
+          signal.computed_generation <- generation);
+    }
 
   let publish_initial_current staged value =
     Transaction.publish_current Transaction.initialize_current staged value
@@ -757,10 +756,7 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.read_effective graph var.graph_value
 
   let remember_computed (P signal) =
-    Graph.remember_computed graph (P signal)
-      ~project:(fun (P signal) -> graph_edge_node signal)
-      ~remember:(fun ~generation nodes node ->
-        Graph_compute.remember ~generation nodes node)
+    Graph.remember_computed graph compute_ops (P signal)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -1489,12 +1485,12 @@ module Make (Observer_error : Observer_error) () = struct
    fun lane signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute signal;
-    let generation = current_generation () in
     let compute_node = graph_edge_node signal in
-    if Graph_compute.seen ~generation compute_node then
-      (effective_signal_value signal, Graph_compute.changed_seen compute_node)
+    if Graph.compute_seen graph compute_ops compute_node then
+      (effective_signal_value signal,
+       Graph.compute_changed_seen graph compute_ops compute_node)
     else
-      Graph_compute.run ~generation compute_node
+      Graph.compute_run graph compute_ops compute_node
         ~cycle:(fun () -> raise (Graph_error `Cycle))
         ~compute:(fun () -> compute_uncached lane signal)
 

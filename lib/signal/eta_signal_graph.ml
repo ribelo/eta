@@ -70,6 +70,19 @@ type ('id, 'node) dirty_ops = {
   dirty_set : 'node -> bool -> unit;
 }
 
+type ('node, 'compute_node) compute_ops = {
+  compute_node : 'node -> 'compute_node;
+  compute_pack : 'compute_node -> 'node;
+  compute_seen_generation : 'compute_node -> int;
+  compute_set_seen_generation : 'compute_node -> int -> unit;
+  compute_changed_seen : 'compute_node -> bool;
+  compute_set_changed_seen : 'compute_node -> bool -> unit;
+  compute_computing : 'compute_node -> bool;
+  compute_set_computing : 'compute_node -> bool -> unit;
+  compute_computed_generation : 'compute_node -> int;
+  compute_set_computed_generation : 'compute_node -> int -> unit;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -195,11 +208,38 @@ let enqueue_pending t pending = Eta_signal_graph_state.enqueue_pending t.state p
 
 let active_staging t = Eta_signal_graph_state.require_staging t.state
 
-let remember_computed t node ~project ~remember =
+let remember_compute ops ~generation computed node =
+  if ops.compute_computed_generation node = generation then computed
+  else (
+    ops.compute_set_computed_generation node generation;
+    ops.compute_pack node :: computed)
+
+let remember_computed t ops node =
   Eta_signal_graph_state.remember_computed t.state (active_staging t)
-    ~generation:(generation t) node ~project ~remember
+    ~generation:(generation t) node ~project:ops.compute_node
+    ~remember:(remember_compute ops)
 
 let computed_nodes t = Eta_signal_graph_state.computed_nodes t.state
+
+let compute_seen t ops node =
+  Int.equal (ops.compute_seen_generation node) (generation t)
+
+let compute_changed_seen _t ops node = ops.compute_changed_seen node
+
+let compute_run t ops node ~cycle ~compute =
+  let generation = generation t in
+  if ops.compute_computing node then cycle ()
+  else (
+    ops.compute_set_computing node true;
+    match
+      Fun.protect
+        ~finally:(fun () -> ops.compute_set_computing node false)
+        compute
+    with
+    | value, changed ->
+        ops.compute_set_seen_generation node generation;
+        ops.compute_set_changed_seen node changed;
+        (value, changed))
 
 let remember_staged_bind t bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
