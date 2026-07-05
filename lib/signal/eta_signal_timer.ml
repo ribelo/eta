@@ -57,11 +57,23 @@ type daemon_state_access = {
     'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
+let daemon_state_access
+    ~(with_state :
+       'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t) =
+  { daemon_with_state = with_state }
+
 type 'timer daemon_update = {
   daemon_update :
     'error.
     'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
 }
+
+let daemon_update (type timer)
+    ~(update :
+       'error.
+       timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t)
+    =
+  { daemon_update = update }
 
 type daemon_hooks = {
   daemon_after_due_read_before_commit :
@@ -70,6 +82,17 @@ type daemon_hooks = {
     'error. unit -> (unit, 'error) Eta.Effect.t;
 }
 
+let daemon_hooks
+    ~(after_due_read_before_commit :
+       'error. unit -> (unit, 'error) Eta.Effect.t)
+    ~(after_update_constructed_before_run :
+       'error. unit -> (unit, 'error) Eta.Effect.t) =
+  {
+    daemon_after_due_read_before_commit = after_due_read_before_commit;
+    daemon_after_update_constructed_before_run =
+      after_update_constructed_before_run;
+  }
+
 type 'timer daemon_context = {
   daemon_advance_generation : int -> int;
   daemon_state_access : daemon_state_access;
@@ -77,6 +100,15 @@ type 'timer daemon_context = {
   daemon_update : 'timer daemon_update;
   daemon_hooks : daemon_hooks;
 }
+
+let daemon_context ~advance_generation ~state_access ~state ~update ~hooks =
+  {
+    daemon_advance_generation = advance_generation;
+    daemon_state_access = state_access;
+    daemon_state = state;
+    daemon_update = update;
+    daemon_hooks = hooks;
+  }
 
 type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;

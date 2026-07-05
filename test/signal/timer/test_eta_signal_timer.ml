@@ -710,28 +710,19 @@ let test_refresh_demand_effect_acquire_failure_skips_release () =
     "events" [ "access"; "acquire:capability" ] !events
 
 let daemon_context events port update =
-  {
-    Timer.daemon_advance_generation = succ;
-    daemon_state_access =
-      {
-        Timer.daemon_with_state =
-          (fun f ->
-            Eta.Effect.sync (fun () ->
-                append_event events "access";
-                f ()));
-      };
-    daemon_state = port;
-    daemon_update = update;
-    daemon_hooks =
-      {
-        Timer.daemon_after_due_read_before_commit =
-          (fun () ->
-            Eta.Effect.sync (fun () -> append_event events "due_hook"));
-        daemon_after_update_constructed_before_run =
-          (fun () ->
-            Eta.Effect.sync (fun () -> append_event events "after_update"));
-      };
-  }
+  Timer.daemon_context ~advance_generation:succ
+    ~state_access:
+      (Timer.daemon_state_access ~with_state:(fun f ->
+           Eta.Effect.sync (fun () ->
+               append_event events "access";
+               f ())))
+    ~state:port ~update
+    ~hooks:
+      (Timer.daemon_hooks
+         ~after_due_read_before_commit:(fun () ->
+           Eta.Effect.sync (fun () -> append_event events "due_hook"))
+         ~after_update_constructed_before_run:(fun () ->
+           Eta.Effect.sync (fun () -> append_event events "after_update")))
 
 let test_start_daemon_wires_start_update_through_timer_port () =
   with_runtime @@ fun runtime ->
@@ -754,14 +745,11 @@ let test_start_daemon_wires_start_update_through_timer_port () =
   run_ok runtime
     (Timer.start_daemon
        (daemon_context events port
-          {
-            Timer.daemon_update =
-              (fun _timer ~generation ~missed ->
-                Eta.Effect.sync (fun () ->
-                    append_event events
-                      ("update:" ^ string_of_int generation ^ ":"
-                     ^ string_of_int missed)));
-          })
+          (Timer.daemon_update ~update:(fun _timer ~generation ~missed ->
+               Eta.Effect.sync (fun () ->
+                   append_event events
+                     ("update:" ^ string_of_int generation ^ ":"
+                    ^ string_of_int missed)))))
        timer
        ~generation:3 ~interval_ms:10 ~update_on_start:true
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
@@ -801,14 +789,11 @@ let test_create_daemon_node_owns_start_effect_generation () =
       Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
         (daemon_context events port
-           {
-             Timer.daemon_update =
-               (fun _timer ~generation ~missed ->
-                 Eta.Effect.sync (fun () ->
-                     append_event events
-                       ("update:" ^ string_of_int generation ^ ":"
-                      ^ string_of_int missed)));
-           })
+           (Timer.daemon_update ~update:(fun _timer ~generation ~missed ->
+                Eta.Effect.sync (fun () ->
+                    append_event events
+                      ("update:" ^ string_of_int generation ^ ":"
+                     ^ string_of_int missed)))))
         ~interval_ms:10 ~update_on_start:true
         ~catch_up_policy:Timer_policy.Catch_up_coalesced
     in

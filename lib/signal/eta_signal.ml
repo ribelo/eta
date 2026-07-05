@@ -2640,30 +2640,23 @@ module Make (Observer_error : Observer_error) () = struct
       let timer =
         Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive
           ~refresh_operation
-          {
-            Timer.daemon_advance_generation =
-              checked_succ "timer generation";
-            daemon_state_access =
-              { Timer.daemon_with_state = (fun f -> with_graph_lane_sync f) };
-            daemon_state = timer_state_port;
-            daemon_update =
-              {
-                Timer.daemon_update =
-                  (fun timer ~generation ~missed ->
-                    update.timer_update timer generation ~missed);
-              };
-            daemon_hooks =
-              {
-                Timer.daemon_after_due_read_before_commit =
-                  (fun () ->
+          (Timer.daemon_context
+             ~advance_generation:(checked_succ "timer generation")
+             ~state_access:
+               (Timer.daemon_state_access ~with_state:(fun f ->
+                    with_graph_lane_sync f))
+             ~state:timer_state_port
+             ~update:
+               (Timer.daemon_update ~update:(fun timer ~generation ~missed ->
+                    update.timer_update timer generation ~missed))
+             ~hooks:
+               (Timer.daemon_hooks
+                  ~after_due_read_before_commit:(fun () ->
                     Private_test_hooks.run
-                      After_timer_due_read_before_commit);
-                daemon_after_update_constructed_before_run =
-                  (fun () ->
+                      After_timer_due_read_before_commit)
+                  ~after_update_constructed_before_run:(fun () ->
                     Private_test_hooks.run
-                      After_timer_update_constructed_before_run);
-              };
-          }
+                      After_timer_update_constructed_before_run)))
           ~interval_ms:(Duration.to_ms interval) ~update_on_start
           ~catch_up_policy:update.timer_catch_up_policy
       in

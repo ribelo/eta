@@ -43,31 +43,38 @@ type 'timer state_port = {
   state_set_current : 'timer -> Eta_signal_timer_policy.state -> unit;
 }
 
-type daemon_state_access = {
-  daemon_with_state :
-    'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
-}
+type daemon_state_access
 
-type 'timer daemon_update = {
-  daemon_update :
-    'error.
-    'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
-}
+val daemon_state_access :
+  with_state:('a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t) ->
+  daemon_state_access
 
-type daemon_hooks = {
-  daemon_after_due_read_before_commit :
-    'error. unit -> (unit, 'error) Eta.Effect.t;
-  daemon_after_update_constructed_before_run :
-    'error. unit -> (unit, 'error) Eta.Effect.t;
-}
+type 'timer daemon_update
 
-type 'timer daemon_context = {
-  daemon_advance_generation : int -> int;
-  daemon_state_access : daemon_state_access;
-  daemon_state : 'timer state_port;
-  daemon_update : 'timer daemon_update;
-  daemon_hooks : daemon_hooks;
-}
+val daemon_update :
+  update:
+    ('error.
+     'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
+  'timer daemon_update
+
+type daemon_hooks
+
+val daemon_hooks :
+  after_due_read_before_commit:
+    ('error. unit -> (unit, 'error) Eta.Effect.t) ->
+  after_update_constructed_before_run:
+    ('error. unit -> (unit, 'error) Eta.Effect.t) ->
+  daemon_hooks
+
+type 'timer daemon_context
+
+val daemon_context :
+  advance_generation:(int -> int) ->
+  state_access:daemon_state_access ->
+  state:'timer state_port ->
+  update:'timer daemon_update ->
+  hooks:daemon_hooks ->
+  'timer daemon_context
 
 type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
