@@ -332,7 +332,8 @@ let restore_dirty _t _lane ops entries =
   List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
 let generation t = Eta_signal_graph_state.generation t.state
-let set_generation t generation = Eta_signal_graph_state.set_generation t.state generation
+let set_generation t _lane generation =
+  Eta_signal_graph_state.set_generation t.state generation
 
 let advance_generation t =
   let exception Overflow in
@@ -600,7 +601,7 @@ let discard_staging t _lane cell =
   | Some transaction -> Eta_signal_transaction.discard transaction cell
   | None -> ()
 
-let next_timer_refresh_token t =
+let next_timer_refresh_token t _lane =
   let exception Overflow in
   match
     Eta_signal_graph_state.next_timer_refresh_token t.state
@@ -610,7 +611,7 @@ let next_timer_refresh_token t =
   | token -> Ok token
   | exception Overflow -> Error (`Counter_overflow "timer refresh token")
 
-let set_next_timer_refresh_token t token =
+let set_next_timer_refresh_token t _lane token =
   Eta_signal_graph_state.set_next_timer_refresh_token t.state token
 
 let mark_timer_refresh_dirty t _lane ~mark ~record =

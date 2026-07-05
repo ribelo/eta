@@ -521,8 +521,8 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
     node.compute_current <- 10;
     (node.compute_current, true)
   in
-  Graph.set_generation graph 1;
   with_graph_lane graph (fun lane ->
+      Graph.set_generation graph lane 1;
       Alcotest.(check (pair int bool))
         "first compute" (10, true)
         (Graph.compute_cached graph lane compute_ops node ~current ~cycle
@@ -535,7 +535,7 @@ let test_compute_cached_owns_cache_and_cycle_dispatch () =
         (Graph.compute_cached graph lane compute_ops node ~current ~cycle
            ~compute);
       node.compute_computing <- true;
-      Graph.set_generation graph 2;
+      Graph.set_generation graph lane 2;
       Alcotest.(check (pair int bool))
         "cycle result" (10, false)
         (Graph.compute_cached graph lane compute_ops node ~current ~cycle
@@ -569,7 +569,7 @@ let test_generation_owned_by_graph () =
     ~defect:(fun ~hooks:_ exn _backtrace ->
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
   Alcotest.(check int) "advanced generation" 1 (Graph.generation graph);
-  Graph.set_generation graph max_int;
+  with_graph_lane graph (fun lane -> Graph.set_generation graph lane max_int);
   let result = run_empty_stabilization graph in
   Pass.result result
     ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
@@ -899,11 +899,19 @@ let test_timer_refresh_token_owned_by_graph () =
       ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
   Alcotest.(check (result int reject))
-    "first token" (Ok 0) (Graph.next_timer_refresh_token graph);
+    "first token" (Ok 0)
+    (with_graph_lane graph (fun lane ->
+         Graph.next_timer_refresh_token graph lane));
   Alcotest.(check (result int reject))
-    "second token" (Ok 1) (Graph.next_timer_refresh_token graph);
-  Graph.set_next_timer_refresh_token graph max_int;
-  match Graph.next_timer_refresh_token graph with
+    "second token" (Ok 1)
+    (with_graph_lane graph (fun lane ->
+         Graph.next_timer_refresh_token graph lane));
+  with_graph_lane graph (fun lane ->
+      Graph.set_next_timer_refresh_token graph lane max_int);
+  match
+    with_graph_lane graph (fun lane ->
+        Graph.next_timer_refresh_token graph lane)
+  with
   | Error (`Counter_overflow name) when String.equal name "timer refresh token" ->
       ()
   | Error err ->

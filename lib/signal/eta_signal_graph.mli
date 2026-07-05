@@ -253,7 +253,8 @@ val restore_dirty :
 
 val generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int
 
-val set_generation : (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+val set_generation :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val enqueue_pending :
   ('pending, _, _, _, _, _, _, _, _, _, _) t ->
@@ -439,10 +440,11 @@ val discard_staging :
 
 val next_timer_refresh_token :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   (int, Eta_signal_error.graph_error) result
 
 val set_next_timer_refresh_token :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
 val mark_timer_refresh_dirty :
   (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->

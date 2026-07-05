@@ -1358,8 +1358,8 @@ module Make (Observer_error : Observer_error) () = struct
     Observer_core.mark_failed_without_current (observer_delivery_port ()) lane
       observer
 
-  let next_timer_refresh_token_unlocked () =
-    match Graph.next_timer_refresh_token graph with
+  let next_timer_refresh_token_unlocked lane =
+    match Graph.next_timer_refresh_token graph lane with
     | Ok token -> token
     | Error err -> raise (Graph_error err)
 
@@ -1955,7 +1955,7 @@ module Make (Observer_error : Observer_error) () = struct
                          let timer_refresh =
                            Some
                              (Timer_policy.create_refresh_context
-                                ~token:(next_timer_refresh_token_unlocked ())
+                                ~token:(next_timer_refresh_token_unlocked lane)
                                 ~runtime_contract
                                 ~now_ms:runtime_contract.Runtime_contract.now_ms)
                          in

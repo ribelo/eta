@@ -167,6 +167,17 @@ let with_runtime f =
   in
   f rt
 
+let with_test_graph_lane rt graph f =
+  run_ok rt
+    (Eta_signal_testable.Graph.with_lane_access graph
+       ~leaf_name:"test_eta_signal.graph_lane"
+       ~depth_local:(Runtime_contract.create_local ())
+       ~hooks:
+         (Eta_signal_testable.Graph.lane_hooks ~note_waiter_enqueued:ignore
+            ~note_waiter_compaction:ignore)
+       ~after_acquired:(fun () -> Effect.unit)
+       f)
+
 let wait_for_sleepers clock expected =
   let rec loop attempts =
     if Eta_test.Test_clock.sleeper_count clock >= expected then ()
@@ -3712,7 +3723,9 @@ let test_var_create_counter_overflow_raises_graph_error () =
 let test_stabilization_generation_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Eta_signal_testable.Graph.set_generation Overflow_signal.graph max_int;
+  with_test_graph_lane rt Overflow_signal.graph (fun lane ->
+      Eta_signal_testable.Graph.set_generation Overflow_signal.graph lane
+        max_int);
   expect_fail "stabilization generation overflow"
     (counter_overflow "stabilization generation")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
@@ -3720,8 +3733,9 @@ let test_stabilization_generation_overflow_is_typed_failure () =
 let test_timer_refresh_token_overflow_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  Eta_signal_testable.Graph.set_next_timer_refresh_token
-    Overflow_signal.graph max_int;
+  with_test_graph_lane rt Overflow_signal.graph (fun lane ->
+      Eta_signal_testable.Graph.set_next_timer_refresh_token
+        Overflow_signal.graph lane max_int);
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize))
