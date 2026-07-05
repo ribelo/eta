@@ -772,7 +772,7 @@ let test_delivery_event_marks_and_runs_claimed_events () =
       events "no-callback"
   in
   let second = delivery_event events "second" in
-  Observer.Delivery_event.mark_pending first;
+  Observer.Delivery_event.mark_pending () first;
   expect_effect_ok "delivery events"
     (Observer.Delivery_event.run
        ~after_claim:(fun () ->
@@ -954,19 +954,32 @@ type observer_live = {
 
 type observer_ref = { mutable live : observer_live option }
 
+let observer_capability = "observer-capability"
+
+let check_observer_capability capability =
+  Alcotest.(check string) "observer capability" observer_capability capability
+
 let observer_delivery_port events =
   {
-    Observer.delivery_live = (fun observer -> observer.live);
-    delivery_snapshot = (fun live -> live.snapshot);
+    Observer.delivery_live =
+      (fun capability observer ->
+        check_observer_capability capability;
+        observer.live);
+    delivery_snapshot =
+      (fun capability live ->
+        check_observer_capability capability;
+        live.snapshot);
     delivery_set_snapshot =
-      (fun live snapshot ->
+      (fun capability live snapshot ->
+        check_observer_capability capability;
         live.snapshot <- snapshot;
         record events
           ("set:"
           ^ Observer.Delivery.label
               (Observer.Snapshot.delivery snapshot)));
     delivery_run_after_ack =
-      (fun actions ->
+      (fun capability actions ->
+        check_observer_capability capability;
         List.iter
           (fun action ->
             record events
@@ -990,10 +1003,11 @@ let test_delivery_port_claim_acknowledge_and_finish () =
   let observer = { live = Some live } in
   let port = observer_delivery_port events in
   Alcotest.(check bool) "claim" true
-    (Observer.claim_delivery port observer 7);
+    (Observer.claim_delivery port observer_capability observer 7);
   Alcotest.(check bool) "running token" true
-    (Observer.running_delivery_token_matches port observer 7);
-  Observer.acknowledge_delivery port observer 7 update_changed
+    (Observer.running_delivery_token_matches port observer_capability observer
+       7);
+  Observer.acknowledge_delivery port observer_capability observer 7 update_changed
     ~after_ack:[ Extra ];
   Alcotest.(check string) "acknowledged" "delivered"
     (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
@@ -1012,8 +1026,8 @@ let test_delivery_port_claim_acknowledge_and_finish () =
       ~delivery:
         (Observer.Delivery.Observer_delivery_running
            (8, update_changed, [ Stored ]));
-  Observer.finish_delivery_after_error port observer 8 update_changed
-    ~delivered:false;
+  Observer.finish_delivery_after_error port observer_capability observer 8
+    update_changed ~delivered:false;
   Alcotest.(check string) "released" "pending"
     (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
   Alcotest.(check (list string)) "release events" [ "set:pending" ]
@@ -1034,21 +1048,17 @@ let test_delivery_port_ignores_missing_or_stale_delivery () =
   let inactive = { live = None } in
   let port = observer_delivery_port events in
   Alcotest.(check bool) "stale claim" false
-    (Observer.claim_delivery port observer 8);
-  Observer.acknowledge_delivery port observer 8 update_changed
+    (Observer.claim_delivery port observer_capability observer 8);
+  Observer.acknowledge_delivery port observer_capability observer 8 update_changed
     ~after_ack:[ Extra ];
-  Observer.finish_delivery_after_error port observer 8 update_changed
-    ~delivered:true;
+  Observer.finish_delivery_after_error port observer_capability observer 8
+    update_changed ~delivered:true;
   Alcotest.(check bool) "inactive running token" false
-    (Observer.running_delivery_token_matches port inactive 7);
+    (Observer.running_delivery_token_matches port observer_capability inactive
+       7);
   Alcotest.(check (list string)) "no events" [] !events;
   Alcotest.(check string) "state unchanged" "pending"
     (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot))
-
-let observer_capability = "observer-capability"
-
-let check_observer_capability capability =
-  Alcotest.(check string) "observer capability" observer_capability capability
 
 let observer_event_port ?(run_callback = fun _observer _token _callback ->
     Eta.Effect.unit) events =
@@ -1098,7 +1108,7 @@ let test_make_delivery_event_owns_success_transitions () =
       (observer_delivery_port events)
       (observer_event_port events) ~observer ~token:7 update_changed
   in
-  Observer.Delivery_event.mark_pending event;
+  Observer.Delivery_event.mark_pending observer_capability event;
   expect_effect_ok "delivery event success"
     (Observer.Delivery_event.run
        ~after_claim:(fun () ->

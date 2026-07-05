@@ -311,8 +311,8 @@ module Delivery_runner = struct
 end
 
 module Delivery_event = struct
-  type ('callback, 'error) t = {
-    mark_pending : unit -> unit;
+  type ('capability, 'callback, 'error) t = {
+    mark_pending : 'capability -> unit;
     active : unit -> (bool, 'error) Eta.Effect.t;
     claim : unit -> (bool, 'error) Eta.Effect.t;
     construct : unit -> ('callback option, 'error) Eta.Effect.t;
@@ -333,7 +333,7 @@ module Delivery_event = struct
       finish_error;
     }
 
-  let mark_pending event = event.mark_pending ()
+  let mark_pending capability event = event.mark_pending capability
 
   let run ~after_claim events =
     Delivery_runner.run
@@ -433,59 +433,60 @@ module Snapshot = struct
     { snapshot; update }
 end
 
-type ('observer, 'live, 'a, 'after_ack) delivery_port = {
-  delivery_live : 'observer -> 'live option;
-  delivery_snapshot : 'live -> ('a, 'after_ack) Snapshot.t;
-  delivery_set_snapshot : 'live -> ('a, 'after_ack) Snapshot.t -> unit;
-  delivery_run_after_ack : 'after_ack list -> unit;
+type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port = {
+  delivery_live : 'capability -> 'observer -> 'live option;
+  delivery_snapshot : 'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
+  delivery_set_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  delivery_run_after_ack : 'capability -> 'after_ack list -> unit;
 }
 
-let acknowledge_delivery port observer token update ~after_ack =
-  match port.delivery_live observer with
+let acknowledge_delivery port capability observer token update ~after_ack =
+  match port.delivery_live capability observer with
   | None -> ()
   | Some live -> (
       match
         Snapshot.acknowledge_delivery ~token ~update ~after_ack
-          (port.delivery_snapshot live)
+          (port.delivery_snapshot capability live)
       with
       | Some (snapshot, after_ack) ->
-          port.delivery_set_snapshot live snapshot;
-          port.delivery_run_after_ack after_ack
+          port.delivery_set_snapshot capability live snapshot;
+          port.delivery_run_after_ack capability after_ack
       | None -> ())
 
-let claim_delivery port observer token =
-  match port.delivery_live observer with
+let claim_delivery port capability observer token =
+  match port.delivery_live capability observer with
   | None -> false
   | Some live -> (
       match
-        Snapshot.claim_delivery ~token (port.delivery_snapshot live)
+        Snapshot.claim_delivery ~token (port.delivery_snapshot capability live)
       with
       | Some snapshot ->
-          port.delivery_set_snapshot live snapshot;
+          port.delivery_set_snapshot capability live snapshot;
           true
       | None -> false)
 
-let finish_delivery_after_error port observer token update ~delivered =
-  match port.delivery_live observer with
+let finish_delivery_after_error port capability observer token update ~delivered =
+  match port.delivery_live capability observer with
   | None -> ()
   | Some live -> (
       match
         Snapshot.finish_running_delivery ~token ~update ~delivered
-          ~after_ack:[] (port.delivery_snapshot live)
+          ~after_ack:[] (port.delivery_snapshot capability live)
       with
       | Some (Snapshot.Finish_acknowledged (snapshot, after_ack)) ->
-          port.delivery_set_snapshot live snapshot;
-          port.delivery_run_after_ack after_ack
+          port.delivery_set_snapshot capability live snapshot;
+          port.delivery_run_after_ack capability after_ack
       | Some (Snapshot.Finish_released snapshot) ->
-          port.delivery_set_snapshot live snapshot
+          port.delivery_set_snapshot capability live snapshot
       | None -> ())
 
-let running_delivery_token_matches port observer token =
-  match port.delivery_live observer with
+let running_delivery_token_matches port capability observer token =
+  match port.delivery_live capability observer with
   | None -> false
   | Some live ->
       Snapshot.running_delivery_token_matches ~token
-        (port.delivery_snapshot live)
+        (port.delivery_snapshot capability live)
 
 type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
   event_active : 'capability -> 'observer -> bool;
@@ -509,39 +510,43 @@ type ('capability, 'error) delivery_event_access = {
 
 let make_delivery_event ~access delivery_port event_port ~observer ~token update =
   Delivery_event.create
-    ~mark_pending:(fun () ->
-      match delivery_port.delivery_live observer with
+    ~mark_pending:(fun capability ->
+      match delivery_port.delivery_live capability observer with
       | None -> ()
       | Some live ->
-          delivery_port.delivery_set_snapshot live
+          delivery_port.delivery_set_snapshot capability live
             (Snapshot.with_pending_delivery ~token update
-               (delivery_port.delivery_snapshot live)))
+               (delivery_port.delivery_snapshot capability live)))
     ~active:(fun () ->
       access.event_with_delivery_access (fun capability ->
           event_port.event_active capability observer))
     ~claim:(fun () ->
-      access.event_with_delivery_access (fun _capability ->
-          claim_delivery delivery_port observer token))
+      access.event_with_delivery_access (fun capability ->
+          claim_delivery delivery_port capability observer token))
     ~construct:(fun () ->
       access.event_with_delivery_access (fun capability ->
-          if running_delivery_token_matches delivery_port observer token then
+          if
+            running_delivery_token_matches delivery_port capability observer
+              token
+          then
             event_port.event_construct capability observer token update
           else Ok None)
       |> Eta.Effect.flatten_result)
     ~run_callback:(fun callback ->
-      access.event_with_delivery_access (fun _capability ->
-          running_delivery_token_matches delivery_port observer token)
+      access.event_with_delivery_access (fun capability ->
+          running_delivery_token_matches delivery_port capability observer
+            token)
       |> Eta.Effect.bind (function
            | false -> Eta.Effect.unit
            | true -> event_port.event_run_callback observer token callback))
     ~acknowledge:(fun () ->
-      access.event_with_delivery_access (fun _capability ->
-          acknowledge_delivery delivery_port observer token update
+      access.event_with_delivery_access (fun capability ->
+          acknowledge_delivery delivery_port capability observer token update
             ~after_ack:[]))
     ~finish_error:(fun ~delivered ->
-      access.event_with_delivery_access (fun _capability ->
-          finish_delivery_after_error delivery_port observer token update
-            ~delivered))
+      access.event_with_delivery_access (fun capability ->
+          finish_delivery_after_error delivery_port capability observer token
+            update ~delivered))
 
 module Event = struct
   type ('a, 'after_ack) plan = {

@@ -571,10 +571,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   type disposal_hook = Cleanup.hook
 
-  type event =
-    ((unit, observer_error) Effect.t, stabilize_error)
-    Observer_core.Delivery_event.t
-
   type timer_refresh_context =
     (Runtime_contract.t, packed_signal * bool) Timer_policy.refresh_context
 
@@ -671,6 +667,10 @@ module Make (Observer_error : Observer_error) () = struct
     Runtime_contract.create_local ()
 
   type graph_lane = Graph_core.lane_access
+
+  type event =
+    (graph_lane, (unit, observer_error) Effect.t, stabilize_error)
+    Observer_core.Delivery_event.t
 
   let with_graph_lane_access f =
     Graph_core.with_lane_access graph.core
@@ -1985,20 +1985,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let observer_delivery_port () =
     {
-      Observer_core.delivery_live = observer_active_live_state;
-      delivery_snapshot = observer_current_snapshot;
-      delivery_set_snapshot = set_observer_current;
-      delivery_run_after_ack = run_after_ack_actions_unlocked;
+      Observer_core.delivery_live =
+        (fun (_lane : graph_lane) observer ->
+          observer_active_live_state observer);
+      delivery_snapshot =
+        (fun (_lane : graph_lane) live -> observer_current_snapshot live);
+      delivery_set_snapshot =
+        (fun (_lane : graph_lane) live snapshot ->
+          set_observer_current live snapshot);
+      delivery_run_after_ack =
+        (fun (_lane : graph_lane) actions ->
+          run_after_ack_actions_unlocked actions);
     }
 
-  let acknowledge_event_delivery_unlocked (_lane : graph_lane) observer token
+  let acknowledge_event_delivery_unlocked lane observer token
       update ~after_ack =
-    Observer_core.acknowledge_delivery (observer_delivery_port ()) observer
+    Observer_core.acknowledge_delivery (observer_delivery_port ()) lane observer
       token update ~after_ack
 
-  let claimed_event_delivery_active observer token =
+  let claimed_event_delivery_active lane observer token =
     Observer_core.running_delivery_token_matches (observer_delivery_port ())
-      observer token
+      lane observer token
 
   let acknowledge_stream_published_delivery observer token update ~after_ack =
     with_graph_lane_access (fun lane ->
@@ -2012,8 +2019,8 @@ module Make (Observer_error : Observer_error) () = struct
     acknowledge_stream_published_delivery observer token update ~after_ack
 
   let active_event_delivery_token observer token =
-    with_graph_lane_sync (fun () ->
-        if claimed_event_delivery_active observer token then Some token
+    with_graph_lane_access (fun lane ->
+        if claimed_event_delivery_active lane observer token then Some token
         else None)
 
   let graph_error_of_die die =
@@ -2160,8 +2167,10 @@ module Make (Observer_error : Observer_error) () = struct
             mark_events_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    events ->
-                let _lane = pure_lane context in
-                List.iter Observer_core.Delivery_event.mark_pending events);
+                let lane = pure_lane context in
+                List.iter
+                  (Observer_core.Delivery_event.mark_pending lane)
+                  events);
             update_necessity =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let lane = pure_lane context in

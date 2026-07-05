@@ -181,25 +181,25 @@ module Delivery_runner : sig
 end
 
 module Delivery_event : sig
-  type ('callback, 'error) t
+  type ('capability, 'callback, 'error) t
   (** Sealed observer delivery event. The event hides the concrete observer
       value/update pair while this module owns the delivery ordering. *)
 
   val create :
-    mark_pending:(unit -> unit) ->
+    mark_pending:('capability -> unit) ->
     active:(unit -> (bool, 'error) Eta.Effect.t) ->
     claim:(unit -> (bool, 'error) Eta.Effect.t) ->
     construct:(unit -> ('callback option, 'error) Eta.Effect.t) ->
     run_callback:('callback -> (unit, 'error) Eta.Effect.t) ->
     acknowledge:(unit -> (unit, 'error) Eta.Effect.t) ->
     finish_error:(delivered:bool -> (unit, 'error) Eta.Effect.t) ->
-    ('callback, 'error) t
+    ('capability, 'callback, 'error) t
 
-  val mark_pending : ('callback, 'error) t -> unit
+  val mark_pending : 'capability -> ('capability, 'callback, 'error) t -> unit
 
   val run :
     after_claim:(unit -> (unit, 'error) Eta.Effect.t) ->
-    ('callback, 'error) t list ->
+    ('capability, 'callback, 'error) t list ->
     (unit, 'error) Eta.Effect.t
 end
 
@@ -273,15 +273,17 @@ module Snapshot : sig
     ('a, 'after_ack) event_plan
 end
 
-type ('observer, 'live, 'a, 'after_ack) delivery_port = {
-  delivery_live : 'observer -> 'live option;
-  delivery_snapshot : 'live -> ('a, 'after_ack) Snapshot.t;
-  delivery_set_snapshot : 'live -> ('a, 'after_ack) Snapshot.t -> unit;
-  delivery_run_after_ack : 'after_ack list -> unit;
+type ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port = {
+  delivery_live : 'capability -> 'observer -> 'live option;
+  delivery_snapshot : 'capability -> 'live -> ('a, 'after_ack) Snapshot.t;
+  delivery_set_snapshot :
+    'capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit;
+  delivery_run_after_ack : 'capability -> 'after_ack list -> unit;
 }
 
 val acknowledge_delivery :
-  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  'capability ->
   'observer ->
   Delivery.token ->
   'a Update.t ->
@@ -289,13 +291,15 @@ val acknowledge_delivery :
   unit
 
 val claim_delivery :
-  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  'capability ->
   'observer ->
   Delivery.token ->
   bool
 
 val finish_delivery_after_error :
-  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  'capability ->
   'observer ->
   Delivery.token ->
   'a Update.t ->
@@ -303,7 +307,8 @@ val finish_delivery_after_error :
   unit
 
 val running_delivery_token_matches :
-  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  'capability ->
   'observer ->
   Delivery.token ->
   bool
@@ -330,12 +335,12 @@ type ('capability, 'error) delivery_event_access = {
 
 val make_delivery_event :
   access:('capability, 'error) delivery_event_access ->
-  ('observer, 'live, 'a, 'after_ack) delivery_port ->
+  ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
   ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
   observer:'observer ->
   token:Delivery.token ->
   'a Update.t ->
-  ('callback, 'error) Delivery_event.t
+  ('capability, 'callback, 'error) Delivery_event.t
 
 module Event : sig
   type ('a, 'after_ack) plan = {
