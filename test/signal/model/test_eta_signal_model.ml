@@ -1271,6 +1271,195 @@ let test_nested_bind_churn_trace_matches_model () =
         (generate_nested_bind_trace ~seed ~steps:120))
     [ 13; 31; 71; 113 ]
 
+type retained_side =
+  | Retained_left
+  | Retained_right
+
+type retained_branch_op =
+  | Retained_set_left of int
+  | Retained_set_right of int
+  | Retained_choose_left of bool
+  | Retained_stabilize
+
+type retained_branch_slot = {
+  retained_side : retained_side;
+  retained_signal : int Signal.signal;
+  mutable retained_valid : bool;
+}
+
+type retained_branch_model = {
+  mutable retained_pending_left : int;
+  mutable retained_pending_right : int;
+  mutable retained_pending_choose_left : bool;
+  mutable retained_committed_left : int;
+  mutable retained_committed_right : int;
+  mutable retained_active_side : retained_side option;
+}
+
+let pp_retained_side formatter = function
+  | Retained_left -> Format.pp_print_string formatter "left"
+  | Retained_right -> Format.pp_print_string formatter "right"
+
+let pp_retained_branch_op formatter = function
+  | Retained_set_left value -> Format.fprintf formatter "Set_left %d" value
+  | Retained_set_right value -> Format.fprintf formatter "Set_right %d" value
+  | Retained_choose_left value ->
+      Format.fprintf formatter "Choose_left %b" value
+  | Retained_stabilize -> Format.pp_print_string formatter "Stabilize"
+
+let retained_side_of_bool choose_left =
+  if choose_left then Retained_left else Retained_right
+
+let retained_side_equal left right =
+  match (left, right) with
+  | Retained_left, Retained_left | Retained_right, Retained_right -> true
+  | Retained_left, Retained_right | Retained_right, Retained_left -> false
+
+let create_retained_branch_model () =
+  {
+    retained_pending_left = 10;
+    retained_pending_right = 20;
+    retained_pending_choose_left = true;
+    retained_committed_left = 10;
+    retained_committed_right = 20;
+    retained_active_side = None;
+  }
+
+let retained_branch_value model = function
+  | Retained_left -> model.retained_committed_left
+  | Retained_right -> model.retained_committed_right
+
+let stabilize_retained_branch_model model retained_slots =
+  let next_side =
+    retained_side_of_bool model.retained_pending_choose_left
+  in
+  let switched =
+    match model.retained_active_side with
+    | None -> true
+    | Some side -> not (retained_side_equal side next_side)
+  in
+  if switched then
+    List.iter (fun slot -> slot.retained_valid <- false) !retained_slots;
+  model.retained_committed_left <- model.retained_pending_left;
+  model.retained_committed_right <- model.retained_pending_right;
+  model.retained_active_side <- Some next_side;
+  switched
+
+let generate_retained_branch_trace ~seed ~steps =
+  let random = Random.State.make [| seed; 31 |] in
+  let next_value () = Random.State.int random 31 - 15 in
+  let next_op index =
+    if index mod 6 = 0 then Retained_stabilize
+    else
+      match Random.State.int random 12 with
+      | 0 | 1 -> Retained_set_left (next_value ())
+      | 2 | 3 -> Retained_set_right (next_value ())
+      | 4 | 5 | 6 -> Retained_choose_left (Random.State.bool random)
+      | _ -> Retained_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Retained_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Retained_stabilize :: loop 1 []
+
+let run_retained_branch_trace name ops =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let choose_left = Signal.Var.create true in
+  let retained_slots = ref [] in
+  let selected =
+    Signal.bind (Signal.Var.watch choose_left) (fun choose_left ->
+        let side = retained_side_of_bool choose_left in
+        let signal =
+          match side with
+          | Retained_left -> Signal.Var.watch left
+          | Retained_right -> Signal.Var.watch right
+        in
+        retained_slots :=
+          {
+            retained_side = side;
+            retained_signal = signal;
+            retained_valid = true;
+          }
+          :: !retained_slots;
+        signal)
+  in
+  let selected_observer =
+    run_ok runtime
+      (Signal.Observer.observe selected (fun _ -> E.unit))
+  in
+  let model = create_retained_branch_model () in
+  let check_retained_slot label index slot =
+    let slot_label =
+      Format.asprintf "%s retained %d %a" label index pp_retained_side
+        slot.retained_side
+    in
+    if slot.retained_valid then (
+      let updates = ref [] in
+      let observer =
+        run_ok runtime
+          (Signal.Observer.observe slot.retained_signal (fun update ->
+               E.sync (fun () ->
+                   updates :=
+                     observed_of_signal_update update :: !updates)))
+      in
+      run_ok runtime Signal.stabilize;
+      let expected = retained_branch_value model slot.retained_side in
+      Alcotest.(check int) (slot_label ^ " read") expected
+        (run_ok runtime (Signal.Observer.read observer));
+      Alcotest.(check (list observed_update))
+        (slot_label ^ " updates") [ Initialized expected ]
+        (List.rev !updates);
+      run_ok runtime (Signal.Observer.dispose observer))
+    else
+      expect_graph_error (slot_label ^ " stale observe")
+        (( = ) `Invalid_scope) runtime
+        (Signal.Observer.observe slot.retained_signal (fun _ -> E.unit))
+  in
+  let check_retained_branches label =
+    List.iteri (check_retained_slot label) !retained_slots
+  in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_retained_branch_op op
+      in
+      match op with
+      | Retained_set_left value ->
+          model.retained_pending_left <- value;
+          run_ok runtime (Signal.Var.set left value)
+      | Retained_set_right value ->
+          model.retained_pending_right <- value;
+          run_ok runtime (Signal.Var.set right value)
+      | Retained_choose_left value ->
+          model.retained_pending_choose_left <- value;
+          run_ok runtime (Signal.Var.set choose_left value)
+      | Retained_stabilize ->
+          let before_retained_count = List.length !retained_slots in
+          let switched =
+            stabilize_retained_branch_model model retained_slots
+          in
+          run_ok runtime Signal.stabilize;
+          let expected_retained_count =
+            before_retained_count + if switched then 1 else 0
+          in
+          Alcotest.(check int)
+            (label ^ " retained branch count") expected_retained_count
+            (List.length !retained_slots);
+          check_retained_branches label)
+    ops;
+  run_ok runtime (Signal.Observer.dispose selected_observer)
+
+let test_retained_branch_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_retained_branch_trace
+        (Format.asprintf "retained-branch-seed-%d" seed)
+        (generate_retained_branch_trace ~seed ~steps:54))
+    [ 2; 11; 29; 47 ]
+
 type diamond_op =
   | Diamond_set of int
   | Diamond_stabilize
@@ -1771,6 +1960,8 @@ let () =
             test_bind_branch_demand_trace_matches_model;
           Alcotest.test_case "nested bind churn trace matches model" `Quick
             test_nested_bind_churn_trace_matches_model;
+          Alcotest.test_case "retained branch trace matches model" `Quick
+            test_retained_branch_trace_matches_model;
           Alcotest.test_case "diamond trace matches model" `Quick
             test_diamond_trace_matches_model;
           Alcotest.test_case "generated small graphs match model" `Quick
