@@ -691,6 +691,24 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
   Alcotest.(check (list int))
     "live registry pruned" [ 1; 2; 3 ] remaining_live_ids
 
+let test_timer_refresh_token_owned_by_graph () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  Alcotest.(check (result int reject))
+    "first token" (Ok 0) (Graph.next_timer_refresh_token graph);
+  Alcotest.(check (result int reject))
+    "second token" (Ok 1) (Graph.next_timer_refresh_token graph);
+  Graph.set_next_timer_refresh_token graph max_int;
+  match Graph.next_timer_refresh_token graph with
+  | Error (`Counter_overflow name) when String.equal name "timer refresh token" ->
+      ()
+  | Error err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  | Ok token -> Alcotest.failf "expected overflow, got token %d" token
+
 let test_staged_bind_switch_protocol_maps_graph_errors () =
   let events = ref [] in
   let current = Bind.switch ~source_value:0 ~inner:10 ~scope:1 in
@@ -768,5 +786,7 @@ let () =
         [
           Alcotest.test_case "plan bridge" `Quick
             test_timer_demand_plan_owns_live_pruning_and_roots;
+          Alcotest.test_case "refresh token ownership" `Quick
+            test_timer_refresh_token_owned_by_graph;
         ] );
     ]

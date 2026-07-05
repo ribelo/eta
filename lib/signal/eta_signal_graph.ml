@@ -593,8 +593,15 @@ let discard_staging t cell =
   | Some transaction -> Eta_signal_transaction.discard transaction cell
   | None -> ()
 
-let next_timer_refresh_token t ~advance =
-  Eta_signal_graph_state.next_timer_refresh_token t.state ~advance
+let next_timer_refresh_token t =
+  let exception Overflow in
+  match
+    Eta_signal_graph_state.next_timer_refresh_token t.state
+      ~advance:(fun token ->
+        if token = max_int then raise Overflow else token + 1)
+  with
+  | token -> Ok token
+  | exception Overflow -> Error (`Counter_overflow "timer refresh token")
 
 let set_next_timer_refresh_token t token =
   Eta_signal_graph_state.set_next_timer_refresh_token t.state token

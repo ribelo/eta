@@ -1332,8 +1332,9 @@ module Make (Observer_error : Observer_error) () = struct
       observer
 
   let next_timer_refresh_token_unlocked () =
-    Graph.next_timer_refresh_token graph
-      ~advance:(fun token -> checked_succ "timer refresh token" token)
+    match Graph.next_timer_refresh_token graph with
+    | Ok token -> token
+    | Error err -> raise (Graph_error err)
 
   let stage_pending_var (_lane : graph_lane) (V var) =
     let graph_value = Transaction.current var.graph_value in

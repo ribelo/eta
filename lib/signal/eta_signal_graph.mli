@@ -426,7 +426,8 @@ val discard_staging :
   unit
 
 val next_timer_refresh_token :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> advance:(int -> int) -> int
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  (int, Eta_signal_error.graph_error) result
 
 val set_next_timer_refresh_token :
   (_, _, _, _, _, _, _, _, _, _, _) t -> int -> unit
