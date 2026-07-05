@@ -482,6 +482,9 @@ let remember_timer_refresh_disposal_hooks t hooks =
   Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state
     (active_staging t) hooks
 
+let saturating_succ value =
+  if value = max_int then max_int else value + 1
+
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
   staging_reset_rollback_bind : 'bind -> 'hook list;
   staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
@@ -515,18 +518,16 @@ type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
   staging_commit_prepare_signal : 'node -> unit;
   staging_commit_timer_refresh : 'timer -> unit;
   staging_commit_signal : 'node -> unit;
-  staging_commit_advance_snapshot : int -> int;
 }
 
 let staging_commit_context ~preflight ~commit_bind ~prepare_signal
-    ~commit_timer_refresh ~commit_signal ~advance_snapshot =
+    ~commit_timer_refresh ~commit_signal =
   {
     staging_commit_preflight = preflight;
     staging_commit_bind = commit_bind;
     staging_commit_prepare_signal = prepare_signal;
     staging_commit_timer_refresh = commit_timer_refresh;
     staging_commit_signal = commit_signal;
-    staging_commit_advance_snapshot = advance_snapshot;
   }
 
 let commit_staging t staging context =
@@ -542,7 +543,7 @@ let commit_staging t staging context =
         | Error err -> raise (Commit_error err))
       ~commit_timer_refresh:context.staging_commit_timer_refresh
       ~commit_signal:context.staging_commit_signal
-      ~advance_snapshot:context.staging_commit_advance_snapshot
+      ~advance_snapshot:saturating_succ
   in
   try Ok (Eta_signal_graph_state.commit_staging t.state staging state_context)
   with Commit_error err -> Error err

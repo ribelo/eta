@@ -373,7 +373,6 @@ val staging_commit_context :
   prepare_signal:('node -> unit) ->
   commit_timer_refresh:('timer -> unit) ->
   commit_signal:('node -> unit) ->
-  advance_snapshot:(int -> int) ->
   ('bind, 'node, 'hook, 'timer) staging_commit_context
 
 val commit_staging :

@@ -1323,7 +1323,6 @@ module Make (Observer_error : Observer_error) () = struct
         ~commit_bind:(commit_bind lane)
         ~prepare_signal:prepare_signal_commit
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
-        ~advance_snapshot:saturating_succ
     in
     match Graph.commit_staging graph staging context with
     | Ok hooks -> hooks

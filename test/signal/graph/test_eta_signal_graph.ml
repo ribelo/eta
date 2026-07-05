@@ -460,7 +460,6 @@ let test_observer_delivery_plan_uses_collection_order () =
             ~prepare_signal:(fun _node -> ())
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
-            ~advance_snapshot:(fun value -> value + 1)
         in
         match Graph.commit_staging graph staging commit_context with
         | Ok hooks -> hooks
