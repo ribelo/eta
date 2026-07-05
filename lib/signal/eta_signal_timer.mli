@@ -72,6 +72,15 @@ type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_start_effect : 'timer -> 'effect;
 }
 
+type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port = {
+  node_demand_necessary : 'necessary;
+  node_demand_timers : ('id * 'operation node) list;
+  node_demand_is_necessary : 'necessary -> 'id -> bool;
+  node_demand_validate_runtime :
+    'runtime -> 'operation node -> (unit, 'error) result;
+  node_demand_state : 'operation node state_port;
+}
+
 type ('capability, 'error) demand_effect_access = {
   demand_with_access :
     'a.
@@ -120,6 +129,16 @@ val refresh_demand :
   ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port ->
   'runtime ->
   (('timer, 'effect) start_attempt demand_effects, 'error) result
+
+val refresh_node_demand :
+  advance_generation:(int -> int) ->
+  cancel_running:bool ->
+  ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port ->
+  'runtime ->
+  (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
+   demand_effects,
+   'error)
+  result
 
 val refresh_demand_effect :
   ('capability, 'error) demand_effect_access ->

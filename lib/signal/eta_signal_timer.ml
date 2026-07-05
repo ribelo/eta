@@ -81,6 +81,15 @@ type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
   demand_start_effect : 'timer -> 'effect;
 }
 
+type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_port = {
+  node_demand_necessary : 'necessary;
+  node_demand_timers : ('id * 'operation node) list;
+  node_demand_is_necessary : 'necessary -> 'id -> bool;
+  node_demand_validate_runtime :
+    'runtime -> 'operation node -> (unit, 'error) result;
+  node_demand_state : 'operation node state_port;
+}
+
 type ('capability, 'error) demand_effect_access = {
   demand_with_access :
     'a.
@@ -176,6 +185,20 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
           demand_cancel_hooks =
             effects.Eta_signal_timer_policy.demand_cancel_hooks;
         }
+
+let refresh_node_demand ~advance_generation ~cancel_running port runtime =
+  refresh_demand ~advance_generation ~cancel_running
+    {
+      demand_collect_necessary = (fun () -> port.node_demand_necessary);
+      demand_collect_timers = (fun () -> port.node_demand_timers);
+      demand_is_necessary = port.node_demand_is_necessary;
+      demand_validate_runtime = port.node_demand_validate_runtime;
+      demand_effective_state = port.node_demand_state.state_effective;
+      demand_current_state = port.node_demand_state.state_current;
+      demand_set_current_state = port.node_demand_state.state_set_current;
+      demand_start_effect = start_effect;
+    }
+    runtime
 
 let refresh_demand_effect access port =
   Eta_signal_timer_adapter.refresh_demand

@@ -36,6 +36,21 @@ type timer = {
 
 let make_timer name ~current ~effective = { name; current; effective }
 
+type node_demand_case = {
+  case_name : string;
+  mutable case_current : Timer_policy.state;
+  mutable case_effective : Timer_policy.state;
+  mutable case_node : unit Timer.node option;
+}
+
+let make_node_demand_case case_name ~current ~effective =
+  {
+    case_name;
+    case_current = current;
+    case_effective = effective;
+    case_node = None;
+  }
+
 let runtime_error = Alcotest.testable Format.pp_print_string String.equal
 
 let state_label state =
@@ -134,6 +149,143 @@ let test_refresh_demand_classifies_and_orders_effects () =
           "cancel:stop";
         ]
         !events
+
+let test_refresh_node_demand_owns_node_start_wiring () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let record event = append_event events event in
+  let running generation label =
+    Timer_policy.running_state ~generation ~next_due_ms:(Some 10)
+      ~cancel:(fun () -> record ("cancel:" ^ label))
+  in
+  let start =
+    make_node_demand_case "start" ~current:(inactive 0)
+      ~effective:(inactive 0)
+  in
+  let stop =
+    make_node_demand_case "stop" ~current:(running 1 "stop")
+      ~effective:(running 1 "stop")
+  in
+  let idle =
+    make_node_demand_case "idle" ~current:(inactive 0)
+      ~effective:(inactive 0)
+  in
+  let cases = [ start; stop; idle ] in
+  let effect =
+    Eta.Effect.Expert.make
+      ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
+    let runtime_contract = Eta.Effect.Expert.contract context in
+    let find_case timer =
+      match
+        List.find_opt
+          (fun case ->
+            match case.case_node with
+            | Some node -> node == timer
+            | None -> false)
+          cases
+      with
+      | Some case -> case
+      | None -> Alcotest.fail "unknown timer node"
+    in
+    let port =
+      {
+        Timer.state_effective =
+          (fun timer -> (find_case timer).case_effective);
+        state_current = (fun timer -> (find_case timer).case_current);
+        state_set_current =
+          (fun timer state ->
+            let case = find_case timer in
+            case.case_current <- state;
+            case.case_effective <- state;
+            record
+              ("set:" ^ case.case_name ^ ":" ^ state_label state));
+      }
+    in
+    let make_node case =
+      let node =
+        Timer.create_node ~runtime_contract
+          ~refresh_when_inactive:true ~refresh_operation:None
+          ~start:
+            {
+              Timer.run =
+                (fun _timer ->
+                  record
+                    ("start:" ^ case.case_name ^ ":"
+                   ^ state_label case.case_current);
+                  Eta.Effect.sync (fun () ->
+                      record ("run:" ^ case.case_name)));
+            }
+      in
+      case.case_node <- Some node;
+      node
+    in
+    let start_node = make_node start in
+    let stop_node = make_node stop in
+    let idle_node = make_node idle in
+    match
+      Timer.refresh_node_demand ~advance_generation:succ
+        ~cancel_running:true
+        {
+          Timer.node_demand_necessary = [ 1 ];
+          node_demand_timers =
+            [ (1, start_node); (2, stop_node); (3, idle_node) ];
+          node_demand_is_necessary =
+            (fun necessary id -> List.exists (( = ) id) necessary);
+          node_demand_validate_runtime =
+            (fun actual_runtime timer ->
+              let case = find_case timer in
+              record ("validate:" ^ case.case_name);
+              if
+                Eta.Runtime_contract.same_runtime actual_runtime
+                  (Timer.runtime_contract timer)
+              then Ok ()
+              else Error `Runtime_mismatch);
+          node_demand_state = port;
+        }
+        runtime_contract
+    with
+    | Error `Runtime_mismatch -> Alcotest.fail "unexpected runtime mismatch"
+    | Ok effects ->
+        Alcotest.(check (list string))
+          "construction events"
+          [
+            "validate:start";
+            "set:start:starting:1";
+            "start:start:starting:1";
+            "set:stop:inactive:2";
+          ]
+          !events;
+        Alcotest.(check int)
+          "start attempts" 1
+          (List.length
+             (Timer.start_attempt_effects
+                effects.Timer.demand_start_attempts));
+        Alcotest.(check int)
+          "cancel hooks" 1
+          (List.length effects.Timer.demand_cancel_hooks);
+        List.iter (fun hook -> hook ()) effects.Timer.demand_cancel_hooks;
+        (match
+           Eta.Effect.Expert.eval context
+             (Eta.Effect.concat
+                (Timer.start_attempt_effects
+                   effects.Timer.demand_start_attempts))
+         with
+        | Eta.Exit.Ok () ->
+            Alcotest.(check (list string))
+              "events"
+              [
+                "validate:start";
+                "set:start:starting:1";
+                "start:start:starting:1";
+                "set:stop:inactive:2";
+                "cancel:stop";
+                "run:start";
+              ]
+              !events;
+            Eta.Exit.Ok ()
+        | Eta.Exit.Error _ as exit -> exit)
+  in
+  run_ok runtime effect
 
 let test_refresh_demand_validation_failure_short_circuits () =
   let changed_state = ref false in
@@ -583,6 +735,8 @@ let () =
         [
           Alcotest.test_case "classifies and orders effects" `Quick
             test_refresh_demand_classifies_and_orders_effects;
+          Alcotest.test_case "node helper owns start wiring" `Quick
+            test_refresh_node_demand_owns_node_start_wiring;
           Alcotest.test_case "validation failure short-circuits" `Quick
             test_refresh_demand_validation_failure_short_circuits;
           Alcotest.test_case "rolls back unclaimed starts" `Quick

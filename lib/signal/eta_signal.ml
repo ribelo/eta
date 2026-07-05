@@ -1675,24 +1675,20 @@ module Make (Observer_error : Observer_error) () = struct
 
   let refresh_timer_demand_unlocked lane runtime_contract =
     let demand = timer_demand_unlocked lane in
-    Timer.refresh_demand
+    Timer.refresh_node_demand
       ~advance_generation:(checked_succ "timer generation")
       ~cancel_running:true
       {
-        Timer.demand_collect_necessary =
-          (fun () -> demand.Graph.timer_demand_necessary_ids);
-        demand_collect_timers = (fun () -> demand.Graph.timer_demand_timers);
-        demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
-        demand_validate_runtime =
+        Timer.node_demand_necessary = demand.Graph.timer_demand_necessary_ids;
+        node_demand_timers = demand.Graph.timer_demand_timers;
+        node_demand_is_necessary = (fun needed id -> Hashtbl.mem needed id);
+        node_demand_validate_runtime =
           (fun runtime_contract timer ->
             match validate_timer_runtime timer runtime_contract with
             | Ok () -> Ok ()
             | Error `Runtime_mismatch ->
                 Error (`Runtime_mismatch : graph_error));
-        demand_effective_state = timer_effective_state;
-        demand_current_state = timer_current_state;
-        demand_set_current_state = set_timer_current_state;
-        demand_start_effect = Timer.start_effect;
+        node_demand_state = timer_state_port;
       }
       runtime_contract
 
