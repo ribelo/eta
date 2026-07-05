@@ -1302,12 +1302,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_finish_unlocked timer =
     let plan = timer_finish_plan (timer_current_state timer) in
-    set_timer_current_state timer plan.finish_state
+    Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks:_ ->
+        set_timer_current_state timer state)
 
   let timer_finish_cancel_hooks_unlocked timer =
     let plan = timer_finish_plan (timer_current_state timer) in
-    set_timer_current_state timer plan.finish_state;
-    plan.finish_cancel_hooks
+    Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
+        set_timer_current_state timer state;
+        cancel_hooks)
 
   let stage_timer_transition timer = function
     | Set_source (source, value) ->
@@ -1317,8 +1319,9 @@ module Make (Observer_error : Observer_error) () = struct
           (timer_set_next_due_state (timer_effective_state timer)
              (Some next_due_ms))
     | Finish plan ->
-        stage_timer_state_unlocked timer plan.finish_state;
-        remember_timer_refresh_disposal_hooks plan.finish_cancel_hooks
+        Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
+            stage_timer_state_unlocked timer state;
+            remember_timer_refresh_disposal_hooks cancel_hooks)
 
   let timer_refresh_action source = function
     | Timer_policy.Refresh_set value -> Set_source (source, value)

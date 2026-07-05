@@ -19,6 +19,23 @@ let pp_runtime_error ppf = function
 let runtime_error =
   Alcotest.testable pp_runtime_error (fun left right -> left = right)
 
+let finish_plan_state plan =
+  Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks:_ ->
+      state)
+
+let finish_plan_cancel_hooks plan =
+  Timer_policy.finish_plan_result plan ~plan:(fun ~state:_ ~cancel_hooks ->
+      cancel_hooks)
+
+let finish_plan_label plan =
+  Timer_policy.finish_plan_result plan ~plan:(fun ~state ~cancel_hooks ->
+      "finish:"
+      ^ Timer_policy.state_label state
+      ^ ":"
+      ^ string_of_int (Timer_policy.state_generation state)
+      ^ ":"
+      ^ string_of_int (List.length cancel_hooks))
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -746,7 +763,8 @@ let test_install_cancel_policy () =
         (Timer_policy.state_next_due state);
       List.iter
         (fun hook -> hook ())
-        (Timer_policy.finish ~advance_generation:succ state).finish_cancel_hooks;
+        (finish_plan_cancel_hooks
+           (Timer_policy.finish ~advance_generation:succ state));
       Alcotest.(check bool) "new cancel installed" true !new_cancelled
   | None -> Alcotest.fail "expected cancel install");
   new_cancelled := false;
@@ -756,7 +774,8 @@ let test_install_cancel_policy () =
         (Timer_policy.state_next_due state);
       List.iter
         (fun hook -> hook ())
-        (Timer_policy.finish ~advance_generation:succ state).finish_cancel_hooks;
+        (finish_plan_cancel_hooks
+           (Timer_policy.finish ~advance_generation:succ state));
       Alcotest.(check bool) "old cancel replaced" false !old_cancelled;
       Alcotest.(check bool) "new cancel replacement" true !new_cancelled
   | None -> Alcotest.fail "expected cancel replacement");
@@ -1071,12 +1090,7 @@ let test_refresh_actions () =
           "advance:" ^ string_of_int next_due_ms
       | Timer_policy.Refresh_set value -> "set:" ^ string_of_int value
       | Timer_policy.Refresh_finish plan ->
-          "finish:"
-          ^ Timer_policy.state_label plan.finish_state
-          ^ ":"
-          ^ string_of_int (Timer_policy.state_generation plan.finish_state)
-          ^ ":"
-          ^ string_of_int (List.length plan.finish_cancel_hooks))
+          finish_plan_label plan)
   in
   Alcotest.(check (list string))
     "set only"
@@ -1103,7 +1117,7 @@ let test_refresh_actions () =
     (action_labels finish_actions);
   (match List.rev finish_actions with
   | Timer_policy.Refresh_finish plan :: _ ->
-      List.iter (fun hook -> hook ()) plan.finish_cancel_hooks
+      List.iter (fun hook -> hook ()) (finish_plan_cancel_hooks plan)
   | _ -> Alcotest.fail "expected finish action");
   Alcotest.(check bool) "finish action carries cancel hook" true !cancelled;
   let spec_actions =
@@ -1119,12 +1133,7 @@ let test_refresh_actions () =
              "advance:" ^ string_of_int next_due_ms
          | Timer_policy.Refresh_set value -> "set:" ^ string_of_bool value
          | Timer_policy.Refresh_finish plan ->
-             "finish:"
-             ^ Timer_policy.state_label plan.finish_state
-             ^ ":"
-             ^ string_of_int (Timer_policy.state_generation plan.finish_state)
-             ^ ":"
-             ^ string_of_int (List.length plan.finish_cancel_hooks))
+             finish_plan_label plan)
        spec_actions);
   Alcotest.(check (list string))
     "empty"
@@ -1146,12 +1155,12 @@ let test_finish_policy () =
   let running_plan = Timer_policy.finish ~advance_generation:succ running in
   let inactive_plan = Timer_policy.finish ~advance_generation:succ inactive in
   Alcotest.(check int) "active advances generation" 8
-    (Timer_policy.state_generation running_plan.finish_state);
+    (Timer_policy.state_generation (finish_plan_state running_plan));
   Alcotest.(check int) "inactive keeps generation" 3
-    (Timer_policy.state_generation inactive_plan.finish_state);
+    (Timer_policy.state_generation (finish_plan_state inactive_plan));
   Alcotest.(check int) "hook count" 1
-    (List.length running_plan.finish_cancel_hooks);
-  List.iter (fun hook -> hook ()) running_plan.finish_cancel_hooks;
+    (List.length (finish_plan_cancel_hooks running_plan));
+  List.iter (fun hook -> hook ()) (finish_plan_cancel_hooks running_plan);
   Alcotest.(check bool) "cancelled" true !cancelled
 
 let () =

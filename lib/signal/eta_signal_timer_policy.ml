@@ -677,6 +677,9 @@ let finish ~advance_generation state =
     finish_cancel_hooks = finish_cancel_hooks state;
   }
 
+let finish_plan_result plan ~plan:result =
+  result ~state:plan.finish_state ~cancel_hooks:plan.finish_cancel_hooks
+
 let due_refresh state ~interval_ms ~now_ms =
   match state_next_due state with
   | None -> { missed = 0; saturated_due = false; next_due_ms = None }

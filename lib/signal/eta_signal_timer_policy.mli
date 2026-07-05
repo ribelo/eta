@@ -101,10 +101,7 @@ type 'a demand_plan =
 
 type ('start, 'hook) demand_effects
 
-type finish_plan = {
-  finish_state : state;
-  finish_cancel_hooks : (unit -> unit) list;
-}
+type finish_plan
 
 type 'a refresh_action =
   | Refresh_set of 'a
@@ -335,6 +332,12 @@ val can_refresh_on_demand :
   bool
 
 val finish : advance_generation:(int -> int) -> state -> finish_plan
+
+val finish_plan_result :
+  finish_plan ->
+  plan:(state:state -> cancel_hooks:(unit -> unit) list -> 'a) ->
+  'a
+
 val current_time_refresh_plan : now_ms:int -> int refresh_plan
 val refresh_actions :
   advance_generation:(int -> int) ->
