@@ -348,18 +348,48 @@ let remember_timer_refresh_disposal_hooks t hooks =
   Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state
     (active_staging t) hooks
 
-let reset_staging t staging ~rollback_bind ~rollback_transaction
-    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
-  Eta_signal_graph_state.reset_staging t.state staging ~rollback_bind
-    ~rollback_transaction ~rollback_timer_refresh_dirty
-    ~clear_timer_refresh_timer
+type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
+  staging_reset_rollback_bind : 'bind -> 'hook list;
+  staging_reset_rollback_transaction : unit -> unit;
+  staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
+  staging_reset_clear_timer_refresh_timer : 'timer -> unit;
+}
 
-let commit_staging t staging ~preflight ~commit_bind ~prepare_signal
-    ~commit_transaction ~commit_timer_refresh ~commit_signal
-    ~advance_snapshot =
-  Eta_signal_graph_state.commit_staging t.state staging ~preflight
-    ~commit_bind ~prepare_signal ~commit_transaction ~commit_timer_refresh
-    ~commit_signal ~advance_snapshot
+let reset_staging t staging context =
+  Eta_signal_graph_state.reset_staging t.state staging
+    {
+      Eta_signal_graph_state.reset_rollback_bind =
+        context.staging_reset_rollback_bind;
+      reset_rollback_transaction =
+        context.staging_reset_rollback_transaction;
+      reset_rollback_timer_refresh_dirty =
+        context.staging_reset_rollback_timer_refresh_dirty;
+      reset_clear_timer_refresh_timer =
+        context.staging_reset_clear_timer_refresh_timer;
+    }
+
+type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
+  staging_commit_preflight : unit -> unit;
+  staging_commit_bind : 'bind -> 'hook list;
+  staging_commit_prepare_signal : 'node -> unit;
+  staging_commit_transaction : unit -> unit;
+  staging_commit_timer_refresh : 'timer -> unit;
+  staging_commit_signal : 'node -> unit;
+  staging_commit_advance_snapshot : int -> int;
+}
+
+let commit_staging t staging context =
+  Eta_signal_graph_state.commit_staging t.state staging
+    {
+      Eta_signal_graph_state.commit_preflight =
+        context.staging_commit_preflight;
+      commit_bind = context.staging_commit_bind;
+      commit_prepare_signal = context.staging_commit_prepare_signal;
+      commit_transaction = context.staging_commit_transaction;
+      commit_timer_refresh = context.staging_commit_timer_refresh;
+      commit_signal = context.staging_commit_signal;
+      commit_advance_snapshot = context.staging_commit_advance_snapshot;
+    }
 
 let pure_snapshot_commit_count t =
   Eta_signal_graph_state.pure_snapshot_commit_count t.state

@@ -1395,21 +1395,30 @@ module Make (Observer_error : Observer_error) () = struct
 
   let reset_staging lane staging =
     Graph.reset_staging graph staging
-      ~rollback_bind:(rollback_bind lane)
-      ~rollback_transaction
-      ~rollback_timer_refresh_dirty:(fun context ->
-        Graph.restore_dirty graph dirty_ops
-          (Timer_policy.refresh_dirty_items context);
-        Timer_policy.clear_refresh_dirty_items context)
-      ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
+      {
+        Graph.staging_reset_rollback_bind = rollback_bind lane;
+        staging_reset_rollback_transaction = rollback_transaction;
+        staging_reset_rollback_timer_refresh_dirty =
+          (fun context ->
+            Graph.restore_dirty graph dirty_ops
+              (Timer_policy.refresh_dirty_items context);
+            Timer_policy.clear_refresh_dirty_items context);
+        staging_reset_clear_timer_refresh_timer =
+          clear_timer_refresh_timer_staging;
+      }
 
   let commit_staging lane staging =
     Graph.commit_staging graph staging
-      ~preflight:(fun () -> preflight_commit_staging lane)
-      ~commit_bind:(commit_bind lane)
-      ~prepare_signal:prepare_signal_commit ~commit_transaction
-      ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
-      ~advance_snapshot:saturating_succ
+      {
+        Graph.staging_commit_preflight =
+          (fun () -> preflight_commit_staging lane);
+        staging_commit_bind = commit_bind lane;
+        staging_commit_prepare_signal = prepare_signal_commit;
+        staging_commit_transaction = commit_transaction;
+        staging_commit_timer_refresh = commit_timer_refresh_staging;
+        staging_commit_signal = commit_signal;
+        staging_commit_advance_snapshot = saturating_succ;
+      }
 
   let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (

@@ -257,13 +257,17 @@ let test_observer_delivery_plan_owns_sorted_collection () =
         (fun context staging ->
           check_cap (Pass.pure_capability context);
           Graph.commit_staging graph staging
-            ~preflight:(fun () -> record events "preflight")
-            ~commit_bind:(fun _bind -> [])
-            ~prepare_signal:(fun _node -> ())
-            ~commit_transaction:(fun () -> commit_transaction graph)
-            ~commit_timer_refresh:(fun _timer -> ())
-            ~commit_signal:(fun _node -> ())
-            ~advance_snapshot:(fun value -> value + 1));
+            {
+              Graph.staging_commit_preflight =
+                (fun () -> record events "preflight");
+              staging_commit_bind = (fun _bind -> []);
+              staging_commit_prepare_signal = (fun _node -> ());
+              staging_commit_transaction =
+                (fun () -> commit_transaction graph);
+              staging_commit_timer_refresh = (fun _timer -> ());
+              staging_commit_signal = (fun _node -> ());
+              staging_commit_advance_snapshot = (fun value -> value + 1);
+            });
       update_necessity =
         (fun context ->
           check_cap (Pass.pure_capability context);
