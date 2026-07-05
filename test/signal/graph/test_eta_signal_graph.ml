@@ -37,6 +37,19 @@ type compute_node = {
   mutable compute_current : int;
 }
 
+type invalidating_node = {
+  invalid_id : int;
+  mutable invalid_valid : bool;
+  mutable invalid_dependencies : invalidating_node list;
+  mutable invalid_dependents : invalidating_node list;
+  invalid_kind_scope : int option;
+}
+
+type dead_node = {
+  dead_id : Id.signal;
+  dead_label : string;
+}
+
 let capability = "graph-lane"
 
 let record events event =
@@ -111,6 +124,35 @@ let compute_ops =
       (fun node -> node.compute_computed_generation);
     compute_set_computed_generation =
       (fun node generation -> node.compute_computed_generation <- generation);
+  }
+
+let invalidating_node ?kind_scope id =
+  {
+    invalid_id = id;
+    invalid_valid = true;
+    invalid_dependencies = [];
+    invalid_dependents = [];
+    invalid_kind_scope = kind_scope;
+  }
+
+let invalidating_edge_ops events =
+  {
+    Graph.edge_id = (fun node -> node.invalid_id);
+    edge_equal_id = Int.equal;
+    edge_dependencies = (fun node -> node.invalid_dependencies);
+    edge_set_dependencies =
+      (fun node dependencies ->
+        record events
+          ("dependencies:" ^ string_of_int node.invalid_id ^ ":"
+         ^ string_of_int (List.length dependencies));
+        node.invalid_dependencies <- dependencies);
+    edge_dependents = (fun node -> node.invalid_dependents);
+    edge_set_dependents =
+      (fun node dependents ->
+        record events
+          ("dependents:" ^ string_of_int node.invalid_id ^ ":"
+         ^ string_of_int (List.length dependents));
+        node.invalid_dependents <- dependents);
   }
 
 let test_create_live_node_owns_lifecycle_context () =
@@ -188,6 +230,105 @@ let test_create_live_node_owns_lifecycle_context () =
       "weak:0";
     ]
     !events
+
+let test_invalidate_live_node_owns_lifecycle_order () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let dependency = invalidating_node 0 in
+  let root = invalidating_node ~kind_scope:10 1 in
+  let dependent = invalidating_node 2 in
+  dependency.invalid_dependents <- [ root ];
+  root.invalid_dependencies <- [ dependency ];
+  root.invalid_dependents <- [ dependent ];
+  dependent.invalid_dependencies <- [ root ];
+  let lifecycle =
+    {
+      Graph.invalidation_valid = (fun node -> node.invalid_valid);
+      invalidation_set_invalid =
+        (fun node ->
+          record events ("invalid:" ^ string_of_int node.invalid_id);
+          node.invalid_valid <- false);
+      invalidation_timer_hooks =
+        (fun node ->
+          record events ("timer:" ^ string_of_int node.invalid_id);
+          [ "timer-hook:" ^ string_of_int node.invalid_id ]);
+      invalidation_tombstone =
+        (fun node ->
+          record events ("tombstone:" ^ string_of_int node.invalid_id);
+          {
+            dead_id = Id.signal node.invalid_id;
+            dead_label = "dead:" ^ string_of_int node.invalid_id;
+          });
+      invalidation_tombstone_id = (fun dead -> dead.dead_id);
+      invalidation_observer_hooks =
+        (fun node ->
+          record events ("observer:" ^ string_of_int node.invalid_id);
+          [ "observer-hook:" ^ string_of_int node.invalid_id ]);
+      invalidation_kind_hooks =
+        (fun ~invalidate_scope node ->
+          record events ("kind:" ^ string_of_int node.invalid_id);
+          match node.invalid_kind_scope with
+          | None -> []
+          | Some scope -> invalidate_scope ~prune:false scope);
+    }
+  in
+  let invalidate_scope ?(prune = true) scope =
+    record events
+      ("scope:" ^ string_of_int scope ^ ":prune:" ^ string_of_bool prune);
+    [ "scope-hook:" ^ string_of_int scope ]
+  in
+  let hooks =
+    Graph.invalidate_live_node graph (invalidating_edge_ops events)
+      lifecycle ~invalidate_scope root
+  in
+  Alcotest.(check (list string))
+    "hooks"
+    [
+      "timer-hook:1";
+      "observer-hook:1";
+      "timer-hook:2";
+      "observer-hook:2";
+      "scope-hook:10";
+    ]
+    hooks;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "timer:1";
+      "invalid:1";
+      "tombstone:1";
+      "observer:1";
+      "dependents:0:0";
+      "dependencies:1:0";
+      "dependents:1:0";
+      "timer:2";
+      "invalid:2";
+      "tombstone:2";
+      "observer:2";
+      "dependents:1:0";
+      "dependencies:2:0";
+      "dependents:2:0";
+      "kind:2";
+      "kind:1";
+      "scope:10:prune:false";
+    ]
+    !events;
+  Alcotest.(check bool) "root invalid" false root.invalid_valid;
+  Alcotest.(check bool) "dependent invalid" false dependent.invalid_valid;
+  Alcotest.(check (list int))
+    "dependency dependents cleared" []
+    (List.map (fun node -> node.invalid_id) dependency.invalid_dependents);
+  Alcotest.(check (list int))
+    "root dependencies cleared" []
+    (List.map (fun node -> node.invalid_id) root.invalid_dependencies);
+  Alcotest.(check int) "dead count" 2 (Graph.dead_node_count graph);
+  Alcotest.(check (list string))
+    "dead nodes"
+    [ "dead:2"; "dead:1" ]
+    (Graph.map_dead_nodes graph ~f:(fun dead -> dead.dead_label))
 
 let test_compute_cached_owns_cache_and_cycle_dispatch () =
   let events = ref [] in
@@ -420,6 +561,8 @@ let () =
         [
           Alcotest.test_case "context owns creation" `Quick
             test_create_live_node_owns_lifecycle_context;
+          Alcotest.test_case "context owns invalidation" `Quick
+            test_invalidate_live_node_owns_lifecycle_order;
         ] );
       ( "compute dispatch",
         [

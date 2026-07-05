@@ -1075,10 +1075,33 @@ module Make (Observer_error : Observer_error) () = struct
       dead_timer = Option.map timer_tombstone signal.timer;
     }
 
-  let record_dead_node_unlocked (P signal as packed) =
-    Graph.remember_dead_node graph
-      ~id:(fun tombstone -> tombstone.dead_id)
-      (signal_tombstone packed)
+  let node_invalidation =
+    {
+      Graph.invalidation_valid = (fun (P signal) -> signal.valid);
+      invalidation_set_invalid = (fun (P signal) -> signal.valid <- false);
+      invalidation_timer_hooks =
+        (fun (P signal) ->
+          match signal.timer with
+          | None -> []
+          | Some timer -> timer_mark_unneeded_unlocked timer);
+      invalidation_tombstone = signal_tombstone;
+      invalidation_tombstone_id = (fun tombstone -> tombstone.dead_id);
+      invalidation_observer_hooks =
+        (fun (P signal) -> dispose_signal_observers signal);
+      invalidation_kind_hooks =
+        (fun ~invalidate_scope (P signal) ->
+          match signal.kind with
+          | Var source ->
+              remove_var_watcher source signal;
+              []
+          | Bind bind -> (
+              match Bind.inner_scope (Transaction.current bind.snapshot) with
+              | None -> []
+              | Some scope -> invalidate_scope ~prune:false scope)
+          | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
+          | Map7 _ | Map8 _ | Map9 _ | All _ ->
+              []);
+    }
 
   let rec invalidate_scope lane ?(prune = true) scope =
     match Scope.invalidate scope with
@@ -1089,37 +1112,9 @@ module Make (Observer_error : Observer_error) () = struct
         if prune then prune_invalid_nodes_unlocked ();
         hooks
 
-  and invalidate_node lane (P signal) =
-    if signal.valid then (
-      let timer_hooks =
-        match signal.timer with
-        | None -> []
-        | Some timer -> timer_mark_unneeded_unlocked timer
-      in
-      signal.valid <- false;
-      record_dead_node_unlocked (P signal);
-      let observer_hooks = dispose_signal_observers signal in
-      let _dependencies, dependents =
-        Graph.detach_node_edges graph edge_ops (P signal)
-      in
-      let dependent_hooks =
-        List.concat_map (invalidate_node lane) dependents
-      in
-      let kind_hooks =
-        match signal.kind with
-        | Var source ->
-            remove_var_watcher source signal;
-            []
-        | Bind bind -> (
-            match Bind.inner_scope (Transaction.current bind.snapshot) with
-            | None -> []
-            | Some scope -> invalidate_scope lane ~prune:false scope)
-        | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
-        | Map7 _ | Map8 _ | Map9 _ | All _ ->
-            []
-      in
-      timer_hooks @ observer_hooks @ dependent_hooks @ kind_hooks)
-    else []
+  and invalidate_node lane packed =
+    Graph.invalidate_live_node graph edge_ops node_invalidation
+      ~invalidate_scope:(invalidate_scope lane) packed
 
   let make_bind ?equal source selector =
     let bind =

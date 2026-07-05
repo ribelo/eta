@@ -100,6 +100,19 @@ type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
     node_create_weak : 'packed_node -> 'weak_node;
   }
 
+type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
+  invalidation_valid : 'node -> bool;
+  invalidation_set_invalid : 'node -> unit;
+  invalidation_timer_hooks : 'node -> 'hook list;
+  invalidation_tombstone : 'node -> 'dead_node;
+  invalidation_tombstone_id : 'dead_node -> Eta_signal_id.signal;
+  invalidation_observer_hooks : 'node -> 'hook list;
+  invalidation_kind_hooks :
+    invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+    'node ->
+    'hook list;
+}
+
 val create :
   create_scope_context:(unit -> 'scope_context) ->
   create_stream_bridge_metrics:(unit -> 'stream_metrics) ->
@@ -569,6 +582,18 @@ val create_live_node :
   ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle ->
   dependencies:'dependency list ->
   ('node, Eta_signal_error.graph_error) result
+
+val invalidate_live_node :
+  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
+  ('id, 'node) edge_ops ->
+  ('node, 'scope, 'hook, 'dead_node) node_invalidation ->
+  invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+  'node ->
+  'hook list
+(** Invalidate one live node and any currently attached dependents. The graph
+    owns the lifecycle order: timer cleanup planning, validity flip,
+    tombstone recording, observer cleanup planning, edge detachment, dependent
+    invalidation, then kind-specific cleanup. *)
 
 val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->

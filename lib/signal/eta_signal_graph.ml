@@ -119,6 +119,19 @@ type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle =
     node_create_weak : 'packed_node -> 'weak_node;
   }
 
+type ('node, 'scope, 'hook, 'dead_node) node_invalidation = {
+  invalidation_valid : 'node -> bool;
+  invalidation_set_invalid : 'node -> unit;
+  invalidation_timer_hooks : 'node -> 'hook list;
+  invalidation_tombstone : 'node -> 'dead_node;
+  invalidation_tombstone_id : 'dead_node -> Eta_signal_id.signal;
+  invalidation_observer_hooks : 'node -> 'hook list;
+  invalidation_kind_hooks :
+    invalidate_scope:(?prune:bool -> 'scope -> 'hook list) ->
+    'node ->
+    'hook list;
+}
+
 let core_counter = function
   | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
   | Recompute_count -> Eta_signal_graph_core.Recompute_count
@@ -577,6 +590,17 @@ let finish_stabilization t delivering_token =
        delivering_token
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token)
 
+let max_dead_node_tombstones = 1024
+
+let same_signal_id left right =
+  Eta_signal_id.signal_int left = Eta_signal_id.signal_int right
+
+let remember_dead_node t ~id dead_node =
+  t.dead_nodes <-
+    Eta_signal_debug.remember_latest
+      ~max_count:max_dead_node_tombstones
+      ~id ~equal_id:same_signal_id dead_node t.dead_nodes
+
 let collect_live_node_registry t ~collect_live_nodes ~keep =
   let cells, nodes = collect_live_nodes keep t.all_nodes in
   t.all_nodes <- cells;
@@ -604,6 +628,25 @@ let create_live_node t scope_ops lifecycle ~dependencies =
             ~create_weak_node:lifecycle.node_create_weak
             (lifecycle.node_pack node);
           Ok node)
+
+let rec invalidate_live_node t edge_ops lifecycle ~invalidate_scope node =
+  if lifecycle.invalidation_valid node then (
+    let timer_hooks = lifecycle.invalidation_timer_hooks node in
+    lifecycle.invalidation_set_invalid node;
+    let tombstone = lifecycle.invalidation_tombstone node in
+    remember_dead_node t ~id:lifecycle.invalidation_tombstone_id tombstone;
+    let observer_hooks = lifecycle.invalidation_observer_hooks node in
+    let _dependencies, dependents = detach_node_edges t edge_ops node in
+    let dependent_hooks =
+      List.concat_map
+        (invalidate_live_node t edge_ops lifecycle ~invalidate_scope)
+        dependents
+    in
+    let kind_hooks =
+      lifecycle.invalidation_kind_hooks ~invalidate_scope node
+    in
+    timer_hooks @ observer_hooks @ dependent_hooks @ kind_hooks)
+  else []
 
 let live_nodes t ~collect_live_nodes =
   collect_live_node_registry t ~collect_live_nodes ~keep:(fun _ -> true)
@@ -640,14 +683,3 @@ let post_commit_necessary_timers t ~collect_live_nodes ~root ~collect_timers =
 let dead_node_count t = List.length t.dead_nodes
 let iter_dead_nodes t ~f = List.iter f t.dead_nodes
 let map_dead_nodes t ~f = List.map f t.dead_nodes
-
-let max_dead_node_tombstones = 1024
-
-let same_signal_id left right =
-  Eta_signal_id.signal_int left = Eta_signal_id.signal_int right
-
-let remember_dead_node t ~id dead_node =
-  t.dead_nodes <-
-    Eta_signal_debug.remember_latest
-      ~max_count:max_dead_node_tombstones
-      ~id ~equal_id:same_signal_id dead_node t.dead_nodes

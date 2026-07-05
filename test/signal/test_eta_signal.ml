@@ -5896,7 +5896,9 @@ let test_to_dot_prefers_tombstone_over_retained_invalid_node () =
   with_runtime @@ fun rt ->
   let retained = Retained_dot_signal.const 1 in
   let signal_id = Retained_dot_signal.signal_id_label retained.id in
-  Retained_dot_signal.record_dead_node_unlocked (Retained_dot_signal.P retained);
+  Eta_signal_testable.Graph.remember_dead_node Retained_dot_signal.graph
+    ~id:(fun tombstone -> tombstone.Retained_dot_signal.dead_id)
+    (Retained_dot_signal.signal_tombstone (Retained_dot_signal.P retained));
   Retained_dot_signal.Private_test_hooks.set_signal_valid retained false;
   let options : Retained_dot_signal.dot_options =
     {
