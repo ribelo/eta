@@ -319,15 +319,17 @@ val reset_staging :
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context ->
   'hook list
 
-type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
-  staging_commit_preflight : unit -> unit;
-  staging_commit_bind : 'bind -> 'hook list;
-  staging_commit_prepare_signal : 'node -> unit;
-  staging_commit_transaction : unit -> unit;
-  staging_commit_timer_refresh : 'timer -> unit;
-  staging_commit_signal : 'node -> unit;
-  staging_commit_advance_snapshot : int -> int;
-}
+type ('bind, 'node, 'hook, 'timer) staging_commit_context
+
+val staging_commit_context :
+  preflight:(unit -> unit) ->
+  commit_bind:('bind -> 'hook list) ->
+  prepare_signal:('node -> unit) ->
+  commit_transaction:(unit -> unit) ->
+  commit_timer_refresh:('timer -> unit) ->
+  commit_signal:('node -> unit) ->
+  advance_snapshot:(int -> int) ->
+  ('bind, 'node, 'hook, 'timer) staging_commit_context
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->

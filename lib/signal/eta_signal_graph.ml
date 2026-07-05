@@ -400,6 +400,19 @@ type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
   staging_commit_advance_snapshot : int -> int;
 }
 
+let staging_commit_context ~preflight ~commit_bind ~prepare_signal
+    ~commit_transaction ~commit_timer_refresh ~commit_signal
+    ~advance_snapshot =
+  {
+    staging_commit_preflight = preflight;
+    staging_commit_bind = commit_bind;
+    staging_commit_prepare_signal = prepare_signal;
+    staging_commit_transaction = commit_transaction;
+    staging_commit_timer_refresh = commit_timer_refresh;
+    staging_commit_signal = commit_signal;
+    staging_commit_advance_snapshot = advance_snapshot;
+  }
+
 let commit_staging t staging context =
   Eta_signal_graph_state.commit_staging t.state staging
     {

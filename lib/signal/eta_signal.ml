@@ -1403,17 +1403,15 @@ module Make (Observer_error : Observer_error) () = struct
       }
 
   let commit_staging lane staging =
-    Graph.commit_staging graph staging
-      {
-        Graph.staging_commit_preflight =
-          (fun () -> preflight_commit_staging lane);
-        staging_commit_bind = commit_bind lane;
-        staging_commit_prepare_signal = prepare_signal_commit;
-        staging_commit_transaction = commit_transaction;
-        staging_commit_timer_refresh = commit_timer_refresh_staging;
-        staging_commit_signal = commit_signal;
-        staging_commit_advance_snapshot = saturating_succ;
-      }
+    let context =
+      Graph.staging_commit_context
+        ~preflight:(fun () -> preflight_commit_staging lane)
+        ~commit_bind:(commit_bind lane)
+        ~prepare_signal:prepare_signal_commit ~commit_transaction
+        ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
+        ~advance_snapshot:saturating_succ
+    in
+    Graph.commit_staging graph staging context
 
   let requeue_if_needed (_lane : graph_lane) (V var as packed) =
     if not var.queued then (
