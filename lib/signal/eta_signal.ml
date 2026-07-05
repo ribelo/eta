@@ -1373,7 +1373,7 @@ module Make (Observer_error : Observer_error) () = struct
       List.iter (mark_self_dirty lane) (source_watchers_unlocked var))
 
   let refresh_timer_source_for_compute lane signal =
-    Graph.with_timer_refresh_timer graph signal.timer
+    Graph.with_timer_refresh_timer graph lane signal.timer
       ~none:(fun () -> ())
       ~some:(fun timer_refresh timer ->
         match

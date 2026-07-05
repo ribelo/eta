@@ -488,6 +488,7 @@ val remember_timer_refresh_timer :
 
 val with_timer_refresh_timer :
   (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
+  lane_access ->
   'timer option ->
   none:(unit -> 'a) ->
   some:('refresh -> 'timer -> 'a) ->

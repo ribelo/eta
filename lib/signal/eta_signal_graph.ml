@@ -643,7 +643,7 @@ let remember_timer_refresh_timer t _lane timer ~refresh_token ~staged_token
           (Eta_signal_graph_state.require_staging t.state)
           timer)
 
-let with_timer_refresh_timer t timer ~none ~some =
+let with_timer_refresh_timer t _lane timer ~none ~some =
   match (Eta_signal_graph_state.active_timer_refresh t.state, timer) with
   | Some refresh, Some timer -> some refresh timer
   | None, _ | Some _, None -> none ()
