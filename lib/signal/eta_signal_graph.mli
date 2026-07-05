@@ -655,13 +655,15 @@ val create_stabilization_finish : unit -> 'owner stabilization_finish
 
 val record_stabilization_result :
   'owner stabilization_finish ->
+  lane_access ->
   ('owner, 'hook, 'event, Eta_signal_error.graph_error)
   Eta_signal_stabilization_pass.result ->
   'hook list
 (** Remember the delivering token from a pure pass result and return the
-    cleanup hooks carried by that result. The graph owns the delivering-token
-    bookkeeping so callers do not need to inspect successful stabilization
-    results just to finish the graph phase later. *)
+    cleanup hooks carried by that result. The lane capability makes
+    delivering-token bookkeeping part of graph mutation, so callers do not
+    need to inspect successful stabilization results just to finish the graph
+    phase later. *)
 
 val stabilization_finish_pending : 'owner stabilization_finish -> bool
 
@@ -678,6 +680,7 @@ val finish_recorded_stabilization :
     'scope_context,
     'stream_metrics )
   t ->
+  lane_access ->
   ( ( 'pending,
       'bind,
       'node,

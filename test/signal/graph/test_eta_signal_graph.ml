@@ -557,12 +557,16 @@ let test_generation_owned_by_graph () =
   Alcotest.(check int) "initial generation" 0 (Graph.generation graph);
   let finish = Graph.create_stabilization_finish () in
   let result = run_empty_stabilization graph in
-  let hooks = Graph.record_stabilization_result finish result in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
   Pass.result result
     ~pure_ok:(fun ~hooks:_ ~events ~delivering_token:_ ->
       Alcotest.(check (list string)) "hooks" [] hooks;
       Alcotest.(check (list string)) "events" [] events;
-      Graph.finish_recorded_stabilization graph finish)
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane finish))
     ~graph_error:(fun ~hooks:_ err ->
       Alcotest.failf "unexpected graph error: %s"
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
@@ -686,7 +690,10 @@ let test_stage_bind_switch_owns_transaction_staging () =
              ~classify_graph_error:(fun _ -> None)
              ~pure ~rollback))
   in
-  let hooks = Graph.record_stabilization_result finish result in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
   Pass.result result
     ~pure_ok:(fun ~hooks:_ ~events ~delivering_token:_ ->
       Alcotest.(check (list string)) "hooks" [] hooks;
@@ -696,7 +703,8 @@ let test_stage_bind_switch_owns_transaction_staging () =
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
     ~defect:(fun ~hooks:_ exn _backtrace ->
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
-  Graph.finish_recorded_stabilization graph finish;
+  with_graph_lane graph (fun lane ->
+      Graph.finish_recorded_stabilization graph lane finish);
   Alcotest.(check (list string))
     "commit events" [ "preflight"; "commit_bind:bind"; "update_necessity" ]
     !events;
@@ -811,7 +819,8 @@ let test_observer_delivery_plan_uses_collection_order () =
              ~pure ~rollback))
   in
   let hooks =
-    Graph.record_stabilization_result stabilization_finish result
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result stabilization_finish lane result)
   in
   Pass.result result
     ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
@@ -839,7 +848,9 @@ let test_observer_delivery_plan_uses_collection_order () =
           "update_necessity";
         ]
         !events;
-      Graph.finish_recorded_stabilization graph stabilization_finish)
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane
+            stabilization_finish))
     ~graph_error:(fun ~hooks:_ err ->
       Alcotest.failf "unexpected graph error: %s"
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))

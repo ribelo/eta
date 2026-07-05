@@ -1914,14 +1914,16 @@ module Make (Observer_error : Observer_error) () = struct
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       stabilization_finish =
     let result = begin_stabilize lane timer_refresh in
-    let hooks = Graph.record_stabilization_result stabilization_finish result in
+    let hooks =
+      Graph.record_stabilization_result stabilization_finish lane result
+    in
     hooks_ref := hooks;
     result
 
   let finish_recorded_stabilize stabilization_finish =
     if Graph.stabilization_finish_pending stabilization_finish then
-      with_graph_lane_access (fun _lane ->
-          Graph.finish_recorded_stabilization graph stabilization_finish)
+      with_graph_lane_access (fun lane ->
+          Graph.finish_recorded_stabilization graph lane stabilization_finish)
     else Effect.unit
 
   let stabilization_delivery_ops hooks_ref refresh_timers stabilization_finish =

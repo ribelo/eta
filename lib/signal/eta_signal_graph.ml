@@ -825,7 +825,7 @@ type 'owner stabilization_finish = {
 
 let create_stabilization_finish () = { delivering_token = None }
 
-let record_stabilization_result finish result =
+let record_stabilization_result finish _lane result =
   Eta_signal_stabilization_pass.result result
     ~pure_ok:(fun ~hooks ~events:_ ~delivering_token ->
       finish.delivering_token <- Some delivering_token;
@@ -836,7 +836,7 @@ let record_stabilization_result finish result =
 let stabilization_finish_pending finish =
   Option.is_some finish.delivering_token
 
-let finish_recorded_stabilization t finish =
+let finish_recorded_stabilization t _lane finish =
   match finish.delivering_token with
   | None -> ()
   | Some delivering_token ->
