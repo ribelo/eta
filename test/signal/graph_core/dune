@@ -67,4 +67,4 @@
   eta_signal_error
   eta_signal_id
   eta_signal_lane)
- (libraries eta eta_eio alcotest eio_main))
+ (libraries eta alcotest))

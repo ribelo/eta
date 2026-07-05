@@ -2130,10 +2130,12 @@ module Make (Observer_error : Observer_error) () = struct
                    pending ->
                 let _lane = pure_lane context in
                 List.iter (fun (V var) -> var.queued <- false) pending);
-            active_observers =
-              (fun (context : graph_lane Stabilization_pass.pure_context) ->
-                let _lane = pure_lane context in
-                Graph.observers graph |> List.filter observer_active);
+            observer_plan =
+              (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+                Graph.observer_delivery_plan graph ~active:observer_active
+                  ~compare:compare_observer_graph_order
+                  ~collect_event:collect_observer_event
+                  ~mark_pending:Observer_core.Delivery_event.mark_pending);
             stage_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
@@ -2144,28 +2146,11 @@ module Make (Observer_error : Observer_error) () = struct
                    observers ->
                 let lane = pure_lane context in
                 plan_staged_bind_switches lane observers);
-            sort_delivery_observers =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   observers ->
-                let _lane = pure_lane context in
-                List.sort compare_observer_graph_order observers);
-            collect_events =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   observers ->
-                let lane = pure_lane context in
-                List.filter_map (collect_observer_event lane) observers);
             commit_staging =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    staging ->
                 let lane = pure_lane context in
                 commit_staging lane staging);
-            mark_events_pending =
-              (fun (context : graph_lane Stabilization_pass.pure_context)
-                   events ->
-                let lane = pure_lane context in
-                List.iter
-                  (Observer_core.Delivery_event.mark_pending lane)
-                  events);
             update_necessity =
               (fun (context : graph_lane Stabilization_pass.pure_context) ->
                 let lane = pure_lane context in

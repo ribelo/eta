@@ -20,19 +20,27 @@ let pure_capability (Pure_context capability) = capability
 let rollback_capability (Rollback_context capability) = capability
 let timer_refresh_capability (Timer_refresh_context capability) = capability
 
+type ('capability, 'observer, 'event) observer_plan = {
+  observers : 'observer list;
+  collect_events :
+    'capability pure_context -> 'observer list -> 'event list;
+  mark_events_pending : 'capability pure_context -> 'event list -> unit;
+}
+
+let observer_plan ~observers ~collect_events ~mark_events_pending =
+  { observers; collect_events; mark_events_pending }
+
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
   advance_generation : 'capability pure_context -> unit;
   begin_staging : 'capability pure_context -> 'staging;
   drain_pending : 'capability pure_context -> 'pending list;
   release_pending_marks : 'capability pure_context -> 'pending list -> unit;
-  active_observers : 'capability pure_context -> 'observer list;
+  observer_plan :
+    'capability pure_context ->
+    ('capability, 'observer, 'event) observer_plan;
   stage_pending : 'capability pure_context -> 'pending list -> unit;
   plan_staged_binds : 'capability pure_context -> 'observer list -> unit;
-  sort_delivery_observers :
-    'capability pure_context -> 'observer list -> 'observer list;
-  collect_events : 'capability pure_context -> 'observer list -> 'event list;
   commit_staging : 'capability pure_context -> 'staging -> 'hook list;
-  mark_events_pending : 'capability pure_context -> 'event list -> unit;
   update_necessity : 'capability pure_context -> unit;
 }
 
@@ -109,19 +117,17 @@ let run state capability ops =
         let pending_value = ops.pure.drain_pending pure_context in
         pending := pending_value;
         ops.pure.release_pending_marks pure_context pending_value;
-        let observers_value = ops.pure.active_observers pure_context in
+        let observer_plan = ops.pure.observer_plan pure_context in
+        let observers_value = observer_plan.observers in
         observers := observers_value;
         let staging = staging_value in
         let pending = pending_value in
         let observers = observers_value in
         ops.pure.stage_pending pure_context pending;
         ops.pure.plan_staged_binds pure_context observers;
-        let delivery_observers =
-          ops.pure.sort_delivery_observers pure_context observers
-        in
-        let events = ops.pure.collect_events pure_context delivery_observers in
+        let events = observer_plan.collect_events pure_context observers in
         let hooks = ops.pure.commit_staging pure_context staging in
-        ops.pure.mark_events_pending pure_context events;
+        observer_plan.mark_events_pending pure_context events;
         ops.pure.update_necessity pure_context;
         ops.timer_refresh.clear_active_timer_refresh timer_refresh_context;
         let delivering_token =

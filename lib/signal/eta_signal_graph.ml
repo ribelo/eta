@@ -60,6 +60,23 @@ let observers t = t.observers
 let add_observer t observer = t.observers <- observer :: t.observers
 let update_observers t f = t.observers <- f t.observers
 
+let observer_delivery_plan t ~active ~compare ~collect_event ~mark_pending =
+  let observers = List.filter active t.observers in
+  Eta_signal_stabilization_pass.observer_plan ~observers
+    ~collect_events:
+      (fun context observers ->
+        let capability =
+          Eta_signal_stabilization_pass.pure_capability context
+        in
+        observers |> List.sort compare
+        |> List.filter_map (collect_event capability))
+    ~mark_events_pending:
+      (fun context events ->
+        let capability =
+          Eta_signal_stabilization_pass.pure_capability context
+        in
+        List.iter (mark_pending capability) events)
+
 let collect_nodes t collect =
   let cells, nodes = collect t.all_nodes in
   t.all_nodes <- cells;

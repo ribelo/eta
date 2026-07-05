@@ -101,6 +101,16 @@ val update_observers :
   ('observer list -> 'observer list) ->
   unit
 
+val observer_delivery_plan :
+  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  active:('observer -> bool) ->
+  compare:('observer -> 'observer -> int) ->
+  collect_event:('capability -> 'observer -> 'event option) ->
+  mark_pending:('capability -> 'event -> unit) ->
+  ('capability, 'observer, 'event) Eta_signal_stabilization_pass.observer_plan
+(** Capture active observers and defer graph-ordered delivery event planning
+    until the stabilization pass reaches the event collection phase. *)
+
 val collect_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   ('weak_node list -> 'weak_node list * 'node list) ->

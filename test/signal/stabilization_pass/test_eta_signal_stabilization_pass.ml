@@ -49,10 +49,9 @@ type failure_slot =
   | Begin_staging
   | Drain_pending
   | Release_pending_marks
-  | Active_observers
+  | Observer_plan
   | Stage_pending
   | Plan_staged_binds
-  | Sort_delivery_observers
   | Collect_events
   | Commit_staging
 
@@ -65,10 +64,9 @@ let failure_slot_name = function
   | Begin_staging -> "begin_staging"
   | Drain_pending -> "drain_pending"
   | Release_pending_marks -> "release_pending_marks"
-  | Active_observers -> "active_observers"
+  | Observer_plan -> "observer_plan"
   | Stage_pending -> "stage_pending"
   | Plan_staged_binds -> "plan_staged_binds"
-  | Sort_delivery_observers -> "sort_delivery_observers"
   | Collect_events -> "collect_events"
   | Commit_staging -> "commit_staging"
 
@@ -77,12 +75,11 @@ let failure_slot_rank = function
   | Begin_staging -> 1
   | Drain_pending -> 2
   | Release_pending_marks -> 3
-  | Active_observers -> 4
+  | Observer_plan -> 4
   | Stage_pending -> 5
   | Plan_staged_binds -> 6
-  | Sort_delivery_observers -> 7
-  | Collect_events -> 8
-  | Commit_staging -> 9
+  | Collect_events -> 7
+  | Commit_staging -> 8
 
 let failure_slots =
   [
@@ -90,10 +87,9 @@ let failure_slots =
     Begin_staging;
     Drain_pending;
     Release_pending_marks;
-    Active_observers;
+    Observer_plan;
     Stage_pending;
     Plan_staged_binds;
-    Sort_delivery_observers;
     Collect_events;
     Commit_staging;
   ]
@@ -103,10 +99,9 @@ let pure_event = function
   | Begin_staging -> "begin_staging"
   | Drain_pending -> "drain_pending"
   | Release_pending_marks -> "release_pending_marks:pending"
-  | Active_observers -> "active_observers"
+  | Observer_plan -> "observer_plan"
   | Stage_pending -> "stage_pending:pending"
   | Plan_staged_binds -> "plan_staged_binds:observer"
-  | Sort_delivery_observers -> "sort_delivery_observers:observer"
   | Collect_events -> "collect_events:observer"
   | Commit_staging -> "commit_staging"
 
@@ -126,15 +121,14 @@ let rollback_events slot =
         "requeue_pending:";
         "clear_timer_refresh";
       ]
-  | Release_pending_marks | Active_observers ->
+  | Release_pending_marks | Observer_plan ->
       [
         "rollback_staging";
         "mark_observers_failed_without_current:";
         "requeue_pending:pending";
         "clear_timer_refresh";
       ]
-  | Stage_pending | Plan_staged_binds | Sort_delivery_observers
-  | Collect_events | Commit_staging ->
+  | Stage_pending | Plan_staged_binds | Collect_events | Commit_staging ->
       [
         "rollback_staging";
         "mark_observers_failed_without_current:observer";
@@ -146,9 +140,8 @@ let expected_failure_events slot = events_through_slot slot @ rollback_events sl
 
 let expected_failure_hooks = function
   | Advance_generation | Begin_staging -> []
-  | Drain_pending | Release_pending_marks | Active_observers | Stage_pending
-  | Plan_staged_binds | Sort_delivery_observers | Collect_events
-  | Commit_staging ->
+  | Drain_pending | Release_pending_marks | Observer_plan | Stage_pending
+  | Plan_staged_binds | Collect_events | Commit_staging ->
       [ "rollback-hook" ]
 
 let maybe_fail fail_at failure_kind slot =
@@ -199,12 +192,23 @@ let ops ?(stage_pending = fun _ -> ())
             record events
               ("release_pending_marks:" ^ String.concat "," pending);
             maybe_fail fail_at failure_kind Release_pending_marks);
-        active_observers =
+        observer_plan =
           (fun context ->
             check_pure_context context;
-            record events "active_observers";
-            maybe_fail fail_at failure_kind Active_observers;
-            [ "observer" ]);
+            record events "observer_plan";
+            maybe_fail fail_at failure_kind Observer_plan;
+            Pass.observer_plan ~observers:[ "observer" ]
+              ~collect_events:(fun context observers ->
+                check_pure_context context;
+                record events
+                  ("collect_events:" ^ String.concat "," observers);
+                maybe_fail fail_at failure_kind Collect_events;
+                [ "event" ])
+              ~mark_events_pending:(fun context events_to_mark ->
+                check_pure_context context;
+                record events
+                  ("mark_events_pending:" ^ String.concat ","
+                     events_to_mark)));
         stage_pending =
           (fun context pending ->
             check_pure_context context;
@@ -216,19 +220,6 @@ let ops ?(stage_pending = fun _ -> ())
             check_pure_context context;
             record events ("plan_staged_binds:" ^ String.concat "," observers);
             maybe_fail fail_at failure_kind Plan_staged_binds);
-        sort_delivery_observers =
-          (fun context observers ->
-            check_pure_context context;
-            record events
-              ("sort_delivery_observers:" ^ String.concat "," observers);
-            maybe_fail fail_at failure_kind Sort_delivery_observers;
-            observers);
-        collect_events =
-          (fun context observers ->
-            check_pure_context context;
-            record events ("collect_events:" ^ String.concat "," observers);
-            maybe_fail fail_at failure_kind Collect_events;
-            [ "event" ]);
         commit_staging =
           (fun context staging ->
             check_pure_context context;
@@ -240,11 +231,6 @@ let ops ?(stage_pending = fun _ -> ())
             | Ok () -> ()
             | Error _ -> Alcotest.fail "unexpected transaction commit failure");
             hooks);
-        mark_events_pending =
-          (fun context events_to_mark ->
-            check_pure_context context;
-            record events
-              ("mark_events_pending:" ^ String.concat "," events_to_mark));
         update_necessity =
           (fun context ->
             check_pure_context context;
@@ -291,10 +277,9 @@ let test_success_runs_pure_pass_in_order () =
           "begin_staging";
           "drain_pending";
           "release_pending_marks:pending";
-          "active_observers";
+          "observer_plan";
           "stage_pending:pending";
           "plan_staged_binds:observer";
-          "sort_delivery_observers:observer";
           "collect_events:observer";
           "commit_staging";
           "mark_events_pending:event";
@@ -327,7 +312,7 @@ let test_graph_error_rolls_back_in_order () =
           "begin_staging";
           "drain_pending";
           "release_pending_marks:pending";
-          "active_observers";
+          "observer_plan";
           "stage_pending:pending";
           "rollback_staging";
           "mark_observers_failed_without_current:observer";
@@ -362,10 +347,9 @@ let test_defect_rolls_back_in_order () =
           "begin_staging";
           "drain_pending";
           "release_pending_marks:pending";
-          "active_observers";
+          "observer_plan";
           "stage_pending:pending";
           "plan_staged_binds:observer";
-          "sort_delivery_observers:observer";
           "collect_events:observer";
           "commit_staging";
           "rollback_staging";

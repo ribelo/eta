@@ -1,6 +1,89 @@
 module Core = Eta_signal_graph_core
 module Id = Eta_signal_id
 
+module Direct_runtime = struct
+  type scope = unit
+  type cancel_context = unit
+  type 'a promise = 'a option ref
+  type 'a resolver = 'a option ref
+  type 'a stream = 'a Stdlib.Queue.t
+
+  let root_scope = ()
+  let now_ms () = 0
+  let sleep _duration = ()
+  let protect f = f ()
+  let run_scope ?name:_ f = f ()
+  let fail_scope ?bt:_ () exn = raise exn
+  let fork () f = f ()
+  let fork_daemon () f = ignore (f () : [ `Stop_daemon ])
+  let await_cancel () = failwith "Direct_runtime.await_cancel"
+  let yield () = ()
+  let check () = ()
+
+  let create_promise () =
+    let cell = ref None in
+    (cell, cell)
+
+  let resolve_promise resolver value =
+    match !resolver with
+    | Some _ -> invalid_arg "Direct_runtime.resolve_promise: already resolved"
+    | None -> resolver := Some value
+
+  let await_promise promise =
+    match !promise with
+    | Some value -> value
+    | None -> failwith "Direct_runtime.await_promise: unresolved"
+
+  let create_stream _capacity = Stdlib.Queue.create ()
+  let stream_add stream value = Stdlib.Queue.add value stream
+
+  let stream_take stream =
+    if Stdlib.Queue.is_empty stream then
+      failwith "Direct_runtime.stream_take: empty"
+    else Stdlib.Queue.take stream
+
+  let stream_take_nonblocking stream =
+    if Stdlib.Queue.is_empty stream then None else Some (Stdlib.Queue.take stream)
+
+  let with_worker_context f = f ()
+  let in_worker_context () = false
+  let cancellation_reason _ = None
+  let multiple_exceptions _ = None
+  let cancel_sub f = f ()
+  let cancel () exn = raise exn
+  let current_fiber_id () = 0
+  let with_fiber_identity f = f ()
+
+  let locals : (int, Eta.Runtime_contract.local_binding list) Hashtbl.t =
+    Hashtbl.create 8
+
+  let local_get local =
+    match
+      Hashtbl.find_opt locals
+        (Eta.Runtime_contract.Backend.local_id local)
+    with
+    | None -> None
+    | Some bindings ->
+        List.find_map
+          (Eta.Runtime_contract.Backend.local_binding_value local)
+          bindings
+
+  let local_with_binding local value f =
+    let id = Eta.Runtime_contract.Backend.local_id local in
+    let previous = Hashtbl.find_opt locals id in
+    let stack = Option.value previous ~default:[] in
+    Hashtbl.replace locals id
+      (Eta.Runtime_contract.Local_binding (local, value) :: stack);
+    Fun.protect
+      ~finally:(fun () ->
+        match previous with
+        | Some stack -> Hashtbl.replace locals id stack
+        | None -> Hashtbl.remove locals id)
+      f
+end
+
+module Direct = Eta.Runtime.Make (Direct_runtime)
+
 let ok = function
   | Ok value -> value
   | Error (`Counter_overflow name) ->
@@ -19,20 +102,17 @@ let signal_set ids =
   table
 
 let with_lane core f =
+  let runtime = Direct.create () in
   match
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    let runtime =
-      Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
-    in
-    Eta.Runtime.run runtime
-      (Core.with_lane_access core ~leaf_name:"test_eta_signal_graph_core"
+    Direct.run runtime
+      (Core.with_lane_access core
+         ~leaf_name:"test_eta_signal_graph_core"
          ~depth_local:(Eta.Runtime_contract.create_local ())
          ~hooks:
            {
              Core.note_waiter_enqueued = ignore;
              note_waiter_compaction = ignore;
-         }
+           }
          ~after_acquired:(fun () -> Eta.Effect.unit)
          f)
   with

@@ -22,19 +22,30 @@ val pure_capability : 'capability pure_context -> 'capability
 val rollback_capability : 'capability rollback_context -> 'capability
 val timer_refresh_capability : 'capability timer_refresh_context -> 'capability
 
+type ('capability, 'observer, 'event) observer_plan
+
+val observer_plan :
+  observers:'observer list ->
+  collect_events:
+    ('capability pure_context -> 'observer list -> 'event list) ->
+  mark_events_pending:('capability pure_context -> 'event list -> unit) ->
+  ('capability, 'observer, 'event) observer_plan
+(** Observer delivery plan for a pure pass. The pass owns when the active
+    observer snapshot is captured, when events are collected, and when pending
+    delivery state is marked; graph code owns how those steps traverse its
+    registry. *)
+
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
   advance_generation : 'capability pure_context -> unit;
   begin_staging : 'capability pure_context -> 'staging;
   drain_pending : 'capability pure_context -> 'pending list;
   release_pending_marks : 'capability pure_context -> 'pending list -> unit;
-  active_observers : 'capability pure_context -> 'observer list;
+  observer_plan :
+    'capability pure_context ->
+    ('capability, 'observer, 'event) observer_plan;
   stage_pending : 'capability pure_context -> 'pending list -> unit;
   plan_staged_binds : 'capability pure_context -> 'observer list -> unit;
-  sort_delivery_observers :
-    'capability pure_context -> 'observer list -> 'observer list;
-  collect_events : 'capability pure_context -> 'observer list -> 'event list;
   commit_staging : 'capability pure_context -> 'staging -> 'hook list;
-  mark_events_pending : 'capability pure_context -> 'event list -> unit;
   update_necessity : 'capability pure_context -> unit;
 }
 
