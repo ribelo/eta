@@ -331,35 +331,37 @@ module Delivery_runner = struct
     }
 
   let run_claimed ops event =
-    let open Eta in
+    let open Eta.Syntax in
     let delivered = ref false in
-    (ops.after_claim ()
-    |> Effect.bind (fun () -> ops.construct event)
-    |> Effect.bind (function
-         | None -> Effect.unit
-         | Some callback ->
-             ops.run_callback event callback
-             |> Effect.bind (fun () ->
-                    Effect.sync (fun () -> delivered := true))
-             |> Effect.bind (fun () -> ops.acknowledge event)))
-    |> Effect.on_exit (function
-         | Exit.Ok _ -> Effect.unit
-         | Exit.Error _ -> ops.finish_error event ~delivered:!delivered)
+    let delivery =
+      let* () = ops.after_claim () in
+      let* callback = ops.construct event in
+      match callback with
+      | None -> Eta.Effect.unit
+      | Some callback ->
+          let* () = ops.run_callback event callback in
+          let* () = Eta.Effect.sync (fun () -> delivered := true) in
+          ops.acknowledge event
+    in
+    Eta.Effect.on_exit
+      (function
+        | Eta.Exit.Ok _ -> Eta.Effect.unit
+        | Eta.Exit.Error _ ->
+            ops.finish_error event ~delivered:!delivered)
+      delivery
 
   let rec run ops = function
     | [] -> Eta.Effect.unit
     | event :: rest ->
-        let open Eta in
-        ops.active event
-        |> Effect.bind (function
-             | false -> run ops rest
-             | true -> (
-                 ops.claim event
-                 |> Effect.bind (function
-                      | false -> run ops rest
-                      | true ->
-                          run_claimed ops event
-                          |> Effect.bind (fun () -> run ops rest))))
+        let open Eta.Syntax in
+        let* active = ops.active event in
+        if not active then run ops rest
+        else
+          let* claimed = ops.claim event in
+          if not claimed then run ops rest
+          else
+            let* () = run_claimed ops event in
+            run ops rest
 end
 
 module Delivery_event = struct

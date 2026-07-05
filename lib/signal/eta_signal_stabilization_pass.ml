@@ -187,13 +187,14 @@ let run state capability ops =
         | None -> Pure_defect (hooks, exn, backtrace))
 
 let finish_delivery ops =
-  let open Eta in
   ops.run_pending_cleanup ()
-  |> Effect.on_exit (fun _exit -> ops.finish ())
+  |> Eta.Effect.on_exit (fun _exit -> ops.finish ())
 
 let deliver ops events =
-  let open Eta in
-  (ops.run_pending_cleanup ()
-  |> Effect.bind (fun () -> ops.run_events events)
-  |> Effect.bind ops.mark_complete)
-  |> Effect.on_exit (fun _exit -> finish_delivery ops)
+  let open Eta.Syntax in
+  let delivery =
+    let* () = ops.run_pending_cleanup () in
+    let* () = ops.run_events events in
+    ops.mark_complete ()
+  in
+  Eta.Effect.on_exit (fun _exit -> finish_delivery ops) delivery
