@@ -1560,9 +1560,12 @@ module Make (Observer_error : Observer_error) () = struct
         ~initialized:(Signal_snapshot.is_initialized snapshot)
         ~current:(Signal_snapshot.value snapshot) ~next
     in
-    let stage_value value =
+    let prepare_value value =
       Graph.bump_counter graph lane Graph.Recompute_count;
       let changed = value_changed value in
+      (value, changed)
+    in
+    let finish_value (value, changed) =
       if changed then stage_signal signal value;
       ((if changed then value else current_or_raise signal), changed)
     in
@@ -1570,18 +1573,13 @@ module Make (Observer_error : Observer_error) () = struct
         (source, value signal, scope, packed_signal, value) Bind.dynamic_plan ->
         value * bool =
      fun plan ->
-      Bind.dynamic_plan_result plan
-        ~switch:(fun ~source_value ~inner ~scope ~dependencies ~value ->
-          Graph.bump_counter graph lane Graph.Recompute_count;
-          let changed = value_changed value in
-          stage_bind_switch bind source_value inner scope;
-          stage_dependency_versions signal dependencies;
-          if changed then stage_signal signal value;
-          ((if changed then value else current_or_raise signal), changed))
-        ~reuse_recompute:(fun ~dependencies ~value ->
-          stage_dependency_versions signal dependencies;
-          stage_value value)
-        ~reuse_cached:(fun () -> (current_or_raise signal, false))
+      Bind.apply_dynamic_plan
+        (Bind.dynamic_apply_context ~prepare_value ~finish_value
+           ~stage_switch:(fun ~source_value ~inner ~scope ->
+             stage_bind_switch bind source_value inner scope)
+           ~stage_dependencies:(stage_dependency_versions signal)
+           ~use_cached:(fun () -> (current_or_raise signal, false)))
+        plan
     in
     match
       Bind.plan_dynamic

@@ -4,6 +4,9 @@ type ('source, 'inner, 'scope) snapshot
 
 type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan
 
+type ('source, 'inner, 'scope, 'dependency, 'value, 'prepared, 'result)
+     dynamic_apply_context
+
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context
   constraint 'error = [> `Invalid_scope ]
@@ -51,17 +54,20 @@ val plan_dynamic :
   source_changed:bool ->
   (('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan, 'error) result
 
-val dynamic_plan_result :
+val dynamic_apply_context :
+  prepare_value:('value -> 'prepared) ->
+  finish_value:('prepared -> 'result) ->
+  stage_switch:
+    (source_value:'source -> inner:'inner -> scope:'scope -> unit) ->
+  stage_dependencies:('dependency list -> unit) ->
+  use_cached:(unit -> 'result) ->
+  ('source, 'inner, 'scope, 'dependency, 'value, 'prepared, 'result)
+  dynamic_apply_context
+
+val apply_dynamic_plan :
+  ('source, 'inner, 'scope, 'dependency, 'value, 'prepared, 'result)
+  dynamic_apply_context ->
   ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan ->
-  switch:
-    (source_value:'source ->
-    inner:'inner ->
-    scope:'scope ->
-    dependencies:'dependency list ->
-    value:'value ->
-    'result) ->
-  reuse_cached:(unit -> 'result) ->
-  reuse_recompute:(dependencies:'dependency list -> value:'value -> 'result) ->
   'result
 
 val stage_transaction_switch :

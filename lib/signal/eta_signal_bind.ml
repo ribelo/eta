@@ -54,6 +54,16 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   eval_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
+type ('source, 'inner, 'scope, 'dependency, 'value, 'prepared, 'result)
+     dynamic_apply_context = {
+  apply_prepare_value : 'value -> 'prepared;
+  apply_finish_value : 'prepared -> 'result;
+  apply_stage_switch :
+    source_value:'source -> inner:'inner -> scope:'scope -> unit;
+  apply_stage_dependencies : 'dependency list -> unit;
+  apply_use_cached : unit -> 'result;
+}
+
 let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
     ~selector ~with_scope ~validate_inner ~compute_inner ~on_switch_failure
     ~dirty ~initialized ~dependencies_changed =
@@ -70,6 +80,16 @@ let dynamic_eval_context ~equal ~source_dependency ~pack_inner ~new_scope
     eval_dirty = dirty;
     eval_initialized = initialized;
     eval_dependencies_changed = dependencies_changed;
+  }
+
+let dynamic_apply_context ~prepare_value ~finish_value ~stage_switch
+    ~stage_dependencies ~use_cached =
+  {
+    apply_prepare_value = prepare_value;
+    apply_finish_value = finish_value;
+    apply_stage_switch = stage_switch;
+    apply_stage_dependencies = stage_dependencies;
+    apply_use_cached = use_cached;
   }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -186,7 +206,10 @@ let plan_dynamic eval_context capability snapshot ~source_value ~source_changed 
     ~initialized:eval_context.eval_initialized
     ~dependencies_changed:eval_context.eval_dependencies_changed
 
-let dynamic_plan_result plan ~switch ~reuse_cached ~reuse_recompute =
+let finish_prepared_value context value =
+  context.apply_finish_value (context.apply_prepare_value value)
+
+let apply_dynamic_plan context plan =
   match plan with
   | Dynamic_switch
       {
@@ -196,14 +219,16 @@ let dynamic_plan_result plan ~switch ~reuse_cached ~reuse_recompute =
         dynamic_switch_dependencies;
         dynamic_switch_value;
       } ->
-      switch ~source_value:dynamic_source_value ~inner:dynamic_inner
-        ~scope:dynamic_scope ~dependencies:dynamic_switch_dependencies
-        ~value:dynamic_switch_value
-  | Dynamic_reuse_cached -> reuse_cached ()
+      let prepared = context.apply_prepare_value dynamic_switch_value in
+      context.apply_stage_switch ~source_value:dynamic_source_value
+        ~inner:dynamic_inner ~scope:dynamic_scope;
+      context.apply_stage_dependencies dynamic_switch_dependencies;
+      context.apply_finish_value prepared
+  | Dynamic_reuse_cached -> context.apply_use_cached ()
   | Dynamic_reuse_recompute
       { dynamic_reuse_dependencies; dynamic_reuse_value } ->
-      reuse_recompute ~dependencies:dynamic_reuse_dependencies
-        ~value:dynamic_reuse_value
+      context.apply_stage_dependencies dynamic_reuse_dependencies;
+      finish_prepared_value context dynamic_reuse_value
 
 let switch_parts snapshot =
   match (snapshot.source_value, snapshot.inner, snapshot.inner_scope) with
