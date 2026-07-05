@@ -401,7 +401,7 @@ let compute_cached t lane ops node ~current ~cycle ~compute =
       ~cycle:(fun () -> cycle compute_node)
       ~compute:(fun () -> compute compute_node)
 
-let version_snapshot _t ops nodes =
+let version_snapshot _t _lane ops nodes =
   List.map (fun node -> (ops.version_id node, ops.version node)) nodes
 
 let rec same_version_snapshot ops left right =
@@ -414,8 +414,9 @@ let rec same_version_snapshot ops left right =
       && same_version_snapshot ops left_rest right_rest
   | [], _ :: _ | _ :: _, [] -> false
 
-let versions_changed t ops ~current nodes =
-  not (same_version_snapshot ops current (version_snapshot t ops nodes))
+let versions_changed t lane ops ~current nodes =
+  not
+    (same_version_snapshot ops current (version_snapshot t lane ops nodes))
 
 let same_order_node ops left right =
   ops.order_equal_id (ops.order_id left) (ops.order_id right)

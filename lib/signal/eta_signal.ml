@@ -776,11 +776,11 @@ module Make (Observer_error : Observer_error) () = struct
           ~advance_version:(checked_succ "signal version")
           ~current snapshot value)
 
-  let dependency_versions dependencies =
-    Graph.version_snapshot graph version_ops dependencies
+  let dependency_versions lane dependencies =
+    Graph.version_snapshot graph lane version_ops dependencies
 
-  let dependencies_changed signal dependencies =
-    Graph.versions_changed graph version_ops
+  let dependencies_changed lane signal dependencies =
+    Graph.versions_changed graph lane version_ops
       ~current:
         (Signal_snapshot.dependency_versions
            (signal_current_snapshot signal))
@@ -789,7 +789,7 @@ module Make (Observer_error : Observer_error) () = struct
   let stage_dependency_versions lane signal dependencies =
     update_signal_staging lane signal (fun snapshot ->
         Signal_snapshot.with_dependency_versions snapshot
-          (dependency_versions dependencies))
+          (dependency_versions lane dependencies))
 
   let effective_signal_value signal =
     match Signal_snapshot.value (signal_effective_snapshot signal) with
@@ -1417,7 +1417,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let use_cached () = (current_or_raise signal, false) in
     let dependency_changed dependencies =
-      dependencies_changed signal dependencies
+      dependencies_changed lane signal dependencies
     in
     let recompute_with_dependencies dependencies value =
       stage_dependency_versions lane signal dependencies;
@@ -1556,8 +1556,8 @@ module Make (Observer_error : Observer_error) () = struct
         ~initialized:(fun () ->
           Signal_snapshot.is_initialized
             (signal_effective_snapshot signal))
-        ~dependencies_changed:(fun _lane dependencies ->
-          dependencies_changed signal dependencies)
+        ~dependencies_changed:(fun lane dependencies ->
+          dependencies_changed lane signal dependencies)
         ~current_value:(fun () ->
           Signal_snapshot.value (signal_effective_snapshot signal))
         ~cached_value:(fun () -> current_or_raise signal)

@@ -294,12 +294,14 @@ val compute_cached :
 
 val version_snapshot :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) version_ops ->
   'node list ->
   ('id * int) list
 
 val versions_changed :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
   ('id, 'node) version_ops ->
   current:('id * int) list ->
   'node list ->
