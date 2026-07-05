@@ -557,7 +557,6 @@ type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_ops
 
 val stabilization_ops :
-  reentrant_stabilization:Eta_signal_error.graph_error ->
   classify_graph_error:(exn -> Eta_signal_error.graph_error option) ->
   pure:
     ('capability, 'pending, 'observer, 'event, 'hook)

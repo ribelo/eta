@@ -745,7 +745,6 @@ let stabilization_rollback_ops ~rollback_staging
 type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_ops =
   {
-    reentrant_stabilization : Eta_signal_error.graph_error;
     classify_graph_error : exn -> Eta_signal_error.graph_error option;
     pure :
       ( 'capability,
@@ -758,15 +757,14 @@ type ('capability, 'pending, 'observer, 'event, 'hook)
       ('capability, 'pending, 'observer, 'hook) stabilization_rollback;
   }
 
-let stabilization_ops ~reentrant_stabilization ~classify_graph_error ~pure
-    ~rollback =
-  { reentrant_stabilization; classify_graph_error; pure; rollback }
+let stabilization_ops ~classify_graph_error ~pure ~rollback =
+  { classify_graph_error; pure; rollback }
 
 exception Graph_phase_error of Eta_signal_error.graph_error
 
 let pass_errors ops =
   Eta_signal_stabilization_pass.errors
-    ~reentrant_stabilization:ops.reentrant_stabilization
+    ~reentrant_stabilization:`Reentrant_stabilization
     ~classify_graph_error:(function
       | Graph_phase_error err -> Some err
       | exn -> ops.classify_graph_error exn)

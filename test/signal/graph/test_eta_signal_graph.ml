@@ -102,7 +102,6 @@ let empty_stabilization_ops graph =
       ~requeue_pending:(fun _context _pending -> ())
   in
   Graph.stabilization_ops
-    ~reentrant_stabilization:`Reentrant_stabilization
     ~classify_graph_error:(fun _ -> None)
     ~pure ~rollback
 
@@ -553,7 +552,6 @@ let test_stage_bind_switch_owns_transaction_staging () =
   let result =
     Graph.run_stabilization graph capability ~timer_refresh:None
       (Graph.stabilization_ops
-         ~reentrant_stabilization:`Reentrant_stabilization
          ~classify_graph_error:(fun _ -> None)
          ~pure ~rollback)
   in
@@ -679,7 +677,6 @@ let test_observer_delivery_plan_uses_collection_order () =
   let result =
     Graph.run_stabilization graph capability ~timer_refresh:None
       (Graph.stabilization_ops
-         ~reentrant_stabilization:`Reentrant_stabilization
          ~classify_graph_error:(fun _ -> None)
          ~pure ~rollback)
   in

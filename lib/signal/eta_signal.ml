@@ -1910,7 +1910,6 @@ module Make (Observer_error : Observer_error) () = struct
     in
     Graph.run_stabilization graph lane ~timer_refresh
       (Graph.stabilization_ops
-         ~reentrant_stabilization:`Reentrant_stabilization
          ~classify_graph_error:(function
            | Graph_error err -> Some err
            | _ -> None)
