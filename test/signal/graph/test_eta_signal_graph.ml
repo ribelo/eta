@@ -174,7 +174,7 @@ let empty_stabilization_ops graph =
       ~observer_plan
       ~stage_pending:(fun _context _pending -> ())
       ~plan_staged_binds:(fun _context _observers -> ())
-      ~commit_staging:(fun _context staging ->
+      ~commit_staging:(fun context staging ->
         let commit_context =
           Graph.staging_commit_context
             ~preflight:(fun () -> ())
@@ -183,7 +183,7 @@ let empty_stabilization_ops graph =
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in
-        match Graph.commit_staging graph staging commit_context with
+        match Graph.commit_staging graph context staging commit_context with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"
@@ -653,7 +653,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~observer_plan
       ~stage_pending:(fun context _pending -> stage_twice context)
       ~plan_staged_binds:(fun _context _observers -> ())
-      ~commit_staging:(fun _context staging ->
+      ~commit_staging:(fun context staging ->
         let commit_context =
           Graph.staging_commit_context
             ~preflight:(fun () -> record events "preflight")
@@ -664,7 +664,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in
-        match Graph.commit_staging graph staging commit_context with
+        match Graph.commit_staging graph context staging commit_context with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"
@@ -783,7 +783,7 @@ let test_observer_delivery_plan_uses_collection_order () =
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in
-        match Graph.commit_staging graph staging commit_context with
+        match Graph.commit_staging graph cap staging commit_context with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"

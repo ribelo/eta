@@ -1335,7 +1335,7 @@ module Make (Observer_error : Observer_error) () = struct
           Timer_policy.clear_refresh_dirty_items context)
         ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
     in
-    Graph.reset_staging graph staging context
+    Graph.reset_staging graph lane staging context
 
   let commit_staging lane staging =
     let context =
@@ -1345,7 +1345,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~prepare_signal:(prepare_signal_commit lane)
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
     in
-    match Graph.commit_staging graph staging context with
+    match Graph.commit_staging graph lane staging context with
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)
 

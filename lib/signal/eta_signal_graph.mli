@@ -374,6 +374,7 @@ val staging_reset_context :
 
 val reset_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
+  lane_access ->
   staging ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context ->
   'hook list
@@ -390,6 +391,7 @@ val staging_commit_context :
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
+  lane_access ->
   staging ->
   ('bind, 'node, 'hook, 'timer) staging_commit_context ->
   ('hook list, Eta_signal_error.graph_error) result

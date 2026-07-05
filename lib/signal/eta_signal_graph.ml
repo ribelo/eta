@@ -513,7 +513,7 @@ let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
     staging_reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
   }
 
-let reset_staging t staging context =
+let reset_staging t _lane staging context =
   let state_context =
     Eta_signal_graph_state.reset_context
       ~rollback_bind:context.staging_reset_rollback_bind
@@ -544,7 +544,7 @@ let staging_commit_context ~preflight ~commit_bind ~prepare_signal
     staging_commit_signal = commit_signal;
   }
 
-let commit_staging t staging context =
+let commit_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
   let state_context =
     Eta_signal_graph_state.commit_context
