@@ -452,17 +452,16 @@ let test_observer_delivery_plan_owns_sorted_collection () =
       observer_plan =
         (fun context ->
           check_cap (Pass.pure_capability context);
-          Graph.observer_delivery_plan graph
-            {
-              Graph.observer_active = (fun observer -> observer.active);
-              observer_compare =
-                (fun left right -> Int.compare left.id right.id);
-              observer_collect_event = collect_event;
-              observer_mark_pending =
-                (fun cap event ->
-                  check_cap cap;
-                  record events ("pending:" ^ event));
-            });
+          let delivery =
+            Graph.observer_delivery_context
+              ~active:(fun observer -> observer.active)
+              ~compare:(fun left right -> Int.compare left.id right.id)
+              ~collect_event
+              ~mark_pending:(fun cap event ->
+                check_cap cap;
+                record events ("pending:" ^ event))
+          in
+          Graph.observer_delivery_plan graph delivery);
       stage_pending =
         (fun context _pending ->
           check_cap (Pass.pure_capability context));

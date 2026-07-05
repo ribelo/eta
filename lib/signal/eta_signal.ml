@@ -2018,14 +2018,13 @@ module Make (Observer_error : Observer_error) () = struct
                 List.iter (fun (V var) -> var.queued <- false) pending);
             observer_plan =
               (fun (_context : graph_lane Stabilization_pass.pure_context) ->
-                Graph.observer_delivery_plan graph
-                  {
-                    Graph.observer_active;
-                    observer_compare = compare_observer_graph_order;
-                    observer_collect_event = collect_observer_event;
-                    observer_mark_pending =
-                      Observer_core.Delivery_event.mark_pending;
-                  });
+                let delivery =
+                  Graph.observer_delivery_context ~active:observer_active
+                    ~compare:compare_observer_graph_order
+                    ~collect_event:collect_observer_event
+                    ~mark_pending:Observer_core.Delivery_event.mark_pending
+                in
+                Graph.observer_delivery_plan graph delivery);
             stage_pending =
               (fun (context : graph_lane Stabilization_pass.pure_context)
                    pending ->
