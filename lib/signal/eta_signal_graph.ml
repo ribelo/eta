@@ -445,8 +445,6 @@ let reachable_ids t ops ~roots =
 let remember_staged_bind t bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
 
-let staged_binds t = Eta_signal_graph_state.staged_binds t.state
-
 let stage_bind_switch t bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
     (Eta_signal_stabilization.active_transaction t.stabilization)
@@ -475,10 +473,11 @@ let rollback_staged_bind_switch ~staged ~invalidate_new_scope =
   Eta_signal_bind.rollback_staged_switch ~staged ~invalidate_new_scope
   |> map_bind_switch_result
 
-let collect_staged_bind_switch_invalidations ~init ~switches
-    ~staged_switch ~collect_old_scope =
-  Eta_signal_bind.collect_staged_switch_invalidations ~init ~switches
-    ~staged_switch ~collect_old_scope
+let collect_staged_bind_switch_invalidations t ~init ~staged_switch
+    ~collect_old_scope =
+  Eta_signal_bind.collect_staged_switch_invalidations ~init
+    ~switches:(Eta_signal_graph_state.staged_binds t.state) ~staged_switch
+    ~collect_old_scope
   |> map_bind_switch_result
 
 let remember_pure_disposal_hooks t hooks =

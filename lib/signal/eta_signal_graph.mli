@@ -314,8 +314,6 @@ val reachable_ids :
   roots:'node list ->
   ('id, unit) Hashtbl.t
 
-val staged_binds : (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind list
-
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   'bind ->
@@ -345,10 +343,10 @@ val rollback_staged_bind_switch :
   ('hook list, Eta_signal_error.graph_error) result
 
 val collect_staged_bind_switch_invalidations :
+  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   init:'acc ->
-  switches:'switch list ->
   staged_switch:
-    ('switch -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->
+    ('bind -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->
   collect_old_scope:('acc -> owner:'owner -> 'scope -> 'acc) ->
   ('acc, Eta_signal_error.graph_error) result
 

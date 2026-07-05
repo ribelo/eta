@@ -1181,9 +1181,8 @@ module Make (Observer_error : Observer_error) () = struct
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
     match
-      Graph.collect_staged_bind_switch_invalidations
+      Graph.collect_staged_bind_switch_invalidations graph
         ~init:(invalidated_ids, invalidated_nodes)
-        ~switches:(Graph.staged_binds graph)
         ~staged_switch:packed_bind_staged_switch
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
           let P owner_signal = owner in

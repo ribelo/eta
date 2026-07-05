@@ -382,19 +382,52 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Graph.create ~create_scope_context:(fun () -> ())
       ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
-  let staged = Transaction.create_staged Bind.empty in
+  let staged =
+    Transaction.create_staged
+      (Bind.switch ~source_value:0 ~inner:"old" ~scope:1)
+  in
   let stage_twice () =
     Graph.stage_bind_switch graph "bind" staged ~source_value:1
       ~inner:"inner" ~scope:2;
     Graph.stage_bind_switch graph "bind" staged ~source_value:2
       ~inner:"next" ~scope:3;
-    Alcotest.(check (list string)) "staged binds" [ "bind" ]
-      (Graph.staged_binds graph);
     let snapshot = Graph.read_effective graph staged in
     Alcotest.(check (option string)) "staged inner" (Some "next")
       (Bind.inner snapshot);
     Alcotest.(check (option int)) "staged scope" (Some 3)
-      (Bind.inner_scope snapshot)
+      (Bind.inner_scope snapshot);
+    let collected =
+      match
+        Graph.collect_staged_bind_switch_invalidations graph ~init:[]
+          ~staged_switch:(fun bind ->
+            Alcotest.(check string) "bind" "bind" bind;
+            Bind.staged_switch ~owner:(Some "owner")
+              ~current:(Transaction.current staged)
+              ~staged:(Graph.staged_value graph staged)
+            |> Bind.pack_staged_switch)
+          ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
+      with
+      | Ok collected -> collected
+      | Error err ->
+          Alcotest.failf "unexpected graph error: %s"
+            (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+               err)
+    in
+    Alcotest.(check (list (pair string int)))
+      "old scope invalidation" [ ("owner", 1) ] collected;
+    match
+      Graph.collect_staged_bind_switch_invalidations graph ~init:[]
+        ~staged_switch:(fun _bind ->
+          Bind.staged_switch ~owner:None ~current:(Transaction.current staged)
+            ~staged:(Graph.staged_value graph staged)
+          |> Bind.pack_staged_switch)
+        ~collect_old_scope:(fun acc ~owner:_ _scope -> acc)
+    with
+    | Error `Invalid_scope -> ()
+    | Ok _ -> Alcotest.fail "expected invalid scope"
+    | Error err ->
+        Alcotest.failf "expected invalid scope, got %s"
+          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
   in
   let observer_plan _context =
     Pass.observer_plan ~observers:[]
@@ -463,9 +496,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
   Alcotest.(check (option string)) "committed inner" (Some "next")
     (Bind.inner snapshot);
   Alcotest.(check (option int)) "committed scope" (Some 3)
-    (Bind.inner_scope snapshot);
-  Alcotest.(check (list string)) "staged binds cleared" []
-    (Graph.staged_binds graph)
+    (Bind.inner_scope snapshot)
 
 let test_observer_delivery_plan_uses_collection_order () =
   let events = ref [] in
@@ -704,35 +735,7 @@ let test_staged_bind_switch_protocol_maps_graph_errors () =
   in
   Alcotest.(check (list string))
     "rollback hooks" [ "rollback-hook:2" ] rollback_hooks;
-  let collected =
-    match
-      Graph.collect_staged_bind_switch_invalidations
-        ~init:[]
-        ~switches:[ Bind.pack_staged_switch switch ]
-        ~staged_switch:Fun.id
-        ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
-    with
-    | Ok collected -> collected
-    | Error err ->
-        Alcotest.failf "unexpected graph error: %s"
-          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
-  in
-  Alcotest.(check (list (pair int int)))
-    "old scope invalidation" [ (99, 1) ] collected;
-  let invalid_switch =
-    Bind.staged_switch ~owner:None ~current ~staged:(Some staged)
-    |> Bind.pack_staged_switch
-  in
-  match
-    Graph.collect_staged_bind_switch_invalidations
-      ~init:[] ~switches:[ invalid_switch ] ~staged_switch:Fun.id
-      ~collect_old_scope:(fun acc ~owner:_ _scope -> acc)
-  with
-  | Error `Invalid_scope -> ()
-  | Ok _ -> Alcotest.fail "expected invalid scope"
-  | Error err ->
-      Alcotest.failf "expected invalid scope, got %s"
-        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  ()
 
 let () =
   Alcotest.run "eta_signal_graph"
