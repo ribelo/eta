@@ -2210,10 +2210,10 @@ module Make (Observer_error : Observer_error) () = struct
             {
               pure_snapshot_commit_count =
                 stats_counter "stats pure_snapshot_commit_count"
-                  (Graph.pure_snapshot_commit_count graph);
+                  (Graph.pure_snapshot_commit_count graph lane);
               callback_delivery_count =
                 stats_counter "stats callback_delivery_count"
-                  (Graph.counter graph Graph.Callback_delivery_count);
+                  (Graph.counter graph lane Graph.Callback_delivery_count);
               total_node_count =
                 stats_counter "stats total_node_count"
                   (stats_count Private_test_hooks.Stats_total_node_count
@@ -2237,27 +2237,27 @@ module Make (Observer_error : Observer_error) () = struct
                   (live_dirty_node_count all_nodes);
               recompute_count =
                 stats_counter "stats recompute_count"
-                  (Graph.counter graph Graph.Recompute_count);
+                  (Graph.counter graph lane Graph.Recompute_count);
               dynamic_scope_invalidations =
                 stats_counter "stats dynamic_scope_invalidations"
-                  (Graph.counter graph Graph.Dynamic_scope_invalidations);
+                  (Graph.counter graph lane Graph.Dynamic_scope_invalidations);
               nodes_became_necessary =
                 stats_counter "stats nodes_became_necessary"
-                  (Graph.counter graph Graph.Nodes_became_necessary);
+                  (Graph.counter graph lane Graph.Nodes_became_necessary);
               nodes_became_unnecessary =
                 stats_counter "stats nodes_became_unnecessary"
-                  (Graph.counter graph Graph.Nodes_became_unnecessary);
+                  (Graph.counter graph lane Graph.Nodes_became_unnecessary);
               stream_bridge_drop_count =
                 stats_counter "stats stream_bridge_drop_count"
                   (Stream_bridge.drop_count (graph_stream_bridge_metrics ()));
               lane_waiter_count =
                 stats_counter "stats lane_waiter_count"
-                  (Graph.lane_waiting_count graph);
+                  (Graph.lane_waiting_count graph lane);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
                   (stats_count
                      Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Graph.lane_cancelled_count graph));
+                     (Graph.lane_cancelled_count graph lane));
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result

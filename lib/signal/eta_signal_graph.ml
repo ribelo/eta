@@ -251,8 +251,11 @@ let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
   Eta_signal_graph_core.with_lane_access t.core ~leaf_name ~depth_local
     ~hooks:(lane_hooks_to_core hooks) ~after_acquired f
 
-let lane_waiting_count t = Eta_signal_graph_core.lane_waiting_count t.core
-let lane_cancelled_count t = Eta_signal_graph_core.lane_cancelled_count t.core
+let lane_waiting_count t _lane =
+  Eta_signal_graph_core.lane_waiting_count t.core
+
+let lane_cancelled_count t _lane =
+  Eta_signal_graph_core.lane_cancelled_count t.core
 let next_signal_id t = Eta_signal_graph_core.next_signal_id t.core
 let next_var_id t = Eta_signal_graph_core.next_var_id t.core
 let next_observer_id t = Eta_signal_graph_core.next_observer_id t.core
@@ -263,7 +266,8 @@ let set_next_node_id t _lane next =
 let set_next_scope_id t _lane next =
   Eta_signal_graph_core.set_next_scope_id t.core next
 
-let counter t target = Eta_signal_graph_core.counter t.core (core_counter target)
+let counter t _lane target =
+  Eta_signal_graph_core.counter t.core (core_counter target)
 
 let set_counter t _lane target value =
   Eta_signal_graph_core.set_counter t.core (core_counter target) value
@@ -564,7 +568,7 @@ let commit_staging t _lane staging context =
   try Ok (Eta_signal_graph_state.commit_staging t.state staging state_context)
   with Commit_error err -> Error err
 
-let pure_snapshot_commit_count t =
+let pure_snapshot_commit_count t _lane =
   Eta_signal_graph_state.pure_snapshot_commit_count t.state
 
 let set_pure_snapshot_commit_count t _lane count =

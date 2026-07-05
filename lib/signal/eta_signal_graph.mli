@@ -162,8 +162,11 @@ val with_lane_access :
   (lane_access -> 'a) ->
   ('a, 'error) Eta.Effect.t
 
-val lane_waiting_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
-val lane_cancelled_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
+val lane_waiting_count :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
+
+val lane_cancelled_count :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val next_signal_id :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
@@ -187,7 +190,8 @@ val set_next_node_id :
 val set_next_scope_id :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
 
-val counter : (_, _, _, _, _, _, _, _, _, _, _) t -> counter -> int
+val counter :
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int
 
 val set_counter :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> counter -> int -> unit
@@ -401,7 +405,7 @@ val commit_staging :
   ('hook list, Eta_signal_error.graph_error) result
 
 val pure_snapshot_commit_count :
-  (_, _, _, _, _, _, _, _, _, _, _) t -> int
+  (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
 val set_pure_snapshot_commit_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int -> unit
