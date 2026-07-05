@@ -682,9 +682,10 @@ let test_observer_delivery_plan_uses_collection_order () =
   let first = create_observer 1 in
   let inactive = create_observer ~active:false 0 in
   let second = create_observer 2 in
-  Graph.add_observer graph second;
-  Graph.add_observer graph inactive;
-  Graph.add_observer graph first;
+  with_graph_lane graph (fun lane ->
+      Graph.add_observer graph lane second;
+      Graph.add_observer graph lane inactive;
+      Graph.add_observer graph lane first);
   let collection =
     Observer.collection_port
       ~live:(fun cap observer ->
@@ -824,8 +825,9 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
   List.iter
     (Graph.remember_live_node graph ~create_weak_node:Fun.id)
     [ live_root; live_timer; live_without_timer; stale_timer ];
-  Graph.add_observer graph None;
-  Graph.add_observer graph (Some live_root);
+  with_graph_lane graph (fun lane ->
+      Graph.add_observer graph lane None;
+      Graph.add_observer graph lane (Some live_root));
   let demand =
     with_graph_lane graph (fun lane ->
         Graph.timer_demand graph lane

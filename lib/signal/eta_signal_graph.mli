@@ -473,7 +473,10 @@ val set_stream_bridge_metrics :
   (_, _, _, _, _, _, _, _, _, _, 'stream_metrics) t -> 'stream_metrics -> unit
 
 val add_observer :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t -> 'observer -> unit
+  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
+  'observer ->
+  unit
 
 val remove_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

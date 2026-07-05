@@ -2067,7 +2067,7 @@ module Make (Observer_error : Observer_error) () = struct
                   obs_state = Observer_lifecycle.Registering live;
                 }
               in
-              Graph.add_observer graph (O observer);
+              Graph.add_observer graph lane (O observer);
               update_necessity_counters_unlocked lane;
               Ok observer
           with Graph_error err -> Error err)
