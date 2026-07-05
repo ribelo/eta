@@ -213,22 +213,26 @@ val finish_stabilization :
   Eta_signal_stabilization.token ->
   unit
 
-val collect_nodes :
-  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
-  ('weak_node list -> 'weak_node list * 'node list) ->
-  'node list
-
 val remember_node :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t -> 'weak_node -> unit
 
-val prune_nodes :
+val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
-  ('weak_node list -> 'weak_node list * 'node list) ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  'node list
+
+val prune_live_nodes :
+  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  keep:('node -> bool) ->
   unit
 
 val necessary_ids :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
-  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
@@ -240,7 +244,8 @@ val necessary_ids :
 val update_necessity :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   Eta_signal_graph_core.lane_access ->
-  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
@@ -255,7 +260,8 @@ type ('id, 'timer) timer_demand = {
 
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
-  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
@@ -267,7 +273,8 @@ val timer_demand :
 
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
-  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
   collect_timers:(roots:'node list -> ('id, 'timer) Hashtbl.t) ->
   ('id, 'timer) Hashtbl.t

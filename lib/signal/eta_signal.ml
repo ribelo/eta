@@ -603,10 +603,11 @@ module Make (Observer_error : Observer_error) () = struct
     Graph_algorithms.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
   let all_nodes_unlocked () =
-    Graph.collect_nodes graph (collect_live_weak_signals (fun _ -> true))
+    Graph.live_nodes graph ~collect_live_nodes:collect_live_weak_signals
 
   let prune_all_nodes_unlocked () =
-    Graph.prune_nodes graph (collect_live_weak_signals (fun _ -> true))
+    Graph.prune_live_nodes graph
+      ~collect_live_nodes:collect_live_weak_signals ~keep:(fun _ -> true)
 
   let children_with_scope_owner signal children =
     Scope.children_with_scope_owner
@@ -1098,8 +1099,9 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let prune_invalid_nodes_unlocked () =
-    Graph.prune_nodes graph
-      (collect_live_weak_signals (fun (P signal) -> signal.valid))
+    Graph.prune_live_nodes graph
+      ~collect_live_nodes:collect_live_weak_signals
+      ~keep:(fun (P signal) -> signal.valid)
 
   let max_dead_signal_tombstones = 1024
 
@@ -1374,7 +1376,7 @@ module Make (Observer_error : Observer_error) () = struct
     end)
     in
     Graph.post_commit_necessary_timers graph
-      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
       ~collect_timers:(fun ~roots ->
         Reachable.fold ~roots ~init:(Hashtbl.create 8)
@@ -1730,13 +1732,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_necessary_node_ids (_lane : graph_lane) =
     Graph.necessary_ids graph
-      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
 
   let update_necessity_counters_unlocked lane =
     ignore
       (Graph.update_necessity graph lane
-         ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+         ~collect_live_nodes:collect_live_weak_signals
          ~root:observer_demand_root
          ~reachable_ids:Graph_reachable_static.ids
         : (signal_id, unit) Hashtbl.t)
@@ -1753,7 +1755,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_demand_unlocked (_lane : graph_lane) =
     Graph.timer_demand graph
-      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root ~reachable_ids:Graph_reachable_static.ids
       ~timer:signal_timer
 

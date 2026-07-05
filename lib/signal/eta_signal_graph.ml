@@ -127,18 +127,21 @@ let finish_stabilization t delivering_token =
        delivering_token
       : (_, Eta_signal_stabilization.idle) Eta_signal_stabilization.token)
 
-let collect_nodes t collect =
-  let cells, nodes = collect t.all_nodes in
+let collect_live_node_registry t ~collect_live_nodes ~keep =
+  let cells, nodes = collect_live_nodes keep t.all_nodes in
   t.all_nodes <- cells;
   nodes
 
 let remember_node t node = t.all_nodes <- node :: t.all_nodes
 
-let prune_nodes t collect =
-  ignore (collect_nodes t collect : _ list)
+let live_nodes t ~collect_live_nodes =
+  collect_live_node_registry t ~collect_live_nodes ~keep:(fun _ -> true)
+
+let prune_live_nodes t ~collect_live_nodes ~keep =
+  ignore (collect_live_node_registry t ~collect_live_nodes ~keep : _ list)
 
 let necessary_ids t ~collect_live_nodes ~root ~reachable_ids =
-  ignore (collect_nodes t collect_live_nodes : _ list);
+  ignore (live_nodes t ~collect_live_nodes : _ list);
   reachable_ids ~roots:(List.filter_map root t.observers)
 
 let update_necessity t lane ~collect_live_nodes ~root ~reachable_ids =
@@ -152,7 +155,7 @@ type ('id, 'timer) timer_demand = {
 }
 
 let timer_demand t ~collect_live_nodes ~root ~reachable_ids ~timer =
-  let nodes = collect_nodes t collect_live_nodes in
+  let nodes = live_nodes t ~collect_live_nodes in
   {
     timer_demand_necessary_ids =
       reachable_ids ~roots:(List.filter_map root t.observers);
@@ -160,7 +163,7 @@ let timer_demand t ~collect_live_nodes ~root ~reachable_ids ~timer =
   }
 
 let post_commit_necessary_timers t ~collect_live_nodes ~root ~collect_timers =
-  ignore (collect_nodes t collect_live_nodes : _ list);
+  ignore (live_nodes t ~collect_live_nodes : _ list);
   collect_timers ~roots:(List.filter_map root t.observers)
 
 let dead_node_count t = List.length t.dead_nodes
