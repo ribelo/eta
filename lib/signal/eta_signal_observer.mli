@@ -443,6 +443,17 @@ val delivery_collection :
   mark_pending:('capability -> 'event -> unit) ->
   ('capability, 'observer, 'event) delivery_collection
 
+val delivery_event_collection :
+  active:('observer -> bool) ->
+  compare:('observer -> 'observer -> int) ->
+  collect_event:
+    ('capability ->
+    'observer ->
+    ('capability, 'callback, 'error) Delivery_event.t option) ->
+  ('capability, 'observer,
+   ('capability, 'callback, 'error) Delivery_event.t)
+  delivery_collection
+
 val active_delivery_observers :
   ('capability, 'observer, 'event) delivery_collection ->
   'observer list ->

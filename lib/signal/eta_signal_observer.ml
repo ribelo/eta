@@ -723,6 +723,10 @@ let delivery_collection ~active ~compare ~collect_event ~mark_pending =
     delivery_mark_pending = mark_pending;
   }
 
+let delivery_event_collection ~active ~compare ~collect_event =
+  delivery_collection ~active ~compare ~collect_event
+    ~mark_pending:Delivery_event.mark_pending
+
 let active_delivery_observers collection observers =
   List.filter collection.delivery_active observers
 

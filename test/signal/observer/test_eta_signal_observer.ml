@@ -941,6 +941,39 @@ let delivery_event ?(active = fun _ -> true) ?(claim = fun _ -> true)
         (record events
            ("finish_error:" ^ name ^ ":" ^ string_of_bool delivered)))
 
+let test_delivery_event_collection_marks_pending () =
+  let events = ref [] in
+  let first = "first" in
+  let second = "second" in
+  let inactive = "inactive" in
+  let rank observer =
+    if String.equal observer first then 0 else 1
+  in
+  let collection =
+    Observer.delivery_event_collection
+      ~active:(fun observer -> not (String.equal observer inactive))
+      ~compare:(fun left right -> Int.compare (rank left) (rank right))
+      ~collect_event:(fun () observer ->
+        record events ("collect:" ^ observer);
+        Some (delivery_event events observer))
+  in
+  let active =
+    Observer.active_delivery_observers collection [ second; inactive; first ]
+  in
+  Alcotest.(check (list string))
+    "active observers" [ second; first ] active;
+  let delivery_events = Observer.collect_delivery_events collection () active in
+  Observer.mark_delivery_events_pending collection () delivery_events;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "collect:first";
+      "collect:second";
+      "mark:first";
+      "mark:second";
+    ]
+    !events
+
 let test_delivery_event_marks_and_runs_claimed_events () =
   let events = ref [] in
   let first = delivery_event events "first" in
@@ -1597,6 +1630,8 @@ let () =
             test_collect_event_stages_snapshot_and_constructs_event;
           Alcotest.test_case "collect event skips inactive" `Quick
             test_collect_event_skips_inactive_and_invalidated_observers;
+          Alcotest.test_case "event collection marks pending" `Quick
+            test_delivery_event_collection_marks_pending;
           Alcotest.test_case "make event success transitions" `Quick
             test_make_delivery_event_owns_success_transitions;
           Alcotest.test_case "make event releases claim on failure" `Quick
