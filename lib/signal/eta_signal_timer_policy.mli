@@ -78,10 +78,7 @@ type update_batch = {
 
 type stop_plan
 
-type start_plan = {
-  start_state : state;
-  start_generation : int;
-}
+type start_plan
 
 type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
   demand_resource_necessary : 'id -> bool;
@@ -245,6 +242,11 @@ val apply_demand_plans :
   stop:('timer -> stop_plan -> 'hook list) ->
   'timer demand_plan list ->
   ('start, 'hook) demand_effects
+
+val start_plan_result :
+  start_plan ->
+  plan:(state:state -> generation:int -> 'a) ->
+  'a
 
 val stop_plan_result :
   stop_plan ->

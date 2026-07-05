@@ -231,8 +231,10 @@ let start_attempt_effects attempts =
   List.map start_attempt_effect attempts
 
 let apply_start_plan ~set_current_state ~start_effect timer plan =
-  set_current_state timer plan.Eta_signal_timer_policy.start_state;
-  start_attempt ~timer ~effect:(start_effect timer)
+  Eta_signal_timer_policy.start_plan_result plan
+    ~plan:(fun ~state ~generation:_ ->
+      set_current_state timer state;
+      start_attempt ~timer ~effect:(start_effect timer))
 
 let apply_stop_plan port timer plan =
   Eta_signal_timer_policy.stop_plan_result plan

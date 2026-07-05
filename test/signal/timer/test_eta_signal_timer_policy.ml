@@ -51,6 +51,19 @@ let stop_plan_label plan =
       ^ ":"
       ^ string_of_int (List.length cancel_hooks))
 
+let start_plan_state plan =
+  Timer_policy.start_plan_result plan ~plan:(fun ~state ~generation:_ ->
+      state)
+
+let start_plan_generation plan =
+  Timer_policy.start_plan_result plan ~plan:(fun ~state:_ ~generation ->
+      generation)
+
+let start_plan_label plan =
+  Timer_policy.start_plan_result plan ~plan:(fun ~state ~generation ->
+      "start:" ^ string_of_int generation ^ ":"
+      ^ Timer_policy.state_label state)
+
 let test_capped_arithmetic () =
   Alcotest.(check int) "add ignores negative" 10 (Timer_policy.add_ms_capped 10 (-2));
   Alcotest.(check int) "add caps" max_int (Timer_policy.add_ms_capped max_int 1);
@@ -472,9 +485,7 @@ let demand_plan_values plans =
   List.map
     (function
       | Timer_policy.Demand_plan_start (item, plan) ->
-          ( item,
-            "start:" ^ string_of_int plan.Timer_policy.start_generation ^ ":"
-            ^ Timer_policy.state_label plan.Timer_policy.start_state )
+          (item, start_plan_label plan)
       | Timer_policy.Demand_plan_stop (item, None) -> (item, "stop:none")
       | Timer_policy.Demand_plan_stop (item, Some plan) ->
           (item, stop_plan_label plan))
@@ -534,10 +545,14 @@ let test_demand_plans_policy () =
 
 let test_apply_demand_plans_preserves_effect_order () =
   let start_plan generation =
-    {
-      Timer_policy.start_state = timer_starting generation;
-      start_generation = generation;
-    }
+    match
+      Timer_policy.start
+        ~advance_generation:(fun _ -> generation)
+        ~effective_state:(timer_inactive 0)
+        ~current_state:(timer_inactive 0)
+    with
+    | Some plan -> plan
+    | None -> Alcotest.fail "expected synthetic start plan"
   in
   let stop_plan generation =
     match
@@ -551,7 +566,7 @@ let test_apply_demand_plans_preserves_effect_order () =
   let effects =
     Timer_policy.apply_demand_plans
       ~start:(fun item plan ->
-        item ^ ":start:" ^ string_of_int plan.Timer_policy.start_generation)
+        item ^ ":start:" ^ string_of_int (start_plan_generation plan))
       ~stop:(fun item plan ->
         let generation =
           Timer_policy.state_generation (stop_plan_state plan)
@@ -613,7 +628,7 @@ let test_demand_effects_classifies_resources () =
       demand_plan_start =
         (fun timer plan ->
           timer ^ ":start:"
-          ^ string_of_int plan.Timer_policy.start_generation);
+          ^ string_of_int (start_plan_generation plan));
       demand_plan_stop =
         (fun timer plan ->
           if List.length (stop_plan_cancel_hooks plan) = 0 then []
@@ -687,9 +702,9 @@ let test_start_policy () =
    with
   | Some plan ->
       Alcotest.(check int) "inactive start generation" 1
-        plan.start_generation;
+        (start_plan_generation plan);
       Alcotest.(check int) "inactive start state generation" 1
-        (Timer_policy.state_generation plan.start_state)
+        (Timer_policy.state_generation (start_plan_state plan))
   | None -> Alcotest.fail "expected inactive start plan");
   (match
      Timer_policy.start ~advance_generation:succ ~effective_state:running
@@ -709,7 +724,7 @@ let test_start_policy () =
   with
   | Some plan ->
       Alcotest.(check int) "staged effective start generation" 1
-        plan.start_generation
+        (start_plan_generation plan)
   | None -> Alcotest.fail "expected staged effective start plan"
 
 let record_generation calls generation =

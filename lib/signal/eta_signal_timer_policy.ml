@@ -591,6 +591,9 @@ let apply_demand_plans ~start ~stop plans =
     demand_cancel_hooks = List.rev !cancel_hooks;
   }
 
+let start_plan_result plan ~plan:result =
+  result ~state:plan.start_state ~generation:plan.start_generation
+
 let stop_plan_result plan ~plan:result =
   result ~state:plan.stop_state ~cancel_hooks:plan.stop_cancel_hooks
 
