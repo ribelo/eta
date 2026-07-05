@@ -882,9 +882,6 @@ module Make (Observer_error : Observer_error) () = struct
         if selected packed then Some (P observer.obs_signal) else None)
       observers
 
-  let observer_demand_roots observers =
-    observer_roots observer_demands_signal observers
-
   let observer_demand_root (O observer as packed) =
     if observer_demands_signal packed then Some (P observer.obs_signal)
     else None
@@ -1355,7 +1352,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
 
   let collect_post_commit_necessary_timers (_lane : graph_lane) invalidated_ids =
-    prune_all_nodes_unlocked ();
     let module Reachable = Graph_algorithms.Make_reachable (struct
       type id = signal_id
       type nonrec packed = packed_signal
@@ -1380,12 +1376,16 @@ module Make (Observer_error : Observer_error) () = struct
         children_with_scope_owner signal signal_children
     end)
     in
-    Reachable.fold ~roots:(observer_demand_roots (Graph.observers graph))
-      ~init:(Hashtbl.create 8)
-      ~f:(fun timers (P signal) ->
-        Option.iter (fun timer -> Hashtbl.replace timers signal.id timer)
-          signal.timer;
-        timers)
+    Graph.post_commit_necessary_timers graph
+      ~collect_live_nodes:(collect_live_weak_signals (fun _ -> true))
+      ~root:observer_demand_root
+      ~collect_timers:(fun ~roots ->
+        Reachable.fold ~roots ~init:(Hashtbl.create 8)
+          ~f:(fun timers (P signal) ->
+            Option.iter
+              (fun timer -> Hashtbl.replace timers signal.id timer)
+              signal.timer;
+            timers))
 
   let preflight_post_commit_timer_starts lane invalidated_ids =
     collect_post_commit_necessary_timers lane invalidated_ids

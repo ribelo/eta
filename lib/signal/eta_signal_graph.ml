@@ -149,6 +149,10 @@ let timer_demand t ~collect_live_nodes ~root ~reachable_ids ~timer =
     timer_demand_timers = List.filter_map timer nodes;
   }
 
+let post_commit_necessary_timers t ~collect_live_nodes ~root ~collect_timers =
+  ignore (collect_nodes t collect_live_nodes : _ list);
+  collect_timers ~roots:(List.filter_map root t.observers)
+
 let dead_nodes t = t.dead_nodes
 let dead_node_count t = List.length t.dead_nodes
 

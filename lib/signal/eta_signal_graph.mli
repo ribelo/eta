@@ -250,6 +250,17 @@ val timer_demand :
     live-node registry traversal and observer-root necessary set; the caller
     supplies graph-shape projections for reachability and timer extraction. *)
 
+val post_commit_necessary_timers :
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  collect_live_nodes:('weak_node list -> 'weak_node list * 'node list) ->
+  root:('observer -> 'node option) ->
+  collect_timers:(roots:'node list -> ('id, 'timer) Hashtbl.t) ->
+  ('id, 'timer) Hashtbl.t
+(** Collect the timers that will remain necessary after committing graph
+    staging. The graph owns live-node pruning and observer-root traversal;
+    callers supply the post-commit reachability rules because staged bind
+    invalidation is graph-shape specific. *)
+
 val dead_nodes : (_, _, _, _, _, _, _, _, 'dead_node, _, _) t -> 'dead_node list
 
 val dead_node_count : (_, _, _, _, _, _, _, _, _, _, _) t -> int
