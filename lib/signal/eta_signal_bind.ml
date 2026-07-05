@@ -34,37 +34,43 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_eval =
       dynamic_reuse_value : 'value;
     }
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
-  dynamic_mark_recomputed : unit -> unit;
-  dynamic_value_changed : 'value -> bool;
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value) dynamic_apply = {
+  dynamic_mark_recomputed : 'capability -> unit;
+  dynamic_value_changed : 'capability -> 'value -> bool;
   dynamic_stage_switch :
+    'capability ->
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  dynamic_stage_dependencies : 'dependency list -> unit;
-  dynamic_stage_value : 'value -> unit;
-  dynamic_current_value : unit -> 'value;
+  dynamic_stage_dependencies : 'capability -> 'dependency list -> unit;
+  dynamic_stage_value : 'capability -> 'value -> unit;
+  dynamic_current_value : 'capability -> 'value;
 }
 
-type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+     dynamic_context = {
   context_equal : 'source -> 'source -> bool;
   context_source_dependency : 'dependency;
   context_pack_inner : 'inner -> 'dependency;
-  context_new_scope : unit -> 'scope;
+  context_new_scope : 'capability -> 'scope;
   context_selector : 'source -> 'inner;
-  context_with_scope : 'scope -> (unit -> 'inner) -> 'inner;
+  context_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
   context_validate_inner :
-    'scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result;
-  context_compute_inner : 'inner -> 'value * bool;
-  context_on_switch_failure : 'scope -> unit;
+    'capability ->
+    'scope ->
+    'inner ->
+    (unit, ([> `Invalid_scope ] as 'error)) result;
+  context_compute_inner : 'capability -> 'inner -> 'value * bool;
+  context_on_switch_failure : 'capability -> 'scope -> unit;
   context_dirty : bool;
   context_initialized : bool;
-  context_dependencies_changed : 'dependency list -> bool;
-  context_mark_recomputed : unit -> unit;
-  context_value_changed : 'value -> bool;
+  context_dependencies_changed : 'capability -> 'dependency list -> bool;
+  context_mark_recomputed : 'capability -> unit;
+  context_value_changed : 'capability -> 'value -> bool;
   context_stage_switch :
+    'capability ->
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  context_stage_dependencies : 'dependency list -> unit;
-  context_stage_value : 'value -> unit;
-  context_current_value : unit -> 'value;
+  context_stage_dependencies : 'capability -> 'dependency list -> unit;
+  context_stage_value : 'capability -> 'value -> unit;
+  context_current_value : 'capability -> 'value;
 }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
@@ -97,20 +103,22 @@ let eval_plan ~equal snapshot ~source_value =
     | Some inner -> Ok (Reuse inner)
     | None -> Error `Invalid_scope
 
-let eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
-    ~compute_inner ~on_failure =
+let eval_switch ~capability ~scope ~source_value ~selector ~with_scope
+    ~validate_inner ~compute_inner ~on_failure =
   try
-    let inner = with_scope scope (fun () -> selector source_value) in
-    match validate_inner scope inner with
+    let inner =
+      with_scope capability scope (fun () -> selector source_value)
+    in
+    match validate_inner capability scope inner with
     | Error _ as error ->
-        on_failure scope;
+        on_failure capability scope;
         error
     | Ok () ->
-        let value, _inner_changed = compute_inner inner in
+        let value, _inner_changed = compute_inner capability inner in
         Ok { eval_inner = inner; eval_value = value }
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
-    on_failure scope;
+    on_failure capability scope;
     Printexc.raise_with_backtrace exn backtrace
 
 let eval_reuse ~source_dependency ~inner_dependency ~source_changed
@@ -125,16 +133,16 @@ let eval_reuse ~source_dependency ~inner_dependency ~source_changed
   then Reuse_recompute { reuse_dependencies = dependencies; reuse_value = value }
   else Reuse_cached
 
-let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
-    ~source_changed ~new_scope ~selector ~with_scope ~validate_inner
-    ~compute_inner ~on_switch_failure ~dirty ~initialized
+let eval_dynamic ~capability ~equal snapshot ~source_dependency ~pack_inner
+    ~source_value ~source_changed ~new_scope ~selector ~with_scope
+    ~validate_inner ~compute_inner ~on_switch_failure ~dirty ~initialized
     ~dependencies_changed =
   match eval_plan ~equal snapshot ~source_value with
   | Error _ as error -> error
   | Ok Switch ->
-      let scope = new_scope () in
-      eval_switch ~scope ~source_value ~selector ~with_scope ~validate_inner
-        ~compute_inner ~on_failure:on_switch_failure
+      let scope = new_scope capability in
+      eval_switch ~capability ~scope ~source_value ~selector ~with_scope
+        ~validate_inner ~compute_inner ~on_failure:on_switch_failure
       |> Result.map (fun eval ->
              let inner_dependency = pack_inner eval.eval_inner in
              Dynamic_switch
@@ -151,8 +159,10 @@ let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
       let inner_dependency = pack_inner inner in
       match
         eval_reuse ~source_dependency ~inner_dependency ~source_changed
-          ~compute_inner:(fun () -> compute_inner inner)
-          ~dirty ~initialized ~dependencies_changed
+          ~compute_inner:(fun () -> compute_inner capability inner)
+          ~dirty ~initialized
+          ~dependencies_changed:(fun dependencies ->
+            dependencies_changed capability dependencies)
       with
       | Reuse_cached -> Ok Dynamic_reuse_cached
       | Reuse_recompute { reuse_dependencies; reuse_value } ->
@@ -163,14 +173,14 @@ let eval_dynamic ~equal snapshot ~source_dependency ~pack_inner ~source_value
                  dynamic_reuse_value = reuse_value;
                }))
 
-let apply_value callbacks value =
-  callbacks.dynamic_mark_recomputed ();
-  let changed = callbacks.dynamic_value_changed value in
-  if changed then callbacks.dynamic_stage_value value;
-  ( (if changed then value else callbacks.dynamic_current_value ()),
+let apply_value callbacks capability value =
+  callbacks.dynamic_mark_recomputed capability;
+  let changed = callbacks.dynamic_value_changed capability value in
+  if changed then callbacks.dynamic_stage_value capability value;
+  ( (if changed then value else callbacks.dynamic_current_value capability),
     changed )
 
-let apply_dynamic_eval callbacks = function
+let apply_dynamic_eval callbacks capability = function
   | Dynamic_switch
       {
         dynamic_source_value;
@@ -179,26 +189,28 @@ let apply_dynamic_eval callbacks = function
         dynamic_switch_dependencies;
         dynamic_switch_value;
       } ->
-      callbacks.dynamic_mark_recomputed ();
+      callbacks.dynamic_mark_recomputed capability;
       let changed =
-        callbacks.dynamic_value_changed dynamic_switch_value
+        callbacks.dynamic_value_changed capability dynamic_switch_value
       in
-      callbacks.dynamic_stage_switch ~source_value:dynamic_source_value
+      callbacks.dynamic_stage_switch capability ~source_value:dynamic_source_value
         ~inner:dynamic_inner ~scope:dynamic_scope;
-      callbacks.dynamic_stage_dependencies dynamic_switch_dependencies;
-      if changed then callbacks.dynamic_stage_value dynamic_switch_value;
+      callbacks.dynamic_stage_dependencies capability
+        dynamic_switch_dependencies;
+      if changed then
+        callbacks.dynamic_stage_value capability dynamic_switch_value;
       ( (if changed then dynamic_switch_value
-         else callbacks.dynamic_current_value ()),
+         else callbacks.dynamic_current_value capability),
         changed )
   | Dynamic_reuse_recompute
       { dynamic_reuse_dependencies; dynamic_reuse_value } ->
-      callbacks.dynamic_stage_dependencies dynamic_reuse_dependencies;
-      apply_value callbacks dynamic_reuse_value
-  | Dynamic_reuse_cached -> (callbacks.dynamic_current_value (), false)
+      callbacks.dynamic_stage_dependencies capability dynamic_reuse_dependencies;
+      apply_value callbacks capability dynamic_reuse_value
+  | Dynamic_reuse_cached -> (callbacks.dynamic_current_value capability, false)
 
-let compute_dynamic context snapshot ~source_value ~source_changed =
+let compute_dynamic context capability snapshot ~source_value ~source_changed =
   match
-    eval_dynamic ~equal:context.context_equal snapshot ~source_value
+    eval_dynamic ~capability ~equal:context.context_equal snapshot ~source_value
       ~source_dependency:context.context_source_dependency
       ~pack_inner:context.context_pack_inner
       ~source_changed
@@ -224,6 +236,7 @@ let compute_dynamic context snapshot ~source_value ~source_changed =
              dynamic_stage_value = context.context_stage_value;
              dynamic_current_value = context.context_current_value;
            }
+           capability
            eval)
 
 let switch_parts snapshot =

@@ -1545,8 +1545,8 @@ module Make (Observer_error : Observer_error) () = struct
           | Some operation -> stage_timer_refresh_operation timer now_ms operation)
     | None, _ | Some _, None -> ()
 
-  let rec compute : type a. a signal -> a * bool =
-   fun signal ->
+  let rec compute : type a. graph_lane -> a signal -> a * bool =
+   fun lane signal ->
     if not signal.valid then raise (Graph_error `Invalid_scope);
     refresh_timer_source_for_compute signal;
     let generation = current_generation () in
@@ -1556,10 +1556,10 @@ module Make (Observer_error : Observer_error) () = struct
     else
       Graph_compute.run ~generation compute_node
         ~cycle:(fun () -> raise (Graph_error `Cycle))
-        ~compute:(fun () -> compute_uncached signal)
+        ~compute:(fun () -> compute_uncached lane signal)
 
-  and compute_uncached : type a. a signal -> a * bool =
-   fun signal ->
+  and compute_uncached : type a. graph_lane -> a signal -> a * bool =
+   fun lane signal ->
     remember_computed (P signal);
     let signal_initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
@@ -1585,7 +1585,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let static_child child_signal =
       Graph_algorithms.Static_eval.child ~dependency:(P child_signal)
-        (compute child_signal)
+        (compute lane child_signal)
     in
     let finish_static ?(stage_dependencies = true) result =
       match
@@ -1689,42 +1689,51 @@ module Make (Observer_error : Observer_error) () = struct
         in
         finish_static (Graph_algorithms.Static_eval.all children)
     | Bind bind ->
-        let source_value, source_changed = compute bind.source in
+        let source_value, source_changed = compute lane bind.source in
         (match
            Bind.compute_dynamic
              {
                Bind.context_equal = bind.source.equal;
                context_source_dependency = P bind.source;
                context_pack_inner = (fun inner -> P inner);
-               context_new_scope = (fun () -> new_scope signal);
+               context_new_scope = (fun _lane -> new_scope signal);
                context_selector = bind.selector;
                context_with_scope =
-                 (fun scope f -> Scope.with_current graph.current_scope scope f);
+                 (fun _lane scope f ->
+                   Scope.with_current graph.current_scope scope f);
                context_validate_inner =
-                 (fun scope inner -> Scope_validation.validate_inner ~scope (P inner));
+                 (fun _lane scope inner ->
+                   Scope_validation.validate_inner ~scope (P inner));
                context_compute_inner = compute;
                context_on_switch_failure =
-                 (fun scope -> remember_pure_disposal_hooks (invalidate_scope scope));
+                 (fun _lane scope ->
+                   remember_pure_disposal_hooks (invalidate_scope scope));
                context_dirty = signal.dirty;
                context_initialized = signal_initialized ();
-               context_dependencies_changed = dependency_changed;
+               context_dependencies_changed =
+                 (fun _lane dependencies -> dependency_changed dependencies);
                context_mark_recomputed =
-                 (fun () ->
+                 (fun _lane ->
                    Graph_core.bump_counter graph.core Graph_core.Recompute_count);
                context_value_changed =
-                 (fun next ->
+                 (fun _lane next ->
                    let snapshot = signal_effective_snapshot signal in
                    Graph_algorithms.Value_cutoff.changed
                      ~equal:signal.equal
                      ~initialized:(Signal_snapshot.is_initialized snapshot)
                      ~current:(Signal_snapshot.value snapshot) ~next);
                context_stage_switch =
-                 (fun ~source_value ~inner ~scope ->
+                 (fun _lane ~source_value ~inner ~scope ->
                    stage_bind_switch bind source_value inner scope);
-               context_stage_dependencies = stage_dependency_versions signal;
-               context_stage_value = stage_signal signal;
-               context_current_value = (fun () -> current_or_raise signal);
+               context_stage_dependencies =
+                 (fun _lane dependencies ->
+                   stage_dependency_versions signal dependencies);
+               context_stage_value =
+                 (fun _lane value -> stage_signal signal value);
+               context_current_value =
+                 (fun _lane -> current_or_raise signal);
              }
+             lane
              (bind_effective_snapshot bind) ~source_value ~source_changed
          with
         | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
@@ -1978,7 +1987,7 @@ module Make (Observer_error : Observer_error) () = struct
           && not (signal_will_be_invalidated_by_staged_bind lane packed)
         then
           match signal.kind with
-          | Bind _ -> ignore (compute signal : _ * bool)
+          | Bind _ -> ignore (compute lane signal : _ * bool)
           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
               ())
@@ -2079,7 +2088,7 @@ module Make (Observer_error : Observer_error) () = struct
              (P observer.obs_signal) ->
         None
     | Some live ->
-      let value, changed = compute observer.obs_signal in
+      let value, changed = compute lane observer.obs_signal in
       let snapshot = observer_effective_snapshot live in
       let event_plan =
         Observer_snapshot.plan_event ~equal:observer.obs_equal ~changed

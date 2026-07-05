@@ -2,27 +2,32 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context = {
+type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+     dynamic_context = {
   context_equal : 'source -> 'source -> bool;
   context_source_dependency : 'dependency;
   context_pack_inner : 'inner -> 'dependency;
-  context_new_scope : unit -> 'scope;
+  context_new_scope : 'capability -> 'scope;
   context_selector : 'source -> 'inner;
-  context_with_scope : 'scope -> (unit -> 'inner) -> 'inner;
+  context_with_scope : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
   context_validate_inner :
-    'scope -> 'inner -> (unit, ([> `Invalid_scope ] as 'error)) result;
-  context_compute_inner : 'inner -> 'value * bool;
-  context_on_switch_failure : 'scope -> unit;
+    'capability ->
+    'scope ->
+    'inner ->
+    (unit, ([> `Invalid_scope ] as 'error)) result;
+  context_compute_inner : 'capability -> 'inner -> 'value * bool;
+  context_on_switch_failure : 'capability -> 'scope -> unit;
   context_dirty : bool;
   context_initialized : bool;
-  context_dependencies_changed : 'dependency list -> bool;
-  context_mark_recomputed : unit -> unit;
-  context_value_changed : 'value -> bool;
+  context_dependencies_changed : 'capability -> 'dependency list -> bool;
+  context_mark_recomputed : 'capability -> unit;
+  context_value_changed : 'capability -> 'value -> bool;
   context_stage_switch :
+    'capability ->
     source_value:'source -> inner:'inner -> scope:'scope -> unit;
-  context_stage_dependencies : 'dependency list -> unit;
-  context_stage_value : 'value -> unit;
-  context_current_value : unit -> 'value;
+  context_stage_dependencies : 'capability -> 'dependency list -> unit;
+  context_stage_value : 'capability -> 'value -> unit;
+  context_current_value : 'capability -> 'value;
 }
 
 val empty : ('source, 'inner, 'scope) snapshot
@@ -40,7 +45,9 @@ val dependencies :
   source:'dependency -> inner:'dependency option -> 'dependency list
 
 val compute_dynamic :
-  ('source, 'inner, 'scope, 'dependency, 'value, 'error) dynamic_context ->
+  ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
+  dynamic_context ->
+  'capability ->
   ('source, 'inner, 'scope) snapshot ->
   source_value:'source ->
   source_changed:bool ->
