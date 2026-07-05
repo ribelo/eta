@@ -64,6 +64,12 @@ type ('node, 'compute_node) compute_ops = {
   compute_set_computed_generation : 'compute_node -> int -> unit;
 }
 
+type ('id, 'node) version_ops = {
+  version_id : 'node -> 'id;
+  version_equal_id : 'id -> 'id -> bool;
+  version : 'node -> int;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -230,6 +236,19 @@ val compute_run :
   cycle:(unit -> 'a * bool) ->
   compute:(unit -> 'a * bool) ->
   'a * bool
+
+val version_snapshot :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) version_ops ->
+  'node list ->
+  ('id * int) list
+
+val versions_changed :
+  (_, _, _, _, _, _, _, _, _, _, _) t ->
+  ('id, 'node) version_ops ->
+  current:('id * int) list ->
+  'node list ->
+  bool
 
 val remember_staged_bind :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t -> 'bind -> unit

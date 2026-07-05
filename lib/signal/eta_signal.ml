@@ -764,6 +764,17 @@ module Make (Observer_error : Observer_error) () = struct
   let signal_effective_snapshot signal =
     Graph.read_effective graph signal.snapshot
 
+  let effective_signal_version signal =
+    Signal_snapshot.version (signal_effective_snapshot signal)
+
+  let version_ops =
+    {
+      Graph.version_id = (fun (P signal) -> signal.id);
+      version_equal_id =
+        (fun left right -> signal_id_int left = signal_id_int right);
+      version = (fun (P signal) -> effective_signal_version signal);
+    }
+
   let update_signal_staging signal f =
     Graph.update_cell graph signal.snapshot f
 
@@ -780,23 +791,11 @@ module Make (Observer_error : Observer_error) () = struct
           ~advance_version:(checked_succ "signal version")
           ~current snapshot value)
 
-  let effective_signal_version signal =
-    Signal_snapshot.version (signal_effective_snapshot signal)
-
-  module Graph_versions = Graph_algorithms.Make_versions (struct
-    type id = signal_id
-    type nonrec packed = packed_signal
-
-    let id (P signal) = signal.id
-    let equal_id left right = signal_id_int left = signal_id_int right
-    let version (P signal) = effective_signal_version signal
-  end)
-
   let dependency_versions dependencies =
-    Graph_versions.snapshot dependencies
+    Graph.version_snapshot graph version_ops dependencies
 
   let dependencies_changed signal dependencies =
-    Graph_versions.changed
+    Graph.versions_changed graph version_ops
       ~current:
         (Signal_snapshot.dependency_versions
            (signal_current_snapshot signal))

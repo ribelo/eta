@@ -83,6 +83,12 @@ type ('node, 'compute_node) compute_ops = {
   compute_set_computed_generation : 'compute_node -> int -> unit;
 }
 
+type ('id, 'node) version_ops = {
+  version_id : 'node -> 'id;
+  version_equal_id : 'id -> 'id -> bool;
+  version : 'node -> int;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -240,6 +246,22 @@ let compute_run t ops node ~cycle ~compute =
         ops.compute_set_seen_generation node generation;
         ops.compute_set_changed_seen node changed;
         (value, changed))
+
+let version_snapshot _t ops nodes =
+  List.map (fun node -> (ops.version_id node, ops.version node)) nodes
+
+let rec same_version_snapshot ops left right =
+  match (left, right) with
+  | [], [] -> true
+  | (left_id, left_version) :: left_rest,
+    (right_id, right_version) :: right_rest ->
+      ops.version_equal_id left_id right_id
+      && Int.equal left_version right_version
+      && same_version_snapshot ops left_rest right_rest
+  | [], _ :: _ | _ :: _, [] -> false
+
+let versions_changed t ops ~current nodes =
+  not (same_version_snapshot ops current (version_snapshot t ops nodes))
 
 let remember_staged_bind t bind =
   Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
