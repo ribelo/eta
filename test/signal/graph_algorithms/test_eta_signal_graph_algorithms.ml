@@ -518,9 +518,10 @@ let test_static_eval_plan_reuses_without_forcing_output () =
       ~dependencies_changed:(fun _ -> false)
       result
   in
-  (match plan with
-  | Graph_algorithms.Static_eval.Use_cached -> ()
-  | Graph_algorithms.Static_eval.Recompute _ -> Alcotest.fail "expected cached plan");
+  Graph_algorithms.Static_eval.plan_result plan
+    ~use_cached:(fun () -> ())
+    ~recompute:(fun ~dependencies:_ ~output:_ ~stage_dependencies:_ ->
+      Alcotest.fail "expected cached plan");
   Alcotest.(check bool) "output not forced" false !ran
 
 let test_static_eval_plan_recomputes_with_dependencies_and_output () =
@@ -531,31 +532,27 @@ let test_static_eval_plan_recomputes_with_dependencies_and_output () =
         ran := true;
         value + 1)
   in
-  match
-    Graph_algorithms.Static_eval.plan ~dirty:false ~initialized:true
-      ~dependencies_changed:(fun _ -> false)
-      result
-  with
-  | Graph_algorithms.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
-  | Graph_algorithms.Static_eval.Recompute
-      { dependencies; output; stage_dependencies } ->
-      Alcotest.(check (list string)) "dependencies" [ "dep" ] dependencies;
-      Alcotest.(check int) "output" 2 output;
-      Alcotest.(check bool) "stage dependencies" true stage_dependencies;
-      Alcotest.(check bool) "output forced" true !ran
+  Graph_algorithms.Static_eval.plan ~dirty:false ~initialized:true
+    ~dependencies_changed:(fun _ -> false)
+    result
+  |> Graph_algorithms.Static_eval.plan_result
+       ~use_cached:(fun () -> Alcotest.fail "expected recompute plan")
+       ~recompute:(fun ~dependencies ~output ~stage_dependencies ->
+         Alcotest.(check (list string)) "dependencies" [ "dep" ] dependencies;
+         Alcotest.(check int) "output" 2 output;
+         Alcotest.(check bool) "stage dependencies" true stage_dependencies;
+         Alcotest.(check bool) "output forced" true !ran)
 
 let test_static_eval_plan_can_skip_dependency_staging () =
-  match
-    Graph_algorithms.Static_eval.plan ~stage_dependencies:false ~dirty:true
-      ~initialized:true ~dependencies_changed:(fun _ -> false)
-      (Graph_algorithms.Static_eval.leaf "value")
-  with
-  | Graph_algorithms.Static_eval.Use_cached -> Alcotest.fail "expected recompute plan"
-  | Graph_algorithms.Static_eval.Recompute
-      { dependencies; output; stage_dependencies } ->
-      Alcotest.(check (list string)) "dependencies" [] dependencies;
-      Alcotest.(check string) "output" "value" output;
-      Alcotest.(check bool) "stage dependencies" false stage_dependencies
+  Graph_algorithms.Static_eval.plan ~stage_dependencies:false ~dirty:true
+    ~initialized:true ~dependencies_changed:(fun _ -> false)
+    (Graph_algorithms.Static_eval.leaf "value")
+  |> Graph_algorithms.Static_eval.plan_result
+       ~use_cached:(fun () -> Alcotest.fail "expected recompute plan")
+       ~recompute:(fun ~dependencies ~output ~stage_dependencies ->
+         Alcotest.(check (list string)) "dependencies" [] dependencies;
+         Alcotest.(check string) "output" "value" output;
+         Alcotest.(check bool) "stage dependencies" false stage_dependencies)
 
 let test_static_eval_delays_output_until_requested () =
   let ran = ref false in

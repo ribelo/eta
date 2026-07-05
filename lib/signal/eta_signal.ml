@@ -1443,16 +1443,14 @@ module Make (Observer_error : Observer_error) () = struct
         (compute lane child_signal)
     in
     let finish_static ?(stage_dependencies = true) result =
-      match
-        Graph_algorithms.Static_eval.plan ~stage_dependencies ~dirty:signal.dirty
-          ~initialized:(signal_initialized ())
-          ~dependencies_changed:dependency_changed result
-      with
-      | Graph_algorithms.Static_eval.Use_cached -> use_cached ()
-      | Graph_algorithms.Static_eval.Recompute
-          { dependencies; output; stage_dependencies } ->
-          if stage_dependencies then recompute_with_dependencies dependencies output
-          else recompute output
+      Graph_algorithms.Static_eval.plan ~stage_dependencies ~dirty:signal.dirty
+        ~initialized:(signal_initialized ())
+        ~dependencies_changed:dependency_changed result
+      |> Graph_algorithms.Static_eval.plan_result ~use_cached
+           ~recompute:(fun ~dependencies ~output ~stage_dependencies ->
+             if stage_dependencies then
+               recompute_with_dependencies dependencies output
+             else recompute output)
     in
     match signal.kind with
     | Const value ->

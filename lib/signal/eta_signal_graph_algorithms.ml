@@ -519,4 +519,10 @@ module Static_eval = struct
           stage_dependencies;
         }
     else Use_cached
+
+  let plan_result plan ~use_cached ~recompute =
+    match plan with
+    | Use_cached -> use_cached ()
+    | Recompute { dependencies; output; stage_dependencies } ->
+        recompute ~dependencies ~output ~stage_dependencies
 end
