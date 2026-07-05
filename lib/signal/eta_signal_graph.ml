@@ -682,29 +682,17 @@ type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_pure =
   {
     release_pending_marks :
-      'capability Eta_signal_stabilization_pass.pure_context ->
-      'pending list ->
-      unit;
+      'capability -> 'pending list -> unit;
     observer_plan :
-      'capability Eta_signal_stabilization_pass.pure_context ->
+      'capability ->
       ( 'capability,
         'observer,
         'event )
       Eta_signal_stabilization_pass.observer_plan;
-    stage_pending :
-      'capability Eta_signal_stabilization_pass.pure_context ->
-      'pending list ->
-      unit;
-    plan_staged_binds :
-      'capability Eta_signal_stabilization_pass.pure_context ->
-      'observer list ->
-      unit;
-    commit_staging :
-      'capability Eta_signal_stabilization_pass.pure_context ->
-      staging ->
-      'hook list;
-    update_necessity :
-      'capability Eta_signal_stabilization_pass.pure_context -> unit;
+    stage_pending : 'capability -> 'pending list -> unit;
+    plan_staged_binds : 'capability -> 'observer list -> unit;
+    commit_staging : 'capability -> staging -> 'hook list;
+    update_necessity : 'capability -> unit;
   }
 
 let stabilization_pure_ops ~release_pending_marks ~observer_plan
@@ -721,17 +709,10 @@ let stabilization_pure_ops ~release_pending_marks ~observer_plan
 type ('capability, 'pending, 'observer, 'hook) stabilization_rollback =
   {
     rollback_staging :
-      'capability Eta_signal_stabilization_pass.rollback_context ->
-      staging ->
-      'hook list;
+      'capability -> staging -> 'hook list;
     mark_observers_failed_without_current :
-      'capability Eta_signal_stabilization_pass.rollback_context ->
-      'observer list ->
-      unit;
-    requeue_pending :
-      'capability Eta_signal_stabilization_pass.rollback_context ->
-      'pending list ->
-      unit;
+      'capability -> 'observer list -> unit;
+    requeue_pending : 'capability -> 'pending list -> unit;
   }
 
 let stabilization_rollback_ops ~rollback_staging
@@ -777,19 +758,44 @@ let pass_pure t timer_refresh pure =
       | Error err -> raise (Graph_phase_error err))
     ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
     ~drain_pending:(fun _context -> drain_pending t)
-    ~release_pending_marks:pure.release_pending_marks
-    ~observer_plan:pure.observer_plan
-    ~stage_pending:pure.stage_pending
-    ~plan_staged_binds:pure.plan_staged_binds
-    ~commit_staging:pure.commit_staging
-    ~update_necessity:pure.update_necessity
+    ~release_pending_marks:(fun context pending ->
+      pure.release_pending_marks
+        (Eta_signal_stabilization_pass.pure_capability context)
+        pending)
+    ~observer_plan:(fun context ->
+      pure.observer_plan
+        (Eta_signal_stabilization_pass.pure_capability context))
+    ~stage_pending:(fun context pending ->
+      pure.stage_pending
+        (Eta_signal_stabilization_pass.pure_capability context)
+        pending)
+    ~plan_staged_binds:(fun context observers ->
+      pure.plan_staged_binds
+        (Eta_signal_stabilization_pass.pure_capability context)
+        observers)
+    ~commit_staging:(fun context staging ->
+      pure.commit_staging
+        (Eta_signal_stabilization_pass.pure_capability context)
+        staging)
+    ~update_necessity:(fun context ->
+      pure.update_necessity
+        (Eta_signal_stabilization_pass.pure_capability context))
 
 let pass_rollback rollback =
   Eta_signal_stabilization_pass.rollback_ops
-    ~rollback_staging:rollback.rollback_staging
+    ~rollback_staging:(fun context staging ->
+      rollback.rollback_staging
+        (Eta_signal_stabilization_pass.rollback_capability context)
+        staging)
     ~mark_observers_failed_without_current:
-      rollback.mark_observers_failed_without_current
-    ~requeue_pending:rollback.requeue_pending
+      (fun context observers ->
+        rollback.mark_observers_failed_without_current
+          (Eta_signal_stabilization_pass.rollback_capability context)
+          observers)
+    ~requeue_pending:(fun context pending ->
+      rollback.requeue_pending
+        (Eta_signal_stabilization_pass.rollback_capability context)
+        pending)
 
 let clear_timer_refresh t _context =
   Eta_signal_graph_state.clear_active_timer_refresh t.state

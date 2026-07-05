@@ -511,46 +511,25 @@ type ('capability, 'pending, 'observer, 'event, 'hook)
      stabilization_pure
 
 val stabilization_pure_ops :
-  release_pending_marks:
-    ('capability Eta_signal_stabilization_pass.pure_context ->
-    'pending list ->
-    unit) ->
+  release_pending_marks:('capability -> 'pending list -> unit) ->
   observer_plan:
-    ('capability Eta_signal_stabilization_pass.pure_context ->
+    ('capability ->
     ('capability, 'observer, 'event)
     Eta_signal_stabilization_pass.observer_plan) ->
-  stage_pending:
-    ('capability Eta_signal_stabilization_pass.pure_context ->
-    'pending list ->
-    unit) ->
-  plan_staged_binds:
-    ('capability Eta_signal_stabilization_pass.pure_context ->
-    'observer list ->
-    unit) ->
-  commit_staging:
-    ('capability Eta_signal_stabilization_pass.pure_context ->
-    staging ->
-    'hook list) ->
-  update_necessity:
-    ('capability Eta_signal_stabilization_pass.pure_context -> unit) ->
+  stage_pending:('capability -> 'pending list -> unit) ->
+  plan_staged_binds:('capability -> 'observer list -> unit) ->
+  commit_staging:('capability -> staging -> 'hook list) ->
+  update_necessity:('capability -> unit) ->
   ('capability, 'pending, 'observer, 'event, 'hook)
   stabilization_pure
 
 type ('capability, 'pending, 'observer, 'hook) stabilization_rollback
 
 val stabilization_rollback_ops :
-  rollback_staging:
-    ('capability Eta_signal_stabilization_pass.rollback_context ->
-    staging ->
-    'hook list) ->
+  rollback_staging:('capability -> staging -> 'hook list) ->
   mark_observers_failed_without_current:
-    ('capability Eta_signal_stabilization_pass.rollback_context ->
-    'observer list ->
-    unit) ->
-  requeue_pending:
-    ('capability Eta_signal_stabilization_pass.rollback_context ->
-    'pending list ->
-    unit) ->
+    ('capability -> 'observer list -> unit) ->
+  requeue_pending:('capability -> 'pending list -> unit) ->
   ('capability, 'pending, 'observer, 'hook) stabilization_rollback
 
 type ('capability, 'pending, 'observer, 'event, 'hook)

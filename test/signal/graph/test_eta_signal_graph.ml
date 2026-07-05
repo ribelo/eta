@@ -619,10 +619,9 @@ let test_observer_delivery_plan_uses_collection_order () =
   in
   let pure =
     Graph.stabilization_pure_ops
-      ~release_pending_marks:(fun context _pending ->
-        check_cap (Pass.pure_capability context))
-      ~observer_plan:(fun context ->
-        check_cap (Pass.pure_capability context);
+      ~release_pending_marks:(fun cap _pending -> check_cap cap)
+      ~observer_plan:(fun cap ->
+        check_cap cap;
         let delivery =
           Observer.delivery_collection
             ~active:(fun observer -> observer.active)
@@ -633,18 +632,17 @@ let test_observer_delivery_plan_uses_collection_order () =
               record events ("pending:" ^ event))
         in
         Graph.observer_delivery_plan graph delivery)
-      ~stage_pending:(fun context _pending ->
-        check_cap (Pass.pure_capability context))
-      ~plan_staged_binds:(fun context observers ->
-        check_cap (Pass.pure_capability context);
+      ~stage_pending:(fun cap _pending -> check_cap cap)
+      ~plan_staged_binds:(fun cap observers ->
+        check_cap cap;
         record events
           ("plan_observers:"
           ^ String.concat ","
               (List.map
                  (fun observer -> string_of_int observer.id)
                  observers)))
-      ~commit_staging:(fun context staging ->
-        check_cap (Pass.pure_capability context);
+      ~commit_staging:(fun cap staging ->
+        check_cap cap;
         let commit_context =
           Graph.staging_commit_context
             ~preflight:(fun () -> record events "preflight")
@@ -659,19 +657,18 @@ let test_observer_delivery_plan_uses_collection_order () =
             Alcotest.failf "unexpected graph error: %s"
               (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
                  err))
-      ~update_necessity:(fun context ->
-        check_cap (Pass.pure_capability context);
+      ~update_necessity:(fun cap ->
+        check_cap cap;
         record events "update_necessity")
   in
   let rollback =
     Graph.stabilization_rollback_ops
-      ~rollback_staging:(fun context _staging ->
-        check_cap (Pass.rollback_capability context);
+      ~rollback_staging:(fun cap _staging ->
+        check_cap cap;
         [])
-      ~mark_observers_failed_without_current:(fun context _observers ->
-        check_cap (Pass.rollback_capability context))
-      ~requeue_pending:(fun context _pending ->
-        check_cap (Pass.rollback_capability context))
+      ~mark_observers_failed_without_current:(fun cap _observers ->
+        check_cap cap)
+      ~requeue_pending:(fun cap _pending -> check_cap cap)
   in
   let stabilization_finish = Graph.create_stabilization_finish () in
   let result =

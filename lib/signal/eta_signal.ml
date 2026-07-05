@@ -1846,21 +1846,13 @@ module Make (Observer_error : Observer_error) () = struct
       events
 
   let begin_stabilize lane timer_refresh =
-    let pure_lane context =
-      Stabilization_pass.pure_capability context
-    in
-    let rollback_lane context =
-      Stabilization_pass.rollback_capability context
-    in
     let pure =
       Graph.stabilization_pure_ops
         ~release_pending_marks:
-          (fun (context : graph_lane Stabilization_pass.pure_context)
-               pending ->
-            let _lane = pure_lane context in
+          (fun (_lane : graph_lane) pending ->
             List.iter (fun (V var) -> var.queued <- false) pending)
         ~observer_plan:
-          (fun (_context : graph_lane Stabilization_pass.pure_context) ->
+          (fun (_lane : graph_lane) ->
             let delivery =
               Observer_core.delivery_event_collection ~active:observer_active
                 ~compare:compare_observer_graph_order
@@ -1868,45 +1860,26 @@ module Make (Observer_error : Observer_error) () = struct
             in
             Graph.observer_delivery_plan graph delivery)
         ~stage_pending:
-          (fun (context : graph_lane Stabilization_pass.pure_context)
-               pending ->
-            let lane = pure_lane context in
+          (fun lane pending ->
             List.iter (stage_pending_var lane) pending)
         ~plan_staged_binds:
-          (fun (context : graph_lane Stabilization_pass.pure_context)
-               observers ->
-            let lane = pure_lane context in
+          (fun lane observers ->
             plan_staged_bind_switches lane observers)
         ~commit_staging:
-          (fun (context : graph_lane Stabilization_pass.pure_context)
-               staging ->
-            let lane = pure_lane context in
+          (fun lane staging ->
             commit_staging lane staging)
         ~update_necessity:
-          (fun (context : graph_lane Stabilization_pass.pure_context) ->
-            let lane = pure_lane context in
-            update_necessity_counters_unlocked lane)
+          (fun lane -> update_necessity_counters_unlocked lane)
     in
     let rollback =
       Graph.stabilization_rollback_ops
         ~rollback_staging:
-          (fun
-            (context : graph_lane Stabilization_pass.rollback_context)
-            staging ->
-            let lane = rollback_lane context in
-            reset_staging lane staging)
+          (fun lane staging -> reset_staging lane staging)
         ~mark_observers_failed_without_current:
-          (fun
-            (context : graph_lane Stabilization_pass.rollback_context)
-            observers ->
-            let lane = rollback_lane context in
+          (fun lane observers ->
             List.iter (mark_failed_without_current lane) observers)
         ~requeue_pending:
-          (fun
-            (context : graph_lane Stabilization_pass.rollback_context)
-            pending ->
-            let lane = rollback_lane context in
-            List.iter (requeue_if_needed lane) pending)
+          (fun lane pending -> List.iter (requeue_if_needed lane) pending)
     in
     Graph.run_stabilization graph lane ~timer_refresh
       (Graph.stabilization_ops
