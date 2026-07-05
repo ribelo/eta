@@ -306,12 +306,14 @@ val remember_pure_disposal_hooks :
 val remember_timer_refresh_disposal_hooks :
   (_, _, _, 'hook, _, _, _, _, _, _, _) t -> 'hook list -> unit
 
-type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
-  staging_reset_rollback_bind : 'bind -> 'hook list;
-  staging_reset_rollback_transaction : unit -> unit;
-  staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
-  staging_reset_clear_timer_refresh_timer : 'timer -> unit;
-}
+type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
+
+val staging_reset_context :
+  rollback_bind:('bind -> 'hook list) ->
+  rollback_transaction:(unit -> unit) ->
+  rollback_timer_refresh_dirty:('refresh -> unit) ->
+  clear_timer_refresh_timer:('timer -> unit) ->
+  ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val reset_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->

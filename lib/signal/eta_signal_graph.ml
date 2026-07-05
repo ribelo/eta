@@ -377,6 +377,15 @@ type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
   staging_reset_clear_timer_refresh_timer : 'timer -> unit;
 }
 
+let staging_reset_context ~rollback_bind ~rollback_transaction
+    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
+  {
+    staging_reset_rollback_bind = rollback_bind;
+    staging_reset_rollback_transaction = rollback_transaction;
+    staging_reset_rollback_timer_refresh_dirty = rollback_timer_refresh_dirty;
+    staging_reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
+  }
+
 let reset_staging t staging context =
   Eta_signal_graph_state.reset_staging t.state staging
     {

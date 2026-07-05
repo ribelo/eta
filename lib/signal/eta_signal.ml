@@ -1389,18 +1389,16 @@ module Make (Observer_error : Observer_error) () = struct
     clear_timer_refresh_timer_staging timer
 
   let reset_staging lane staging =
-    Graph.reset_staging graph staging
-      {
-        Graph.staging_reset_rollback_bind = rollback_bind lane;
-        staging_reset_rollback_transaction = rollback_transaction;
-        staging_reset_rollback_timer_refresh_dirty =
-          (fun context ->
-            Graph.restore_dirty graph dirty_ops
-              (Timer_policy.refresh_dirty_items context);
-            Timer_policy.clear_refresh_dirty_items context);
-        staging_reset_clear_timer_refresh_timer =
-          clear_timer_refresh_timer_staging;
-      }
+    let context =
+      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
+        ~rollback_transaction
+        ~rollback_timer_refresh_dirty:(fun context ->
+          Graph.restore_dirty graph dirty_ops
+            (Timer_policy.refresh_dirty_items context);
+          Timer_policy.clear_refresh_dirty_items context)
+        ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
+    in
+    Graph.reset_staging graph staging context
 
   let commit_staging lane staging =
     let context =
