@@ -1878,7 +1878,7 @@ module Make (Observer_error : Observer_error) () = struct
                 ~compare:(compare_observer_graph_order lane)
                 ~collect_event:collect_observer_event
             in
-            Graph.observer_delivery_plan graph delivery)
+            Graph.observer_delivery_plan graph lane delivery)
         ~stage_pending:
           (fun lane pending ->
             List.iter (stage_pending_var lane) pending)

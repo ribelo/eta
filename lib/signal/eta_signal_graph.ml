@@ -681,7 +681,7 @@ let count_observers t _lane ~selected =
 
 let filter_map_observers t _lane ~f = List.filter_map f t.observers
 
-let observer_delivery_plan t delivery =
+let observer_delivery_plan t _lane delivery =
   Eta_signal_observer.delivery_plan delivery ~observers:t.observers
     ~capability:Eta_signal_stabilization_pass.pure_capability
     ~make_plan:Eta_signal_stabilization_pass.observer_plan

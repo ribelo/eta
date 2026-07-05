@@ -553,6 +553,7 @@ val filter_map_observers :
 
 val observer_delivery_plan :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
+  lane_access ->
   (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection ->
   (lane_access, 'observer, 'event) Eta_signal_stabilization_pass.observer_plan
 (** Capture active observers and defer graph-ordered delivery event collection

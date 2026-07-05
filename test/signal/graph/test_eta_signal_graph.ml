@@ -775,7 +775,7 @@ let test_observer_delivery_plan_uses_collection_order () =
               check_cap cap;
               record events ("pending:" ^ event))
         in
-        Graph.observer_delivery_plan graph delivery)
+        Graph.observer_delivery_plan graph cap delivery)
       ~stage_pending:(fun cap _pending -> check_cap cap)
       ~plan_staged_binds:(fun cap observers ->
         check_cap cap;
