@@ -144,11 +144,10 @@ let reset_staging t staging context =
          ~pure_disposal_hooks:(fun _context -> t.pure_disposal_hooks)
          ~rollback_transaction:(fun _context ->
            context.reset_rollback_transaction ())
-         ~clear_computed_nodes:(fun _context -> t.computed_nodes <- [])
-         ~clear_staged_binds:(fun _context -> t.staged_binds <- [])
-         ~clear_pure_disposal_hooks:(fun _context ->
-           t.pure_disposal_hooks <- [])
-         ~clear_timer_refresh_staging:(fun _context ->
+         ~clear_staging:(fun _context ->
+           t.computed_nodes <- [];
+           t.staged_binds <- [];
+           t.pure_disposal_hooks <- [];
            clear_timer_refresh_staging t
              ~rollback_dirty:context.reset_rollback_timer_refresh_dirty
              ~clear_timer:context.reset_clear_timer_refresh_timer))
@@ -199,13 +198,11 @@ let commit_staging t staging context =
            List.iter context.commit_signal t.computed_nodes)
          ~disposal_hooks:(fun _context ->
            t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks)
-         ~clear_computed_nodes:(fun _context -> t.computed_nodes <- [])
-         ~clear_staged_binds:(fun _context -> t.staged_binds <- [])
-         ~clear_pure_disposal_hooks:(fun _context ->
-           t.pure_disposal_hooks <- [])
-         ~clear_timer_refresh_disposal_hooks:(fun _context ->
-           t.timer_refresh_disposal_hooks <- [])
-         ~clear_timer_refresh_staged_timers:(fun _context ->
+         ~clear_staging:(fun _context ->
+           t.computed_nodes <- [];
+           t.staged_binds <- [];
+           t.pure_disposal_hooks <- [];
+           t.timer_refresh_disposal_hooks <- [];
            t.timer_refresh_staged_timers <- [])
          ~commit_snapshot:(fun _context ->
            t.pure_snapshot_commit_count <-

@@ -15,14 +15,7 @@ let test_reset_runs_callbacks_in_staging_order () =
            [ "pure" ])
          ~rollback_transaction:(fun _context ->
            record events "rollback_transaction")
-         ~clear_computed_nodes:(fun _context ->
-           record events "clear_computed_nodes")
-         ~clear_staged_binds:(fun _context ->
-           record events "clear_staged_binds")
-         ~clear_pure_disposal_hooks:(fun _context ->
-           record events "clear_pure_disposal_hooks")
-         ~clear_timer_refresh_staging:(fun _context ->
-           record events "clear_timer_refresh_staging"))
+         ~clear_staging:(fun _context -> record events "clear_staging"))
   in
   Alcotest.(check (list string))
     "callback order"
@@ -30,10 +23,7 @@ let test_reset_runs_callbacks_in_staging_order () =
       "rollback_binds";
       "pure_disposal_hooks";
       "rollback_transaction";
-      "clear_computed_nodes";
-      "clear_staged_binds";
-      "clear_pure_disposal_hooks";
-      "clear_timer_refresh_staging";
+      "clear_staging";
     ]
     !events;
   Alcotest.(check (list string)) "hooks" [ "bind"; "pure" ] hooks
@@ -59,16 +49,7 @@ let test_commit_runs_callbacks_in_staging_order () =
          ~disposal_hooks:(fun _context ->
            record events "disposal_hooks";
            [ "pure"; "timer" ])
-         ~clear_computed_nodes:(fun _context ->
-           record events "clear_computed_nodes")
-         ~clear_staged_binds:(fun _context ->
-           record events "clear_staged_binds")
-         ~clear_pure_disposal_hooks:(fun _context ->
-           record events "clear_pure_disposal_hooks")
-         ~clear_timer_refresh_disposal_hooks:(fun _context ->
-           record events "clear_timer_refresh_disposal_hooks")
-         ~clear_timer_refresh_staged_timers:(fun _context ->
-           record events "clear_timer_refresh_staged_timers")
+         ~clear_staging:(fun _context -> record events "clear_staging")
          ~commit_snapshot:(fun _context -> record events "commit_snapshot"))
   in
   Alcotest.(check (list string))
@@ -82,11 +63,7 @@ let test_commit_runs_callbacks_in_staging_order () =
       "commit_timer_refresh";
       "commit_signals";
       "disposal_hooks";
-      "clear_computed_nodes";
-      "clear_staged_binds";
-      "clear_pure_disposal_hooks";
-      "clear_timer_refresh_disposal_hooks";
-      "clear_timer_refresh_staged_timers";
+      "clear_staging";
       "commit_snapshot";
     ]
     !events;
