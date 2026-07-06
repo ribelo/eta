@@ -1960,6 +1960,10 @@ type small_graph_op =
   | Small_stabilize
   | Small_read of int
 
+type small_graph_observer_policy =
+  | Small_default_equal
+  | Small_mod_equal of int
+
 type small_graph_model = {
   small_pending : int array;
   small_committed : int array;
@@ -1968,6 +1972,7 @@ type small_graph_model = {
 
 and small_graph_observer = {
   small_observed_node : int;
+  small_observer_policy : small_graph_observer_policy;
   mutable small_actual_observer : int Signal.Observer.t option;
   mutable small_actual_updates : observed_update list;
   mutable small_model_active : bool;
@@ -1981,6 +1986,15 @@ let pp_small_graph_op formatter = function
   | Small_dispose slot -> Format.fprintf formatter "Dispose slot%d" slot
   | Small_stabilize -> Format.pp_print_string formatter "Stabilize"
   | Small_read slot -> Format.fprintf formatter "Read slot%d" slot
+
+let pp_small_graph_observer_policy formatter = function
+  | Small_default_equal -> Format.pp_print_string formatter "default"
+  | Small_mod_equal modulus -> Format.fprintf formatter "mod%d" modulus
+
+let small_graph_observer_equal policy left right =
+  match policy with
+  | Small_default_equal -> left = right
+  | Small_mod_equal modulus -> left mod modulus = right mod modulus
 
 let small_graph_apply_map ~scale ~bias value = (value * scale) + bias
 
@@ -2010,9 +2024,10 @@ let small_graph_eval_all ast committed =
     ast;
   values
 
-let create_small_graph_observer node =
+let create_small_graph_observer (node, policy) =
   {
     small_observed_node = node;
+    small_observer_policy = policy;
     small_actual_observer = None;
     small_actual_updates = [];
     small_model_active = false;
@@ -2020,11 +2035,11 @@ let create_small_graph_observer node =
     small_model_updates = [];
   }
 
-let create_small_graph_model initial_values observer_nodes =
+let create_small_graph_model initial_values observer_specs =
   {
     small_pending = Array.copy initial_values;
     small_committed = Array.copy initial_values;
-    small_observers = Array.map create_small_graph_observer observer_nodes;
+    small_observers = Array.map create_small_graph_observer observer_specs;
   }
 
 let small_graph_model_stabilize ast model =
@@ -2039,7 +2054,10 @@ let small_graph_model_stabilize ast model =
           match observer.small_model_current with
           | None -> Some (Initialized next)
           | Some current ->
-              if current = next then None
+              if
+                small_graph_observer_equal observer.small_observer_policy
+                  current next
+              then None
               else Some (Changed (current, next))
         in
         observer.small_model_current <- Some next;
@@ -2170,8 +2188,10 @@ let small_graph_signal_of_node signals = function
               (fun value -> (value * odd_scale) + bias)
               signals.(odd_child))
 
-let small_graph_observer_nodes ~node_count =
-  [| 0; node_count / 2; node_count - 1 |]
+let small_graph_observer_specs ~node_count =
+  [| (0, Small_default_equal);
+     (node_count / 2, Small_mod_equal 2);
+     (node_count - 1, Small_mod_equal 3) |]
 
 let small_graph_record observer update =
   E.sync (fun () ->
@@ -2182,9 +2202,15 @@ let small_graph_observe runtime signals observer =
   match observer.small_actual_observer with
   | Some _ -> ()
   | None ->
+      let equal =
+        match observer.small_observer_policy with
+        | Small_default_equal -> None
+        | Small_mod_equal modulus ->
+            Some (fun left right -> left mod modulus = right mod modulus)
+      in
       let actual_observer =
         run_ok runtime
-          (Signal.Observer.observe signals.(observer.small_observed_node)
+          (Signal.Observer.observe ?equal signals.(observer.small_observed_node)
              (small_graph_record observer))
       in
       observer.small_actual_observer <- Some actual_observer;
@@ -2202,8 +2228,9 @@ let small_graph_dispose runtime observer =
 
 let small_graph_check_observer label slot observer =
   Alcotest.(check (list observed_update))
-    (Format.asprintf "%s slot%d node%d updates" label slot
-       observer.small_observed_node)
+    (Format.asprintf "%s slot%d node%d %a updates" label slot
+       observer.small_observed_node pp_small_graph_observer_policy
+       observer.small_observer_policy)
     (List.rev observer.small_model_updates)
     (List.rev observer.small_actual_updates)
 
@@ -2244,7 +2271,7 @@ let run_small_graph_trace name ~seed =
   let var_count = 3 in
   let node_count = 14 in
   let initial_values = [| -1; 0; 2 |] in
-  let observer_nodes = small_graph_observer_nodes ~node_count in
+  let observer_specs = small_graph_observer_specs ~node_count in
   let ast = generate_small_graph_ast ~seed ~var_count ~node_count in
   let vars = Array.map Signal.Var.create initial_values in
   let signals = Array.make node_count (Signal.const 0) in
@@ -2256,7 +2283,7 @@ let run_small_graph_trace name ~seed =
         | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_bind_select _ ->
             small_graph_signal_of_node signals node))
     ast;
-  let model = create_small_graph_model initial_values observer_nodes in
+  let model = create_small_graph_model initial_values observer_specs in
   let ops =
     generate_small_graph_ops ~seed ~var_count
       ~observer_count:(Array.length model.small_observers)
