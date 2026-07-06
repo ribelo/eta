@@ -1,3 +1,364 @@
+module Adapter = struct
+  open Eta
+
+  module Timer_policy = Eta_signal_timer_policy
+
+  exception Timer_cancelled
+
+  type continue =
+    [ `Continue
+    | `Stop
+    ]
+
+  type advance =
+    [ `Advanced
+    | `Stale
+    | `Stop
+    ]
+
+  type ('capability, 'error) access = {
+    with_access :
+      'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Effect.t;
+  }
+
+  let access :
+      type capability error.
+      with_access:
+        ('a. (capability -> ('a, error) result) -> ('a, error) Effect.t) ->
+      (capability, error) access =
+   fun ~with_access -> { with_access }
+
+  type 'error loop_due_plan = {
+    read_next_due :
+      generation:int -> fallback:int -> (int option, 'error) Effect.t;
+    advance_next_due :
+      generation:int ->
+      expected:int ->
+      next_due_ms:int ->
+      (advance, 'error) Effect.t;
+    after_due_read_before_commit : unit -> (unit, 'error) Effect.t;
+  }
+
+  let loop_due_plan ~read_next_due ~advance_next_due
+      ~after_due_read_before_commit =
+    {
+      read_next_due;
+      advance_next_due;
+      after_due_read_before_commit;
+    }
+
+  type 'error loop_update_plan = {
+    after_update_state : generation:int -> (continue, 'error) Effect.t;
+    construct_update :
+      generation:int -> missed:int -> (unit, 'error) Effect.t;
+    after_update_constructed_before_run : unit -> (unit, 'error) Effect.t;
+  }
+
+  let loop_update_plan ~after_update_state ~construct_update
+      ~after_update_constructed_before_run =
+    {
+      after_update_state;
+      construct_update;
+      after_update_constructed_before_run;
+    }
+
+  type 'error loop_finish_plan = {
+    finish_saturated : generation:int -> (unit, 'error) Effect.t;
+  }
+
+  let loop_finish_plan ~finish_saturated = { finish_saturated }
+
+  type 'error loop_plan = {
+    loop_due_plan : 'error loop_due_plan;
+    loop_update_plan : 'error loop_update_plan;
+    loop_finish_plan : 'error loop_finish_plan;
+  }
+
+  let loop_plan ~due ~updates ~finish =
+    {
+      loop_due_plan = due;
+      loop_update_plan = updates;
+      loop_finish_plan = finish;
+    }
+
+  type 'error start_gate_plan = {
+    begin_start : generation:int -> (continue, 'error) Effect.t;
+    set_next_due :
+      generation:int -> next_due_ms:int -> (continue, 'error) Effect.t;
+  }
+
+  let start_gate_plan ~begin_start ~set_next_due =
+    { begin_start; set_next_due }
+
+  type 'error start_update_plan = {
+    after_start_update : generation:int -> (continue, 'error) Effect.t;
+    construct_start_update :
+      generation:int -> missed:int -> (unit, 'error) Effect.t;
+  }
+
+  let start_update_plan ~construct_start_update ~after_start_update =
+    { after_start_update; construct_start_update }
+
+  type 'error start_daemon_plan = {
+    install_cancel :
+      generation:int -> cancel:(unit -> unit) -> (continue, 'error) Effect.t;
+    cleanup_after_exit :
+      generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
+    cleanup_failed_start :
+      generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
+  }
+
+  let start_daemon_plan ~install_cancel ~cleanup_after_exit
+      ~cleanup_failed_start =
+    {
+      install_cancel;
+      cleanup_after_exit;
+      cleanup_failed_start;
+    }
+
+  type 'error start_plan = {
+    start_gate_plan : 'error start_gate_plan;
+    start_update_plan : 'error start_update_plan;
+    start_daemon_plan : 'error start_daemon_plan;
+  }
+
+  let start_plan ~gate ~update ~daemon =
+    {
+      start_gate_plan = gate;
+      start_update_plan = update;
+      start_daemon_plan = daemon;
+    }
+
+  type ('attempt, 'cancel_hook) demand_claim = {
+    claim_start_attempts : 'attempt list;
+    claim_cancel_hooks : 'cancel_hook list;
+  }
+
+  let demand_claim ~start_attempts ~cancel_hooks =
+    { claim_start_attempts = start_attempts; claim_cancel_hooks = cancel_hooks }
+
+  type ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan = {
+    demand_acquire :
+      Eta.Runtime_contract.t ->
+      'capability ->
+      (('attempt, 'cancel_hook) demand_claim, 'error) result;
+    demand_rollback_unclaimed :
+      'capability -> 'attempt list -> ('cancel_hook list, 'error) result;
+  }
+
+  let demand_claim_plan ~acquire ~rollback_unclaimed =
+    {
+      demand_acquire = acquire;
+      demand_rollback_unclaimed = rollback_unclaimed;
+    }
+
+  type ('attempt, 'cancel_hook, 'error) demand_effect_plan = {
+    run_cancel_hooks : 'cancel_hook list -> (unit, 'error) Effect.t;
+    run_start_attempts : 'attempt list -> (unit, 'error) Effect.t;
+  }
+
+  let demand_effect_plan ~run_cancel_hooks ~run_start_attempts =
+    { run_cancel_hooks; run_start_attempts }
+
+  type ('capability, 'attempt, 'cancel_hook, 'error) demand_plan = {
+    demand_claim_plan :
+      ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan;
+    demand_effect_plan : ('attempt, 'cancel_hook, 'error) demand_effect_plan;
+  }
+
+  let demand_plan ~claim ~effects =
+    { demand_claim_plan = claim; demand_effect_plan = effects }
+
+  let run_cancellable ~install_cancel ~loop =
+    Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
+    let contract = Effect.Expert.contract context in
+    let cancelled_exit = function
+      | Exit.Error cause when Cause.is_interrupt_only cause -> Exit.Ok ()
+      | exit -> exit
+    in
+    try
+      contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+      let cancel () =
+        contract.Runtime_contract.cancel cancel_context Timer_cancelled
+      in
+      match Effect.Expert.eval context (install_cancel ~cancel) with
+      | Exit.Error _ as error -> error
+      | Exit.Ok `Stop -> Exit.Ok ()
+      | Exit.Ok `Continue -> Effect.Expert.eval context loop |> cancelled_exit
+    with exn ->
+      if Option.is_some (contract.Runtime_contract.cancellation_reason exn) then
+        Exit.Ok ()
+      else Effect.Expert.exit_of_exn context exn
+
+  let current_runtime_contract () =
+    Effect.Expert.make ~leaf_name:"eta_signal.timer.demand.runtime_contract"
+      (fun context -> Exit.Ok (Effect.Expert.contract context))
+
+  let run_pending_cancel_hooks effects hooks_ref =
+    match !hooks_ref with
+    | [] -> Effect.unit
+    | hooks ->
+        effects.run_cancel_hooks hooks
+        |> Effect.on_exit (fun _exit ->
+               Effect.sync (fun () -> hooks_ref := []))
+
+  let acquire_demand access claim runtime_contract =
+    access.with_access (fun capability ->
+        claim.demand_acquire runtime_contract capability)
+
+  let rollback_unclaimed_starts access claim effects start_attempts =
+    let open Syntax in
+    let* cancel_hooks =
+      access.with_access (fun capability ->
+          claim.demand_rollback_unclaimed capability start_attempts)
+    in
+    effects.run_cancel_hooks cancel_hooks
+
+  let refresh_demand access plan =
+    let open Syntax in
+    let claim = plan.demand_claim_plan in
+    let effects = plan.demand_effect_plan in
+    let* runtime_contract = current_runtime_contract () in
+    Effect.acquire_use_release
+      ~acquire:
+        (acquire_demand access claim runtime_contract
+        |> Effect.map (fun demand ->
+               (demand.claim_start_attempts, ref demand.claim_cancel_hooks)))
+      ~release:(fun (start_attempts, cancel_hooks_ref) ->
+        let* () =
+          rollback_unclaimed_starts access claim effects start_attempts
+        in
+        run_pending_cancel_hooks effects cancel_hooks_ref)
+      (fun (start_attempts, cancel_hooks_ref) ->
+        let* () = run_pending_cancel_hooks effects cancel_hooks_ref in
+        effects.run_start_attempts start_attempts)
+
+  let rec run_update_batch updates generation remaining ~missed =
+    let open Syntax in
+    if remaining <= 0 then Effect.pure `Continue
+    else
+      let* status = updates.after_update_state ~generation in
+      match status with
+      | `Stop -> Effect.pure `Stop
+      | `Continue ->
+          let* update =
+            Effect.sync (fun () ->
+                updates.construct_update ~generation ~missed)
+          in
+          let* () = updates.after_update_constructed_before_run () in
+          let* () = update in
+          run_update_batch updates generation (remaining - 1) ~missed
+
+  let rec run_updates updates generation remaining ~missed =
+    let open Syntax in
+    match Timer_policy.update_batch ~remaining with
+    | None -> Effect.unit
+    | Some batch ->
+        Timer_policy.update_batch_result batch
+          ~plan:(fun ~count ~remaining ~yield ->
+            let* status = run_update_batch updates generation count ~missed in
+            match status with
+            | `Stop -> Effect.unit
+            | `Continue ->
+                if not yield then Effect.unit
+                else
+                  let* () = Effect.yield in
+                  run_updates updates generation remaining ~missed)
+
+  let rec run_loop plan ~generation ~interval_ms ~next_due_ms
+      ~catch_up_policy =
+    let open Syntax in
+    let due = plan.loop_due_plan in
+    let updates = plan.loop_update_plan in
+    let finish = plan.loop_finish_plan in
+    let* next_due = due.read_next_due ~generation ~fallback:next_due_ms in
+    match next_due with
+    | None -> Effect.unit
+    | Some next_due_ms ->
+        let* now_ms = Effect.now in
+        let delay_ms = Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms in
+        let* () = Effect.sleep (Duration.ms delay_ms) in
+        let* next_due = due.read_next_due ~generation ~fallback:next_due_ms in
+        (match next_due with
+        | None -> Effect.unit
+        | Some due_ms ->
+            let* now_ms = Effect.now in
+            let wake =
+              Timer_policy.daemon_wake_plan ~catch_up_policy ~interval_ms
+                ~next_due_ms:due_ms ~now_ms
+            in
+            Timer_policy.wake_plan_result wake
+              ~plan:
+                (fun ~next_due_ms ~saturated_due ~update_count
+                     ~update_missed ->
+                  let continue () =
+                    run_loop plan ~generation ~interval_ms ~next_due_ms
+                      ~catch_up_policy
+                  in
+                  let* () = due.after_due_read_before_commit () in
+                  let* advance =
+                    due.advance_next_due ~generation ~expected:due_ms
+                      ~next_due_ms
+                  in
+                  match advance with
+                  | `Stop -> Effect.unit
+                  | `Stale -> continue ()
+                  | `Advanced ->
+                      let* () =
+                        run_updates updates generation update_count
+                          ~missed:update_missed
+                      in
+                      let* () =
+                        if saturated_due then
+                          finish.finish_saturated ~generation
+                        else Effect.unit
+                      in
+                      let* status = updates.after_update_state ~generation in
+                      match status with
+                      | `Continue -> continue ()
+                      | `Stop -> Effect.unit))
+
+  let start plan loop_plan ~generation ~interval_ms
+      ~update_on_start ~catch_up_policy =
+    let open Syntax in
+    let gate = plan.start_gate_plan in
+    let update = plan.start_update_plan in
+    let daemon = plan.start_daemon_plan in
+    let start_loop () =
+      let* now_ms = Effect.now in
+      let next_due_ms =
+        Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
+      in
+      let* status = gate.set_next_due ~generation ~next_due_ms in
+      match status with
+      | `Stop -> Effect.unit
+      | `Continue ->
+          Effect.daemon
+            (run_cancellable
+               ~install_cancel:(fun ~cancel ->
+                 daemon.install_cancel ~generation ~cancel)
+               ~loop:
+                 (run_loop loop_plan ~generation ~interval_ms ~next_due_ms
+                    ~catch_up_policy
+                 |> Effect.on_exit
+                      (daemon.cleanup_after_exit ~generation)))
+    in
+    let start () =
+      if update_on_start then
+        let* () = update.construct_start_update ~generation ~missed:1 in
+        let* status = update.after_start_update ~generation in
+        match status with
+        | `Continue -> start_loop ()
+        | `Stop -> Effect.unit
+      else start_loop ()
+    in
+    let* status = gate.begin_start ~generation in
+    match status with
+    | `Stop -> Effect.unit
+    | `Continue ->
+        start () |> Effect.on_exit (daemon.cleanup_failed_start ~generation)
+end
+
 type 'start demand_effects = {
   demand_start_attempts : 'start list;
   demand_cancel_hooks : (unit -> unit) list;
@@ -366,7 +727,7 @@ let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
 
 let refresh_demand_effect access port =
   let claim =
-    Eta_signal_timer_adapter.demand_claim_plan
+    Adapter.demand_claim_plan
       ~acquire:(fun runtime_contract capability ->
         match port.demand_acquire runtime_contract capability with
         | Error _ as error -> error
@@ -374,19 +735,19 @@ let refresh_demand_effect access port =
             demand_effects_plan effects ~plan:(fun ~start_attempts
                 ~cancel_hooks ->
               Ok
-                (Eta_signal_timer_adapter.demand_claim ~start_attempts
+                (Adapter.demand_claim ~start_attempts
                    ~cancel_hooks)))
       ~rollback_unclaimed:port.demand_rollback_unclaimed
   in
   let effects =
-    Eta_signal_timer_adapter.demand_effect_plan
+    Adapter.demand_effect_plan
       ~run_cancel_hooks:port.demand_run_cancel_hooks
       ~run_start_attempts:port.demand_run_start_attempts
   in
-  Eta_signal_timer_adapter.refresh_demand
-    (Eta_signal_timer_adapter.access ~with_access:(fun f ->
+  Adapter.refresh_demand
+    (Adapter.access ~with_access:(fun f ->
          access.demand_with_access f))
-    (Eta_signal_timer_adapter.demand_plan ~claim ~effects)
+    (Adapter.demand_plan ~claim ~effects)
 
 let run_node_demand_refresh refresh =
   let active_plan = ref None in
@@ -533,7 +894,7 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
     with_state (fun () -> after_update_state port timer ~generation)
   in
   let loop_due =
-    Eta_signal_timer_adapter.loop_due_plan
+    Adapter.loop_due_plan
       ~read_next_due:(fun ~generation ~fallback ->
         with_state (fun () ->
             read_next_due port timer ~generation ~fallback))
@@ -543,7 +904,7 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
       ~after_due_read_before_commit:hooks.daemon_after_due_read_before_commit
   in
   let loop_updates =
-    Eta_signal_timer_adapter.loop_update_plan
+    Adapter.loop_update_plan
       ~after_update_state
       ~construct_update:(fun ~generation ~missed ->
         update.daemon_update timer ~generation ~missed)
@@ -551,17 +912,17 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
         hooks.daemon_after_update_constructed_before_run
   in
   let loop_finish =
-    Eta_signal_timer_adapter.loop_finish_plan
+    Adapter.loop_finish_plan
       ~finish_saturated:(fun ~generation ->
         with_state (fun () ->
             finish_saturated ~advance_generation port timer ~generation))
   in
   let loop_plan =
-    Eta_signal_timer_adapter.loop_plan ~due:loop_due ~updates:loop_updates
+    Adapter.loop_plan ~due:loop_due ~updates:loop_updates
       ~finish:loop_finish
   in
   let start_gate =
-    Eta_signal_timer_adapter.start_gate_plan
+    Adapter.start_gate_plan
       ~begin_start:(fun ~generation ->
         with_state (fun () -> begin_start port timer ~generation))
       ~set_next_due:(fun ~generation ~next_due_ms ->
@@ -569,23 +930,23 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
             set_next_due port timer ~generation ~next_due_ms))
   in
   let start_update =
-    Eta_signal_timer_adapter.start_update_plan
+    Adapter.start_update_plan
       ~construct_start_update:(fun ~generation ~missed ->
         update.daemon_update timer ~generation ~missed)
       ~after_start_update:after_update_state
   in
   let start_daemon =
-    Eta_signal_timer_adapter.start_daemon_plan
+    Adapter.start_daemon_plan
       ~install_cancel:(fun ~generation ~cancel ->
         with_state (fun () ->
             install_cancel port timer ~generation ~cancel))
       ~cleanup_after_exit ~cleanup_failed_start
   in
   let start_plan =
-    Eta_signal_timer_adapter.start_plan ~gate:start_gate
+    Adapter.start_plan ~gate:start_gate
       ~update:start_update ~daemon:start_daemon
   in
-  Eta_signal_timer_adapter.start start_plan loop_plan ~generation
+  Adapter.start start_plan loop_plan ~generation
     ~interval_ms ~update_on_start ~catch_up_policy
 
 let create_daemon_node ~runtime_contract ~refresh_when_inactive

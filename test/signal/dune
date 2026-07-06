@@ -15,7 +15,6 @@
   eta_signal_scope
   eta_signal_stabilization_pass
   eta_signal_timer
-  eta_signal_timer_adapter
   eta_signal_timer_policy
   eta_signal_transaction
   eta_signal_stabilization)
@@ -204,18 +203,6 @@
 (rule
  (target eta_signal_timer.mli)
  (deps ../../lib/signal/eta_signal_timer.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_timer_adapter.ml)
- (deps ../../lib/signal/eta_signal_timer_adapter.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_timer_adapter.mli)
- (deps ../../lib/signal/eta_signal_timer_adapter.mli)
  (action
   (copy %{deps} %{target})))
 
