@@ -221,6 +221,197 @@ let test_graph_rejects_cross_domain_effectful_apis () =
     (S.Var.value source);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_n_ary_maps_both_and_all () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let v1 = S.Var.create 1 in
+  let v2 = S.Var.create 2 in
+  let v3 = S.Var.create 3 in
+  let v4 = S.Var.create 4 in
+  let v5 = S.Var.create 5 in
+  let v6 = S.Var.create 6 in
+  let v7 = S.Var.create 7 in
+  let v8 = S.Var.create 8 in
+  let v9 = S.Var.create 9 in
+  let s1 = S.Var.watch v1 in
+  let s2 = S.Var.watch v2 in
+  let s3 = S.Var.watch v3 in
+  let s4 = S.Var.watch v4 in
+  let s5 = S.Var.watch v5 in
+  let s6 = S.Var.watch v6 in
+  let s7 = S.Var.watch v7 in
+  let s8 = S.Var.watch v8 in
+  let s9 = S.Var.watch v9 in
+  let sum3 = S.map3 (fun a b c -> a + b + c) s1 s2 s3 in
+  let sum4 = S.map4 (fun a b c d -> a + b + c + d) s1 s2 s3 s4 in
+  let sum5 =
+    S.map5 (fun a b c d e -> a + b + c + d + e) s1 s2 s3 s4 s5
+  in
+  let sum6 =
+    S.map6
+      (fun a b c d e f -> a + b + c + d + e + f)
+      s1 s2 s3 s4 s5 s6
+  in
+  let sum7 =
+    S.map7
+      (fun a b c d e f g -> a + b + c + d + e + f + g)
+      s1 s2 s3 s4 s5 s6 s7
+  in
+  let sum8 =
+    S.map8
+      (fun a b c d e f g h -> a + b + c + d + e + f + g + h)
+      s1 s2 s3 s4 s5 s6 s7 s8
+  in
+  let sum9 =
+    S.map9
+      (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+      s1 s2 s3 s4 s5 s6 s7 s8 s9
+  in
+  let pair_sum = S.both s1 s2 |> S.map (fun (a, b) -> a + b) in
+  let all_sum = S.all [ s1; s2; s3 ] |> S.map (List.fold_left ( + ) 0) in
+  let combined =
+    S.all [ sum3; sum4; sum5; sum6; sum7; sum8; sum9; pair_sum; all_sum ]
+    |> S.map (List.fold_left ( + ) 0)
+  in
+  let observer = run_ok runtime (S.Observer.observe combined (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "initial combined n-ary value" 170
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Var.set v9 10);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "map9 updates through all" 171
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Var.set v1 11);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "shared source updates all combinators" 261
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_map_arity_matrix_initializes_and_coalesces () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let v1 = S.Var.create 1 in
+  let v2 = S.Var.create 2 in
+  let v3 = S.Var.create 3 in
+  let v4 = S.Var.create 4 in
+  let v5 = S.Var.create 5 in
+  let v6 = S.Var.create 6 in
+  let v7 = S.Var.create 7 in
+  let v8 = S.Var.create 8 in
+  let v9 = S.Var.create 9 in
+  let s1 = S.Var.watch v1 in
+  let s2 = S.Var.watch v2 in
+  let s3 = S.Var.watch v3 in
+  let s4 = S.Var.watch v4 in
+  let s5 = S.Var.watch v5 in
+  let s6 = S.Var.watch v6 in
+  let s7 = S.Var.watch v7 in
+  let s8 = S.Var.watch v8 in
+  let s9 = S.Var.watch v9 in
+  let mapped =
+    [
+      S.const 10 |> S.map (fun n -> n + 1);
+      S.map (fun a -> a) s1;
+      S.map2 (fun a b -> a + b) s1 s2;
+      S.map3 (fun a b c -> a + b + c) s1 s2 s3;
+      S.map4 (fun a b c d -> a + b + c + d) s1 s2 s3 s4;
+      S.map5 (fun a b c d e -> a + b + c + d + e) s1 s2 s3 s4 s5;
+      S.map6
+        (fun a b c d e f -> a + b + c + d + e + f)
+        s1 s2 s3 s4 s5 s6;
+      S.map7
+        (fun a b c d e f g -> a + b + c + d + e + f + g)
+        s1 s2 s3 s4 s5 s6 s7;
+      S.map8
+        (fun a b c d e f g h -> a + b + c + d + e + f + g + h)
+        s1 s2 s3 s4 s5 s6 s7 s8;
+      S.map9
+        (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+        s1 s2 s3 s4 s5 s6 s7 s8 s9;
+    ]
+  in
+  let events = ref [] in
+  let observer =
+    run_ok runtime (S.Observer.observe (S.all mapped) (record events))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list int))
+    "map arities initialize"
+    [ 11; 1; 3; 6; 10; 15; 21; 28; 36; 45 ]
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Var.set v1 100);
+  run_ok runtime (S.Var.set v1 101);
+  run_ok runtime (S.Var.set v9 90);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list int))
+    "map arities publish final coalesced source values"
+    [ 11; 101; 103; 106; 110; 115; 121; 128; 136; 226 ]
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "one initialization and one changed event" 2
+    (List.length !events);
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_map_invariants_repeated_children_cutoff_and_final_values () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let shared_calls = ref 0 in
+  let shared =
+    S.Var.watch source
+    |> S.map (fun value ->
+           incr shared_calls;
+           value)
+  in
+  let repeated_map2 = S.map2 ( + ) shared shared in
+  let repeated_map9 =
+    S.map9
+      (fun a b c d e f g h i -> a + b + c + d + e + f + g + h + i)
+      shared shared shared shared shared shared shared shared shared
+  in
+  let cutoff_source = S.Var.create 0 in
+  let cutoff_child =
+    S.Var.watch cutoff_source |> S.map ~equal:Int.equal (fun value -> value mod 2)
+  in
+  let cutoff_calls = ref 0 in
+  let cutoff_map9 =
+    S.map9
+      (fun a b c d e f g h i ->
+        incr cutoff_calls;
+        a + b + c + d + e + f + g + h + i)
+      cutoff_child cutoff_child cutoff_child cutoff_child cutoff_child
+      cutoff_child cutoff_child cutoff_child cutoff_child
+  in
+  let left = S.Var.create 1 in
+  let right = S.Var.create 10 in
+  let map2_calls = ref 0 in
+  let two_inputs =
+    S.map2
+      (fun a b ->
+        incr map2_calls;
+        a + b)
+      (S.Var.watch left) (S.Var.watch right)
+  in
+  let combined = S.all [ repeated_map2; repeated_map9; cutoff_map9; two_inputs ] in
+  let observer = run_ok runtime (S.Observer.observe combined (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list int)) "initial invariant values" [ 2; 9; 0; 11 ]
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "repeated child recomputed once initially" 1 !shared_calls;
+  Alcotest.(check int) "map2 computed once initially" 1 !map2_calls;
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime (S.Var.set cutoff_source 2);
+  run_ok runtime (S.Var.set left 2);
+  run_ok runtime (S.Var.set right 20);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list int))
+    "updated invariant values" [ 4; 18; 0; 22 ]
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "repeated child recomputed once after update" 2
+    !shared_calls;
+  Alcotest.(check int) "child cutoff suppressed map9 recompute" 1 !cutoff_calls;
+  Alcotest.(check int) "two changed inputs recomputed once" 2 !map2_calls;
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_explicit_stabilization_boundary () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -784,6 +975,12 @@ let () =
             test_graph_rejects_registered_worker_context;
           Alcotest.test_case "graph rejects cross-domain effectful APIs" `Quick
             test_graph_rejects_cross_domain_effectful_apis;
+          Alcotest.test_case "n-ary maps, both, and all" `Quick
+            test_n_ary_maps_both_and_all;
+          Alcotest.test_case "map arity matrix initializes and coalesces"
+            `Quick test_map_arity_matrix_initializes_and_coalesces;
+          Alcotest.test_case "map invariants repeated children and cutoff"
+            `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
