@@ -27,6 +27,12 @@ module type Observer_error = sig
   val pp : Format.formatter -> t -> unit
 end
 
+module No_observer_error = struct
+  type t = |
+
+  let pp _ppf (error : t) = match error with _ -> .
+end
+
 module Make (Observer_error : Observer_error) () = struct
   type observer_error = Observer_error.t
 
@@ -2817,3 +2823,5 @@ module Make (Observer_error : Observer_error) () = struct
         (fun (_observer, stream) -> f stream)
   end
 end
+
+module Make_no_error () = Make (No_observer_error) ()

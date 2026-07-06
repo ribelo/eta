@@ -1,13 +1,6 @@
 open Eta
 
-module Signal =
-  Eta_signal.Make
-    (struct
-      type t = |
-
-      let pp _ppf (value : t) = match value with _ -> .
-    end)
-    ()
+module Signal = Eta_signal.Make_no_error ()
 
 type error =
   [ Signal.graph_error

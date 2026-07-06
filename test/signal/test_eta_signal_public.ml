@@ -8,6 +8,7 @@ module Observer_error = struct
 end
 
 module Signal = Eta_signal.Make (Observer_error) ()
+module No_error_signal = Eta_signal.Make_no_error ()
 
 type test_error =
   [ Signal.graph_error
@@ -16,13 +17,26 @@ type test_error =
   | Signal.time_error
   | Signal.stream_error ]
 
+type no_error_test_error =
+  [ No_error_signal.graph_error
+  | No_error_signal.observer_read_error
+  | No_error_signal.stabilize_error ]
+
 let pp_hidden formatter _ = Format.pp_print_string formatter "<signal-error>"
 
 let widen (eff : ('a, [< test_error ]) E.t) : ('a, test_error) E.t =
   E.map_error (fun error -> (error :> test_error)) eff
 
+let widen_no_error
+    (eff : ('a, [< no_error_test_error ]) E.t) :
+    ('a, no_error_test_error) E.t =
+  E.map_error (fun error -> (error :> no_error_test_error)) eff
+
 let run_ok runtime eff =
   Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen eff))
+
+let run_no_error_ok runtime eff =
+  Eta_test.Expect.expect_ok (Eta.Runtime.run runtime (widen_no_error eff))
 
 let wait_until label predicate =
   let rec loop attempts =
@@ -50,6 +64,26 @@ let expect_exact_runtime_mismatch label = function
 
 let record updates update =
   E.sync (fun () -> updates := update :: !updates)
+
+let test_make_no_error_first_use () =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = No_error_signal.Var.create 1 in
+  let doubled =
+    No_error_signal.Var.watch source
+    |> No_error_signal.map (fun value -> value * 2)
+  in
+  let observer =
+    run_no_error_ok runtime
+      (No_error_signal.Observer.observe doubled (fun _ -> E.unit))
+  in
+  run_no_error_ok runtime No_error_signal.stabilize;
+  Alcotest.(check int) "initial read" 2
+    (run_no_error_ok runtime (No_error_signal.Observer.read observer));
+  run_no_error_ok runtime (No_error_signal.Var.set source 3);
+  run_no_error_ok runtime No_error_signal.stabilize;
+  Alcotest.(check int) "changed read" 6
+    (run_no_error_ok runtime (No_error_signal.Observer.read observer));
+  run_no_error_ok runtime (No_error_signal.Observer.dispose observer)
 
 let test_basic_observe_stabilize_read () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -492,6 +526,8 @@ let () =
     [
       ( "public",
         [
+          Alcotest.test_case "no-error graph first use" `Quick
+            test_make_no_error_first_use;
           Alcotest.test_case "observe stabilize read" `Quick
             test_basic_observe_stabilize_read;
           Alcotest.test_case "bind switch detaches stale dependency" `Quick

@@ -18,7 +18,8 @@
     Structural [?equal] cannot recover a previous snapshot after you mutate the
     same heap object in place: the graph still holds that object as the old
     value. Treat signal payloads as immutable once published, or publish a copy.
-    In the examples below, [S] is a signal module produced by {!Make}.
+    In the examples below, [S] is a signal module produced by {!Make} or
+    {!Make_no_error}.
 
     Mutating a heap block in place and setting the same block is suppressed by
     the default cutoff:
@@ -106,6 +107,14 @@
 
 module type Observer_error = sig
   type t
+
+  val pp : Format.formatter -> t -> unit
+end
+
+(** Observer callback typed failures for graph instances whose callbacks cannot
+    fail. *)
+module No_observer_error : sig
+  type t = |
 
   val pp : Format.formatter -> t -> unit
 end
@@ -701,3 +710,9 @@ module Make (Observer_error : Observer_error) () : sig
         reported as finalizer diagnostics by Eta's resource semantics. *)
   end
 end
+
+module Make_no_error () : module type of Make (No_observer_error) ()
+(** [Make_no_error ()] is [Make (No_observer_error) ()]. Use it for pure signal
+    graphs and observer callbacks that cannot fail with a typed application
+    error. Use {!Make} when observer callbacks need their own typed failure
+    channel. *)
