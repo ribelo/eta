@@ -113,45 +113,40 @@ let run_in_domain f =
   in
   Domain.join domain
 
-let test_queue_rejects_cross_domain_use () =
+let test_queue_allows_cross_domain_sync_use () =
   let queue = Queue.unbounded () in
   match
     run_in_domain @@ fun () ->
-    try Ok (ignore (Queue.stats queue : Queue.stats))
+    try
+      ignore (Queue.stats queue : Queue.stats);
+      Queue.close queue;
+      Ok ()
     with
     | Invalid_argument message -> Error message
     | exn ->
-        Alcotest.failf "expected Invalid_argument, got %s"
+        Alcotest.failf "expected cross-domain queue use to succeed, got %s"
           (Printexc.to_string exn)
   with
+  | Ok () ->
+      Alcotest.(check bool)
+        "closed from foreign domain" true (Queue.stats queue).closed
   | Error message ->
-      Alcotest.(check string)
-        "cross-domain queue failure"
-        "Eta.Queue: queue APIs must be called on the domain that created the queue"
-        message
-  | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
+      Alcotest.failf "cross-domain queue use was rejected: %s" message
 
-let test_queue_take_up_to_zero_rejects_cross_domain_use () =
+let test_queue_take_up_to_zero_allows_cross_domain_use () =
   let queue = Queue.unbounded () in
   match
     run_in_domain @@ fun () ->
     let rt = Test_runtime.create () in
     match Test_runtime.run rt (Queue.take_up_to queue ~max:0) with
-    | Exit.Error (Cause.Die { exn = Invalid_argument message; _ }) ->
-        Error message
+    | Exit.Ok values -> Ok values
     | Exit.Error cause ->
-        Alcotest.failf "expected Invalid_argument defect, got %a"
+        Alcotest.failf "expected cross-domain zero drain to succeed, got %a"
           (Cause.pp pp_hidden) cause
-    | Exit.Ok values ->
-        Alcotest.failf "expected cross-domain queue use to fail, got %d values"
-          (List.length values)
   with
+  | Ok values -> Alcotest.(check (list int)) "empty zero drain" [] values
   | Error message ->
-      Alcotest.(check string)
-        "cross-domain zero drain failure"
-        "Eta.Queue: queue APIs must be called on the domain that created the queue"
-        message
-  | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
+      Alcotest.failf "cross-domain zero drain was rejected: %s" message
 
 let yield_until label predicate =
   let rec loop = function
@@ -163,6 +158,97 @@ let yield_until label predicate =
           loop (attempts - 1))
   in
   loop 20
+
+let test_queue_foreign_try_offer_wakes_owner_receiver () =
+  Test_eta_support.with_test_clock @@ fun sw _clock rt ->
+  let owner = Domain.self () in
+  let queue = Queue.unbounded () in
+  let started, started_resolver = Eio.Promise.create () in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+          |> Effect.bind (fun () -> Queue.take queue)
+          |> Effect.map (fun value -> (value, Domain.self ()))))
+  in
+  Eio.Promise.await started;
+  yield_until "owner receiver waiter" (fun () ->
+      (Queue.stats queue).Queue.waiting_receivers = 1);
+  let foreign_offer =
+    run_in_domain @@ fun () ->
+    let foreign_rt = Test_runtime.create () in
+    Test_runtime.run foreign_rt (Queue.try_offer queue 42)
+  in
+  (match foreign_offer with
+  | Exit.Ok `Sent -> ()
+  | Exit.Ok _ -> Alcotest.fail "expected foreign offer to be sent"
+  | Exit.Error cause ->
+      Alcotest.failf "foreign offer failed: %a" (Cause.pp pp_hidden) cause);
+  let value, resumed_domain =
+    expect_exit_ok "foreign offer receiver wakeup" (Eio.Promise.await_exn receiver)
+  in
+  Alcotest.(check int) "received foreign value" 42 value;
+  Alcotest.(check bool)
+    "receiver continuation resumed on owner domain" true
+    (resumed_domain = owner)
+
+let test_queue_foreign_take_wakes_owner_sender () =
+  Test_eta_support.with_test_clock @@ fun sw _clock rt ->
+  let owner = Domain.self () in
+  let queue = Queue.bounded ~capacity:1 () in
+  Test_eta_support.run_ok rt (Queue.send queue 1);
+  let started, started_resolver = Eio.Promise.create () in
+  let sender =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+          |> Effect.bind (fun () -> Queue.offer queue 2)
+          |> Effect.map (fun admitted -> (admitted, Domain.self ()))))
+  in
+  Eio.Promise.await started;
+  yield_until "owner sender waiter" (fun () ->
+      (Queue.stats queue).Queue.waiting_senders = 1);
+  let foreign_take =
+    run_in_domain @@ fun () ->
+    let foreign_rt = Test_runtime.create () in
+    Test_runtime.run foreign_rt (Queue.take queue)
+  in
+  (match foreign_take with
+  | Exit.Ok value -> Alcotest.(check int) "foreign took first value" 1 value
+  | Exit.Error cause ->
+      Alcotest.failf "foreign take failed: %a" (Cause.pp pp_hidden) cause);
+  let admitted, resumed_domain =
+    expect_exit_ok "foreign take sender wakeup" (Eio.Promise.await_exn sender)
+  in
+  Alcotest.(check bool) "sender admitted" true admitted;
+  Alcotest.(check bool)
+    "sender continuation resumed on owner domain" true
+    (resumed_domain = owner);
+  Alcotest.(check int) "admitted value remains" 2
+    (Test_eta_support.run_ok rt (Queue.take queue))
+
+let test_queue_foreign_shutdown_wakes_owner_receiver () =
+  Test_eta_support.with_test_clock @@ fun sw _clock rt ->
+  let queue = Queue.unbounded () in
+  let started, started_resolver = Eio.Promise.create () in
+  let receiver =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Runtime.run rt
+          (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
+          |> Effect.bind (fun () -> Queue.take queue)))
+  in
+  Eio.Promise.await started;
+  yield_until "owner receiver waiter" (fun () ->
+      (Queue.stats queue).Queue.waiting_receivers = 1);
+  run_in_domain (fun () -> Queue.shutdown queue);
+  (match Eio.Promise.await_exn receiver with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected closed receiver, got %a"
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok value ->
+      Alcotest.failf "expected closed receiver, got value %d" value);
+  Alcotest.(check bool) "shutdown committed" true (Queue.is_shutdown queue)
 
 let test_queue_backpressure_sender_wakeup_stays_on_owner_domain () =
   Test_eta_support.with_test_clock @@ fun sw _clock rt ->
@@ -623,7 +709,7 @@ let set_queue_counter queue field value =
 let test_queue_stats_counters_saturate () =
   let rt = Test_runtime.create () in
   let sent_queue = Queue.unbounded () in
-  set_queue_counter sent_queue 9 (max_int - 1);
+  set_queue_counter sent_queue 8 (max_int - 1);
   run_ok rt (Queue.send sent_queue 1);
   run_ok rt (Queue.send sent_queue 2);
   Alcotest.(check int) "sent saturates" max_int
@@ -631,7 +717,7 @@ let test_queue_stats_counters_saturate () =
   let received_queue = Queue.unbounded () in
   run_ok rt (Queue.send received_queue 1);
   run_ok rt (Queue.send received_queue 2);
-  set_queue_counter received_queue 10 (max_int - 1);
+  set_queue_counter received_queue 9 (max_int - 1);
   Alcotest.(check int) "first received value" 1
     (run_ok rt (Queue.take received_queue));
   Alcotest.(check int) "second received value" 2
@@ -640,7 +726,7 @@ let test_queue_stats_counters_saturate () =
     (Queue.stats received_queue).Queue.received;
   let dropped_queue = Queue.dropping ~capacity:1 () in
   run_ok rt (Queue.send dropped_queue 1);
-  set_queue_counter dropped_queue 11 (max_int - 1);
+  set_queue_counter dropped_queue 10 (max_int - 1);
   Alcotest.(check bool) "first drop" false
     (run_ok rt (Queue.offer dropped_queue 2));
   Alcotest.(check bool) "second drop" false

@@ -5,7 +5,7 @@
     subscribers either receive them or unsubscribe. Late subscribers do not
     receive earlier messages.
 
-    v1 is deliberately same-domain, like {!Channel} and {!Queue}. *)
+    Pubsub is deliberately same-domain, like {!Channel}. *)
 
 type ('a, 'err) t
 type ('a, 'err) subscription

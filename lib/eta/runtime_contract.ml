@@ -254,7 +254,7 @@ let of_runtime (module R : RUNTIME) =
         (promise raw_promise, resolver raw_resolver));
     resolve_promise =
       (fun (type a) (resolver : a resolver) (value : a) ->
-        ensure_runtime_operation ();
+        Sync_lock.check_no_runtime_operation ();
         R.resolve_promise (resolver_value resolver) value);
     await_promise =
       (fun (type a) (promise : a promise) ->

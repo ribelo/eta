@@ -100,7 +100,7 @@ Use named helpers at common boundaries:
   that preserve typed close results.
 - `Eta.Queue.unbounded`, `bounded`, `dropping`, and `sliding` for named queue
   policies without exposing the internal admission strategy.
-- `Eta.Queue.send` / `take` for same-domain queue handoff with close fences.
+- `Eta.Queue.send` / `take` for cross-domain queue handoff with close fences.
 - `Eta.Queue.try_offer` / `poll` for non-blocking queue probes
   that preserve typed close results.
 - `Eta.Mutable_ref.update_and_get` for application-owned shared state that

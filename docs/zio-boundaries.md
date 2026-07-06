@@ -72,7 +72,7 @@ Eta has small, focused primitives rather than ZIO-compatible data structures:
 
 - `Mutable_ref` is a named `Atomic.t` wrapper with CAS-style operations, not a
   ZIO `Ref` or `Ref.Synchronized`.
-- `Queue` is a same-domain unbounded FIFO with close/error fences.
+- `Queue` is a cross-domain producer/consumer queue with close/error fences.
 - `Channel` is a same-domain bounded backpressure channel.
 - `Pubsub` is a same-domain scoped broadcast hub with explicit overflow
   policy.

@@ -3,8 +3,8 @@ open Eta
 module Direct_runtime = struct
   type scope = unit
   type cancel_context = unit
-  type 'a promise = 'a option ref
-  type 'a resolver = 'a option ref
+  type 'a promise = 'a option Atomic.t
+  type 'a resolver = 'a option Atomic.t
   type 'a stream = 'a Stdlib.Queue.t
 
   let now = ref 0
@@ -21,16 +21,18 @@ module Direct_runtime = struct
   let check () = ()
 
   let create_promise () =
-    let cell = ref None in
+    let cell = Atomic.make None in
     (cell, cell)
 
-  let resolve_promise resolver value =
-    match !resolver with
+  let rec resolve_promise resolver value =
+    match Atomic.get resolver with
     | Some _ -> invalid_arg "Direct_runtime.resolve_promise: already resolved"
-    | None -> resolver := Some value
+    | None ->
+        if not (Atomic.compare_and_set resolver None (Some value)) then
+          resolve_promise resolver value
 
   let await_promise promise =
-    match !promise with
+    match Atomic.get promise with
     | Some value -> value
     | None -> failwith "Direct_runtime.await_promise: unresolved promise"
 
@@ -242,8 +244,6 @@ let test_erased_runtime_contract_rejects_foreign_domain_operations () =
       ignore (contract.Runtime_contract.create_promise () : int
                 Runtime_contract.promise
                 * int Runtime_contract.resolver));
-  check_foreign "resolve_promise" (fun () ->
-      contract.Runtime_contract.resolve_promise resolver 1);
   check_foreign "await_promise" (fun () ->
       ignore (contract.Runtime_contract.await_promise promise : int));
   check_foreign "create_stream" (fun () ->
@@ -260,6 +260,17 @@ let test_erased_runtime_contract_rejects_foreign_domain_operations () =
       ignore (contract.Runtime_contract.local_get local : int option));
   check_foreign "local_with_binding" (fun () ->
       contract.Runtime_contract.local_with_binding local 1 (fun () -> ()))
+
+let test_erased_runtime_contract_allows_foreign_domain_resolution () =
+  let contract =
+    Runtime_contract.of_runtime
+      (module Direct_runtime : Runtime_contract.RUNTIME)
+  in
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  run_in_domain (fun () -> contract.Runtime_contract.resolve_promise resolver 42);
+  Alcotest.(check int)
+    "foreign resolution observed on owner" 42
+    (contract.Runtime_contract.await_promise promise)
 
 module Foreign_callback_runtime = struct
   include Direct_runtime
@@ -317,6 +328,8 @@ let tests =
           test_erased_runtime_contract_rejects_foreign_domain_use;
         Alcotest.test_case "erased contract rejects cross-domain operations"
           `Quick test_erased_runtime_contract_rejects_foreign_domain_operations;
+        Alcotest.test_case "erased contract allows foreign resolution" `Quick
+          test_erased_runtime_contract_allows_foreign_domain_resolution;
         Alcotest.test_case "erased contract rejects off-owner callbacks" `Quick
           test_erased_runtime_contract_rejects_backend_foreign_domain_callbacks;
       ] );

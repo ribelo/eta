@@ -36,7 +36,6 @@ type shutdown_waiter = {
 }
 
 type ('a, 'err) t = {
-  owner_domain : Domain.id;
   mutex : Sync_lock.t;
   strategy : strategy;
   values : 'a Stdlib.Queue.t;
@@ -103,7 +102,6 @@ let invariant_failed message =
 let create_with_strategy constructor strategy =
   validate_strategy constructor strategy;
   {
-    owner_domain = Domain.self ();
     mutex = Sync_lock.create ();
     strategy;
     values = Stdlib.Queue.create ();
@@ -140,15 +138,7 @@ let sliding ~capacity () =
 let enqueue t = Enqueue t
 let dequeue t = Dequeue t
 
-let context_error_message =
-  "Eta.Queue: queue APIs must be called on the domain that created the queue"
-
-let ensure_owner_domain t =
-  if Domain.self () <> t.owner_domain then invalid_arg context_error_message
-
-let with_lock (t : ('a, 'err) t) f =
-  ensure_owner_domain t;
-  Sync_lock.use t.mutex f
+let with_lock (t : ('a, 'err) t) f = Sync_lock.use t.mutex f
 
 let with_lock_during_cancel contract t f =
   contract.Runtime_contract.protect (fun () -> with_lock t f)
@@ -163,22 +153,25 @@ let resolve_sender
     (sender : ('a, 'err) sender)
     (result : 'err offer_result) =
   if not sender.notified then
-    sender.contract.Runtime_contract.protect (fun () ->
-        sender.contract.Runtime_contract.resolve_promise sender.resolver result;
-        sender.notified <- true)
+    let () =
+      sender.contract.Runtime_contract.resolve_promise sender.resolver result
+    in
+    sender.notified <- true
 
 let wake_receiver (receiver : 'a receiver) =
   if not receiver.notified then
-    receiver.contract.Runtime_contract.protect (fun () ->
-        receiver.contract.Runtime_contract.resolve_promise receiver.resolver ();
-        receiver.notified <- true)
+    let () =
+      receiver.contract.Runtime_contract.resolve_promise receiver.resolver ()
+    in
+    receiver.notified <- true
 
 let wake_shutdown_waiter waiter =
   if not waiter.shutdown_notified then
-    waiter.shutdown_contract.Runtime_contract.protect (fun () ->
-        waiter.shutdown_contract.Runtime_contract.resolve_promise
-          waiter.shutdown_resolver ();
-        waiter.shutdown_notified <- true)
+    let () =
+      waiter.shutdown_contract.Runtime_contract.resolve_promise
+        waiter.shutdown_resolver ()
+    in
+    waiter.shutdown_notified <- true
 
 let resolve_wakeup = function
   | Wake_sender (sender, result) -> resolve_sender sender result

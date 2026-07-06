@@ -77,15 +77,19 @@ type t = {
     the adapter; do not add another mirror record of backend operations.
 
     Erased runtime contracts are owner-domain values. Except for
-    [with_worker_context], [in_worker_context], [cancellation_reason],
-    [multiple_exceptions], [current_fiber_id], and [with_fiber_identity],
+    [resolve_promise], [with_worker_context], [in_worker_context],
+    [cancellation_reason], [multiple_exceptions], [current_fiber_id], and
+    [with_fiber_identity],
     contract operations must be called on the domain that created the erased
     contract, and callbacks supplied to [run_scope], [fork], [fork_daemon],
     [protect], [cancel_sub], and [local_with_binding] must resume on that same
-    domain. This is part of the backend contract: Eta-owned queues, signal graph
-    lanes, and in-memory wait queues use same-domain locks and cannot be resumed
-    from arbitrary worker domains. Cross-domain contract use raises
-    [Invalid_argument].
+    domain. Cross-domain contract use raises [Invalid_argument].
+
+    [resolve_promise] is the explicit cross-domain wake operation. Eta-owned
+    queues may store resolvers created by waiters on different domains and
+    settle them from the domain that commits the queue transition. Backends must
+    make the waiter runnable on its runtime domain; resolving a promise must not
+    run Eta callbacks on the resolving domain.
 
     [now_ms] is monotonic runtime time in milliseconds, not wall/civil time.
     [sleep] must suspend on the same monotonic time base. Eta timers,
@@ -158,8 +162,9 @@ module type RUNTIME = sig
       This operation is a commit point. It must not fail because a waiter was
       cancelled or because notification is temporarily unavailable. Once it
       returns normally, every non-cancelled waiter must be able to observe the
-      value. It may raise only for programmer errors such as resolving an
-      already-settled resolver. *)
+      value. It may be called from a different domain than the runtime owner so
+      cross-domain data structures can wake owner-domain waiters. It may raise
+      only for programmer errors such as resolving an already-settled resolver. *)
 
   val await_promise : 'a promise -> 'a
   val create_stream : int -> 'a stream
@@ -192,11 +197,12 @@ end
     work. Until then, keep the design to these two layers.
 
     Backends must preserve same-domain execution for ordinary Eta fibers:
-    promise resolution, cancellation propagation, scope callbacks, forked
-    fibers, daemon fibers, and runtime-local bindings must not resume Eta code
-    on a different OCaml domain from the one running the erased contract.
-    Worker callbacks are represented explicitly by [with_worker_context]; they
-    must not call Eta graph or queue APIs directly. *)
+    cancellation propagation, scope callbacks, forked fibers, daemon fibers,
+    and runtime-local bindings must not resume Eta code on a different OCaml
+    domain from the one running the erased contract. Promise resolution may be
+    requested from another domain, but resumed waiters still run on the owning
+    runtime domain. Worker callbacks are represented explicitly by
+    [with_worker_context]; they must not call Eta graph APIs directly. *)
 
 val create_local : unit -> 'a local
 (** Create a runtime-local key. *)

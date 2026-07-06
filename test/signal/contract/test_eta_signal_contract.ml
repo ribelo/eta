@@ -1942,16 +1942,23 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
-let test_stream_bridge_rejects_cross_domain_consumer () =
+let test_stream_bridge_allows_cross_domain_consumer () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source in
   let observer, stream = run_ok runtime (S.Stream.observe signal) in
   run_ok runtime S.stabilize;
-  expect_die "cross-domain stream bridge consumer"
-    (run_effect_in_foreign_domain
-       (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect));
+  (match
+     run_effect_in_foreign_domain
+       (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+  | Eta.Exit.Ok [ S.Initialized 1 ] -> ()
+  | Eta.Exit.Ok _ ->
+      Alcotest.fail "cross-domain stream bridge consumer returned wrong event"
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "cross-domain stream bridge consumer failed: %a"
+        (Eta.Cause.pp pp_hidden) cause);
   run_ok runtime (S.Observer.dispose observer)
 
 let test_stream_observe_validates_capacity () =
@@ -2293,8 +2300,8 @@ let () =
             `Quick test_time_after_overflow_fails_with_deadline_overflow;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
-          Alcotest.test_case "stream bridge rejects cross-domain consumer"
-            `Quick test_stream_bridge_rejects_cross_domain_consumer;
+          Alcotest.test_case "stream bridge allows cross-domain consumer"
+            `Quick test_stream_bridge_allows_cross_domain_consumer;
           Alcotest.test_case "stream observe validates capacity" `Quick
             test_stream_observe_validates_capacity;
           Alcotest.test_case

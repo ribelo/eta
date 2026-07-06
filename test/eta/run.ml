@@ -88,10 +88,16 @@ let () =
         ] );
       ( "Queue",
         [
-          Alcotest.test_case "rejects cross-domain use" `Quick
-            test_queue_rejects_cross_domain_use;
-          Alcotest.test_case "zero take_up_to rejects cross-domain use" `Quick
-            test_queue_take_up_to_zero_rejects_cross_domain_use;
+          Alcotest.test_case "allows cross-domain sync use" `Quick
+            test_queue_allows_cross_domain_sync_use;
+          Alcotest.test_case "zero take_up_to allows cross-domain use" `Quick
+            test_queue_take_up_to_zero_allows_cross_domain_use;
+          Alcotest.test_case "foreign try_offer wakes owner receiver" `Quick
+            test_queue_foreign_try_offer_wakes_owner_receiver;
+          Alcotest.test_case "foreign take wakes owner sender" `Quick
+            test_queue_foreign_take_wakes_owner_sender;
+          Alcotest.test_case "foreign shutdown wakes owner receiver" `Quick
+            test_queue_foreign_shutdown_wakes_owner_receiver;
           Alcotest.test_case "backpressure sender wakeup stays on owner domain"
             `Quick test_queue_backpressure_sender_wakeup_stays_on_owner_domain;
           Alcotest.test_case "receiver wakeup stays on owner domain" `Quick

@@ -1,7 +1,7 @@
-(** Same-domain asynchronous queue.
+(** Cross-domain asynchronous queue.
 
     Queue is an Eta-owned producer/consumer primitive for handoff between
-    fibers. It owns two lifecycle modes:
+    fibers and OCaml domains. It owns two lifecycle modes:
 
     - [close] and [close_with_error] are graceful fences. Future offers are
       rejected, already buffered values remain drainable, and receivers observe
@@ -16,8 +16,10 @@
     cancellation/defect boundary; it does not change the committed result of
     the active operation.
 
-    Create and use each queue on one domain. Queue APIs raise
-    [Invalid_argument] when called from a different domain. *)
+    Queue state may be used from multiple OCaml domains. Waiters resume on the
+    runtime/domain that created the blocked operation. Queue does not copy
+    payloads; callers remain responsible for sending values whose
+    representation is safe for their cross-domain use. *)
 
 type ('a, 'err) t
 (** Combined producer and consumer queue handle. *)
