@@ -14,12 +14,13 @@ module Observer_error = struct
 end
 
 (* Most tests shadow [Signal] with a fresh functor instance so graph indexes do
-   not accumulate across cases. These top-level instances are kept for tests
-   that deliberately exercise cross-instance behavior or custom runtime hooks. *)
-module Signal = Eta_signal_testable.Make (Observer_error) ()
-module Other_signal = Eta_signal_testable.Make (Observer_error) ()
-module Dot_signal = Eta_signal_testable.Make (Observer_error) ()
-module Dependency_signal = Eta_signal_testable.Make (Observer_error) ()
+   not accumulate across cases. These public top-level instances are kept for
+   tests that deliberately exercise cross-instance behavior. *)
+module Signal = Eta_signal.Make (Observer_error) ()
+module Other_signal = Eta_signal.Make (Observer_error) ()
+module Dot_signal = Eta_signal.Make (Observer_error) ()
+module Dependency_signal = Eta_signal.Make (Observer_error) ()
+module Timer_hook_signal = Eta_signal_testable.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -6868,14 +6869,14 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
-(* This helper intentionally uses the top-level [Signal] instance because the
-   delayed timer-update hook and constructed signal type have to agree. *)
+(* This helper intentionally uses a shared testable instance because the delayed
+   timer-update hook and constructed signal type have to agree. *)
 let check_time_step_dispose_after_update_construction_skips_f make_signal =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let f_calls = ref 0 in
   let signal = run_ok rt (make_signal (fun () -> incr f_calls)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt (Timer_hook_signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   let constructed, constructed_resolver = Eio.Promise.create () in
   let release, release_resolver = Eio.Promise.create () in
@@ -6889,7 +6890,7 @@ let check_time_step_dispose_after_update_construction_skips_f make_signal =
   in
   let hook =
     {
-      Signal.Private_test_hooks.run =
+      Timer_hook_signal.Private_test_hooks.run =
         (fun () ->
           Effect.sync (fun () ->
               if not !hook_ran then (
@@ -6900,22 +6901,25 @@ let check_time_step_dispose_after_update_construction_skips_f make_signal =
   in
   Fun.protect
     ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
+      Timer_hook_signal.Private_test_hooks.clear ();
       release_once ();
-      ignore (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
-                : _ Exit.t))
+      ignore
+        (Eta_eio.Runtime.run rt
+           (widen (Timer_hook_signal.Observer.dispose observer))
+          : _ Exit.t))
     (fun () ->
       wait_for_sleepers clock 1;
-      run_ok rt Signal.stabilize;
+      run_ok rt Timer_hook_signal.stabilize;
       Alcotest.(check int) "initial step value" 0
-        (run_ok rt (Signal.Observer.read observer));
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_timer_update_constructed_before_run hook
+        (run_ok rt (Timer_hook_signal.Observer.read observer));
+      Timer_hook_signal.Private_test_hooks.with_hook
+        Timer_hook_signal.Private_test_hooks.After_timer_update_constructed_before_run
+        hook
       @@ fun () ->
       Eta_test.Test_clock.adjust clock (Duration.ms 10);
       wait_until "timer update construction" (fun () ->
           Eio.Promise.is_resolved constructed);
-      run_ok rt (Signal.Observer.dispose observer);
+      run_ok rt (Timer_hook_signal.Observer.dispose observer);
       release_once ();
       let drained =
         Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
@@ -6928,13 +6932,14 @@ let check_time_step_dispose_after_update_construction_skips_f make_signal =
 
 let test_time_step_dispose_after_update_construction_skips_f () =
   check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
-      Signal.Time.step ~every:(Duration.ms 10) ~initial:0 (fun ~missed:_ value ->
+      Timer_hook_signal.Time.step ~every:(Duration.ms 10) ~initial:0
+        (fun ~missed:_ value ->
           record_call ();
           value + 1))
 
 let test_time_step_replay_dispose_after_update_construction_skips_f () =
   check_time_step_dispose_after_update_construction_skips_f (fun record_call ->
-      Signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0
+      Timer_hook_signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0
         (fun value ->
           record_call ();
           value + 1))
