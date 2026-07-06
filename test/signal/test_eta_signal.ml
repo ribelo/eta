@@ -968,32 +968,6 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   Alcotest.(check int) "two changed inputs recomputed once" 2 !map2_calls;
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_cutoff_suppresses_downstream_recompute () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let parity =
-    Signal.Var.watch source
-    |> Signal.map ~equal:Int.equal (fun n -> n mod 2)
-  in
-  let downstream_calls = ref 0 in
-  let downstream =
-    Signal.map
-      (fun n ->
-        incr downstream_calls;
-        n)
-      parity
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe downstream (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial value" 0
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "downstream not recomputed" 1 !downstream_calls
-
 let test_unnecessary_derived_recomputes_after_dependency_change () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8416,8 +8390,6 @@ let () =
             `Quick test_map_arity_matrix_initializes_and_coalesces;
           Alcotest.test_case "map invariants repeated children and cutoff"
             `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
-          Alcotest.test_case "cutoff suppresses downstream recompute" `Quick
-            test_cutoff_suppresses_downstream_recompute;
           Alcotest.test_case
             "unnecessary derived recomputes after dependency change" `Quick
             test_unnecessary_derived_recomputes_after_dependency_change;

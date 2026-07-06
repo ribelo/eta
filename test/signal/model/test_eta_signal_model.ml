@@ -343,6 +343,7 @@ let check_int_updates label expected actual =
 
 let int_list_equal = List.equal Int.equal
 let cutoff_payload value = [ value mod 2 ]
+let cutoff_payload_value payload = List.fold_left ( + ) 0 payload
 
 let test_source_equality_trace_matches_model () =
   let parity_equal left right = left mod 2 = right mod 2 in
@@ -416,6 +417,14 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
         (fun value -> cutoff_payload value)
         source_signal
     in
+    let structural_downstream_calls = ref 0 in
+    let structural_downstream =
+      Signal.map
+        (fun payload ->
+          incr structural_downstream_calls;
+          cutoff_payload_value payload)
+        structural
+    in
     let bind_inner_calls = ref 0 in
     let bound =
       Signal.bind ~equal:int_list_equal (Signal.const ()) (fun () ->
@@ -426,6 +435,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     in
     let physical_callbacks = ref 0 in
     let structural_callbacks = ref 0 in
+    let structural_downstream_updates = ref [] in
     let bound_callbacks = ref 0 in
     let normal_updates = ref [] in
     let suppressed_callbacks = ref 0 in
@@ -438,6 +448,14 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let structural_observer =
       run_ok runtime
         (Signal.Observer.observe structural (count structural_callbacks))
+    in
+    let structural_downstream_observer =
+      run_ok runtime
+        (Signal.Observer.observe structural_downstream (fun update ->
+             E.sync (fun () ->
+                 structural_downstream_updates :=
+                   observed_of_signal_update update
+                   :: !structural_downstream_updates)))
     in
     let bound_observer =
       run_ok runtime (Signal.Observer.observe bound (count bound_callbacks))
@@ -462,6 +480,9 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
     let physical_model_callbacks = ref 0 in
     let structural_model_callbacks = ref 0 in
     let structural_current = ref None in
+    let structural_downstream_model_calls = ref 0 in
+    let structural_downstream_current = ref None in
+    let structural_downstream_model_updates = ref [] in
     let bound_model_callbacks = ref 0 in
     let bound_model_inner_calls = ref 0 in
     let bound_current = ref None in
@@ -475,11 +496,13 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
       match !current with
       | None ->
           current := Some next;
-          incr callbacks
-      | Some previous when int_list_equal previous next -> ()
+          incr callbacks;
+          true
+      | Some previous when int_list_equal previous next -> false
       | Some _ ->
           current := Some next;
-          incr callbacks
+          incr callbacks;
+          true
     in
     let stabilize () =
       if !source_dirty then (
@@ -487,11 +510,20 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
         source_dirty := false;
         publish_int normal_current normal_model_updates !committed;
         incr physical_model_callbacks;
-        maybe_publish_payload structural_current structural_model_callbacks
-          (cutoff_payload !committed);
+        let structural_next = cutoff_payload !committed in
+        let structural_changed =
+          maybe_publish_payload structural_current structural_model_callbacks
+            structural_next
+        in
+        if structural_changed then (
+          incr structural_downstream_model_calls;
+          publish_int structural_downstream_current
+            structural_downstream_model_updates
+            (cutoff_payload_value structural_next));
         incr bound_model_inner_calls;
-        maybe_publish_payload bound_current bound_model_callbacks
-          (cutoff_payload !committed);
+        ignore
+          (maybe_publish_payload bound_current bound_model_callbacks
+             (cutoff_payload !committed));
         if !suppressed_model_callbacks = 0 then
           incr suppressed_model_callbacks);
       run_ok runtime Signal.stabilize
@@ -504,6 +536,12 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
       Alcotest.(check int)
         (label ^ " structural callbacks") !structural_model_callbacks
         !structural_callbacks;
+      check_int_updates
+        (label ^ " structural downstream") structural_downstream_model_updates
+        structural_downstream_updates;
+      Alcotest.(check int)
+        (label ^ " structural downstream recomputes")
+        !structural_downstream_model_calls !structural_downstream_calls;
       Alcotest.(check int)
         (label ^ " bind callbacks") !bound_model_callbacks !bound_callbacks;
       Alcotest.(check int)
@@ -530,6 +568,13 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
             (label ^ " structural")
             (Option.value ~default:(cutoff_payload expected) !structural_current)
             (run_ok runtime (Signal.Observer.read structural_observer));
+          Alcotest.(check int)
+            (label ^ " structural downstream")
+            (cutoff_payload_value
+               (Option.value ~default:(cutoff_payload expected)
+                  !structural_current))
+            (run_ok runtime
+               (Signal.Observer.read structural_downstream_observer));
           Alcotest.(check (list int))
             (label ^ " bind")
             (Option.value ~default:(cutoff_payload expected) !bound_current)
@@ -549,6 +594,7 @@ let test_derived_observer_and_bind_cutoff_trace_matches_model () =
       ops;
     run_ok runtime (Signal.Observer.dispose physical_observer);
     run_ok runtime (Signal.Observer.dispose structural_observer);
+    run_ok runtime (Signal.Observer.dispose structural_downstream_observer);
     run_ok runtime (Signal.Observer.dispose bound_observer);
     run_ok runtime (Signal.Observer.dispose normal_observer);
     run_ok runtime (Signal.Observer.dispose suppressed_observer)
