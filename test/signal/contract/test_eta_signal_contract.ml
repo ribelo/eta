@@ -1153,25 +1153,47 @@ let test_observer_phase_mutation_is_delayed () =
   let source = S.Var.create 1 in
   let signal = S.Var.watch source in
   let updates = ref [] in
+  let pending_values = ref [] in
+  let snapshot_reads = ref [] in
+  let observer_ref = ref None in
   let observer =
     run_ok runtime
       (S.Observer.observe signal (fun update ->
            record updates update
            |> E.bind (fun () ->
-                  match update with
-                  | S.Initialized 1 ->
+                  match (!observer_ref, update) with
+                  | Some observer, S.Initialized 1 ->
                       S.Var.set source 2
                       |> E.map_error (fun _ -> `Observer_failed)
-                  | Initialized _ | Changed _ -> E.unit)))
+                      |> E.bind (fun () ->
+                             E.sync (fun () ->
+                                 pending_values :=
+                                   S.Var.value source :: !pending_values))
+                      |> E.bind (fun () -> S.Var.set source 3)
+                      |> E.map_error (fun _ -> `Observer_failed)
+                      |> E.bind (fun () ->
+                             S.Observer.read observer
+                             |> E.map_error (fun _ -> `Observer_failed))
+                      |> E.bind (fun snapshot ->
+                             E.sync (fun () ->
+                                 pending_values :=
+                                   S.Var.value source :: !pending_values;
+                                 snapshot_reads := snapshot :: !snapshot_reads))
+                  | Some _, (Initialized _ | Changed _) | None, _ -> E.unit)))
   in
+  observer_ref := Some observer;
   run_ok runtime S.stabilize;
   Alcotest.(check int) "observer-phase read uses committed snapshot" 1
     (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check (list int)) "observer-phase writes update pending source"
+    [ 2; 3 ] (List.rev !pending_values);
+  Alcotest.(check (list int)) "observer-phase callback read sees snapshot"
+    [ 1 ] (List.rev !snapshot_reads);
   run_ok runtime S.stabilize;
-  Alcotest.(check int) "observer mutation publishes next stabilization" 2
+  Alcotest.(check int) "observer mutation publishes next stabilization" 3
     (run_ok runtime (S.Observer.read observer));
   (match List.rev !updates with
-   | [ S.Initialized 1; S.Changed { old_value = 1; new_value = 2 } ] -> ()
+   | [ S.Initialized 1; S.Changed { old_value = 1; new_value = 3 } ] -> ()
    | _ -> Alcotest.fail "unexpected observer-phase updates");
   run_ok runtime (S.Observer.dispose observer)
 

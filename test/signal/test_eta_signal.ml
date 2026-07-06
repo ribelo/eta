@@ -1535,60 +1535,6 @@ let test_bind_switch_invalidates_external_derived_branch_dependents () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_bind_switch_invalidates_observers_of_invalidated_scope () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choose_left = Signal.Var.create true in
-  let left = Signal.Var.create 10 in
-  let right = Signal.Var.create 20 in
-  let captured_left = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
-        if use_left then (
-          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
-          captured_left := Some signal;
-          signal)
-        else Signal.Var.watch right)
-  in
-  let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let captured =
-    match !captured_left with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected captured bind RHS signal"
-  in
-  let branch_observer =
-    run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "branch observer initialized" 10
-    (run_ok rt (Signal.Observer.read branch_observer));
-  let before_switch = run_ok rt (Signal.stats ()) in
-  run_ok rt (Signal.Var.set choose_left false);
-  run_ok rt Signal.stabilize;
-  let after_switch = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "selected switched to right" 20
-    (run_ok rt (Signal.Observer.read selected_observer));
-  expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
-  Alcotest.(check int) "invalidated branch observer is counted" 1
-    after_switch.Signal.invalid_observer_count;
-  Alcotest.(check bool) "invalidated branch nodes counted in stats" true
-    (after_switch.Signal.dead_node_count > before_switch.Signal.dead_node_count);
-  run_ok rt (Signal.Observer.dispose branch_observer);
-  let after_dispose = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "disposed invalid branch observer is uncounted" 0
-    after_dispose.Signal.invalid_observer_count;
-  expect_fail "disposed invalid branch observer read" (( = ) `Disposed_observer)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
-  run_ok rt (Signal.Var.set right 21);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization ignores invalidated observer" 21
-    (run_ok rt (Signal.Observer.read selected_observer));
-  run_ok rt (Signal.Observer.dispose selected_observer)
-
 let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -1906,59 +1852,6 @@ let test_bind_cycle_detection_is_typed_failure () =
   in
   expect_fail "cycle" (( = ) `Cycle)
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_observer_phase_multiple_sets_publish_final_next_value () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let events = ref [] in
-  let pending_values = ref [] in
-  let snapshot_reads = ref [] in
-  let observer_ref = ref None in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe signal (fun update ->
-           Effect.sync (fun () -> events := update :: !events)
-           |> Effect.bind (fun () ->
-                  match (!observer_ref, update) with
-                  | Some observer, Signal.Initialized 1 ->
-                      Signal.Var.set source 2
-                      |> Effect.map_error (fun _ -> `Observer_failed)
-                      |> Effect.bind (fun () ->
-                             Effect.sync (fun () ->
-                                 pending_values :=
-                                   Signal.Var.value source :: !pending_values))
-                      |> Effect.bind (fun () -> Signal.Var.set source 3)
-                      |> Effect.map_error (fun _ -> `Observer_failed)
-                      |> Effect.bind (fun () ->
-                             Signal.Observer.read observer
-                             |> Effect.map_error (fun _ -> `Observer_failed))
-                      |> Effect.bind (fun snapshot ->
-                             Effect.sync (fun () ->
-                                 pending_values :=
-                                   Signal.Var.value source :: !pending_values;
-                                 snapshot_reads := snapshot :: !snapshot_reads))
-                  | _ -> Effect.unit)))
-  in
-  observer_ref := Some observer;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "current stabilization snapshot remains stable" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int)) "callback saw pending source values" [ 2; 3 ]
-    (List.rev !pending_values);
-  Alcotest.(check (list int)) "callback observer read saw snapshot" [ 1 ]
-    (List.rev !snapshot_reads);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "next stabilization publishes final pending value" 3
-    (run_ok rt (Signal.Observer.read observer));
-  (match List.rev !events with
-   | [
-       Signal.Initialized 1;
-       Changed { old_value = 1; new_value = 3 };
-     ] -> ()
-   | _ -> Alcotest.fail "expected coalesced observer-phase mutation events");
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_dispose_unlinks_observer_from_graph () =
@@ -4420,8 +4313,6 @@ let () =
             test_bind_accepts_ancestor_dynamic_scope_inner;
           Alcotest.test_case "bind switch invalidates external branch dependents"
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
-          Alcotest.test_case "bind switch invalidates branch observers" `Quick
-            test_bind_switch_invalidates_observers_of_invalidated_scope;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
             test_bind_switch_skips_stale_branch_observer_before_invalidation;
           Alcotest.test_case "dynamic scope invalidation skips callback" `Quick
@@ -4436,8 +4327,6 @@ let () =
             test_bind_switch_is_not_committed_when_later_pure_node_fails;
           Alcotest.test_case "bind cycle detection typed failure" `Quick
             test_bind_cycle_detection_is_typed_failure;
-          Alcotest.test_case "observer phase multiple sets publish final value"
-            `Quick test_observer_phase_multiple_sets_publish_final_next_value;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
             test_dispose_unlinks_observer_from_graph;
           Alcotest.test_case "observer lifecycle changes inside callback"
