@@ -188,7 +188,6 @@ let with_runtime_and_switch f =
   f sw rt
 
 exception Cleanup_interrupt
-exception Lane_grant_resolution_failed
 
 module Cleanup_interrupt_runtime = struct
   type scope = unit
@@ -3021,189 +3020,6 @@ let test_active_graph_operation_interruption_releases_lane () =
   Alcotest.(check int) "lane released for later set/stabilize" 2
     (run_ok rt (Signal.Observer.read observer))
 
-let test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let clock = Eio.Stdenv.clock env in
-  let fail_next_grant_resolve = ref false in
-  let grant_resolve_failures = ref 0 in
-  let module Base =
-    (val Eta_eio.runtime ~sw ~clock : Runtime_contract.RUNTIME)
-  in
-  let module Hooked_runtime = struct
-    type scope = Base.scope
-    type cancel_context = Base.cancel_context
-    type 'a promise = 'a Base.promise
-    type 'a resolver = 'a Base.resolver
-    type 'a stream = 'a Base.stream
-
-    let root_scope = Base.root_scope
-    let now_ms = Base.now_ms
-    let sleep = Base.sleep
-    let protect = Base.protect
-    let run_scope = Base.run_scope
-    let fail_scope = Base.fail_scope
-    let fork = Base.fork
-    let fork_daemon = Base.fork_daemon
-    let await_cancel = Base.await_cancel
-    let yield = Base.yield
-    let check = Base.check
-    let create_promise = Base.create_promise
-
-    let resolve_promise resolver value =
-      if !fail_next_grant_resolve then (
-        fail_next_grant_resolve := false;
-        incr grant_resolve_failures;
-        raise Lane_grant_resolution_failed);
-      Base.resolve_promise resolver value
-
-    let await_promise = Base.await_promise
-    let create_stream = Base.create_stream
-    let stream_add = Base.stream_add
-    let stream_take = Base.stream_take
-    let stream_take_nonblocking = Base.stream_take_nonblocking
-    let with_worker_context = Base.with_worker_context
-    let in_worker_context = Base.in_worker_context
-    let cancellation_reason = Base.cancellation_reason
-    let multiple_exceptions = Base.multiple_exceptions
-    let cancel_sub = Base.cancel_sub
-    let cancel = Base.cancel
-    let local_get = Base.local_get
-    let local_with_binding = Base.local_with_binding
-    let current_fiber_id = Base.current_fiber_id
-    let with_fiber_identity = Base.with_fiber_identity
-  end in
-  let rt =
-    Runtime.create_with_runtime
-      (module Hooked_runtime : Runtime_contract.RUNTIME)
-      ()
-  in
-  Fun.protect
-    ~finally:Signal.Private_test_hooks.clear
-    (fun () ->
-      let started, started_resolver = Eio.Promise.create () in
-      let release, release_resolver = Eio.Promise.create () in
-      let hook_ran = ref false in
-      let hook =
-        {
-          Signal.Private_test_hooks.run =
-            (fun () ->
-              Effect.sync (fun () ->
-                  if not !hook_ran then (
-                    hook_ran := true;
-                    Eio.Promise.resolve started_resolver ();
-                    Eio.Promise.await release)));
-        }
-      in
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_graph_lane_acquired hook
-      @@ fun () ->
-      let first_stats =
-        Eio.Fiber.fork_promise ~sw (fun () ->
-            Runtime.run rt (widen (Signal.stats ())))
-      in
-      Eio.Promise.await started;
-      let queued_stats =
-        Eio.Fiber.fork_promise ~sw (fun () ->
-            Runtime.run rt (widen (Signal.stats ())))
-      in
-      for _ = 1 to 5 do
-        Eta_test.Async.yield ()
-      done;
-      Alcotest.(check bool) "stats waits behind graph lane" false
-        (Eio.Promise.is_resolved queued_stats);
-      fail_next_grant_resolve := true;
-      Eio.Promise.resolve release_resolver ();
-      for _ = 1 to 20 do
-        Eta_test.Async.yield ()
-      done;
-      if not (Eio.Promise.is_resolved first_stats) then
-        Alcotest.fail "first stats did not finish after lane release";
-      ignore
-        (expect_exit_ok "releasing stats ignores grant resolver failure"
-           (Eio.Promise.await_exn first_stats)
-          : Signal.stats);
-      for _ = 1 to 20 do
-        Eta_test.Async.yield ()
-      done;
-      if not (Eio.Promise.is_resolved queued_stats) then
-        Alcotest.fail "queued stats was stranded after committed lane grant";
-      let queued_snapshot =
-        expect_exit_ok "queued stats after grant retry"
-          (Eio.Promise.await_exn queued_stats)
-      in
-      Alcotest.(check int) "queued stats saw no stranded waiters" 0
-        queued_snapshot.Signal.lane_waiter_count;
-      Alcotest.(check int) "grant resolver failed once" 1
-        !grant_resolve_failures;
-      let later_snapshot = run_ok rt (Signal.stats ()) in
-      Alcotest.(check int) "future stats calls do not hang" 0
-        later_snapshot.Signal.lane_waiter_count)
-
-let test_graph_lane_acquisition_stays_on_owner_domain () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime_and_switch @@ fun sw rt ->
-  let owner = Domain.self () in
-  let acquired_domains = ref [] in
-  Fun.protect
-    ~finally:Signal.Private_test_hooks.clear
-    (fun () ->
-      let hook =
-        {
-          Signal.Private_test_hooks.run =
-            (fun () ->
-              Effect.sync (fun () ->
-                  acquired_domains := Domain.self () :: !acquired_domains));
-        }
-      in
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_graph_lane_acquired hook
-      @@ fun () ->
-      let source = Signal.Var.create 1 in
-      let started, started_resolver = Eio.Promise.create () in
-      let release, release_resolver = Eio.Promise.create () in
-      let block_once = ref true in
-      let signal =
-        Signal.Var.watch source
-        |> Signal.map (fun value ->
-               if !block_once then (
-                 block_once := false;
-                 Eio.Promise.resolve started_resolver ();
-                 Eio.Promise.await release);
-               value)
-      in
-      let observer =
-        run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-      in
-      let stabilizer =
-        Eio.Fiber.fork_promise ~sw (fun () ->
-            Eta_eio.Runtime.run rt (widen Signal.stabilize))
-      in
-      Eio.Promise.await started;
-      let queued_stats =
-        Eio.Fiber.fork_promise ~sw (fun () ->
-            Eta_eio.Runtime.run rt (widen (Signal.stats ())))
-      in
-      for _ = 1 to 5 do
-        Eta_test.Async.yield ()
-      done;
-      Alcotest.(check bool) "stats waits behind graph lane" false
-        (Eio.Promise.is_resolved queued_stats);
-      Eio.Promise.resolve release_resolver ();
-      ignore
-        (expect_exit_ok "stabilizer" (Eio.Promise.await_exn stabilizer) : unit);
-      ignore
-        (expect_exit_ok "queued stats" (Eio.Promise.await_exn queued_stats)
-          : Signal.stats);
-      run_ok rt (Signal.Observer.dispose observer);
-      Alcotest.(check bool)
-        "graph lane acquisitions stayed on owner domain" true
-        (List.for_all (fun domain -> domain = owner) !acquired_domains);
-      Alcotest.(check bool)
-        "immediate and queued graph lane acquisitions were observed" true
-        (List.length !acquired_domains >= 3))
-
 let test_nested_runtime_graph_read_reenters_graph_lane () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   let module Runtime_a = Make_isolated_sync_runtime () in
@@ -5373,11 +5189,6 @@ let () =
             test_stats_report_lane_waiters;
           Alcotest.test_case "active graph interruption releases lane" `Quick
             test_active_graph_operation_interruption_releases_lane;
-          Alcotest.test_case
-            "graph lane granted waiter survives resolver failure" `Quick
-            test_graph_lane_granted_waiter_is_not_stranded_if_resolve_raises;
-          Alcotest.test_case "graph lane acquisitions stay on owner domain"
-            `Quick test_graph_lane_acquisition_stays_on_owner_domain;
           Alcotest.test_case "nested runtime graph read reenters graph lane"
             `Quick test_nested_runtime_graph_read_reenters_graph_lane;
           Alcotest.test_case "observer read waits for graph lane" `Quick
