@@ -1,12 +1,5 @@
-module Observer_error = struct
-  type t = [ `Observer_failed ]
-
-  let pp ppf = function
-    | `Observer_failed -> Format.pp_print_string ppf "observer failed"
-end
-
-module A = Eta_signal.Make (Observer_error) ()
-module B = Eta_signal.Make (Observer_error) ()
+module A = Eta_signal.Make_no_error ()
+module B = Eta_signal.Make_no_error ()
 
 let a_source = A.Var.create 1
 let b_source = B.Var.create 1
