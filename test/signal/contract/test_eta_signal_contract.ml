@@ -741,6 +741,99 @@ let test_invalidated_branch_diagnostics_are_retained () =
   run_ok runtime (S.Observer.dispose branch_observer);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_diagnostics_stay_read_only_after_nested_bind_replacement () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let options : S.dot_options =
+    {
+      dot_scope = `All_including_invalid;
+      dot_observers = true;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = true;
+    }
+  in
+  let check_diagnostics_read_only label =
+    let before = run_ok runtime (S.stats ()) in
+    let dot = run_ok runtime (S.to_dot ~options ()) in
+    let after_dot = run_ok runtime (S.stats ()) in
+    Alcotest.(check bool) (label ^ " to_dot is read-only") true
+      (before = after_dot);
+    let after_stats = run_ok runtime (S.stats ()) in
+    Alcotest.(check bool) (label ^ " stats is read-only") true
+      (before = after_stats);
+    dot
+  in
+  let choose_left = S.Var.create true in
+  let offset = S.Var.create 0 in
+  let left = S.Var.create 10 in
+  let right = S.Var.create 100 in
+  let captured_left = ref None in
+  let selected =
+    S.bind (S.Var.watch choose_left) (fun use_left ->
+        S.bind (S.Var.watch offset) (fun offset ->
+            let signal =
+              if use_left then S.Var.watch left |> S.map (( + ) offset)
+              else S.Var.watch right |> S.map (( + ) offset)
+            in
+            if use_left && Option.is_none !captured_left then
+              captured_left := Some signal;
+            signal))
+  in
+  let selected_observer =
+    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let branch =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured nested bind branch"
+  in
+  let branch_observer =
+    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let after_initial = run_ok runtime (S.stats ()) in
+  let initial_dot = check_diagnostics_read_only "initial nested bind" in
+  Alcotest.(check int) "initial dot shows both observers" 2
+    (count_occurrences initial_dot "observer:");
+  run_ok runtime (S.Var.set offset 7);
+  run_ok runtime (S.Var.set choose_left false);
+  run_ok runtime S.stabilize;
+  let after_switch = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "selected switched through nested bind" 107
+    (run_ok runtime (S.Observer.read selected_observer));
+  expect_fail "captured branch observer invalidated" (( = ) `Invalid_scope)
+    (run runtime (S.Observer.read branch_observer));
+  Alcotest.(check int) "one invalid observer is counted" 1
+    after_switch.S.invalid_observer_count;
+  Alcotest.(check bool) "nested switch invalidated dynamic scope" true
+    (after_switch.S.dynamic_scope_invalidations
+     > after_initial.S.dynamic_scope_invalidations);
+  Alcotest.(check bool) "nested switch records dead branch nodes" true
+    (after_switch.S.dead_node_count > after_initial.S.dead_node_count);
+  let switch_dot = check_diagnostics_read_only "after nested bind switch" in
+  Alcotest.(check int) "switch dot shows invalid observer" 1
+    (count_occurrences switch_dot "state=invalid_scope");
+  run_ok runtime (S.Observer.dispose branch_observer);
+  let after_partial_dispose = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "partial disposal leaves selected observer active" 1
+    after_partial_dispose.S.active_observer_count;
+  Alcotest.(check int) "partial disposal removes invalid observer count" 0
+    after_partial_dispose.S.invalid_observer_count;
+  let partial_dot =
+    check_diagnostics_read_only "after invalid branch disposal"
+  in
+  Alcotest.(check int) "partial dot shows remaining observer" 1
+    (count_occurrences partial_dot "observer:");
+  run_ok runtime (S.Observer.dispose selected_observer);
+  let after_final_dispose = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "final disposal removes active observers" 0
+    after_final_dispose.S.active_observer_count;
+  let final_dot = check_diagnostics_read_only "after final disposal" in
+  Alcotest.(check int) "final dot hides disposed observers" 0
+    (count_occurrences final_dot "observer:")
+
 let test_invalid_observer_diagnostics_survive_tombstone_eviction () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1595,6 +1688,9 @@ let () =
             test_diagnostic_dot_options_expose_public_metadata;
           Alcotest.test_case "diagnostics retain invalidated branches" `Quick
             test_invalidated_branch_diagnostics_are_retained;
+          Alcotest.test_case
+            "diagnostics read-only after nested bind replacement" `Quick
+            test_diagnostics_stay_read_only_after_nested_bind_replacement;
           Alcotest.test_case "diagnostics survive tombstone eviction" `Quick
             test_invalid_observer_diagnostics_survive_tombstone_eviction;
           Alcotest.test_case "default cutoff is physical equality" `Quick
