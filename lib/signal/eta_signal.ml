@@ -1899,7 +1899,8 @@ module Make (Observer_error : Observer_error) () = struct
     let pending =
       Graph.stabilization_pending_plan
         ~release_marks:(fun (_lane : graph_lane) pending ->
-          List.iter (fun (V var) -> var.queued <- false) pending)
+          Graph.stabilization_pending_mark_release ~release:(fun () ->
+              List.iter (fun (V var) -> var.queued <- false) pending))
         ~stage:(fun lane staging pending ->
           List.iter (stage_pending_var lane staging) pending)
     in

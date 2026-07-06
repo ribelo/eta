@@ -954,12 +954,26 @@ let observer_delivery_plan t _lane delivery =
     ~make_plan:Eta_signal_stabilization_pass.observer_plan
 
 type 'pending stabilization_pending_plan = {
-  pending_release_marks : lane_access -> 'pending list -> unit;
+  pending_release_marks :
+    lane_access -> 'pending list -> stabilization_pending_mark_release;
   pending_stage : lane_access -> staging -> 'pending list -> unit;
 }
 
+and stabilization_pending_mark_release =
+  | Stabilization_pending_mark_release of {
+      release_pending_marks : unit -> unit;
+    }
+
+let stabilization_pending_mark_release ~release =
+  Stabilization_pending_mark_release { release_pending_marks = release }
+
 let stabilization_pending_plan ~release_marks ~stage =
   { pending_release_marks = release_marks; pending_stage = stage }
+
+let run_stabilization_pending_mark_release lane pending plan =
+  match plan lane pending with
+  | Stabilization_pending_mark_release { release_pending_marks } ->
+      release_pending_marks ()
 
 type ('observer, 'event) stabilization_observer_plan = {
   observer_delivery :
@@ -1111,9 +1125,9 @@ let pass_pure t timer_refresh pure =
     Eta_signal_stabilization_pass.pure_pending_plan
       ~drain_pending:(fun _context -> drain_pending t)
       ~release_pending_marks:(fun context pending ->
-        pure.pending_plan.pending_release_marks
+        run_stabilization_pending_mark_release
           (Eta_signal_stabilization_pass.pure_capability context)
-          pending)
+          pending pure.pending_plan.pending_release_marks)
       ~stage_pending:(fun context pending ->
         pure.pending_plan.pending_stage
           (Eta_signal_stabilization_pass.pure_capability context)

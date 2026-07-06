@@ -250,7 +250,10 @@ let stabilization_pure_ops
   Graph.stabilization_pure_ops
     ~pending:
       (Graph.stabilization_pending_plan
-         ~release_marks:release_pending_marks ~stage:stage_pending)
+         ~release_marks:(fun context pending ->
+           Graph.stabilization_pending_mark_release ~release:(fun () ->
+               release_pending_marks context pending))
+         ~stage:stage_pending)
     ~observers:
       (Graph.stabilization_observer_plan ~delivery:observer_delivery
          ~plan_staged_binds:(fun context staging observers ->
@@ -285,6 +288,68 @@ let run_empty_stabilization graph =
   with_graph_lane graph (fun lane ->
       Graph.run_stabilization graph lane ~timer_refresh:None
         (empty_stabilization_ops graph))
+
+let test_pending_mark_release_runs_as_graph_action () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let pure =
+    stabilization_pure_ops
+      ~release_pending_marks:(fun _context pending ->
+        List.iter (fun label -> record events ("release:" ^ label)) pending)
+      ~stage_pending:(fun _context _staging pending ->
+        List.iter (fun label -> record events ("stage:" ^ label)) pending)
+      ~staging:(fun _context _staging ->
+        staging_commit_plan
+          ~preflight:(fun _staging -> record events "preflight")
+          ())
+      ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context _staging -> staging_reset_context ())
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.enqueue_pending graph lane "first";
+        Graph.enqueue_pending graph lane "second";
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "delivery events" [] delivery_events;
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane finish))
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Alcotest.(check (list string))
+    "events"
+    [
+      "release:first";
+      "release:second";
+      "stage:first";
+      "stage:second";
+      "preflight";
+      "update_necessity";
+    ]
+    !events
 
 let create_observer ?(active = true) id =
   {
@@ -1710,6 +1775,8 @@ let () =
             test_computed_nodes_are_staging_scoped;
           Alcotest.test_case "signal commit invalid discard" `Quick
             test_signal_commit_discards_invalid_staging;
+          Alcotest.test_case "pending mark release action" `Quick
+            test_pending_mark_release_runs_as_graph_action;
         ] );
       ( "bind switch",
         [

@@ -614,8 +614,14 @@ val collect_observer_diagnostics :
 
 type 'pending stabilization_pending_plan
 
+type stabilization_pending_mark_release
+
+val stabilization_pending_mark_release :
+  release:(unit -> unit) -> stabilization_pending_mark_release
+
 val stabilization_pending_plan :
-  release_marks:(lane_access -> 'pending list -> unit) ->
+  release_marks:
+    (lane_access -> 'pending list -> stabilization_pending_mark_release) ->
   stage:(lane_access -> staging -> 'pending list -> unit) ->
   'pending stabilization_pending_plan
 
