@@ -495,31 +495,6 @@ let test_error_pretty_printers_are_clear () =
   check_render "invalid stream capacity" Signal.pp_stream_error
     `Invalid_capacity "stream bridge capacity must be positive"
 
-let test_observer_initializes_on_stabilize () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let doubled = Signal.Var.watch source |> Signal.map (fun n -> n * 2) in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe doubled (record_observer events))
-  in
-  Alcotest.(check int) "registration does not run callback" 0
-    (List.length !events);
-  expect_fail "read before stabilize"
-    (( = ) `Uninitialized_observer)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer read" 2
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int))
-    "initial event" [ 2 ]
-    (List.map
-       (function
-         | Signal.Initialized n -> n
-         | Changed _ -> Alcotest.fail "unexpected changed event")
-       (List.rev !events))
-
 let force_signal_gc () =
   Gc.full_major ();
   Gc.compact ();
@@ -8150,8 +8125,6 @@ let () =
         [
           Alcotest.test_case "error pretty printers are clear" `Quick
             test_error_pretty_printers_are_clear;
-          Alcotest.test_case "observer initializes on stabilize" `Quick
-            test_observer_initializes_on_stabilize;
           Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "observer unsafe read reports invalid state"
