@@ -176,11 +176,17 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
 
 let stabilization_pure_ops
     ?(release_pending_marks = fun _context _pending -> ())
-    ?(observer_plan =
+    ?(observer_delivery =
       fun _context _staging ->
-        Pass.observer_plan ~observers:[]
-          ~collect_events:(fun _context _observers -> [])
-          ~mark_events_pending:(fun _context _events -> ()))
+        let selection =
+          Observer.delivery_selection_plan ~active:(fun _observer -> false)
+            ~compare:(fun _left _right -> 0)
+        in
+        Observer.delivery_collection ~selection
+          ~events:
+            (Observer.delivery_event_plan
+               ~collect_event:(fun _context _observer -> None)
+               ~mark_pending:(fun _context _events -> ())))
     ?(stage_pending = fun _context _staging _pending -> ())
     ?(plan_staged_binds = fun _context _staging _observers -> ())
     ?(commit_staging = fun _context _staging -> [])
@@ -190,7 +196,7 @@ let stabilization_pure_ops
       (Graph.stabilization_pending_plan
          ~release_marks:release_pending_marks ~stage:stage_pending)
     ~observers:
-      (Graph.stabilization_observer_plan ~observe:observer_plan
+      (Graph.stabilization_observer_plan ~delivery:observer_delivery
          ~plan_staged_binds)
     ~commit:
       (Graph.stabilization_commit_plan ~commit_staging ~update_necessity)
@@ -734,15 +740,9 @@ let test_computed_nodes_are_staging_scoped () =
       compute_current = 0;
     }
   in
-  let observer_plan _context _staging =
-    Pass.observer_plan ~observers:[]
-      ~collect_events:(fun _context _observers -> [])
-      ~mark_events_pending:(fun _context _events -> ())
-  in
   let pure =
     stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
-      ~observer_plan
       ~stage_pending:(fun context staging _pending ->
         Graph.remember_computed graph context staging compute_ops node;
         record events "remember")
@@ -876,15 +876,9 @@ let test_stage_bind_switch_owns_transaction_staging () =
         Alcotest.failf "expected invalid scope, got %s"
           (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
   in
-  let observer_plan _context _staging =
-    Pass.observer_plan ~observers:[]
-      ~collect_events:(fun _context _observers -> [])
-      ~mark_events_pending:(fun _context _events -> ())
-  in
   let pure =
     stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
-      ~observer_plan
       ~stage_pending:(fun context staging _pending -> stage_twice context staging)
       ~plan_staged_binds:(fun _context _staging _observers -> ())
       ~commit_staging:(fun context staging ->
@@ -954,7 +948,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
   Alcotest.(check (option int)) "committed scope" (Some 3)
     (Bind.inner_scope snapshot)
 
-let test_observer_delivery_plan_uses_collection_order () =
+let test_stabilization_observer_plan_uses_collection_order () =
   let events = ref [] in
   let graph =
     Graph.create ~create_scope_context:(fun () -> ())
@@ -1000,7 +994,7 @@ let test_observer_delivery_plan_uses_collection_order () =
   let pure =
     stabilization_pure_ops
       ~release_pending_marks:(fun cap _pending -> check_cap cap)
-      ~observer_plan:(fun cap _staging ->
+      ~observer_delivery:(fun cap _staging ->
         check_cap cap;
         let selection =
           Observer.delivery_selection_plan
@@ -1013,10 +1007,7 @@ let test_observer_delivery_plan_uses_collection_order () =
               check_cap cap;
               record events ("pending:" ^ event))
         in
-        let delivery =
-          Observer.delivery_collection ~selection ~events:event_plan
-        in
-        Graph.observer_delivery_plan graph cap delivery)
+        Observer.delivery_collection ~selection ~events:event_plan)
       ~stage_pending:(fun cap _staging _pending -> check_cap cap)
       ~plan_staged_binds:(fun cap _staging observers ->
         check_cap cap;
@@ -1321,7 +1312,7 @@ let () =
           Alcotest.test_case "lane-scoped registry traversal" `Quick
             test_observer_registry_traversal_uses_lane;
           Alcotest.test_case "sorted collection" `Quick
-            test_observer_delivery_plan_uses_collection_order;
+            test_stabilization_observer_plan_uses_collection_order;
         ] );
       ( "timer demand",
         [

@@ -833,18 +833,17 @@ let stabilization_pending_plan ~release_marks ~stage =
   { pending_release_marks = release_marks; pending_stage = stage }
 
 type ('observer, 'event) stabilization_observer_plan = {
-  observer_plan :
+  observer_delivery :
     lane_access ->
     staging ->
-    (lane_access, 'observer, 'event)
-    Eta_signal_stabilization_pass.observer_plan;
+    (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection;
   observer_plan_staged_binds :
     lane_access -> staging -> 'observer list -> unit;
 }
 
-let stabilization_observer_plan ~observe ~plan_staged_binds =
+let stabilization_observer_plan ~delivery ~plan_staged_binds =
   {
-    observer_plan = observe;
+    observer_delivery = delivery;
     observer_plan_staged_binds = plan_staged_binds;
   }
 
@@ -939,9 +938,12 @@ let pass_pure t timer_refresh pure =
   let observers =
     Eta_signal_stabilization_pass.pure_observer_plan
       ~observer_plan:(fun context ->
-        pure.observer_plan.observer_plan
-          (Eta_signal_stabilization_pass.pure_capability context)
-          (require_active_staging t))
+        let lane = Eta_signal_stabilization_pass.pure_capability context in
+        let staging = require_active_staging t in
+        let delivery =
+          pure.observer_plan.observer_delivery lane staging
+        in
+        observer_delivery_plan t lane delivery)
       ~plan_staged_binds:(fun context observers ->
         pure.observer_plan.observer_plan_staged_binds
           (Eta_signal_stabilization_pass.pure_capability context)

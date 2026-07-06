@@ -593,16 +593,6 @@ val collect_observer_diagnostics :
     supply lifecycle predicates and diagnostic projections for their concrete
     observer representation. *)
 
-val observer_delivery_plan :
-  (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
-  lane_access ->
-  (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection ->
-  (lane_access, 'observer, 'event) Eta_signal_stabilization_pass.observer_plan
-(** Capture active observers and defer graph-ordered delivery event collection
-    until the stabilization pass reaches the event collection phase. The graph
-    owns registry traversal; the observer subsystem owns active filtering,
-    delivery ordering, event collection, and pending-state marking. *)
-
 type 'pending stabilization_pending_plan
 
 val stabilization_pending_plan :
@@ -613,13 +603,16 @@ val stabilization_pending_plan :
 type ('observer, 'event) stabilization_observer_plan
 
 val stabilization_observer_plan :
-  observe:
+  delivery:
     (lane_access ->
     staging ->
-    (lane_access, 'observer, 'event)
-    Eta_signal_stabilization_pass.observer_plan) ->
+    (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection) ->
   plan_staged_binds:(lane_access -> staging -> 'observer list -> unit) ->
   ('observer, 'event) stabilization_observer_plan
+(** Capture active observers and defer graph-ordered delivery event collection
+    until the stabilization pass reaches the event collection phase. The graph
+    owns registry traversal; the observer subsystem owns active filtering,
+    delivery ordering, event collection, and pending-state marking. *)
 
 type 'hook stabilization_commit_plan
 
