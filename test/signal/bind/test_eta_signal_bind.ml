@@ -279,16 +279,19 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         check_cap cap;
         compute_inner inner)
   in
+  let reuse =
+    Bind.dynamic_reuse_plan ~dirty ~initialized:(fun () -> initialized)
+      ~dependencies_changed:(fun cap dependencies ->
+        check_cap cap;
+        dependencies_changed dependencies)
+  in
   let eval =
     Bind.dynamic_eval_context ~source_equal:Int.equal
       ~dependencies:
         (Bind.dynamic_dependencies ~source:100
            ~pack_inner:(fun inner -> inner + 1000))
       ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
-      ~dirty ~initialized:(fun () -> initialized)
-      ~dependencies_changed:(fun cap dependencies ->
-        check_cap cap;
-        dependencies_changed dependencies)
+      ~reuse
   in
   let apply_value =
     Bind.dynamic_value_context

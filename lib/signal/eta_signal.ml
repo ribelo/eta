@@ -1579,14 +1579,17 @@ module Make (Observer_error : Observer_error) () = struct
             Scope_validation.validate_inner ~scope (P inner))
           ~compute_inner:(fun lane inner -> compute lane staging inner)
       in
+      let reuse =
+        Bind.dynamic_reuse_plan ~dirty:signal.dirty ~initialized
+          ~dependencies_changed:(fun lane dependencies ->
+            dependencies_changed lane signal dependencies)
+      in
       Bind.dynamic_eval_context ~source_equal:bind.source.equal
         ~dependencies:
           (Bind.dynamic_dependencies ~source:(P bind.source)
              ~pack_inner:(fun inner -> P inner))
         ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
-        ~dirty:signal.dirty ~initialized
-        ~dependencies_changed:(fun lane dependencies ->
-          dependencies_changed lane signal dependencies)
+        ~reuse
     in
     let apply_value =
       Bind.dynamic_value_context

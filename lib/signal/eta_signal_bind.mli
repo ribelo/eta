@@ -52,15 +52,21 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context
   constraint 'error = [> `Invalid_scope ]
 
+type ('capability, 'dependency) dynamic_reuse_plan
+
+val dynamic_reuse_plan :
+  dirty:bool ->
+  initialized:(unit -> bool) ->
+  dependencies_changed:('capability -> 'dependency list -> bool) ->
+  ('capability, 'dependency) dynamic_reuse_plan
+
 val dynamic_eval_context :
   source_equal:('source -> 'source -> bool) ->
   dependencies:('inner, 'dependency) dynamic_dependencies ->
   scope:
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
     dynamic_scope_context ->
-  dirty:bool ->
-  initialized:(unit -> bool) ->
-  dependencies_changed:('capability -> 'dependency list -> bool) ->
+  reuse:('capability, 'dependency) dynamic_reuse_plan ->
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   dynamic_eval_context
 
