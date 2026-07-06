@@ -1558,9 +1558,8 @@ module Make (Observer_error : Observer_error) () = struct
     let source =
       Bind.dynamic_source_plan ~equal:bind.source.equal
         ~compute_source:(fun lane -> compute lane staging bind.source)
-        ~dependencies:
-          (Bind.dynamic_dependencies ~source:(P bind.source)
-             ~pack_inner:(fun inner -> P inner))
+        ~source_dependency:(P bind.source)
+        ~inner_dependency:(fun inner -> P inner)
     in
     let value =
       Bind.dynamic_value_context

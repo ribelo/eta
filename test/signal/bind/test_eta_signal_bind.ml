@@ -299,9 +299,8 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         events :=
           !events @ [ "compute_source:" ^ string_of_int source_value ];
         (source_value, source_changed))
-      ~dependencies:
-        (Bind.dynamic_dependencies ~source:100
-           ~pack_inner:(fun inner -> inner + 1000))
+      ~source_dependency:100
+      ~inner_dependency:(fun inner -> inner + 1000)
   in
   let value =
     Bind.dynamic_value_context

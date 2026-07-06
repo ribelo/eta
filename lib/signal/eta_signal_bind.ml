@@ -4,25 +4,20 @@ type ('source, 'inner, 'scope) snapshot = {
   inner_scope : 'scope option;
 }
 
-type ('inner, 'dependency) dynamic_dependencies = {
-  dependency_source : 'dependency;
-  dependency_pack_inner : 'inner -> 'dependency;
-}
-
-let dynamic_dependencies ~source ~pack_inner =
-  { dependency_source = source; dependency_pack_inner = pack_inner }
-
 type ('capability, 'source, 'inner, 'dependency) dynamic_source_plan = {
   source_equal : 'source -> 'source -> bool;
   source_compute : 'capability -> 'source * bool;
-  source_dependencies : ('inner, 'dependency) dynamic_dependencies;
+  source_dependency : 'dependency;
+  source_inner_dependency : 'inner -> 'dependency;
 }
 
-let dynamic_source_plan ~equal ~compute_source ~dependencies =
+let dynamic_source_plan ~equal ~compute_source ~source_dependency
+    ~inner_dependency =
   {
     source_equal = equal;
     source_compute = compute_source;
-    source_dependencies = dependencies;
+    source_dependency;
+    source_inner_dependency = inner_dependency;
   }
 
 type ('capability, 'source, 'inner, 'scope, 'value, 'error)
@@ -186,9 +181,9 @@ let dependencies ~source ~inner =
   | None -> [ source ]
   | Some inner -> [ source; inner ]
 
-let dynamic_dependency_list dynamic_dependencies inner =
-  dependencies ~source:dynamic_dependencies.dependency_source
-    ~inner:(Option.map dynamic_dependencies.dependency_pack_inner inner)
+let dynamic_dependency_list source inner =
+  dependencies ~source:source.source_dependency
+    ~inner:(Option.map source.source_inner_dependency inner)
 
 let needs_new_inner ~equal snapshot source_value =
   match snapshot.source_value with
@@ -229,7 +224,7 @@ let eval_reuse ~dependencies ~source_changed ~compute_inner ~dirty
   then Reuse_recompute { reuse_dependencies = dependencies; reuse_value = value }
   else Reuse_cached
 
-let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
+let plan_dynamic_unlocked ~capability ~equal snapshot ~source
     ~source_value ~source_changed ~switch ~reuse ~initialized =
   match eval_plan ~equal snapshot ~source_value with
   | Error _ as error -> error
@@ -248,12 +243,12 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
                  dynamic_inner = eval.eval_inner;
                  dynamic_scope;
                  dynamic_switch_dependencies =
-                   dynamic_dependency_list dependencies
+                   dynamic_dependency_list source
                      (Some eval.eval_inner);
                  dynamic_switch_value = eval.eval_value;
                })
   | Ok (Reuse inner) -> (
-      let dependency_list = dynamic_dependency_list dependencies (Some inner) in
+      let dependency_list = dynamic_dependency_list source (Some inner) in
       match
         eval_reuse ~dependencies:dependency_list ~source_changed
           ~compute_inner:(fun () ->
@@ -277,7 +272,7 @@ let plan_dynamic eval_context value_context capability snapshot =
   let source_value, source_changed = source.source_compute capability in
   let value_state = value_context.value_state () in
   plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
-    ~source_value ~dependencies:source.source_dependencies
+    ~source ~source_value
     ~source_changed ~switch:eval_context.eval_switch
     ~reuse:eval_context.eval_reuse
     ~initialized:value_state.state_initialized

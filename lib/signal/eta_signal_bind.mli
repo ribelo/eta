@@ -2,19 +2,13 @@
 
 type ('source, 'inner, 'scope) snapshot
 
-type ('inner, 'dependency) dynamic_dependencies
-
-val dynamic_dependencies :
-  source:'dependency ->
-  pack_inner:('inner -> 'dependency) ->
-  ('inner, 'dependency) dynamic_dependencies
-
 type ('capability, 'source, 'inner, 'dependency) dynamic_source_plan
 
 val dynamic_source_plan :
   equal:('source -> 'source -> bool) ->
   compute_source:('capability -> 'source * bool) ->
-  dependencies:('inner, 'dependency) dynamic_dependencies ->
+  source_dependency:'dependency ->
+  inner_dependency:('inner -> 'dependency) ->
   ('capability, 'source, 'inner, 'dependency) dynamic_source_plan
 
 type ('capability, 'source, 'inner, 'scope, 'value, 'error)
