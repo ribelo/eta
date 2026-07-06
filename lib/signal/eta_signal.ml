@@ -1870,23 +1870,38 @@ module Make (Observer_error : Observer_error) () = struct
 
   let plan_staged_bind_switches lane staging observers =
     let invalidations = ref (collect_staged_bind_invalidations lane staging) in
+    let planned_bind_ids = Hashtbl.create 8 in
     let refresh_invalidations () =
       invalidations := collect_staged_bind_invalidations lane staging
     in
-    List.iter
-      (fun (P signal as packed) ->
-        if
-          signal.valid
-          && not (staged_bind_invalidates !invalidations packed)
-        then
-          match signal.kind with
-          | Bind _ ->
-              ignore (compute lane staging signal : _ * bool);
-              refresh_invalidations ()
-          | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
-          | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-              ())
-      (collect_observed_bind_nodes lane observers)
+    let plan_bind_if_needed (P signal as packed) =
+      let signal_id = signal_id_int signal.id in
+      if
+        signal.valid
+        && (not (Hashtbl.mem planned_bind_ids signal_id))
+        && not (staged_bind_invalidates !invalidations packed)
+      then (
+        Hashtbl.replace planned_bind_ids signal_id ();
+        match signal.kind with
+        | Bind _ ->
+            ignore (compute lane staging signal : _ * bool);
+            refresh_invalidations ();
+            true
+        | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
+        | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
+            false)
+      else false
+    in
+    let rec loop () =
+      let planned_any =
+        List.fold_left
+          (fun planned packed -> plan_bind_if_needed packed || planned)
+          false
+          (collect_observed_bind_nodes lane observers)
+      in
+      if planned_any then loop ()
+    in
+    loop ()
 
   let graph_error_of_die die =
     match die.Eta.Cause.exn with
@@ -2858,7 +2873,7 @@ module Make (Observer_error : Observer_error) () = struct
                                     Effect.sync (fun () -> f (Var.value source))
                                     |> Effect.annotate
                                          ~key:"eta_signal.timer.kind"
-                                         ~value:"step"
+                                         ~value:"step_replay"
                                     |> Effect.named
                                          "eta_signal.time.step_replay"
                                     |> Effect.bind (fun next ->

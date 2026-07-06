@@ -1171,6 +1171,71 @@ let test_bind_accepts_ancestor_dynamic_scope_inner () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_nested_bind_switches_newly_reachable_inner_same_stabilization () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let outer_enabled = Signal.Var.create false in
+  let inner_right = Signal.Var.create false in
+  let left = Signal.Var.create 10 in
+  let right = Signal.Var.create 20 in
+  let captured_left = ref None in
+  let stale_left_recomputes = ref 0 in
+  let inner =
+    Signal.bind (Signal.Var.watch inner_right) (fun use_right ->
+        if use_right then Signal.Var.watch right
+        else
+          let branch =
+            Signal.Var.watch left
+            |> Signal.map (fun value ->
+                   if Int.equal value 11 then incr stale_left_recomputes;
+                   value)
+          in
+          captured_left := Some branch;
+          branch)
+  in
+  let priming_observer =
+    run_ok rt (Signal.Observer.observe inner (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let left_branch =
+    match !captured_left with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured inner branch"
+  in
+  let left_callbacks = ref 0 in
+  let left_observer =
+    run_ok rt
+      (Signal.Observer.observe left_branch (fun _ ->
+           Effect.sync (fun () -> incr left_callbacks)))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "inner branch observer initialized" 1 !left_callbacks;
+  run_ok rt (Signal.Observer.dispose priming_observer);
+  let outer =
+    Signal.bind (Signal.Var.watch outer_enabled) (fun enabled ->
+        if enabled then inner else Signal.const (-1))
+  in
+  let outer_observer =
+    run_ok rt (Signal.Observer.observe outer (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "outer initially uses fallback" (-1)
+    (run_ok rt (Signal.Observer.read outer_observer));
+  run_ok rt (Signal.Var.set left 11);
+  run_ok rt (Signal.Var.set inner_right true);
+  run_ok rt (Signal.Var.set outer_enabled true);
+  run_ok rt Signal.stabilize;
+  Alcotest.(check int) "outer uses newly reachable inner branch" 20
+    (run_ok rt (Signal.Observer.read outer_observer));
+  Alcotest.(check int) "stale inner branch did not recompute" 0
+    !stale_left_recomputes;
+  Alcotest.(check int) "stale inner branch observer was skipped" 1
+    !left_callbacks;
+  expect_fail "stale inner branch invalidated" (( = ) `Invalid_scope)
+    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read left_observer)));
+  run_ok rt (Signal.Observer.dispose left_observer);
+  run_ok rt (Signal.Observer.dispose outer_observer)
+
 let test_bind_switch_invalidates_external_derived_branch_dependents () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -3388,6 +3453,40 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_step_replay_defect_logs_step_replay_diagnostic_kind () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  with_logger_test_clock @@ fun _sw clock rt logger ->
+  let signal =
+    run_ok rt
+      (Signal.Time.step_replay ~every:(Duration.ms 5) ~initial:1 (fun _ ->
+           failwith "time step_replay defect"))
+  in
+  let observer =
+    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock 1;
+  run_ok rt Signal.stabilize;
+  Eta_test.Test_clock.adjust clock (Duration.ms 5);
+  Eta_test.Async.yield ();
+  Eta_eio.Runtime.drain rt;
+  (match Logger.dump logger with
+   | [ record ] ->
+       Alcotest.(check (option string))
+         "step_replay diagnostic span"
+         (Some "eta_signal.time.step_replay")
+         (List.assoc_opt "eta.die.span_name" record.attrs);
+       Alcotest.(check (option string))
+         "step_replay diagnostic annotation" (Some "step_replay")
+         (List.assoc_opt "eta.annotation.eta_signal.timer.kind" record.attrs);
+       Alcotest.(check (option string))
+         "step_replay exception message"
+         (Some "Failure(\"time step_replay defect\")")
+         (List.assoc_opt "exception.message" record.attrs)
+   | records ->
+       Alcotest.failf "expected one step_replay daemon diagnostic, got %d"
+         (List.length records));
+  run_ok rt (Signal.Observer.dispose observer)
+
 let with_yield_after_daemon_fork_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -3921,6 +4020,10 @@ let () =
             test_bind_rejects_new_scope_wrapper_over_reused_dynamic_scope_inner;
           Alcotest.test_case "bind accepts ancestor dynamic-scope inner" `Quick
             test_bind_accepts_ancestor_dynamic_scope_inner;
+          Alcotest.test_case
+            "nested bind switches newly reachable inner same stabilization"
+            `Quick
+            test_nested_bind_switches_newly_reachable_inner_same_stabilization;
           Alcotest.test_case "bind switch invalidates external branch dependents"
             `Quick test_bind_switch_invalidates_external_derived_branch_dependents;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
@@ -4054,6 +4157,8 @@ let () =
             test_time_step_function;
           Alcotest.test_case "time step defect logs diagnostic" `Quick
             test_time_step_defect_logs_daemon_diagnostic_and_restarts;
+          Alcotest.test_case "time step_replay diagnostic kind" `Quick
+            test_time_step_replay_defect_logs_step_replay_diagnostic_kind;
           Alcotest.test_case "stream observe timer initialization race" `Quick
             test_stream_observe_timer_initialization_race;
           Alcotest.test_case
