@@ -373,22 +373,6 @@ let snapshot_with_generation snapshot generation =
 let snapshot_with_on_demand_refresh_token snapshot token =
   { snapshot with on_demand_refresh_token = token }
 
-let snapshot_with_next_due snapshot next_due_ms =
-  match snapshot.state with
-  | Timer_running_uncancellable (generation, _) ->
-      Some
-        {
-          snapshot with
-          state = Timer_running_uncancellable (generation, Some next_due_ms);
-        }
-  | Timer_running (generation, _, cancel) ->
-      Some
-        {
-          snapshot with
-          state = Timer_running (generation, Some next_due_ms, cancel);
-        }
-  | Timer_inactive _ | Timer_starting _ | Timer_finished _ -> None
-
 let create_refresh_context ~token ~runtime_contract ~now_ms =
   {
     refresh_token = token;

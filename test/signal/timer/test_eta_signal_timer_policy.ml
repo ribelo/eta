@@ -364,14 +364,7 @@ let test_snapshot_policy () =
           (Timer_policy.snapshot_with_generation running 9)));
   Alcotest.(check int) "snapshot token update" 4
     (Timer_policy.snapshot_on_demand_refresh_token
-       (Timer_policy.snapshot_with_on_demand_refresh_token running 4));
-  (match Timer_policy.snapshot_with_next_due running 20 with
-  | Some snapshot ->
-      Alcotest.(check (option int)) "snapshot due" (Some 20)
-        (Timer_policy.state_next_due (Timer_policy.snapshot_state snapshot))
-  | None -> Alcotest.fail "expected active timer snapshot update");
-  Alcotest.(check bool) "inactive next due rejected" true
-    (Option.is_none (Timer_policy.snapshot_with_next_due initial 20))
+       (Timer_policy.snapshot_with_on_demand_refresh_token running 4))
 
 let test_refresh_context () =
   let calls = ref 0 in

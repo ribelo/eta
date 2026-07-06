@@ -154,7 +154,6 @@ val snapshot_on_demand_refresh_token : snapshot -> int
 val snapshot_with_state : snapshot -> state -> snapshot
 val snapshot_with_generation : snapshot -> int -> snapshot
 val snapshot_with_on_demand_refresh_token : snapshot -> int -> snapshot
-val snapshot_with_next_due : snapshot -> int -> snapshot option
 
 val create_refresh_context :
   token:int ->
