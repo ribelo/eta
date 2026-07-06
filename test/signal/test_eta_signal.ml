@@ -111,49 +111,12 @@ let expect_finalizer_die label expected = function
         (Cause.pp pp_hidden) cause
   | Exit.Ok _ -> Alcotest.failf "%s: expected finalizer defect, got Ok" label
 
-let signal_graph_context_message =
-  "Eta_signal: signal graph APIs must be called on the domain that created "
-  ^ "the graph and not from runtime worker callbacks"
-
-let signal_test_worker_context_active = ref false
-
-let () =
-  Runtime_contract.register_worker_context_probe (fun () ->
-      !signal_test_worker_context_active)
-
 let domain_spawn f =
   (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"]) f
 
 let run_in_domain f =
   let domain = domain_spawn f in
   Domain.join domain
-
-let expect_cross_domain_signal_context_failure label f =
-  match
-    run_in_domain @@ fun () ->
-    try Ok (f (); false) with
-    | Invalid_argument message -> Ok (String.equal message signal_graph_context_message)
-    | exn -> Error (Printexc.to_string exn)
-  with
-  | Ok true -> ()
-  | Ok false -> Alcotest.failf "%s: expected signal graph context failure" label
-  | Error actual ->
-      Alcotest.failf "%s: expected signal graph context failure, got %s" label
-        actual
-
-let expect_signal_context_failure label f =
-  match f () with
-  | exception Invalid_argument message
-    when String.equal message signal_graph_context_message ->
-      ()
-  | exception exn ->
-      Alcotest.failf "%s: expected signal graph context failure, got %s" label
-        (Printexc.to_string exn)
-  | _ -> Alcotest.failf "%s: expected signal graph context failure" label
-
-let with_signal_test_worker_context f =
-  signal_test_worker_context_active := true;
-  Fun.protect ~finally:(fun () -> signal_test_worker_context_active := false) f
 
 let with_runtime f =
   Eio_main.run @@ fun env ->
@@ -543,58 +506,6 @@ let test_functor_instances_stabilize_independently () =
     (List.length !other_events);
   run_ok rt (Signal.Observer.dispose observer);
   run_ok rt (Other_signal.Observer.dispose other_observer)
-
-let test_graph_rejects_cross_domain_synchronous_apis () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  expect_cross_domain_signal_context_failure "cross-domain Var.create" (fun () ->
-      ignore (Signal.Var.create 0 : int Signal.Var.t));
-  expect_cross_domain_signal_context_failure "cross-domain Var.value" (fun () ->
-      ignore (Signal.Var.value source : int));
-  expect_cross_domain_signal_context_failure "cross-domain Var.watch" (fun () ->
-      ignore (Signal.Var.watch source : int Signal.signal));
-  expect_cross_domain_signal_context_failure "cross-domain const" (fun () ->
-      ignore (Signal.const 0 : int Signal.signal));
-  expect_cross_domain_signal_context_failure "cross-domain map" (fun () ->
-      ignore (Signal.map (fun value -> value + 1) signal : int Signal.signal))
-
-let test_graph_rejects_registered_worker_context () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  let source = Signal.Var.create 1 in
-  with_signal_test_worker_context @@ fun () ->
-  expect_signal_context_failure "worker-context Var.value" (fun () ->
-      ignore (Signal.Var.value source : int));
-  expect_signal_context_failure "worker-context const" (fun () ->
-      ignore (Signal.const 0 : int Signal.signal))
-
-let test_graph_rejects_cross_domain_effectful_apis () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  expect_die "cross-domain Var.set"
-    (run_effect_in_foreign_domain (Signal.Var.set source 2));
-  expect_die "cross-domain Observer.observe"
-    (run_effect_in_foreign_domain
-       (Signal.Observer.observe signal (fun _ -> Effect.unit)));
-  expect_die "cross-domain Observer.read"
-    (run_effect_in_foreign_domain (Signal.Observer.read observer));
-  expect_die "cross-domain Observer.dispose"
-    (run_effect_in_foreign_domain (Signal.Observer.dispose observer));
-  expect_die "cross-domain stats"
-    (run_effect_in_foreign_domain (Signal.stats ()));
-  expect_die "cross-domain to_dot"
-    (run_effect_in_foreign_domain (Signal.to_dot ()));
-  expect_die "cross-domain stabilize"
-    (run_effect_in_foreign_domain Signal.stabilize);
-  Alcotest.(check int) "cross-domain set did not mutate source" 1
-    (Signal.Var.value source);
-  run_ok rt (Signal.Observer.dispose observer)
 
 let test_recompute_order_is_topological () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -7612,12 +7523,6 @@ let () =
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "functor instances stabilize independently" `Quick
             test_functor_instances_stabilize_independently;
-          Alcotest.test_case "graph rejects cross-domain synchronous APIs" `Quick
-            test_graph_rejects_cross_domain_synchronous_apis;
-          Alcotest.test_case "graph rejects registered worker context" `Quick
-            test_graph_rejects_registered_worker_context;
-          Alcotest.test_case "graph rejects cross-domain effectful APIs" `Quick
-            test_graph_rejects_cross_domain_effectful_apis;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
           Alcotest.test_case "n-ary maps, both, and all" `Quick
