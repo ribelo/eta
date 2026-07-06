@@ -126,5 +126,8 @@ module Make (Observer_error : Observer_error) () = struct
           | Stream_bridge_drop_count ->
               Impl.Graph.set_stream_bridge_metrics S.graph lane
                 (Impl.Stream_bridge.create_metrics ~drop_count:value ()))
+
+    let registration_cleanup_on_error ~cleanup eff =
+      S.cleanup_observer_registration_on_error cleanup eff
   end
 end

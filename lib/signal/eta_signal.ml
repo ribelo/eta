@@ -1734,17 +1734,13 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.uninterruptible
 
   let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
-    let best_effort eff = Effect.exit eff |> Effect.map (fun _ -> ()) in
     if !refresh_timers || Cleanup.pending hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
           |> Effect.bind (fun () -> refresh_timer_demand ())
-          |> Effect.ignore_errors
-          |> best_effort
         else Effect.unit)
-       |> Effect.bind (fun () ->
-              Cleanup.run_pending_as_finalizers hooks_ref
-              |> best_effort))
+       |> Effect.on_exit (fun _exit ->
+              Cleanup.run_pending_as_finalizers hooks_ref))
       |> Effect.uninterruptible
     else Effect.unit
 
@@ -1778,6 +1774,7 @@ module Make (Observer_error : Observer_error) () = struct
   let abort_observer_registration_effect observer =
     let hooks_ref = ref [] in
     let refresh_timers = ref false in
+    let cleanup_state_checked = ref false in
     let run_cleanup () =
       run_pending_registration_abort_cleanup hooks_ref refresh_timers
     in
@@ -1790,15 +1787,21 @@ module Make (Observer_error : Observer_error) () = struct
             hooks_ref := hooks;
             refresh_timers := true;
             update_necessity_counters_unlocked lane;
+            cleanup_state_checked := true;
             true
-        | Observer_lifecycle.Disposed _ -> false)
+        | Observer_lifecycle.Disposed _ ->
+            cleanup_state_checked := true;
+            false)
     |> Effect.bind (function
          | true -> run_cleanup ()
          | false -> Effect.unit)
     |> Effect.on_exit (fun _exit ->
-           run_cleanup ())
+           if !cleanup_state_checked then Effect.unit else run_cleanup ())
 
   let cleanup_observer_registration_on_error cleanup eff =
+    let render_graph_error err =
+      Format.asprintf "%a" Error.pp_graph_error err
+    in
     Effect.Expert.make @@ fun context ->
     let exit =
       try Effect.Expert.eval context eff
@@ -1806,12 +1809,19 @@ module Make (Observer_error : Observer_error) () = struct
     in
     match exit with
     | Eta.Exit.Ok _ -> exit
-    | Eta.Exit.Error _ as error ->
-        (try
-           ignore
-             (Effect.Expert.eval context (cleanup ()) : (unit, _) Eta.Exit.t)
-         with _ -> ());
-        error
+    | Eta.Exit.Error primary -> (
+        let cleanup_exit =
+          try Effect.Expert.eval context (cleanup ())
+          with exn -> Effect.Expert.exit_of_exn context exn
+        in
+        match cleanup_exit with
+        | Eta.Exit.Ok () -> Eta.Exit.Error primary
+        | Eta.Exit.Error cleanup_cause ->
+            Eta.Exit.Error
+              (Eta.Cause.suppressed ~primary
+                 ~finalizer:
+                   (Eta.Cause.finalizer_of_cause render_graph_error
+                      cleanup_cause)))
 
   let compare_signal_scope_then_id (P left) (P right) =
     match Int.compare (Scope.depth left.scope) (Scope.depth right.scope) with

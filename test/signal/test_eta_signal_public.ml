@@ -62,6 +62,57 @@ let expect_exact_runtime_mismatch label = function
         (Eta.Cause.pp pp_hidden) cause
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected Runtime_mismatch, got Ok" label
 
+let contains_substring haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec matches_at haystack_index needle_index =
+    needle_index = needle_len
+    || (haystack_index + needle_index < haystack_len
+       && Char.equal haystack.[haystack_index + needle_index]
+            needle.[needle_index]
+       && matches_at haystack_index (needle_index + 1))
+  in
+  let rec search index =
+    needle_len = 0
+    || (index + needle_len <= haystack_len
+       && (matches_at index 0 || search (index + 1)))
+  in
+  search 0
+
+let rec finalizer_has_fail_message expected = function
+  | Eta.Cause.Finalizer.Fail message -> contains_substring message expected
+  | Eta.Cause.Finalizer.Die _ | Eta.Cause.Finalizer.Interrupt _ -> false
+  | Eta.Cause.Finalizer.Sequential causes
+  | Eta.Cause.Finalizer.Concurrent causes ->
+      List.exists (finalizer_has_fail_message expected) causes
+  | Eta.Cause.Finalizer.Finalizer cause ->
+      finalizer_has_fail_message expected cause
+  | Eta.Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_has_fail_message expected primary
+      || finalizer_has_fail_message expected finalizer
+
+let rec cause_has_finalizer_fail_message expected = function
+  | Eta.Cause.Finalizer finalizer -> finalizer_has_fail_message expected finalizer
+  | Eta.Cause.Suppressed { primary; finalizer } ->
+      cause_has_finalizer_fail_message expected primary
+      || finalizer_has_fail_message expected finalizer
+  | Eta.Cause.Sequential causes | Eta.Cause.Concurrent causes ->
+      List.exists (cause_has_finalizer_fail_message expected) causes
+  | Eta.Cause.Fail _ | Eta.Cause.Die _ | Eta.Cause.Interrupt _ -> false
+
+let expect_runtime_mismatch_with_cleanup_mismatch label = function
+  | Eta.Exit.Error cause
+    when Eta.Cause.failures cause = [ `Runtime_mismatch ]
+         && cause_has_finalizer_fail_message
+              "timer used from a different Eta runtime"
+              cause ->
+      ()
+  | Eta.Exit.Error cause ->
+      Alcotest.failf
+        "%s: expected Runtime_mismatch with cleanup Runtime_mismatch, got %a"
+        label (Eta.Cause.pp pp_hidden) cause
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected Runtime_mismatch, got Ok" label
+
 let record updates update =
   E.sync (fun () -> updates := update :: !updates)
 
@@ -314,7 +365,7 @@ let test_timer_runtime_mismatch_on_observe () =
       ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
       (fun () ->
         run_ok rt_a S.stabilize;
-        expect_exact_runtime_mismatch
+        expect_runtime_mismatch_with_cleanup_mismatch
           (label ^ " active observe from another runtime")
           (Eta.Runtime.run rt_b
              (widen (S.Observer.observe timer (fun _ -> E.unit)))))
@@ -361,7 +412,7 @@ let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
     ~finally:dispose_wrong_runtime_observer
     (fun () ->
       run_ok rt_a S.stabilize;
-      expect_exact_runtime_mismatch "mixed runtime observe"
+      expect_runtime_mismatch_with_cleanup_mismatch "mixed runtime observe"
         (Eta.Runtime.run rt_b
            (widen
               (S.Observer.observe same_runtime_timer (fun _ -> E.unit))));

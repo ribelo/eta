@@ -94,5 +94,10 @@ module Make (Observer_error : Observer_error) () : sig
     val set_next_timer_refresh_token : int -> (unit, 'err) Eta.Effect.t
     val set_stats_counter :
       stats_counter_target -> int -> (unit, 'err) Eta.Effect.t
+
+    val registration_cleanup_on_error :
+      cleanup:(unit -> (unit, graph_error) Eta.Effect.t) ->
+      ('a, graph_error) Eta.Effect.t ->
+      ('a, graph_error) Eta.Effect.t
   end
 end

@@ -45,6 +45,62 @@ let counter_overflow name = function
   | `Counter_overflow actual -> String.equal actual name
   | _ -> false
 
+let rec cause_has_fail pred = function
+  | Cause.Fail err -> pred err
+  | Cause.Suppressed { primary; _ } -> cause_has_fail pred primary
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (cause_has_fail pred) causes
+  | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> false
+
+let contains_substring haystack needle =
+  let haystack_len = String.length haystack in
+  let needle_len = String.length needle in
+  let rec matches_at haystack_index needle_index =
+    needle_index = needle_len
+    || (haystack_index + needle_index < haystack_len
+       && Char.equal haystack.[haystack_index + needle_index]
+            needle.[needle_index]
+       && matches_at haystack_index (needle_index + 1))
+  in
+  let rec search index =
+    needle_len = 0
+    || (index + needle_len <= haystack_len
+       && (matches_at index 0 || search (index + 1)))
+  in
+  search 0
+
+let rec finalizer_has_die_message expected = function
+  | Cause.Finalizer.Die die ->
+      contains_substring (Printexc.to_string die.exn) expected
+  | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> false
+  | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
+      List.exists (finalizer_has_die_message expected) causes
+  | Cause.Finalizer.Finalizer cause -> finalizer_has_die_message expected cause
+  | Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_has_die_message expected primary
+      || finalizer_has_die_message expected finalizer
+
+let rec cause_has_finalizer_die_message expected = function
+  | Cause.Finalizer finalizer -> finalizer_has_die_message expected finalizer
+  | Cause.Suppressed { primary; finalizer } ->
+      cause_has_finalizer_die_message expected primary
+      || finalizer_has_die_message expected finalizer
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.exists (cause_has_finalizer_die_message expected) causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt _ -> false
+
+let expect_fail_with_finalizer_die label pred expected = function
+  | Exit.Error cause
+    when cause_has_fail pred cause
+         && cause_has_finalizer_die_message expected cause ->
+      ()
+  | Exit.Error cause ->
+      Alcotest.failf "%s: expected typed failure with finalizer defect %S, got %a"
+        label expected (Cause.pp pp_hidden) cause
+  | Exit.Ok _ ->
+      Alcotest.failf "%s: expected typed failure with finalizer defect, got Ok"
+        label
+
 let with_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -165,6 +221,23 @@ let test_stats_counter_saturation_is_typed_failure () =
   check "stats stream_bridge_drop_count"
     Test_signal.Overflow.Stream_bridge_drop_count
 
+let test_registration_abort_cleanup_failure_is_suppressed () =
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
+  with_runtime @@ fun rt ->
+  let cleanup_ran = ref false in
+  expect_fail_with_finalizer_die "registration abort cleanup"
+    (counter_overflow "registration primary")
+    "registration abort cleanup failure"
+    (Eta_eio.Runtime.run rt
+       (widen
+          (Test_signal.Overflow.registration_cleanup_on_error
+             ~cleanup:(fun () ->
+               Effect.sync (fun () ->
+                   cleanup_ran := true;
+                   failwith "registration abort cleanup failure"))
+             (Effect.fail (`Counter_overflow "registration primary")))));
+  Alcotest.(check bool) "abort cleanup hook ran" true !cleanup_ran
+
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -242,6 +315,9 @@ let () =
             test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "stats counter saturation is typed failure" `Quick
             test_stats_counter_saturation_is_typed_failure;
+          Alcotest.test_case
+            "registration abort cleanup failure is suppressed" `Quick
+            test_registration_abort_cleanup_failure_is_suppressed;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case
