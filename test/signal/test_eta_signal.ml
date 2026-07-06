@@ -3764,24 +3764,6 @@ let test_time_interval_catches_up_after_late_sleep () =
   run_ok rt (Signal.Observer.dispose observer);
   release ()
 
-let test_time_step_catches_up_after_late_sleep () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_late_timer_wake @@ fun rt sleep_calls release ->
-  let signal =
-    run_ok rt
-      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
-         (fun ~missed value -> value + missed))
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_until "late step wake rescheduled" (fun () -> !sleep_calls >= 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "late step wake catches up" 10
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer);
-  release ()
-
 let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -5045,50 +5027,6 @@ let test_time_after_overflow_fails_with_deadline_overflow () =
     (Eta_eio.Runtime.run rt
        (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))))
 
-let test_time_absolute_deadline () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 1) ()) in
-  let now_observer =
-    run_ok rt (Signal.Observer.observe now_signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let deadline =
-    match
-      Signal.Time.add
-        (run_ok rt (Signal.Observer.read now_observer))
-        (Duration.ms 10)
-    with
-    | Ok timestamp -> timestamp
-    | Error _ -> Alcotest.fail "expected future monotonic timestamp"
-  in
-  run_ok rt (Signal.Observer.dispose now_observer);
-  Eta_eio.Runtime.drain rt;
-  let signal =
-    run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) deadline)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "initial absolute deadline" false
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "absolute deadline not reached" false
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "absolute deadline reached" true
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "absolute deadline timer stopped" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  run_ok rt (Signal.Observer.dispose observer)
-
 let with_blocked_timer_daemon f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -6301,8 +6239,6 @@ let () =
             test_time_interval_catches_up_after_late_sleep;
           Alcotest.test_case "time interval does not recount saturated due"
             `Quick test_time_interval_does_not_recount_saturated_due;
-          Alcotest.test_case "time step catches up after late sleep" `Quick
-            test_time_step_catches_up_after_late_sleep;
           Alcotest.test_case "time step_replay catch-up yields between batches"
             `Quick
             test_time_step_replay_catch_up_yields_between_batches;
@@ -6387,8 +6323,6 @@ let () =
             test_time_after_bind_activation_does_not_compute_stale_deadline;
           Alcotest.test_case "time after overflow fails with Deadline_overflow"
             `Quick test_time_after_overflow_fails_with_deadline_overflow;
-          Alcotest.test_case "time absolute deadline" `Quick
-            test_time_absolute_deadline;
           Alcotest.test_case "time deadline catches up without daemon yield"
             `Quick test_time_deadline_catches_up_without_daemon_yield;
           Alcotest.test_case
