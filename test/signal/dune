@@ -8,7 +8,6 @@
   eta_signal_error
   eta_signal_graph
   eta_signal_graph_core
-  eta_signal_graph_state
   eta_signal_id
   eta_signal_graph_algorithms
   eta_signal_lane
@@ -98,18 +97,6 @@
 (rule
  (target eta_signal_graph_core.mli)
  (deps ../../lib/signal/eta_signal_graph_core.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_graph_state.ml)
- (deps ../../lib/signal/eta_signal_graph_state.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_graph_state.mli)
- (deps ../../lib/signal/eta_signal_graph_state.mli)
  (action
   (copy %{deps} %{target})))
 

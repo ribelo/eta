@@ -1,3 +1,237 @@
+module State = struct
+  type staging = Staging of unit ref
+
+  type ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t = {
+    mutable generation : int;
+    mutable pending : 'pending list;
+    mutable staged_binds : 'bind list;
+    mutable computed_nodes : 'node list;
+    mutable pure_disposal_hooks : 'hook list;
+    mutable timer_refresh_disposal_hooks : 'hook list;
+    mutable timer_refresh_staged_timers : 'timer list;
+    mutable pure_snapshot_commit_count : int;
+    mutable next_timer_refresh_token : int;
+    mutable active_timer_refresh : 'refresh option;
+    mutable active_staging : staging option;
+  }
+
+  let create () =
+    {
+      generation = 0;
+      pending = [];
+      staged_binds = [];
+      computed_nodes = [];
+      pure_disposal_hooks = [];
+      timer_refresh_disposal_hooks = [];
+      timer_refresh_staged_timers = [];
+      pure_snapshot_commit_count = 0;
+      next_timer_refresh_token = 0;
+      active_timer_refresh = None;
+      active_staging = None;
+    }
+
+  let generation t = t.generation
+  let set_generation t generation = t.generation <- generation
+  let advance_generation t ~advance = t.generation <- advance t.generation
+
+  let staging_matches left right =
+    match (left, right) with
+    | Staging left, Staging right -> left == right
+
+  let validate_staging t staging =
+    match t.active_staging with
+    | Some active when staging_matches active staging -> ()
+    | Some _ -> invalid_arg "Eta_signal graph staging token is not active"
+    | None -> invalid_arg "Eta_signal graph staging is not active"
+
+  let clear_staging_token t staging =
+    validate_staging t staging;
+    t.active_staging <- None
+
+  let begin_staging t ~timer_refresh =
+    (match t.active_staging with
+    | None -> ()
+    | Some _ -> invalid_arg "Eta_signal graph staging is already active");
+    let staging = Staging (ref ()) in
+    t.computed_nodes <- [];
+    t.staged_binds <- [];
+    t.pure_disposal_hooks <- [];
+    t.timer_refresh_disposal_hooks <- [];
+    t.timer_refresh_staged_timers <- [];
+    t.active_timer_refresh <- timer_refresh;
+    t.active_staging <- Some staging;
+    staging
+
+  let require_staging t =
+    match t.active_staging with
+    | Some staging -> staging
+    | None -> invalid_arg "Eta_signal graph staging is not active"
+
+  let drain_pending t =
+    let pending = List.rev t.pending in
+    t.pending <- [];
+    pending
+
+  let enqueue_pending t pending = t.pending <- pending :: t.pending
+
+  let remember_computed t staging ~generation node ~project ~remember =
+    validate_staging t staging;
+    t.computed_nodes <-
+      remember ~generation t.computed_nodes (project node)
+
+  let computed_nodes t = t.computed_nodes
+
+  let stage_bind t staging bind =
+    validate_staging t staging;
+    t.staged_binds <- bind :: t.staged_binds
+
+  let staged_binds t = t.staged_binds
+
+  let remember_pure_disposal_hooks t staging hooks =
+    validate_staging t staging;
+    t.pure_disposal_hooks <- hooks @ t.pure_disposal_hooks
+
+  let remember_timer_refresh_disposal_hooks t staging hooks =
+    validate_staging t staging;
+    match t.active_timer_refresh with
+    | Some _ ->
+        t.timer_refresh_disposal_hooks <-
+          hooks @ t.timer_refresh_disposal_hooks
+    | None -> remember_pure_disposal_hooks t staging hooks
+
+  let active_timer_refresh t = t.active_timer_refresh
+  let clear_active_timer_refresh t = t.active_timer_refresh <- None
+
+  let stage_timer_refresh_timer t staging timer =
+    validate_staging t staging;
+    t.timer_refresh_staged_timers <- timer :: t.timer_refresh_staged_timers
+
+  let next_timer_refresh_token t ~advance =
+    let token = t.next_timer_refresh_token in
+    t.next_timer_refresh_token <- advance t.next_timer_refresh_token;
+    token
+
+  let set_next_timer_refresh_token t token =
+    t.next_timer_refresh_token <- token
+
+  let clear_timer_refresh_staging t ~rollback_dirty ~clear_timer =
+    Option.iter rollback_dirty t.active_timer_refresh;
+    List.iter clear_timer t.timer_refresh_staged_timers;
+    t.timer_refresh_staged_timers <- [];
+    t.timer_refresh_disposal_hooks <- []
+
+  type ('bind, 'hook, 'timer, 'refresh) reset_context = {
+    reset_rollback_bind : 'bind -> 'hook list;
+    reset_rollback_transaction : unit -> unit;
+    reset_rollback_timer_refresh_dirty : 'refresh -> unit;
+    reset_clear_timer_refresh_timer : 'timer -> unit;
+  }
+
+  let reset_context ~rollback_bind ~rollback_transaction
+      ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer =
+    {
+      reset_rollback_bind = rollback_bind;
+      reset_rollback_transaction = rollback_transaction;
+      reset_rollback_timer_refresh_dirty = rollback_timer_refresh_dirty;
+      reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
+    }
+
+  let reset_staging t staging context =
+    validate_staging t staging;
+    let rollback_hooks =
+      List.concat_map context.reset_rollback_bind t.staged_binds
+    in
+    let hooks = rollback_hooks @ t.pure_disposal_hooks in
+    context.reset_rollback_transaction ();
+    t.computed_nodes <- [];
+    t.staged_binds <- [];
+    t.pure_disposal_hooks <- [];
+    clear_timer_refresh_staging t
+      ~rollback_dirty:context.reset_rollback_timer_refresh_dirty
+      ~clear_timer:context.reset_clear_timer_refresh_timer;
+    clear_staging_token t staging;
+    hooks
+
+  type ('bind, 'hook) bind_commit_plan = {
+    bind_commit : 'bind -> 'hook list;
+  }
+
+  let bind_commit_plan ~commit = { bind_commit = commit }
+
+  type ('node, 'prepared) signal_commit_plan = {
+    signal_prepare : 'node -> 'prepared;
+    signal_commit : 'prepared -> unit;
+  }
+
+  let signal_commit_plan ~prepare_signal ~commit_signal =
+    { signal_prepare = prepare_signal; signal_commit = commit_signal }
+
+  type 'timer timer_commit_plan = {
+    timer_commit : 'timer -> unit;
+  }
+
+  let timer_commit_plan ~commit = { timer_commit = commit }
+
+  type snapshot_commit_plan = {
+    snapshot_commit_transaction : unit -> unit;
+    snapshot_advance : int -> int;
+  }
+
+  let snapshot_commit_plan ~commit_transaction ~advance_snapshot =
+    {
+      snapshot_commit_transaction = commit_transaction;
+      snapshot_advance = advance_snapshot;
+    }
+
+  type ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan = {
+    commit_preflight : unit -> unit;
+    commit_binds : ('bind, 'hook) bind_commit_plan;
+    commit_signals : ('node, 'prepared) signal_commit_plan;
+    commit_timers : 'timer timer_commit_plan;
+    commit_snapshot : snapshot_commit_plan;
+  }
+
+  let commit_plan ~preflight ~binds ~signals ~timers ~snapshot =
+    {
+      commit_preflight = preflight;
+      commit_binds = binds;
+      commit_signals = signals;
+      commit_timers = timers;
+      commit_snapshot = snapshot;
+    }
+
+  let commit_staging t staging context =
+    validate_staging t staging;
+    context.commit_preflight ();
+    let bind_hooks =
+      List.concat_map context.commit_binds.bind_commit t.staged_binds
+    in
+    remember_pure_disposal_hooks t staging bind_hooks;
+    let signal_commits =
+      List.map context.commit_signals.signal_prepare t.computed_nodes
+    in
+    context.commit_snapshot.snapshot_commit_transaction ();
+    List.iter context.commit_timers.timer_commit
+      t.timer_refresh_staged_timers;
+    List.iter context.commit_signals.signal_commit signal_commits;
+    let hooks = t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks in
+    t.computed_nodes <- [];
+    t.staged_binds <- [];
+    t.pure_disposal_hooks <- [];
+    t.timer_refresh_disposal_hooks <- [];
+    t.timer_refresh_staged_timers <- [];
+    t.pure_snapshot_commit_count <-
+      context.commit_snapshot.snapshot_advance
+        t.pure_snapshot_commit_count;
+    clear_staging_token t staging;
+    hooks
+
+  let pure_snapshot_commit_count t = t.pure_snapshot_commit_count
+
+  let set_pure_snapshot_commit_count t count =
+    t.pure_snapshot_commit_count <- count
+end
+
 type
   ( 'pending,
     'bind,
@@ -30,7 +264,7 @@ type
       Eta_signal_stabilization.t;
     state :
       ('pending, 'bind, 'node, 'hook, 'timer, 'refresh)
-      Eta_signal_graph_state.t;
+      State.t;
     mutable observers : 'observer list;
     mutable all_nodes : 'weak_node list;
     mutable dead_nodes : 'dead_node list;
@@ -55,7 +289,7 @@ type counter =
   | Nodes_became_necessary
   | Nodes_became_unnecessary
 
-type staging = Eta_signal_graph_state.staging
+type staging = State.staging
 
 type ('id, 'node) node_identity = {
   identity_id : 'node -> 'id;
@@ -231,7 +465,7 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
   {
     core = Eta_signal_graph_core.create ();
     stabilization = Eta_signal_stabilization.create ();
-    state = Eta_signal_graph_state.create ();
+    state = State.create ();
     observers = [];
     all_nodes = [];
     dead_nodes = [];
@@ -349,27 +583,27 @@ let mark_dirty_recording_previous t lane ops entries node =
 let restore_dirty _t _lane ops entries =
   List.iter (fun (node, dirty) -> ops.dirty_set node dirty) entries
 
-let generation t _lane = Eta_signal_graph_state.generation t.state
+let generation t _lane = State.generation t.state
 let set_generation t _lane generation =
-  Eta_signal_graph_state.set_generation t.state generation
+  State.set_generation t.state generation
 
 let advance_generation t =
   let exception Overflow in
   match
-    Eta_signal_graph_state.advance_generation t.state ~advance:(fun generation ->
+    State.advance_generation t.state ~advance:(fun generation ->
         if generation = max_int then raise Overflow else generation + 1)
   with
   | () -> Ok ()
   | exception Overflow -> Error (`Counter_overflow "stabilization generation")
 
 let begin_staging t ~timer_refresh =
-  Eta_signal_graph_state.begin_staging t.state ~timer_refresh
+  State.begin_staging t.state ~timer_refresh
 
-let drain_pending t = Eta_signal_graph_state.drain_pending t.state
+let drain_pending t = State.drain_pending t.state
 let enqueue_pending t _lane pending =
-  Eta_signal_graph_state.enqueue_pending t.state pending
+  State.enqueue_pending t.state pending
 
-let require_active_staging t = Eta_signal_graph_state.require_staging t.state
+let require_active_staging t = State.require_staging t.state
 
 let remember_compute ops ~generation computed node =
   if ops.compute_computed_generation node = generation then computed
@@ -378,14 +612,14 @@ let remember_compute ops ~generation computed node =
     ops.compute_pack node :: computed)
 
 let remember_computed t lane staging ops node =
-  Eta_signal_graph_state.remember_computed t.state staging
+  State.remember_computed t.state staging
     ~generation:(generation t lane) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
 
 let iter_computed t _lane staging ~f =
-  if not (Eta_signal_graph_state.require_staging t.state == staging) then
+  if not (State.require_staging t.state == staging) then
     invalid_arg "Eta_signal graph staging token is not active";
-  List.iter f (Eta_signal_graph_state.computed_nodes t.state)
+  List.iter f (State.computed_nodes t.state)
 
 let compute_seen t lane ops node =
   Int.equal (ops.compute_seen_generation node) (generation t lane)
@@ -485,7 +719,7 @@ let collect_reachable_ids t lane ops ~roots =
       seen)
 
 let remember_staged_bind t _lane staging bind =
-  Eta_signal_graph_state.stage_bind t.state staging bind
+  State.stage_bind t.state staging bind
 
 let stage_bind_switch t lane staging bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
@@ -527,16 +761,16 @@ let staged_bind_invalidation_plan ~init ~staged_switch ~collect_old_scope =
 let collect_staged_bind_switch_invalidations t _lane _staging plan =
   Eta_signal_bind.collect_staged_switch_invalidations
     ~init:plan.staged_bind_invalidation_init
-    ~switches:(Eta_signal_graph_state.staged_binds t.state)
+    ~switches:(State.staged_binds t.state)
     ~staged_switch:plan.staged_bind_invalidation_switch
     ~collect_old_scope:plan.staged_bind_invalidation_collect_old_scope
   |> map_bind_switch_result
 
 let remember_pure_disposal_hooks t _lane staging hooks =
-  Eta_signal_graph_state.remember_pure_disposal_hooks t.state staging hooks
+  State.remember_pure_disposal_hooks t.state staging hooks
 
 let remember_timer_refresh_disposal_hooks t _lane staging hooks =
-  Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state staging
+  State.remember_timer_refresh_disposal_hooks t.state staging
     hooks
 
 let saturating_succ value =
@@ -614,7 +848,7 @@ let rollback_staging_timer_refresh_dirty staging refresh context =
 let reset_staging t _lane staging context =
   let exception Rollback_error of Eta_signal_error.graph_error in
   let state_context =
-    Eta_signal_graph_state.reset_context
+    State.reset_context
       ~rollback_bind:(fun bind ->
         match rollback_staging_bind staging bind context with
         | Ok hooks -> hooks
@@ -626,7 +860,7 @@ let reset_staging t _lane staging context =
       ~clear_timer_refresh_timer:(fun timer ->
         reset_staging_timer staging timer context)
   in
-  Eta_signal_graph_state.reset_staging t.state staging state_context
+  State.reset_staging t.state staging state_context
 
 type 'hook staged_bind_commit =
   | Staged_bind_commit : {
@@ -732,11 +966,11 @@ let staging_commit_plan ~preflight ~binds ~signals ~timers =
 let commit_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
   let state_plan =
-    Eta_signal_graph_state.commit_plan
+    State.commit_plan
       ~preflight:(fun () ->
         run_staging_preflight staging context.staging_commit_preflight)
       ~binds:
-        (Eta_signal_graph_state.bind_commit_plan
+        (State.bind_commit_plan
            ~commit:(fun bind ->
              match
                commit_staging_bind staging bind context.staging_commit_binds
@@ -744,19 +978,19 @@ let commit_staging t _lane staging context =
              | Ok hooks -> hooks
              | Error err -> raise (Commit_error err)))
       ~signals:
-        (Eta_signal_graph_state.signal_commit_plan
+        (State.signal_commit_plan
            ~prepare_signal:(fun node ->
              context.staging_commit_signals.staging_signal_commit
                staging node
              |> prepare_staging_signal t staging)
            ~commit_signal:commit_staging_signal)
       ~timers:
-        (Eta_signal_graph_state.timer_commit_plan
+        (State.timer_commit_plan
            ~commit:(fun timer ->
              commit_staging_timer staging timer
                context.staging_commit_timers))
       ~snapshot:
-        (Eta_signal_graph_state.snapshot_commit_plan
+        (State.snapshot_commit_plan
            ~commit_transaction:(fun () ->
              match
                Eta_signal_stabilization.commit_transaction
@@ -766,14 +1000,14 @@ let commit_staging t _lane staging context =
              | Error err -> raise (Commit_error err))
            ~advance_snapshot:saturating_succ)
   in
-  try Ok (Eta_signal_graph_state.commit_staging t.state staging state_plan)
+  try Ok (State.commit_staging t.state staging state_plan)
   with Commit_error err -> Error err
 
 let pure_snapshot_commit_count t _lane =
-  Eta_signal_graph_state.pure_snapshot_commit_count t.state
+  State.pure_snapshot_commit_count t.state
 
 let set_pure_snapshot_commit_count t _lane count =
-  Eta_signal_graph_state.set_pure_snapshot_commit_count t.state count
+  State.set_pure_snapshot_commit_count t.state count
 
 let active_transaction t =
   Eta_signal_stabilization.active_transaction t.stabilization
@@ -810,7 +1044,7 @@ let discard_staging t _lane _staging cell =
 let next_timer_refresh_token t _lane =
   let exception Overflow in
   match
-    Eta_signal_graph_state.next_timer_refresh_token t.state
+    State.next_timer_refresh_token t.state
       ~advance:(fun token ->
         if token = max_int then raise Overflow else token + 1)
   with
@@ -818,31 +1052,31 @@ let next_timer_refresh_token t _lane =
   | exception Overflow -> Error (`Counter_overflow "timer refresh token")
 
 let set_next_timer_refresh_token t _lane token =
-  Eta_signal_graph_state.set_next_timer_refresh_token t.state token
+  State.set_next_timer_refresh_token t.state token
 
 let mark_timer_refresh_dirty t _lane _staging ~mark ~record =
-  match Eta_signal_graph_state.active_timer_refresh t.state with
+  match State.active_timer_refresh t.state with
   | None -> mark ()
   | Some refresh -> record refresh
 
 let timer_has_staged_refresh t timer ~refresh_token ~staged_token =
-  match Eta_signal_graph_state.active_timer_refresh t.state with
+  match State.active_timer_refresh t.state with
   | Some refresh -> staged_token timer = refresh_token refresh
   | None -> false
 
 let remember_timer_refresh_timer t _lane staging timer ~refresh_token
     ~staged_token ~set_staged_token ~stage_refresh_token =
-  match Eta_signal_graph_state.active_timer_refresh t.state with
+  match State.active_timer_refresh t.state with
   | None -> ()
   | Some refresh ->
       let token = refresh_token refresh in
       if staged_token timer <> token then (
         set_staged_token timer token;
         stage_refresh_token timer token;
-        Eta_signal_graph_state.stage_timer_refresh_timer t.state staging timer)
+        State.stage_timer_refresh_timer t.state staging timer)
 
 let with_timer_refresh_timer t _lane timer ~none ~some =
-  match (Eta_signal_graph_state.active_timer_refresh t.state, timer) with
+  match (State.active_timer_refresh t.state, timer) with
   | Some refresh, Some timer -> some refresh timer
   | None, _ | Some _, None -> none ()
 
@@ -1244,7 +1478,7 @@ let pass_rollback t rollback =
 
 let clear_timer_refresh t _context =
   Eta_signal_stabilization_pass.timer_refresh_clear ~clear:(fun () ->
-      Eta_signal_graph_state.clear_active_timer_refresh t.state)
+      State.clear_active_timer_refresh t.state)
 
 let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_stabilization_pass.run t.stabilization capability
@@ -1256,7 +1490,7 @@ let run_stabilization t capability ~timer_refresh ops =
             ~clear_active_timer_refresh:(clear_timer_refresh t)))
 
 let finish_stabilization t _lane delivering_token =
-  Eta_signal_graph_state.clear_active_timer_refresh t.state;
+  State.clear_active_timer_refresh t.state;
   ignore
     (Eta_signal_stabilization.finish_delivering t.stabilization
        delivering_token
