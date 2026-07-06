@@ -597,44 +597,6 @@ let test_observer_graph_order_after_bind_switch_uses_new_inner () =
         "new inner upstream observer ran before dynamic fail-fast" [ 3 ]
         (List.rev !upstream_events))
 
-let test_observer_dispose_during_callback_skips_collected_event () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let events = ref [] in
-  let later_observer = ref None in
-  let first_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ ->
-           Effect.sync (fun () -> events := "first" :: !events)
-           |> Effect.bind (fun () ->
-                  match !later_observer with
-                  | Some observer ->
-                      Signal.Observer.dispose observer
-                      |> Effect.or_die (fun err -> Signal.Graph_error err)
-                  | None -> Effect.sync (fun () -> Alcotest.fail "missing observer"))))
-  in
-  let second_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ ->
-           Effect.sync (fun () -> events := "second" :: !events)))
-  in
-  later_observer := Some second_observer;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "collected event is skipped after same-stabilization disposal"
-    [ "first" ] (List.rev !events);
-  expect_fail "same-stabilization disposed observer read" (( = ) `Disposed_observer)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read second_observer)));
-  events := [];
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "disposed observer is absent from later stabilization" [ "first" ]
-    (List.rev !events);
-  run_ok rt (Signal.Observer.dispose first_observer)
-
 let test_observer_dispose_after_active_check_skips_callback () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -3816,8 +3778,6 @@ let () =
           Alcotest.test_case
             "observer graph order uses staged bind switch" `Quick
             test_observer_graph_order_after_bind_switch_uses_new_inner;
-          Alcotest.test_case "observer dispose skips collected event" `Quick
-            test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
             `Quick test_observer_dispose_after_active_check_skips_callback;
           Alcotest.test_case "observer registration skips callbacks until returned"

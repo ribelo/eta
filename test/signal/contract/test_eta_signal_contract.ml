@@ -1473,6 +1473,45 @@ let test_observer_lifecycle_changes_inside_callback () =
   | Some late -> run_ok runtime (S.Observer.dispose late)
   | None -> Alcotest.fail "late observer was not registered"
 
+let test_observer_dispose_skips_collected_event () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let observed = S.Var.watch source in
+  let events = ref [] in
+  let later_observer = ref None in
+  let first_observer =
+    run_ok runtime
+      (S.Observer.observe observed (fun _ ->
+           let open Eta.Syntax in
+           let* () = E.sync (fun () -> events := "first" :: !events) in
+           match !later_observer with
+           | Some observer ->
+               S.Observer.dispose observer
+               |> E.or_die (fun err -> S.Graph_error err)
+           | None -> E.sync (fun () -> Alcotest.fail "missing observer")))
+  in
+  let second_observer =
+    run_ok runtime
+      (S.Observer.observe observed (fun _ ->
+           E.sync (fun () -> events := "second" :: !events)))
+  in
+  later_observer := Some second_observer;
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list string))
+    "collected event is skipped after same-stabilization disposal"
+    [ "first" ] (List.rev !events);
+  expect_fail "same-stabilization disposed observer read"
+    (( = ) `Disposed_observer)
+    (run runtime (S.Observer.read second_observer));
+  events := [];
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list string))
+    "disposed observer is absent from later stabilization" [ "first" ]
+    (List.rev !events);
+  run_ok runtime (S.Observer.dispose first_observer)
+
 let test_observer_callbacks_read_consistent_published_snapshot () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2228,6 +2267,8 @@ let () =
             test_observer_phase_mutation_is_delayed;
           Alcotest.test_case "observer lifecycle changes inside callback"
             `Quick test_observer_lifecycle_changes_inside_callback;
+          Alcotest.test_case "observer dispose skips collected event" `Quick
+            test_observer_dispose_skips_collected_event;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case
