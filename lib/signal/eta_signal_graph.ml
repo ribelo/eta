@@ -232,6 +232,141 @@ module State = struct
     t.pure_snapshot_commit_count <- count
 end
 
+module Core = struct
+  type counter =
+    | Callback_delivery_count
+    | Recompute_count
+    | Dynamic_scope_invalidations
+    | Nodes_became_necessary
+    | Nodes_became_unnecessary
+
+  type lane_access = Eta_signal_lane.access
+
+  type lane_hooks = {
+    note_waiter_enqueued : unit -> unit;
+    note_waiter_compaction : unit -> unit;
+  }
+
+  let lane_hooks ~note_waiter_enqueued ~note_waiter_compaction =
+    { note_waiter_enqueued; note_waiter_compaction }
+
+  type t = {
+    lane : Eta_signal_lane.t;
+    owner_domain : Domain.id;
+    mutable next_node_id : int;
+    mutable next_scope_id : int;
+    mutable callback_delivery_count : int;
+    mutable recompute_count : int;
+    mutable dynamic_scope_invalidations : int;
+    mutable nodes_became_necessary : int;
+    mutable nodes_became_unnecessary : int;
+    mutable necessary_node_ids : (Eta_signal_id.signal, unit) Hashtbl.t;
+  }
+
+  let create () =
+    {
+      lane = Eta_signal_lane.create ();
+      owner_domain = Domain.self ();
+      next_node_id = 0;
+      next_scope_id = 1;
+      callback_delivery_count = 0;
+      recompute_count = 0;
+      dynamic_scope_invalidations = 0;
+      nodes_became_necessary = 0;
+      nodes_became_unnecessary = 0;
+      necessary_node_ids = Hashtbl.create 16;
+    }
+
+  let context_error_message =
+    "Eta_signal: signal graph APIs must be called on the domain that created "
+    ^ "the graph and not from runtime worker callbacks"
+
+  let ensure_context t =
+    if
+      Domain.self () <> t.owner_domain
+      || Eta.Runtime_contract.in_registered_worker_context ()
+    then invalid_arg context_error_message
+
+  let lane_hooks_to_lane hooks =
+    Eta_signal_lane.hooks
+      ~note_waiter_enqueued:hooks.note_waiter_enqueued
+      ~note_waiter_compaction:hooks.note_waiter_compaction
+
+  let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
+    Eta_signal_lane.with_sync ~leaf_name ~depth_local
+      ~ensure_context:(fun () -> ensure_context t)
+      ~hooks:(lane_hooks_to_lane hooks) ~after_acquired t.lane f
+
+  let lane_waiting_count t = Eta_signal_lane.waiting_count t.lane
+  let lane_cancelled_count t = Eta_signal_lane.cancelled_count t.lane
+
+  let checked_succ name value =
+    if value = max_int then Error (`Counter_overflow name)
+    else Ok (value + 1)
+
+  let next_node_index t =
+    let id = t.next_node_id in
+    match checked_succ "node id" id with
+    | Error _ as error -> error
+    | Ok next ->
+        t.next_node_id <- next;
+        Ok id
+
+  let next_signal_id t = Result.map Eta_signal_id.signal (next_node_index t)
+  let next_var_id t = Result.map Eta_signal_id.var (next_node_index t)
+
+  let next_observer_id t =
+    Result.map Eta_signal_id.observer (next_node_index t)
+
+  let next_scope_id t =
+    let id = t.next_scope_id in
+    match checked_succ "scope id" id with
+    | Error _ as error -> error
+    | Ok next ->
+        t.next_scope_id <- next;
+        Ok (Eta_signal_id.scope id)
+
+  let set_next_node_id t next_node_id = t.next_node_id <- next_node_id
+  let set_next_scope_id t next_scope_id = t.next_scope_id <- next_scope_id
+
+  let counter t = function
+    | Callback_delivery_count -> t.callback_delivery_count
+    | Recompute_count -> t.recompute_count
+    | Dynamic_scope_invalidations -> t.dynamic_scope_invalidations
+    | Nodes_became_necessary -> t.nodes_became_necessary
+    | Nodes_became_unnecessary -> t.nodes_became_unnecessary
+
+  let set_counter t counter value =
+    match counter with
+    | Callback_delivery_count -> t.callback_delivery_count <- value
+    | Recompute_count -> t.recompute_count <- value
+    | Dynamic_scope_invalidations -> t.dynamic_scope_invalidations <- value
+    | Nodes_became_necessary -> t.nodes_became_necessary <- value
+    | Nodes_became_unnecessary -> t.nodes_became_unnecessary <- value
+
+  let saturating_succ value =
+    if value = max_int then max_int else value + 1
+
+  let add_int_capped left right =
+    if right <= 0 then left
+    else if left > max_int - right then max_int
+    else left + right
+
+  let bump_counter t (_lane : lane_access) target =
+    set_counter t target (saturating_succ (counter t target))
+
+  let update_necessary_ids t (_lane : lane_access) next =
+    let summary =
+      Eta_signal_graph_algorithms.Demand.summarize_diff
+        ~previous:t.necessary_node_ids ~next
+    in
+    t.nodes_became_necessary <-
+      add_int_capped t.nodes_became_necessary summary.became_necessary;
+    t.nodes_became_unnecessary <-
+      add_int_capped t.nodes_became_unnecessary summary.became_unnecessary;
+    t.necessary_node_ids <- next
+end
+
 type
   ( 'pending,
     'bind,
@@ -246,7 +381,7 @@ type
     'stream_metrics )
   t =
   {
-    core : Eta_signal_graph_core.t;
+    core : Core.t;
     stabilization :
       ( ( 'pending,
           'bind,
@@ -272,7 +407,7 @@ type
     mutable stream_bridge_metrics : 'stream_metrics;
   }
 
-type lane_access = Eta_signal_graph_core.lane_access
+type lane_access = Core.lane_access
 
 type lane_hooks = {
   note_waiter_enqueued : unit -> unit;
@@ -454,16 +589,15 @@ let node_invalidation ~valid ~set_invalid ~timer_hooks ~tombstone
   }
 
 let core_counter = function
-  | Callback_delivery_count -> Eta_signal_graph_core.Callback_delivery_count
-  | Recompute_count -> Eta_signal_graph_core.Recompute_count
-  | Dynamic_scope_invalidations ->
-      Eta_signal_graph_core.Dynamic_scope_invalidations
-  | Nodes_became_necessary -> Eta_signal_graph_core.Nodes_became_necessary
-  | Nodes_became_unnecessary -> Eta_signal_graph_core.Nodes_became_unnecessary
+  | Callback_delivery_count -> Core.Callback_delivery_count
+  | Recompute_count -> Core.Recompute_count
+  | Dynamic_scope_invalidations -> Core.Dynamic_scope_invalidations
+  | Nodes_became_necessary -> Core.Nodes_became_necessary
+  | Nodes_became_unnecessary -> Core.Nodes_became_unnecessary
 
 let create ~create_scope_context ~create_stream_bridge_metrics () =
   {
-    core = Eta_signal_graph_core.create ();
+    core = Core.create ();
     stabilization = Eta_signal_stabilization.create ();
     state = State.create ();
     observers = [];
@@ -473,38 +607,37 @@ let create ~create_scope_context ~create_stream_bridge_metrics () =
     stream_bridge_metrics = create_stream_bridge_metrics ();
   }
 
-let context_error_message = Eta_signal_graph_core.context_error_message
-let ensure_context t = Eta_signal_graph_core.ensure_context t.core
+let context_error_message = Core.context_error_message
+let ensure_context t = Core.ensure_context t.core
 
 let lane_hooks_to_core hooks =
-  Eta_signal_graph_core.lane_hooks
+  Core.lane_hooks
     ~note_waiter_enqueued:hooks.note_waiter_enqueued
     ~note_waiter_compaction:hooks.note_waiter_compaction
 
 let with_lane_access t ~leaf_name ~depth_local ~hooks ~after_acquired f =
-  Eta_signal_graph_core.with_lane_access t.core ~leaf_name ~depth_local
+  Core.with_lane_access t.core ~leaf_name ~depth_local
     ~hooks:(lane_hooks_to_core hooks) ~after_acquired f
 
-let lane_waiting_count t _lane =
-  Eta_signal_graph_core.lane_waiting_count t.core
+let lane_waiting_count t _lane = Core.lane_waiting_count t.core
 
 let lane_cancelled_count t _lane =
-  Eta_signal_graph_core.lane_cancelled_count t.core
-let next_signal_id t = Eta_signal_graph_core.next_signal_id t.core
-let next_var_id t = Eta_signal_graph_core.next_var_id t.core
-let next_observer_id t = Eta_signal_graph_core.next_observer_id t.core
-let next_scope_id t = Eta_signal_graph_core.next_scope_id t.core
-let set_next_node_id t _lane next =
-  Eta_signal_graph_core.set_next_node_id t.core next
+  Core.lane_cancelled_count t.core
+
+let next_signal_id t = Core.next_signal_id t.core
+let next_var_id t = Core.next_var_id t.core
+let next_observer_id t = Core.next_observer_id t.core
+let next_scope_id t = Core.next_scope_id t.core
+let set_next_node_id t _lane next = Core.set_next_node_id t.core next
 
 let counter t _lane target =
-  Eta_signal_graph_core.counter t.core (core_counter target)
+  Core.counter t.core (core_counter target)
 
 let set_counter t _lane target value =
-  Eta_signal_graph_core.set_counter t.core (core_counter target) value
+  Core.set_counter t.core (core_counter target) value
 
 let bump_counter t lane target =
-  Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
+  Core.bump_counter t.core lane (core_counter target)
 
 let identity_id identity node = identity.identity_id node
 let identity_equal identity left right = identity.identity_equal_id left right
@@ -1684,7 +1817,7 @@ let necessary_ids t lane plan =
 
 let update_necessity t lane plan =
   let next = necessary_ids t lane plan in
-  Eta_signal_graph_core.update_necessary_ids t.core lane next;
+  Core.update_necessary_ids t.core lane next;
   next
 
 type 'timer timer_demand = {
