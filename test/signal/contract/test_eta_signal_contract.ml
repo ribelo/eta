@@ -43,6 +43,15 @@ let expect_die label = function
         (Eta.Cause.pp pp_hidden) cause
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
+let run_effect_in_foreign_domain eff =
+  let domain =
+    (Domain.spawn [@alert "-do_not_spawn_domains"] [@alert "-unsafe_multidomain"])
+      (fun () ->
+        Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+        run runtime eff)
+  in
+  Domain.join domain
+
 let render pp value = Format.asprintf "%a" pp value
 
 let check_render label pp value expected =
@@ -448,6 +457,18 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
+let test_stream_bridge_rejects_cross_domain_consumer () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  let observer, stream = run_ok runtime (S.Stream.observe signal) in
+  run_ok runtime S.stabilize;
+  expect_die "cross-domain stream bridge consumer"
+    (run_effect_in_foreign_domain
+       (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect));
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_stream_observe_validates_capacity () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -687,6 +708,8 @@ let () =
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
+          Alcotest.test_case "stream bridge rejects cross-domain consumer"
+            `Quick test_stream_bridge_rejects_cross_domain_consumer;
           Alcotest.test_case "stream observe validates capacity" `Quick
             test_stream_observe_validates_capacity;
           Alcotest.test_case

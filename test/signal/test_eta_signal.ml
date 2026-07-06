@@ -7451,18 +7451,6 @@ let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
        | [ Signal.Initialized 0 ] -> ()
        | _ -> Alcotest.fail "expected initialized stream update"))
 
-let test_stream_bridge_rejects_cross_domain_consumer () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream = run_ok rt (Signal.Stream.observe signal) in
-  run_ok rt Signal.stabilize;
-  expect_die "cross-domain stream bridge consumer"
-    (run_effect_in_foreign_domain
-       (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -8033,8 +8021,6 @@ let () =
             "stream bridge consumer wakeup failure does not fail stabilize"
             `Quick
             test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize;
-          Alcotest.test_case "stream bridge rejects cross-domain consumer"
-            `Quick test_stream_bridge_rejects_cross_domain_consumer;
           Alcotest.test_case
             "stream bridge interrupted drop callback does not duplicate" `Quick
             test_stream_bridge_interrupted_drop_callback_does_not_duplicate;
