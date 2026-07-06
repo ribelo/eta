@@ -2314,10 +2314,30 @@ let small_graph_signal_of_node signals = function
               (fun value -> (value * odd_scale) + bias)
               signals.(odd_child))
 
-let small_graph_observer_specs ~node_count =
-  [| (0, Small_default_equal);
-     (node_count / 2, Small_mod_equal 2);
-     (node_count - 1, Small_mod_equal 3) |]
+let small_graph_random_observer_policy random =
+  match Random.State.int random 4 with
+  | 0 -> Small_default_equal
+  | _ -> Small_mod_equal (2 + Random.State.int random 4)
+
+let small_graph_observer_specs ~seed ~node_count ~observer_count =
+  let random =
+    Random.State.make [| seed; node_count; observer_count; 23 |]
+  in
+  Array.init observer_count (fun slot ->
+      let node =
+        match slot with
+        | 0 -> 0
+        | 1 -> node_count / 2
+        | 2 -> node_count - 1
+        | 3 -> node_count - 1
+        | _ -> Random.State.int random node_count
+      in
+      let policy =
+        match slot with
+        | 0 | 3 -> Small_default_equal
+        | _ -> small_graph_random_observer_policy random
+      in
+      (node, policy))
 
 let small_graph_record observer update =
   E.sync (fun () ->
@@ -2396,8 +2416,11 @@ let run_small_graph_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let var_count = 3 in
   let node_count = 14 in
+  let observer_count = 6 in
   let initial_values = [| -1; 0; 2 |] in
-  let observer_specs = small_graph_observer_specs ~node_count in
+  let observer_specs =
+    small_graph_observer_specs ~seed ~node_count ~observer_count
+  in
   let ast = generate_small_graph_ast ~seed ~var_count ~node_count in
   let vars = Array.map Signal.Var.create initial_values in
   let signals = Array.make node_count (Signal.const 0) in
