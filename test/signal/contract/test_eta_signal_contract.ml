@@ -671,6 +671,51 @@ let test_invalidated_branch_diagnostics_are_retained () =
   run_ok runtime (S.Observer.dispose branch_observer);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_invalid_observer_diagnostics_survive_tombstone_eviction () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let selector = S.Var.create 0 in
+  let first_branch = ref None in
+  let selected =
+    S.bind (S.Var.watch selector) (fun index ->
+        let signal = S.const index |> S.map (fun value -> value) in
+        if index = 0 then first_branch := Some signal;
+        signal)
+  in
+  let selected_observer =
+    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let branch =
+    match !first_branch with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected first dynamic branch"
+  in
+  let branch_observer =
+    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  for index = 1 to 1_100 do
+    run_ok runtime (S.Var.set selector index);
+    run_ok runtime S.stabilize
+  done;
+  let options : S.dot_options =
+    {
+      dot_scope = `All_including_invalid;
+      dot_observers = true;
+      dot_timers = false;
+      dot_state = false;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok runtime (S.to_dot ~options ()) in
+  Alcotest.(check int) "dot keeps invalid observer handle visible" 1
+    (count_occurrences dot "state=invalid_scope");
+  Alcotest.(check int) "dot labels evicted observer target id" 1
+    (count_occurrences dot "missing_observed_signal_id=s");
+  run_ok runtime (S.Observer.dispose branch_observer);
+  run_ok runtime (S.Observer.dispose selected_observer)
+
 let test_default_cutoff_is_physical_equality () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1478,6 +1523,8 @@ let () =
             `Quick test_diagnostics_track_observation_and_disposal;
           Alcotest.test_case "diagnostics retain invalidated branches" `Quick
             test_invalidated_branch_diagnostics_are_retained;
+          Alcotest.test_case "diagnostics survive tombstone eviction" `Quick
+            test_invalid_observer_diagnostics_survive_tombstone_eviction;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"

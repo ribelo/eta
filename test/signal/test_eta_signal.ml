@@ -3822,54 +3822,6 @@ let test_to_dot_debug_options_expose_hidden_state () =
   run_ok rt (Dot_signal.Observer.dispose timer_observer);
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
 
-let test_to_dot_labels_invalid_observer_with_evicted_target_tombstone () =
-  let module Eviction_signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let selector = Eviction_signal.Var.create 0 in
-  let first_branch = ref None in
-  let selected =
-    Eviction_signal.bind (Eviction_signal.Var.watch selector) (fun index ->
-        let signal =
-          Eviction_signal.const index
-          |> Eviction_signal.map (fun value -> value)
-        in
-        if index = 0 then first_branch := Some signal;
-        signal)
-  in
-  let selected_observer =
-    run_ok rt (Eviction_signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Eviction_signal.stabilize;
-  let branch =
-    match !first_branch with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected first dynamic branch"
-  in
-  let branch_observer =
-    run_ok rt (Eviction_signal.Observer.observe branch (fun _ -> Effect.unit))
-  in
-  run_ok rt Eviction_signal.stabilize;
-  for index = 1 to 1_100 do
-    run_ok rt (Eviction_signal.Var.set selector index);
-    run_ok rt Eviction_signal.stabilize
-  done;
-  let options : Eviction_signal.dot_options =
-    {
-      dot_scope = `All_including_invalid;
-      dot_observers = true;
-      dot_timers = false;
-      dot_state = false;
-      dot_dynamic_scopes = false;
-    }
-  in
-  let dot = run_ok rt (Eviction_signal.to_dot ~options ()) in
-  Alcotest.(check int) "invalid observer remains visible" 1
-    (count_occurrences dot "state=invalid_scope");
-  Alcotest.(check int) "evicted observer target id remains visible" 1
-    (count_occurrences dot "missing_observed_signal_id=s");
-  run_ok rt (Eviction_signal.Observer.dispose branch_observer);
-  run_ok rt (Eviction_signal.Observer.dispose selected_observer)
-
 let test_fanout_fanin_cutoff_and_partial_disposal () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6643,9 +6595,6 @@ let () =
             test_stats_and_dot_stay_read_only_through_nested_bind_churn;
           Alcotest.test_case "to_dot debug options expose hidden state" `Quick
             test_to_dot_debug_options_expose_hidden_state;
-          Alcotest.test_case
-            "to_dot labels invalid observer with evicted target tombstone" `Quick
-            test_to_dot_labels_invalid_observer_with_evicted_target_tombstone;
           Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
             test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick
