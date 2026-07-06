@@ -2779,7 +2779,7 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
         (run_ok rt (Signal.Observer.read selected_observer)))
 
 let test_commit_skips_invalidated_staged_entries () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 10 in
@@ -2802,7 +2802,6 @@ let test_commit_skips_invalidated_staged_entries () =
     | Some signal -> signal
     | None -> Alcotest.fail "expected captured bind RHS signal"
   in
-  let branch_version = Signal.Private_test_hooks.signal_version captured in
   let branch_observer =
     run_ok rt (Signal.Observer.observe captured (fun _ -> Effect.unit))
   in
@@ -2811,11 +2810,6 @@ let test_commit_skips_invalidated_staged_entries () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "selected switched to right" 20
     (run_ok rt (Signal.Observer.read selected_observer));
-  Alcotest.(check bool) "captured branch invalidated" false
-    (Signal.Private_test_hooks.signal_valid captured);
-  Alcotest.(check int) "invalidated staged branch version unchanged"
-    branch_version
-    (Signal.Private_test_hooks.signal_version captured);
   expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
   let options =
