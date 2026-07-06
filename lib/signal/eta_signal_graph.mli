@@ -651,12 +651,6 @@ val finish_recorded_stabilization :
   stabilization_finish ->
   unit
 
-val remember_live_node :
-  (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
-  create_weak_node:('node -> 'weak_node) ->
-  'node ->
-  unit
-
 val create_live_node :
   (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->
   ('scope_context, 'scope) scope_ops ->

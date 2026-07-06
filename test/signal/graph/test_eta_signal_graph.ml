@@ -274,8 +274,27 @@ let collect_demand_live_nodes keep cells =
   let cells = List.filter (fun node -> node.demand_live && keep node) cells in
   (cells, cells)
 
-let demand_node ?timer ?(live = true) id =
-  { demand_id = Id.signal id; demand_live = live; demand_timer = timer }
+let demand_scope_ops =
+  Graph.scope_ops
+    ~current:(fun () -> None)
+    ~require_valid_current:(fun () -> Error `Ambiguous_scope)
+    ~with_current:(fun () (_scope : unit) f -> f ())
+
+let create_demand_node graph ?timer ?(live = true) () =
+  let lifecycle =
+    Graph.node_lifecycle
+      ~validate_dependency:(fun (_ : unit) -> ())
+      ~create:(fun ~id ~scope:_ ->
+        { demand_id = id; demand_live = live; demand_timer = timer })
+      ~attach_dependency:(fun ~parent:_ ~child:(_ : unit) -> ())
+      ~add_to_scope:(fun () _node -> ())
+      ~pack:Fun.id ~create_weak:Fun.id
+  in
+  match Graph.create_live_node graph demand_scope_ops lifecycle ~dependencies:[] with
+  | Ok node -> node
+  | Error err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
 
 let demand_reachable_ids ~roots =
   let table = Hashtbl.create 8 in
@@ -866,13 +885,11 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     Graph.create ~create_scope_context:(fun () -> ())
       ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
-  let live_root = demand_node ~timer:"root" 1 in
-  let live_timer = demand_node ~timer:"leaf" 2 in
-  let live_without_timer = demand_node 3 in
-  let stale_timer = demand_node ~live:false ~timer:"stale" 4 in
-  List.iter
-    (Graph.remember_live_node graph ~create_weak_node:Fun.id)
-    [ live_root; live_timer; live_without_timer; stale_timer ];
+  let live_root = create_demand_node graph ~timer:"root" () in
+  let live_timer = create_demand_node graph ~timer:"leaf" () in
+  let live_without_timer = create_demand_node graph () in
+  let _stale_timer = create_demand_node graph ~live:false ~timer:"stale" () in
+  let demand_id node = Id.signal_int node.demand_id in
   with_graph_lane graph (fun lane ->
       Graph.add_observer graph lane None;
       Graph.add_observer graph lane (Some live_root));
@@ -893,10 +910,11 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
           |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
           |> List.sort compare ))
   in
-  Alcotest.(check (list int)) "necessary ids" [ 1 ] necessary_ids;
+  Alcotest.(check (list int)) "necessary ids" [ demand_id live_root ]
+    necessary_ids;
   Alcotest.(check (list (pair int string)))
     "live timer candidates"
-    [ (1, "root"); (2, "leaf") ]
+    [ (demand_id live_root, "root"); (demand_id live_timer, "leaf") ]
     timers;
   let remaining_live_ids =
     with_graph_lane graph (fun lane ->
@@ -906,7 +924,9 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     |> List.sort Int.compare
   in
   Alcotest.(check (list int))
-    "live registry pruned" [ 1; 2; 3 ] remaining_live_ids
+    "live registry pruned"
+    [ demand_id live_root; demand_id live_timer; demand_id live_without_timer ]
+    remaining_live_ids
 
 let test_timer_refresh_token_owned_by_graph () =
   let graph =
