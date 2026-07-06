@@ -410,8 +410,6 @@ module Make (Observer_error : Observer_error) () = struct
       | After_observer_delivery_claim
       | After_observer_activation_before_return
       | After_graph_lane_acquired
-      | After_stream_try_send_before_ack
-      | After_stream_drop_before_ack
 
     type stats_count = Test_hooks.stats_count =
       | Stats_total_node_count
@@ -2679,10 +2677,6 @@ module Make (Observer_error : Observer_error) () = struct
 
     let bridge_hooks () =
       Stream_bridge.hooks ~metrics:(graph_stream_bridge_metrics ())
-        ~after_try_send_before_ack:(fun () ->
-          Private_test_hooks.run After_stream_try_send_before_ack)
-        ~after_drop_before_ack:(fun () ->
-          Private_test_hooks.run After_stream_drop_before_ack)
         ~on_closed_with_error:(fun err ->
           Effect.sync (fun () -> raise (Graph_error err)))
         ()

@@ -4,8 +4,6 @@ type hook =
   | After_observer_delivery_claim
   | After_observer_activation_before_return
   | After_graph_lane_acquired
-  | After_stream_try_send_before_ack
-  | After_stream_drop_before_ack
 
 type stats_count =
   | Stats_total_node_count
