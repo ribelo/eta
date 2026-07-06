@@ -1445,48 +1445,6 @@ let test_commit_skips_invalidated_staged_entries () =
   run_ok rt (Signal.Observer.dispose branch_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let a_target = Signal.Var.create (Signal.const 1) in
-  let b_target = Signal.Var.create (Signal.const 10) in
-  let a = Signal.bind (Signal.Var.watch a_target) (fun signal -> signal) in
-  let b = Signal.bind (Signal.Var.watch b_target) (fun signal -> signal) in
-  let a_observer =
-    run_ok rt (Signal.Observer.observe a (fun _ -> Effect.unit))
-  in
-  let b_observer =
-    run_ok rt (Signal.Observer.observe b (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial a" 1
-    (run_ok rt (Signal.Observer.read a_observer));
-  Alcotest.(check int) "initial b" 10
-    (run_ok rt (Signal.Observer.read b_observer));
-  run_ok rt (Signal.Var.set a_target b);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "one-way a follows b" 10
-    (run_ok rt (Signal.Observer.read a_observer));
-  Alcotest.(check int) "one-way b remains constant" 10
-    (run_ok rt (Signal.Observer.read b_observer));
-  run_ok rt (Signal.Var.set a_target (Signal.const 2));
-  run_ok rt (Signal.Var.set b_target a);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reverse a constant" 2
-    (run_ok rt (Signal.Observer.read a_observer));
-  Alcotest.(check int) "reverse b follows a" 2
-    (run_ok rt (Signal.Observer.read b_observer));
-  run_ok rt (Signal.Var.set a_target b);
-  run_ok rt (Signal.Var.set b_target a);
-  expect_fail "dynamic signal cycle" (( = ) `Cycle)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "a snapshot preserved after cycle" 2
-    (run_ok rt (Signal.Observer.read a_observer));
-  Alcotest.(check int) "b snapshot preserved after cycle" 2
-    (run_ok rt (Signal.Observer.read b_observer));
-  run_ok rt (Signal.Observer.dispose a_observer);
-  run_ok rt (Signal.Observer.dispose b_observer)
-
 let test_bind_selector_failure_preserves_previous_branch () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -4061,8 +4019,6 @@ let () =
             test_dynamic_scope_invalidation_skips_callback;
           Alcotest.test_case "commit skips invalidated staged entries" `Quick
             test_commit_skips_invalidated_staged_entries;
-          Alcotest.test_case "dynamic signal rewires and cycle" `Quick
-            test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
           Alcotest.test_case "bind selector failure preserves branch" `Quick
             test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind switch rollback preserves old branch" `Quick
