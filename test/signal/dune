@@ -14,7 +14,6 @@
   eta_signal_observer
   eta_signal_scope
   eta_signal_stabilization_pass
-  eta_signal_stream_bridge
   eta_signal_timer
   eta_signal_timer_adapter
   eta_signal_timer_policy
@@ -193,18 +192,6 @@
 (rule
  (target eta_signal_stabilization_pass.mli)
  (deps ../../lib/signal/eta_signal_stabilization_pass.mli)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stream_bridge.ml)
- (deps ../../lib/signal/eta_signal_stream_bridge.ml)
- (action
-  (copy %{deps} %{target})))
-
-(rule
- (target eta_signal_stream_bridge.mli)
- (deps ../../lib/signal/eta_signal_stream_bridge.mli)
  (action
   (copy %{deps} %{target})))
 
