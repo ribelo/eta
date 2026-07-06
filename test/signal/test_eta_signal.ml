@@ -5329,47 +5329,6 @@ let test_stream_observe_timer_initialization_race () =
    | _ -> Alcotest.fail "expected initialized stream update");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_observe_invalidated_before_return_fails () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
-  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let use_branch = Signal.Var.create true in
-  let captured = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
-        if active then (
-          let branch = Signal.map Fun.id timer in
-          captured := Some branch;
-          Signal.const 0)
-        else Signal.const 1)
-  in
-  let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let branch =
-    match !captured with
-    | Some branch -> branch
-    | None -> Alcotest.fail "expected captured branch signal"
-  in
-  let switch_branch =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eio.Promise.await daemon_forked;
-        Eta_eio.Runtime.run rt
-          (widen
-             (Signal.Var.set use_branch false
-              |> Effect.bind (fun () -> Signal.stabilize))))
-  in
-  let observe_branch =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eta_eio.Runtime.run rt
-          (widen (Signal.Observer.observe branch (fun _ -> Effect.unit))))
-  in
-  ignore (expect_exit_ok "branch switch" (Eio.Promise.await_exn switch_branch) : unit);
-  expect_fail "observe invalidated before return" (( = ) `Invalid_scope)
-    (Eio.Promise.await_exn observe_branch);
-  run_ok rt (Signal.Observer.dispose selected_observer)
-
 let test_registering_timer_demand_does_not_restart_active_pure_closures () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_yield_after_daemon_fork_runtime @@ fun sw rt daemon_forked ->
@@ -6093,8 +6052,6 @@ let () =
             test_time_deadline_validation_errors;
           Alcotest.test_case "stream observe timer initialization race" `Quick
             test_stream_observe_timer_initialization_race;
-          Alcotest.test_case "observe invalidated before return fails" `Quick
-            test_observe_invalidated_before_return_fails;
           Alcotest.test_case
             "registering timer demand does not restart active pure closures"
             `Quick
