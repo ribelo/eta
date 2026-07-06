@@ -5942,7 +5942,7 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
     (run_ok rt (Overflow_signal.Observer.read observer))
 
 let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let check_timer_snapshot label
       ( expected_interval,
@@ -5958,11 +5958,16 @@ let test_time_large_clock_jump_catches_up_without_auto_stabilize () =
     Alcotest.(check int) (label ^ " step") expected_step actual_step
   in
   let interval = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let now = run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ()) in
+  let now =
+    run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ())
+    |> Signal.map Signal.Time.to_ms
+  in
   let after =
     run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 50))
   in
-  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 50) in
+  let deadline =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 50))
+  in
   let step =
     run_ok rt
       (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
@@ -6253,12 +6258,14 @@ let test_time_interval_saturated_catch_up_coalesces () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_deadline_saturated_catch_up_does_not_overflow () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   (* Start at -1 so the first 1ms cadence is due at 0, reproducing the
      saturated successor edge through public timer APIs. *)
   with_cooperative_timer_host ~initial_ms:(-1) ~jump_ms:max_int
   @@ fun rt sleep_calls _yield_calls logger ->
-  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 1) 1) in
+  let signal =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 2))
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -7561,9 +7568,11 @@ let with_blocked_timer_daemon f =
   Fun.protect ~finally:release (fun () -> f rt now_ms sleep_calls)
 
 let test_time_deadline_catches_up_without_daemon_yield () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
-  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
+  let signal =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 100))
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -7625,9 +7634,11 @@ let test_time_interval_does_not_recount_saturated_due () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_deadline_refresh_retries_after_downstream_defect () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
-  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 10) 100) in
+  let deadline =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 10) (Duration.ms 100))
+  in
   let raised = ref false in
   let checked =
     Signal.map
@@ -7754,9 +7765,11 @@ let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
             (run_ok rt (Signal.Observer.read observer))))
 
 let test_time_active_deadline_refreshes_before_daemon_runs () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
-  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let signal =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -7777,9 +7790,11 @@ let test_time_active_deadline_refreshes_before_daemon_runs () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_deadline_on_demand_finish_cancels_running_daemon () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
-  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.days 1) 5) in
+  let signal =
+    run_ok rt (Signal.Time.after ~every:(Duration.days 1) (Duration.ms 5))
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
@@ -7917,7 +7932,7 @@ let test_time_step_does_not_run_f_inside_stabilize () =
       Alcotest.(check int) "f not called by stabilize" 0 !f_called)
 
 let test_time_active_timer_refresh_does_not_restart_pure_pass () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
   let source = Signal.Var.create 1 in
   let pure_runs = ref 0 in
@@ -7927,7 +7942,9 @@ let test_time_active_timer_refresh_does_not_restart_pure_pass () =
            incr pure_runs;
            value)
   in
-  let deadline = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let deadline =
+    run_ok rt (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
+  in
   let combined =
     Signal.map2 (fun value due -> if due then value else 0) mapped deadline
   in
