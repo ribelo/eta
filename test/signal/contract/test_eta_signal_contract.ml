@@ -534,6 +534,94 @@ let test_observer_read_does_not_force_recompute () =
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_graph_delivery_order_is_deterministic () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let check_events label expected events =
+    Alcotest.(check (list string)) label expected (List.rev !events);
+    events := []
+  in
+  let dispose_all observers =
+    List.iter
+      (fun observer -> run_ok runtime (S.Observer.dispose observer))
+      observers
+  in
+  let check_dependency_order label registration_order =
+    let source = S.Var.create 1 in
+    let upstream =
+      S.Var.watch source |> S.map (fun value -> value + 1)
+    in
+    let downstream = S.map (fun value -> value * 10) upstream in
+    let independent =
+      S.Var.watch source |> S.map (fun value -> -value)
+    in
+    let events = ref [] in
+    let record label _update =
+      E.sync (fun () -> events := label :: !events)
+    in
+    let observe = function
+      | "upstream" -> S.Observer.observe upstream (record "upstream")
+      | "downstream" ->
+          S.Observer.observe downstream (record "downstream")
+      | "independent" ->
+          S.Observer.observe independent (record "independent")
+      | unexpected ->
+          Alcotest.failf "unexpected observer label %S" unexpected
+    in
+    let observers =
+      List.map (fun name -> run_ok runtime (observe name)) registration_order
+    in
+    let expected = [ "upstream"; "downstream"; "independent" ] in
+    run_ok runtime S.stabilize;
+    check_events (label ^ " initial dependency order") expected events;
+    run_ok runtime (S.Var.set source 2);
+    run_ok runtime S.stabilize;
+    check_events (label ^ " changed dependency order") expected events;
+    dispose_all observers
+  in
+  check_dependency_order "creation registration"
+    [ "upstream"; "downstream"; "independent" ];
+  check_dependency_order "reverse dependency registration"
+    [ "downstream"; "upstream"; "independent" ];
+  check_dependency_order "reverse registration"
+    [ "independent"; "downstream"; "upstream" ];
+
+  let check_independent_order label registration_order =
+    let source = S.Var.create 1 in
+    let left = S.Var.watch source |> S.map (fun value -> value + 1) in
+    let middle =
+      S.Var.watch source |> S.map (fun value -> value + 2)
+    in
+    let right = S.Var.watch source |> S.map (fun value -> value + 3) in
+    let events = ref [] in
+    let record label _update =
+      E.sync (fun () -> events := label :: !events)
+    in
+    let observe = function
+      | "left" -> S.Observer.observe left (record "left")
+      | "middle" -> S.Observer.observe middle (record "middle")
+      | "right" -> S.Observer.observe right (record "right")
+      | unexpected ->
+          Alcotest.failf "unexpected observer label %S" unexpected
+    in
+    let observers =
+      List.map (fun name -> run_ok runtime (observe name)) registration_order
+    in
+    let expected = [ "left"; "middle"; "right" ] in
+    run_ok runtime S.stabilize;
+    check_events (label ^ " initial independent order") expected events;
+    run_ok runtime (S.Var.set source 2);
+    run_ok runtime S.stabilize;
+    check_events (label ^ " changed independent order") expected events;
+    dispose_all observers
+  in
+  check_independent_order "independent creation registration"
+    [ "left"; "middle"; "right" ];
+  check_independent_order "independent reverse registration"
+    [ "right"; "middle"; "left" ];
+  check_independent_order "independent mixed registration"
+    [ "middle"; "right"; "left" ]
+
 let test_observer_unsafe_read_exn_reports_invalid_state () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1912,6 +2000,8 @@ let () =
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
+          Alcotest.test_case "observer graph delivery order is deterministic"
+            `Quick test_observer_graph_delivery_order_is_deterministic;
           Alcotest.test_case "observer unsafe read reports invalid state"
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "diagnostics track observation and disposal"
