@@ -4513,27 +4513,6 @@ let test_time_now_bind_activation_refreshes_current_stabilization () =
       Alcotest.(check int) "dynamic activation refreshes current snapshot" 20
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_now_uses_runtime_clock () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial now" 0
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "updated now" 5
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -4590,77 +4569,6 @@ let test_time_now_backward_clock_refresh_overrides_pending_update () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_now_reobserve_refreshes_while_old_sleep_pending () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  let first_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial now" 0
-    (run_ok rt (Signal.Observer.read first_observer));
-  run_ok rt (Signal.Observer.dispose first_observer);
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  let second_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reobserved now refreshes immediately" 5
-    (run_ok rt (Signal.Observer.read second_observer));
-  run_ok rt (Signal.Observer.dispose second_observer)
-
-let test_time_now_refreshes_after_idle_observe () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  Eta_test.Test_clock.adjust clock (Duration.ms 20);
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "unobserved now has no sleeper" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "idle now refreshes on observe" 20
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_time_after_deadline () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal =
-    run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "initial deadline" false
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "deadline not reached" false
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "deadline reached" true
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_time_after_positive_duration_tolerates_advancing_clock () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -4676,26 +4584,7 @@ let test_time_after_positive_duration_tolerates_advancing_clock () =
   in
   ignore
     (run_ok rt
-       (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 1)))
-
-let test_time_after_elapsed_before_observe () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal =
-    run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
-  in
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "unobserved deadline has no sleeper" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "elapsed deadline refreshes on observe" true
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
+      (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 1)))
 
 let test_time_after_bind_activation_refreshes_current_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -5988,23 +5877,13 @@ let () =
             test_time_branch_churn_keeps_single_active_sleeper;
           Alcotest.test_case "time now bind activation refreshes current" `Quick
             test_time_now_bind_activation_refreshes_current_stabilization;
-          Alcotest.test_case "time now uses runtime clock" `Quick
-            test_time_now_uses_runtime_clock;
           Alcotest.test_case "time now uses one clock snapshot" `Quick
             test_time_now_uses_single_clock_snapshot_per_stabilization;
           Alcotest.test_case "time now backward refresh overrides pending update"
             `Quick
             test_time_now_backward_clock_refresh_overrides_pending_update;
-          Alcotest.test_case "time now refreshes on quick reobserve" `Quick
-            test_time_now_reobserve_refreshes_while_old_sleep_pending;
-          Alcotest.test_case "time now refreshes after idle observe" `Quick
-            test_time_now_refreshes_after_idle_observe;
-          Alcotest.test_case "time after deadline" `Quick
-            test_time_after_deadline;
           Alcotest.test_case "time after positive duration tolerates advancing clock"
             `Quick test_time_after_positive_duration_tolerates_advancing_clock;
-          Alcotest.test_case "time after elapsed before observe" `Quick
-            test_time_after_elapsed_before_observe;
           Alcotest.test_case "time after bind activation refreshes current"
             `Quick test_time_after_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time after bind activation skips stale compute"

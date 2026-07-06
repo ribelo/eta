@@ -13,6 +13,7 @@ type test_error =
   [ Signal.graph_error
   | Signal.observer_read_error
   | Signal.stabilize_error
+  | Signal.time_error
   | Signal.stream_error ]
 
 type observed_update =
@@ -245,6 +246,168 @@ let test_randomized_trace_matches_model () =
     (fun seed ->
       run_trace (Format.asprintf "seed-%d" seed) (generate_trace ~seed ~steps:80))
     [ 11; 29; 47; 83 ]
+
+type timer_model_op =
+  | Timer_advance of int
+  | Timer_stabilize
+  | Timer_observe_now
+  | Timer_dispose_now
+  | Timer_read_now
+  | Timer_observe_after
+  | Timer_dispose_after
+  | Timer_read_after
+
+let pp_timer_model_op formatter = function
+  | Timer_advance ms -> Format.fprintf formatter "Timer_advance %d" ms
+  | Timer_stabilize -> Format.pp_print_string formatter "Timer_stabilize"
+  | Timer_observe_now -> Format.pp_print_string formatter "Timer_observe_now"
+  | Timer_dispose_now -> Format.pp_print_string formatter "Timer_dispose_now"
+  | Timer_read_now -> Format.pp_print_string formatter "Timer_read_now"
+  | Timer_observe_after -> Format.pp_print_string formatter "Timer_observe_after"
+  | Timer_dispose_after -> Format.pp_print_string formatter "Timer_dispose_after"
+  | Timer_read_after -> Format.pp_print_string formatter "Timer_read_after"
+
+type 'a timer_observer_state = {
+  mutable timer_observer : 'a Signal.observer option;
+  mutable timer_current : 'a option;
+}
+
+let create_timer_observer_state () =
+  { timer_observer = None; timer_current = None }
+
+let timer_model_observe runtime signal state =
+  match state.timer_observer with
+  | Some _ -> ()
+  | None ->
+      state.timer_observer <-
+        Some (run_ok runtime (Signal.Observer.observe signal (fun _ -> E.unit)));
+      state.timer_current <- None
+
+let timer_model_dispose runtime state =
+  match state.timer_observer with
+  | None -> ()
+  | Some observer ->
+      run_ok runtime (Signal.Observer.dispose observer);
+      state.timer_observer <- None;
+      state.timer_current <- None
+
+let timer_model_stabilize_state state value =
+  match state.timer_observer with
+  | None -> ()
+  | Some _ -> state.timer_current <- Some value
+
+let timer_model_read runtime label state testable =
+  match (state.timer_observer, state.timer_current) with
+  | None, _ -> ()
+  | Some observer, None ->
+      expect_uninitialized_observer label runtime (Signal.Observer.read observer)
+  | Some observer, Some expected ->
+      Alcotest.check testable label expected
+        (run_ok runtime (Signal.Observer.read observer))
+
+let generate_timer_model_ops ~seed ~steps =
+  let random = Random.State.make [| seed; steps; 53 |] in
+  let next_op index =
+    if index mod 6 = 0 then Timer_stabilize
+    else
+      match Random.State.int random 16 with
+      | 0 | 1 | 2 -> Timer_advance (1 + Random.State.int random 9)
+      | 3 | 4 -> Timer_observe_now
+      | 5 -> Timer_dispose_now
+      | 6 | 7 -> Timer_read_now
+      | 8 | 9 -> Timer_observe_after
+      | 10 -> Timer_dispose_after
+      | 11 | 12 -> Timer_read_after
+      | _ -> Timer_stabilize
+  in
+  let scripted =
+    [
+      Timer_observe_now;
+      Timer_observe_after;
+      Timer_stabilize;
+      Timer_read_now;
+      Timer_read_after;
+      Timer_advance 5;
+      Timer_stabilize;
+      Timer_read_now;
+      Timer_read_after;
+      Timer_advance 5;
+      Timer_stabilize;
+      Timer_read_now;
+      Timer_read_after;
+      Timer_dispose_now;
+      Timer_dispose_after;
+      Timer_advance 7;
+      Timer_observe_now;
+      Timer_observe_after;
+      Timer_read_now;
+      Timer_read_after;
+      Timer_stabilize;
+      Timer_read_now;
+      Timer_read_after;
+    ]
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Timer_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  scripted @ loop 1 []
+
+let run_timer_model_trace name ~seed =
+  Eta_test.with_test_clock @@ fun _sw clock runtime ->
+  let clock_ms = ref 0 in
+  let now_signal =
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5) ())
+    |> Signal.map Signal.Time.to_ms
+  in
+  let after_signal =
+    run_ok runtime
+      (Signal.Time.after ~every:(Eta.Duration.ms 5) (Eta.Duration.ms 10))
+  in
+  let now_state = create_timer_observer_state () in
+  let after_state = create_timer_observer_state () in
+  let after_value () = !clock_ms >= 10 in
+  let ops = generate_timer_model_ops ~seed ~steps:80 in
+  Fun.protect
+    ~finally:(fun () ->
+      timer_model_dispose runtime now_state;
+      timer_model_dispose runtime after_state)
+    (fun () ->
+      List.iteri
+        (fun index op ->
+          let label =
+            Format.asprintf "%s step %d %a" name index pp_timer_model_op op
+          in
+          match op with
+          | Timer_advance ms ->
+              clock_ms := !clock_ms + ms;
+              Eta_test.Test_clock.adjust clock (Eta.Duration.ms ms);
+              Eta_test.Async.yield ()
+          | Timer_stabilize ->
+              run_ok runtime Signal.stabilize;
+              timer_model_stabilize_state now_state !clock_ms;
+              timer_model_stabilize_state after_state (after_value ())
+          | Timer_observe_now ->
+              timer_model_observe runtime now_signal now_state
+          | Timer_dispose_now ->
+              timer_model_dispose runtime now_state
+          | Timer_read_now ->
+              timer_model_read runtime label now_state Alcotest.int
+          | Timer_observe_after ->
+              timer_model_observe runtime after_signal after_state
+          | Timer_dispose_after ->
+              timer_model_dispose runtime after_state
+          | Timer_read_after ->
+              timer_model_read runtime label after_state Alcotest.bool)
+        ops)
+
+let test_time_now_after_lifecycle_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_timer_model_trace
+        (Format.asprintf "timer-lifecycle-seed-%d" seed)
+        ~seed)
+    [ 19; 43; 71; 131 ]
 
 let test_coalesced_sets_match_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2761,6 +2924,8 @@ let () =
             test_scripted_trace_matches_model;
           Alcotest.test_case "randomized trace matches model" `Quick
             test_randomized_trace_matches_model;
+          Alcotest.test_case "time now/after lifecycle trace matches model"
+            `Quick test_time_now_after_lifecycle_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
           Alcotest.test_case "source equality trace matches model" `Quick
