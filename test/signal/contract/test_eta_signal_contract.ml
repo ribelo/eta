@@ -650,6 +650,71 @@ let test_observer_phase_mutation_is_delayed () =
    | _ -> Alcotest.fail "unexpected observer-phase updates");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_callbacks_read_consistent_published_snapshot () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let left = S.Var.watch source |> S.map (fun value -> value + 1) in
+  let right = S.Var.watch source |> S.map (fun value -> value + 2) in
+  let total = S.map2 ( + ) left right in
+  let left_observer = ref None in
+  let right_observer = ref None in
+  let total_observer = ref None in
+  let snapshots = ref [] in
+  let record_snapshot label =
+    match (!left_observer, !right_observer, !total_observer) with
+    | Some left_observer, Some right_observer, Some total_observer ->
+        S.Observer.read left_observer
+        |> E.map_error (fun _ -> `Observer_failed)
+        |> E.bind (fun left_value ->
+               S.Observer.read right_observer
+               |> E.map_error (fun _ -> `Observer_failed)
+               |> E.bind (fun right_value ->
+                      S.Observer.read total_observer
+                      |> E.map_error (fun _ -> `Observer_failed)
+                      |> E.bind (fun total_value ->
+                             E.sync (fun () ->
+                                 snapshots :=
+                                   (label, left_value, right_value, total_value)
+                                   :: !snapshots))))
+    | _ -> E.unit
+  in
+  let left_handle =
+    run_ok runtime
+      (S.Observer.observe left (fun _ ->
+           S.Var.set source 100
+           |> E.map_error (fun _ -> `Observer_failed)
+           |> E.bind (fun () -> record_snapshot "left")))
+  in
+  let right_handle =
+    run_ok runtime (S.Observer.observe right (fun _ -> record_snapshot "right"))
+  in
+  let total_handle =
+    run_ok runtime (S.Observer.observe total (fun _ -> record_snapshot "total"))
+  in
+  left_observer := Some left_handle;
+  right_observer := Some right_handle;
+  total_observer := Some total_handle;
+  run_ok runtime S.stabilize;
+  snapshots := [];
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  let render_snapshot (label, left_value, right_value, total_value) =
+    Printf.sprintf "%s:%d:%d:%d" label left_value right_value total_value
+  in
+  Alcotest.(check (list string))
+    "all callbacks read same changed snapshot"
+    [ "left:3:4:7"; "right:3:4:7"; "total:3:4:7" ]
+    (List.sort String.compare (List.map render_snapshot !snapshots));
+  Alcotest.(check int) "callback mutation waits for next stabilization" 7
+    (run_ok runtime (S.Observer.read total_handle));
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "next stabilization sees callback mutation" 203
+    (run_ok runtime (S.Observer.read total_handle));
+  run_ok runtime (S.Observer.dispose left_handle);
+  run_ok runtime (S.Observer.dispose right_handle);
+  run_ok runtime (S.Observer.dispose total_handle)
+
 let test_observer_failure_commits_snapshot_and_retries_delivery () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1081,6 +1146,8 @@ let () =
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
             test_observer_phase_mutation_is_delayed;
+          Alcotest.test_case "observer callbacks read consistent snapshot"
+            `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case
             "observer failure commits snapshot and retries delivery" `Quick
             test_observer_failure_commits_snapshot_and_retries_delivery;

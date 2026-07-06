@@ -802,71 +802,6 @@ let test_observer_graph_order_after_bind_switch_uses_new_inner () =
         "new inner upstream observer ran before dynamic fail-fast" [ 3 ]
         (List.rev !upstream_events))
 
-let test_observer_callbacks_read_consistent_published_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let left = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
-  let right = Signal.Var.watch source |> Signal.map (fun value -> value + 2) in
-  let total = Signal.map2 ( + ) left right in
-  let left_observer = ref None in
-  let right_observer = ref None in
-  let total_observer = ref None in
-  let snapshots = ref [] in
-  let record_snapshot label =
-    match (!left_observer, !right_observer, !total_observer) with
-    | Some left_observer, Some right_observer, Some total_observer ->
-        Signal.Observer.read left_observer
-        |> Effect.map_error (fun _ -> `Observer_failed)
-        |> Effect.bind (fun left_value ->
-               Signal.Observer.read right_observer
-               |> Effect.map_error (fun _ -> `Observer_failed)
-               |> Effect.bind (fun right_value ->
-                      Signal.Observer.read total_observer
-                      |> Effect.map_error (fun _ -> `Observer_failed)
-                      |> Effect.bind (fun total_value ->
-                             Effect.sync (fun () ->
-                                 snapshots :=
-                                   (label, left_value, right_value, total_value)
-                                   :: !snapshots))))
-    | _ -> Effect.unit
-  in
-  let left_handle =
-    run_ok rt
-      (Signal.Observer.observe left (fun _ ->
-           Signal.Var.set source 100
-           |> Effect.map_error (fun _ -> `Observer_failed)
-           |> Effect.bind (fun () -> record_snapshot "left")))
-  in
-  let right_handle =
-    run_ok rt (Signal.Observer.observe right (fun _ -> record_snapshot "right"))
-  in
-  let total_handle =
-    run_ok rt (Signal.Observer.observe total (fun _ -> record_snapshot "total"))
-  in
-  left_observer := Some left_handle;
-  right_observer := Some right_handle;
-  total_observer := Some total_handle;
-  run_ok rt Signal.stabilize;
-  snapshots := [];
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  let render_snapshot (label, left_value, right_value, total_value) =
-    Printf.sprintf "%s:%d:%d:%d" label left_value right_value total_value
-  in
-  Alcotest.(check (list string))
-    "all callbacks read same changed snapshot"
-    [ "left:3:4:7"; "right:3:4:7"; "total:3:4:7" ]
-    (List.rev_map render_snapshot !snapshots);
-  Alcotest.(check int) "callback mutation waits for next stabilization" 7
-    (run_ok rt (Signal.Observer.read total_handle));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "next stabilization sees callback mutation" 203
-    (run_ok rt (Signal.Observer.read total_handle));
-  run_ok rt (Signal.Observer.dispose left_handle);
-  run_ok rt (Signal.Observer.dispose right_handle);
-  run_ok rt (Signal.Observer.dispose total_handle)
-
 let test_observer_dispose_during_callback_skips_collected_event () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -7250,8 +7185,6 @@ let () =
           Alcotest.test_case
             "observer graph order uses staged bind switch" `Quick
             test_observer_graph_order_after_bind_switch_uses_new_inner;
-          Alcotest.test_case "observer callbacks read consistent snapshot"
-            `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case "observer dispose skips collected event" `Quick
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
