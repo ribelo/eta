@@ -69,19 +69,38 @@ val start_callbacks :
     (unit, 'error) Eta.Effect.t) ->
   'error start_callbacks
 
-type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks
+type ('attempt, 'cancel_hook) demand_claim
 
-val demand_callbacks :
-  acquire_demand:
+val demand_claim :
+  start_attempts:'attempt list ->
+  cancel_hooks:'cancel_hook list ->
+  ('attempt, 'cancel_hook) demand_claim
+
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan
+
+val demand_claim_plan :
+  acquire:
     (Eta.Runtime_contract.t ->
     'capability ->
-    ('attempt list * 'cancel_hook list, 'error) result) ->
-  rollback_unclaimed_starts:
+    (('attempt, 'cancel_hook) demand_claim, 'error) result) ->
+  rollback_unclaimed:
     ('capability -> 'attempt list -> ('cancel_hook list, 'error) result) ->
+  ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan
+
+type ('attempt, 'cancel_hook, 'error) demand_effect_plan
+
+val demand_effect_plan :
   run_cancel_hooks:
     ('cancel_hook list -> (unit, 'error) Eta.Effect.t) ->
   run_start_attempts:('attempt list -> (unit, 'error) Eta.Effect.t) ->
-  ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks
+  ('attempt, 'cancel_hook, 'error) demand_effect_plan
+
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_plan
+
+val demand_plan :
+  claim:('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan ->
+  effects:('attempt, 'cancel_hook, 'error) demand_effect_plan ->
+  ('capability, 'attempt, 'cancel_hook, 'error) demand_plan
 
 val run_cancellable :
   install_cancel:
@@ -91,7 +110,7 @@ val run_cancellable :
 
 val refresh_demand :
   ('capability, 'error) access ->
-  ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks ->
+  ('capability, 'attempt, 'cancel_hook, 'error) demand_plan ->
   (unit, 'error) Eta.Effect.t
 
 val run_loop :

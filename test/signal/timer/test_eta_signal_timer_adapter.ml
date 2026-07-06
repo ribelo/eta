@@ -39,6 +39,22 @@ let adapter_access =
   Adapter.access ~with_access:(fun f ->
       Effect.sync (fun () -> f capability) |> Effect.flatten_result)
 
+let demand_plan ~acquire ~rollback_unclaimed ~run_cancel_hooks
+    ~run_start_attempts =
+  let claim =
+    Adapter.demand_claim_plan
+      ~acquire:(fun runtime_contract cap ->
+        match acquire runtime_contract cap with
+        | Error _ as error -> error
+        | Ok (start_attempts, cancel_hooks) ->
+            Ok (Adapter.demand_claim ~start_attempts ~cancel_hooks))
+      ~rollback_unclaimed
+  in
+  let effects =
+    Adapter.demand_effect_plan ~run_cancel_hooks ~run_start_attempts
+  in
+  Adapter.demand_plan ~claim ~effects
+
 let check_demand_failed cause =
   match Cause.failures cause with
   | [ `Demand_failed ] -> ()
@@ -66,12 +82,12 @@ let test_refresh_demand_orders_cancel_start_and_rollback () =
   let events = ref [] in
   run_ok runtime
     (Adapter.refresh_demand adapter_access
-       (Adapter.demand_callbacks
-          ~acquire_demand:(fun _runtime_contract cap ->
+       (demand_plan
+          ~acquire:(fun _runtime_contract cap ->
             check_cap cap;
             record events "acquire";
             Ok ([ "start-a"; "start-b" ], [ "cancel-a"; "cancel-b" ]))
-          ~rollback_unclaimed_starts:(fun cap attempts ->
+          ~rollback_unclaimed:(fun cap attempts ->
             check_cap cap;
             List.iter
               (fun attempt -> record events ("rollback:" ^ attempt))
@@ -105,12 +121,12 @@ let test_refresh_demand_release_does_not_rerun_cancel_hooks () =
   let cause =
     run_error runtime
       (Adapter.refresh_demand adapter_access
-         (Adapter.demand_callbacks
-            ~acquire_demand:(fun _runtime_contract cap ->
+         (demand_plan
+            ~acquire:(fun _runtime_contract cap ->
               check_cap cap;
               record events "acquire";
               Ok ([ "start" ], [ "cancel" ]))
-            ~rollback_unclaimed_starts:(fun cap attempts ->
+            ~rollback_unclaimed:(fun cap attempts ->
               check_cap cap;
               List.iter
                 (fun attempt -> record events ("rollback:" ^ attempt))
@@ -140,12 +156,12 @@ let test_refresh_demand_acquire_failure_skips_use_and_release () =
   let cause =
     run_error runtime
       (Adapter.refresh_demand adapter_access
-         (Adapter.demand_callbacks
-            ~acquire_demand:(fun _runtime_contract cap ->
+         (demand_plan
+            ~acquire:(fun _runtime_contract cap ->
               check_cap cap;
               record events "acquire";
               Error `Demand_failed)
-            ~rollback_unclaimed_starts:(fun cap _attempts ->
+            ~rollback_unclaimed:(fun cap _attempts ->
               check_cap cap;
               record events "rollback";
               Ok [])

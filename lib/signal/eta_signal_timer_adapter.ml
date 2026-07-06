@@ -83,25 +83,45 @@ let start_callbacks ~begin_start ~set_next_due ~after_start_update
     cleanup_failed_start;
   }
 
-type ('capability, 'attempt, 'cancel_hook, 'error) demand_callbacks = {
-  acquire_demand :
+type ('attempt, 'cancel_hook) demand_claim = {
+  claim_start_attempts : 'attempt list;
+  claim_cancel_hooks : 'cancel_hook list;
+}
+
+let demand_claim ~start_attempts ~cancel_hooks =
+  { claim_start_attempts = start_attempts; claim_cancel_hooks = cancel_hooks }
+
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan = {
+  demand_acquire :
     Runtime_contract.t ->
     'capability ->
-    ('attempt list * 'cancel_hook list, 'error) result;
-  rollback_unclaimed_starts :
+    (('attempt, 'cancel_hook) demand_claim, 'error) result;
+  demand_rollback_unclaimed :
     'capability -> 'attempt list -> ('cancel_hook list, 'error) result;
+}
+
+let demand_claim_plan ~acquire ~rollback_unclaimed =
+  {
+    demand_acquire = acquire;
+    demand_rollback_unclaimed = rollback_unclaimed;
+  }
+
+type ('attempt, 'cancel_hook, 'error) demand_effect_plan = {
   run_cancel_hooks : 'cancel_hook list -> (unit, 'error) Effect.t;
   run_start_attempts : 'attempt list -> (unit, 'error) Effect.t;
 }
 
-let demand_callbacks ~acquire_demand ~rollback_unclaimed_starts
-    ~run_cancel_hooks ~run_start_attempts =
-  {
-    acquire_demand;
-    rollback_unclaimed_starts;
-    run_cancel_hooks;
-    run_start_attempts;
-  }
+let demand_effect_plan ~run_cancel_hooks ~run_start_attempts =
+  { run_cancel_hooks; run_start_attempts }
+
+type ('capability, 'attempt, 'cancel_hook, 'error) demand_plan = {
+  demand_claim_plan :
+    ('capability, 'attempt, 'cancel_hook, 'error) demand_claim_plan;
+  demand_effect_plan : ('attempt, 'cancel_hook, 'error) demand_effect_plan;
+}
+
+let demand_plan ~claim ~effects =
+  { demand_claim_plan = claim; demand_effect_plan = effects }
 
 let run_cancellable ~install_cancel ~loop =
   Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
@@ -128,39 +148,43 @@ let current_runtime_contract () =
   Effect.Expert.make ~leaf_name:"eta_signal.timer.demand.runtime_contract"
     (fun context -> Exit.Ok (Effect.Expert.contract context))
 
-let run_pending_cancel_hooks callbacks hooks_ref =
+let run_pending_cancel_hooks effects hooks_ref =
   match !hooks_ref with
   | [] -> Effect.unit
   | hooks ->
-      callbacks.run_cancel_hooks hooks
+      effects.run_cancel_hooks hooks
       |> Effect.on_exit (fun _exit -> Effect.sync (fun () -> hooks_ref := []))
 
-let acquire_demand access callbacks runtime_contract =
+let acquire_demand access claim runtime_contract =
   access.with_access (fun capability ->
-      callbacks.acquire_demand runtime_contract capability)
+      claim.demand_acquire runtime_contract capability)
 
-let rollback_unclaimed_starts access callbacks start_attempts =
+let rollback_unclaimed_starts access claim effects start_attempts =
   let open Syntax in
   let* cancel_hooks =
     access.with_access (fun capability ->
-        callbacks.rollback_unclaimed_starts capability start_attempts)
+        claim.demand_rollback_unclaimed capability start_attempts)
   in
-  callbacks.run_cancel_hooks cancel_hooks
+  effects.run_cancel_hooks cancel_hooks
 
-let refresh_demand access callbacks =
+let refresh_demand access plan =
   let open Syntax in
+  let claim = plan.demand_claim_plan in
+  let effects = plan.demand_effect_plan in
   let* runtime_contract = current_runtime_contract () in
   Effect.acquire_use_release
     ~acquire:
-      (acquire_demand access callbacks runtime_contract
-      |> Effect.map (fun (start_attempts, cancel_hooks) ->
-             (start_attempts, ref cancel_hooks)))
+      (acquire_demand access claim runtime_contract
+      |> Effect.map (fun demand ->
+             (demand.claim_start_attempts, ref demand.claim_cancel_hooks)))
     ~release:(fun (start_attempts, cancel_hooks_ref) ->
-      let* () = rollback_unclaimed_starts access callbacks start_attempts in
-      run_pending_cancel_hooks callbacks cancel_hooks_ref)
+      let* () =
+        rollback_unclaimed_starts access claim effects start_attempts
+      in
+      run_pending_cancel_hooks effects cancel_hooks_ref)
     (fun (start_attempts, cancel_hooks_ref) ->
-      let* () = run_pending_cancel_hooks callbacks cancel_hooks_ref in
-      callbacks.run_start_attempts start_attempts)
+      let* () = run_pending_cancel_hooks effects cancel_hooks_ref in
+      effects.run_start_attempts start_attempts)
 
 let rec run_update_batch callbacks generation remaining ~missed =
   let open Syntax in

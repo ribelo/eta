@@ -341,19 +341,28 @@ let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
     runtime
 
 let refresh_demand_effect access port =
+  let claim =
+    Eta_signal_timer_adapter.demand_claim_plan
+      ~acquire:(fun runtime_contract capability ->
+        match port.demand_acquire runtime_contract capability with
+        | Error _ as error -> error
+        | Ok effects ->
+            demand_effects_plan effects ~plan:(fun ~start_attempts
+                ~cancel_hooks ->
+              Ok
+                (Eta_signal_timer_adapter.demand_claim ~start_attempts
+                   ~cancel_hooks)))
+      ~rollback_unclaimed:port.demand_rollback_unclaimed
+  in
+  let effects =
+    Eta_signal_timer_adapter.demand_effect_plan
+      ~run_cancel_hooks:port.demand_run_cancel_hooks
+      ~run_start_attempts:port.demand_run_start_attempts
+  in
   Eta_signal_timer_adapter.refresh_demand
     (Eta_signal_timer_adapter.access ~with_access:(fun f ->
          access.demand_with_access f))
-    (Eta_signal_timer_adapter.demand_callbacks
-       ~acquire_demand:(fun runtime_contract capability ->
-         match port.demand_acquire runtime_contract capability with
-         | Error _ as error -> error
-         | Ok effects ->
-             demand_effects_plan effects ~plan:(fun ~start_attempts
-                 ~cancel_hooks -> Ok (start_attempts, cancel_hooks)))
-       ~rollback_unclaimed_starts:port.demand_rollback_unclaimed
-       ~run_cancel_hooks:port.demand_run_cancel_hooks
-       ~run_start_attempts:port.demand_run_start_attempts)
+    (Eta_signal_timer_adapter.demand_plan ~claim ~effects)
 
 let refresh_node_demand_effect ~advance_generation access port =
   let active_plan = ref None in
