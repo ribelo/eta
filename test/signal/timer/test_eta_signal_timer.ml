@@ -23,6 +23,23 @@ let with_runtime f =
   in
   f runtime
 
+let with_runtime_and_foreign_contract f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let eio_clock = Eio.Stdenv.clock env in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:eio_clock
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ()
+  in
+  let foreign_contract =
+    Eta.Runtime_contract.of_runtime
+      (Eta_eio.runtime ~sw ~clock:eio_clock)
+  in
+  f runtime foreign_contract
+
 type timer = {
   name : string;
   mutable current : Timer_policy.state;
@@ -135,15 +152,11 @@ let test_refresh_node_demand_owns_node_start_wiring () =
       Timer.node_demand_plan
         ~timers:[ (1, start_node); (2, stop_node); (3, idle_node) ]
         ~is_necessary:(fun id -> id = 1)
-        ~validate_runtime:
-          (fun actual_runtime timer ->
+        ~runtime_mismatch:
+          (fun _actual_runtime timer ->
             let case = find_case timer in
-            record ("validate:" ^ case.case_name);
-            if
-              Eta.Runtime_contract.same_runtime actual_runtime
-                (Timer.runtime_contract timer)
-            then Ok ()
-            else Error `Runtime_mismatch)
+            record ("mismatch:" ^ case.case_name);
+            `Runtime_mismatch)
         ~state:port
     in
     match
@@ -156,7 +169,6 @@ let test_refresh_node_demand_owns_node_start_wiring () =
         Alcotest.(check (list string))
           "construction events"
           [
-            "validate:start";
             "set:start:starting:1";
             "start:start:starting:1";
             "set:stop:inactive:2";
@@ -176,7 +188,6 @@ let test_refresh_node_demand_owns_node_start_wiring () =
             Alcotest.(check (list string))
               "events"
               [
-                "validate:start";
                 "set:start:starting:1";
                 "start:start:starting:1";
                 "set:stop:inactive:2";
@@ -267,15 +278,11 @@ let test_node_demand_refresh_owns_node_bracketing () =
               Timer.node_demand_plan
                 ~timers:[ (1, start_node); (2, stop_node) ]
                 ~is_necessary:(fun id -> id = 1)
-                ~validate_runtime:
-                  (fun actual_runtime timer ->
+                ~runtime_mismatch:
+                  (fun _actual_runtime timer ->
                     let case = find_case timer in
-                    record ("validate:" ^ case.case_name);
-                    if
-                      Eta.Runtime_contract.same_runtime actual_runtime
-                      (Timer.runtime_contract timer)
-                    then Ok ()
-                    else Error `Runtime_mismatch)
+                    record ("mismatch:" ^ case.case_name);
+                    `Runtime_mismatch)
                 ~state:port))
   in
   run_ok runtime (Timer.run_node_demand_refresh refresh);
@@ -284,7 +291,6 @@ let test_node_demand_refresh_owns_node_bracketing () =
     [
       "access";
       "acquire";
-      "validate:start";
       "set:start:starting:1";
       "start:start:starting:1";
       "set:stop:inactive:2";
@@ -296,7 +302,7 @@ let test_node_demand_refresh_owns_node_bracketing () =
     !events
 
 let test_refresh_node_on_demand_owns_validation_and_token_order () =
-  with_runtime @@ fun runtime ->
+  with_runtime_and_foreign_contract @@ fun runtime foreign_contract ->
   let active =
     Timer_policy.running_uncancellable_state ~generation:1
       ~next_due_ms:None
@@ -312,8 +318,8 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         active,
         true,
         Ok (),
-        [ "validate"; "remember"; "now"; "run:op:42" ] );
-      ("no operation", None, true, 0, -1, active, true, Ok (), [ "validate" ]);
+        [ "remember"; "now"; "run:op:42" ] );
+      ("no operation", None, true, 0, -1, active, true, Ok (), []);
       ( "inactive without permission",
         Some "op",
         false,
@@ -322,7 +328,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         inactive,
         true,
         Ok (),
-        [ "validate" ] );
+        [] );
       ( "stale current token",
         Some "op",
         true,
@@ -331,7 +337,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         active,
         true,
         Ok (),
-        [ "validate" ] );
+        [] );
       ( "runtime failure",
         Some "op",
         true,
@@ -340,7 +346,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         active,
         false,
         Error "runtime",
-        [ "validate" ] );
+        [ "mismatch" ] );
     ]
   in
   List.iter
@@ -351,7 +357,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         current_token,
         staged_token,
         effective_state,
-        validate_ok,
+        runtime_matches,
         expected_result,
         expected_events )
     ->
@@ -363,8 +369,11 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
              ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
           @@ fun context ->
             let runtime_contract = Eta.Effect.Expert.contract context in
+            let node_runtime_contract =
+              if runtime_matches then runtime_contract else foreign_contract
+            in
             let node =
-              Timer.create_node ~runtime_contract
+              Timer.create_node ~runtime_contract:node_runtime_contract
                 ~refresh_when_inactive ~refresh_operation:operation
                 ~start:(Timer.start ~run:(fun _timer -> Eta.Effect.unit))
             in
@@ -378,9 +387,9 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
             in
             Eta.Exit.Ok
               (Timer.refresh_node_on_demand
-                 ~validate_runtime:(fun _timer _runtime_contract ->
-                   record "validate";
-                   if validate_ok then Ok () else Error "runtime")
+                 ~runtime_mismatch:(fun _runtime_contract _timer ->
+                   record "mismatch";
+                   "runtime")
                  ~current_snapshot:(fun _timer ->
                    Timer_policy.snapshot
                      ~state:(Timer_policy.inactive_state ~generation:0)
@@ -398,8 +407,8 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
         (name ^ " events") expected_events !events)
     cases
 
-let test_refresh_node_demand_validation_failure_short_circuits () =
-  with_runtime @@ fun runtime ->
+let test_refresh_node_demand_runtime_mismatch_short_circuits () =
+  with_runtime_and_foreign_contract @@ fun runtime foreign_contract ->
   let changed_state = ref false in
   let started = ref false in
   let bad =
@@ -425,9 +434,9 @@ let test_refresh_node_demand_validation_failure_short_circuits () =
   in
   let effect =
     Eta.Effect.Expert.make
-      ~leaf_name:"eta_signal.timer.test_node_validation" @@ fun context ->
+      ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
-    let make_node case =
+    let make_node runtime_contract case =
       let node =
         Timer.create_node ~runtime_contract
           ~refresh_when_inactive:true ~refresh_operation:None
@@ -439,13 +448,13 @@ let test_refresh_node_demand_validation_failure_short_circuits () =
       case.case_node <- Some node;
       node
     in
-    let bad_node = make_node bad in
-    let unreached_node = make_node unreached in
+    let bad_node = make_node foreign_contract bad in
+    let unreached_node = make_node runtime_contract unreached in
     let plan =
       Timer.node_demand_plan
         ~timers:[ (1, bad_node); (2, unreached_node) ]
         ~is_necessary:(fun id -> id = 1)
-        ~validate_runtime:(fun _runtime _timer -> Error "runtime")
+        ~runtime_mismatch:(fun _runtime _timer -> "runtime")
         ~state:
           (Timer.state_port
              ~effective:(fun timer -> (find_case timer).case_effective)
@@ -799,8 +808,8 @@ let () =
             test_node_demand_refresh_owns_node_bracketing;
           Alcotest.test_case "node refresh demand order" `Quick
             test_refresh_node_on_demand_owns_validation_and_token_order;
-          Alcotest.test_case "validation failure short-circuits" `Quick
-            test_refresh_node_demand_validation_failure_short_circuits;
+          Alcotest.test_case "runtime mismatch short-circuits" `Quick
+            test_refresh_node_demand_runtime_mismatch_short_circuits;
           Alcotest.test_case "marks unneeded node inactive" `Quick
             test_mark_node_unneeded_marks_starting_inactive;
           Alcotest.test_case "daemon lifecycle transitions" `Quick

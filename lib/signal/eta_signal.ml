@@ -925,20 +925,17 @@ module Make (Observer_error : Observer_error) () = struct
     Timer_policy.needs_start ~effective_state:(timer_effective_state timer)
       ~current_state:(timer_current_state timer)
 
-  let validate_timer_runtime timer runtime_contract =
-    match
-      Timer_policy.validate_runtime ~same_runtime:Runtime_contract.same_runtime
-        ~expected:(Timer.runtime_contract timer) ~actual:runtime_contract
-    with
-    | Ok () -> Ok ()
-    | Error `Runtime_mismatch ->
-        Private_test_hooks.run_timer_runtime_mismatch_hook ();
-        Error `Runtime_mismatch
+  let timer_runtime_mismatch _runtime_contract _timer =
+    Private_test_hooks.run_timer_runtime_mismatch_hook ();
+    (`Runtime_mismatch : graph_error)
 
   let ensure_timer_runtime timer runtime_contract =
-    match validate_timer_runtime timer runtime_contract with
+    match
+      Timer.validate_runtime ~runtime_mismatch:timer_runtime_mismatch
+        runtime_contract timer
+    with
     | Ok () -> ()
-    | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch)
+    | Error err -> raise (Graph_error err)
 
   let timer_running_generation timer =
     Timer_policy.state_running_generation (timer_effective_state timer)
@@ -1378,8 +1375,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~some:(fun timer_refresh timer ->
         match
           Timer.refresh_node_on_demand
-            ~validate_runtime:(fun timer runtime_contract ->
-              validate_timer_runtime timer runtime_contract)
+            ~runtime_mismatch:timer_runtime_mismatch
             ~current_snapshot:timer_current_snapshot
             ~effective_state:timer_effective_state
             ~remember:(remember_timer_refresh_timer lane staging)
@@ -1388,7 +1384,7 @@ module Make (Observer_error : Observer_error) () = struct
             timer_refresh timer
         with
         | Ok () -> ()
-        | Error `Runtime_mismatch -> raise (Graph_error `Runtime_mismatch))
+        | Error err -> raise (Graph_error err))
 
   let rec compute : type a. graph_lane -> Graph.staging -> a signal -> a * bool
       =
@@ -1619,12 +1615,7 @@ module Make (Observer_error : Observer_error) () = struct
     let demand = timer_demand_unlocked lane in
     Graph.timer_demand_plan demand ~plan:(fun ~is_necessary ~timers ->
         Timer.node_demand_plan ~timers ~is_necessary
-          ~validate_runtime:
-            (fun runtime_contract timer ->
-              match validate_timer_runtime timer runtime_contract with
-              | Ok () -> Ok ()
-              | Error `Runtime_mismatch ->
-                  Error (`Runtime_mismatch : graph_error))
+          ~runtime_mismatch:timer_runtime_mismatch
           ~state:timer_state_port)
 
   let current_runtime_contract () =

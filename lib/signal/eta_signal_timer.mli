@@ -37,11 +37,15 @@ val set_staged_refresh_token : _ node -> int -> unit
 val runtime_contract : _ node -> Eta.Runtime_contract.t
 val start_effect : 'operation node -> (unit, 'err) Eta.Effect.t
 
+val validate_runtime :
+  runtime_mismatch:(Eta.Runtime_contract.t -> 'operation node -> 'error) ->
+  Eta.Runtime_contract.t ->
+  'operation node ->
+  (unit, 'error) result
+
 val refresh_node_on_demand :
-  validate_runtime:
-    ('operation node ->
-    Eta.Runtime_contract.t ->
-    (unit, 'error) result) ->
+  runtime_mismatch:
+    (Eta.Runtime_contract.t -> 'operation node -> 'error) ->
   current_snapshot:('operation node -> Eta_signal_timer_policy.snapshot) ->
   effective_state:('operation node -> Eta_signal_timer_policy.state) ->
   remember:('operation node -> unit) ->
@@ -93,14 +97,15 @@ val daemon_context :
   hooks:daemon_hooks ->
   'timer daemon_context
 
-type ('id, 'operation, 'runtime, 'error) node_demand_plan
+type ('id, 'operation, 'error) node_demand_plan
 
 val node_demand_plan :
   timers:('id * 'operation node) list ->
   is_necessary:('id -> bool) ->
-  validate_runtime:('runtime -> 'operation node -> (unit, 'error) result) ->
+  runtime_mismatch:
+    (Eta.Runtime_contract.t -> 'operation node -> 'error) ->
   state:'operation node state_port ->
-  ('id, 'operation, 'runtime, 'error) node_demand_plan
+  ('id, 'operation, 'error) node_demand_plan
 
 type ('capability, 'error) demand_effect_access
 
@@ -117,7 +122,7 @@ val node_demand_effect_port :
   plan:
     (Eta.Runtime_contract.t ->
     'capability ->
-    ('id, 'operation, Eta.Runtime_contract.t, 'error) node_demand_plan) ->
+    ('id, 'operation, 'error) node_demand_plan) ->
   ('capability, 'id, 'operation, 'error) node_demand_effect_port
 
 type ('capability, 'id, 'operation, 'error) node_demand_refresh
@@ -147,8 +152,8 @@ val start_attempt_effects :
 val refresh_node_demand_plan :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
-  ('id, 'operation, 'runtime, 'error) node_demand_plan ->
-  'runtime ->
+  ('id, 'operation, 'error) node_demand_plan ->
+  Eta.Runtime_contract.t ->
   (('operation node, (unit, 'error) Eta.Effect.t) start_attempt
    demand_effects,
    'error)

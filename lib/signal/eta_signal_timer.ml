@@ -53,6 +53,15 @@ let set_staged_refresh_token timer token =
 let runtime_contract timer = timer.timer_runtime_contract
 let start_effect timer = timer.timer_start timer
 
+let validate_runtime ~runtime_mismatch runtime_contract timer =
+  match
+    Eta_signal_timer_policy.validate_runtime
+      ~same_runtime:Eta.Runtime_contract.same_runtime
+      ~expected:timer.timer_runtime_contract ~actual:runtime_contract
+  with
+  | Ok () -> Ok ()
+  | Error `Runtime_mismatch -> Error (runtime_mismatch runtime_contract timer)
+
 let can_refresh_on_demand ~token ~current_snapshot ~effective_state timer =
   Eta_signal_timer_policy.can_refresh_on_demand
     ~refresh_operation:(Option.is_some timer.timer_refresh_operation)
@@ -64,11 +73,12 @@ let can_refresh_on_demand ~token ~current_snapshot ~effective_state timer =
     ~active:(Eta_signal_timer_policy.state_active effective_state)
     ~finished:(Eta_signal_timer_policy.state_finished effective_state)
 
-let refresh_node_on_demand ~validate_runtime ~current_snapshot
+let refresh_node_on_demand ~runtime_mismatch ~current_snapshot
     ~effective_state ~remember ~run_operation context timer =
   match
-    validate_runtime timer
+    validate_runtime ~runtime_mismatch
       (Eta_signal_timer_policy.refresh_runtime_contract context)
+      timer
   with
   | Error _ as error -> error
   | Ok () -> (
@@ -186,19 +196,19 @@ let demand_port ~collect_necessary ~collect_timers ~is_necessary
     demand_start_effect = start_effect;
   }
 
-type ('id, 'operation, 'runtime, 'error) node_demand_plan = {
+type ('id, 'operation, 'error) node_demand_plan = {
   node_demand_timers : ('id * 'operation node) list;
   node_demand_is_necessary : 'id -> bool;
-  node_demand_validate_runtime :
-    'runtime -> 'operation node -> (unit, 'error) result;
+  node_demand_runtime_mismatch :
+    Eta.Runtime_contract.t -> 'operation node -> 'error;
   node_demand_state : 'operation node state_port;
 }
 
-let node_demand_plan ~timers ~is_necessary ~validate_runtime ~state =
+let node_demand_plan ~timers ~is_necessary ~runtime_mismatch ~state =
   {
     node_demand_timers = timers;
     node_demand_is_necessary = is_necessary;
-    node_demand_validate_runtime = validate_runtime;
+    node_demand_runtime_mismatch = runtime_mismatch;
     node_demand_state = state;
   }
 
@@ -241,7 +251,7 @@ type ('capability, 'id, 'operation, 'error) node_demand_effect_port = {
   node_demand_effect_plan :
     Eta.Runtime_contract.t ->
     'capability ->
-    ('id, 'operation, Eta.Runtime_contract.t, 'error) node_demand_plan;
+    ('id, 'operation, 'error) node_demand_plan;
 }
 
 let node_demand_effect_port ~plan =
@@ -348,7 +358,9 @@ let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
        ~collect_necessary:(fun () -> ())
        ~collect_timers:(fun () -> plan.node_demand_timers)
        ~is_necessary:(fun () id -> plan.node_demand_is_necessary id)
-       ~validate_runtime:plan.node_demand_validate_runtime
+       ~validate_runtime:
+         (validate_runtime
+            ~runtime_mismatch:plan.node_demand_runtime_mismatch)
        ~state:plan.node_demand_state ~start_effect)
     runtime
 
