@@ -174,21 +174,33 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
       (Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
     ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
 
+let stabilization_pure_ops
+    ?(release_pending_marks = fun _context _pending -> ())
+    ?(observer_plan =
+      fun _context _staging ->
+        Pass.observer_plan ~observers:[]
+          ~collect_events:(fun _context _observers -> [])
+          ~mark_events_pending:(fun _context _events -> ()))
+    ?(stage_pending = fun _context _staging _pending -> ())
+    ?(plan_staged_binds = fun _context _staging _observers -> ())
+    ?(commit_staging = fun _context _staging -> [])
+    ?(update_necessity = fun _context -> ()) () =
+  Graph.stabilization_pure_ops
+    ~pending:
+      (Graph.stabilization_pending_plan
+         ~release_marks:release_pending_marks ~stage:stage_pending)
+    ~observers:
+      (Graph.stabilization_observer_plan ~observe:observer_plan
+         ~plan_staged_binds)
+    ~commit:
+      (Graph.stabilization_commit_plan ~commit_staging ~update_necessity)
+
 let with_graph_lane graph f =
   run_effect "lane access" (graph_lane_effect graph f)
 
 let empty_stabilization_ops graph =
-  let observer_plan _context _staging =
-    Pass.observer_plan ~observers:[]
-      ~collect_events:(fun _context _observers -> [])
-      ~mark_events_pending:(fun _context _events -> ())
-  in
   let pure =
-    Graph.stabilization_pure_ops
-      ~release_pending_marks:(fun _context _pending -> ())
-      ~observer_plan
-      ~stage_pending:(fun _context _staging _pending -> ())
-      ~plan_staged_binds:(fun _context _staging _observers -> ())
+    stabilization_pure_ops
       ~commit_staging:(fun context staging ->
         let plan = staging_commit_plan () in
         match Graph.commit_staging graph context staging plan with
@@ -197,7 +209,7 @@ let empty_stabilization_ops graph =
             Alcotest.failf "unexpected graph error: %s"
               (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
                  err))
-      ~update_necessity:(fun _context -> ())
+      ()
   in
   let rollback =
     Graph.stabilization_rollback_ops
@@ -705,7 +717,7 @@ let test_computed_nodes_are_staging_scoped () =
       ~mark_events_pending:(fun _context _events -> ())
   in
   let pure =
-    Graph.stabilization_pure_ops
+    stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
       ~stage_pending:(fun context staging _pending ->
@@ -737,6 +749,7 @@ let test_computed_nodes_are_staging_scoped () =
               (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
                  err))
       ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
   in
   let rollback =
     Graph.stabilization_rollback_ops
@@ -840,7 +853,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~mark_events_pending:(fun _context _events -> ())
   in
   let pure =
-    Graph.stabilization_pure_ops
+    stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
       ~stage_pending:(fun context staging _pending -> stage_twice context staging)
@@ -872,6 +885,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
               (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
                  err))
       ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
   in
   let rollback =
     Graph.stabilization_rollback_ops
@@ -955,7 +969,7 @@ let test_observer_delivery_plan_uses_collection_order () =
     Observer.collect_event collection cap observer
   in
   let pure =
-    Graph.stabilization_pure_ops
+    stabilization_pure_ops
       ~release_pending_marks:(fun cap _pending -> check_cap cap)
       ~observer_plan:(fun cap _staging ->
         check_cap cap;
@@ -998,6 +1012,7 @@ let test_observer_delivery_plan_uses_collection_order () =
       ~update_necessity:(fun cap ->
         check_cap cap;
         record events "update_necessity")
+      ()
   in
   let rollback =
     Graph.stabilization_rollback_ops

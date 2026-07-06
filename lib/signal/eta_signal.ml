@@ -1890,30 +1890,33 @@ module Make (Observer_error : Observer_error) () = struct
       events
 
   let begin_stabilize lane timer_refresh =
+    let pending =
+      Graph.stabilization_pending_plan
+        ~release_marks:(fun (_lane : graph_lane) pending ->
+          List.iter (fun (V var) -> var.queued <- false) pending)
+        ~stage:(fun lane staging pending ->
+          List.iter (stage_pending_var lane staging) pending)
+    in
+    let observers =
+      Graph.stabilization_observer_plan
+        ~observe:(fun lane staging ->
+          let delivery =
+            Observer_core.delivery_event_collection ~active:observer_active
+              ~compare:(compare_observer_graph_order lane)
+              (observer_delivery_event_source staging)
+          in
+          Graph.observer_delivery_plan graph lane delivery)
+        ~plan_staged_binds:(fun lane staging observers ->
+          plan_staged_bind_switches lane staging observers)
+    in
+    let commit =
+      Graph.stabilization_commit_plan
+        ~commit_staging:(fun lane staging -> commit_staging lane staging)
+        ~update_necessity:(fun lane ->
+          update_necessity_counters_unlocked lane)
+    in
     let pure =
-      Graph.stabilization_pure_ops
-        ~release_pending_marks:
-          (fun (_lane : graph_lane) pending ->
-            List.iter (fun (V var) -> var.queued <- false) pending)
-        ~observer_plan:
-          (fun lane staging ->
-            let delivery =
-              Observer_core.delivery_event_collection ~active:observer_active
-                ~compare:(compare_observer_graph_order lane)
-                (observer_delivery_event_source staging)
-            in
-            Graph.observer_delivery_plan graph lane delivery)
-        ~stage_pending:
-          (fun lane staging pending ->
-            List.iter (stage_pending_var lane staging) pending)
-        ~plan_staged_binds:
-          (fun lane staging observers ->
-            plan_staged_bind_switches lane staging observers)
-        ~commit_staging:
-          (fun lane staging ->
-            commit_staging lane staging)
-        ~update_necessity:
-          (fun lane -> update_necessity_counters_unlocked lane)
+      Graph.stabilization_pure_ops ~pending ~observers ~commit
     in
     let rollback =
       Graph.stabilization_rollback_ops

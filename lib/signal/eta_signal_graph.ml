@@ -774,33 +774,50 @@ let observer_delivery_plan t _lane delivery =
     ~capability:Eta_signal_stabilization_pass.pure_capability
     ~make_plan:Eta_signal_stabilization_pass.observer_plan
 
-type ('pending, 'observer, 'event, 'hook) stabilization_pure =
+type 'pending stabilization_pending_plan = {
+  pending_release_marks : lane_access -> 'pending list -> unit;
+  pending_stage : lane_access -> staging -> 'pending list -> unit;
+}
+
+let stabilization_pending_plan ~release_marks ~stage =
+  { pending_release_marks = release_marks; pending_stage = stage }
+
+type ('observer, 'event) stabilization_observer_plan = {
+  observer_plan :
+    lane_access ->
+    staging ->
+    (lane_access, 'observer, 'event)
+    Eta_signal_stabilization_pass.observer_plan;
+  observer_plan_staged_binds :
+    lane_access -> staging -> 'observer list -> unit;
+}
+
+let stabilization_observer_plan ~observe ~plan_staged_binds =
   {
-    release_pending_marks :
-      lane_access -> 'pending list -> unit;
-    observer_plan :
-      lane_access ->
-      staging ->
-      ( lane_access,
-        'observer,
-        'event )
-      Eta_signal_stabilization_pass.observer_plan;
-    stage_pending : lane_access -> staging -> 'pending list -> unit;
-    plan_staged_binds : lane_access -> staging -> 'observer list -> unit;
-    commit_staging : lane_access -> staging -> 'hook list;
-    update_necessity : lane_access -> unit;
+    observer_plan = observe;
+    observer_plan_staged_binds = plan_staged_binds;
   }
 
-let stabilization_pure_ops ~release_pending_marks ~observer_plan
-    ~stage_pending ~plan_staged_binds ~commit_staging ~update_necessity =
+type 'hook stabilization_commit_plan = {
+  stabilization_commit_staging : lane_access -> staging -> 'hook list;
+  stabilization_update_necessity : lane_access -> unit;
+}
+
+let stabilization_commit_plan ~commit_staging ~update_necessity =
   {
-    release_pending_marks;
-    observer_plan;
-    stage_pending;
-    plan_staged_binds;
-    commit_staging;
-    update_necessity;
+    stabilization_commit_staging = commit_staging;
+    stabilization_update_necessity = update_necessity;
   }
+
+type ('pending, 'observer, 'event, 'hook) stabilization_pure =
+  {
+    pending_plan : 'pending stabilization_pending_plan;
+    observer_plan : ('observer, 'event) stabilization_observer_plan;
+    commit_plan : 'hook stabilization_commit_plan;
+  }
+
+let stabilization_pure_ops ~pending ~observers ~commit =
+  { pending_plan = pending; observer_plan = observers; commit_plan = commit }
 
 type ('pending, 'observer, 'hook) stabilization_rollback =
   {
@@ -853,29 +870,29 @@ let pass_pure t timer_refresh pure =
     ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
     ~drain_pending:(fun _context -> drain_pending t)
     ~release_pending_marks:(fun context pending ->
-      pure.release_pending_marks
+      pure.pending_plan.pending_release_marks
         (Eta_signal_stabilization_pass.pure_capability context)
         pending)
     ~observer_plan:(fun context ->
-      pure.observer_plan
+      pure.observer_plan.observer_plan
         (Eta_signal_stabilization_pass.pure_capability context)
         (require_active_staging t))
     ~stage_pending:(fun context pending ->
-      pure.stage_pending
+      pure.pending_plan.pending_stage
         (Eta_signal_stabilization_pass.pure_capability context)
         (require_active_staging t)
         pending)
     ~plan_staged_binds:(fun context observers ->
-      pure.plan_staged_binds
+      pure.observer_plan.observer_plan_staged_binds
         (Eta_signal_stabilization_pass.pure_capability context)
         (require_active_staging t)
         observers)
     ~commit_staging:(fun context staging ->
-      pure.commit_staging
+      pure.commit_plan.stabilization_commit_staging
         (Eta_signal_stabilization_pass.pure_capability context)
         staging)
     ~update_necessity:(fun context ->
-      pure.update_necessity
+      pure.commit_plan.stabilization_update_necessity
         (Eta_signal_stabilization_pass.pure_capability context))
 
 let pass_rollback rollback =

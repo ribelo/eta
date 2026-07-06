@@ -583,19 +583,37 @@ val observer_delivery_plan :
     owns registry traversal; the observer subsystem owns active filtering,
     delivery ordering, event collection, and pending-state marking. *)
 
-type ('pending, 'observer, 'event, 'hook) stabilization_pure
+type 'pending stabilization_pending_plan
 
-val stabilization_pure_ops :
-  release_pending_marks:(lane_access -> 'pending list -> unit) ->
-  observer_plan:
+val stabilization_pending_plan :
+  release_marks:(lane_access -> 'pending list -> unit) ->
+  stage:(lane_access -> staging -> 'pending list -> unit) ->
+  'pending stabilization_pending_plan
+
+type ('observer, 'event) stabilization_observer_plan
+
+val stabilization_observer_plan :
+  observe:
     (lane_access ->
     staging ->
     (lane_access, 'observer, 'event)
     Eta_signal_stabilization_pass.observer_plan) ->
-  stage_pending:(lane_access -> staging -> 'pending list -> unit) ->
   plan_staged_binds:(lane_access -> staging -> 'observer list -> unit) ->
+  ('observer, 'event) stabilization_observer_plan
+
+type 'hook stabilization_commit_plan
+
+val stabilization_commit_plan :
   commit_staging:(lane_access -> staging -> 'hook list) ->
   update_necessity:(lane_access -> unit) ->
+  'hook stabilization_commit_plan
+
+type ('pending, 'observer, 'event, 'hook) stabilization_pure
+
+val stabilization_pure_ops :
+  pending:'pending stabilization_pending_plan ->
+  observers:('observer, 'event) stabilization_observer_plan ->
+  commit:'hook stabilization_commit_plan ->
   ('pending, 'observer, 'event, 'hook) stabilization_pure
 
 type ('pending, 'observer, 'hook) stabilization_rollback
