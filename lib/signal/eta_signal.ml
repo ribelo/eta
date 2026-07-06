@@ -412,7 +412,6 @@ module Make (Observer_error : Observer_error) () = struct
       | After_graph_lane_acquired
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
-      | After_timer_due_read_before_commit
 
     type stats_count = Test_hooks.stats_count =
       | Stats_total_node_count
@@ -2529,8 +2528,7 @@ module Make (Observer_error : Observer_error) () = struct
              ~hooks:
                (Timer.daemon_hooks
                  ~after_due_read_before_commit:(fun () ->
-                   Private_test_hooks.run
-                     After_timer_due_read_before_commit)
+                   Effect.unit)
                  ~after_update_constructed_before_run:(fun () ->
                    Effect.unit)))
           ~interval_ms:(Duration.to_ms interval) ~update_on_start

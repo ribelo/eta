@@ -255,6 +255,55 @@ let test_loop_orders_due_advance_and_update () =
     ]
     !events
 
+let test_loop_stale_due_skips_update () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let reads = ref 0 in
+  let stale = ref false in
+  let plan =
+    loop_plan
+      ~read_next_due:(fun ~generation ~fallback ->
+        Effect.sync (fun () ->
+            incr reads;
+            record events
+              ("read:" ^ string_of_int !reads ^ ":"
+             ^ string_of_int generation ^ ":" ^ string_of_int fallback);
+            if !reads <= 2 then Some fallback else None))
+      ~advance_next_due:(fun ~generation ~expected ~next_due_ms ->
+        Effect.sync (fun () ->
+            record events
+              ("advance:" ^ string_of_int generation ^ ":"
+             ^ string_of_int expected ^ ":" ^ string_of_int next_due_ms);
+            if !stale then `Stale
+            else Alcotest.fail "expected due hook to make advance stale"))
+      ~after_update_state:(fun ~generation:_ ->
+        Effect.sync (fun () -> Alcotest.fail "stale due ran update state"))
+      ~finish_saturated:(fun ~generation:_ ->
+        Effect.sync (fun () -> Alcotest.fail "stale due finished timer"))
+      ~construct_update:(fun ~generation:_ ~missed:_ ->
+        Alcotest.fail "stale due constructed update")
+      ~after_due_read_before_commit:(fun () ->
+        Effect.sync (fun () ->
+            stale := true;
+            record events "due_hook"))
+      ~after_update_constructed_before_run:(fun () ->
+        Effect.sync (fun () ->
+            Alcotest.fail "stale due reached update hook"))
+  in
+  run_ok runtime
+    (Adapter.run_loop plan ~generation:7 ~interval_ms:10 ~next_due_ms:0
+       ~catch_up_policy:Timer_policy.Catch_up_coalesced);
+  Alcotest.(check (list string))
+    "events"
+    [
+      "read:1:7:0";
+      "read:2:7:0";
+      "due_hook";
+      "advance:7:0:10";
+      "read:3:7:10";
+    ]
+    !events
+
 let test_loop_update_rechecks_state_after_construction () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
@@ -395,6 +444,8 @@ let () =
             `Quick test_refresh_demand_acquire_failure_skips_use_and_release;
           Alcotest.test_case "loop plan order" `Quick
             test_loop_orders_due_advance_and_update;
+          Alcotest.test_case "loop stale due skips update" `Quick
+            test_loop_stale_due_skips_update;
           Alcotest.test_case "loop update rechecks state after construction"
             `Quick test_loop_update_rechecks_state_after_construction;
           Alcotest.test_case "start update before initial due" `Quick

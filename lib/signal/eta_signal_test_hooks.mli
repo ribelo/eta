@@ -6,7 +6,6 @@ type hook =
   | After_graph_lane_acquired
   | After_stream_try_send_before_ack
   | After_stream_drop_before_ack
-  | After_timer_due_read_before_commit
 
 type stats_count =
   | Stats_total_node_count

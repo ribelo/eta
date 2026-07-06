@@ -7309,62 +7309,6 @@ let test_time_interval_refresh_retries_after_downstream_defect () =
       Alcotest.(check int) "interval refresh retried" 5
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_interval_daemon_and_stabilization_race_does_not_double_count () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  Fun.protect
-    ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
-      ignore
-        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
-          : _ Exit.t))
-    (fun () ->
-      wait_for_sleepers clock 1;
-      run_ok rt Signal.stabilize;
-      Alcotest.(check int) "initial interval" 0
-        (run_ok rt (Signal.Observer.read observer));
-      let daemon_read_due, daemon_read_due_resolver = Eio.Promise.create () in
-      let release_daemon, release_daemon_resolver = Eio.Promise.create () in
-      let release_once =
-        let released = ref false in
-        fun () ->
-          if not !released then (
-            released := true;
-            Eio.Promise.resolve release_daemon_resolver ())
-      in
-      let hook_ran = ref false in
-      let hook =
-        {
-          Signal.Private_test_hooks.run =
-            (fun () ->
-              Effect.sync (fun () ->
-                  if not !hook_ran then (
-                    hook_ran := true;
-                    Eio.Promise.resolve daemon_read_due_resolver ();
-                    Eio.Promise.await release_daemon)));
-        }
-      in
-      Fun.protect ~finally:release_once (fun () ->
-          Signal.Private_test_hooks.with_hook
-            Signal.Private_test_hooks.After_timer_due_read_before_commit hook
-          @@ fun () ->
-          Eta_test.Test_clock.adjust clock (Duration.ms 10);
-          Eio.Promise.await daemon_read_due;
-          run_ok rt Signal.stabilize;
-          Alcotest.(check int)
-            "stabilization applies the due cadence once" 1
-            (run_ok rt (Signal.Observer.read observer));
-          release_once ();
-          wait_for_sleepers clock 1;
-          run_ok rt Signal.stabilize;
-          Alcotest.(check int)
-            "daemon does not replay the same due cadence" 1
-            (run_ok rt (Signal.Observer.read observer))))
-
 let test_time_active_deadline_refreshes_before_daemon_runs () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
@@ -9297,10 +9241,6 @@ let () =
           Alcotest.test_case
             "time interval refresh retries after downstream defect" `Quick
             test_time_interval_refresh_retries_after_downstream_defect;
-          Alcotest.test_case
-            "time interval daemon/stabilization race does not double count"
-            `Quick
-            test_time_interval_daemon_and_stabilization_race_does_not_double_count;
           Alcotest.test_case "time active deadline refreshes before daemon"
             `Quick test_time_active_deadline_refreshes_before_daemon_runs;
           Alcotest.test_case

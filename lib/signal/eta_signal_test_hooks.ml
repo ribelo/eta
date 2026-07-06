@@ -6,7 +6,6 @@ type hook =
   | After_graph_lane_acquired
   | After_stream_try_send_before_ack
   | After_stream_drop_before_ack
-  | After_timer_due_read_before_commit
 
 type stats_count =
   | Stats_total_node_count
@@ -22,7 +21,6 @@ type t = {
   after_graph_lane_acquired : action ref;
   after_stream_try_send_before_ack : action ref;
   after_stream_drop_before_ack : action ref;
-  after_timer_due_read_before_commit : action ref;
   total_node_count_override : int option ref;
   necessary_node_count_override : int option ref;
   dead_node_count_override : int option ref;
@@ -39,7 +37,6 @@ let create () =
     after_graph_lane_acquired = ref noop;
     after_stream_try_send_before_ack = ref noop;
     after_stream_drop_before_ack = ref noop;
-    after_timer_due_read_before_commit = ref noop;
     total_node_count_override = ref None;
     necessary_node_count_override = ref None;
     dead_node_count_override = ref None;
@@ -54,8 +51,6 @@ let slot state = function
   | After_graph_lane_acquired -> state.after_graph_lane_acquired
   | After_stream_try_send_before_ack -> state.after_stream_try_send_before_ack
   | After_stream_drop_before_ack -> state.after_stream_drop_before_ack
-  | After_timer_due_read_before_commit ->
-      state.after_timer_due_read_before_commit
 
 let stats_count_slot state = function
   | Stats_total_node_count -> state.total_node_count_override
@@ -81,7 +76,6 @@ let clear state =
       After_graph_lane_acquired;
       After_stream_try_send_before_ack;
       After_stream_drop_before_ack;
-      After_timer_due_read_before_commit;
     ];
   state.total_node_count_override := None;
   state.necessary_node_count_override := None;
