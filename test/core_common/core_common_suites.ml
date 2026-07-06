@@ -330,6 +330,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     expect_fail "future take closed" (( = ) `Closed) (B.run rt (Queue.take q));
     expect_fail "future take_all closed" (( = ) `Closed)
       (B.run rt (Queue.take_all q));
+    expect_fail "future zero take_up_to closed" (( = ) `Closed)
+      (B.run rt (Queue.take_up_to q ~max:0));
     ignore (run_ok rt (Queue.await_shutdown q) : unit);
     let buffered = Queue.unbounded () in
     ignore (run_ok rt (Queue.send buffered 1) : unit);

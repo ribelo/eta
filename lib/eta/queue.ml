@@ -619,8 +619,6 @@ let take_all t =
 
 let take_up_to t ~max =
   if max < 0 then invalid_arg "Eta.Queue.take_up_to: max must be >= 0";
-  if max = 0 then Effect.pure []
-  else
   drain_result_effect t max
   |> Effect.bind (function
        | `Items values -> Effect.pure values

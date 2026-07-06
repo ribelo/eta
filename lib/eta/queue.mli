@@ -157,7 +157,8 @@ val take_up_to :
   ('a list, [> `Closed | `Closed_with_error of 'err ]) Effect.t
 (** Drain up to [max] currently buffered values without waiting.
 
-    [max = 0] returns [[]].
+    [max = 0] returns [[]] while the queue is open, and reports the close or
+    shutdown reason otherwise.
 
     @raise Invalid_argument if [max < 0]. *)
 

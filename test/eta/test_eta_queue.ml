@@ -131,6 +131,28 @@ let test_queue_rejects_cross_domain_use () =
         message
   | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
 
+let test_queue_take_up_to_zero_rejects_cross_domain_use () =
+  let queue = Queue.unbounded () in
+  match
+    run_in_domain @@ fun () ->
+    let rt = Test_runtime.create () in
+    match Test_runtime.run rt (Queue.take_up_to queue ~max:0) with
+    | Exit.Error (Cause.Die { exn = Invalid_argument message; _ }) ->
+        Error message
+    | Exit.Error cause ->
+        Alcotest.failf "expected Invalid_argument defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok values ->
+        Alcotest.failf "expected cross-domain queue use to fail, got %d values"
+          (List.length values)
+  with
+  | Error message ->
+      Alcotest.(check string)
+        "cross-domain zero drain failure"
+        "Eta.Queue: queue APIs must be called on the domain that created the queue"
+        message
+  | Ok () -> Alcotest.fail "expected cross-domain queue use to fail"
+
 let yield_until label predicate =
   let rec loop = function
     | 0 -> Alcotest.failf "timed out waiting for %s" label
