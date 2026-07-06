@@ -253,7 +253,9 @@ let stabilization_pure_ops
          ~release_marks:(fun context pending ->
            Graph.stabilization_pending_mark_release ~release:(fun () ->
                release_pending_marks context pending))
-         ~stage:stage_pending)
+         ~stage:(fun context staging pending ->
+           Graph.stabilization_pending_stage ~stage:(fun () ->
+               stage_pending context staging pending)))
     ~observers:
       (Graph.stabilization_observer_plan ~delivery:observer_delivery
          ~plan_staged_binds:(fun context staging observers ->
@@ -289,7 +291,7 @@ let run_empty_stabilization graph =
       Graph.run_stabilization graph lane ~timer_refresh:None
         (empty_stabilization_ops graph))
 
-let test_pending_mark_release_runs_as_graph_action () =
+let test_pending_actions_run_in_graph_order () =
   let events = ref [] in
   let graph =
     Graph.create ~create_scope_context:(fun () -> ())
@@ -1775,8 +1777,8 @@ let () =
             test_computed_nodes_are_staging_scoped;
           Alcotest.test_case "signal commit invalid discard" `Quick
             test_signal_commit_discards_invalid_staging;
-          Alcotest.test_case "pending mark release action" `Quick
-            test_pending_mark_release_runs_as_graph_action;
+          Alcotest.test_case "pending actions" `Quick
+            test_pending_actions_run_in_graph_order;
         ] );
       ( "bind switch",
         [

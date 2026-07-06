@@ -956,7 +956,8 @@ let observer_delivery_plan t _lane delivery =
 type 'pending stabilization_pending_plan = {
   pending_release_marks :
     lane_access -> 'pending list -> stabilization_pending_mark_release;
-  pending_stage : lane_access -> staging -> 'pending list -> unit;
+  pending_stage :
+    lane_access -> staging -> 'pending list -> stabilization_pending_stage;
 }
 
 and stabilization_pending_mark_release =
@@ -964,8 +965,14 @@ and stabilization_pending_mark_release =
       release_pending_marks : unit -> unit;
     }
 
+and stabilization_pending_stage =
+  | Stabilization_pending_stage of { stage_pending : unit -> unit }
+
 let stabilization_pending_mark_release ~release =
   Stabilization_pending_mark_release { release_pending_marks = release }
+
+let stabilization_pending_stage ~stage =
+  Stabilization_pending_stage { stage_pending = stage }
 
 let stabilization_pending_plan ~release_marks ~stage =
   { pending_release_marks = release_marks; pending_stage = stage }
@@ -974,6 +981,10 @@ let run_stabilization_pending_mark_release lane pending plan =
   match plan lane pending with
   | Stabilization_pending_mark_release { release_pending_marks } ->
       release_pending_marks ()
+
+let run_stabilization_pending_stage lane staging pending plan =
+  match plan lane staging pending with
+  | Stabilization_pending_stage { stage_pending } -> stage_pending ()
 
 type ('observer, 'event) stabilization_observer_plan = {
   observer_delivery :
@@ -1129,10 +1140,10 @@ let pass_pure t timer_refresh pure =
           (Eta_signal_stabilization_pass.pure_capability context)
           pending pure.pending_plan.pending_release_marks)
       ~stage_pending:(fun context pending ->
-        pure.pending_plan.pending_stage
+        run_stabilization_pending_stage
           (Eta_signal_stabilization_pass.pure_capability context)
           (require_active_staging t)
-          pending)
+          pending pure.pending_plan.pending_stage)
   in
   let observers =
     Eta_signal_stabilization_pass.pure_observer_plan

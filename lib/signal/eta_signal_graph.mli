@@ -619,10 +619,15 @@ type stabilization_pending_mark_release
 val stabilization_pending_mark_release :
   release:(unit -> unit) -> stabilization_pending_mark_release
 
+type stabilization_pending_stage
+
+val stabilization_pending_stage :
+  stage:(unit -> unit) -> stabilization_pending_stage
+
 val stabilization_pending_plan :
   release_marks:
     (lane_access -> 'pending list -> stabilization_pending_mark_release) ->
-  stage:(lane_access -> staging -> 'pending list -> unit) ->
+  stage:(lane_access -> staging -> 'pending list -> stabilization_pending_stage) ->
   'pending stabilization_pending_plan
 
 type ('observer, 'event) stabilization_observer_plan
