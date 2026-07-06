@@ -1320,23 +1320,10 @@ let test_observer_phase_mutation_matches_model () =
   run_ok runtime (Signal.Observer.dispose observer)
 
 let test_observer_failure_retry_matches_model () =
-  let delivery_base = function
-    | `Never -> None
-    | `Delivered value -> Some value
-    | `Pending (Initialized _) -> None
-    | `Pending (Changed (old_value, _)) -> Some old_value
-  in
-  let delivery_pending = function
-    | `Pending _ -> true
-    | `Never | `Delivered _ -> false
-  in
-  let delivered_value = function
-    | Initialized value -> value
-    | Changed (_, value) -> value
-  in
   let pp_delivery_op formatter = function
     | `Set value -> Format.fprintf formatter "Set %d" value
     | `Fail_next -> Format.pp_print_string formatter "Fail_next"
+    | `Die_next -> Format.pp_print_string formatter "Die_next"
     | `Stabilize -> Format.pp_print_string formatter "Stabilize"
     | `Read -> Format.pp_print_string formatter "Read"
   in
@@ -1349,7 +1336,8 @@ let test_observer_failure_retry_matches_model () =
         match Random.State.int random 10 with
         | 0 | 1 | 2 | 3 -> `Set (next_value ())
         | 4 -> `Fail_next
-        | 5 | 6 -> `Read
+        | 5 -> `Die_next
+        | 6 | 7 -> `Read
         | _ -> `Stabilize
     in
     let rec loop index acc =
@@ -1362,27 +1350,85 @@ let test_observer_failure_retry_matches_model () =
     Eta_test.with_test_clock @@ fun _sw _clock runtime ->
     let source = Signal.Var.create 0 in
     let signal = Signal.Var.watch source in
-    let delivered_updates = ref [] in
-    let fail_next_delivery = ref false in
-    let callback update =
-      if !fail_next_delivery then (
-        fail_next_delivery := false;
+    let first_delivered_updates = ref [] in
+    let second_delivered_updates = ref [] in
+    let next_delivery_outcome = ref `Ok in
+    let record updates update =
+      E.sync (fun () ->
+          updates := observed_of_signal_update update :: !updates)
+    in
+    let first_observer =
+      run_ok runtime
+        (Signal.Observer.observe signal (record first_delivered_updates))
+    in
+    let second_callback update =
+      if !next_delivery_outcome = `Die then (
+        next_delivery_outcome := `Ok;
+        failwith "observer delivery defect");
+      if !next_delivery_outcome = `Fail then (
+        next_delivery_outcome := `Ok;
         E.fail `Observer_failed)
       else
         E.sync (fun () ->
-            delivered_updates :=
-              observed_of_signal_update update :: !delivered_updates)
+            second_delivered_updates :=
+              observed_of_signal_update update :: !second_delivered_updates)
     in
-    let observer = run_ok runtime (Signal.Observer.observe signal callback) in
+    let second_observer =
+      run_ok runtime (Signal.Observer.observe signal second_callback)
+    in
     let model_pending = ref 0 in
     let model_current = ref None in
-    let model_delivery =
+    let model_next_outcome = ref `Ok in
+    let delivery_base = function
+      | `Never -> None
+      | `Delivered value -> Some value
+      | `Pending (Initialized _) -> None
+      | `Pending (Changed (old_value, _)) -> Some old_value
+    in
+    let delivery_pending = function
+      | `Pending _ -> true
+      | `Never | `Delivered _ -> false
+    in
+    let delivered_value = function
+      | Initialized value -> value
+      | Changed (_, value) -> value
+    in
+    let deliver_slot delivery delivered_updates changed next outcome =
+      let update =
+        match delivery_base !delivery with
+        | None -> Some (Initialized next)
+        | Some base ->
+            if changed || delivery_pending !delivery then
+              if base = next then (
+                delivery := `Delivered next;
+                None)
+              else Some (Changed (base, next))
+            else None
+      in
+      match update with
+      | None -> `Ok
+      | Some update -> (
+          delivery := `Pending update;
+          match outcome with
+          | `Ok ->
+              delivered_updates := update :: !delivered_updates;
+              delivery := `Delivered (delivered_value update);
+              `Ok
+          | `Fail -> `Observer_failed
+          | `Die -> `Die)
+    in
+    let first_delivery =
       ref
         (`Never :
           [ `Delivered of int | `Never | `Pending of observed_update ])
     in
-    let model_delivered = ref [] in
-    let model_fail_next = ref false in
+    let second_delivery =
+      ref
+        (`Never :
+          [ `Delivered of int | `Never | `Pending of observed_update ])
+    in
+    let first_model_delivered = ref [] in
+    let second_model_delivered = ref [] in
     let stabilize_model () =
       let next = !model_pending in
       let changed =
@@ -1391,40 +1437,35 @@ let test_observer_failure_retry_matches_model () =
         | Some current -> current <> next
       in
       model_current := Some next;
-      let update =
-        match delivery_base !model_delivery with
-        | None -> Some (Initialized next)
-        | Some base ->
-            if changed || delivery_pending !model_delivery then
-              if base = next then (
-                model_delivery := `Delivered next;
-                None)
-              else Some (Changed (base, next))
-            else None
-      in
-      match update with
-      | None -> `Ok
-      | Some update ->
-          model_delivery := `Pending update;
-          if !model_fail_next then (
-            model_fail_next := false;
-            `Observer_failed)
-          else (
-            model_delivered := update :: !model_delivered;
-            model_delivery := `Delivered (delivered_value update);
-            `Ok)
+      match
+        deliver_slot first_delivery first_model_delivered changed next `Ok
+      with
+      | `Observer_failed | `Die as unexpected -> unexpected
+      | `Ok ->
+          let outcome = !model_next_outcome in
+          let result =
+            deliver_slot second_delivery second_model_delivered changed next
+              outcome
+          in
+          if result <> `Ok then model_next_outcome := `Ok;
+          result
     in
     let check_delivered label =
       Alcotest.(check (list observed_update))
-        (label ^ " delivered") (List.rev !model_delivered)
-        (List.rev !delivered_updates)
+        (label ^ " first delivered") (List.rev !first_model_delivered)
+        (List.rev !first_delivered_updates);
+      Alcotest.(check (list observed_update))
+        (label ^ " second delivered") (List.rev !second_model_delivered)
+        (List.rev !second_delivered_updates)
     in
     let check_read label =
       match !model_current with
       | None -> ()
       | Some expected ->
-          Alcotest.(check int) (label ^ " read") expected
-            (run_ok runtime (Signal.Observer.read observer))
+          Alcotest.(check int) (label ^ " first read") expected
+            (run_ok runtime (Signal.Observer.read first_observer));
+          Alcotest.(check int) (label ^ " second read") expected
+            (run_ok runtime (Signal.Observer.read second_observer))
     in
     List.iteri
       (fun index op ->
@@ -1436,8 +1477,11 @@ let test_observer_failure_retry_matches_model () =
             model_pending := value;
             run_ok runtime (Signal.Var.set source value)
         | `Fail_next ->
-            model_fail_next := true;
-            fail_next_delivery := true
+            model_next_outcome := `Fail;
+            next_delivery_outcome := `Fail
+        | `Die_next ->
+            model_next_outcome := `Die;
+            next_delivery_outcome := `Die
         | `Read -> check_read label
         | `Stabilize -> (
             match stabilize_model () with
@@ -1448,9 +1492,14 @@ let test_observer_failure_retry_matches_model () =
             | `Observer_failed ->
                 expect_observer_failed label runtime Signal.stabilize;
                 check_delivered label;
+                check_read label
+            | `Die ->
+                expect_die label runtime Signal.stabilize;
+                check_delivered label;
                 check_read label))
       ops;
-    run_ok runtime (Signal.Observer.dispose observer)
+    run_ok runtime (Signal.Observer.dispose first_observer);
+    run_ok runtime (Signal.Observer.dispose second_observer)
   in
   let scripted =
     [
@@ -1459,6 +1508,10 @@ let test_observer_failure_retry_matches_model () =
       `Set 1;
       `Stabilize;
       `Set 0;
+      `Stabilize;
+      `Stabilize;
+      `Die_next;
+      `Set 2;
       `Stabilize;
       `Stabilize;
       `Set 1;
@@ -1470,7 +1523,7 @@ let test_observer_failure_retry_matches_model () =
     (fun seed ->
       run_delivery_trace
         (Format.asprintf "observer-failure-seed-%d" seed)
-        (generate_delivery_trace ~seed ~steps:36))
+        (generate_delivery_trace ~seed ~steps:48))
     [ 11; 23; 37; 41; 53 ]
 
 type pure_failure_op =

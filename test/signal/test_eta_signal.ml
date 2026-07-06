@@ -2407,53 +2407,6 @@ let test_observer_registration_and_self_disposal_inside_callback () =
    | Some late -> run_ok rt (Signal.Observer.dispose late)
    | None -> Alcotest.fail "late observer was not registered")
 
-let test_observer_effects_before_later_failure_are_not_rolled_back () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let effects = ref [] in
-  let first_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ ->
-           Effect.sync (fun () -> effects := "first" :: !effects)))
-  in
-  let failing_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
-  in
-  expect_fail "later observer failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check (list string))
-    "already-run observer effect remains" [ "first" ] (List.rev !effects);
-  run_ok rt (Signal.Observer.dispose first_observer);
-  run_ok rt (Signal.Observer.dispose failing_observer)
-
-let test_observer_callback_construction_defect_does_not_poison_graph () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let fail_once = ref true in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ ->
-           if !fail_once then (
-             fail_once := false;
-             failwith "observer construction");
-           Effect.unit))
-  in
-  expect_die "observer construction defect"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "snapshot published before observer defect" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization is not poisoned" 2
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_observer_callback_interruption_releases_phase () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
@@ -5124,11 +5077,6 @@ let () =
             test_stats_counter_saturation_is_typed_failure;
           Alcotest.test_case "observer lifecycle changes inside callback"
             `Quick test_observer_registration_and_self_disposal_inside_callback;
-          Alcotest.test_case "observer effects survive later failure" `Quick
-            test_observer_effects_before_later_failure_are_not_rolled_back;
-          Alcotest.test_case "observer construction defect does not poison"
-            `Quick
-            test_observer_callback_construction_defect_does_not_poison_graph;
           Alcotest.test_case "observer interruption releases phase" `Quick
             test_observer_callback_interruption_releases_phase;
           Alcotest.test_case "stream observe failure during timer start"
