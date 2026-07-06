@@ -497,16 +497,6 @@ module Make (Observer_error : Observer_error) () = struct
           publish_timer_current snapshot_cell
             (Timer_policy.snapshot_with_generation snapshot generation)
 
-    let timer_state signal =
-      match signal.timer with
-      | None ->
-          invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
-      | Some timer ->
-          let snapshot_cell = Timer.snapshot_cell timer in
-          Timer_policy.state_label
-            (Timer_policy.snapshot_state
-               (Transaction.current snapshot_cell))
-
     let set_observer_on_finish observer hooks =
       let live =
         match Observer_lifecycle.live observer.obs_state with

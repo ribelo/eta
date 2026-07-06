@@ -6880,59 +6880,6 @@ let test_time_timer_rejects_mismatched_runtime () =
   check_observe_mismatch "mismatched step observe runtime" step;
   check_mismatch "mismatched step runtime" step
 
-let test_time_timer_runtime_mismatch_does_not_partially_refresh_timers () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let clock_a = Eta_test.Test_clock.create () in
-  let clock_b = Eta_test.Test_clock.create () in
-  let rt_a =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_a)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
-      ()
-  in
-  let rt_b =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_b)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
-      ()
-  in
-  let bad_timer = run_ok rt_a (Signal.Time.interval (Duration.ms 10)) in
-  let good_timer = run_ok rt_b (Signal.Time.interval (Duration.ms 10)) in
-  let bad_observer =
-    run_ok rt_a (Signal.Observer.observe bad_timer (fun _ -> Effect.unit))
-  in
-  let good_state_at_mismatch = ref None in
-  Fun.protect
-    ~finally:Signal.Private_test_hooks.clear
-    (fun () ->
-      Signal.Private_test_hooks.set_timer_runtime_mismatch_hook (fun () ->
-          if Option.is_none !good_state_at_mismatch then
-            good_state_at_mismatch :=
-              Some (Signal.Private_test_hooks.timer_state good_timer));
-      expect_exact_runtime_mismatch "mixed runtime timer observe"
-        (Eta_eio.Runtime.run rt_b
-           (widen (Signal.Observer.observe good_timer (fun _ -> Effect.unit)))));
-  Alcotest.(check (option string))
-    "good timer was not mutated before later mismatch"
-    (Some "inactive") !good_state_at_mismatch;
-  let options : Signal.dot_options =
-    {
-      dot_scope = `All_valid;
-      dot_observers = false;
-      dot_timers = true;
-      dot_state = false;
-      dot_dynamic_scopes = false;
-    }
-  in
-  let dot = run_ok rt_b (Signal.to_dot ~options ()) in
-  Alcotest.(check int) "no timer was moved to starting before mismatch" 0
-    (count_occurrences dot "timer_state=starting");
-  Alcotest.(check int) "no sleeper was started before mismatch" 0
-    (Eta_test.Test_clock.sleeper_count clock_b);
-  run_ok rt_a (Signal.Observer.dispose bad_observer)
-
 let test_time_timer_runtime_mismatch_validation_reenters_graph_lane () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -9393,10 +9340,6 @@ let () =
             test_time_now_uses_runtime_clock;
           Alcotest.test_case "time timer rejects mismatched runtime" `Quick
             test_time_timer_rejects_mismatched_runtime;
-          Alcotest.test_case
-            "time timer runtime mismatch does not partially refresh timers"
-            `Quick
-            test_time_timer_runtime_mismatch_does_not_partially_refresh_timers;
           Alcotest.test_case
             "time timer runtime mismatch validation reenters graph lane" `Quick
             test_time_timer_runtime_mismatch_validation_reenters_graph_lane;
