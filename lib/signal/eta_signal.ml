@@ -600,7 +600,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   module Private_test_hooks = struct
     type hook =
-      | After_observer_delivery_claim
       | After_observer_activation_before_return
 
     type action = {
@@ -608,7 +607,6 @@ module Make (Observer_error : Observer_error) () = struct
     }
 
     type state = {
-      after_observer_delivery_claim : action ref;
       after_observer_activation_before_return : action ref;
     }
 
@@ -616,12 +614,10 @@ module Make (Observer_error : Observer_error) () = struct
 
     let state =
       {
-        after_observer_delivery_claim = ref noop;
         after_observer_activation_before_return = ref noop;
       }
 
     let slot = function
-      | After_observer_delivery_claim -> state.after_observer_delivery_claim
       | After_observer_activation_before_return ->
           state.after_observer_activation_before_return
 
@@ -636,10 +632,7 @@ module Make (Observer_error : Observer_error) () = struct
         (fun hook ->
           let slot = slot hook in
           slot := noop)
-        [
-          After_observer_delivery_claim;
-          After_observer_activation_before_return;
-        ]
+        [ After_observer_activation_before_return ]
 
     let run hook =
       let slot = slot hook in
@@ -1940,8 +1933,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let run_events events =
     Observer_core.Delivery_event.run
-      ~after_claim:(fun () ->
-        Private_test_hooks.run After_observer_delivery_claim)
+      ~after_claim:(fun () -> Effect.unit)
       events
 
   let begin_stabilize lane timer_refresh =

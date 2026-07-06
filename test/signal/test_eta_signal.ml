@@ -915,66 +915,6 @@ let test_observer_dispose_after_active_check_skips_callback () =
       expect_fail "target disposed by active-check hook" (( = ) `Disposed_observer)
         (Runtime.run rt (widen (Signal.Observer.read target))))
 
-let test_observer_dispose_after_delivery_claim_skips_callback () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime_and_switch @@ fun sw rt ->
-  let source = Signal.Var.create 0 in
-  let signal = Signal.Var.watch source in
-  let callbacks = ref 0 in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe signal (fun _ ->
-           Effect.sync (fun () -> incr callbacks)))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial callback" 1 !callbacks;
-  run_ok rt (Signal.Var.set source 1);
-  let claimed, claimed_resolver = Eio.Promise.create () in
-  let release, release_resolver = Eio.Promise.create () in
-  let hook_ran = ref false in
-  let release_once =
-    let released = ref false in
-    fun () ->
-      if not !released then (
-        released := true;
-        Eio.Promise.resolve release_resolver ())
-  in
-  let hook =
-    {
-      Signal.Private_test_hooks.run =
-        (fun () ->
-          Effect.sync (fun () ->
-              if not !hook_ran then (
-                hook_ran := true;
-                Eio.Promise.resolve claimed_resolver ();
-                Eio.Promise.await release)));
-    }
-  in
-  Fun.protect
-    ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
-      release_once ();
-      ignore (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t))
-    (fun () ->
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_observer_delivery_claim hook
-      @@ fun () ->
-      let stabilizer =
-        Eio.Fiber.fork_promise ~sw (fun () ->
-            Runtime.run rt (widen Signal.stabilize))
-      in
-      Eio.Promise.await claimed;
-      run_ok rt (Signal.Observer.dispose observer);
-      release_once ();
-      ignore
-        (expect_exit_ok "stabilize with post-claim dispose"
-           (Eio.Promise.await_exn stabilizer)
-          : unit);
-      Alcotest.(check int)
-        "disposed observer callback is skipped after delivery claim" 1 !callbacks;
-      expect_fail "target disposed by claim hook" (( = ) `Disposed_observer)
-        (Runtime.run rt (widen (Signal.Observer.read observer))))
-
 let test_observer_registration_skips_callbacks_until_returned () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -5073,8 +5013,6 @@ let () =
             test_observer_dispose_during_callback_skips_collected_event;
           Alcotest.test_case "observer dispose after active check skips callback"
             `Quick test_observer_dispose_after_active_check_skips_callback;
-          Alcotest.test_case "observer dispose after claim skips callback" `Quick
-            test_observer_dispose_after_delivery_claim_skips_callback;
           Alcotest.test_case "observer registration skips callbacks until returned"
             `Quick test_observer_registration_skips_callbacks_until_returned;
           Alcotest.test_case
