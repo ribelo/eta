@@ -2055,8 +2055,12 @@ let compute_branch_if_needed branch =
 let stabilize_bind_demand_model model =
   commit_branch_source model.branch_a;
   commit_branch_source model.branch_b;
+  let previous_choose_a = model.committed_choose_a in
   model.committed_choose_a <- model.pending_choose_a;
-  let value = compute_branch_if_needed (selected_branch_model model) in
+  let selected = selected_branch_model model in
+  if previous_choose_a <> model.committed_choose_a then
+    selected.branch_current <- None;
+  let value = compute_branch_if_needed selected in
   let update =
     match model.bind_observer_current with
     | None -> Some (Initialized value)
@@ -2101,26 +2105,43 @@ let generate_branch_demand_trace ~seed ~steps =
 
 let run_bind_branch_demand_trace name ops =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let base_stats = run_ok runtime (Signal.stats ()) in
   let source_a = Signal.Var.create 0 in
   let source_b = Signal.Var.create 10 in
   let choose_a = Signal.Var.create true in
   let recomputes_a = ref 0 in
   let recomputes_b = ref 0 in
-  let branch_a =
-    Signal.Var.watch source_a
+  let branch_signal source recomputes =
+    Signal.Var.watch source
     |> Signal.map (fun value ->
-           incr recomputes_a;
-           value)
-  in
-  let branch_b =
-    Signal.Var.watch source_b
-    |> Signal.map (fun value ->
-           incr recomputes_b;
+           incr recomputes;
            value)
   in
   let selected =
     Signal.bind (Signal.Var.watch choose_a) (fun use_a ->
-        if use_a then branch_a else branch_b)
+        if use_a then branch_signal source_a recomputes_a
+        else branch_signal source_b recomputes_b)
+  in
+  let branch_total_nodes = Array.make 2 None in
+  let check_stats label model =
+    Gc.full_major ();
+    let stats = run_ok runtime (Signal.stats ()) in
+    Alcotest.(check int) (label ^ " active observers")
+      (base_stats.Signal.active_observer_count + 1)
+      stats.Signal.active_observer_count;
+    Alcotest.(check int) (label ^ " invalid observers")
+      base_stats.Signal.invalid_observer_count
+      stats.Signal.invalid_observer_count;
+    let branch_index = if model.committed_choose_a then 0 else 1 in
+    match branch_total_nodes.(branch_index) with
+    | None ->
+        branch_total_nodes.(branch_index) <-
+          Some stats.Signal.total_node_count
+    | Some baseline ->
+        Alcotest.(check bool)
+          (label ^ " does not retain inactive branch nodes")
+          true
+          (stats.Signal.total_node_count <= baseline)
   in
   let updates = ref [] in
   let record update =
@@ -2147,7 +2168,8 @@ let run_bind_branch_demand_trace name ops =
       | Branch_stabilize ->
           stabilize_bind_demand_model model;
           run_ok runtime Signal.stabilize;
-          check_bind_demand_model label model updates recomputes_a recomputes_b
+          check_bind_demand_model label model updates recomputes_a recomputes_b;
+          check_stats label model
       | Branch_read -> (
           match model.bind_observer_current with
           | None ->

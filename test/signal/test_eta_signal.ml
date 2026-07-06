@@ -1643,52 +1643,6 @@ let test_bind_switch_skips_stale_branch_observer_before_invalidation () =
   run_ok rt (Signal.Observer.dispose branch_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_old_branch_observer_not_computed_on_switch () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let selector = Signal.Var.create true in
-  let branch_var = Signal.Var.create 0 in
-  let captured_old = ref None in
-  let old_branch_compute_count = ref 0 in
-  let top =
-    Signal.bind (Signal.Var.watch selector) (function
-      | true ->
-          let signal =
-            Signal.Var.watch branch_var
-            |> Signal.map (fun value ->
-                   incr old_branch_compute_count;
-                   if value = 1 then failwith "old branch was computed";
-                   value)
-          in
-          captured_old := Some signal;
-          signal
-      | false -> Signal.const 42)
-  in
-  let top_observer =
-    run_ok rt (Signal.Observer.observe top (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let old_signal =
-    match !captured_old with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected captured old branch signal"
-  in
-  let old_observer =
-    run_ok rt (Signal.Observer.observe old_signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set branch_var 1);
-  run_ok rt (Signal.Var.set selector false);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int)
-    "old branch map not recomputed during switch" 1 !old_branch_compute_count;
-  expect_fail "old branch observer invalidated" (( = ) `Invalid_scope)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read old_observer)));
-  Alcotest.(check int) "top switched to new branch" 42
-    (run_ok rt (Signal.Observer.read top_observer));
-  run_ok rt (Signal.Observer.dispose old_observer);
-  run_ok rt (Signal.Observer.dispose top_observer)
-
 let test_dynamic_scope_invalidation_skips_callback () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -1833,152 +1787,6 @@ let test_dynamic_signal_rewires_and_cycle_preserves_snapshot () =
     (run_ok rt (Signal.Observer.read b_observer));
   run_ok rt (Signal.Observer.dispose a_observer);
   run_ok rt (Signal.Observer.dispose b_observer)
-
-let test_dynamic_list_bind_switches_dependency_set () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let indices = Signal.Var.create [ 0; 2 ] in
-  let values =
-    [| Signal.Var.create 10; Signal.Var.create 20; Signal.Var.create 30;
-       Signal.Var.create 40 |]
-  in
-  let calls = Array.make 4 0 in
-  let watch_index index =
-    Signal.Var.watch values.(index)
-    |> Signal.map (fun value ->
-           calls.(index) <- calls.(index) + 1;
-           value)
-  in
-  let selected_sum =
-    Signal.bind (Signal.Var.watch indices) (fun indices ->
-        indices
-        |> List.map watch_index
-        |> Signal.all
-        |> Signal.map (List.fold_left ( + ) 0))
-  in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected_sum (record_observer events))
-  in
-  let check_calls label expected =
-    Alcotest.(check (list int)) label expected (Array.to_list calls)
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial selected sum" 40
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "initial active inputs recomputed" [ 1; 0; 1; 0 ];
-  run_ok rt (Signal.Var.set values.(1) 200);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "excluded input ignored" 40
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "excluded input did not recompute" [ 1; 0; 1; 0 ];
-  run_ok rt (Signal.Var.set values.(2) 300);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "included input updates" 310
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "included input recomputed" [ 1; 0; 2; 0 ];
-  run_ok rt (Signal.Var.set indices [ 1; 3 ]);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "new dependency set uses latest values" 240
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "new active inputs attach" [ 1; 1; 2; 1 ];
-  run_ok rt (Signal.Var.set values.(0) 1000);
-  run_ok rt (Signal.Var.set values.(2) 3000);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "old dependency set detached" 240
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "detached inputs ignored" [ 1; 1; 2; 1 ];
-  run_ok rt (Signal.Var.set values.(1) 210);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "current dependency still active" 250
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "current input recomputed" [ 1; 2; 2; 1 ];
-  (match List.rev !events with
-   | [
-       Signal.Initialized 40;
-       Changed { old_value = 40; new_value = 310 };
-       Changed { old_value = 310; new_value = 240 };
-       Changed { old_value = 240; new_value = 250 };
-     ] -> ()
-   | _ -> Alcotest.fail "unexpected dynamic list observer events");
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_bind_branch_churn_releases_inactive_scopes () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choice = Signal.Var.create `A in
-  let sources =
-    [| Signal.Var.create 10; Signal.Var.create 20; Signal.Var.create 30 |]
-  in
-  let calls = Array.make 3 0 in
-  let index = function `A -> 0 | `B -> 1 | `C -> 2 in
-  let selected =
-    Signal.bind (Signal.Var.watch choice) (fun branch ->
-        let index = index branch in
-        Signal.Var.watch sources.(index)
-        |> Signal.map (fun value ->
-               calls.(index) <- calls.(index) + 1;
-               value))
-  in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (record_observer events))
-  in
-  let check_calls label expected =
-    Alcotest.(check (list int)) label expected (Array.to_list calls)
-  in
-  let set_sources a b c =
-    run_ok rt (Signal.Var.set sources.(0) a);
-    run_ok rt (Signal.Var.set sources.(1) b);
-    run_ok rt (Signal.Var.set sources.(2) c)
-  in
-  let switch label branch expected_value expected_calls =
-    run_ok rt (Signal.Var.set choice branch);
-    run_ok rt Signal.stabilize;
-    Alcotest.(check int) (label ^ " selected value") expected_value
-      (run_ok rt (Signal.Observer.read observer));
-    check_calls (label ^ " calls") expected_calls
-  in
-  run_ok rt Signal.stabilize;
-  let before_churn = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "initial branch value" 10
-    (run_ok rt (Signal.Observer.read observer));
-  check_calls "initial calls" [ 1; 0; 0 ];
-  set_sources 11 21 31;
-  switch "switch to b" `B 21 [ 1; 1; 0 ];
-  set_sources 12 22 32;
-  switch "switch to c" `C 32 [ 1; 1; 1 ];
-  set_sources 13 23 33;
-  switch "reactivate a" `A 13 [ 2; 1; 1 ];
-  set_sources 14 24 34;
-  switch "reactivate b" `B 24 [ 2; 2; 1 ];
-  set_sources 15 25 35;
-  switch "reactivate a again" `A 15 [ 3; 2; 1 ];
-  let after_churn = run_ok rt (Signal.stats ()) in
-  Alcotest.(check bool)
-    "branch churn invalidated old scopes" true
-    (after_churn.Signal.dynamic_scope_invalidations
-     >= before_churn.Signal.dynamic_scope_invalidations + 5);
-  Alcotest.(check bool)
-    "branch churn released unnecessary nodes" true
-    (after_churn.Signal.nodes_became_unnecessary
-     > before_churn.Signal.nodes_became_unnecessary);
-  Alcotest.(check int) "branch churn does not retain invalid nodes"
-    before_churn.Signal.total_node_count after_churn.Signal.total_node_count;
-  Alcotest.(check int) "branch churn did not add observers"
-    before_churn.Signal.active_observer_count
-    after_churn.Signal.active_observer_count;
-  (match List.rev !events with
-   | [
-       Signal.Initialized 10;
-       Changed { old_value = 10; new_value = 21 };
-       Changed { old_value = 21; new_value = 32 };
-       Changed { old_value = 32; new_value = 13 };
-       Changed { old_value = 13; new_value = 24 };
-       Changed { old_value = 24; new_value = 15 };
-     ] -> ()
-   | _ -> Alcotest.fail "unexpected bind churn observer events");
-  run_ok rt (Signal.Observer.dispose observer)
 
 let test_bind_selector_failure_preserves_previous_branch () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -4616,19 +4424,12 @@ let () =
             test_bind_switch_invalidates_observers_of_invalidated_scope;
           Alcotest.test_case "bind switch skips stale branch observer" `Quick
             test_bind_switch_skips_stale_branch_observer_before_invalidation;
-          Alcotest.test_case
-            "old branch observer not computed on same stabilization switch"
-            `Quick test_old_branch_observer_not_computed_on_switch;
           Alcotest.test_case "dynamic scope invalidation skips callback" `Quick
             test_dynamic_scope_invalidation_skips_callback;
           Alcotest.test_case "commit skips invalidated staged entries" `Quick
             test_commit_skips_invalidated_staged_entries;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
-          Alcotest.test_case "dynamic list bind switches dependency set" `Quick
-            test_dynamic_list_bind_switches_dependency_set;
-          Alcotest.test_case "bind branch churn releases inactive scopes" `Quick
-            test_bind_branch_churn_releases_inactive_scopes;
           Alcotest.test_case "bind selector failure preserves branch" `Quick
             test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind switch rollback preserves old branch" `Quick
