@@ -877,19 +877,28 @@ type
 let stabilization_pure_ops ~pending ~observers ~commit =
   { pending_plan = pending; observer_plan = observers; commit_plan = commit }
 
-type ('pending, 'observer, 'hook) stabilization_rollback =
+type
+  ( 'pending,
+    'bind,
+    'observer,
+    'hook,
+    'timer,
+    'refresh )
+  stabilization_rollback =
   {
-    rollback_staging :
-      lane_access -> staging -> 'hook list;
+    rollback_staging_context :
+      lane_access ->
+      staging ->
+      ('bind, 'hook, 'timer, 'refresh) staging_reset_context;
     mark_observers_failed_without_current :
       lane_access -> 'observer list -> unit;
     requeue_pending : lane_access -> 'pending list -> unit;
   }
 
-let stabilization_rollback_ops ~rollback_staging
+let stabilization_rollback_ops ~staging
     ~mark_observers_failed_without_current ~requeue_pending =
   {
-    rollback_staging;
+    rollback_staging_context = staging;
     mark_observers_failed_without_current;
     requeue_pending;
   }
@@ -901,7 +910,8 @@ type
     'observer,
     'event,
     'hook,
-    'timer )
+    'timer,
+    'refresh )
   stabilization_ops =
   {
     classify_graph_error : exn -> Eta_signal_error.graph_error option;
@@ -915,7 +925,13 @@ type
         'timer )
       stabilization_pure;
     rollback :
-      ('pending, 'observer, 'hook) stabilization_rollback;
+      ( 'pending,
+        'bind,
+        'observer,
+        'hook,
+        'timer,
+        'refresh )
+      stabilization_rollback;
   }
 
 let stabilization_ops ~classify_graph_error ~pure ~rollback =
@@ -987,13 +1003,17 @@ let pass_pure t timer_refresh pure =
   Eta_signal_stabilization_pass.pure_ops ~generation ~staging ~pending
     ~observers ~commit
 
-let pass_rollback rollback =
+let pass_rollback t rollback =
   let staging =
     Eta_signal_stabilization_pass.rollback_staging_plan
       ~rollback_staging:(fun context staging ->
-        rollback.rollback_staging
-          (Eta_signal_stabilization_pass.rollback_capability context)
-          staging)
+        let lane =
+          Eta_signal_stabilization_pass.rollback_capability context
+        in
+        let reset_context =
+          rollback.rollback_staging_context lane staging
+        in
+        reset_staging t lane staging reset_context)
   in
   let observers =
     Eta_signal_stabilization_pass.rollback_observer_plan
@@ -1019,7 +1039,7 @@ let run_stabilization t capability ~timer_refresh ops =
   Eta_signal_stabilization_pass.run t.stabilization capability
     (Eta_signal_stabilization_pass.pass_ops ~errors:(pass_errors ops)
        ~pure:(pass_pure t timer_refresh ops.pure)
-       ~rollback:(pass_rollback ops.rollback)
+       ~rollback:(pass_rollback t ops.rollback)
        ~timer_refresh:
          (Eta_signal_stabilization_pass.timer_refresh_ops
             ~clear_active_timer_refresh:(clear_timer_refresh t)))

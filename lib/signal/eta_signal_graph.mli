@@ -368,13 +368,6 @@ val staging_reset_context :
   clear_timer_refresh_timer:('timer -> unit) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
-val reset_staging :
-  ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
-  lane_access ->
-  staging ->
-  ('bind, 'hook, 'timer, 'refresh) staging_reset_context ->
-  'hook list
-
 type ('bind, 'hook) staging_bind_commit_plan
 
 val staging_bind_commit_plan :
@@ -640,13 +633,29 @@ val stabilization_pure_ops :
     'timer )
   stabilization_pure
 
-type ('pending, 'observer, 'hook) stabilization_rollback
+type
+  ( 'pending,
+    'bind,
+    'observer,
+    'hook,
+    'timer,
+    'refresh )
+  stabilization_rollback
 
 val stabilization_rollback_ops :
-  rollback_staging:(lane_access -> staging -> 'hook list) ->
+  staging:
+    (lane_access ->
+    staging ->
+    ('bind, 'hook, 'timer, 'refresh) staging_reset_context) ->
   mark_observers_failed_without_current:(lane_access -> 'observer list -> unit) ->
   requeue_pending:(lane_access -> 'pending list -> unit) ->
-  ('pending, 'observer, 'hook) stabilization_rollback
+  ( 'pending,
+    'bind,
+    'observer,
+    'hook,
+    'timer,
+    'refresh )
+  stabilization_rollback
 
 type
   ( 'pending,
@@ -655,7 +664,8 @@ type
     'observer,
     'event,
     'hook,
-    'timer )
+    'timer,
+    'refresh )
   stabilization_ops
 
 val stabilization_ops :
@@ -669,14 +679,22 @@ val stabilization_ops :
       'hook,
       'timer )
     stabilization_pure ->
-  rollback:('pending, 'observer, 'hook) stabilization_rollback ->
+  rollback:
+    ( 'pending,
+      'bind,
+      'observer,
+      'hook,
+      'timer,
+      'refresh )
+    stabilization_rollback ->
   ( 'pending,
     'bind,
     'node,
     'observer,
     'event,
     'hook,
-    'timer )
+    'timer,
+    'refresh )
   stabilization_ops
 
 val run_stabilization :
@@ -700,7 +718,8 @@ val run_stabilization :
     'observer,
     'event,
     'hook,
-    'timer )
+    'timer,
+    'refresh )
   stabilization_ops ->
   ( ( 'pending,
       'bind,

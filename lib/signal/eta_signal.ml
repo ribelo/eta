@@ -1340,16 +1340,13 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_timer_refresh_staging timer =
     clear_timer_refresh_timer_staging timer
 
-  let reset_staging lane staging =
-    let context =
-      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
-        ~rollback_timer_refresh_dirty:(fun context ->
-          Graph.restore_dirty graph lane dirty_ops
-            (Timer_policy.refresh_dirty_items context);
-          Timer_policy.clear_refresh_dirty_items context)
-        ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
-    in
-    Graph.reset_staging graph lane staging context
+  let staging_reset_context lane _staging =
+    Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
+      ~rollback_timer_refresh_dirty:(fun context ->
+        Graph.restore_dirty graph lane dirty_ops
+          (Timer_policy.refresh_dirty_items context);
+        Timer_policy.clear_refresh_dirty_items context)
+      ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
 
   let staging_commit_plan lane _staging =
     Graph.staging_commit_plan
@@ -1945,8 +1942,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let rollback =
       Graph.stabilization_rollback_ops
-        ~rollback_staging:
-          (fun lane staging -> reset_staging lane staging)
+        ~staging:staging_reset_context
         ~mark_observers_failed_without_current:
           (fun lane observers ->
             List.iter (mark_failed_without_current lane) observers)

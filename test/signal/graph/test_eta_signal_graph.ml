@@ -174,6 +174,13 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
       (Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
     ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
 
+let staging_reset_context
+    ?(rollback_bind = fun _staging _bind -> [])
+    ?(rollback_timer_refresh_dirty = fun _refresh -> ())
+    ?(clear_timer_refresh_timer = fun _timer -> ()) () =
+  Graph.staging_reset_context ~rollback_bind
+    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer
+
 let stabilization_pure_ops
     ?(release_pending_marks = fun _context _pending -> ())
     ?(observer_delivery =
@@ -212,7 +219,7 @@ let empty_stabilization_ops graph =
   in
   let rollback =
     Graph.stabilization_rollback_ops
-      ~rollback_staging:(fun _context _staging -> [])
+      ~staging:(fun _context _staging -> staging_reset_context ())
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
   in
@@ -760,7 +767,7 @@ let test_computed_nodes_are_staging_scoped () =
   in
   let rollback =
     Graph.stabilization_rollback_ops
-      ~rollback_staging:(fun _context _staging -> [])
+      ~staging:(fun _context _staging -> staging_reset_context ())
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
   in
@@ -888,7 +895,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
   in
   let rollback =
     Graph.stabilization_rollback_ops
-      ~rollback_staging:(fun _context _staging -> [])
+      ~staging:(fun _context _staging -> staging_reset_context ())
       ~mark_observers_failed_without_current:(fun _context _observers -> ())
       ~requeue_pending:(fun _context _pending -> ())
   in
@@ -1009,9 +1016,9 @@ let test_stabilization_observer_plan_uses_collection_order () =
   in
   let rollback =
     Graph.stabilization_rollback_ops
-      ~rollback_staging:(fun cap _staging ->
+      ~staging:(fun cap _staging ->
         check_cap cap;
-        [])
+        staging_reset_context ())
       ~mark_observers_failed_without_current:(fun cap _observers ->
         check_cap cap)
       ~requeue_pending:(fun cap _pending -> check_cap cap)
