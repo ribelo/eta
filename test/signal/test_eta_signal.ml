@@ -1268,89 +1268,6 @@ let test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_invalidated_bind_rhs_cannot_be_observed () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choose_left = Signal.Var.create true in
-  let left = Signal.Var.create 10 in
-  let right = Signal.Var.create 20 in
-  let captured_left = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
-        if use_left then (
-          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
-          captured_left := Some signal;
-          signal)
-        else Signal.Var.watch right)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial captured branch" 10
-    (run_ok rt (Signal.Observer.read observer));
-  let captured =
-    match !captured_left with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected captured bind RHS signal"
-  in
-  run_ok rt (Signal.Var.set choose_left false);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "active branch switched" 20
-    (run_ok rt (Signal.Observer.read observer));
-  let before = run_ok rt (Signal.stats ()) in
-  expect_fail "captured invalid scope observe" (( = ) `Invalid_scope)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Observer.observe captured (fun _ -> Effect.unit))));
-  let after = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "failed observe did not add observer"
-    before.Signal.active_observer_count after.Signal.active_observer_count;
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_invalidated_bind_rhs_cannot_be_wrapped () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choose_left = Signal.Var.create true in
-  let left = Signal.Var.create 10 in
-  let right = Signal.Var.create 20 in
-  let captured_left = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
-        if use_left then (
-          let signal = Signal.Var.watch left |> Signal.map (fun value -> value) in
-          captured_left := Some signal;
-          signal)
-        else Signal.Var.watch right)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let captured =
-    match !captured_left with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected captured bind RHS signal"
-  in
-  run_ok rt (Signal.Var.set choose_left false);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "active branch switched" 20
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     ignore (Signal.map (fun value -> value + 1) captured : int Signal.signal)
-   with
-  | exception Signal.Graph_error `Invalid_scope -> ()
-  | exception exn ->
-      Alcotest.failf "wrapped invalid scope construction: expected graph error, got %s"
-        (Printexc.to_string exn)
-  | () ->
-      Alcotest.fail
-        "wrapped invalid scope construction: expected graph error");
-  run_ok rt (Signal.Var.set right 21);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization remains healthy" 21
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_bind_rejects_reused_dynamic_scope_inner () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -4296,10 +4213,6 @@ let () =
             test_bind_switches_after_unnecessary_source_change;
           Alcotest.test_case "bind invalidates old scope" `Quick
             test_bind_invalidates_old_scope_without_recomputing_obsolete_nodes;
-          Alcotest.test_case "invalidated bind rhs cannot be observed" `Quick
-            test_invalidated_bind_rhs_cannot_be_observed;
-          Alcotest.test_case "invalidated bind rhs cannot be wrapped" `Quick
-            test_invalidated_bind_rhs_cannot_be_wrapped;
           Alcotest.test_case "bind rejects reused dynamic-scope inner" `Quick
             test_bind_rejects_reused_dynamic_scope_inner;
           Alcotest.test_case

@@ -1699,6 +1699,23 @@ let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
   run_ok runtime S.stabilize;
   run_ok runtime (S.Var.set use_branch false);
   run_ok runtime S.stabilize;
+  let before_failed_observe = run_ok runtime (S.stats ()) in
+  expect_fail "invalidated branch cannot be observed again"
+    (( = ) `Invalid_scope)
+    (run runtime (S.Observer.observe branch (fun _ -> E.unit)));
+  let after_failed_observe = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "failed stale observe does not add active observer"
+    before_failed_observe.S.active_observer_count
+    after_failed_observe.S.active_observer_count;
+  Alcotest.(check int) "failed stale observe does not add invalid observer"
+    before_failed_observe.S.invalid_observer_count
+    after_failed_observe.S.invalid_observer_count;
+  (match ignore (S.map Fun.id branch : int S.signal) with
+  | exception S.Graph_error `Invalid_scope -> ()
+  | exception exn ->
+      Alcotest.failf "stale branch wrapping raised %s"
+        (Printexc.to_string exn)
+  | () -> Alcotest.fail "stale branch wrapping unexpectedly succeeded");
   (match
      run_ok runtime (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)
    with
