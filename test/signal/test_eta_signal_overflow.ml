@@ -201,6 +201,32 @@ let test_time_timer_start_generation_overflow_is_precommit_failure () =
   Alcotest.(check int) "snapshot did not switch after overflow" (-1)
     (run_ok rt (Test_signal.Observer.read observer))
 
+let test_external_timer_stop_generation_overflow_is_precommit_failure () =
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let use_timer = Test_signal.Var.create true in
+  let timer_signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
+  let selected =
+    Test_signal.bind (Test_signal.Var.watch use_timer) (fun active ->
+        if active then timer_signal else Test_signal.const (-1))
+  in
+  let observer =
+    run_ok rt (Test_signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Test_signal.stabilize;
+  wait_for_sleepers clock 1;
+  let previous_value = run_ok rt (Test_signal.Observer.read observer) in
+  Test_signal.Overflow.set_timer_generation timer_signal max_int;
+  run_ok rt (Test_signal.Var.set use_timer false);
+  expect_fail "external timer stop generation overflow"
+    (counter_overflow "timer generation")
+    (Eta_eio.Runtime.run rt (widen Test_signal.stabilize));
+  Alcotest.(check int) "snapshot did not switch after stop overflow"
+    previous_value
+    (run_ok rt (Test_signal.Observer.read observer));
+  Test_signal.Overflow.set_timer_generation timer_signal 0;
+  run_ok rt (Test_signal.Observer.dispose observer)
+
 let () =
   Alcotest.run "eta_signal_overflow"
     [
@@ -221,5 +247,8 @@ let () =
           Alcotest.test_case
             "time timer start overflow is precommit failure" `Quick
             test_time_timer_start_generation_overflow_is_precommit_failure;
+          Alcotest.test_case
+            "external timer stop overflow is precommit failure" `Quick
+            test_external_timer_stop_generation_overflow_is_precommit_failure;
         ] );
     ]

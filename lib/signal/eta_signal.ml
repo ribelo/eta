@@ -1187,7 +1187,7 @@ module Make (Observer_error : Observer_error) () = struct
     Scope_invalidation.collect ?exclude_node_id:exclude_signal_id seen
       collected scope
 
-  let preflight_timer_invalidation timer =
+  let preflight_timer_stop timer =
     Timer.preflight_stop ~advance_generation:(checked_succ "timer generation")
       timer_state_port timer
 
@@ -1265,20 +1265,42 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.post_commit_necessary_timers graph lane
       (Graph.timer_demand_source ~reachable:plan ~timer:signal_timer)
 
-  let preflight_post_commit_timer_starts lane invalidations =
-    collect_post_commit_necessary_timers lane invalidations
+  let collect_current_necessary_timers lane =
+    Graph.timer_demand graph lane
+      (Graph.timer_demand_source ~reachable:(graph_reachable_plan ())
+         ~timer:signal_timer)
+    |> Graph.timer_demand_plan ~plan:(fun ~is_necessary ~timers ->
+           let necessary_timers = Hashtbl.create 8 in
+           List.iter
+             (fun (id, timer) ->
+               if is_necessary id then Hashtbl.replace necessary_timers id timer)
+             timers;
+           necessary_timers)
+
+  let preflight_post_commit_timer_starts post_commit_necessary =
+    post_commit_necessary
     |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
+
+  let preflight_post_commit_timer_stops lane post_commit_necessary =
+    collect_current_necessary_timers lane
+    |> Hashtbl.iter (fun id timer ->
+           if not (Hashtbl.mem post_commit_necessary id) then
+             preflight_timer_stop timer)
 
   let preflight_commit_staging lane staging =
     Graph.staged_preflight ~preflight:(fun () ->
         let invalidations = collect_staged_bind_invalidations lane staging in
+        let post_commit_necessary =
+          collect_post_commit_necessary_timers lane invalidations
+        in
         List.iter
           (fun (P signal) ->
-            Option.iter preflight_timer_invalidation signal.timer)
+            Option.iter preflight_timer_stop signal.timer)
           invalidations.invalidated_nodes;
+        preflight_post_commit_timer_stops lane post_commit_necessary;
         Graph.iter_computed graph lane staging
           ~f:(preflight_signal_commit lane staging invalidations);
-        preflight_post_commit_timer_starts lane invalidations)
+        preflight_post_commit_timer_starts post_commit_necessary)
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks
