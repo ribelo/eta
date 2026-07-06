@@ -392,10 +392,16 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
       (S.Var.watch left) (S.Var.watch right)
   in
   let combined = S.all [ repeated_map2; repeated_map9; cutoff_map9; two_inputs ] in
-  let observer = run_ok runtime (S.Observer.observe combined (fun _ -> E.unit)) in
+  let first_observer =
+    run_ok runtime (S.Observer.observe combined (fun _ -> E.unit))
+  in
+  let second_observer =
+    run_ok runtime (S.Observer.observe combined (fun _ -> E.unit))
+  in
   run_ok runtime S.stabilize;
+  let after_initial = run_ok runtime (S.stats ()) in
   Alcotest.(check (list int)) "initial invariant values" [ 2; 9; 0; 11 ]
-    (run_ok runtime (S.Observer.read observer));
+    (run_ok runtime (S.Observer.read first_observer));
   Alcotest.(check int) "repeated child recomputed once initially" 1 !shared_calls;
   Alcotest.(check int) "map2 computed once initially" 1 !map2_calls;
   run_ok runtime (S.Var.set source 2);
@@ -405,12 +411,29 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   run_ok runtime S.stabilize;
   Alcotest.(check (list int))
     "updated invariant values" [ 4; 18; 0; 22 ]
-    (run_ok runtime (S.Observer.read observer));
+    (run_ok runtime (S.Observer.read first_observer));
   Alcotest.(check int) "repeated child recomputed once after update" 2
     !shared_calls;
   Alcotest.(check int) "child cutoff suppressed map9 recompute" 1 !cutoff_calls;
   Alcotest.(check int) "two changed inputs recomputed once" 2 !map2_calls;
-  run_ok runtime (S.Observer.dispose observer)
+  run_ok runtime (S.Observer.dispose first_observer);
+  let after_partial_dispose = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "partial disposal keeps shared graph necessary"
+    after_initial.S.necessary_node_count
+    after_partial_dispose.S.necessary_node_count;
+  run_ok runtime (S.Var.set source 3);
+  run_ok runtime (S.Var.set cutoff_source 3);
+  run_ok runtime S.stabilize;
+  Alcotest.(check (list int))
+    "remaining observer sees post-disposal update" [ 6; 27; 9; 22 ]
+    (run_ok runtime (S.Observer.read second_observer));
+  Alcotest.(check int) "cutoff fanin recomputes when child changes" 2
+    !cutoff_calls;
+  run_ok runtime (S.Observer.dispose second_observer);
+  let after_final_dispose = run_ok runtime (S.stats ()) in
+  Alcotest.(check bool) "final disposal releases shared graph" true
+    (after_final_dispose.S.necessary_node_count
+     < after_partial_dispose.S.necessary_node_count)
 
 let test_repeated_dependencies_are_deduplicated_in_diagnostics () =
   let module S = Eta_signal.Make (Observer_error) () in

@@ -3617,61 +3617,6 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
        (Runtime.run rt (widen (Signal.Observer.dispose observer)))
       : unit)
 
-let test_fanout_fanin_cutoff_and_partial_disposal () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let root_calls = ref 0 in
-  let root =
-    Signal.Var.watch source
-    |> Signal.map ~equal:Int.equal (fun value ->
-           incr root_calls;
-           value mod 2)
-  in
-  let child_calls = Array.make 8 0 in
-  let children =
-    List.init 8 (fun index ->
-        Signal.map
-          (fun value ->
-            child_calls.(index) <- child_calls.(index) + 1;
-            value + index)
-          root)
-  in
-  let sum =
-    Signal.all children |> Signal.map (List.fold_left ( + ) 0)
-  in
-  let first_observer =
-    run_ok rt (Signal.Observer.observe sum (fun _ -> Effect.unit))
-  in
-  let second_observer =
-    run_ok rt (Signal.Observer.observe sum (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let after_initial = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "initial fanin sum" 28
-    (run_ok rt (Signal.Observer.read first_observer));
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "root recomputed for cutoff" 2 !root_calls;
-  Alcotest.(check (list int))
-    "root cutoff suppressed fanout children" (List.init 8 (fun _ -> 1))
-    (Array.to_list child_calls);
-  run_ok rt (Signal.Observer.dispose first_observer);
-  let after_partial_dispose = run_ok rt (Signal.stats ()) in
-  Alcotest.(check bool) "shared graph remains necessary after partial dispose"
-    true
-    (after_partial_dispose.Signal.necessary_node_count
-     = after_initial.Signal.necessary_node_count);
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "remaining observer sees fanin update" 36
-    (run_ok rt (Signal.Observer.read second_observer));
-  run_ok rt (Signal.Observer.dispose second_observer);
-  let after_final_dispose = run_ok rt (Signal.stats ()) in
-  Alcotest.(check bool) "final disposal clears necessary fanout" true
-    (after_final_dispose.Signal.necessary_node_count
-     < after_partial_dispose.Signal.necessary_node_count)
-
 let test_time_interval_starts_only_when_observed () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -6386,8 +6331,6 @@ let () =
           Alcotest.test_case
             "observer delivery acknowledgement uses graph lane" `Quick
             test_observer_delivery_acknowledgement_uses_graph_lane;
-          Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
-            test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
