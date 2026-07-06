@@ -298,13 +298,6 @@ val fold_reachable :
   f:('acc -> 'node -> 'acc) ->
   'acc
 
-val reachable_ids :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  lane_access ->
-  ('id, 'node) reachable_ops ->
-  roots:'node list ->
-  ('id, unit) Hashtbl.t
-
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
@@ -726,11 +719,10 @@ val demand_roots :
 val necessary_ids :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
+  (Eta_signal_id.signal, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   roots:('observer, 'node) demand_roots ->
-  reachable_ids:
-    (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   necessary_snapshot
 (** Recompute the current necessary node set from graph-owned observer and
     weak-node registries. The graph owns registry traversal and pruning; the
@@ -739,11 +731,10 @@ val necessary_ids :
 val update_necessity :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
+  (Eta_signal_id.signal, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   roots:('observer, 'node) demand_roots ->
-  reachable_ids:
-    (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   necessary_snapshot
 (** Recompute necessary nodes and update graph-core transition counters from
     the same snapshot. *)
@@ -753,11 +744,10 @@ type ('id, 'timer) timer_demand
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
+  (Eta_signal_id.signal, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   roots:('observer, 'node) demand_roots ->
-  reachable_ids:
-    (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   timer:('node -> ('id * 'timer) option) ->
   ('id, 'timer) timer_demand
 (** Snapshot graph demand inputs for the timer subsystem. The graph owns the

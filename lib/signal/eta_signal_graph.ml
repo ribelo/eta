@@ -450,7 +450,7 @@ let fold_reachable _t _lane ops ~roots ~init ~f =
   in
   List.fold_left visit init roots
 
-let reachable_ids t lane ops ~roots =
+let collect_reachable_ids t lane ops ~roots =
   fold_reachable t lane ops ~roots ~init:(Hashtbl.create 16)
     ~f:(fun seen node ->
       Hashtbl.replace seen (ops.reachable_id node) ();
@@ -950,12 +950,13 @@ let demand_root_nodes roots observers =
       else None)
     observers
 
-let necessary_ids t lane ~collect_live_nodes ~roots ~reachable_ids =
+let necessary_ids t lane reachable_ops ~collect_live_nodes ~roots =
   ignore (live_nodes t lane ~collect_live_nodes : _ list);
-  reachable_ids ~roots:(demand_root_nodes roots t.observers)
+  collect_reachable_ids t lane reachable_ops
+    ~roots:(demand_root_nodes roots t.observers)
 
-let update_necessity t lane ~collect_live_nodes ~roots ~reachable_ids =
-  let next = necessary_ids t lane ~collect_live_nodes ~roots ~reachable_ids in
+let update_necessity t lane reachable_ops ~collect_live_nodes ~roots =
+  let next = necessary_ids t lane reachable_ops ~collect_live_nodes ~roots in
   Eta_signal_graph_core.update_necessary_ids t.core lane next;
   next
 
@@ -964,11 +965,12 @@ type ('id, 'timer) timer_demand = {
   timer_demand_timers : ('id * 'timer) list;
 }
 
-let timer_demand t lane ~collect_live_nodes ~roots ~reachable_ids ~timer =
+let timer_demand t lane reachable_ops ~collect_live_nodes ~roots ~timer =
   let nodes = live_nodes t lane ~collect_live_nodes in
   {
     timer_demand_necessary_ids =
-      reachable_ids ~roots:(demand_root_nodes roots t.observers);
+      collect_reachable_ids t lane reachable_ops
+        ~roots:(demand_root_nodes roots t.observers);
     timer_demand_timers = List.filter_map timer nodes;
   }
 

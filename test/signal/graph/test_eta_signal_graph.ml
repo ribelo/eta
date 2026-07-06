@@ -311,13 +311,6 @@ let create_demand_node graph ?timer ?(live = true) () =
       Alcotest.failf "unexpected graph error: %s"
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
 
-let demand_reachable_ids ~roots =
-  let table = Hashtbl.create 8 in
-  List.iter
-    (fun node -> Hashtbl.replace table node.demand_id ())
-    roots;
-  table
-
 let demand_reachable_ops =
   Graph.reachable_ops ~id:(fun node -> node.demand_id)
     ~valid:(fun node -> node.demand_live)
@@ -1019,9 +1012,9 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
       Graph.add_observer graph lane (Some live_root));
   let demand =
     with_graph_lane graph (fun lane ->
-        Graph.timer_demand graph lane
+        Graph.timer_demand graph lane demand_reachable_ops
           ~collect_live_nodes:collect_demand_live_nodes
-          ~roots:optional_demand_roots ~reachable_ids:demand_reachable_ids
+          ~roots:optional_demand_roots
           ~timer:(fun node ->
             Option.map
               (fun timer -> (node.demand_id, timer))

@@ -1570,17 +1570,15 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok result -> result
 
   let collect_necessary_node_ids lane =
-    Graph.necessary_ids graph lane
+    Graph.necessary_ids graph lane reachable_ops
       ~collect_live_nodes:collect_live_weak_signals
       ~roots:observer_demand_roots
-      ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
 
   let update_necessity_counters_unlocked lane =
     ignore
-      (Graph.update_necessity graph lane
+      (Graph.update_necessity graph lane reachable_ops
          ~collect_live_nodes:collect_live_weak_signals
          ~roots:observer_demand_roots
-         ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
         : Graph.necessary_snapshot)
 
   let signal_timer (P signal) =
@@ -1594,10 +1592,9 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.fail (err :> stabilize_error))
 
   let timer_demand_unlocked lane =
-    Graph.timer_demand graph lane
+    Graph.timer_demand graph lane reachable_ops
       ~collect_live_nodes:collect_live_weak_signals
       ~roots:observer_demand_roots
-      ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
       ~timer:signal_timer
 
   let timer_demand_plan_unlocked lane =
