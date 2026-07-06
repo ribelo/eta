@@ -46,6 +46,17 @@ let expect_die label = function
 let record updates update =
   E.sync (fun () -> updates := update :: !updates)
 
+let count_occurrences text needle =
+  let text_len = String.length text in
+  let needle_len = String.length needle in
+  let rec loop index count =
+    if needle_len = 0 || index + needle_len > text_len then count
+    else if String.sub text index needle_len = needle then
+      loop (index + needle_len) (count + 1)
+    else loop (index + 1) count
+  in
+  loop 0 0
+
 let wait_until label predicate =
   let rec loop attempts =
     if predicate () then ()
@@ -121,6 +132,41 @@ let test_observer_read_does_not_force_recompute () =
   Alcotest.(check int) "observer sees new snapshot after stabilize" 2
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer)
+
+let test_diagnostics_track_observation_and_disposal () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  run_ok runtime S.stabilize;
+  let before = run_ok runtime (S.stats ()) in
+  let before_dot_nodes =
+    count_occurrences (run_ok runtime (S.to_dot ())) "[label="
+  in
+  let source = S.Var.create 1 in
+  run_ok runtime (S.Var.set source 2);
+  let signal = S.Var.watch source |> S.map (fun value -> value + 1) in
+  let observer =
+    run_ok runtime (S.Observer.observe signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let after_observe = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "observer after prior stabilization sees latest source"
+    3
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check bool) "observe after stabilization adds demand" true
+    (after_observe.S.necessary_node_count > before.S.necessary_node_count);
+  Alcotest.(check bool) "to_dot shows observed graph" true
+    (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
+     > before_dot_nodes);
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime S.stabilize;
+  let after_dispose = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "disposal returns active observer count to baseline"
+    before.S.active_observer_count after_dispose.S.active_observer_count;
+  Alcotest.(check bool) "disposal releases necessary graph" true
+    (after_dispose.S.necessary_node_count <= before.S.necessary_node_count);
+  Alcotest.(check bool) "to_dot returns to baseline necessary graph" true
+    (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
+     <= before_dot_nodes)
 
 let test_default_cutoff_is_physical_equality () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -432,6 +478,8 @@ let () =
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
+          Alcotest.test_case "diagnostics track observation and disposal"
+            `Quick test_diagnostics_track_observation_and_disposal;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"

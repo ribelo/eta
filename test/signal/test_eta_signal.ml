@@ -520,41 +520,6 @@ let test_observer_initializes_on_stabilize () =
          | Changed _ -> Alcotest.fail "unexpected changed event")
        (List.rev !events))
 
-let test_observe_after_stabilization_and_disposal_clears_graph () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  run_ok rt Signal.stabilize;
-  let before = run_ok rt (Signal.stats ()) in
-  let before_dot_nodes = count_occurrences (run_ok rt (Signal.to_dot ())) "[label=" in
-  let source = Signal.Var.create 1 in
-  run_ok rt (Signal.Var.set source 2);
-  let signal = Signal.Var.watch source |> Signal.map (fun value -> value + 1) in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let after_observe = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "observer after prior stabilization sees latest source" 3
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check bool) "observe after stabilization adds demand" true
-    (after_observe.Signal.necessary_node_count
-     > before.Signal.necessary_node_count);
-  Alcotest.(check bool) "to_dot shows observed graph" true
-    (count_occurrences (run_ok rt (Signal.to_dot ())) "[label="
-     > before_dot_nodes);
-  run_ok rt (Signal.Observer.dispose observer);
-  run_ok rt Signal.stabilize;
-  let after_dispose = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "disposal returns active observer count to baseline"
-    before.Signal.active_observer_count
-    after_dispose.Signal.active_observer_count;
-  Alcotest.(check bool) "disposal releases necessary graph" true
-    (after_dispose.Signal.necessary_node_count
-     <= before.Signal.necessary_node_count);
-  Alcotest.(check bool) "to_dot returns to baseline necessary graph" true
-    (count_occurrences (run_ok rt (Signal.to_dot ())) "[label="
-     <= before_dot_nodes)
-
 let force_signal_gc () =
   Gc.full_major ();
   Gc.compact ();
@@ -8187,8 +8152,6 @@ let () =
             test_error_pretty_printers_are_clear;
           Alcotest.test_case "observer initializes on stabilize" `Quick
             test_observer_initializes_on_stabilize;
-          Alcotest.test_case "observe after stabilize and dispose clears graph"
-            `Quick test_observe_after_stabilization_and_disposal_clears_graph;
           Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "observer unsafe read reports invalid state"
