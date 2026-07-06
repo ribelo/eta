@@ -614,6 +614,63 @@ let test_diagnostics_track_observation_and_disposal () =
     (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
      <= before_dot_nodes)
 
+let test_invalidated_branch_diagnostics_are_retained () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let choose_left = S.Var.create true in
+  let captured_left = ref None in
+  let selected =
+    S.bind (S.Var.watch choose_left) (fun use_left ->
+        if use_left then
+          let signal = S.const 10 |> S.map (fun value -> value + 1) in
+          captured_left := Some signal;
+          signal
+        else S.const 20)
+  in
+  let observer =
+    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let branch =
+    match !captured_left with
+    | Some signal -> signal
+    | None -> Alcotest.fail "expected captured bind branch"
+  in
+  let branch_observer =
+    run_ok runtime (S.Observer.observe branch (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let before_switch = run_ok runtime (S.stats ()) in
+  run_ok runtime (S.Var.set choose_left false);
+  run_ok runtime S.stabilize;
+  let after_switch = run_ok runtime (S.stats ()) in
+  Alcotest.(check bool) "invalidated branch is counted as dead" true
+    (after_switch.S.dead_node_count > before_switch.S.dead_node_count);
+  let options : S.dot_options =
+    {
+      dot_scope = `All_including_invalid;
+      dot_observers = true;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = true;
+    }
+  in
+  let dot = run_ok runtime (S.to_dot ~options ()) in
+  Alcotest.(check bool) "dot includes invalid node tombstones" true
+    (count_occurrences dot "valid=false" > 0);
+  Alcotest.(check bool) "dot namespaces invalid node tombstones" true
+    (count_occurrences dot "dead_s" > 0);
+  Alcotest.(check bool) "dot includes invalid dynamic scopes" true
+    (count_occurrences dot ":invalid" > 0);
+  Alcotest.(check int) "dot includes invalid observer" 1
+    (count_occurrences dot "state=invalid_scope");
+  Alcotest.(check int) "dot includes both observer handles" 2
+    (count_occurrences dot "observer:");
+  Alcotest.(check int) "dot includes observer edges" 2
+    (count_occurrences dot "style=dashed,label=\"observes\"");
+  run_ok runtime (S.Observer.dispose branch_observer);
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_default_cutoff_is_physical_equality () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1419,6 +1476,8 @@ let () =
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "diagnostics track observation and disposal"
             `Quick test_diagnostics_track_observation_and_disposal;
+          Alcotest.test_case "diagnostics retain invalidated branches" `Quick
+            test_invalidated_branch_diagnostics_are_retained;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"

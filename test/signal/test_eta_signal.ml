@@ -3822,67 +3822,6 @@ let test_to_dot_debug_options_expose_hidden_state () =
   run_ok rt (Dot_signal.Observer.dispose timer_observer);
   run_ok rt (Dot_signal.Observer.dispose scoped_observer)
 
-let test_dead_nodes_and_dot_include_pruned_invalid_nodes () =
-  let module Tombstone_signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choose_left = Tombstone_signal.Var.create true in
-  let captured_left = ref None in
-  let selected =
-    Tombstone_signal.bind (Tombstone_signal.Var.watch choose_left) (fun use_left ->
-        if use_left then
-          let signal =
-            Tombstone_signal.const 10
-            |> Tombstone_signal.map (fun value -> value + 1)
-          in
-          captured_left := Some signal;
-          signal
-        else Tombstone_signal.const 20)
-  in
-  let observer =
-    run_ok rt (Tombstone_signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Tombstone_signal.stabilize;
-  let branch =
-    match !captured_left with
-    | Some signal -> signal
-    | None -> Alcotest.fail "expected captured bind branch"
-  in
-  let branch_observer =
-    run_ok rt (Tombstone_signal.Observer.observe branch (fun _ -> Effect.unit))
-  in
-  run_ok rt Tombstone_signal.stabilize;
-  let before_switch = run_ok rt (Tombstone_signal.stats ()) in
-  run_ok rt (Tombstone_signal.Var.set choose_left false);
-  run_ok rt Tombstone_signal.stabilize;
-  let after_switch = run_ok rt (Tombstone_signal.stats ()) in
-  Alcotest.(check bool) "dead branch nodes are counted" true
-    (after_switch.Tombstone_signal.dead_node_count
-     > before_switch.Tombstone_signal.dead_node_count);
-  let options : Tombstone_signal.dot_options =
-    {
-      dot_scope = `All_including_invalid;
-      dot_observers = true;
-      dot_timers = false;
-      dot_state = true;
-      dot_dynamic_scopes = true;
-    }
-  in
-  let dot = run_ok rt (Tombstone_signal.to_dot ~options ()) in
-  Alcotest.(check bool) "all-including-invalid dot shows dead nodes" true
-    (count_occurrences dot "valid=false" > 0);
-  Alcotest.(check bool) "all-including-invalid dot namespaces tombstones" true
-    (count_occurrences dot "dead_s" > 0);
-  Alcotest.(check bool) "all-including-invalid dot shows invalid scopes" true
-    (count_occurrences dot ":invalid" > 0);
-  Alcotest.(check int) "all-including-invalid dot shows invalid observer" 1
-    (count_occurrences dot "state=invalid_scope");
-  Alcotest.(check int) "all-including-invalid dot shows both observers" 2
-    (count_occurrences dot "observer:");
-  Alcotest.(check int) "all-including-invalid dot shows observer edges" 2
-    (count_occurrences dot "style=dashed,label=\"observes\"");
-  run_ok rt (Tombstone_signal.Observer.dispose branch_observer);
-  run_ok rt (Tombstone_signal.Observer.dispose observer)
-
 let test_to_dot_labels_invalid_observer_with_evicted_target_tombstone () =
   let module Eviction_signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6704,8 +6643,6 @@ let () =
             test_stats_and_dot_stay_read_only_through_nested_bind_churn;
           Alcotest.test_case "to_dot debug options expose hidden state" `Quick
             test_to_dot_debug_options_expose_hidden_state;
-          Alcotest.test_case "dead nodes and dot include pruned invalid nodes"
-            `Quick test_dead_nodes_and_dot_include_pruned_invalid_nodes;
           Alcotest.test_case
             "to_dot labels invalid observer with evicted target tombstone" `Quick
             test_to_dot_labels_invalid_observer_with_evicted_target_tombstone;
