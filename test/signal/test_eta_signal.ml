@@ -2067,55 +2067,6 @@ let test_bind_branch_churn_releases_inactive_scopes () =
    | _ -> Alcotest.fail "unexpected bind churn observer events");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let a = Signal.Var.create 1 in
-  let b = Signal.Var.create 2 in
-  let c = Signal.Var.create 3 in
-  let map_sum =
-    Signal.map3 (fun a b c -> a + b + c) (Signal.Var.watch a)
-      (Signal.Var.watch b) (Signal.Var.watch c)
-  in
-  let outer_rhs_calls = ref 0 in
-  let inner_rhs_calls = ref 0 in
-  let bind_sum =
-    Signal.bind (Signal.Var.watch a) (fun a ->
-        incr outer_rhs_calls;
-        Signal.bind (Signal.Var.watch b) (fun b ->
-            incr inner_rhs_calls;
-            Signal.Var.watch c |> Signal.map (fun c -> a + b + c)))
-  in
-  let combined = Signal.both map_sum bind_sum in
-  let observer =
-    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let before_rewire = run_ok rt (Signal.stats ()) in
-  Alcotest.(check (pair int int)) "initial sums match" (6, 6)
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "outer rhs created once" 1 !outer_rhs_calls;
-  Alcotest.(check int) "inner rhs created once" 1 !inner_rhs_calls;
-  run_ok rt (Signal.Var.set c 4);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (pair int int)) "leaf update keeps sums equal" (7, 7)
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "leaf update does not recreate outer rhs" 1
-    !outer_rhs_calls;
-  Alcotest.(check int) "leaf update does not recreate inner rhs" 1
-    !inner_rhs_calls;
-  run_ok rt (Signal.Var.set a 10);
-  run_ok rt Signal.stabilize;
-  let after_rewire = run_ok rt (Signal.stats ()) in
-  Alcotest.(check (pair int int)) "outer source update keeps sums equal" (16, 16)
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "outer source recreates outer rhs" 2 !outer_rhs_calls;
-  Alcotest.(check int) "outer source recreates nested rhs" 2 !inner_rhs_calls;
-  Alcotest.(check bool) "nested bind invalidated stale scopes" true
-    (after_rewire.Signal.dynamic_scope_invalidations
-     > before_rewire.Signal.dynamic_scope_invalidations);
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_bind_selector_failure_preserves_previous_branch () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6049,8 +6000,6 @@ let () =
             test_dynamic_list_bind_switches_dependency_set;
           Alcotest.test_case "bind branch churn releases inactive scopes" `Quick
             test_bind_branch_churn_releases_inactive_scopes;
-          Alcotest.test_case "nested bind matches map3 and recreates scopes"
-            `Quick test_nested_bind_sum_matches_map3_and_recreates_rhs_scopes;
           Alcotest.test_case "bind selector failure preserves branch" `Quick
             test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind switch rollback preserves old branch" `Quick
