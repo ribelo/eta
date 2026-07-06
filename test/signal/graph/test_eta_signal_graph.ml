@@ -139,6 +139,7 @@ type demand_node = {
   demand_id : Id.signal;
   demand_live : bool;
   demand_timer : string option;
+  mutable demand_children : demand_node list;
 }
 
 let record events event =
@@ -294,7 +295,12 @@ let create_demand_node graph ?timer ?(live = true) () =
     Graph.node_lifecycle
       ~validate_dependency:(fun (_ : unit) -> ())
       ~create:(fun ~id ~scope:_ ->
-        { demand_id = id; demand_live = live; demand_timer = timer })
+        {
+          demand_id = id;
+          demand_live = live;
+          demand_timer = timer;
+          demand_children = [];
+        })
       ~attach_dependency:(fun ~parent:_ ~child:(_ : unit) -> ())
       ~add_to_scope:(fun () _node -> ())
       ~pack:Fun.id ~create_weak:Fun.id
@@ -311,6 +317,11 @@ let demand_reachable_ids ~roots =
     (fun node -> Hashtbl.replace table node.demand_id ())
     roots;
   table
+
+let demand_reachable_ops =
+  Graph.reachable_ops ~id:(fun node -> node.demand_id)
+    ~valid:(fun node -> node.demand_live)
+    ~children:(fun node -> node.demand_children)
 
 let sorted_signal_ids table =
   Hashtbl.to_seq_keys table
@@ -1042,6 +1053,49 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     [ demand_id live_root; demand_id live_timer; demand_id live_without_timer ]
     remaining_live_ids
 
+let test_post_commit_necessary_timers_uses_reachability () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let root = create_demand_node graph ~timer:"root" () in
+  let reachable_leaf = create_demand_node graph ~timer:"reachable" () in
+  let invalid_leaf = create_demand_node graph ~live:false ~timer:"invalid" () in
+  let live_but_unnecessary = create_demand_node graph ~timer:"unnecessary" () in
+  root.demand_children <- [ reachable_leaf; invalid_leaf ];
+  let demand_id node = Id.signal_int node.demand_id in
+  with_graph_lane graph (fun lane ->
+      Graph.add_observer graph lane None;
+      Graph.add_observer graph lane (Some root));
+  let timers =
+    with_graph_lane graph (fun lane ->
+        Graph.post_commit_necessary_timers graph lane demand_reachable_ops
+          ~collect_live_nodes:collect_demand_live_nodes ~root:Fun.id
+          ~timer:(fun node ->
+            Option.map
+              (fun timer -> (node.demand_id, timer))
+              node.demand_timer))
+    |> Hashtbl.to_seq
+    |> List.of_seq
+    |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
+    |> List.sort compare
+  in
+  Alcotest.(check (list (pair int string)))
+    "necessary timers"
+    [ (demand_id root, "root"); (demand_id reachable_leaf, "reachable") ]
+    timers;
+  let remaining_live_ids =
+    with_graph_lane graph (fun lane ->
+        Graph.live_nodes graph lane
+          ~collect_live_nodes:collect_demand_live_nodes)
+    |> List.map (fun node -> Id.signal_int node.demand_id)
+    |> List.sort Int.compare
+  in
+  Alcotest.(check (list int))
+    "live registry pruned"
+    [ demand_id root; demand_id reachable_leaf; demand_id live_but_unnecessary ]
+    remaining_live_ids
+
 let test_timer_refresh_token_owned_by_graph () =
   let graph =
     Graph.create ~create_scope_context:(fun () -> ())
@@ -1151,6 +1205,8 @@ let () =
         [
           Alcotest.test_case "plan bridge" `Quick
             test_timer_demand_plan_owns_live_pruning_and_roots;
+          Alcotest.test_case "post-commit reachability" `Quick
+            test_post_commit_necessary_timers_uses_reachability;
           Alcotest.test_case "refresh token ownership" `Quick
             test_timer_refresh_token_owned_by_graph;
         ] );

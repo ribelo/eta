@@ -955,10 +955,15 @@ let timer_demand_plan demand ~plan =
   plan ~necessary:demand.timer_demand_necessary_ids
     ~timers:demand.timer_demand_timers
 
-let post_commit_necessary_timers t lane ~collect_live_nodes ~root
-    ~collect_timers =
+let post_commit_necessary_timers t lane reachable_ops ~collect_live_nodes ~root
+    ~timer =
   ignore (live_nodes t lane ~collect_live_nodes : _ list);
-  collect_timers ~roots:(List.filter_map root t.observers)
+  fold_reachable t lane reachable_ops
+    ~roots:(List.filter_map root t.observers)
+    ~init:(Hashtbl.create 8)
+    ~f:(fun timers node ->
+      Option.iter (fun (id, timer) -> Hashtbl.replace timers id timer) (timer node);
+      timers)
 
 let dead_node_count t _lane = List.length t.dead_nodes
 let iter_dead_nodes t _lane ~f = List.iter f t.dead_nodes

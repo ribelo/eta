@@ -762,15 +762,16 @@ val timer_demand_plan :
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
+  ('id, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   root:('observer -> 'node option) ->
-  collect_timers:(roots:'node list -> ('id, 'timer) Hashtbl.t) ->
+  timer:('node -> ('id * 'timer) option) ->
   ('id, 'timer) Hashtbl.t
 (** Collect the timers that will remain necessary after committing graph
     staging. The graph owns live-node pruning and observer-root traversal;
-    callers supply the post-commit reachability rules because staged bind
-    invalidation is graph-shape specific. *)
+    callers supply graph-shape reachability and timer projections because
+    staged bind invalidation is graph-shape specific. *)
 
 val dead_node_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int

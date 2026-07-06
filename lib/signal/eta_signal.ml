@@ -1233,17 +1233,11 @@ module Make (Observer_error : Observer_error) () = struct
           in
           children_with_scope_owner signal signal_children)
     in
-    Graph.post_commit_necessary_timers graph lane
+    Graph.post_commit_necessary_timers graph lane reachable_ops
       ~collect_live_nodes:collect_live_weak_signals
       ~root:observer_demand_root
-      ~collect_timers:(fun ~roots ->
-        Graph.fold_reachable graph lane reachable_ops ~roots
-          ~init:(Hashtbl.create 8)
-          ~f:(fun timers (P signal) ->
-            Option.iter
-              (fun timer -> Hashtbl.replace timers signal.id timer)
-              signal.timer;
-            timers))
+      ~timer:(fun (P signal) ->
+        Option.map (fun timer -> (signal.id, timer)) signal.timer)
 
   let preflight_post_commit_timer_starts lane invalidated_ids =
     collect_post_commit_necessary_timers lane invalidated_ids
