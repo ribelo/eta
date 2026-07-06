@@ -1248,6 +1248,56 @@ let test_bind_self_cycle_is_typed_failure () =
   expect_fail "self cycle" (( = ) `Cycle) (run runtime S.stabilize);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_reentrant_stabilization_is_typed_failure () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let nested = ref None in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch source) (fun _ ->
+           E.exit S.stabilize
+           |> E.bind (fun exit -> E.sync (fun () -> nested := Some exit))))
+  in
+  run_ok runtime S.stabilize;
+  (match !nested with
+   | Some (Eta.Exit.Error (Eta.Cause.Fail `Reentrant_stabilization)) -> ()
+   | Some (Eta.Exit.Error cause) ->
+       Alcotest.failf "unexpected nested cause %a" (Eta.Cause.pp pp_hidden)
+         cause
+   | Some (Eta.Exit.Ok ()) ->
+       Alcotest.fail "nested stabilize unexpectedly succeeded"
+   | None -> Alcotest.fail "nested stabilize did not run");
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_reentrant_stabilization_preserves_outer_delivery_phase () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let observed = S.Var.watch source in
+  let nested = ref [] in
+  let record_nested () =
+    E.exit S.stabilize
+    |> E.bind (fun exit -> E.sync (fun () -> nested := exit :: !nested))
+  in
+  let first_observer =
+    run_ok runtime (S.Observer.observe observed (fun _ -> record_nested ()))
+  in
+  let second_observer =
+    run_ok runtime (S.Observer.observe observed (fun _ -> record_nested ()))
+  in
+  run_ok runtime S.stabilize;
+  let is_reentrant = function
+    | Eta.Exit.Error (Eta.Cause.Fail `Reentrant_stabilization) -> true
+    | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false
+  in
+  Alcotest.(check int) "two nested attempts" 2 (List.length !nested);
+  Alcotest.(check bool)
+    "all nested attempts remained reentrant" true
+    (List.for_all is_reentrant !nested);
+  run_ok runtime (S.Observer.dispose first_observer);
+  run_ok runtime (S.Observer.dispose second_observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2083,6 +2133,11 @@ let () =
             test_ambiguous_scope_failures_are_typed;
           Alcotest.test_case "bind self-cycle failure is typed" `Quick
             test_bind_self_cycle_is_typed_failure;
+          Alcotest.test_case "reentrant stabilization is typed" `Quick
+            test_reentrant_stabilization_is_typed_failure;
+          Alcotest.test_case
+            "reentrant stabilization preserves outer delivery phase" `Quick
+            test_reentrant_stabilization_preserves_outer_delivery_phase;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick

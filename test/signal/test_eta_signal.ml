@@ -1834,54 +1834,6 @@ let test_time_timer_start_failure_rolls_back_unstarted_timers () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_reentrant_stabilization_is_typed_failure () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let nested = ref None in
-  ignore
-    (run_ok rt
-       (Signal.Observer.observe observed (fun _ ->
-            Effect.exit Signal.stabilize
-            |> Effect.bind (fun exit ->
-                   Effect.sync (fun () -> nested := Some exit))))
-      : int Signal.observer);
-  run_ok rt Signal.stabilize;
-  (match !nested with
-   | Some (Exit.Error (Cause.Fail `Reentrant_stabilization)) -> ()
-   | Some (Exit.Error cause) ->
-       Alcotest.failf "unexpected nested cause %a" (Cause.pp pp_hidden) cause
-   | Some (Exit.Ok ()) -> Alcotest.fail "nested stabilize unexpectedly succeeded"
-   | None -> Alcotest.fail "nested stabilize did not run")
-
-let test_reentrant_stabilization_does_not_clear_outer_phase () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let nested = ref [] in
-  let record_nested () =
-    Effect.exit Signal.stabilize
-    |> Effect.bind (fun exit ->
-           Effect.sync (fun () -> nested := exit :: !nested))
-  in
-  ignore
-    (run_ok rt (Signal.Observer.observe observed (fun _ -> record_nested ()))
-      : int Signal.observer);
-  ignore
-    (run_ok rt (Signal.Observer.observe observed (fun _ -> record_nested ()))
-      : int Signal.observer);
-  run_ok rt Signal.stabilize;
-  let is_reentrant = function
-    | Exit.Error (Cause.Fail `Reentrant_stabilization) -> true
-    | Exit.Ok _ | Exit.Error _ -> false
-  in
-  Alcotest.(check int) "two nested attempts" 2 (List.length !nested);
-  Alcotest.(check bool)
-    "all nested attempts remained reentrant" true
-    (List.for_all is_reentrant !nested)
-
 let test_effectful_update_reentry_fails_and_preserves_value () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -4020,10 +3972,6 @@ let () =
             test_time_timer_start_failure_preserves_pending_observer_event;
           Alcotest.test_case "time timer start failure rolls back unstarted timers"
             `Quick test_time_timer_start_failure_rolls_back_unstarted_timers;
-          Alcotest.test_case "reentrant stabilization typed failure" `Quick
-            test_reentrant_stabilization_is_typed_failure;
-          Alcotest.test_case "reentrant stabilization keeps outer phase" `Quick
-            test_reentrant_stabilization_does_not_clear_outer_phase;
           Alcotest.test_case "effectful update reentry typed failure" `Quick
             test_effectful_update_reentry_fails_and_preserves_value;
           Alcotest.test_case "concurrent effectful update fails fast" `Quick
