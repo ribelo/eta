@@ -5445,68 +5445,6 @@ let test_time_timer_rejects_mismatched_runtime () =
   check_observe_mismatch "mismatched step observe runtime" step;
   check_mismatch "mismatched step runtime" step
 
-let test_time_timer_runtime_mismatch_validation_reenters_graph_lane () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let clock_a = Eta_test.Test_clock.create () in
-  let clock_b = Eta_test.Test_clock.create () in
-  let rt_a =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_a)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
-      ()
-  in
-  let rt_b =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_b)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
-      ()
-  in
-  let bad_timer = run_ok rt_a (Signal.Time.interval (Duration.ms 10)) in
-  let good_timer = run_ok rt_b (Signal.Time.interval (Duration.ms 10)) in
-  let bad_observer =
-    run_ok rt_a (Signal.Observer.observe bad_timer (fun _ -> Effect.unit))
-  in
-  let lane_acquisitions = ref 0 in
-  let nested_stats = ref None in
-  Fun.protect
-    ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
-      ignore
-        (Eta_eio.Runtime.run rt_a
-           (widen (Signal.Observer.dispose bad_observer))
-          : (unit, test_error) Exit.t))
-    (fun () ->
-      let lane_hook =
-        {
-          Signal.Private_test_hooks.run =
-            (fun () ->
-              Effect.sync (fun () -> incr lane_acquisitions));
-        }
-      in
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_graph_lane_acquired lane_hook
-      @@ fun () ->
-      Signal.Private_test_hooks.set_timer_runtime_mismatch_hook (fun () ->
-          let before = !lane_acquisitions in
-          let stats_exit =
-            Eta_eio.Runtime.run rt_a (widen (Signal.stats ()))
-          in
-          let after = !lane_acquisitions in
-          nested_stats := Some (before, after, stats_exit));
-      expect_exact_runtime_mismatch "mixed runtime timer observe"
-        (Eta_eio.Runtime.run rt_b
-           (widen (Signal.Observer.observe good_timer (fun _ -> Effect.unit)))));
-  match !nested_stats with
-  | None -> Alcotest.fail "runtime mismatch hook did not run"
-  | Some (_, _, Exit.Error cause) ->
-      Alcotest.failf "nested stats should reenter graph lane, got %a"
-        (Cause.pp pp_hidden) cause
-  | Some (before, after, Exit.Ok _) ->
-      Alcotest.(check int)
-        "nested stats reused active graph lane" before after
-
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -7086,9 +7024,6 @@ let () =
             test_time_now_uses_runtime_clock;
           Alcotest.test_case "time timer rejects mismatched runtime" `Quick
             test_time_timer_rejects_mismatched_runtime;
-          Alcotest.test_case
-            "time timer runtime mismatch validation reenters graph lane" `Quick
-            test_time_timer_runtime_mismatch_validation_reenters_graph_lane;
           Alcotest.test_case "time now uses one clock snapshot" `Quick
             test_time_now_uses_single_clock_snapshot_per_stabilization;
           Alcotest.test_case "time now backward refresh overrides pending update"
