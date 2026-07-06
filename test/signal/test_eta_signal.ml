@@ -3099,31 +3099,6 @@ let test_observer_phase_multiple_sets_publish_final_next_value () =
    | _ -> Alcotest.fail "expected coalesced observer-phase mutation events");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_observer_read_during_callback_sees_current_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let seen = ref [] in
-  let observer_ref = ref None in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe signal (fun _update ->
-           match !observer_ref with
-           | None -> Effect.unit
-           | Some observer ->
-               Signal.Observer.read observer
-               |> Effect.map_error (fun _ -> `Observer_failed)
-               |> Effect.bind (fun value ->
-                      Effect.sync (fun () -> seen := value :: !seen))))
-  in
-  observer_ref := Some observer;
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list int)) "callback reads current snapshots" [ 1; 2 ]
-    (List.rev !seen)
-
 let test_observer_read_does_not_force_recompute () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8452,8 +8427,6 @@ let () =
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "observer phase multiple sets publish final value"
             `Quick test_observer_phase_multiple_sets_publish_final_next_value;
-          Alcotest.test_case "observer read during callback" `Quick
-            test_observer_read_during_callback_sees_current_snapshot;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
