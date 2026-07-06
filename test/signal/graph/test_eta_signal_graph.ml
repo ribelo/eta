@@ -163,7 +163,7 @@ let with_graph_lane graph f =
   | Eta.Exit.Error _ -> Alcotest.fail "unexpected lane access failure"
 
 let empty_stabilization_ops graph =
-  let observer_plan _context =
+  let observer_plan _context _staging =
     Pass.observer_plan ~observers:[]
       ~collect_events:(fun _context _observers -> [])
       ~mark_events_pending:(fun _context _events -> ())
@@ -172,8 +172,8 @@ let empty_stabilization_ops graph =
     Graph.stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
-      ~stage_pending:(fun _context _pending -> ())
-      ~plan_staged_binds:(fun _context _observers -> ())
+      ~stage_pending:(fun _context _staging _pending -> ())
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
       ~commit_staging:(fun context staging ->
         let commit_context =
           Graph.staging_commit_context
@@ -635,10 +635,10 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Transaction.create_staged
       (Bind.switch ~source_value:0 ~inner:"old" ~scope:1)
   in
-  let stage_twice lane =
-    Graph.stage_bind_switch graph lane "bind" staged ~source_value:1
+  let stage_twice lane staging =
+    Graph.stage_bind_switch graph lane staging "bind" staged ~source_value:1
       ~inner:"inner" ~scope:2;
-    Graph.stage_bind_switch graph lane "bind" staged ~source_value:2
+    Graph.stage_bind_switch graph lane staging "bind" staged ~source_value:2
       ~inner:"next" ~scope:3;
     let snapshot = Graph.read_effective graph staged in
     Alcotest.(check (option string)) "staged inner" (Some "next")
@@ -678,7 +678,7 @@ let test_stage_bind_switch_owns_transaction_staging () =
         Alcotest.failf "expected invalid scope, got %s"
           (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
   in
-  let observer_plan _context =
+  let observer_plan _context _staging =
     Pass.observer_plan ~observers:[]
       ~collect_events:(fun _context _observers -> [])
       ~mark_events_pending:(fun _context _events -> ())
@@ -687,8 +687,8 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Graph.stabilization_pure_ops
       ~release_pending_marks:(fun _context _pending -> ())
       ~observer_plan
-      ~stage_pending:(fun context _pending -> stage_twice context)
-      ~plan_staged_binds:(fun _context _observers -> ())
+      ~stage_pending:(fun context staging _pending -> stage_twice context staging)
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
       ~commit_staging:(fun context staging ->
         let commit_context =
           Graph.staging_commit_context
@@ -792,7 +792,7 @@ let test_observer_delivery_plan_uses_collection_order () =
   let pure =
     Graph.stabilization_pure_ops
       ~release_pending_marks:(fun cap _pending -> check_cap cap)
-      ~observer_plan:(fun cap ->
+      ~observer_plan:(fun cap _staging ->
         check_cap cap;
         let delivery =
           Observer.delivery_collection
@@ -804,8 +804,8 @@ let test_observer_delivery_plan_uses_collection_order () =
               record events ("pending:" ^ event))
         in
         Graph.observer_delivery_plan graph cap delivery)
-      ~stage_pending:(fun cap _pending -> check_cap cap)
-      ~plan_staged_binds:(fun cap observers ->
+      ~stage_pending:(fun cap _staging _pending -> check_cap cap)
+      ~plan_staged_binds:(fun cap _staging observers ->
         check_cap cap;
         record events
           ("plan_observers:"

@@ -454,14 +454,14 @@ let reachable_ids t lane ops ~roots =
       Hashtbl.replace seen (ops.reachable_id node) ();
       seen)
 
-let remember_staged_bind t _lane bind =
-  Eta_signal_graph_state.stage_bind t.state (active_staging t) bind
+let remember_staged_bind t _lane staging bind =
+  Eta_signal_graph_state.stage_bind t.state staging bind
 
-let stage_bind_switch t lane bind snapshot ~source_value ~inner ~scope =
+let stage_bind_switch t lane staging bind snapshot ~source_value ~inner ~scope =
   Eta_signal_bind.stage_transaction_switch
     (Eta_signal_stabilization.active_transaction t.stabilization)
     snapshot
-    ~remember:(fun () -> remember_staged_bind t lane bind)
+    ~remember:(fun () -> remember_staged_bind t lane staging bind)
     ~source_value ~inner ~scope
 
 let graph_error_of_bind_switch_error = function
@@ -488,13 +488,12 @@ let collect_staged_bind_switch_invalidations t _lane ~init ~staged_switch
     ~collect_old_scope
   |> map_bind_switch_result
 
-let remember_pure_disposal_hooks t _lane hooks =
-  Eta_signal_graph_state.remember_pure_disposal_hooks t.state
-    (active_staging t) hooks
+let remember_pure_disposal_hooks t _lane staging hooks =
+  Eta_signal_graph_state.remember_pure_disposal_hooks t.state staging hooks
 
-let remember_timer_refresh_disposal_hooks t _lane hooks =
-  Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state
-    (active_staging t) hooks
+let remember_timer_refresh_disposal_hooks t _lane staging hooks =
+  Eta_signal_graph_state.remember_timer_refresh_disposal_hooks t.state staging
+    hooks
 
 let saturating_succ value =
   if value = max_int then max_int else value + 1
@@ -576,10 +575,10 @@ let read_effective t cell =
   | Some transaction -> Eta_signal_transaction.read transaction cell
   | None -> Eta_signal_transaction.current cell
 
-let stage_cell t _lane cell value =
+let stage_cell t _lane _staging cell value =
   Eta_signal_transaction.stage (active_transaction t) cell value
 
-let update_cell t _lane cell f =
+let update_cell t _lane _staging cell f =
   let transaction = active_transaction t in
   let value = Eta_signal_transaction.read transaction cell in
   Eta_signal_transaction.stage transaction cell (f value)
@@ -595,7 +594,7 @@ let staged_value t _lane cell =
       Some (Eta_signal_transaction.read transaction cell)
   | Some _ | None -> None
 
-let discard_staging t _lane cell =
+let discard_staging t _lane _staging cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction -> Eta_signal_transaction.discard transaction cell
   | None -> ()
@@ -613,7 +612,7 @@ let next_timer_refresh_token t _lane =
 let set_next_timer_refresh_token t _lane token =
   Eta_signal_graph_state.set_next_timer_refresh_token t.state token
 
-let mark_timer_refresh_dirty t _lane ~mark ~record =
+let mark_timer_refresh_dirty t _lane _staging ~mark ~record =
   match Eta_signal_graph_state.active_timer_refresh t.state with
   | None -> mark ()
   | Some refresh -> record refresh
@@ -623,8 +622,8 @@ let timer_has_staged_refresh t timer ~refresh_token ~staged_token =
   | Some refresh -> staged_token timer = refresh_token refresh
   | None -> false
 
-let remember_timer_refresh_timer t _lane timer ~refresh_token ~staged_token
-    ~set_staged_token ~stage_refresh_token =
+let remember_timer_refresh_timer t _lane staging timer ~refresh_token
+    ~staged_token ~set_staged_token ~stage_refresh_token =
   match Eta_signal_graph_state.active_timer_refresh t.state with
   | None -> ()
   | Some refresh ->
@@ -632,9 +631,7 @@ let remember_timer_refresh_timer t _lane timer ~refresh_token ~staged_token
       if staged_token timer <> token then (
         set_staged_token timer token;
         stage_refresh_token timer token;
-        Eta_signal_graph_state.stage_timer_refresh_timer t.state
-          (Eta_signal_graph_state.require_staging t.state)
-          timer)
+        Eta_signal_graph_state.stage_timer_refresh_timer t.state staging timer)
 
 let with_timer_refresh_timer t _lane timer ~none ~some =
   match (Eta_signal_graph_state.active_timer_refresh t.state, timer) with
@@ -706,12 +703,13 @@ type ('pending, 'observer, 'event, 'hook) stabilization_pure =
       lane_access -> 'pending list -> unit;
     observer_plan :
       lane_access ->
+      staging ->
       ( lane_access,
         'observer,
         'event )
       Eta_signal_stabilization_pass.observer_plan;
-    stage_pending : lane_access -> 'pending list -> unit;
-    plan_staged_binds : lane_access -> 'observer list -> unit;
+    stage_pending : lane_access -> staging -> 'pending list -> unit;
+    plan_staged_binds : lane_access -> staging -> 'observer list -> unit;
     commit_staging : lane_access -> staging -> 'hook list;
     update_necessity : lane_access -> unit;
   }
@@ -783,14 +781,17 @@ let pass_pure t timer_refresh pure =
         pending)
     ~observer_plan:(fun context ->
       pure.observer_plan
-        (Eta_signal_stabilization_pass.pure_capability context))
+        (Eta_signal_stabilization_pass.pure_capability context)
+        (active_staging t))
     ~stage_pending:(fun context pending ->
       pure.stage_pending
         (Eta_signal_stabilization_pass.pure_capability context)
+        (active_staging t)
         pending)
     ~plan_staged_binds:(fun context observers ->
       pure.plan_staged_binds
         (Eta_signal_stabilization_pass.pure_capability context)
+        (active_staging t)
         observers)
     ~commit_staging:(fun context staging ->
       pure.commit_staging

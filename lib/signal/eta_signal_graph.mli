@@ -306,6 +306,7 @@ val reachable_ids :
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'bind ->
   ('source, 'inner, 'scope) Eta_signal_bind.snapshot
   Eta_signal_transaction.staged ->
@@ -339,12 +340,14 @@ val collect_staged_bind_switch_invalidations :
 val remember_pure_disposal_hooks :
   (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'hook list ->
   unit
 
 val remember_timer_refresh_disposal_hooks :
   (_, _, _, 'hook, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'hook list ->
   unit
 
@@ -394,6 +397,7 @@ val read_effective :
 val stage_cell :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'a Eta_signal_transaction.staged ->
   'a ->
   unit
@@ -401,6 +405,7 @@ val stage_cell :
 val update_cell :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'a Eta_signal_transaction.staged ->
   ('a -> 'a) ->
   unit
@@ -420,6 +425,7 @@ val staged_value :
 val discard_staging :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'a Eta_signal_transaction.staged ->
   unit
 
@@ -434,6 +440,7 @@ val set_next_timer_refresh_token :
 val mark_timer_refresh_dirty :
   (_, _, _, _, _, 'refresh, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   mark:(unit -> unit) ->
   record:('refresh -> unit) ->
   unit
@@ -448,6 +455,7 @@ val timer_has_staged_refresh :
 val remember_timer_refresh_timer :
   (_, _, _, _, 'timer, 'refresh, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'timer ->
   refresh_token:('refresh -> int) ->
   staged_token:('timer -> int) ->
@@ -545,10 +553,11 @@ val stabilization_pure_ops :
   release_pending_marks:(lane_access -> 'pending list -> unit) ->
   observer_plan:
     (lane_access ->
+    staging ->
     (lane_access, 'observer, 'event)
     Eta_signal_stabilization_pass.observer_plan) ->
-  stage_pending:(lane_access -> 'pending list -> unit) ->
-  plan_staged_binds:(lane_access -> 'observer list -> unit) ->
+  stage_pending:(lane_access -> staging -> 'pending list -> unit) ->
+  plan_staged_binds:(lane_access -> staging -> 'observer list -> unit) ->
   commit_staging:(lane_access -> staging -> 'hook list) ->
   update_necessity:(lane_access -> unit) ->
   ('pending, 'observer, 'event, 'hook) stabilization_pure
