@@ -938,12 +938,31 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
   run_ok runtime S.stabilize;
   fail_next_change := true;
   run_ok runtime (S.Var.set source 1);
+  let before_failure = run_ok runtime (S.stats ()) in
   expect_fail "observer failure"
     (function `Observer_error `Observer_failed -> true | _ -> false)
     (run runtime S.stabilize);
+  let after_failure = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "failed delivery still commits pure snapshot"
+    (before_failure.S.pure_snapshot_commit_count + 1)
+    after_failure.S.pure_snapshot_commit_count;
+  Alcotest.(check int) "failed delivery does not complete callbacks"
+    before_failure.S.callback_delivery_count
+    after_failure.S.callback_delivery_count;
+  Alcotest.(check int) "failed delivery leaves observer valid" 0
+    after_failure.S.invalid_observer_count;
+  Alcotest.(check int) "failed delivery does not create dead nodes"
+    before_failure.S.dead_node_count after_failure.S.dead_node_count;
   Alcotest.(check int) "snapshot committed despite observer failure" 1
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime S.stabilize;
+  let after_retry = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "retry commits another pure snapshot"
+    (after_failure.S.pure_snapshot_commit_count + 1)
+    after_retry.S.pure_snapshot_commit_count;
+  Alcotest.(check int) "retry completes callback delivery"
+    (after_failure.S.callback_delivery_count + 1)
+    after_retry.S.callback_delivery_count;
   (match List.rev !delivered with
    | [ S.Initialized 0; S.Changed { old_value = 0; new_value = 1 } ] -> ()
    | _ -> Alcotest.fail "expected failed delivery to retry");

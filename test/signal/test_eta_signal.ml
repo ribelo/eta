@@ -3619,47 +3619,6 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
        (Runtime.run rt (widen (Signal.Observer.dispose observer)))
       : unit)
 
-let test_stats_split_snapshot_commit_from_callback_delivery () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let fail_once = ref true in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (fun _update ->
-           if !fail_once then (
-             fail_once := false;
-             Effect.fail `Observer_failed)
-           else Effect.unit))
-  in
-  let before = run_ok rt (Signal.stats ()) in
-  expect_fail "observer callback failure"
-    (function
-      | `Observer_error `Observer_failed -> true
-      | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  let after_failure = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "failed callback still committed pure snapshot"
-    (before.Signal.pure_snapshot_commit_count + 1)
-    after_failure.Signal.pure_snapshot_commit_count;
-  Alcotest.(check int) "failed callback did not complete delivery"
-    before.Signal.callback_delivery_count
-    after_failure.Signal.callback_delivery_count;
-  Alcotest.(check int) "no invalid observer hidden by necessary count" 0
-    after_failure.Signal.invalid_observer_count;
-  Alcotest.(check int) "failure does not add dead nodes"
-    before.Signal.dead_node_count
-    after_failure.Signal.dead_node_count;
-  run_ok rt Signal.stabilize;
-  let after_retry = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "retry commits second pure snapshot"
-    (after_failure.Signal.pure_snapshot_commit_count + 1)
-    after_retry.Signal.pure_snapshot_commit_count;
-  Alcotest.(check int) "retry completes callback delivery"
-    (after_failure.Signal.callback_delivery_count + 1)
-    after_retry.Signal.callback_delivery_count;
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_stats_and_dot_stay_read_only_through_nested_bind_churn () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6790,9 +6749,6 @@ let () =
           Alcotest.test_case
             "observer delivery acknowledgement uses graph lane" `Quick
             test_observer_delivery_acknowledgement_uses_graph_lane;
-          Alcotest.test_case
-            "stats split snapshot commit from callback delivery" `Quick
-            test_stats_split_snapshot_commit_from_callback_delivery;
           Alcotest.test_case "stats and dot survive nested bind churn" `Quick
             test_stats_and_dot_stay_read_only_through_nested_bind_churn;
           Alcotest.test_case "repeated dependencies are stored once" `Quick
