@@ -508,11 +508,17 @@ val collect_observer_hooks :
   collect:('observer -> 'hook list) ->
   'hook list
 
-val count_observers :
+type observer_counts
+
+val observer_counts :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  selected:('observer -> bool) ->
-  int
+  active:('observer -> bool) ->
+  invalid:('observer -> bool) ->
+  observer_counts
+
+val observer_counts_active : observer_counts -> int
+val observer_counts_invalid : observer_counts -> int
 
 val filter_map_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

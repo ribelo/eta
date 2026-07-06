@@ -669,13 +669,29 @@ let remove_observer t _lane ~same observer =
 let collect_observer_hooks t _lane ~selected ~collect =
   List.filter selected t.observers |> List.concat_map collect
 
-let count_observers t _lane ~selected =
+type observer_counts = {
+  active_count : int;
+  invalid_count : int;
+}
+
+let increment_count count = if count = max_int then max_int else count + 1
+
+let observer_counts t _lane ~active ~invalid =
   List.fold_left
-    (fun count observer ->
-      if selected observer then
-        if count = max_int then max_int else count + 1
-      else count)
-    0 t.observers
+    (fun counts observer ->
+      {
+        active_count =
+          (if active observer then increment_count counts.active_count
+           else counts.active_count);
+        invalid_count =
+          (if invalid observer then increment_count counts.invalid_count
+           else counts.invalid_count);
+      })
+    { active_count = 0; invalid_count = 0 }
+    t.observers
+
+let observer_counts_active counts = counts.active_count
+let observer_counts_invalid counts = counts.invalid_count
 
 let filter_map_observers t _lane ~f = List.filter_map f t.observers
 
