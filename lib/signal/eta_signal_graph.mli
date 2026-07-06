@@ -289,16 +289,20 @@ val compare_order :
   'node ->
   int
 
-val filter_map_reachable :
+type ('node, 'bind_node) bind_node_selection
+
+val bind_node_selection :
+  bind:('node -> 'bind_node option) -> ('node, 'bind_node) bind_node_selection
+
+val collect_reachable_bind_nodes :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) reachable_ops ->
   roots:'node list ->
-  f:('node -> 'a option) ->
-  'a list
+  ('node, 'bind_node) bind_node_selection ->
+  'bind_node list
 (** Traverse valid reachable nodes from [roots], deduplicate by node id, and
-    return selected values. The graph owns traversal mechanics; callers supply
-    only graph-shape operations and a projection. *)
+    return bind nodes selected by the caller's concrete node representation. *)
 
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->

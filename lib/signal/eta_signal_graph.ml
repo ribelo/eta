@@ -450,9 +450,17 @@ let fold_reachable _t _lane ops ~roots ~init ~f =
   in
   List.fold_left visit init roots
 
-let filter_map_reachable t lane ops ~roots ~f =
+type ('node, 'bind_node) bind_node_selection = {
+  reachable_bind_node : 'node -> 'bind_node option;
+}
+
+let bind_node_selection ~bind = { reachable_bind_node = bind }
+
+let collect_reachable_bind_nodes t lane ops ~roots selection =
   fold_reachable t lane ops ~roots ~init:[] ~f:(fun selected node ->
-      match f node with None -> selected | Some value -> value :: selected)
+      match selection.reachable_bind_node node with
+      | None -> selected
+      | Some value -> value :: selected)
 
 let collect_reachable_ids t lane ops ~roots =
   fold_reachable t lane ops ~roots ~init:(Hashtbl.create 16)
