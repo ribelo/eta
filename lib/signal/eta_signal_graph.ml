@@ -545,7 +545,8 @@ let saturating_succ value =
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
   staging_reset_rollback_bind :
     staging -> 'bind -> 'hook staged_bind_rollback;
-  staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
+  staging_reset_rollback_timer_refresh_dirty :
+    staging -> 'refresh -> staged_timer_refresh_dirty_rollback;
   staging_reset_clear_timer_refresh_timer :
     staging -> 'timer -> staged_timer_reset;
 }
@@ -562,6 +563,11 @@ and 'hook staged_bind_rollback =
 
 and staged_timer_reset = Staged_timer_reset of { timer_reset : unit -> unit }
 
+and staged_timer_refresh_dirty_rollback =
+  | Staged_timer_refresh_dirty_rollback of {
+      timer_refresh_dirty_rollback : unit -> unit;
+    }
+
 let staged_bind_rollback ~staged ~lifecycle =
   Staged_bind_rollback
     {
@@ -570,6 +576,10 @@ let staged_bind_rollback ~staged ~lifecycle =
     }
 
 let staged_timer_reset ~reset = Staged_timer_reset { timer_reset = reset }
+
+let staged_timer_refresh_dirty_rollback ~rollback =
+  Staged_timer_refresh_dirty_rollback
+    { timer_refresh_dirty_rollback = rollback }
 
 let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
     ~clear_timer_refresh_timer =
@@ -593,6 +603,14 @@ let reset_staging_timer staging timer context =
   match context.staging_reset_clear_timer_refresh_timer staging timer with
   | Staged_timer_reset { timer_reset } -> timer_reset ()
 
+let rollback_staging_timer_refresh_dirty staging refresh context =
+  match
+    context.staging_reset_rollback_timer_refresh_dirty staging refresh
+  with
+  | Staged_timer_refresh_dirty_rollback
+      { timer_refresh_dirty_rollback } ->
+      timer_refresh_dirty_rollback ()
+
 let reset_staging t _lane staging context =
   let exception Rollback_error of Eta_signal_error.graph_error in
   let state_context =
@@ -603,8 +621,8 @@ let reset_staging t _lane staging context =
         | Error err -> raise (Rollback_error err))
       ~rollback_transaction:(fun () ->
         Eta_signal_stabilization.rollback_transaction t.stabilization)
-      ~rollback_timer_refresh_dirty:
-        context.staging_reset_rollback_timer_refresh_dirty
+      ~rollback_timer_refresh_dirty:(fun refresh ->
+        rollback_staging_timer_refresh_dirty staging refresh context)
       ~clear_timer_refresh_timer:(fun timer ->
         reset_staging_timer staging timer context)
   in

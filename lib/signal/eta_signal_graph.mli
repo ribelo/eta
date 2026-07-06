@@ -362,11 +362,17 @@ type staged_timer_reset
 
 val staged_timer_reset : reset:(unit -> unit) -> staged_timer_reset
 
+type staged_timer_refresh_dirty_rollback
+
+val staged_timer_refresh_dirty_rollback :
+  rollback:(unit -> unit) -> staged_timer_refresh_dirty_rollback
+
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
   rollback_bind:(staging -> 'bind -> 'hook staged_bind_rollback) ->
-  rollback_timer_refresh_dirty:('refresh -> unit) ->
+  rollback_timer_refresh_dirty:
+    (staging -> 'refresh -> staged_timer_refresh_dirty_rollback) ->
   clear_timer_refresh_timer:(staging -> 'timer -> staged_timer_reset) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 

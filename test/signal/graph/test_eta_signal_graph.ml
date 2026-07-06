@@ -223,7 +223,9 @@ let staging_reset_context
                  ~attach_new_inner:(fun () () -> ()))
   in
   Graph.staging_reset_context ~rollback_bind
-    ~rollback_timer_refresh_dirty
+    ~rollback_timer_refresh_dirty:(fun _staging refresh ->
+      Graph.staged_timer_refresh_dirty_rollback ~rollback:(fun () ->
+          rollback_timer_refresh_dirty refresh))
     ~clear_timer_refresh_timer:(fun _staging timer ->
       Graph.staged_timer_reset ~reset:(fun () ->
           clear_timer_refresh_timer timer))
@@ -1559,8 +1561,11 @@ let test_timer_refresh_reset_plan_owns_staging () =
                  ~attach_new_inner:(fun () () -> ()))
         in
         Graph.staging_reset_context ~rollback_bind
-          ~rollback_timer_refresh_dirty:(fun refresh ->
-            record events ("rollback_dirty:" ^ string_of_int refresh))
+          ~rollback_timer_refresh_dirty:(fun callback_staging refresh ->
+            if not (callback_staging == staging) then
+              Alcotest.fail "dirty rollback received stale staging token";
+            Graph.staged_timer_refresh_dirty_rollback ~rollback:(fun () ->
+                record events ("rollback_dirty:" ^ string_of_int refresh)))
           ~clear_timer_refresh_timer:(fun callback_staging timer ->
             if not (callback_staging == staging) then
               Alcotest.fail "timer reset received stale staging token";
