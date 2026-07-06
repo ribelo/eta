@@ -78,22 +78,46 @@ val reset_staging :
   ('bind, 'hook, 'timer, 'refresh) reset_context ->
   'hook list
 
-type ('bind, 'node, 'hook, 'timer) commit_context
+type ('bind, 'hook) bind_commit_plan
 
-val commit_context :
-  preflight:(unit -> unit) ->
-  commit_bind:('bind -> 'hook list) ->
+val bind_commit_plan :
+  commit:('bind -> 'hook list) ->
+  ('bind, 'hook) bind_commit_plan
+
+type 'node signal_commit_plan
+
+val signal_commit_plan :
   prepare_signal:('node -> unit) ->
-  commit_transaction:(unit -> unit) ->
-  commit_timer_refresh:('timer -> unit) ->
   commit_signal:('node -> unit) ->
+  'node signal_commit_plan
+
+type 'timer timer_commit_plan
+
+val timer_commit_plan :
+  commit:('timer -> unit) ->
+  'timer timer_commit_plan
+
+type snapshot_commit_plan
+
+val snapshot_commit_plan :
+  commit_transaction:(unit -> unit) ->
   advance_snapshot:(int -> int) ->
-  ('bind, 'node, 'hook, 'timer) commit_context
+  snapshot_commit_plan
+
+type ('bind, 'node, 'hook, 'timer) commit_plan
+
+val commit_plan :
+  preflight:(unit -> unit) ->
+  binds:('bind, 'hook) bind_commit_plan ->
+  signals:'node signal_commit_plan ->
+  timers:'timer timer_commit_plan ->
+  snapshot:snapshot_commit_plan ->
+  ('bind, 'node, 'hook, 'timer) commit_plan
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
   staging ->
-  ('bind, 'node, 'hook, 'timer) commit_context ->
+  ('bind, 'node, 'hook, 'timer) commit_plan ->
   'hook list
 
 val pure_snapshot_commit_count : (_, _, _, _, _, _) t -> int

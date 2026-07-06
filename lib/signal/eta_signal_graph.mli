@@ -366,21 +366,39 @@ val reset_staging :
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context ->
   'hook list
 
-type ('bind, 'node, 'hook, 'timer) staging_commit_context
+type ('bind, 'hook) staging_bind_commit_plan
 
-val staging_commit_context :
-  preflight:(staging -> unit) ->
-  commit_bind:(staging -> 'bind -> 'hook list) ->
+val staging_bind_commit_plan :
+  commit:(staging -> 'bind -> 'hook list) ->
+  ('bind, 'hook) staging_bind_commit_plan
+
+type 'node staging_signal_commit_plan
+
+val staging_signal_commit_plan :
   prepare_signal:(staging -> 'node -> unit) ->
-  commit_timer_refresh:('timer -> unit) ->
   commit_signal:('node -> unit) ->
-  ('bind, 'node, 'hook, 'timer) staging_commit_context
+  'node staging_signal_commit_plan
+
+type 'timer staging_timer_commit_plan
+
+val staging_timer_commit_plan :
+  commit:('timer -> unit) ->
+  'timer staging_timer_commit_plan
+
+type ('bind, 'node, 'hook, 'timer) staging_commit_plan
+
+val staging_commit_plan :
+  preflight:(staging -> unit) ->
+  binds:('bind, 'hook) staging_bind_commit_plan ->
+  signals:'node staging_signal_commit_plan ->
+  timers:'timer staging_timer_commit_plan ->
+  ('bind, 'node, 'hook, 'timer) staging_commit_plan
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
   lane_access ->
   staging ->
-  ('bind, 'node, 'hook, 'timer) staging_commit_context ->
+  ('bind, 'node, 'hook, 'timer) staging_commit_plan ->
   ('hook list, Eta_signal_error.graph_error) result
 
 val pure_snapshot_commit_count :

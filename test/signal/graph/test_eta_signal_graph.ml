@@ -163,6 +163,17 @@ let run_effect label eff =
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error _ -> Alcotest.fail (label ^ " failed")
 
+let staging_commit_plan ?(preflight = fun _staging -> ())
+    ?(commit_bind = fun _staging _bind -> [])
+    ?(prepare_signal = fun _staging _node -> ())
+    ?(commit_timer_refresh = fun _timer -> ())
+    ?(commit_signal = fun _node -> ()) () =
+  Graph.staging_commit_plan ~preflight
+    ~binds:(Graph.staging_bind_commit_plan ~commit:commit_bind)
+    ~signals:
+      (Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
+    ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
+
 let with_graph_lane graph f =
   run_effect "lane access" (graph_lane_effect graph f)
 
@@ -179,15 +190,8 @@ let empty_stabilization_ops graph =
       ~stage_pending:(fun _context _staging _pending -> ())
       ~plan_staged_binds:(fun _context _staging _observers -> ())
       ~commit_staging:(fun context staging ->
-        let commit_context =
-          Graph.staging_commit_context
-            ~preflight:(fun _staging -> ())
-            ~commit_bind:(fun _staging _bind -> [])
-            ~prepare_signal:(fun _staging _node -> ())
-            ~commit_timer_refresh:(fun _timer -> ())
-            ~commit_signal:(fun _node -> ())
-        in
-        match Graph.commit_staging graph context staging commit_context with
+        let plan = staging_commit_plan () in
+        match Graph.commit_staging graph context staging plan with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"
@@ -711,8 +715,8 @@ let test_computed_nodes_are_staging_scoped () =
       ~commit_staging:(fun context staging ->
         Graph.iter_computed graph context staging ~f:(fun node ->
             record events ("iter:" ^ string_of_int node.compute_id));
-        let commit_context =
-          Graph.staging_commit_context
+        let plan =
+          staging_commit_plan
             ~preflight:(fun callback_staging ->
               Graph.iter_computed graph context callback_staging
                 ~f:(fun node ->
@@ -724,8 +728,9 @@ let test_computed_nodes_are_staging_scoped () =
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun node ->
               record events ("commit:" ^ string_of_int node.compute_id))
+            ()
         in
-        match Graph.commit_staging graph context staging commit_context with
+        match Graph.commit_staging graph context staging plan with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"
@@ -845,8 +850,8 @@ let test_stage_bind_switch_owns_transaction_staging () =
           if not (actual == staging) then
             Alcotest.failf "%s received stale staging token" label
         in
-        let commit_context =
-          Graph.staging_commit_context
+        let plan =
+          staging_commit_plan
             ~preflight:(fun callback_staging ->
               check_staging "preflight" callback_staging;
               record events "preflight")
@@ -858,8 +863,9 @@ let test_stage_bind_switch_owns_transaction_staging () =
               check_staging "prepare_signal" callback_staging)
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
+            ()
         in
-        match Graph.commit_staging graph context staging commit_context with
+        match Graph.commit_staging graph context staging plan with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"
@@ -974,15 +980,16 @@ let test_observer_delivery_plan_uses_collection_order () =
                  observers)))
       ~commit_staging:(fun cap staging ->
         check_cap cap;
-        let commit_context =
-          Graph.staging_commit_context
+        let plan =
+          staging_commit_plan
             ~preflight:(fun _staging -> record events "preflight")
             ~commit_bind:(fun _staging _bind -> [])
             ~prepare_signal:(fun _staging _node -> ())
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
+            ()
         in
-        match Graph.commit_staging graph cap staging commit_context with
+        match Graph.commit_staging graph cap staging plan with
         | Ok hooks -> hooks
         | Error err ->
             Alcotest.failf "unexpected graph error: %s"

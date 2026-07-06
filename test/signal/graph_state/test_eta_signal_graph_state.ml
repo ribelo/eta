@@ -7,6 +7,19 @@ let string_list = Alcotest.(list string)
 let create () : (string, string, string, string, string, string) State.t =
   State.create ()
 
+let commit_plan ?(preflight = fun () -> ())
+    ?(commit_bind = fun _bind -> []) ?(prepare_signal = fun _node -> ())
+    ?(commit_transaction = fun () -> ())
+    ?(commit_timer_refresh = fun _timer -> ())
+    ?(commit_signal = fun _node -> ())
+    ?(advance_snapshot = fun value -> value + 1) () =
+  State.commit_plan ~preflight
+    ~binds:(State.bind_commit_plan ~commit:commit_bind)
+    ~signals:(State.signal_commit_plan ~prepare_signal ~commit_signal)
+    ~timers:(State.timer_commit_plan ~commit:commit_timer_refresh)
+    ~snapshot:
+      (State.snapshot_commit_plan ~commit_transaction ~advance_snapshot)
+
 let test_generation_pending_and_active_refresh () =
   let state = create () in
   State.enqueue_pending state "first";
@@ -78,7 +91,7 @@ let test_commit_staging_owns_state_cleanup_order () =
   State.stage_timer_refresh_timer state staging "timer";
   let hooks =
     State.commit_staging state staging
-      (State.commit_context
+      (commit_plan
          ~preflight:(fun () -> record events "preflight")
          ~commit_bind:(fun bind ->
            record events ("commit_bind:" ^ bind);
@@ -88,7 +101,7 @@ let test_commit_staging_owns_state_cleanup_order () =
          ~commit_timer_refresh:(fun timer ->
            record events ("commit_timer:" ^ timer))
          ~commit_signal:(fun node -> record events ("commit_signal:" ^ node))
-         ~advance_snapshot:(fun value -> value + 1))
+         ())
   in
   Alcotest.(check string_list)
     "events"
@@ -108,6 +121,98 @@ let test_commit_staging_owns_state_cleanup_order () =
     (State.pure_snapshot_commit_count state);
   Alcotest.(check string_list) "binds cleared" [] (State.staged_binds state);
   Alcotest.(check string_list) "nodes cleared" [] (State.computed_nodes state)
+
+let test_commit_staging_generated_matrix () =
+  let values prefix count =
+    List.init count (fun index -> prefix ^ string_of_int index)
+  in
+  let cases =
+    List.concat_map
+      (fun bind_count ->
+        List.concat_map
+          (fun node_count ->
+            List.concat_map
+              (fun timer_count ->
+                [
+                  (bind_count, node_count, timer_count, false);
+                  (bind_count, node_count, timer_count, true);
+                ])
+              [ 0; 1; 2 ])
+          [ 0; 1; 2 ])
+      [ 0; 1; 2 ]
+  in
+  List.iter
+    (fun (bind_count, node_count, timer_count, active_refresh) ->
+      let label =
+        Printf.sprintf "binds=%d nodes=%d timers=%d refresh=%b"
+          bind_count node_count timer_count active_refresh
+      in
+      let state = create () in
+      let events = ref [] in
+      let staging =
+        State.begin_staging state
+          ~timer_refresh:(if active_refresh then Some "refresh" else None)
+      in
+      let binds = values "bind" bind_count in
+      let nodes = values "node" node_count in
+      let timers = values "timer" timer_count in
+      List.iter (State.stage_bind state staging) binds;
+      List.iter
+        (fun node ->
+          State.remember_computed state staging ~generation:1 node
+            ~project:(fun value -> value)
+            ~remember:(fun ~generation:_ remembered value ->
+              value :: remembered))
+        nodes;
+      List.iter (State.stage_timer_refresh_timer state staging) timers;
+      State.remember_pure_disposal_hooks state staging [ "pure-hook" ];
+      State.remember_timer_refresh_disposal_hooks state staging
+        [ "timer-hook" ];
+      let staged_binds = List.rev binds in
+      let staged_nodes = List.rev nodes in
+      let staged_timers = List.rev timers in
+      let hooks =
+        State.commit_staging state staging
+          (commit_plan
+             ~preflight:(fun () -> record events "preflight")
+             ~commit_bind:(fun bind ->
+               record events ("commit_bind:" ^ bind);
+               [ "bind-hook:" ^ bind ])
+             ~prepare_signal:(fun node ->
+               record events ("prepare:" ^ node))
+             ~commit_transaction:(fun () ->
+               record events "commit_transaction")
+             ~commit_timer_refresh:(fun timer ->
+               record events ("commit_timer:" ^ timer))
+             ~commit_signal:(fun node ->
+               record events ("commit_signal:" ^ node))
+             ())
+      in
+      let expected_events =
+        [ "preflight" ]
+        @ List.map (fun bind -> "commit_bind:" ^ bind) staged_binds
+        @ List.map (fun node -> "prepare:" ^ node) staged_nodes
+        @ [ "commit_transaction" ]
+        @ List.map (fun timer -> "commit_timer:" ^ timer) staged_timers
+        @ List.map (fun node -> "commit_signal:" ^ node) staged_nodes
+      in
+      Alcotest.(check string_list) (label ^ " events") expected_events
+        !events;
+      let expected_hooks =
+        List.map (fun bind -> "bind-hook:" ^ bind) staged_binds
+        @
+        if active_refresh then [ "pure-hook"; "timer-hook" ]
+        else [ "timer-hook"; "pure-hook" ]
+      in
+      Alcotest.(check string_list) (label ^ " hooks") expected_hooks hooks;
+      Alcotest.(check int)
+        (label ^ " snapshot count") 1
+        (State.pure_snapshot_commit_count state);
+      Alcotest.(check string_list)
+        (label ^ " binds cleared") [] (State.staged_binds state);
+      Alcotest.(check string_list)
+        (label ^ " nodes cleared") [] (State.computed_nodes state))
+    cases
 
 let test_staging_token_validation () =
   let state = create () in
@@ -168,6 +273,8 @@ let () =
             test_reset_staging_owns_state_cleanup_order;
           Alcotest.test_case "commit staging state" `Quick
             test_commit_staging_owns_state_cleanup_order;
+          Alcotest.test_case "generated commit staging matrix" `Quick
+            test_commit_staging_generated_matrix;
           Alcotest.test_case "staging token validation" `Quick
             test_staging_token_validation;
           Alcotest.test_case "staging mutations require token" `Quick

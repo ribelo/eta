@@ -150,38 +150,65 @@ let reset_staging t staging context =
   clear_staging_token t staging;
   hooks
 
-type ('bind, 'node, 'hook, 'timer) commit_context = {
-  commit_preflight : unit -> unit;
-  commit_bind : 'bind -> 'hook list;
-  commit_prepare_signal : 'node -> unit;
-  commit_transaction : unit -> unit;
-  commit_timer_refresh : 'timer -> unit;
-  commit_signal : 'node -> unit;
-  commit_advance_snapshot : int -> int;
+type ('bind, 'hook) bind_commit_plan = {
+  bind_commit : 'bind -> 'hook list;
 }
 
-let commit_context ~preflight ~commit_bind ~prepare_signal
-    ~commit_transaction ~commit_timer_refresh ~commit_signal
-    ~advance_snapshot =
+let bind_commit_plan ~commit = { bind_commit = commit }
+
+type 'node signal_commit_plan = {
+  signal_prepare : 'node -> unit;
+  signal_commit : 'node -> unit;
+}
+
+let signal_commit_plan ~prepare_signal ~commit_signal =
+  { signal_prepare = prepare_signal; signal_commit = commit_signal }
+
+type 'timer timer_commit_plan = {
+  timer_commit : 'timer -> unit;
+}
+
+let timer_commit_plan ~commit = { timer_commit = commit }
+
+type snapshot_commit_plan = {
+  snapshot_commit_transaction : unit -> unit;
+  snapshot_advance : int -> int;
+}
+
+let snapshot_commit_plan ~commit_transaction ~advance_snapshot =
+  {
+    snapshot_commit_transaction = commit_transaction;
+    snapshot_advance = advance_snapshot;
+  }
+
+type ('bind, 'node, 'hook, 'timer) commit_plan = {
+  commit_preflight : unit -> unit;
+  commit_binds : ('bind, 'hook) bind_commit_plan;
+  commit_signals : 'node signal_commit_plan;
+  commit_timers : 'timer timer_commit_plan;
+  commit_snapshot : snapshot_commit_plan;
+}
+
+let commit_plan ~preflight ~binds ~signals ~timers ~snapshot =
   {
     commit_preflight = preflight;
-    commit_bind;
-    commit_prepare_signal = prepare_signal;
-    commit_transaction;
-    commit_timer_refresh;
-    commit_signal;
-    commit_advance_snapshot = advance_snapshot;
+    commit_binds = binds;
+    commit_signals = signals;
+    commit_timers = timers;
+    commit_snapshot = snapshot;
   }
 
 let commit_staging t staging context =
   validate_staging t staging;
   context.commit_preflight ();
-  let bind_hooks = List.concat_map context.commit_bind t.staged_binds in
+  let bind_hooks =
+    List.concat_map context.commit_binds.bind_commit t.staged_binds
+  in
   remember_pure_disposal_hooks t staging bind_hooks;
-  List.iter context.commit_prepare_signal t.computed_nodes;
-  context.commit_transaction ();
-  List.iter context.commit_timer_refresh t.timer_refresh_staged_timers;
-  List.iter context.commit_signal t.computed_nodes;
+  List.iter context.commit_signals.signal_prepare t.computed_nodes;
+  context.commit_snapshot.snapshot_commit_transaction ();
+  List.iter context.commit_timers.timer_commit t.timer_refresh_staged_timers;
+  List.iter context.commit_signals.signal_commit t.computed_nodes;
   let hooks = t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks in
   t.computed_nodes <- [];
   t.staged_binds <- [];
@@ -189,7 +216,7 @@ let commit_staging t staging context =
   t.timer_refresh_disposal_hooks <- [];
   t.timer_refresh_staged_timers <- [];
   t.pure_snapshot_commit_count <-
-    context.commit_advance_snapshot t.pure_snapshot_commit_count;
+    context.commit_snapshot.snapshot_advance t.pure_snapshot_commit_count;
   clear_staging_token t staging;
   hooks
 

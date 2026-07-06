@@ -537,40 +537,75 @@ let reset_staging t _lane staging context =
   in
   Eta_signal_graph_state.reset_staging t.state staging state_context
 
-type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
-  staging_commit_preflight : staging -> unit;
-  staging_commit_bind : staging -> 'bind -> 'hook list;
-  staging_commit_prepare_signal : staging -> 'node -> unit;
-  staging_commit_timer_refresh : 'timer -> unit;
-  staging_commit_signal : 'node -> unit;
+type ('bind, 'hook) staging_bind_commit_plan = {
+  staging_bind_commit : staging -> 'bind -> 'hook list;
 }
 
-let staging_commit_context ~preflight ~commit_bind ~prepare_signal
-    ~commit_timer_refresh ~commit_signal =
+let staging_bind_commit_plan ~commit = { staging_bind_commit = commit }
+
+type 'node staging_signal_commit_plan = {
+  staging_signal_prepare : staging -> 'node -> unit;
+  staging_signal_commit : 'node -> unit;
+}
+
+let staging_signal_commit_plan ~prepare_signal ~commit_signal =
+  {
+    staging_signal_prepare = prepare_signal;
+    staging_signal_commit = commit_signal;
+  }
+
+type 'timer staging_timer_commit_plan = {
+  staging_timer_commit : 'timer -> unit;
+}
+
+let staging_timer_commit_plan ~commit = { staging_timer_commit = commit }
+
+type ('bind, 'node, 'hook, 'timer) staging_commit_plan = {
+  staging_commit_preflight : staging -> unit;
+  staging_commit_binds : ('bind, 'hook) staging_bind_commit_plan;
+  staging_commit_signals : 'node staging_signal_commit_plan;
+  staging_commit_timers : 'timer staging_timer_commit_plan;
+}
+
+let staging_commit_plan ~preflight ~binds ~signals ~timers =
   {
     staging_commit_preflight = preflight;
-    staging_commit_bind = commit_bind;
-    staging_commit_prepare_signal = prepare_signal;
-    staging_commit_timer_refresh = commit_timer_refresh;
-    staging_commit_signal = commit_signal;
+    staging_commit_binds = binds;
+    staging_commit_signals = signals;
+    staging_commit_timers = timers;
   }
 
 let commit_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
-  let state_context =
-    Eta_signal_graph_state.commit_context
+  let state_plan =
+    Eta_signal_graph_state.commit_plan
       ~preflight:(fun () -> context.staging_commit_preflight staging)
-      ~commit_bind:(context.staging_commit_bind staging)
-      ~prepare_signal:(context.staging_commit_prepare_signal staging)
-      ~commit_transaction:(fun () ->
-        match Eta_signal_stabilization.commit_transaction t.stabilization with
-        | Ok () -> ()
-        | Error err -> raise (Commit_error err))
-      ~commit_timer_refresh:context.staging_commit_timer_refresh
-      ~commit_signal:context.staging_commit_signal
-      ~advance_snapshot:saturating_succ
+      ~binds:
+        (Eta_signal_graph_state.bind_commit_plan
+           ~commit:
+             (context.staging_commit_binds.staging_bind_commit staging))
+      ~signals:
+        (Eta_signal_graph_state.signal_commit_plan
+           ~prepare_signal:
+             (context.staging_commit_signals.staging_signal_prepare
+                staging)
+           ~commit_signal:
+             context.staging_commit_signals.staging_signal_commit)
+      ~timers:
+        (Eta_signal_graph_state.timer_commit_plan
+           ~commit:context.staging_commit_timers.staging_timer_commit)
+      ~snapshot:
+        (Eta_signal_graph_state.snapshot_commit_plan
+           ~commit_transaction:(fun () ->
+             match
+               Eta_signal_stabilization.commit_transaction
+                 t.stabilization
+             with
+             | Ok () -> ()
+             | Error err -> raise (Commit_error err))
+           ~advance_snapshot:saturating_succ)
   in
-  try Ok (Eta_signal_graph_state.commit_staging t.state staging state_context)
+  try Ok (Eta_signal_graph_state.commit_staging t.state staging state_plan)
   with Commit_error err -> Error err
 
 let pure_snapshot_commit_count t _lane =

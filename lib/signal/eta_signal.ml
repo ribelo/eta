@@ -1335,14 +1335,19 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.reset_staging graph lane staging context
 
   let commit_staging lane staging =
-    let context =
-      Graph.staging_commit_context
+    let plan =
+      Graph.staging_commit_plan
         ~preflight:(preflight_commit_staging lane)
-        ~commit_bind:(commit_bind lane)
-        ~prepare_signal:(prepare_signal_commit lane)
-        ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
+        ~binds:(Graph.staging_bind_commit_plan ~commit:(commit_bind lane))
+        ~signals:
+          (Graph.staging_signal_commit_plan
+             ~prepare_signal:(prepare_signal_commit lane)
+             ~commit_signal)
+        ~timers:
+          (Graph.staging_timer_commit_plan
+             ~commit:commit_timer_refresh_staging)
     in
-    match Graph.commit_staging graph lane staging context with
+    match Graph.commit_staging graph lane staging plan with
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)
 
