@@ -2269,6 +2269,13 @@ let test_dispose_unlinks_observer_from_graph () =
 let test_signal_version_overflow_does_not_publish_partial_snapshot () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
+  let set_signal_version (signal : int Overflow_signal.signal) value =
+    let snapshot =
+      Eta_signal_testable.Transaction.current signal.Overflow_signal.snapshot
+    in
+    Overflow_signal.publish_initial_current signal.Overflow_signal.snapshot
+      (Eta_signal_testable.Signal_snapshot.with_version snapshot value)
+  in
   let source = Overflow_signal.Var.create 1 in
   let signal = Overflow_signal.Var.watch source in
   let events = ref [] in
@@ -2278,13 +2285,13 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
            Effect.sync (fun () -> events := update :: !events)))
   in
   run_ok rt Overflow_signal.stabilize;
-  Overflow_signal.Private_test_hooks.set_signal_version signal max_int;
+  set_signal_version signal max_int;
   run_ok rt (Overflow_signal.Var.set source 2);
   expect_fail "signal version overflow" (counter_overflow "signal version")
     (Eta_eio.Runtime.run rt (widen Overflow_signal.stabilize));
   Alcotest.(check int) "old snapshot remains after version overflow" 1
     (run_ok rt (Overflow_signal.Observer.read observer));
-  Overflow_signal.Private_test_hooks.set_signal_version signal 0;
+  set_signal_version signal 0;
   run_ok rt Overflow_signal.stabilize;
   Alcotest.(check int) "retry publishes pending source" 2
     (run_ok rt (Overflow_signal.Observer.read observer));
@@ -3364,12 +3371,22 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
+  let set_timer_generation (signal : int Overflow_signal.signal) generation =
+    match signal.Overflow_signal.timer with
+    | None -> invalid_arg "expected timer signal"
+    | Some timer ->
+        let snapshot_cell = Eta_signal_testable.Timer.snapshot_cell timer in
+        let snapshot = Eta_signal_testable.Transaction.current snapshot_cell in
+        Overflow_signal.publish_timer_current snapshot_cell
+          (Eta_signal_testable.Timer_policy.snapshot_with_generation snapshot
+             generation)
+  in
   let signal = run_ok rt (Overflow_signal.Time.interval (Duration.ms 10)) in
   let observer =
     run_ok rt (Overflow_signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
-  Overflow_signal.Private_test_hooks.set_timer_generation signal max_int;
+  set_timer_generation signal max_int;
   expect_fail "timer generation overflow"
     (counter_overflow "timer generation")
     (Eta_eio.Runtime.run rt (widen (Overflow_signal.Observer.dispose observer)))
@@ -3377,11 +3394,21 @@ let test_time_timer_generation_overflow_fails_loudly () =
 let test_time_timer_start_generation_overflow_is_precommit_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
+  let set_timer_generation (signal : int Overflow_signal.signal) generation =
+    match signal.Overflow_signal.timer with
+    | None -> invalid_arg "expected timer signal"
+    | Some timer ->
+        let snapshot_cell = Eta_signal_testable.Timer.snapshot_cell timer in
+        let snapshot = Eta_signal_testable.Transaction.current snapshot_cell in
+        Overflow_signal.publish_timer_current snapshot_cell
+          (Eta_signal_testable.Timer_policy.snapshot_with_generation snapshot
+             generation)
+  in
   let use_timer = Overflow_signal.Var.create false in
   let timer_signal =
     run_ok rt (Overflow_signal.Time.interval (Duration.ms 10))
   in
-  Overflow_signal.Private_test_hooks.set_timer_generation timer_signal max_int;
+  set_timer_generation timer_signal max_int;
   let selected =
     Overflow_signal.bind (Overflow_signal.Var.watch use_timer) (fun active ->
         if active then timer_signal else Overflow_signal.const (-1))

@@ -419,22 +419,6 @@ module Make (Observer_error : Observer_error) () = struct
     let with_hook hook action f = Test_hooks.with_hook state hook action f
     let clear () = Test_hooks.clear state
     let run hook = Test_hooks.run state hook
-
-    let set_signal_version signal value =
-      let snapshot = Transaction.current signal.snapshot in
-      publish_initial_current signal.snapshot
-        (Signal_snapshot.with_version snapshot value)
-
-    let set_timer_generation signal generation =
-      match signal.timer with
-      | None ->
-          invalid_arg "Eta_signal.Private_test_hooks: expected timer signal"
-      | Some timer ->
-          let snapshot_cell = Timer.snapshot_cell timer in
-          let snapshot = Transaction.current snapshot_cell in
-          publish_timer_current snapshot_cell
-            (Timer_policy.snapshot_with_generation snapshot generation)
-
   end
 
   type disposal_hook = Cleanup.hook
