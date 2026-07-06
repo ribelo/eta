@@ -713,12 +713,22 @@ type necessary_snapshot
 val necessary_count : necessary_snapshot -> int
 val necessary_mem : necessary_snapshot -> Eta_signal_id.signal -> bool
 
+type ('observer, 'node) demand_roots
+
+val demand_roots :
+  demand:('observer -> bool) ->
+  root:('observer -> 'node) ->
+  ('observer, 'node) demand_roots
+(** Describe which observers demand graph roots. The graph owns observer
+    registry traversal; callers supply lifecycle demand and concrete root
+    projection for their observer representation. *)
+
 val necessary_ids :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  root:('observer -> 'node option) ->
+  roots:('observer, 'node) demand_roots ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   necessary_snapshot
@@ -731,7 +741,7 @@ val update_necessity :
   lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  root:('observer -> 'node option) ->
+  roots:('observer, 'node) demand_roots ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   necessary_snapshot
@@ -745,7 +755,7 @@ val timer_demand :
   lane_access ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  root:('observer -> 'node option) ->
+  roots:('observer, 'node) demand_roots ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
   timer:('node -> ('id * 'timer) option) ->
@@ -768,7 +778,7 @@ val post_commit_necessary_timers :
   ('id, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  root:('observer -> 'node option) ->
+  roots:('observer, 'node) demand_roots ->
   timer:('node -> ('id * 'timer) option) ->
   ('id, 'timer) Hashtbl.t
 (** Collect the timers that will remain necessary after committing graph

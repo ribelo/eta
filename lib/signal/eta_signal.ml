@@ -814,9 +814,9 @@ module Make (Observer_error : Observer_error) () = struct
         if selected packed then Some (P observer.obs_signal) else None)
       observers
 
-  let observer_demand_root (O observer as packed) =
-    if observer_demands_signal packed then Some (P observer.obs_signal)
-    else None
+  let observer_demand_roots =
+    Graph.demand_roots ~demand:observer_demands_signal
+      ~root:(fun (O observer) -> P observer.obs_signal)
 
   let observer_active_roots observers =
     observer_roots observer_active observers
@@ -1235,7 +1235,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     Graph.post_commit_necessary_timers graph lane reachable_ops
       ~collect_live_nodes:collect_live_weak_signals
-      ~root:observer_demand_root
+      ~roots:observer_demand_roots
       ~timer:(fun (P signal) ->
         Option.map (fun timer -> (signal.id, timer)) signal.timer)
 
@@ -1572,14 +1572,14 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_necessary_node_ids lane =
     Graph.necessary_ids graph lane
       ~collect_live_nodes:collect_live_weak_signals
-      ~root:observer_demand_root
+      ~roots:observer_demand_roots
       ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
 
   let update_necessity_counters_unlocked lane =
     ignore
       (Graph.update_necessity graph lane
          ~collect_live_nodes:collect_live_weak_signals
-         ~root:observer_demand_root
+         ~roots:observer_demand_roots
          ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
         : Graph.necessary_snapshot)
 
@@ -1596,7 +1596,7 @@ module Make (Observer_error : Observer_error) () = struct
   let timer_demand_unlocked lane =
     Graph.timer_demand graph lane
       ~collect_live_nodes:collect_live_weak_signals
-      ~root:observer_demand_root
+      ~roots:observer_demand_roots
       ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
       ~timer:signal_timer
 

@@ -934,12 +934,28 @@ type necessary_snapshot = (Eta_signal_id.signal, unit) Hashtbl.t
 let necessary_count snapshot = Hashtbl.length snapshot
 let necessary_mem snapshot id = Hashtbl.mem snapshot id
 
-let necessary_ids t lane ~collect_live_nodes ~root ~reachable_ids =
-  ignore (live_nodes t lane ~collect_live_nodes : _ list);
-  reachable_ids ~roots:(List.filter_map root t.observers)
+type ('observer, 'node) demand_roots = {
+  demand_root_demands : 'observer -> bool;
+  demand_root_node : 'observer -> 'node;
+}
 
-let update_necessity t lane ~collect_live_nodes ~root ~reachable_ids =
-  let next = necessary_ids t lane ~collect_live_nodes ~root ~reachable_ids in
+let demand_roots ~demand ~root =
+  { demand_root_demands = demand; demand_root_node = root }
+
+let demand_root_nodes roots observers =
+  List.filter_map
+    (fun observer ->
+      if roots.demand_root_demands observer then
+        Some (roots.demand_root_node observer)
+      else None)
+    observers
+
+let necessary_ids t lane ~collect_live_nodes ~roots ~reachable_ids =
+  ignore (live_nodes t lane ~collect_live_nodes : _ list);
+  reachable_ids ~roots:(demand_root_nodes roots t.observers)
+
+let update_necessity t lane ~collect_live_nodes ~roots ~reachable_ids =
+  let next = necessary_ids t lane ~collect_live_nodes ~roots ~reachable_ids in
   Eta_signal_graph_core.update_necessary_ids t.core lane next;
   next
 
@@ -948,11 +964,11 @@ type ('id, 'timer) timer_demand = {
   timer_demand_timers : ('id * 'timer) list;
 }
 
-let timer_demand t lane ~collect_live_nodes ~root ~reachable_ids ~timer =
+let timer_demand t lane ~collect_live_nodes ~roots ~reachable_ids ~timer =
   let nodes = live_nodes t lane ~collect_live_nodes in
   {
     timer_demand_necessary_ids =
-      reachable_ids ~roots:(List.filter_map root t.observers);
+      reachable_ids ~roots:(demand_root_nodes roots t.observers);
     timer_demand_timers = List.filter_map timer nodes;
   }
 
@@ -960,11 +976,11 @@ let timer_demand_plan demand ~plan =
   plan ~necessary:demand.timer_demand_necessary_ids
     ~timers:demand.timer_demand_timers
 
-let post_commit_necessary_timers t lane reachable_ops ~collect_live_nodes ~root
-    ~timer =
+let post_commit_necessary_timers t lane reachable_ops ~collect_live_nodes
+    ~roots ~timer =
   ignore (live_nodes t lane ~collect_live_nodes : _ list);
   fold_reachable t lane reachable_ops
-    ~roots:(List.filter_map root t.observers)
+    ~roots:(demand_root_nodes roots t.observers)
     ~init:(Hashtbl.create 8)
     ~f:(fun timers node ->
       Option.iter (fun (id, timer) -> Hashtbl.replace timers id timer) (timer node);
