@@ -481,7 +481,7 @@ let rollback_staged_bind_switch ~staged ~invalidate_new_scope =
   Eta_signal_bind.rollback_staged_switch ~staged ~invalidate_new_scope
   |> map_bind_switch_result
 
-let collect_staged_bind_switch_invalidations t _lane ~init ~staged_switch
+let collect_staged_bind_switch_invalidations t _lane _staging ~init ~staged_switch
     ~collect_old_scope =
   Eta_signal_bind.collect_staged_switch_invalidations ~init
     ~switches:(Eta_signal_graph_state.staged_binds t.state) ~staged_switch
@@ -583,12 +583,12 @@ let update_cell t _lane _staging cell f =
   let value = Eta_signal_transaction.read transaction cell in
   Eta_signal_transaction.stage transaction cell (f value)
 
-let staged_in_active_transaction t _lane cell =
+let staged_in_active_transaction t _lane _staging cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction -> Eta_signal_transaction.staged transaction cell
   | None -> false
 
-let staged_value t _lane cell =
+let staged_value t _lane _staging cell =
   match Eta_signal_stabilization.transaction t.stabilization with
   | Some transaction when Eta_signal_transaction.staged transaction cell ->
       Some (Eta_signal_transaction.read transaction cell)

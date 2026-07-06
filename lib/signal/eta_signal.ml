@@ -757,8 +757,8 @@ module Make (Observer_error : Observer_error) () = struct
   let update_signal_staging lane staging signal f =
     Graph.update_cell graph lane staging signal.snapshot f
 
-  let signal_staged_in_active_transaction lane signal =
-    Graph.staged_in_active_transaction graph lane signal.snapshot
+  let signal_staged_in_active_transaction lane staging signal =
+    Graph.staged_in_active_transaction graph lane staging signal.snapshot
 
   let discard_signal_staging lane staging signal =
     Graph.discard_staging graph lane staging signal.snapshot
@@ -1095,7 +1095,7 @@ module Make (Observer_error : Observer_error) () = struct
   let prepare_signal_commit lane staging (P signal) =
     if
       (not signal.valid)
-      && signal_staged_in_active_transaction lane signal
+      && signal_staged_in_active_transaction lane staging signal
     then
       discard_signal_staging lane staging signal
 
@@ -1137,26 +1137,26 @@ module Make (Observer_error : Observer_error) () = struct
   let bind_effective_inner bind =
     Bind.inner (bind_effective_snapshot bind)
 
-  let bind_staged_snapshot (type a b) lane (bind : (a, b) bind) :
+  let bind_staged_snapshot (type a b) lane staging (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot option =
-    Graph.staged_value graph lane bind.snapshot
+    Graph.staged_value graph lane staging bind.snapshot
 
-  let bind_staged_switch (type a b) lane (bind : (a, b) bind) :
+  let bind_staged_switch (type a b) lane staging (bind : (a, b) bind) :
       (a, b signal, scope, b signal) Bind.staged_switch =
     Bind.staged_switch ~owner:bind.owner
       ~current:(bind_current_snapshot bind)
-      ~staged:(bind_staged_snapshot lane bind)
+      ~staged:(bind_staged_snapshot lane staging bind)
 
-  let packed_bind_staged_switch lane (B bind) =
+  let packed_bind_staged_switch lane staging (B bind) =
     Bind.pack_staged_switch
       (Bind.staged_switch
          ~owner:(Option.map (fun owner -> P owner) bind.owner)
          ~current:(bind_current_snapshot bind)
-         ~staged:(bind_staged_snapshot lane bind))
+         ~staged:(bind_staged_snapshot lane staging bind))
 
-  let commit_bind lane (B bind) =
+  let commit_bind lane staging (B bind) =
     match
-      Graph.commit_staged_bind_switch (bind_staged_switch lane bind)
+      Graph.commit_staged_bind_switch (bind_staged_switch lane staging bind)
         ~detach_old_inner:(detach_dependency lane)
         ~invalidate_old_scope:(invalidate_scope lane)
         ~attach_new_inner:(attach_dependency lane)
@@ -1164,10 +1164,10 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)
 
-  let rollback_bind lane (B bind) =
+  let rollback_bind lane staging (B bind) =
     match
       Graph.rollback_staged_bind_switch
-        ~staged:(bind_staged_snapshot lane bind)
+        ~staged:(bind_staged_snapshot lane staging bind)
         ~invalidate_new_scope:(invalidate_scope lane)
     with
     | Ok hooks -> hooks
@@ -1185,11 +1185,11 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.preflight_start ~advance_generation:(checked_succ "timer generation")
       timer_state_port timer
 
-  let preflight_signal_commit lane invalidated_ids (P signal) =
+  let preflight_signal_commit lane staging invalidated_ids (P signal) =
     if
       signal.valid
       && not (Hashtbl.mem invalidated_ids signal.id)
-      && signal_staged_in_active_transaction lane signal
+      && signal_staged_in_active_transaction lane staging signal
     then
       let current = signal_current_snapshot signal in
       let staged = signal_effective_snapshot signal in
@@ -1197,13 +1197,13 @@ module Make (Observer_error : Observer_error) () = struct
         ~advance_version:(checked_succ "signal version")
         ~current ~staged
 
-  let collect_staged_bind_invalidations lane =
+  let collect_staged_bind_invalidations lane staging =
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
     match
-      Graph.collect_staged_bind_switch_invalidations graph lane
+      Graph.collect_staged_bind_switch_invalidations graph lane staging
         ~init:(invalidated_ids, invalidated_nodes)
-        ~staged_switch:(packed_bind_staged_switch lane)
+        ~staged_switch:(packed_bind_staged_switch lane staging)
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
           let P owner_signal = owner in
           collect_scope_invalidations_into ~exclude_signal_id:owner_signal.id
@@ -1251,13 +1251,13 @@ module Make (Observer_error : Observer_error) () = struct
 
   let preflight_commit_staging lane staging =
     let invalidated_ids, invalidated_nodes =
-      collect_staged_bind_invalidations lane
+      collect_staged_bind_invalidations lane staging
     in
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
     Graph.iter_computed graph lane
-      ~f:(preflight_signal_commit lane invalidated_ids);
+      ~f:(preflight_signal_commit lane staging invalidated_ids);
     preflight_post_commit_timer_starts lane invalidated_ids
 
   let remember_pure_disposal_hooks lane staging hooks =
@@ -1325,7 +1325,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let reset_staging lane staging =
     let context =
-      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
+      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane staging)
         ~rollback_timer_refresh_dirty:(fun context ->
           Graph.restore_dirty graph lane dirty_ops
             (Timer_policy.refresh_dirty_items context);
@@ -1338,7 +1338,7 @@ module Make (Observer_error : Observer_error) () = struct
     let context =
       Graph.staging_commit_context
         ~preflight:(fun () -> preflight_commit_staging lane staging)
-        ~commit_bind:(commit_bind lane)
+        ~commit_bind:(commit_bind lane staging)
         ~prepare_signal:(prepare_signal_commit lane staging)
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
     in
@@ -1780,8 +1780,8 @@ module Make (Observer_error : Observer_error) () = struct
             binds)
     |> List.sort compare_signal_scope_then_id
 
-  let signal_will_be_invalidated_by_staged_bind lane (P signal) =
-    let invalidated_ids, _ = collect_staged_bind_invalidations lane in
+  let signal_will_be_invalidated_by_staged_bind lane staging (P signal) =
+    let invalidated_ids, _ = collect_staged_bind_invalidations lane staging in
     Hashtbl.mem invalidated_ids signal.id
 
   let plan_staged_bind_switches lane staging observers =
@@ -1789,7 +1789,8 @@ module Make (Observer_error : Observer_error) () = struct
       (fun (P signal as packed) ->
         if
           signal.valid
-          && not (signal_will_be_invalidated_by_staged_bind lane packed)
+          && not
+               (signal_will_be_invalidated_by_staged_bind lane staging packed)
         then
           match signal.kind with
           | Bind _ -> ignore (compute lane staging signal : _ * bool)
@@ -1843,7 +1844,7 @@ module Make (Observer_error : Observer_error) () = struct
       ~live:(fun (_lane : graph_lane) observer ->
         observer_active_live_state observer)
       ~skip:(fun lane observer ->
-        signal_will_be_invalidated_by_staged_bind lane
+        signal_will_be_invalidated_by_staged_bind lane staging
           (P observer.obs_signal))
       ~compute:(fun lane observer -> compute lane staging observer.obs_signal)
       ~snapshot:(fun (_lane : graph_lane) live ->

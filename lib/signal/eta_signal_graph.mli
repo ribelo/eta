@@ -331,6 +331,7 @@ val rollback_staged_bind_switch :
 val collect_staged_bind_switch_invalidations :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   init:'acc ->
   staged_switch:
     ('bind -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->
@@ -413,12 +414,14 @@ val update_cell :
 val staged_in_active_transaction :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'a Eta_signal_transaction.staged ->
   bool
 
 val staged_value :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   'a Eta_signal_transaction.staged ->
   'a option
 
