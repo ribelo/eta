@@ -2614,86 +2614,6 @@ let test_stats_counter_saturation_is_typed_failure () =
   check_stats_count "stats lane_cancelled_waiter_count"
     Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
 
-let test_cutoff_exception_is_defect_without_partial_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let defect = Failure "cutoff" in
-  let mapped =
-    Signal.Var.watch source
-    |> Signal.map
-         ~equal:(fun _old_value _new_value -> raise defect)
-         (fun n -> n)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  expect_die "cutoff defect"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "old snapshot remains after cutoff defect" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_source_equality_exception_is_defect_without_partial_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let fail_equal = ref true in
-  let source =
-    Signal.Var.create
-      ~equal:(fun _old_value _new_value ->
-        if !fail_equal then failwith "source equality";
-        false)
-      1
-  in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  expect_die "source equality defect"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "old snapshot remains after source equality defect" 1
-    (run_ok rt (Signal.Observer.read observer));
-  fail_equal := false;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization retries source equality" 2
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_observer_equality_exception_is_defect_without_partial_snapshot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let fail_equal = ref true in
-  let events = ref [] in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe
-         ~equal:(fun _old_value _new_value ->
-           if !fail_equal then failwith "observer equality";
-           false)
-         (Signal.Var.watch source)
-         (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  expect_die "observer equality defect"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "old observer current remains after equality defect" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "observer callback was not run after equality defect" 1
-    (List.length !events);
-  fail_equal := false;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer current retries after equality defect" 2
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "observer callback runs after retry" 2
-    (List.length !events);
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_ambiguous_node_creation_during_pure_recompute_is_typed_failure () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -7254,14 +7174,6 @@ let () =
             test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "stats counter saturation is typed failure" `Quick
             test_stats_counter_saturation_is_typed_failure;
-          Alcotest.test_case "cutoff exception preserves snapshot" `Quick
-            test_cutoff_exception_is_defect_without_partial_snapshot;
-          Alcotest.test_case "source equality exception preserves snapshot"
-            `Quick
-            test_source_equality_exception_is_defect_without_partial_snapshot;
-          Alcotest.test_case "observer equality exception preserves snapshot"
-            `Quick
-            test_observer_equality_exception_is_defect_without_partial_snapshot;
           Alcotest.test_case "pure ambiguous node creation typed failure" `Quick
             test_ambiguous_node_creation_during_pure_recompute_is_typed_failure;
           Alcotest.test_case "pure Var.value typed failure" `Quick

@@ -600,6 +600,75 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
    | _ -> Alcotest.fail "expected no event after same-block mutation");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_equality_defects_preserve_committed_snapshots () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let cutoff_source = S.Var.create 1 in
+  let cutoff_signal =
+    S.Var.watch cutoff_source
+    |> S.map
+         ~equal:(fun _old_value _new_value -> failwith "cutoff equality")
+         (fun value -> value)
+  in
+  let cutoff_observer =
+    run_ok runtime (S.Observer.observe cutoff_signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set cutoff_source 2);
+  expect_die "cutoff equality defect" (run runtime S.stabilize);
+  Alcotest.(check int) "cutoff defect preserves snapshot" 1
+    (run_ok runtime (S.Observer.read cutoff_observer));
+  run_ok runtime (S.Observer.dispose cutoff_observer);
+
+  let source_equal_fails = ref true in
+  let source =
+    S.Var.create
+      ~equal:(fun _old_value _new_value ->
+        if !source_equal_fails then failwith "source equality";
+        false)
+      1
+  in
+  let source_observer =
+    run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set source 2);
+  expect_die "source equality defect" (run runtime S.stabilize);
+  Alcotest.(check int) "source equality defect preserves snapshot" 1
+    (run_ok runtime (S.Observer.read source_observer));
+  source_equal_fails := false;
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "source equality retry publishes value" 2
+    (run_ok runtime (S.Observer.read source_observer));
+  run_ok runtime (S.Observer.dispose source_observer);
+
+  let observer_equal_fails = ref true in
+  let observer_source = S.Var.create 1 in
+  let observer_events = ref [] in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe
+         ~equal:(fun _old_value _new_value ->
+           if !observer_equal_fails then failwith "observer equality";
+           false)
+         (S.Var.watch observer_source)
+         (record observer_events))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set observer_source 2);
+  expect_die "observer equality defect" (run runtime S.stabilize);
+  Alcotest.(check int) "observer equality defect preserves current" 1
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "observer equality defect skips callback" 1
+    (List.length !observer_events);
+  observer_equal_fails := false;
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "observer equality retry publishes value" 2
+    (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "observer equality retry delivers callback" 2
+    (List.length !observer_events);
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1163,6 +1232,8 @@ let () =
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
+          Alcotest.test_case "equality defects preserve committed snapshots"
+            `Quick test_equality_defects_preserve_committed_snapshots;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
