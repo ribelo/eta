@@ -1317,6 +1317,84 @@ let observer_event_access events =
           record events "access";
           f observer_capability))
 
+let test_delivery_event_source_collects_updates () =
+  let events = ref [] in
+  let live =
+    {
+      snapshot =
+        Observer.Snapshot.create ~value:(Observer.Value.current 1)
+          ~delivery:(Observer.Delivery.Observer_delivered 1);
+    }
+  in
+  let observer = { live = Some live } in
+  let collection =
+    Observer.update_collection_port
+      ~live:(fun capability observer ->
+        check_observer_capability capability;
+        observer.live)
+      ~skip:(fun capability _observer ->
+        check_observer_capability capability;
+        false)
+      ~compute:(fun capability _observer ->
+        check_observer_capability capability;
+        record events "compute";
+        (2, true))
+      ~snapshot:(fun capability live ->
+        check_observer_capability capability;
+        live.snapshot)
+      ~stage_snapshot:(fun capability live snapshot ->
+        check_observer_capability capability;
+        live.snapshot <- snapshot;
+        record events
+          ("stage:"
+          ^ Observer.Value.label (Observer.Snapshot.value snapshot)
+          ^ ":"
+          ^ Observer.Delivery.label
+              (Observer.Snapshot.delivery snapshot)))
+      ~equal:(fun _observer -> Int.equal)
+  in
+  let source =
+    Observer.delivery_event_source ~access:(observer_event_access events)
+      ~delivery:(observer_delivery_port events)
+      ~event:(observer_event_port events)
+      ~token:(fun capability ->
+        check_observer_capability capability;
+        11)
+      collection
+  in
+  let event =
+    match Observer.collect_delivery_event source observer_capability observer with
+    | Some event -> event
+    | None -> Alcotest.fail "expected delivery event"
+  in
+  Observer.Delivery_event.mark_pending observer_capability event;
+  expect_effect_ok "delivery source event"
+    (Observer.Delivery_event.run
+       ~after_claim:(fun () ->
+         Eta.Effect.sync (fun () -> record events "after_claim"))
+       [ event ]);
+  Alcotest.(check string) "delivered" "delivered"
+    (Observer.Delivery.label (Observer.Snapshot.delivery live.snapshot));
+  Alcotest.(check (list string))
+    "events"
+    [
+      "compute";
+      "stage:current:delivered";
+      "set:pending";
+      "access";
+      "active";
+      "access";
+      "set:running";
+      "after_claim";
+      "access";
+      "construct:11";
+      "access";
+      "run:11:callback";
+      "access";
+      "set:delivered";
+    ]
+    !events
+
 let test_make_delivery_handle_owns_token_and_acknowledge () =
   let events = ref [] in
   let live =
@@ -1658,6 +1736,8 @@ let () =
             test_collect_event_skips_inactive_and_invalidated_observers;
           Alcotest.test_case "event collection marks pending" `Quick
             test_delivery_event_collection_marks_pending;
+          Alcotest.test_case "event source collects updates" `Quick
+            test_delivery_event_source_collects_updates;
           Alcotest.test_case "make event success transitions" `Quick
             test_make_delivery_event_owns_success_transitions;
           Alcotest.test_case "make event releases claim on failure" `Quick

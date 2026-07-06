@@ -1834,13 +1834,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~with_delivery_access:(fun f ->
         with_graph_lane_access (fun lane -> f lane))
 
-  let make_observer_event ~token observer update =
-    Observer_core.make_delivery_event ~access:observer_delivery_event_access
-      (observer_delivery_port ())
-      (observer_delivery_event_port ()) ~observer ~token update
-
-  let observer_collection_port staging =
-    Observer_core.collection_port
+  let observer_update_collection_port staging =
+    Observer_core.update_collection_port
       ~live:(fun (_lane : graph_lane) observer ->
         observer_active_live_state observer)
       ~skip:(fun lane observer ->
@@ -1852,16 +1847,21 @@ module Make (Observer_error : Observer_error) () = struct
       ~stage_snapshot:(fun lane live snapshot ->
         Graph.stage_cell graph lane staging live.observer_snapshot snapshot)
       ~equal:(fun observer -> observer.obs_equal)
-      ~make_event:(fun lane observer update ->
-        make_observer_event ~token:(current_generation lane) observer update)
 
   let collect_typed_observer_event staging lane (type a)
       (observer : a observer) =
-    Observer_core.collect_event (observer_collection_port staging) lane
-      observer
+    let source =
+      Observer_core.delivery_event_source
+        ~access:observer_delivery_event_access
+        ~delivery:(observer_delivery_port ())
+        ~event:(observer_delivery_event_port ())
+        ~token:current_generation
+        (observer_update_collection_port staging)
+    in
+    Observer_core.collect_delivery_event source lane observer
 
   let observer_delivery_event_source staging =
-    Observer_core.delivery_event_source
+    Observer_core.delivery_event_source_of_collect_event
       ~collect_event:(fun lane (O observer) ->
         collect_typed_observer_event staging lane observer)
 

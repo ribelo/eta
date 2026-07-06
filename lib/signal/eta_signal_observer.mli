@@ -434,6 +434,17 @@ val collection_port :
   make_event:('capability -> 'observer -> 'a Update.t -> 'event) ->
   ('capability, 'observer, 'live, 'a, 'after_ack, 'event) collection_port
 
+val update_collection_port :
+  live:('capability -> 'observer -> 'live option) ->
+  skip:('capability -> 'observer -> bool) ->
+  compute:('capability -> 'observer -> 'a * bool) ->
+  snapshot:('capability -> 'live -> ('a, 'after_ack) Snapshot.t) ->
+  stage_snapshot:
+    ('capability -> 'live -> ('a, 'after_ack) Snapshot.t -> unit) ->
+  equal:('observer -> 'a -> 'a -> bool) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'a Update.t)
+  collection_port
+
 val collect_event :
   ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
   collection_port ->
@@ -453,6 +464,15 @@ val delivery_collection :
 type ('capability, 'observer, 'callback, 'error) delivery_event_source
 
 val delivery_event_source :
+  access:'capability delivery_event_access ->
+  delivery:('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  event:('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
+  token:('capability -> Delivery.token) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'a Update.t)
+  collection_port ->
+  ('capability, 'observer, 'callback, 'error) delivery_event_source
+
+val delivery_event_source_of_collect_event :
   collect_event:
     ('capability ->
     'observer ->
@@ -464,6 +484,12 @@ val delivery_event_source_of_collection :
    ('capability, 'callback, 'error) Delivery_event.t)
   collection_port ->
   ('capability, 'observer, 'callback, 'error) delivery_event_source
+
+val collect_delivery_event :
+  ('capability, 'observer, 'callback, 'error) delivery_event_source ->
+  'capability ->
+  'observer ->
+  ('capability, 'callback, 'error) Delivery_event.t option
 
 val delivery_event_collection :
   active:('observer -> bool) ->

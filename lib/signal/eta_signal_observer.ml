@@ -700,6 +700,11 @@ let collection_port ~live ~skip ~compute ~snapshot ~stage_snapshot ~equal
     collection_make_event = make_event;
   }
 
+let update_collection_port ~live ~skip ~compute ~snapshot ~stage_snapshot
+    ~equal =
+  collection_port ~live ~skip ~compute ~snapshot ~stage_snapshot ~equal
+    ~make_event:(fun _capability _observer update -> update)
+
 let collect_event port capability observer =
   match port.collection_live capability observer with
   | None -> None
@@ -739,15 +744,26 @@ type ('capability, 'observer, 'callback, 'error) delivery_event_source = {
     ('capability, 'callback, 'error) Delivery_event.t option;
 }
 
-let delivery_event_source ~collect_event =
+let delivery_event_source_of_collect_event ~collect_event =
   { source_collect_event = collect_event }
 
 let delivery_event_source_of_collection collection =
-  delivery_event_source ~collect_event:(collect_event collection)
+  delivery_event_source_of_collect_event ~collect_event:(collect_event collection)
+
+let delivery_event_source ~access ~delivery ~event ~token collection =
+  delivery_event_source_of_collect_event
+    ~collect_event:(fun capability observer ->
+      collect_event collection capability observer
+      |> Option.map (fun update ->
+             make_delivery_event ~access delivery event ~observer
+               ~token:(token capability) update))
+
+let collect_delivery_event source capability observer =
+  source.source_collect_event capability observer
 
 let delivery_event_collection ~active ~compare source =
   delivery_collection ~active ~compare
-    ~collect_event:source.source_collect_event
+    ~collect_event:(collect_delivery_event source)
     ~mark_pending:Delivery_event.mark_pending
 
 let active_delivery_observers collection observers =
