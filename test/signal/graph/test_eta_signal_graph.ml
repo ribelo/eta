@@ -255,7 +255,10 @@ let stabilization_pure_ops
       (Graph.stabilization_observer_plan ~delivery:observer_delivery
          ~plan_staged_binds)
     ~commit:
-      (Graph.stabilization_commit_plan ~staging ~update_necessity)
+      (Graph.stabilization_commit_plan ~staging
+         ~update_necessity:(fun context ->
+           Graph.stabilization_necessity_update ~update:(fun () ->
+               update_necessity context)))
 
 let with_graph_lane graph f =
   run_effect "lane access" (graph_lane_effect graph f)

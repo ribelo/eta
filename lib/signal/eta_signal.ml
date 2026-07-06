@@ -1919,7 +1919,8 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.stabilization_commit_plan
         ~staging:staging_commit_plan
         ~update_necessity:(fun lane ->
-          update_necessity_counters_unlocked lane)
+          Graph.stabilization_necessity_update ~update:(fun () ->
+              update_necessity_counters_unlocked lane))
     in
     let pure =
       Graph.stabilization_pure_ops ~pending ~observers ~commit

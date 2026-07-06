@@ -979,14 +979,25 @@ let stabilization_observer_plan ~delivery ~plan_staged_binds =
 type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan = {
   stabilization_commit_staging_plan :
     lane_access -> staging -> ('bind, 'node, 'hook, 'timer) staging_commit_plan;
-  stabilization_update_necessity : lane_access -> unit;
+  stabilization_update_necessity : lane_access -> stabilization_necessity_update;
 }
+
+and stabilization_necessity_update =
+  | Stabilization_necessity_update of { update_necessity : unit -> unit }
+
+let stabilization_necessity_update ~update =
+  Stabilization_necessity_update { update_necessity = update }
 
 let stabilization_commit_plan ~staging ~update_necessity =
   {
     stabilization_commit_staging_plan = staging;
     stabilization_update_necessity = update_necessity;
   }
+
+let run_stabilization_necessity_update lane plan =
+  match plan lane with
+  | Stabilization_necessity_update { update_necessity } ->
+      update_necessity ()
 
 type
   ( 'pending,
@@ -1126,8 +1137,9 @@ let pass_pure t timer_refresh pure =
         | Ok hooks -> hooks
         | Error err -> raise (Graph_phase_error err))
       ~update_necessity:(fun context ->
-        pure.commit_plan.stabilization_update_necessity
-          (Eta_signal_stabilization_pass.pure_capability context))
+        run_stabilization_necessity_update
+          (Eta_signal_stabilization_pass.pure_capability context)
+          pure.commit_plan.stabilization_update_necessity)
   in
   Eta_signal_stabilization_pass.pure_ops ~generation ~staging ~pending
     ~observers ~commit

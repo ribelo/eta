@@ -635,12 +635,17 @@ val stabilization_observer_plan :
 
 type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan
 
+type stabilization_necessity_update
+
+val stabilization_necessity_update :
+  update:(unit -> unit) -> stabilization_necessity_update
+
 val stabilization_commit_plan :
   staging:
     (lane_access ->
     staging ->
     ('bind, 'node, 'hook, 'timer) staging_commit_plan) ->
-  update_necessity:(lane_access -> unit) ->
+  update_necessity:(lane_access -> stabilization_necessity_update) ->
   ('bind, 'node, 'hook, 'timer) stabilization_commit_plan
 
 type
