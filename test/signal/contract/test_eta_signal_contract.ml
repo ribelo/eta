@@ -598,6 +598,18 @@ let test_stream_bridge_full_queue_drops_newest () =
     (List.map update_value
        (run_ok runtime
           (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)));
+  run_ok runtime (S.Var.set source 3);
+  run_ok runtime S.stabilize;
+  let after_delivery = run_ok runtime (S.stats ()) in
+  Alcotest.(check int)
+    "later delivery does not count as drop"
+    after_drop.S.stream_bridge_drop_count
+    after_delivery.S.stream_bridge_drop_count;
+  (match
+     run_ok runtime (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+   with
+   | [ S.Changed { old_value = 2; new_value = 3 } ] -> ()
+   | _ -> Alcotest.fail "expected later stream update after draining drop");
   run_ok runtime (S.Observer.dispose observer);
   Alcotest.(check (list int))
     "disposed bridge closes after buffered items"
