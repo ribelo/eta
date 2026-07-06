@@ -603,6 +603,27 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let initially_failing_source = S.Var.create 1 in
+  let fail_initially = ref true in
+  let initially_failing =
+    S.Var.watch initially_failing_source
+    |> S.map (fun value ->
+           if !fail_initially then (
+             fail_initially := false;
+             failwith "initial contract pure failure");
+           value)
+  in
+  let initial_observer =
+    run_ok runtime (S.Observer.observe initially_failing (fun _ -> E.unit))
+  in
+  expect_die "initial pure failure" (run runtime S.stabilize);
+  expect_fail "read after failed initial stabilization"
+    (( = ) `No_current_value)
+    (run runtime (S.Observer.read initial_observer));
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "later stabilization initializes observer" 1
+    (run_ok runtime (S.Observer.read initial_observer));
+  run_ok runtime (S.Observer.dispose initial_observer);
   let source = S.Var.create 1 in
   let signal =
     S.Var.watch source

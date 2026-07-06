@@ -2614,32 +2614,6 @@ let test_stats_counter_saturation_is_typed_failure () =
   check_stats_count "stats lane_cancelled_waiter_count"
     Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
 
-let test_failed_initial_stabilization_leaves_no_current_value () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let fail = ref true in
-  let signal =
-    Signal.Var.watch source
-    |> Signal.map (fun value ->
-           if !fail then (
-             fail := false;
-             failwith "initial failure");
-           value)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  expect_die "initial pure failure"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  expect_fail "read after failed initial stabilization"
-    (( = ) `No_current_value)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read observer)));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization initializes observer" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_cutoff_exception_is_defect_without_partial_snapshot () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -7280,8 +7254,6 @@ let () =
             test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "stats counter saturation is typed failure" `Quick
             test_stats_counter_saturation_is_typed_failure;
-          Alcotest.test_case "failed initial stabilize has no current" `Quick
-            test_failed_initial_stabilization_leaves_no_current_value;
           Alcotest.test_case "cutoff exception preserves snapshot" `Quick
             test_cutoff_exception_is_defect_without_partial_snapshot;
           Alcotest.test_case "source equality exception preserves snapshot"
