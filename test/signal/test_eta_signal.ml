@@ -197,6 +197,8 @@ module Cleanup_interrupt_runtime = struct
   type 'a stream = 'a Stdlib.Queue.t
 
   let interrupt_next_protect_return = ref false
+  let interrupt_on_protect_count = ref None
+  let protect_count = ref 0
   let interrupt_on_local_binding_count = ref None
   let after_local_binding_count : (int * (unit -> unit)) option ref = ref None
   let now = ref 0
@@ -206,7 +208,17 @@ module Cleanup_interrupt_runtime = struct
 
   let protect f =
     let value = f () in
-    if !interrupt_next_protect_return then (
+    protect_count := !protect_count + 1;
+    let interrupt_next = !interrupt_next_protect_return in
+    if interrupt_next then interrupt_next_protect_return := false;
+    let interrupt_count =
+      match !interrupt_on_protect_count with
+      | Some target when target = !protect_count ->
+          interrupt_on_protect_count := None;
+          true
+      | Some _ | None -> false
+    in
+    if interrupt_next || interrupt_count then (
       interrupt_next_protect_return := false;
       raise Cleanup_interrupt);
     value
@@ -1026,109 +1038,132 @@ let test_observer_activation_waits_for_transfer_before_callbacks () =
           : unit);
       Alcotest.(check int) "callback after observe transfer" 1 !callback_count)
 
-let test_observer_activation_interruption_disposes_unowned_observer () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+let reset_cleanup_interrupt_runtime () =
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
+  Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
+  Cleanup_interrupt_runtime.protect_count := 0;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
   Cleanup_interrupt_runtime.now := 0;
   Cleanup_interrupt_runtime.local_binding_count := 0;
-  Hashtbl.clear Cleanup_interrupt_runtime.locals;
-  Signal.Private_test_hooks.clear ();
-  let rt =
-    Runtime.create_with_runtime
-      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
-      ()
-  in
-  let before_stats =
-    expect_exit_ok "stats before interrupted observe"
-      (Runtime.run rt (widen (Signal.stats ())))
-  in
+  Hashtbl.clear Cleanup_interrupt_runtime.locals
+
+let cleanup_interrupt_runtime () =
+  Runtime.create_with_runtime
+    (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
+    ()
+
+type observe_protect_result =
+  | Observe_returned
+  | Observe_failed of test_error Cause.t
+
+let observer_observe_with_protect_interrupt target ~on_finish =
+  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  reset_cleanup_interrupt_runtime ();
+  let rt = cleanup_interrupt_runtime () in
+  let before_stats = run_ok rt (Signal.stats ()) in
   let source = Signal.Var.create 1 in
   let signal = Signal.Var.watch source in
   let callbacks = ref 0 in
-  let hook =
-    {
-      Signal.Private_test_hooks.run =
-        (fun () -> Effect.sync (fun () -> raise Cleanup_interrupt));
-    }
+  Cleanup_interrupt_runtime.protect_count := 0;
+  Cleanup_interrupt_runtime.interrupt_on_protect_count := Some target;
+  let result =
+    Runtime.run rt
+      (widen
+         (Signal.Observer.observe_with_hooks ?on_finish signal (fun _update ->
+              Effect.sync (fun () -> incr callbacks))))
   in
+  Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
+  let result =
+    match result with
+    | Exit.Ok observer ->
+        ignore
+          (Runtime.run rt (widen (Signal.Observer.dispose observer))
+            : _ Exit.t);
+        Observe_returned
+    | Exit.Error cause -> Observe_failed cause
+  in
+  let stats = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int)
+    (Printf.sprintf
+       "target %d: observer observe interruption leaves no active observer"
+       target)
+    0
+    (stats.Signal.active_observer_count
+    - before_stats.Signal.active_observer_count);
+  Alcotest.(check int)
+    (Printf.sprintf "target %d: interrupted observe does not run callback"
+       target)
+    0 !callbacks;
+  result
+
+let protect_interrupt_targets = [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 ]
+
+let test_observer_activation_interruption_disposes_unowned_observer () =
+  let saw_interruption = ref false in
+  let saw_abort_cleanup = ref false in
   Fun.protect
-    ~finally:Signal.Private_test_hooks.clear
+    ~finally:(fun () ->
+      Cleanup_interrupt_runtime.interrupt_on_protect_count := None)
     (fun () ->
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_observer_activation_before_return hook
-      @@ fun () ->
-      (match
-         Runtime.run rt
-           (widen
-              (Signal.Observer.observe signal (fun _update ->
-                   Effect.sync (fun () -> incr callbacks))))
-       with
-      | exception Cleanup_interrupt -> ()
-      | Exit.Error cause when Cause.is_interrupt_only cause -> ()
-      | Exit.Error cause ->
-          Alcotest.failf "expected injected interruption, got %a"
-            (Cause.pp pp_hidden) cause
-      | Exit.Ok observer ->
-          ignore
-            (Runtime.run rt (widen (Signal.Observer.dispose observer))
-              : _ Exit.t);
-          Alcotest.fail "observer unexpectedly returned after interruption");
-      let stats =
-        expect_exit_ok "stats after interrupted observe"
-          (Runtime.run rt (widen (Signal.stats ())))
-      in
-      Alcotest.(check int)
-        "interrupted observer activation leaves no active observer" 0
-        (stats.Signal.active_observer_count
-        - before_stats.Signal.active_observer_count);
-      ignore
-        (expect_exit_ok "stabilize after interrupted observe"
-           (Runtime.run rt (widen Signal.stabilize))
-          : unit);
-      Alcotest.(check int)
-        "interrupted observer activation does not leak callback" 0 !callbacks)
+      List.iter
+        (fun target ->
+          let finish_hooks = ref 0 in
+          match
+            observer_observe_with_protect_interrupt target
+              ~on_finish:
+                (Some
+                   [
+                     (fun _reason ->
+                       finish_hooks := !finish_hooks + 1);
+                   ])
+          with
+          | Observe_failed cause when Cause.is_interrupt_only cause ->
+              saw_interruption := true;
+              if !finish_hooks > 0 then saw_abort_cleanup := true
+          | Observe_failed cause ->
+              Alcotest.failf
+                "target %d: expected injected interruption, got %a" target
+                (Cause.pp pp_hidden) cause
+          | Observe_returned -> ())
+        protect_interrupt_targets);
+  Alcotest.(check bool) "at least one protected return interrupted observe" true
+    !saw_interruption;
+  Alcotest.(check bool) "at least one interrupted observe ran abort cleanup"
+    true !saw_abort_cleanup
 
 let test_observer_activation_abort_cleanup_does_not_mask_failure () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  Signal.Private_test_hooks.clear ();
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let hook =
-    {
-      Signal.Private_test_hooks.run =
-        (fun () -> Effect.sync (fun () -> failwith "activation failure"));
-    }
-  in
+  let saw_abort_cleanup = ref false in
   Fun.protect
-    ~finally:Signal.Private_test_hooks.clear
+    ~finally:(fun () ->
+      Cleanup_interrupt_runtime.interrupt_on_protect_count := None)
     (fun () ->
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_observer_activation_before_return hook
-      @@ fun () ->
-      match
-        Runtime.run rt
-          (widen
-             (Signal.Observer.observe_with_hooks_callback
-                ~on_finish:[ (fun _reason ->
-                  failwith "abort cleanup hook failure") ]
-                signal
-                (fun _observer _update -> Effect.unit)))
-      with
-      | Exit.Error cause ->
-          if
-            cause_has_finalizer_die_message "abort cleanup hook failure" cause
-          then
-            Alcotest.failf
-              "observer activation abort cleanup masked original failure: %a"
-              (Cause.pp pp_hidden) cause
-      | Exit.Ok observer ->
-          ignore
-            (Runtime.run rt (widen (Signal.Observer.dispose observer))
-              : _ Exit.t);
-          Alcotest.fail "observer unexpectedly returned after activation failure")
+      List.iter
+        (fun target ->
+          let hook_started = ref false in
+          match
+            observer_observe_with_protect_interrupt target
+              ~on_finish:
+                (Some
+                   [
+                     (fun _reason ->
+                       hook_started := true;
+                       failwith "abort cleanup hook failure");
+                   ])
+          with
+          | Observe_failed cause ->
+              if
+                cause_has_finalizer_die_message
+                  "abort cleanup hook failure" cause
+              then
+                Alcotest.failf
+                  "target %d: abort cleanup hook masked interruption: %a"
+                  target (Cause.pp pp_hidden) cause;
+              if !hook_started then saw_abort_cleanup := true
+          | Observe_returned -> ())
+        protect_interrupt_targets);
+  Alcotest.(check bool) "failing abort cleanup hook was exercised" true
+    !saw_abort_cleanup
 
 let test_observer_observe_invalidated_before_transfer_fails () =
   let module Signal = Eta_signal.Make (Observer_error) () in

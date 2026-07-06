@@ -598,47 +598,6 @@ module Make (Observer_error : Observer_error) () = struct
   let publish_timer_current staged value =
     Transaction.publish_current Transaction.timer_lifecycle staged value
 
-  module Private_test_hooks = struct
-    type hook =
-      | After_observer_activation_before_return
-
-    type action = {
-      run : 'err. unit -> (unit, 'err) Effect.t;
-    }
-
-    type state = {
-      after_observer_activation_before_return : action ref;
-    }
-
-    let noop = { run = (fun () -> Effect.unit) }
-
-    let state =
-      {
-        after_observer_activation_before_return = ref noop;
-      }
-
-    let slot = function
-      | After_observer_activation_before_return ->
-          state.after_observer_activation_before_return
-
-    let with_hook hook action f =
-      let slot = slot hook in
-      let previous = !slot in
-      slot := action;
-      Fun.protect ~finally:(fun () -> slot := previous) f
-
-    let clear () =
-      List.iter
-        (fun hook ->
-          let slot = slot hook in
-          slot := noop)
-        [ After_observer_activation_before_return ]
-
-    let run hook =
-      let slot = slot hook in
-      (!slot).run ()
-  end
-
   type disposal_hook = Cleanup.hook
 
   type timer_refresh_context =
@@ -1790,6 +1749,21 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.on_exit (fun _exit ->
            run_cleanup ())
 
+  let cleanup_observer_registration_on_error cleanup eff =
+    Effect.Expert.make @@ fun context ->
+    let exit =
+      try Effect.Expert.eval context eff
+      with exn -> Effect.Expert.exit_of_exn context exn
+    in
+    match exit with
+    | Eta.Exit.Ok _ -> exit
+    | Eta.Exit.Error _ as error ->
+        (try
+           ignore
+             (Effect.Expert.eval context (cleanup ()) : (unit, _) Eta.Exit.t)
+         with _ -> ());
+        error
+
   let compare_signal_scope_then_id (P left) (P right) =
     match Int.compare (Scope.depth left.scope) (Scope.depth right.scope) with
     | 0 -> Int.compare (signal_id_int left.id) (signal_id_int right.id)
@@ -2138,43 +2112,44 @@ module Make (Observer_error : Observer_error) () = struct
 
     let observe_with_hooks_delivery_callback ?(equal = default_equal)
         ?(on_finish = []) signal callback =
-      with_graph_lane_access (fun lane ->
-          try
-            if not signal.valid then Error `Invalid_scope
-            else
-              let live =
-                {
-                  observer_snapshot =
-                    Transaction.create_staged Observer_snapshot.initial;
-                  obs_on_finish = on_finish;
-                }
-              in
-              let rec observer =
-                {
-                  obs_id = next_observer_id ();
-                  obs_signal = signal;
-                  obs_equal = equal;
-                  obs_callback =
-                    (fun token update -> callback observer token update);
-                  obs_state = Observer_lifecycle.Registering live;
-                }
-              in
-              Graph.add_observer graph lane (O observer);
-              update_necessity_counters_unlocked lane;
-              Ok observer
-          with Graph_error err -> Error err)
-      |> Effect.flatten_result
+      let registered = ref None in
+      cleanup_observer_registration_on_error
+        (fun () ->
+          match !registered with
+          | None -> Effect.unit
+          | Some (O observer) -> abort_observer_registration_effect observer)
+        (with_graph_lane_access (fun lane ->
+             try
+               if not signal.valid then Error `Invalid_scope
+               else
+                 let live =
+                   {
+                     observer_snapshot =
+                       Transaction.create_staged Observer_snapshot.initial;
+                     obs_on_finish = on_finish;
+                   }
+                 in
+                 let rec observer =
+                   {
+                     obs_id = next_observer_id ();
+                     obs_signal = signal;
+                     obs_equal = equal;
+                     obs_callback =
+                       (fun token update -> callback observer token update);
+                     obs_state = Observer_lifecycle.Registering live;
+                   }
+                 in
+                 Graph.add_observer graph lane (O observer);
+                 registered := Some (O observer);
+                 update_necessity_counters_unlocked lane;
+                 Ok observer
+             with Graph_error err -> Error err)
+         |> Effect.flatten_result)
       |> Effect.bind (fun observer ->
-             (refresh_timer_demand ()
-             |> Effect.bind (fun () -> transfer_active_observer observer)
-             |> Effect.bind (fun observer ->
-                    Private_test_hooks.run
-                      After_observer_activation_before_return
-                    |> Effect.map (fun () -> observer)))
-             |> Effect.on_exit (function
-                  | Eta.Exit.Ok _ -> Effect.unit
-                  | Eta.Exit.Error _ ->
-                      abort_observer_registration_effect observer))
+             cleanup_observer_registration_on_error
+               (fun () -> abort_observer_registration_effect observer)
+               (refresh_timer_demand ()
+               |> Effect.bind (fun () -> transfer_active_observer observer)))
 
     let observe_with_hooks_callback ?equal ?on_finish signal callback =
       observe_with_hooks_delivery_callback ?equal ?on_finish signal
