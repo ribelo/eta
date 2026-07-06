@@ -1174,10 +1174,18 @@ module Make (Observer_error : Observer_error) () = struct
     Timer.preflight_start ~advance_generation:(checked_succ "timer generation")
       timer_state_port timer
 
-  let preflight_signal_commit lane staging invalidated_ids (P signal) =
+  type staged_bind_invalidation_view = {
+    invalidated_ids : (signal_id, unit) Hashtbl.t;
+    invalidated_nodes : packed_signal list;
+  }
+
+  let staged_bind_invalidates view (P signal) =
+    Hashtbl.mem view.invalidated_ids signal.id
+
+  let preflight_signal_commit lane staging invalidations (P signal) =
     if
       signal.valid
-      && not (Hashtbl.mem invalidated_ids signal.id)
+      && not (staged_bind_invalidates invalidations (P signal))
       && signal_staged_in_active_transaction lane staging signal
     then
       let current = signal_current_snapshot signal in
@@ -1203,17 +1211,18 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.collect_staged_bind_switch_invalidations graph lane staging plan
     with
     | Ok (invalidated_ids, invalidated_nodes) ->
-        (invalidated_ids, !invalidated_nodes)
+        { invalidated_ids; invalidated_nodes = !invalidated_nodes }
     | Error err -> raise (Graph_error err)
 
   let signal_timer (P signal) =
     Option.map (fun timer -> (signal.id, timer)) signal.timer
 
-  let collect_post_commit_necessary_timers lane invalidated_ids =
+  let collect_post_commit_necessary_timers lane invalidations =
     let reachable_ops =
       Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
         ~valid:(fun (P signal) ->
-          signal.valid && not (Hashtbl.mem invalidated_ids signal.id))
+          signal.valid
+          && not (staged_bind_invalidates invalidations (P signal)))
         ~children:(fun (P signal) ->
           let signal_children =
             match signal.kind with
@@ -1236,22 +1245,20 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.post_commit_necessary_timers graph lane
       (Graph.timer_demand_source ~reachable:plan ~timer:signal_timer)
 
-  let preflight_post_commit_timer_starts lane invalidated_ids =
-    collect_post_commit_necessary_timers lane invalidated_ids
+  let preflight_post_commit_timer_starts lane invalidations =
+    collect_post_commit_necessary_timers lane invalidations
     |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
 
   let preflight_commit_staging lane staging =
     Graph.staged_preflight ~preflight:(fun () ->
-        let invalidated_ids, invalidated_nodes =
-          collect_staged_bind_invalidations lane staging
-        in
+        let invalidations = collect_staged_bind_invalidations lane staging in
         List.iter
           (fun (P signal) ->
             Option.iter preflight_timer_invalidation signal.timer)
-          invalidated_nodes;
+          invalidations.invalidated_nodes;
         Graph.iter_computed graph lane staging
-          ~f:(preflight_signal_commit lane staging invalidated_ids);
-        preflight_post_commit_timer_starts lane invalidated_ids)
+          ~f:(preflight_signal_commit lane staging invalidations);
+        preflight_post_commit_timer_starts lane invalidations)
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks
@@ -1788,20 +1795,21 @@ module Make (Observer_error : Observer_error) () = struct
       bind_selection
     |> List.sort compare_signal_scope_then_id
 
-  let signal_will_be_invalidated_by_staged_bind lane staging (P signal) =
-    let invalidated_ids, _ = collect_staged_bind_invalidations lane staging in
-    Hashtbl.mem invalidated_ids signal.id
-
   let plan_staged_bind_switches lane staging observers =
+    let invalidations = ref (collect_staged_bind_invalidations lane staging) in
+    let refresh_invalidations () =
+      invalidations := collect_staged_bind_invalidations lane staging
+    in
     List.iter
       (fun (P signal as packed) ->
         if
           signal.valid
-          && not
-               (signal_will_be_invalidated_by_staged_bind lane staging packed)
+          && not (staged_bind_invalidates !invalidations packed)
         then
           match signal.kind with
-          | Bind _ -> ignore (compute lane staging signal : _ * bool)
+          | Bind _ ->
+              ignore (compute lane staging signal : _ * bool);
+              refresh_invalidations ()
           | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
           | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
               ())
@@ -1849,13 +1857,12 @@ module Make (Observer_error : Observer_error) () = struct
       ~with_delivery_access:(fun f ->
         with_graph_lane_access (fun lane -> f lane))
 
-  let observer_update_collection_port staging =
+  let observer_update_collection_port staging invalidations =
     Observer_core.update_collection_port
       ~live:(fun (_lane : graph_lane) observer ->
         observer_active_live_state observer)
-      ~skip:(fun lane observer ->
-        signal_will_be_invalidated_by_staged_bind lane staging
-          (P observer.obs_signal))
+      ~skip:(fun (_lane : graph_lane) observer ->
+        staged_bind_invalidates invalidations (P observer.obs_signal))
       ~compute:(fun lane observer -> compute lane staging observer.obs_signal)
       ~snapshot:(fun (_lane : graph_lane) live ->
         observer_effective_snapshot live)
@@ -1865,6 +1872,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_typed_observer_event staging lane (type a)
       (observer : a observer) =
+    let invalidations = collect_staged_bind_invalidations lane staging in
     let context =
       Observer_core.delivery_event_context
         ~access:observer_delivery_event_access
@@ -1874,7 +1882,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let source =
       Observer_core.delivery_event_source context
-        (observer_update_collection_port staging)
+        (observer_update_collection_port staging invalidations)
     in
     Observer_core.collect_delivery_event source lane observer
 
