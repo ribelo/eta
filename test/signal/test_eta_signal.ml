@@ -1834,18 +1834,6 @@ let test_time_timer_start_failure_rolls_back_unstarted_timers () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_effectful_update_reentry_fails_and_preserves_value () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  expect_fail "reentrant update" (( = ) `Reentrant_update)
-    (Eta_eio.Runtime.run rt
-       (widen
-          (Signal.Var.update_effect source (fun current ->
-               Signal.Var.update_effect source (fun _ -> Effect.pure (current + 10))
-               |> Effect.map (fun _ -> current + 1)))));
-  Alcotest.(check int) "source unchanged" 1 (Signal.Var.value source)
-
 let test_concurrent_effectful_update_same_variable_fails_fast () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
@@ -3972,8 +3960,6 @@ let () =
             test_time_timer_start_failure_preserves_pending_observer_event;
           Alcotest.test_case "time timer start failure rolls back unstarted timers"
             `Quick test_time_timer_start_failure_rolls_back_unstarted_timers;
-          Alcotest.test_case "effectful update reentry typed failure" `Quick
-            test_effectful_update_reentry_fails_and_preserves_value;
           Alcotest.test_case "concurrent effectful update fails fast" `Quick
             test_concurrent_effectful_update_same_variable_fails_fast;
           Alcotest.test_case

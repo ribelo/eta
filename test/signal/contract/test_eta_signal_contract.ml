@@ -1298,6 +1298,17 @@ let test_reentrant_stabilization_preserves_outer_delivery_phase () =
   run_ok runtime (S.Observer.dispose first_observer);
   run_ok runtime (S.Observer.dispose second_observer)
 
+let test_effectful_update_reentry_is_typed_failure () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  expect_fail "effectful update reentry" (( = ) `Reentrant_update)
+    (run runtime
+       (S.Var.update_effect source (fun current ->
+            S.Var.update_effect source (fun _ -> E.pure (current + 10))
+            |> E.map (fun _ -> current + 1))));
+  Alcotest.(check int) "source unchanged" 1 (S.Var.value source)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2138,6 +2149,8 @@ let () =
           Alcotest.test_case
             "reentrant stabilization preserves outer delivery phase" `Quick
             test_reentrant_stabilization_preserves_outer_delivery_phase;
+          Alcotest.test_case "effectful update reentry is typed" `Quick
+            test_effectful_update_reentry_is_typed_failure;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
