@@ -435,6 +435,14 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
+let test_stream_observe_validates_capacity () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  expect_fail "invalid stream capacity" (( = ) `Invalid_capacity)
+    (run runtime (S.Stream.observe ~capacity:0 signal))
+
 let test_stream_dispose_closes_queue_after_buffered_updates () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -577,6 +585,8 @@ let () =
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
+          Alcotest.test_case "stream observe validates capacity" `Quick
+            test_stream_observe_validates_capacity;
           Alcotest.test_case
             "stream dispose closes queue after buffered updates" `Quick
             test_stream_dispose_closes_queue_after_buffered_updates;
