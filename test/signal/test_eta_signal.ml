@@ -7519,9 +7519,27 @@ let test_time_after_overflow_fails_with_deadline_overflow () =
        (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))))
 
 let test_time_absolute_deadline () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) 10) in
+  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 1) ()) in
+  let now_observer =
+    run_ok rt (Signal.Observer.observe now_signal (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let deadline =
+    match
+      Signal.Time.add
+        (run_ok rt (Signal.Observer.read now_observer))
+        (Duration.ms 10)
+    with
+    | Ok timestamp -> timestamp
+    | Error _ -> Alcotest.fail "expected future monotonic timestamp"
+  in
+  run_ok rt (Signal.Observer.dispose now_observer);
+  Eta_eio.Runtime.drain rt;
+  let signal =
+    run_ok rt (Signal.Time.deadline ~every:(Duration.ms 5) deadline)
+  in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
   in
