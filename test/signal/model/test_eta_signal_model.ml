@@ -299,6 +299,266 @@ let test_coalesced_sets_match_model () =
   check "second stabilize";
   run_ok runtime (Signal.Observer.dispose observer)
 
+type cutoff_op =
+  | Cutoff_set of int
+  | Cutoff_stabilize
+  | Cutoff_read
+
+let pp_cutoff_op formatter = function
+  | Cutoff_set value -> Format.fprintf formatter "Set %d" value
+  | Cutoff_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Cutoff_read -> Format.pp_print_string formatter "Read"
+
+let generate_cutoff_trace ~seed ~steps =
+  let random = Random.State.make [| seed; steps; 101 |] in
+  let next_value () = Random.State.int random 9 in
+  let next_op index =
+    if index mod 5 = 0 then Cutoff_stabilize
+    else
+      match Random.State.int random 10 with
+      | 0 | 1 | 2 | 3 | 4 -> Cutoff_set (next_value ())
+      | 5 | 6 -> Cutoff_read
+      | _ -> Cutoff_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Cutoff_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Cutoff_stabilize :: loop 1 []
+
+let publish_int current updates next =
+  let update =
+    match !current with
+    | None -> Some (Initialized next)
+    | Some current ->
+        if current = next then None else Some (Changed (current, next))
+  in
+  current := Some next;
+  Option.iter (fun update -> updates := update :: !updates) update
+
+let check_int_updates label expected actual =
+  Alcotest.(check (list observed_update))
+    (label ^ " updates") (List.rev !expected) (List.rev !actual)
+
+let int_list_equal = List.equal Int.equal
+let cutoff_payload value = [ value mod 2 ]
+
+let test_source_equality_trace_matches_model () =
+  let parity_equal left right = left mod 2 = right mod 2 in
+  let run_trace name ops =
+    Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+    let source = Signal.Var.create ~equal:parity_equal 0 in
+    let updates = ref [] in
+    let observer =
+      run_ok runtime
+        (Signal.Observer.observe (Signal.Var.watch source) (fun update ->
+             E.sync (fun () ->
+                 updates := observed_of_signal_update update :: !updates)))
+    in
+    let pending = ref 0 in
+    let committed = ref 0 in
+    let source_dirty = ref false in
+    let current = ref None in
+    let model_updates = ref [] in
+    let set value =
+      pending := value;
+      source_dirty := not (parity_equal !committed value);
+      run_ok runtime (Signal.Var.set source value);
+      Alcotest.(check int) "source value updates immediately" !pending
+        (Signal.Var.value source)
+    in
+    let stabilize () =
+      if !source_dirty then (
+        committed := !pending;
+        source_dirty := false);
+      publish_int current model_updates !committed;
+      run_ok runtime Signal.stabilize
+    in
+    List.iteri
+      (fun index op ->
+        let label =
+          Format.asprintf "%s step %d %a" name index pp_cutoff_op op
+        in
+        match op with
+        | Cutoff_set value -> set value
+        | Cutoff_stabilize ->
+            stabilize ();
+            check_int_updates label model_updates updates
+        | Cutoff_read -> (
+            match !current with
+            | None ->
+                expect_uninitialized_observer label runtime
+                  (Signal.Observer.read observer)
+            | Some expected ->
+                Alcotest.(check int) label expected
+                  (run_ok runtime (Signal.Observer.read observer))))
+      ops;
+    run_ok runtime (Signal.Observer.dispose observer)
+  in
+  List.iter
+    (fun seed ->
+      run_trace
+        (Format.asprintf "source-cutoff-seed-%d" seed)
+        (generate_cutoff_trace ~seed ~steps:70))
+    [ 17; 41; 73; 109 ]
+
+let test_derived_observer_and_bind_cutoff_trace_matches_model () =
+  let run_trace name ops =
+    Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+    let source = Signal.Var.create 0 in
+    let source_signal = Signal.Var.watch source in
+    let physical =
+      Signal.map (fun value -> cutoff_payload value) source_signal
+    in
+    let structural =
+      Signal.map ~equal:int_list_equal
+        (fun value -> cutoff_payload value)
+        source_signal
+    in
+    let bind_inner_calls = ref 0 in
+    let bound =
+      Signal.bind ~equal:int_list_equal (Signal.const ()) (fun () ->
+          source_signal
+          |> Signal.map (fun value ->
+                 incr bind_inner_calls;
+                 cutoff_payload value))
+    in
+    let physical_callbacks = ref 0 in
+    let structural_callbacks = ref 0 in
+    let bound_callbacks = ref 0 in
+    let normal_updates = ref [] in
+    let suppressed_callbacks = ref 0 in
+    let count callback_count _update =
+      E.sync (fun () -> incr callback_count)
+    in
+    let physical_observer =
+      run_ok runtime (Signal.Observer.observe physical (count physical_callbacks))
+    in
+    let structural_observer =
+      run_ok runtime
+        (Signal.Observer.observe structural (count structural_callbacks))
+    in
+    let bound_observer =
+      run_ok runtime (Signal.Observer.observe bound (count bound_callbacks))
+    in
+    let normal_observer =
+      run_ok runtime
+        (Signal.Observer.observe source_signal (fun update ->
+             E.sync (fun () ->
+                 normal_updates :=
+                   observed_of_signal_update update :: !normal_updates)))
+    in
+    let suppressed_observer =
+      run_ok runtime
+        (Signal.Observer.observe ~equal:(fun _ _ -> true) source_signal
+           (fun _update -> E.sync (fun () -> incr suppressed_callbacks)))
+    in
+    let pending = ref 0 in
+    let committed = ref 0 in
+    let source_dirty = ref true in
+    let normal_current = ref None in
+    let normal_model_updates = ref [] in
+    let physical_model_callbacks = ref 0 in
+    let structural_model_callbacks = ref 0 in
+    let structural_current = ref None in
+    let bound_model_callbacks = ref 0 in
+    let bound_model_inner_calls = ref 0 in
+    let bound_current = ref None in
+    let suppressed_model_callbacks = ref 0 in
+    let set value =
+      pending := value;
+      source_dirty := !committed <> value;
+      run_ok runtime (Signal.Var.set source value)
+    in
+    let maybe_publish_payload current callbacks next =
+      match !current with
+      | None ->
+          current := Some next;
+          incr callbacks
+      | Some previous when int_list_equal previous next -> ()
+      | Some _ ->
+          current := Some next;
+          incr callbacks
+    in
+    let stabilize () =
+      if !source_dirty then (
+        committed := !pending;
+        source_dirty := false;
+        publish_int normal_current normal_model_updates !committed;
+        incr physical_model_callbacks;
+        maybe_publish_payload structural_current structural_model_callbacks
+          (cutoff_payload !committed);
+        incr bound_model_inner_calls;
+        maybe_publish_payload bound_current bound_model_callbacks
+          (cutoff_payload !committed);
+        if !suppressed_model_callbacks = 0 then
+          incr suppressed_model_callbacks);
+      run_ok runtime Signal.stabilize
+    in
+    let check label =
+      check_int_updates label normal_model_updates normal_updates;
+      Alcotest.(check int)
+        (label ^ " physical callbacks") !physical_model_callbacks
+        !physical_callbacks;
+      Alcotest.(check int)
+        (label ^ " structural callbacks") !structural_model_callbacks
+        !structural_callbacks;
+      Alcotest.(check int)
+        (label ^ " bind callbacks") !bound_model_callbacks !bound_callbacks;
+      Alcotest.(check int)
+        (label ^ " bind inner calls") !bound_model_inner_calls
+        !bind_inner_calls;
+      Alcotest.(check int)
+        (label ^ " suppressed callbacks") !suppressed_model_callbacks
+        !suppressed_callbacks
+    in
+    let check_reads label =
+      match !normal_current with
+      | None ->
+          expect_uninitialized_observer (label ^ " normal") runtime
+            (Signal.Observer.read normal_observer)
+      | Some expected ->
+          Alcotest.(check int) (label ^ " normal") expected
+            (run_ok runtime (Signal.Observer.read normal_observer));
+          Alcotest.(check int) (label ^ " suppressed") expected
+            (run_ok runtime (Signal.Observer.read suppressed_observer));
+          Alcotest.(check (list int))
+            (label ^ " physical") (cutoff_payload expected)
+            (run_ok runtime (Signal.Observer.read physical_observer));
+          Alcotest.(check (list int))
+            (label ^ " structural")
+            (Option.value ~default:(cutoff_payload expected) !structural_current)
+            (run_ok runtime (Signal.Observer.read structural_observer));
+          Alcotest.(check (list int))
+            (label ^ " bind")
+            (Option.value ~default:(cutoff_payload expected) !bound_current)
+            (run_ok runtime (Signal.Observer.read bound_observer))
+    in
+    List.iteri
+      (fun index op ->
+        let label =
+          Format.asprintf "%s step %d %a" name index pp_cutoff_op op
+        in
+        match op with
+        | Cutoff_set value -> set value
+        | Cutoff_stabilize ->
+            stabilize ();
+            check label
+        | Cutoff_read -> check_reads label)
+      ops;
+    run_ok runtime (Signal.Observer.dispose physical_observer);
+    run_ok runtime (Signal.Observer.dispose structural_observer);
+    run_ok runtime (Signal.Observer.dispose bound_observer);
+    run_ok runtime (Signal.Observer.dispose normal_observer);
+    run_ok runtime (Signal.Observer.dispose suppressed_observer)
+  in
+  List.iter
+    (fun seed ->
+      run_trace
+        (Format.asprintf "derived-cutoff-seed-%d" seed)
+        (generate_cutoff_trace ~seed ~steps:80))
+    [ 23; 59; 97; 131 ]
+
 let test_observer_phase_mutation_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = Signal.Var.create 1 in
@@ -2027,6 +2287,11 @@ let () =
             test_randomized_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
+          Alcotest.test_case "source equality trace matches model" `Quick
+            test_source_equality_trace_matches_model;
+          Alcotest.test_case
+            "derived observer and bind cutoff trace matches model" `Quick
+            test_derived_observer_and_bind_cutoff_trace_matches_model;
           Alcotest.test_case "observer-phase mutation matches model" `Quick
             test_observer_phase_mutation_matches_model;
           Alcotest.test_case "observer failure retry matches model" `Quick

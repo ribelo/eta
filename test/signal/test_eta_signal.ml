@@ -1215,46 +1215,6 @@ let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
   run_ok rt (Signal.Observer.dispose source_observer);
   run_ok rt (Signal.Observer.dispose reobserved)
 
-let test_source_equality_suppresses_graph_propagation () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source =
-    Signal.Var.create ~equal:(fun old_value new_value ->
-        old_value mod 2 = new_value mod 2)
-      0
-  in
-  let calls = ref 0 in
-  let observed =
-    Signal.Var.watch source
-    |> Signal.map (fun value ->
-           incr calls;
-           value)
-  in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe observed (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial recompute" 1 !calls;
-  run_ok rt (Signal.Var.set source 2);
-  Alcotest.(check int) "source value updates immediately" 2
-    (Signal.Var.value source);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "equal source update does not recompute" 1 !calls;
-  Alcotest.(check int) "observer keeps previous graph snapshot" 0
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "equal source update emits no event" 1
-    (List.length !events);
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "non-equal source update recomputes" 2 !calls;
-  Alcotest.(check int) "observer sees non-equal update" 3
-    (run_ok rt (Signal.Observer.read observer));
-  (match List.rev !events with
-   | [ Signal.Initialized 0; Changed { old_value = 0; new_value = 3 } ] -> ()
-   | _ -> Alcotest.fail "expected initialization and non-equal change event");
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_default_cutoff_is_physical_equality () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -1281,72 +1241,6 @@ let test_default_cutoff_is_physical_equality () =
    | _ -> Alcotest.fail "expected initialized and changed events");
   Alcotest.(check bool) "observer current is next block" true
     (run_ok rt (Signal.Observer.read observer) == next);
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_derived_default_cutoff_is_physical_equality () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let mapped = Signal.Var.watch source |> Signal.map (fun _ -> Array.make 1 1) in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe mapped (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  (match List.rev !events with
-   | [ Signal.Initialized initialized; Changed { old_value; new_value } ] ->
-       Alcotest.(check (list int)) "initialized derived value" [ 1 ]
-         (Array.to_list initialized);
-       Alcotest.(check (list int)) "old derived value" [ 1 ]
-         (Array.to_list old_value);
-       Alcotest.(check (list int)) "new derived value" [ 1 ]
-         (Array.to_list new_value);
-       Alcotest.(check bool) "fresh equal arrays still changed" false
-         (old_value == new_value)
-   | _ ->
-       Alcotest.fail
-         "expected derived physical cutoff to emit structurally equal block");
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_structural_equal_suppresses_fresh_equal_values () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let structural_array_equal left right =
-    Array.length left = Array.length right
-    && Array.for_all2 Int.equal left right
-  in
-  let source = Signal.Var.create 0 in
-  let mapped =
-    Signal.Var.watch source
-    |> Signal.map ~equal:structural_array_equal (fun value ->
-           Array.make 1 (value mod 2))
-  in
-  let events = ref [] in
-  let callbacks = ref 0 in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe mapped (fun update ->
-           Effect.sync (fun () ->
-               incr callbacks;
-               events := update :: !events)))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial callback delivered" 1 !callbacks;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "fresh structurally equal value emits no callback" 1
-    !callbacks;
-  (match List.rev !events with
-   | [ Signal.Initialized initialized ] ->
-       Alcotest.(check (list int)) "initialized derived value" [ 0 ]
-         (Array.to_list initialized)
-   | _ ->
-       Alcotest.fail
-          "expected structural cutoff to suppress fresh equal block");
-  Alcotest.(check (list int)) "observer current remains structural value" [ 0 ]
-    (Array.to_list (run_ok rt (Signal.Observer.read observer)));
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_default_physical_cutoff_suppresses_in_place_mutation () =
@@ -1388,35 +1282,6 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected no event after same-block mutation");
   run_ok rt (Signal.Observer.dispose observer)
-
-let test_observer_equality_suppresses_only_that_observer () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let signal = Signal.Var.watch source in
-  let suppressed_events = ref [] in
-  let normal_events = ref [] in
-  let suppressed_observer =
-    run_ok rt
-      (Signal.Observer.observe ~equal:(fun _old_value _new_value -> true)
-         signal (record_observer suppressed_events))
-  in
-  let normal_observer =
-    run_ok rt (Signal.Observer.observe signal (record_observer normal_events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "suppressed observer saw only initialization" 1
-    (List.length !suppressed_events);
-  Alcotest.(check int) "normal observer saw initialization and change" 2
-    (List.length !normal_events);
-  Alcotest.(check int) "suppressed observer current still updates" 1
-    (run_ok rt (Signal.Observer.read suppressed_observer));
-  Alcotest.(check int) "normal observer current updates" 1
-    (run_ok rt (Signal.Observer.read normal_observer));
-  run_ok rt (Signal.Observer.dispose suppressed_observer);
-  run_ok rt (Signal.Observer.dispose normal_observer)
 
 let test_observer_callbacks_run_in_registration_order () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -3068,49 +2933,6 @@ let test_bind_can_select_initialized_external_bind () =
   Alcotest.(check int) "selected follows external bind switch" 26
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
-
-let test_bind_reuse_recompute_respects_bind_cutoff () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let array_equal left right =
-    Array.length left = Array.length right
-    && Array.for_all2 Int.equal left right
-  in
-  let selector = Signal.Var.create () in
-  let payload = Signal.Var.create 0 in
-  let inner_calls = ref 0 in
-  let selected =
-    Signal.bind ~equal:array_equal (Signal.Var.watch selector) (fun () ->
-        Signal.Var.watch payload
-        |> Signal.map (fun value ->
-               incr inner_calls;
-               Array.make 1 (value mod 2)))
-  in
-  let events = ref [] in
-  let callbacks = ref 0 in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe selected (fun update ->
-           Effect.sync (fun () ->
-               incr callbacks;
-               events := update :: !events)))
-  in
-  run_ok rt Signal.stabilize;
-  let initial = run_ok rt (Signal.Observer.read observer) in
-  Alcotest.(check int) "initial inner recompute" 1 !inner_calls;
-  run_ok rt (Signal.Var.set payload 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reused inner branch recomputed" 2 !inner_calls;
-  Alcotest.(check int) "structurally equal bind value emits no callback" 1
-    !callbacks;
-  Alcotest.(check bool) "bind current keeps previous block" true
-    (run_ok rt (Signal.Observer.read observer) == initial);
-  (match List.rev !events with
-   | [ Signal.Initialized initialized ] ->
-       Alcotest.(check (list int)) "initialized value" [ 0 ]
-         (Array.to_list initialized)
-   | _ -> Alcotest.fail "expected bind cutoff to suppress equal reuse value");
-  run_ok rt (Signal.Observer.dispose observer)
 
 let test_dynamic_list_bind_switches_dependency_set () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
@@ -9553,19 +9375,10 @@ let () =
           Alcotest.test_case
             "newly necessary derived chain refreshes dependency versions" `Quick
             test_newly_necessary_derived_chain_refreshes_dependency_versions;
-          Alcotest.test_case "source equality suppresses propagation" `Quick
-            test_source_equality_suppresses_graph_propagation;
           Alcotest.test_case "default cutoff is physical equality" `Quick
             test_default_cutoff_is_physical_equality;
-          Alcotest.test_case "derived default cutoff is physical equality"
-            `Quick test_derived_default_cutoff_is_physical_equality;
-          Alcotest.test_case
-            "structural equality suppresses fresh equal values" `Quick
-            test_structural_equal_suppresses_fresh_equal_values;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
-          Alcotest.test_case "observer equality is observer-local" `Quick
-            test_observer_equality_suppresses_only_that_observer;
           Alcotest.test_case "observer callbacks run in registration order"
             `Quick
             test_observer_callbacks_run_in_registration_order;
@@ -9655,8 +9468,6 @@ let () =
             test_dynamic_signal_rewires_and_cycle_preserves_snapshot;
           Alcotest.test_case "bind can select initialized external bind" `Quick
             test_bind_can_select_initialized_external_bind;
-          Alcotest.test_case "bind reuse recompute respects bind cutoff" `Quick
-            test_bind_reuse_recompute_respects_bind_cutoff;
           Alcotest.test_case "dynamic list bind switches dependency set" `Quick
             test_dynamic_list_bind_switches_dependency_set;
           Alcotest.test_case "bind branch churn releases inactive scopes" `Quick
