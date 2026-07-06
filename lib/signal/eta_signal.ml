@@ -1896,12 +1896,15 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_typed_observer_event staging lane (type a)
       (observer : a observer) =
-    let source =
-      Observer_core.delivery_event_source
+    let context =
+      Observer_core.delivery_event_context
         ~access:observer_delivery_event_access
         ~delivery:(observer_delivery_port ())
         ~event:(observer_delivery_event_port ())
         ~token:current_generation
+    in
+    let source =
+      Observer_core.delivery_event_source context
         (observer_update_collection_port staging)
     in
     Observer_core.collect_delivery_event source lane observer

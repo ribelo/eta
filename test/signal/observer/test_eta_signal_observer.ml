@@ -1361,14 +1361,16 @@ let test_delivery_event_source_collects_updates () =
               (Observer.Snapshot.delivery snapshot)))
       ~equal:(fun _observer -> Int.equal)
   in
-  let source =
-    Observer.delivery_event_source ~access:(observer_event_access events)
+  let context =
+    Observer.delivery_event_context ~access:(observer_event_access events)
       ~delivery:(observer_delivery_port events)
       ~event:(observer_event_port events)
       ~token:(fun capability ->
         check_observer_capability capability;
         11)
-      collection
+  in
+  let source =
+    Observer.delivery_event_source context collection
   in
   let event =
     match Observer.collect_delivery_event source observer_capability observer with

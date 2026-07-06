@@ -691,6 +691,24 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
           finish_delivery_after_error delivery_port capability observer token
             update ~delivered))
 
+type ('capability, 'observer, 'live, 'a, 'after_ack, 'callback, 'error)
+     delivery_event_context = {
+  context_access : 'capability delivery_event_access;
+  context_delivery :
+    ('capability, 'observer, 'live, 'a, 'after_ack) delivery_port;
+  context_event :
+    ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port;
+  context_token : 'capability -> Delivery.token;
+}
+
+let delivery_event_context ~access ~delivery ~event ~token =
+  {
+    context_access = access;
+    context_delivery = delivery;
+    context_event = event;
+    context_token = token;
+  }
+
 type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
      collection_port = {
   collection_live : 'capability -> 'observer -> 'live option;
@@ -779,13 +797,14 @@ let delivery_event_source_of_collect_event ~collect_event =
 let delivery_event_source_of_collection collection =
   delivery_event_source_of_collect_event ~collect_event:(collect_event collection)
 
-let delivery_event_source ~access ~delivery ~event ~token collection =
+let delivery_event_source context collection =
   delivery_event_source_of_collect_event
     ~collect_event:(fun capability observer ->
       collect_event collection capability observer
       |> Option.map (fun update ->
-             make_delivery_event ~access delivery event ~observer
-               ~token:(token capability) update))
+             make_delivery_event ~access:context.context_access
+               context.context_delivery context.context_event ~observer
+               ~token:(context.context_token capability) update))
 
 let collect_delivery_event source capability observer =
   source.source_collect_event capability observer

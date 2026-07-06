@@ -436,6 +436,17 @@ val make_delivery_event :
   'a Update.t ->
   ('capability, 'callback, 'error) Delivery_event.t
 
+type ('capability, 'observer, 'live, 'a, 'after_ack, 'callback, 'error)
+     delivery_event_context
+
+val delivery_event_context :
+  access:'capability delivery_event_access ->
+  delivery:('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
+  event:('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
+  token:('capability -> Delivery.token) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'callback, 'error)
+  delivery_event_context
+
 type ('capability, 'observer, 'live, 'a, 'after_ack, 'event)
      collection_port
 
@@ -492,10 +503,8 @@ val delivery_collection :
 type ('capability, 'observer, 'callback, 'error) delivery_event_source
 
 val delivery_event_source :
-  access:'capability delivery_event_access ->
-  delivery:('capability, 'observer, 'live, 'a, 'after_ack) delivery_port ->
-  event:('capability, 'observer, 'a, 'callback, 'error) delivery_event_port ->
-  token:('capability -> Delivery.token) ->
+  ('capability, 'observer, 'live, 'a, 'after_ack, 'callback, 'error)
+  delivery_event_context ->
   ('capability, 'observer, 'live, 'a, 'after_ack, 'a Update.t)
   collection_port ->
   ('capability, 'observer, 'callback, 'error) delivery_event_source
