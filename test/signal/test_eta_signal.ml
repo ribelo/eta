@@ -7536,63 +7536,6 @@ let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
    | [ Signal.Initialized 1 ] -> ()
    | _ -> Alcotest.fail "expected buffered initialized stream update")
 
-let test_stream_bridge_drop_callback_failure_is_best_effort () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_logger_test_clock @@ fun _sw _clock rt logger ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let drop_calls = ref 0 in
-  let before = run_ok rt (Signal.stats ()) in
-  let observer, stream =
-    run_ok rt
-      (Signal.Stream.observe ~capacity:1
-         ~on_drop:(fun _update ->
-           incr drop_calls;
-           failwith "drop hook failure")
-         signal)
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "drop hook ran once" 1 !drop_calls;
-  Alcotest.(check int) "observer snapshot advances after failed drop hook" 2
-    (run_ok rt (Signal.Observer.read observer));
-  let after_failed_drop = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "failed drop still counts as loss"
-    (before.Signal.stream_bridge_drop_count + 1)
-    after_failed_drop.Signal.stream_bridge_drop_count;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "failed drop hook is not retried" 1 !drop_calls;
-  (match Logger.dump logger with
-   | [ record ] ->
-       Alcotest.(check bool) "diagnostic level" true
-         (record.level = Logger.Error);
-       Alcotest.(check string) "diagnostic body"
-         "eta_signal.stream.on_drop_failure" record.body;
-       Alcotest.(check (option string))
-         "diagnostic exception message" (Some "Failure(\"drop hook failure\")")
-         (List.assoc_opt "exception.message" record.attrs)
-   | records ->
-       Alcotest.failf "expected one drop hook diagnostic, got %d"
-         (List.length records));
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected buffered initial update");
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
-   | _ -> Alcotest.fail "expected later delivered update after draining");
-  let after_delivery = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "delivered update does not count as drop"
-    after_failed_drop.Signal.stream_bridge_drop_count
-    after_delivery.Signal.stream_bridge_drop_count;
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_stream_bridge_full_queue_failure_releases_phase () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8095,9 +8038,6 @@ let () =
           Alcotest.test_case
             "stream bridge interrupted drop callback does not duplicate" `Quick
             test_stream_bridge_interrupted_drop_callback_does_not_duplicate;
-          Alcotest.test_case
-            "stream bridge failed drop callback is best effort" `Quick
-            test_stream_bridge_drop_callback_failure_is_best_effort;
           Alcotest.test_case
             "stream bridge full queue plus observer failure releases phase"
             `Quick test_stream_bridge_full_queue_failure_releases_phase;

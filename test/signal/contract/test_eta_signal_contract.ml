@@ -72,6 +72,19 @@ let wait_until label predicate =
   in
   loop 200
 
+let with_logger_test_clock f =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let logger = Eta.Logger.in_memory () in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
+      ~logger:(Eta.Logger.as_capability logger) ()
+  in
+  f sw clock runtime logger
+
 let test_error_pretty_printers_are_clear () =
   let module S = Eta_signal.Make (Observer_error) () in
   check_render "ambiguous scope" S.pp_graph_error `Ambiguous_scope
@@ -560,14 +573,16 @@ let test_stream_with_observed_disposes_on_exit () =
 
 let test_stream_bridge_full_queue_drops_newest () =
   let module S = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun sw _clock runtime ->
+  with_logger_test_clock @@ fun sw _clock runtime logger ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source in
   let drops = ref [] in
+  let drop_calls = ref 0 in
   let observer, stream =
     run_ok runtime
       (S.Stream.observe ~capacity:1
          ~on_drop:(fun update ->
+           incr drop_calls;
            drops := update :: !drops;
            failwith "contract drop hook failure")
          signal)
@@ -590,6 +605,7 @@ let test_stream_bridge_full_queue_drops_newest () =
     "drop counted after acknowledgement"
     (before_drop.S.stream_bridge_drop_count + 1)
     after_drop.S.stream_bridge_drop_count;
+  Alcotest.(check int) "failed drop hook ran once" 1 !drop_calls;
   Alcotest.(check int)
     "observer snapshot still commits"
     2
@@ -597,6 +613,21 @@ let test_stream_bridge_full_queue_drops_newest () =
   (match !drops with
    | [ S.Changed { old_value = 1; new_value = 2 } ] -> ()
    | _ -> Alcotest.fail "expected newest stream update to be dropped");
+  (match Eta.Logger.dump logger with
+   | [ record ] ->
+       Alcotest.(check bool) "drop hook diagnostic level" true
+         (record.level = Eta.Logger.Error);
+       Alcotest.(check string) "drop hook diagnostic body"
+         "eta_signal.stream.on_drop_failure" record.body;
+       Alcotest.(check (option string))
+         "drop hook diagnostic exception"
+         (Some "Failure(\"contract drop hook failure\")")
+         (List.assoc_opt "exception.message" record.attrs)
+   | records ->
+       Alcotest.failf "expected one drop hook diagnostic, got %d"
+         (List.length records));
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "failed drop hook is not retried" 1 !drop_calls;
   let update_value = function
     | S.Initialized value -> value
     | S.Changed { new_value; _ } -> new_value
