@@ -1169,11 +1169,6 @@ let staged_value t _lane _staging cell =
       Some (Eta_signal_transaction.read transaction cell)
   | Some _ | None -> None
 
-let discard_staging t _lane _staging cell =
-  match Eta_signal_stabilization.transaction t.stabilization with
-  | Some transaction -> Eta_signal_transaction.discard transaction cell
-  | None -> ()
-
 let next_timer_refresh_token t _lane =
   let exception Overflow in
   match

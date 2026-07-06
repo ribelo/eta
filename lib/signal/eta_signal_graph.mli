@@ -470,13 +470,6 @@ val staged_value :
   'a Eta_signal_transaction.staged ->
   'a option
 
-val discard_staging :
-  (_, _, _, _, _, _, _, _, _, _, _) t ->
-  lane_access ->
-  staging ->
-  'a Eta_signal_transaction.staged ->
-  unit
-
 val next_timer_refresh_token :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
@@ -824,37 +817,6 @@ val record_stabilization_result :
     need to inspect successful stabilization results just to finish the graph
     phase later. *)
 
-val stabilization_finish_pending : 'owner stabilization_finish -> bool
-
-val finish_recorded_stabilization :
-  ( 'pending,
-    'bind,
-    'node,
-    'hook,
-    'timer,
-    'refresh,
-    'observer,
-    'weak_node,
-    'dead_node,
-    'scope_context,
-    'stream_metrics )
-  t ->
-  lane_access ->
-  ( ( 'pending,
-      'bind,
-      'node,
-      'hook,
-      'timer,
-      'refresh,
-      'observer,
-      'weak_node,
-      'dead_node,
-      'scope_context,
-      'stream_metrics )
-    t )
-  stabilization_finish ->
-  unit
-
 type ('event, 'error) stabilization_delivery_context
 
 val stabilization_delivery_context :
@@ -1032,10 +994,3 @@ val map_dead_nodes :
   lane_access ->
   f:('dead_node -> 'a) ->
   'a list
-
-val remember_dead_node :
-  (_, _, _, _, _, _, _, _, 'dead_node, _, _) t ->
-  lane_access ->
-  id:('dead_node -> Eta_signal_id.signal) ->
-  'dead_node ->
-  unit
