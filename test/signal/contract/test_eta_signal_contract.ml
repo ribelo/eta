@@ -412,6 +412,39 @@ let test_map_invariants_repeated_children_cutoff_and_final_values () =
   Alcotest.(check int) "two changed inputs recomputed once" 2 !map2_calls;
   run_ok runtime (S.Observer.dispose observer)
 
+let test_repeated_dependencies_are_deduplicated_in_diagnostics () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let base = S.Var.watch source in
+  let repeated = S.map2 (fun left _right -> left) base base in
+  let observer =
+    run_ok runtime (S.Observer.observe repeated (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let options : S.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = false;
+      dot_timers = false;
+      dot_state = true;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let diagnostic_dot = run_ok runtime (S.to_dot ~options ()) in
+  Alcotest.(check int) "map2 stores one dependency" 1
+    (count_occurrences diagnostic_dot "dependencies=1");
+  Alcotest.(check int) "source stores one dependent" 1
+    (count_occurrences diagnostic_dot "dependents=1");
+  Alcotest.(check int) "map2 does not store duplicate dependencies" 0
+    (count_occurrences diagnostic_dot "dependencies=2");
+  Alcotest.(check int) "source does not store duplicate dependents" 0
+    (count_occurrences diagnostic_dot "dependents=2");
+  let necessary_dot = run_ok runtime (S.to_dot ()) in
+  Alcotest.(check int) "to_dot renders repeated dependency edge once" 1
+    (count_occurrences necessary_dot " -> ");
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_explicit_stabilization_boundary () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1376,6 +1409,8 @@ let () =
             `Quick test_map_arity_matrix_initializes_and_coalesces;
           Alcotest.test_case "map invariants repeated children and cutoff"
             `Quick test_map_invariants_repeated_children_cutoff_and_final_values;
+          Alcotest.test_case "repeated dependencies deduplicate diagnostics"
+            `Quick test_repeated_dependencies_are_deduplicated_in_diagnostics;
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick

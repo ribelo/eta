@@ -19,7 +19,6 @@ end
 module Signal = Eta_signal.Make (Observer_error) ()
 module Other_signal = Eta_signal.Make (Observer_error) ()
 module Dot_signal = Eta_signal.Make (Observer_error) ()
-module Dependency_signal = Eta_signal.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -3753,54 +3752,6 @@ let test_stats_and_dot_stay_read_only_through_nested_bind_churn () =
   Alcotest.(check int) "final dot hides disposed observers" 0
     (count_occurrences final_dot "observer:")
 
-let test_repeated_dependencies_are_stored_once () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Dependency_signal.Var.create 1 in
-  let base = Dependency_signal.Var.watch source in
-  let repeated =
-    Dependency_signal.map2 (fun left _right -> left) base base
-  in
-  let observer =
-    run_ok rt
-      (Dependency_signal.Observer.observe repeated (fun _ -> Effect.unit))
-  in
-  run_ok rt Dependency_signal.stabilize;
-  let options : Dependency_signal.dot_options =
-    {
-      dot_scope = `All_valid;
-      dot_observers = false;
-      dot_timers = false;
-      dot_state = true;
-      dot_dynamic_scopes = false;
-    }
-  in
-  let dot = run_ok rt (Dependency_signal.to_dot ~options ()) in
-  Alcotest.(check int) "map2 stores one dependency edge" 1
-    (count_occurrences dot "dependencies=1");
-  Alcotest.(check int) "source records one dependent edge" 1
-    (count_occurrences dot "dependents=1");
-  Alcotest.(check int) "map2 does not store duplicate dependencies" 0
-    (count_occurrences dot "dependencies=2");
-  Alcotest.(check int) "source does not store duplicate dependents" 0
-    (count_occurrences dot "dependents=2");
-  run_ok rt (Dependency_signal.Observer.dispose observer)
-
-let test_to_dot_deduplicates_repeated_dependency_edges () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Dot_signal.Var.create 1 in
-  let base = Dot_signal.Var.watch source in
-  let repeated = Dot_signal.map2 (fun left _right -> left) base base in
-  let observer =
-    run_ok rt (Dot_signal.Observer.observe repeated (fun _ -> Effect.unit))
-  in
-  run_ok rt Dot_signal.stabilize;
-  let dot = run_ok rt (Dot_signal.to_dot ()) in
-  Alcotest.(check int) "repeated dependency edge rendered once" 1
-    (count_occurrences dot " -> ");
-  run_ok rt (Dot_signal.Observer.dispose observer)
-
 let test_to_dot_debug_options_expose_hidden_state () =
   with_logger_test_clock @@ fun _sw _clock rt _logger ->
   let source = Dot_signal.Var.create 1 in
@@ -6751,10 +6702,6 @@ let () =
             test_observer_delivery_acknowledgement_uses_graph_lane;
           Alcotest.test_case "stats and dot survive nested bind churn" `Quick
             test_stats_and_dot_stay_read_only_through_nested_bind_churn;
-          Alcotest.test_case "repeated dependencies are stored once" `Quick
-            test_repeated_dependencies_are_stored_once;
-          Alcotest.test_case "to_dot deduplicates repeated dependency edges"
-            `Quick test_to_dot_deduplicates_repeated_dependency_edges;
           Alcotest.test_case "to_dot debug options expose hidden state" `Quick
             test_to_dot_debug_options_expose_hidden_state;
           Alcotest.test_case "dead nodes and dot include pruned invalid nodes"
