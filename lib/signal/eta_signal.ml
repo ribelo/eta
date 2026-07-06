@@ -1537,17 +1537,15 @@ module Make (Observer_error : Observer_error) () = struct
       (source, value) bind ->
       value * bool =
    fun lane staging signal bind ->
-    let scope_plan =
-      Bind.dynamic_scope_plan
+    let switch =
+      Bind.dynamic_switch_plan
         ~new_scope:(fun _lane -> new_scope signal)
         ~with_scope:(fun _lane scope f ->
           Graph.with_current_scope graph scope_ops scope f)
         ~on_switch_failure:(fun lane scope ->
           remember_pure_disposal_hooks lane staging
             (invalidate_scope lane scope))
-    in
-    let inner_plan =
-      Bind.dynamic_inner_plan ~selector:bind.selector
+        ~selector:bind.selector
         ~validate_inner:(fun _lane scope inner ->
           Scope_validation.validate_inner ~scope (P inner))
         ~compute_inner:(fun lane inner -> compute lane staging inner)
@@ -1584,8 +1582,8 @@ module Make (Observer_error : Observer_error) () = struct
         ~stage_value:(stage_signal lane staging signal)
     in
     let context =
-      Bind.dynamic_context ~source ~scope:scope_plan ~inner:inner_plan
-        ~reuse ~value ~staging:staging_context
+      Bind.dynamic_context ~source ~switch ~reuse ~value
+        ~staging:staging_context
     in
     match
       Bind.run_dynamic context lane (bind_effective_snapshot bind)

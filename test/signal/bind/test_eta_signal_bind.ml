@@ -248,8 +248,8 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   let with_scope, validate_inner, default_compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
-  let scope_plan =
-    Bind.dynamic_scope_plan
+  let switch =
+    Bind.dynamic_switch_plan
       ~new_scope:(fun cap ->
         check_cap cap;
         events := !events @ [ "new_scope" ];
@@ -264,9 +264,6 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
             fun cap _scope ->
               check_cap cap;
               Alcotest.fail "unexpected cleanup")
-  in
-  let inner_plan =
-    Bind.dynamic_inner_plan
       ~selector:
         (match selector_override with
         | Some selector -> selector
@@ -337,8 +334,7 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       ~stage_value:(fun value ->
         events := !events @ [ "stage_value:" ^ string_of_int value ])
   in
-  Bind.dynamic_context ~source ~scope:scope_plan ~inner:inner_plan ~reuse
-    ~value ~staging
+  Bind.dynamic_context ~source ~switch ~reuse ~value ~staging
 
 let run_dynamic context snapshot =
   match

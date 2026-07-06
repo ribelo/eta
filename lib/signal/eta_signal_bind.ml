@@ -25,21 +25,12 @@ let dynamic_source_plan ~equal ~compute_source ~dependencies =
     source_dependencies = dependencies;
   }
 
-type ('capability, 'inner, 'scope) dynamic_scope_plan = {
-  scope_new : 'capability -> 'scope;
-  scope_with_current : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
-  scope_on_switch_failure : 'capability -> 'scope -> unit;
-}
-
-let dynamic_scope_plan ~new_scope ~with_scope ~on_switch_failure =
-  {
-    scope_new = new_scope;
-    scope_with_current = with_scope;
-    scope_on_switch_failure = on_switch_failure;
-  }
-
 type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_inner_plan = {
+     dynamic_switch_plan = {
+  switch_new_scope : 'capability -> 'scope;
+  switch_with_current :
+    'capability -> 'scope -> (unit -> 'inner) -> 'inner;
+  switch_on_failure : 'capability -> 'scope -> unit;
   inner_select : 'source -> 'inner;
   scope_validate_inner :
     'capability ->
@@ -49,20 +40,16 @@ type ('capability, 'source, 'inner, 'scope, 'value, 'error)
   scope_compute_inner : 'capability -> 'inner -> 'value * bool;
 }
 
-let dynamic_inner_plan ~selector ~validate_inner ~compute_inner =
+let dynamic_switch_plan ~new_scope ~with_scope ~on_switch_failure
+    ~selector ~validate_inner ~compute_inner =
   {
+    switch_new_scope = new_scope;
+    switch_with_current = with_scope;
+    switch_on_failure = on_switch_failure;
     inner_select = selector;
     scope_validate_inner = validate_inner;
     scope_compute_inner = compute_inner;
   }
-
-type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_scope_context = {
-  scope_plan : ('capability, 'inner, 'scope) dynamic_scope_plan;
-  inner_plan :
-    ('capability, 'source, 'inner, 'scope, 'value, 'error)
-    dynamic_inner_plan;
-}
 
 type 'inner eval_plan =
   | Switch
@@ -103,9 +90,9 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context = {
   eval_source :
     ('capability, 'source, 'inner, 'dependency) dynamic_source_plan;
-  eval_scope :
+  eval_switch :
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
-    dynamic_scope_context;
+    dynamic_switch_plan;
   eval_reuse : ('capability, 'dependency) dynamic_reuse_plan;
 }
 
@@ -170,12 +157,12 @@ let dynamic_staging_context ~stage_switch ~stage_dependencies ~stage_value =
     staging_stage_value = stage_value;
   }
 
-let dynamic_context ~source ~scope ~inner ~reuse ~value ~staging =
+let dynamic_context ~source ~switch ~reuse ~value ~staging =
   {
     dynamic_eval =
       {
         eval_source = source;
-        eval_scope = { scope_plan = scope; inner_plan = inner };
+        eval_switch = switch;
         eval_reuse = reuse;
       };
     dynamic_apply = { apply_value = value; apply_staging = staging };
@@ -243,17 +230,17 @@ let eval_reuse ~dependencies ~source_changed ~compute_inner ~dirty
   else Reuse_cached
 
 let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
-    ~source_value ~source_changed ~scope ~reuse ~initialized =
+    ~source_value ~source_changed ~switch ~reuse ~initialized =
   match eval_plan ~equal snapshot ~source_value with
   | Error _ as error -> error
   | Ok Switch ->
-      let dynamic_scope = scope.scope_plan.scope_new capability in
+      let dynamic_scope = switch.switch_new_scope capability in
       eval_switch ~capability ~scope:dynamic_scope ~source_value
-        ~selector:scope.inner_plan.inner_select
-        ~with_scope:scope.scope_plan.scope_with_current
-        ~validate_inner:scope.inner_plan.scope_validate_inner
-        ~compute_inner:scope.inner_plan.scope_compute_inner
-        ~on_failure:scope.scope_plan.scope_on_switch_failure
+        ~selector:switch.inner_select
+        ~with_scope:switch.switch_with_current
+        ~validate_inner:switch.scope_validate_inner
+        ~compute_inner:switch.scope_compute_inner
+        ~on_failure:switch.switch_on_failure
       |> Result.map (fun eval ->
              Dynamic_switch
                {
@@ -270,7 +257,7 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
       match
         eval_reuse ~dependencies:dependency_list ~source_changed
           ~compute_inner:(fun () ->
-            scope.inner_plan.scope_compute_inner capability inner)
+            switch.scope_compute_inner capability inner)
           ~dirty:reuse.reuse_dirty
           ~initialized
           ~dependencies_changed:(fun dependencies ->
@@ -291,7 +278,8 @@ let plan_dynamic eval_context value_context capability snapshot =
   let value_state = value_context.value_state () in
   plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
     ~source_value ~dependencies:source.source_dependencies
-    ~source_changed ~scope:eval_context.eval_scope ~reuse:eval_context.eval_reuse
+    ~source_changed ~switch:eval_context.eval_switch
+    ~reuse:eval_context.eval_reuse
     ~initialized:value_state.state_initialized
 
 let value_changed context value =

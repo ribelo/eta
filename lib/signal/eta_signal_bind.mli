@@ -17,19 +17,14 @@ val dynamic_source_plan :
   dependencies:('inner, 'dependency) dynamic_dependencies ->
   ('capability, 'source, 'inner, 'dependency) dynamic_source_plan
 
-type ('capability, 'inner, 'scope) dynamic_scope_plan
+type ('capability, 'source, 'inner, 'scope, 'value, 'error)
+     dynamic_switch_plan
+  constraint 'error = [> `Invalid_scope ]
 
-val dynamic_scope_plan :
+val dynamic_switch_plan :
   new_scope:('capability -> 'scope) ->
   with_scope:('capability -> 'scope -> (unit -> 'inner) -> 'inner) ->
   on_switch_failure:('capability -> 'scope -> unit) ->
-  ('capability, 'inner, 'scope) dynamic_scope_plan
-
-type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_inner_plan
-  constraint 'error = [> `Invalid_scope ]
-
-val dynamic_inner_plan :
   selector:('source -> 'inner) ->
   validate_inner:
     ('capability ->
@@ -38,7 +33,7 @@ val dynamic_inner_plan :
     (unit, ([> `Invalid_scope ] as 'error)) result) ->
   compute_inner:('capability -> 'inner -> 'value * bool) ->
   ('capability, 'source, 'inner, 'scope, 'value, 'error)
-  dynamic_inner_plan
+  dynamic_switch_plan
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_context
@@ -78,10 +73,9 @@ val dynamic_staging_context :
 
 val dynamic_context :
   source:('capability, 'source, 'inner, 'dependency) dynamic_source_plan ->
-  scope:('capability, 'inner, 'scope) dynamic_scope_plan ->
-  inner:
+  switch:
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
-    dynamic_inner_plan ->
+    dynamic_switch_plan ->
   reuse:('capability, 'dependency) dynamic_reuse_plan ->
   value:'value dynamic_value_context ->
   staging:
