@@ -500,11 +500,12 @@ val remove_observers :
   keep:('observer -> bool) ->
   unit
 
-val matching_observers :
+val collect_observer_hooks :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
   selected:('observer -> bool) ->
-  'observer list
+  collect:('observer -> 'hook list) ->
+  'hook list
 
 val count_observers :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

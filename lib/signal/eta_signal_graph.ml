@@ -662,7 +662,9 @@ let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t _lane metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
 let remove_observers t _lane ~keep = t.observers <- List.filter keep t.observers
-let matching_observers t _lane ~selected = List.filter selected t.observers
+
+let collect_observer_hooks t _lane ~selected ~collect =
+  List.filter selected t.observers |> List.concat_map collect
 
 let count_observers t _lane ~selected =
   List.fold_left

@@ -862,13 +862,9 @@ module Make (Observer_error : Observer_error) () = struct
     Observer_core.invalidate_observer (observer_lifecycle_port lane) observer
 
   let dispose_signal_observers lane signal =
-    let observers =
-      Graph.matching_observers graph lane ~selected:
-        (fun (O observer) -> observer.obs_signal.id = signal.id)
-    in
-    List.concat_map
-      (fun (O observer) -> invalidate_observer_unlocked lane observer)
-      observers
+    Graph.collect_observer_hooks graph lane
+      ~selected:(fun (O observer) -> observer.obs_signal.id = signal.id)
+      ~collect:(fun (O observer) -> invalidate_observer_unlocked lane observer)
 
   let validate_dependency (P signal) =
     if not signal.valid then raise (Graph_error `Invalid_scope)
