@@ -2453,8 +2453,13 @@ type stream_model_op =
   | Stream_take of int
   | Stream_stabilize
 
+type stream_equal_policy =
+  | Stream_default_equal
+  | Stream_mod_equal of int
+
 type stream_model_slot = {
   stream_capacity : int;
+  stream_equal_policy : stream_equal_policy;
   mutable stream_observer : int Signal.observer option;
   mutable stream :
     (int Signal.update, Signal.graph_error) Eta_stream.Stream.t option;
@@ -2471,9 +2476,15 @@ let pp_stream_model_op formatter = function
   | Stream_take slot -> Format.fprintf formatter "Take slot%d" slot
   | Stream_stabilize -> Format.pp_print_string formatter "Stabilize"
 
-let create_stream_model_slot capacity =
+let stream_model_equal policy left right =
+  match policy with
+  | Stream_default_equal -> left == right
+  | Stream_mod_equal modulus -> left mod modulus = right mod modulus
+
+let create_stream_model_slot ?(equal_policy = Stream_default_equal) capacity =
   {
     stream_capacity = capacity;
+    stream_equal_policy = equal_policy;
     stream_observer = None;
     stream = None;
     stream_current = None;
@@ -2500,7 +2511,8 @@ let stream_model_stabilize_slot committed total_drops slot =
       match slot.stream_current with
       | None -> Some (Initialized committed)
       | Some current ->
-          if current = committed then None
+          if stream_model_equal slot.stream_equal_policy current committed then
+            None
           else Some (Changed (current, committed))
     in
     slot.stream_current <- Some committed;
@@ -2513,12 +2525,20 @@ let stream_model_observe runtime signal slot =
   | Some _ -> ()
   | None ->
       let observer, stream =
-        run_ok runtime
-          (Signal.Stream.observe ~capacity:slot.stream_capacity
-             ~on_drop:(fun update ->
-               slot.stream_actual_drops <-
-                 slot.stream_actual_drops @ [ observed_of_signal_update update ])
-             signal)
+        let on_drop update =
+          slot.stream_actual_drops <-
+            slot.stream_actual_drops @ [ observed_of_signal_update update ]
+        in
+        match slot.stream_equal_policy with
+        | Stream_default_equal ->
+            run_ok runtime
+              (Signal.Stream.observe ~capacity:slot.stream_capacity ~on_drop
+                 signal)
+        | Stream_mod_equal _ ->
+            run_ok runtime
+              (Signal.Stream.observe ~capacity:slot.stream_capacity ~on_drop
+                 ~equal:(stream_model_equal slot.stream_equal_policy)
+                 signal)
       in
       slot.stream_observer <- Some observer;
       slot.stream <- Some stream;
@@ -2599,7 +2619,15 @@ let generate_stream_model_ops ~seed ~slot_count ~steps =
     if index = steps then List.rev (Stream_stabilize :: acc)
     else loop (index + 1) (next_op index :: acc)
   in
-  [ Stream_observe 0; Stream_observe 1; Stream_stabilize ] @ loop 1 []
+  List.init slot_count (fun slot -> Stream_observe slot)
+  @ [
+      Stream_stabilize;
+      Stream_set 3;
+      Stream_stabilize;
+      Stream_set 4;
+      Stream_stabilize;
+    ]
+  @ loop 1 []
 
 let run_stream_model_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2607,7 +2635,7 @@ let run_stream_model_trace name ~seed =
   let signal = Signal.Var.watch source in
   let slots =
     [| create_stream_model_slot 1; create_stream_model_slot 2;
-       create_stream_model_slot 3 |]
+       create_stream_model_slot ~equal_policy:(Stream_mod_equal 3) 3 |]
   in
   let base_stats = run_ok runtime (Signal.stats ()) in
   let base_drops = base_stats.Signal.stream_bridge_drop_count in
