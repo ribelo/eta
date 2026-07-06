@@ -1738,7 +1738,9 @@ let test_observer_dispose_during_callback_skips_collected_event () =
            Effect.sync (fun () -> events := "first" :: !events)
            |> Effect.bind (fun () ->
                   match !later_observer with
-                  | Some observer -> Signal.Observer.dispose observer
+                  | Some observer ->
+                      Signal.Observer.dispose observer
+                      |> Effect.or_die (fun err -> Signal.Graph_error err)
                   | None -> Effect.sync (fun () -> Alcotest.fail "missing observer"))))
   in
   let second_observer =
@@ -4113,7 +4115,9 @@ let test_observer_registration_and_self_disposal_inside_callback () =
                       |> Effect.bind (fun late ->
                              Effect.sync (fun () -> late_ref := Some late)
                              |> Effect.bind (fun () ->
-                                    Signal.Observer.dispose primary))
+                                    Signal.Observer.dispose primary
+                                    |> Effect.or_die (fun err ->
+                                           Signal.Graph_error err)))
                   | _ -> Effect.unit)))
   in
   primary_ref := Some primary;
@@ -6200,7 +6204,8 @@ let test_time_timer_generation_overflow_fails_loudly () =
   in
   wait_for_sleepers clock 1;
   Overflow_signal.Private_test_hooks.set_timer_generation signal max_int;
-  expect_die "timer generation overflow"
+  expect_fail "timer generation overflow"
+    (counter_overflow "timer generation")
     (Eta_eio.Runtime.run rt (widen (Overflow_signal.Observer.dispose observer)))
 
 let test_time_timer_start_generation_overflow_is_precommit_failure () =
@@ -9443,6 +9448,7 @@ let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
       (Signal.Observer.observe signal (function
         | Signal.Changed _ when !dispose_bridge ->
             Signal.Observer.dispose bridge_observer
+            |> Effect.or_die (fun err -> Signal.Graph_error err)
         | _ -> Effect.unit))
   in
   run_ok rt Signal.stabilize;

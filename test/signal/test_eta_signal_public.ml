@@ -370,7 +370,7 @@ let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
           Alcotest.(check bool) "same-runtime sleeper starts after retry" true
             (Eta_test.Test_clock.sleeper_count clock_b > 0)))
 
-let test_dispose_checked_reports_timer_runtime_mismatch () =
+let test_dispose_reports_timer_runtime_mismatch () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -401,10 +401,10 @@ let test_dispose_checked_reports_timer_runtime_mismatch () =
       run_ok rt_a (S.Observer.dispose keep_alive))
     (fun () ->
       run_ok rt_a S.stabilize;
-      expect_exact_runtime_mismatch "checked dispose from another runtime"
+      expect_exact_runtime_mismatch "dispose from another runtime"
         (Eta.Runtime.run rt_b
-           (widen (S.Observer.dispose_checked disposed_from_wrong_runtime)));
-      expect_fail "checked dispose still finished observer"
+           (widen (S.Observer.dispose disposed_from_wrong_runtime)));
+      expect_fail "dispose still finished observer"
         (function `Disposed_observer -> true | _ -> false)
         (Eta.Runtime.run rt_a
            (widen (S.Observer.read disposed_from_wrong_runtime))))
@@ -582,8 +582,8 @@ let () =
             test_timer_runtime_mismatch_on_observe;
           Alcotest.test_case "mixed runtime timer mismatch recovery" `Quick
             test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer;
-          Alcotest.test_case "dispose_checked reports timer runtime mismatch"
-            `Quick test_dispose_checked_reports_timer_runtime_mismatch;
+          Alcotest.test_case "dispose reports timer runtime mismatch" `Quick
+            test_dispose_reports_timer_runtime_mismatch;
           Alcotest.test_case "captured branch observer invalidates" `Quick
             test_captured_branch_observer_invalidates_without_owner_observer;
           Alcotest.test_case "captured branch observer invalidates after gc"

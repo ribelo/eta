@@ -107,6 +107,9 @@ for src in "$fixture_dir"/*_negative.ml; do
         '`Uninitialized_observer'
       )
       ;;
+    observer_dispose_checked_negative.ml)
+      expected_substrings=('Unbound value "Signal.Observer.dispose_checked"')
+      ;;
     stream_to_signal_negative.ml)
       expected_substrings=('Unbound value "Signal.Stream.to_signal"')
       ;;

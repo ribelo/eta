@@ -327,26 +327,15 @@ module Make (Observer_error : Observer_error) () : sig
     (** Synchronous read for tests and debugging. Raises when the observer is
         disposed or not initialized; normal consumers should prefer {!read}. *)
 
-    val dispose : 'a t -> (unit, 'err) Eta.Effect.t
+    val dispose : 'a t -> (unit, graph_error) Eta.Effect.t
     (** Dispose an observer lifecycle handle. Disposal is idempotent. Pending
         callbacks collected for the observer are skipped, and demand-owned
         timer cleanup is refreshed before the effect returns.
 
-        [dispose] has no typed graph-error channel. Cleanup failures that can
-        only occur after the observer state has been changed, such as timer
-        lifecycle defects, timer runtime mismatch, counter overflow, or
-        disposal-hook defects, are therefore reported as Eta defects or
-        finalizer diagnostics rather than typed graph failures. *)
-
-    val dispose_checked : 'a t -> (unit, graph_error) Eta.Effect.t
-    (** Dispose an observer lifecycle handle like {!dispose}, but preserve
-        timer demand-cleanup graph failures in the typed error channel.
-
-        This is intended for test harnesses and hosts that need to distinguish
-        recoverable timer graph failures such as [`Runtime_mismatch] from Eta
-        defects. The observer lifecycle state is still changed before timer
-        cleanup runs. Disposal-hook defects remain Eta defects or finalizer
-        diagnostics. *)
+        Timer demand-cleanup graph failures such as [`Runtime_mismatch] are
+        preserved in the typed error channel. The observer lifecycle state is
+        still changed before timer cleanup runs. Disposal-hook defects remain
+        Eta defects or finalizer diagnostics. *)
   end
 
   val const : ?equal:('a -> 'a -> bool) -> 'a -> 'a signal
@@ -727,8 +716,8 @@ module Make (Observer_error : Observer_error) () : sig
         wider workflow also needs non-stream Eta operations in the same error
         channel.
 
-        Cleanup uses {!Observer.dispose_checked}; disposal cleanup failures are
-        reported as finalizer diagnostics by Eta's resource semantics. *)
+        Cleanup uses {!Observer.dispose}; disposal cleanup failures are
+        reported through Eta's resource semantics. *)
   end
 end
 

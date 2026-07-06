@@ -1662,19 +1662,6 @@ module Make (Observer_error : Observer_error) () = struct
     if !refresh_timers || Cleanup.pending hooks_ref then
       ((if !refresh_timers then
           Effect.sync (fun () -> refresh_timers := false)
-          |> Effect.bind (fun () ->
-                 refresh_timer_demand ()
-                 |> Effect.or_die (fun err -> Graph_error err))
-        else Effect.unit)
-       |> Effect.bind (fun () ->
-              Cleanup.run_pending_as_finalizers hooks_ref))
-      |> Effect.uninterruptible
-    else Effect.unit
-
-  let run_pending_dispose_checked_cleanup hooks_ref refresh_timers =
-    if !refresh_timers || Cleanup.pending hooks_ref then
-      ((if !refresh_timers then
-          Effect.sync (fun () -> refresh_timers := false)
           |> Effect.bind (fun () -> refresh_timer_demand ())
         else Effect.unit)
        |> Effect.bind (fun () ->
@@ -1717,9 +1704,6 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dispose_observer_effect observer =
     dispose_observer_with_cleanup run_pending_dispose_cleanup observer
-
-  let dispose_observer_checked_effect observer =
-    dispose_observer_with_cleanup run_pending_dispose_checked_cleanup observer
 
   let abort_observer_registration_effect observer =
     let hooks_ref = ref [] in
@@ -2162,7 +2146,6 @@ module Make (Observer_error : Observer_error) () = struct
         observer.obs_state
 
     let dispose observer = dispose_observer_effect observer
-    let dispose_checked observer = dispose_observer_checked_effect observer
   end
 
   let const ?equal value = new_const ?equal value
@@ -2827,7 +2810,7 @@ module Make (Observer_error : Observer_error) () = struct
       Effect.with_resource
         ~acquire:(observe ?capacity ?on_drop ?equal signal)
         ~release:(fun (observer, _stream) ->
-          Observer.dispose_checked observer)
+          Observer.dispose observer)
         (fun (_observer, stream) -> f stream)
   end
 end
