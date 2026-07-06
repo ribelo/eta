@@ -16,7 +16,6 @@ module Observer_lifecycle = Observer_core.Lifecycle
 module Scope = Eta_signal_scope
 module Stabilization_pass = Eta_signal_stabilization_pass
 module Stream_bridge = Eta_signal_stream_bridge
-module Test_hooks = Eta_signal_test_hooks
 module Timer = Eta_signal_timer
 module Timer_policy = Eta_signal_timer_policy
 module Transaction = Eta_signal_transaction
@@ -406,19 +405,56 @@ module Make (Observer_error : Observer_error) () = struct
     Transaction.publish_current Transaction.timer_lifecycle staged value
 
   module Private_test_hooks = struct
-    type hook = Test_hooks.hook =
+    type hook =
       | After_observer_delivery_claim
       | After_observer_activation_before_return
       | After_graph_lane_acquired
 
-    type action = Test_hooks.action = {
+    type action = {
       run : 'err. unit -> (unit, 'err) Effect.t;
     }
 
-    let state = Test_hooks.create ()
-    let with_hook hook action f = Test_hooks.with_hook state hook action f
-    let clear () = Test_hooks.clear state
-    let run hook = Test_hooks.run state hook
+    type state = {
+      after_observer_delivery_claim : action ref;
+      after_observer_activation_before_return : action ref;
+      after_graph_lane_acquired : action ref;
+    }
+
+    let noop = { run = (fun () -> Effect.unit) }
+
+    let state =
+      {
+        after_observer_delivery_claim = ref noop;
+        after_observer_activation_before_return = ref noop;
+        after_graph_lane_acquired = ref noop;
+      }
+
+    let slot = function
+      | After_observer_delivery_claim -> state.after_observer_delivery_claim
+      | After_observer_activation_before_return ->
+          state.after_observer_activation_before_return
+      | After_graph_lane_acquired -> state.after_graph_lane_acquired
+
+    let with_hook hook action f =
+      let slot = slot hook in
+      let previous = !slot in
+      slot := action;
+      Fun.protect ~finally:(fun () -> slot := previous) f
+
+    let clear () =
+      List.iter
+        (fun hook ->
+          let slot = slot hook in
+          slot := noop)
+        [
+          After_observer_delivery_claim;
+          After_observer_activation_before_return;
+          After_graph_lane_acquired;
+        ]
+
+    let run hook =
+      let slot = slot hook in
+      (!slot).run ()
   end
 
   type disposal_hook = Cleanup.hook
