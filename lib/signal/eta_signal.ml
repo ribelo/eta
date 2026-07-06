@@ -1213,8 +1213,8 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_staged_bind_invalidations lane staging =
     let invalidated_ids = Hashtbl.create 16 in
     let invalidated_nodes = ref [] in
-    match
-      Graph.collect_staged_bind_switch_invalidations graph lane staging
+    let plan =
+      Graph.staged_bind_invalidation_plan
         ~init:(invalidated_ids, invalidated_nodes)
         ~staged_switch:(packed_bind_staged_switch lane staging)
         ~collect_old_scope:(fun (seen, collected) ~owner scope ->
@@ -1222,6 +1222,9 @@ module Make (Observer_error : Observer_error) () = struct
           collect_scope_invalidations_into ~exclude_signal_id:owner_signal.id
             seen collected scope;
           (seen, collected))
+    in
+    match
+      Graph.collect_staged_bind_switch_invalidations graph lane staging plan
     with
     | Ok (invalidated_ids, invalidated_nodes) ->
         (invalidated_ids, !invalidated_nodes)

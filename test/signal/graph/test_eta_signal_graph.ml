@@ -831,17 +831,20 @@ let test_stage_bind_switch_owns_transaction_staging () =
       (Bind.inner snapshot);
     Alcotest.(check (option int)) "staged scope" (Some 3)
       (Bind.inner_scope snapshot);
+    let invalidation_plan =
+      Graph.staged_bind_invalidation_plan ~init:[]
+        ~staged_switch:(fun bind ->
+          Alcotest.(check string) "bind" "bind" bind;
+          Bind.staged_switch ~owner:(Some "owner")
+            ~current:(Transaction.current staged)
+            ~staged:(Graph.staged_value graph lane staging staged)
+          |> Bind.pack_staged_switch)
+        ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
+    in
     let collected =
       match
         Graph.collect_staged_bind_switch_invalidations graph lane staging
-          ~init:[]
-          ~staged_switch:(fun bind ->
-            Alcotest.(check string) "bind" "bind" bind;
-            Bind.staged_switch ~owner:(Some "owner")
-              ~current:(Transaction.current staged)
-              ~staged:(Graph.staged_value graph lane staging staged)
-            |> Bind.pack_staged_switch)
-          ~collect_old_scope:(fun acc ~owner scope -> (owner, scope) :: acc)
+          invalidation_plan
       with
       | Ok collected -> collected
       | Error err ->
@@ -851,14 +854,17 @@ let test_stage_bind_switch_owns_transaction_staging () =
     in
     Alcotest.(check (list (pair string int)))
       "old scope invalidation" [ ("owner", 1) ] collected;
-    match
-      Graph.collect_staged_bind_switch_invalidations graph lane staging
-        ~init:[]
+    let missing_owner_plan =
+      Graph.staged_bind_invalidation_plan ~init:[]
         ~staged_switch:(fun _bind ->
           Bind.staged_switch ~owner:None ~current:(Transaction.current staged)
             ~staged:(Graph.staged_value graph lane staging staged)
           |> Bind.pack_staged_switch)
         ~collect_old_scope:(fun acc ~owner:_ _scope -> acc)
+    in
+    match
+      Graph.collect_staged_bind_switch_invalidations graph lane staging
+        missing_owner_plan
     with
     | Error `Invalid_scope -> ()
     | Ok _ -> Alcotest.fail "expected invalid scope"

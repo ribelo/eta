@@ -330,14 +330,20 @@ val rollback_staged_bind_switch :
   ('owner, 'inner, 'scope, 'hook) Eta_signal_bind.staged_switch_lifecycle ->
   ('hook list, Eta_signal_error.graph_error) result
 
-val collect_staged_bind_switch_invalidations :
-  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
-  lane_access ->
-  staging ->
+type ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan
+
+val staged_bind_invalidation_plan :
   init:'acc ->
   staged_switch:
     ('bind -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch) ->
   collect_old_scope:('acc -> owner:'owner -> 'scope -> 'acc) ->
+  ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan
+
+val collect_staged_bind_switch_invalidations :
+  (_, 'bind, _, _, _, _, _, _, _, _, _) t ->
+  lane_access ->
+  staging ->
+  ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan ->
   ('acc, Eta_signal_error.graph_error) result
 
 val remember_pure_disposal_hooks :

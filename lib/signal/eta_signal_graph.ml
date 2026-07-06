@@ -509,11 +509,27 @@ let rollback_staged_bind_switch ~staged lifecycle =
   Eta_signal_bind.rollback_staged_switch ~staged lifecycle
   |> map_bind_switch_result
 
-let collect_staged_bind_switch_invalidations t _lane _staging ~init ~staged_switch
-    ~collect_old_scope =
-  Eta_signal_bind.collect_staged_switch_invalidations ~init
-    ~switches:(Eta_signal_graph_state.staged_binds t.state) ~staged_switch
-    ~collect_old_scope
+type ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan = {
+  staged_bind_invalidation_init : 'acc;
+  staged_bind_invalidation_switch :
+    'bind -> ('scope, 'owner) Eta_signal_bind.packed_staged_switch;
+  staged_bind_invalidation_collect_old_scope :
+    'acc -> owner:'owner -> 'scope -> 'acc;
+}
+
+let staged_bind_invalidation_plan ~init ~staged_switch ~collect_old_scope =
+  {
+    staged_bind_invalidation_init = init;
+    staged_bind_invalidation_switch = staged_switch;
+    staged_bind_invalidation_collect_old_scope = collect_old_scope;
+  }
+
+let collect_staged_bind_switch_invalidations t _lane _staging plan =
+  Eta_signal_bind.collect_staged_switch_invalidations
+    ~init:plan.staged_bind_invalidation_init
+    ~switches:(Eta_signal_graph_state.staged_binds t.state)
+    ~staged_switch:plan.staged_bind_invalidation_switch
+    ~collect_old_scope:plan.staged_bind_invalidation_collect_old_scope
   |> map_bind_switch_result
 
 let remember_pure_disposal_hooks t _lane staging hooks =
