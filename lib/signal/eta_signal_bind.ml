@@ -59,9 +59,6 @@ type ('capability, 'source, 'inner, 'scope, 'value, 'error)
     dynamic_inner_plan;
 }
 
-let dynamic_scope_context ~scope ~inner =
-  { scope_plan = scope; inner_plan = inner }
-
 type 'inner eval_plan =
   | Switch
   | Reuse of 'inner
@@ -146,9 +143,6 @@ let dynamic_reuse_plan ~dirty ~initialized ~dependencies_changed =
     reuse_dependencies_changed = dependencies_changed;
   }
 
-let dynamic_eval_context ~source ~scope ~reuse =
-  { eval_source = source; eval_scope = scope; eval_reuse = reuse }
-
 let dynamic_value_context ~current_value ~cached_value ~initialized
     ~value_equal ~bump_recompute =
   {
@@ -166,11 +160,16 @@ let dynamic_staging_context ~stage_switch ~stage_dependencies ~stage_value =
     staging_stage_value = stage_value;
   }
 
-let dynamic_apply_context ~value ~staging =
-  { apply_value = value; apply_staging = staging }
-
-let dynamic_context ~eval ~apply =
-  { dynamic_eval = eval; dynamic_apply = apply }
+let dynamic_context ~source ~scope ~inner ~reuse ~value ~staging =
+  {
+    dynamic_eval =
+      {
+        eval_source = source;
+        eval_scope = { scope_plan = scope; inner_plan = inner };
+        eval_reuse = reuse;
+      };
+    dynamic_apply = { apply_value = value; apply_staging = staging };
+  }
 
 let empty = { source_value = None; inner = None; inner_scope = None }
 

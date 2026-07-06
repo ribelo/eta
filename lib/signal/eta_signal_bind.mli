@@ -39,24 +39,8 @@ val dynamic_inner_plan :
   ('capability, 'source, 'inner, 'scope, 'value, 'error)
   dynamic_inner_plan
 
-type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_scope_context
-  constraint 'error = [> `Invalid_scope ]
-
-val dynamic_scope_context :
-  scope:('capability, 'inner, 'scope) dynamic_scope_plan ->
-  inner:
-    ('capability, 'source, 'inner, 'scope, 'value, 'error)
-    dynamic_inner_plan ->
-  ('capability, 'source, 'inner, 'scope, 'value, 'error)
-  dynamic_scope_context
-
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_context
-  constraint 'error = [> `Invalid_scope ]
-
-type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-     dynamic_eval_context
   constraint 'error = [> `Invalid_scope ]
 
 type ('capability, 'dependency) dynamic_reuse_plan
@@ -66,15 +50,6 @@ val dynamic_reuse_plan :
   initialized:(unit -> bool) ->
   dependencies_changed:('capability -> 'dependency list -> bool) ->
   ('capability, 'dependency) dynamic_reuse_plan
-
-val dynamic_eval_context :
-  source:('source, 'inner, 'dependency) dynamic_source_plan ->
-  scope:
-    ('capability, 'source, 'inner, 'scope, 'value, 'error)
-    dynamic_scope_context ->
-  reuse:('capability, 'dependency) dynamic_reuse_plan ->
-  ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-  dynamic_eval_context
 
 type 'value dynamic_value_context
 
@@ -97,20 +72,17 @@ val dynamic_staging_context :
   ('source, 'inner, 'scope, 'dependency, 'value)
   dynamic_staging_context
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
-
-val dynamic_apply_context :
+val dynamic_context :
+  source:('source, 'inner, 'dependency) dynamic_source_plan ->
+  scope:('capability, 'inner, 'scope) dynamic_scope_plan ->
+  inner:
+    ('capability, 'source, 'inner, 'scope, 'value, 'error)
+    dynamic_inner_plan ->
+  reuse:('capability, 'dependency) dynamic_reuse_plan ->
   value:'value dynamic_value_context ->
   staging:
     ('source, 'inner, 'scope, 'dependency, 'value)
     dynamic_staging_context ->
-  ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
-
-val dynamic_context :
-  eval:
-    ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
-    dynamic_eval_context ->
-  apply:('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context ->
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   dynamic_context
 

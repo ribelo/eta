@@ -1554,38 +1554,33 @@ module Make (Observer_error : Observer_error) () = struct
     let initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
-    let eval =
-      let scope_plan =
-        Bind.dynamic_scope_plan
-          ~new_scope:(fun _lane -> new_scope signal)
-          ~with_scope:(fun _lane scope f ->
-            Graph.with_current_scope graph scope_ops scope f)
-          ~on_switch_failure:(fun lane scope ->
-            remember_pure_disposal_hooks lane staging
-              (invalidate_scope lane scope))
-      in
-      let inner_plan =
-        Bind.dynamic_inner_plan ~selector:bind.selector
-          ~validate_inner:(fun _lane scope inner ->
-            Scope_validation.validate_inner ~scope (P inner))
-          ~compute_inner:(fun lane inner -> compute lane staging inner)
-      in
-      let reuse =
-        Bind.dynamic_reuse_plan ~dirty:signal.dirty ~initialized
-          ~dependencies_changed:(fun lane dependencies ->
-            dependencies_changed lane signal dependencies)
-      in
-      let source =
-        Bind.dynamic_source_plan ~equal:bind.source.equal
-          ~dependencies:
-            (Bind.dynamic_dependencies ~source:(P bind.source)
-               ~pack_inner:(fun inner -> P inner))
-      in
-      Bind.dynamic_eval_context ~source
-        ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
-        ~reuse
+    let scope_plan =
+      Bind.dynamic_scope_plan
+        ~new_scope:(fun _lane -> new_scope signal)
+        ~with_scope:(fun _lane scope f ->
+          Graph.with_current_scope graph scope_ops scope f)
+        ~on_switch_failure:(fun lane scope ->
+          remember_pure_disposal_hooks lane staging
+            (invalidate_scope lane scope))
     in
-    let apply_value =
+    let inner_plan =
+      Bind.dynamic_inner_plan ~selector:bind.selector
+        ~validate_inner:(fun _lane scope inner ->
+          Scope_validation.validate_inner ~scope (P inner))
+        ~compute_inner:(fun lane inner -> compute lane staging inner)
+    in
+    let reuse =
+      Bind.dynamic_reuse_plan ~dirty:signal.dirty ~initialized
+        ~dependencies_changed:(fun lane dependencies ->
+          dependencies_changed lane signal dependencies)
+    in
+    let source =
+      Bind.dynamic_source_plan ~equal:bind.source.equal
+        ~dependencies:
+          (Bind.dynamic_dependencies ~source:(P bind.source)
+             ~pack_inner:(fun inner -> P inner))
+    in
+    let value =
       Bind.dynamic_value_context
         ~current_value:(fun () ->
           Signal_snapshot.value (signal_effective_snapshot signal))
@@ -1594,17 +1589,17 @@ module Make (Observer_error : Observer_error) () = struct
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)
     in
-    let apply_staging =
+    let staging_context =
       Bind.dynamic_staging_context
         ~stage_switch:(fun ~source_value ~inner ~scope ->
           stage_bind_switch lane staging bind source_value inner scope)
         ~stage_dependencies:(stage_dependency_versions lane staging signal)
         ~stage_value:(stage_signal lane staging signal)
     in
-    let apply =
-      Bind.dynamic_apply_context ~value:apply_value ~staging:apply_staging
+    let context =
+      Bind.dynamic_context ~source ~scope:scope_plan ~inner:inner_plan
+        ~reuse ~value ~staging:staging_context
     in
-    let context = Bind.dynamic_context ~eval ~apply in
     match
       Bind.run_dynamic context lane (bind_effective_snapshot bind)
         ~source_value ~source_changed

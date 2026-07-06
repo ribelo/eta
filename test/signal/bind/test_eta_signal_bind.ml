@@ -291,12 +291,7 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         (Bind.dynamic_dependencies ~source:100
            ~pack_inner:(fun inner -> inner + 1000))
   in
-  let eval =
-    Bind.dynamic_eval_context ~source
-      ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
-      ~reuse
-  in
-  let apply_value =
+  let value =
     Bind.dynamic_value_context
       ~current_value:(fun () -> current)
       ~cached_value:(fun () ->
@@ -308,7 +303,7 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       ~value_equal:Int.equal
       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
   in
-  let apply_staging =
+  let staging =
     Bind.dynamic_staging_context
       ~stage_switch:(fun ~source_value ~inner ~scope ->
         events :=
@@ -328,10 +323,8 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       ~stage_value:(fun value ->
         events := !events @ [ "stage_value:" ^ string_of_int value ])
   in
-  let apply =
-    Bind.dynamic_apply_context ~value:apply_value ~staging:apply_staging
-  in
-  Bind.dynamic_context ~eval ~apply
+  Bind.dynamic_context ~source ~scope:scope_plan ~inner:inner_plan ~reuse
+    ~value ~staging
 
 let run_dynamic context snapshot ~source_value ~source_changed =
   match
