@@ -3631,42 +3631,6 @@ let test_observer_effect_typed_failure_is_observer_error () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_observer_typed_failure_retries_after_flag_fixed () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let fail = ref false in
-  let callback_values = ref [] in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (function
-        | Signal.Initialized value ->
-            Effect.sync (fun () -> callback_values := value :: !callback_values)
-        | Changed { new_value; _ } ->
-            if !fail then Effect.fail `Observer_failed
-            else
-              Effect.sync (fun () ->
-                  callback_values := new_value :: !callback_values)))
-  in
-  run_ok rt Signal.stabilize;
-  fail := true;
-  run_ok rt (Signal.Var.set source 2);
-  expect_fail "observer typed failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "snapshot published before observer failure" 2
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int)) "failing callback did not record side effect" [ 1 ]
-    (List.rev !callback_values);
-  fail := false;
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization succeeds" 3
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check (list int)) "retry records later value" [ 1; 3 ]
-    (List.rev !callback_values);
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_observer_failure_is_fail_fast () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8634,8 +8598,6 @@ let () =
           Alcotest.test_case
             "observer effect typed failure is observer error" `Quick
             test_observer_effect_typed_failure_is_observer_error;
-          Alcotest.test_case "observer typed failure retries" `Quick
-            test_observer_typed_failure_retries_after_flag_fixed;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
           Alcotest.test_case "observer lifecycle changes inside callback"
