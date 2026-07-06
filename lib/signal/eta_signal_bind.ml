@@ -96,7 +96,6 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan =
 
 type ('capability, 'dependency) dynamic_reuse_plan = {
   reuse_dirty : bool;
-  reuse_initialized : unit -> bool;
   reuse_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
@@ -142,10 +141,9 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
     ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context;
 }
 
-let dynamic_reuse_plan ~dirty ~initialized ~dependencies_changed =
+let dynamic_reuse_plan ~dirty ~dependencies_changed =
   {
     reuse_dirty = dirty;
-    reuse_initialized = initialized;
     reuse_dependencies_changed = dependencies_changed;
   }
 
@@ -239,7 +237,7 @@ let eval_reuse ~dependencies ~source_changed ~compute_inner ~dirty
   else Reuse_cached
 
 let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
-    ~source_value ~source_changed ~scope ~reuse =
+    ~source_value ~source_changed ~scope ~reuse ~initialized =
   match eval_plan ~equal snapshot ~source_value with
   | Error _ as error -> error
   | Ok Switch ->
@@ -268,7 +266,7 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
           ~compute_inner:(fun () ->
             scope.inner_plan.scope_compute_inner capability inner)
           ~dirty:reuse.reuse_dirty
-          ~initialized:(reuse.reuse_initialized ())
+          ~initialized
           ~dependencies_changed:(fun dependencies ->
             reuse.reuse_dependencies_changed capability dependencies)
       with
@@ -281,13 +279,13 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
                  dynamic_reuse_value = reuse_value;
                }))
 
-let plan_dynamic eval_context capability snapshot =
+let plan_dynamic eval_context value_context capability snapshot =
   let source = eval_context.eval_source in
   let source_value, source_changed = source.source_compute capability in
   plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
     ~source_value ~dependencies:source.source_dependencies
-    ~source_changed ~scope:eval_context.eval_scope
-    ~reuse:eval_context.eval_reuse
+    ~source_changed ~scope:eval_context.eval_scope ~reuse:eval_context.eval_reuse
+    ~initialized:(value_context.value_initialized ())
 
 let value_changed context value =
   (not (context.value_initialized ()))
@@ -340,7 +338,8 @@ let apply_dynamic_plan context plan =
 
 let run_dynamic context capability snapshot =
   match
-    plan_dynamic context.dynamic_eval capability snapshot
+    plan_dynamic context.dynamic_eval context.dynamic_apply.apply_value
+      capability snapshot
   with
   | Error _ as error -> error
   | Ok plan -> Ok (apply_dynamic_plan context.dynamic_apply plan)

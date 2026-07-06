@@ -48,7 +48,6 @@ type ('capability, 'dependency) dynamic_reuse_plan
 
 val dynamic_reuse_plan :
   dirty:bool ->
-  initialized:(unit -> bool) ->
   dependencies_changed:('capability -> 'dependency list -> bool) ->
   ('capability, 'dependency) dynamic_reuse_plan
 

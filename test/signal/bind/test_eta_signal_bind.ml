@@ -290,7 +290,7 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
               default_compute_inner inner)
   in
   let reuse =
-    Bind.dynamic_reuse_plan ~dirty ~initialized:(fun () -> initialized)
+    Bind.dynamic_reuse_plan ~dirty
       ~dependencies_changed:(fun cap dependencies ->
         check_cap cap;
         dependencies_changed dependencies)
@@ -374,6 +374,9 @@ let test_run_dynamic_reuse_paths () =
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
   let cached = dynamic_contexts events in
   let recomputed = dynamic_contexts ~dependencies_changed:true events in
+  let uninitialized =
+    dynamic_contexts ~initialized:false ~current:None events
+  in
   let missing_current = dynamic_contexts ~current:None events in
   Alcotest.(check (pair int bool))
     "cached result" (-1, false)
@@ -381,6 +384,9 @@ let test_run_dynamic_reuse_paths () =
   Alcotest.(check (pair int bool))
     "recomputed result" (40, true)
     (run_dynamic recomputed snapshot);
+  Alcotest.(check (pair int bool))
+    "uninitialized result" (40, true)
+    (run_dynamic uninitialized snapshot);
   Alcotest.check_raises "cached missing current"
     (Invalid_argument "missing current")
     (fun () ->
@@ -392,6 +398,12 @@ let test_run_dynamic_reuse_paths () =
       "compute:4";
       "dependencies:100,1004";
       "cached";
+      "compute_source:3";
+      "compute:4";
+      "dependencies:100,1004";
+      "bump";
+      "stage_dependencies:100,1004";
+      "stage_value:40";
       "compute_source:3";
       "compute:4";
       "dependencies:100,1004";

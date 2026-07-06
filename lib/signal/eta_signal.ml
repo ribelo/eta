@@ -1556,7 +1556,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~compute_inner:(fun lane inner -> compute lane staging inner)
     in
     let reuse =
-      Bind.dynamic_reuse_plan ~dirty:signal.dirty ~initialized
+      Bind.dynamic_reuse_plan ~dirty:signal.dirty
         ~dependencies_changed:(fun lane dependencies ->
           dependencies_changed lane signal dependencies)
     in
