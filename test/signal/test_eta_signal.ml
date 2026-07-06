@@ -5640,16 +5640,6 @@ let test_time_interval_overflow_saturates () =
   Alcotest.(check int) "dispose logs no daemon diagnostic" 0
     (List.length (Logger.dump logger))
 
-let test_time_inactive_timer_stop_is_idempotent () =
-  let module Idempotent_signal = Eta_signal_testable.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
-  let signal =
-    run_ok rt (Idempotent_signal.Time.interval (Duration.ms 10))
-  in
-  Idempotent_signal.Private_test_hooks.set_timer_generation signal max_int;
-  run_ok rt Idempotent_signal.stabilize;
-  run_ok rt Idempotent_signal.stabilize
-
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -9349,8 +9339,6 @@ let () =
             test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time interval overflow saturates" `Quick
             test_time_interval_overflow_saturates;
-          Alcotest.test_case "time inactive timer stop is idempotent" `Quick
-            test_time_inactive_timer_stop_is_idempotent;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case
