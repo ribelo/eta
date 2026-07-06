@@ -1584,10 +1584,13 @@ module Make (Observer_error : Observer_error) () = struct
           ~dependencies_changed:(fun lane dependencies ->
             dependencies_changed lane signal dependencies)
       in
-      Bind.dynamic_eval_context ~source_equal:bind.source.equal
-        ~dependencies:
-          (Bind.dynamic_dependencies ~source:(P bind.source)
-             ~pack_inner:(fun inner -> P inner))
+      let source =
+        Bind.dynamic_source_plan ~equal:bind.source.equal
+          ~dependencies:
+            (Bind.dynamic_dependencies ~source:(P bind.source)
+               ~pack_inner:(fun inner -> P inner))
+      in
+      Bind.dynamic_eval_context ~source
         ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
         ~reuse
     in

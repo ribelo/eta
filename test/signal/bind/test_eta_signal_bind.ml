@@ -285,11 +285,14 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         check_cap cap;
         dependencies_changed dependencies)
   in
-  let eval =
-    Bind.dynamic_eval_context ~source_equal:Int.equal
+  let source =
+    Bind.dynamic_source_plan ~equal:Int.equal
       ~dependencies:
         (Bind.dynamic_dependencies ~source:100
            ~pack_inner:(fun inner -> inner + 1000))
+  in
+  let eval =
+    Bind.dynamic_eval_context ~source
       ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
       ~reuse
   in

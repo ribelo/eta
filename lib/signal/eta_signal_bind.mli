@@ -9,6 +9,13 @@ val dynamic_dependencies :
   pack_inner:('inner -> 'dependency) ->
   ('inner, 'dependency) dynamic_dependencies
 
+type ('source, 'inner, 'dependency) dynamic_source_plan
+
+val dynamic_source_plan :
+  equal:('source -> 'source -> bool) ->
+  dependencies:('inner, 'dependency) dynamic_dependencies ->
+  ('source, 'inner, 'dependency) dynamic_source_plan
+
 type ('capability, 'inner, 'scope) dynamic_scope_plan
 
 val dynamic_scope_plan :
@@ -61,8 +68,7 @@ val dynamic_reuse_plan :
   ('capability, 'dependency) dynamic_reuse_plan
 
 val dynamic_eval_context :
-  source_equal:('source -> 'source -> bool) ->
-  dependencies:('inner, 'dependency) dynamic_dependencies ->
+  source:('source, 'inner, 'dependency) dynamic_source_plan ->
   scope:
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
     dynamic_scope_context ->

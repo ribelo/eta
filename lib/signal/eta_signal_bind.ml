@@ -12,6 +12,14 @@ type ('inner, 'dependency) dynamic_dependencies = {
 let dynamic_dependencies ~source ~pack_inner =
   { dependency_source = source; dependency_pack_inner = pack_inner }
 
+type ('source, 'inner, 'dependency) dynamic_source_plan = {
+  source_equal : 'source -> 'source -> bool;
+  source_dependencies : ('inner, 'dependency) dynamic_dependencies;
+}
+
+let dynamic_source_plan ~equal ~dependencies =
+  { source_equal = equal; source_dependencies = dependencies }
+
 type ('capability, 'inner, 'scope) dynamic_scope_plan = {
   scope_new : 'capability -> 'scope;
   scope_with_current : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
@@ -84,20 +92,19 @@ type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_plan =
       dynamic_reuse_value : 'value;
     }
 
+type ('capability, 'dependency) dynamic_reuse_plan = {
+  reuse_dirty : bool;
+  reuse_initialized : unit -> bool;
+  reuse_dependencies_changed : 'capability -> 'dependency list -> bool;
+}
+
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context = {
-  eval_equal : 'source -> 'source -> bool;
-  eval_dependencies : ('inner, 'dependency) dynamic_dependencies;
+  eval_source : ('source, 'inner, 'dependency) dynamic_source_plan;
   eval_scope :
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
     dynamic_scope_context;
   eval_reuse : ('capability, 'dependency) dynamic_reuse_plan;
-}
-
-and ('capability, 'dependency) dynamic_reuse_plan = {
-  reuse_dirty : bool;
-  reuse_initialized : unit -> bool;
-  reuse_dependencies_changed : 'capability -> 'dependency list -> bool;
 }
 
 type 'value dynamic_value_context = {
@@ -139,13 +146,8 @@ let dynamic_reuse_plan ~dirty ~initialized ~dependencies_changed =
     reuse_dependencies_changed = dependencies_changed;
   }
 
-let dynamic_eval_context ~source_equal ~dependencies ~scope ~reuse =
-  {
-    eval_equal = source_equal;
-    eval_dependencies = dependencies;
-    eval_scope = scope;
-    eval_reuse = reuse;
-  }
+let dynamic_eval_context ~source ~scope ~reuse =
+  { eval_source = source; eval_scope = scope; eval_reuse = reuse }
 
 let dynamic_value_context ~current_value ~cached_value ~initialized
     ~value_equal ~bump_recompute =
@@ -275,8 +277,9 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
                }))
 
 let plan_dynamic eval_context capability snapshot ~source_value ~source_changed =
-  plan_dynamic_unlocked ~capability ~equal:eval_context.eval_equal snapshot
-    ~source_value ~dependencies:eval_context.eval_dependencies
+  let source = eval_context.eval_source in
+  plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
+    ~source_value ~dependencies:source.source_dependencies
     ~source_changed ~scope:eval_context.eval_scope
     ~reuse:eval_context.eval_reuse
 
