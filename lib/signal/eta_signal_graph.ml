@@ -1112,6 +1112,20 @@ type ('observer, 'node) demand_roots = {
 let demand_roots ~demand ~root =
   { demand_root_demands = demand; demand_root_node = root }
 
+type ('observer, 'node, 'weak_node) reachable_plan = {
+  reachable_plan_ops : (Eta_signal_id.signal, 'node) reachable_ops;
+  reachable_plan_collect_live_nodes :
+    ('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list;
+  reachable_plan_roots : ('observer, 'node) demand_roots;
+}
+
+let reachable_plan ~ops ~collect_live_nodes ~roots =
+  {
+    reachable_plan_ops = ops;
+    reachable_plan_collect_live_nodes = collect_live_nodes;
+    reachable_plan_roots = roots;
+  }
+
 let demand_root_nodes roots observers =
   List.filter_map
     (fun observer ->
@@ -1120,13 +1134,19 @@ let demand_root_nodes roots observers =
       else None)
     observers
 
-let necessary_ids t lane reachable_ops ~collect_live_nodes ~roots =
-  ignore (live_nodes t lane ~collect_live_nodes : _ list);
-  collect_reachable_ids t lane reachable_ops
-    ~roots:(demand_root_nodes roots t.observers)
+let reachable_live_nodes t lane plan =
+  live_nodes t lane ~collect_live_nodes:plan.reachable_plan_collect_live_nodes
 
-let update_necessity t lane reachable_ops ~collect_live_nodes ~roots =
-  let next = necessary_ids t lane reachable_ops ~collect_live_nodes ~roots in
+let reachable_root_nodes t plan =
+  demand_root_nodes plan.reachable_plan_roots t.observers
+
+let necessary_ids t lane plan =
+  ignore (reachable_live_nodes t lane plan : _ list);
+  collect_reachable_ids t lane plan.reachable_plan_ops
+    ~roots:(reachable_root_nodes t plan)
+
+let update_necessity t lane plan =
+  let next = necessary_ids t lane plan in
   Eta_signal_graph_core.update_necessary_ids t.core lane next;
   next
 
@@ -1135,12 +1155,12 @@ type 'timer timer_demand = {
   timer_demand_timers : (Eta_signal_id.signal * 'timer) list;
 }
 
-let timer_demand t lane reachable_ops ~collect_live_nodes ~roots ~timer =
-  let nodes = live_nodes t lane ~collect_live_nodes in
+let timer_demand t lane plan ~timer =
+  let nodes = reachable_live_nodes t lane plan in
   {
     timer_demand_necessary_ids =
-      collect_reachable_ids t lane reachable_ops
-        ~roots:(demand_root_nodes roots t.observers);
+      collect_reachable_ids t lane plan.reachable_plan_ops
+        ~roots:(reachable_root_nodes t plan);
     timer_demand_timers = List.filter_map timer nodes;
   }
 
@@ -1149,11 +1169,10 @@ let timer_demand_plan demand ~plan =
     ~is_necessary:(necessary_mem demand.timer_demand_necessary_ids)
     ~timers:demand.timer_demand_timers
 
-let post_commit_necessary_timers t lane reachable_ops ~collect_live_nodes
-    ~roots ~timer =
-  ignore (live_nodes t lane ~collect_live_nodes : _ list);
-  fold_reachable t lane reachable_ops
-    ~roots:(demand_root_nodes roots t.observers)
+let post_commit_necessary_timers t lane plan ~timer =
+  ignore (reachable_live_nodes t lane plan : _ list);
+  fold_reachable t lane plan.reachable_plan_ops
+    ~roots:(reachable_root_nodes t plan)
     ~init:(Hashtbl.create 8)
     ~f:(fun timers node ->
       Option.iter (fun (id, timer) -> Hashtbl.replace timers id timer) (timer node);

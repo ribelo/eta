@@ -816,13 +816,21 @@ val demand_roots :
     registry traversal; callers supply lifecycle demand and concrete root
     projection for their observer representation. *)
 
-val necessary_ids :
-  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
-  lane_access ->
-  (Eta_signal_id.signal, 'node) reachable_ops ->
+type ('observer, 'node, 'weak_node) reachable_plan
+
+val reachable_plan :
+  ops:(Eta_signal_id.signal, 'node) reachable_ops ->
   collect_live_nodes:
     (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
   roots:('observer, 'node) demand_roots ->
+  ('observer, 'node, 'weak_node) reachable_plan
+(** Package graph-shape reachability with live-node pruning and observer root
+    projection so demand snapshots use one assembled traversal plan. *)
+
+val necessary_ids :
+  (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
+  lane_access ->
+  ('observer, 'node, 'weak_node) reachable_plan ->
   necessary_snapshot
 (** Recompute the current necessary node set from graph-owned observer and
     weak-node registries. The graph owns registry traversal and pruning; the
@@ -831,10 +839,7 @@ val necessary_ids :
 val update_necessity :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
-  (Eta_signal_id.signal, 'node) reachable_ops ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  roots:('observer, 'node) demand_roots ->
+  ('observer, 'node, 'weak_node) reachable_plan ->
   necessary_snapshot
 (** Recompute necessary nodes and update graph-core transition counters from
     the same snapshot. *)
@@ -844,10 +849,7 @@ type 'timer timer_demand
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
-  (Eta_signal_id.signal, 'node) reachable_ops ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  roots:('observer, 'node) demand_roots ->
+  ('observer, 'node, 'weak_node) reachable_plan ->
   timer:('node -> (Eta_signal_id.signal * 'timer) option) ->
   'timer timer_demand
 (** Snapshot graph demand inputs for the timer subsystem. The graph owns the
@@ -867,12 +869,9 @@ val timer_demand_plan :
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
-  ('id, 'node) reachable_ops ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
-  roots:('observer, 'node) demand_roots ->
-  timer:('node -> ('id * 'timer) option) ->
-  ('id, 'timer) Hashtbl.t
+  ('observer, 'node, 'weak_node) reachable_plan ->
+  timer:('node -> (Eta_signal_id.signal * 'timer) option) ->
+  (Eta_signal_id.signal, 'timer) Hashtbl.t
 (** Collect the timers that will remain necessary after committing graph
     staging. The graph owns live-node pruning and observer-root traversal;
     callers supply graph-shape reachability and timer projections because

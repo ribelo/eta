@@ -343,6 +343,11 @@ let optional_demand_roots =
     | Some node -> node
     | None -> invalid_arg "optional demand root is missing")
 
+let demand_reachable_plan =
+  Graph.reachable_plan ~ops:demand_reachable_ops
+    ~collect_live_nodes:collect_demand_live_nodes
+    ~roots:optional_demand_roots
+
 let compute_ops =
   Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
     ~seen_generation:(fun node -> node.compute_seen_generation)
@@ -1094,9 +1099,7 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
       Graph.add_observer graph lane (Some live_root));
   let demand =
     with_graph_lane graph (fun lane ->
-        Graph.timer_demand graph lane demand_reachable_ops
-          ~collect_live_nodes:collect_demand_live_nodes
-          ~roots:optional_demand_roots
+        Graph.timer_demand graph lane demand_reachable_plan
           ~timer:(fun node ->
             Option.map
               (fun timer -> (node.demand_id, timer))
@@ -1166,9 +1169,7 @@ let test_post_commit_necessary_timers_uses_reachability () =
       Graph.add_observer graph lane (Some root));
   let timers =
     with_graph_lane graph (fun lane ->
-        Graph.post_commit_necessary_timers graph lane demand_reachable_ops
-          ~collect_live_nodes:collect_demand_live_nodes
-          ~roots:optional_demand_roots
+        Graph.post_commit_necessary_timers graph lane demand_reachable_plan
           ~timer:(fun node ->
             Option.map
               (fun timer -> (node.demand_id, timer))

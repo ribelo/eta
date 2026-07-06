@@ -819,6 +819,11 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.demand_roots ~demand:observer_demands_signal
       ~root:(fun (O observer) -> P observer.obs_signal)
 
+  let graph_reachable_plan () =
+    Graph.reachable_plan ~ops:reachable_ops
+      ~collect_live_nodes:collect_live_weak_signals
+      ~roots:observer_demand_roots
+
   let observer_active_roots observers =
     observer_roots observer_active observers
 
@@ -1240,9 +1245,12 @@ module Make (Observer_error : Observer_error) () = struct
           in
           children_with_scope_owner signal signal_children)
     in
-    Graph.post_commit_necessary_timers graph lane reachable_ops
-      ~collect_live_nodes:collect_live_weak_signals
-      ~roots:observer_demand_roots
+    let plan =
+      Graph.reachable_plan ~ops:reachable_ops
+        ~collect_live_nodes:collect_live_weak_signals
+        ~roots:observer_demand_roots
+    in
+    Graph.post_commit_necessary_timers graph lane plan
       ~timer:(fun (P signal) ->
         Option.map (fun timer -> (signal.id, timer)) signal.timer)
 
@@ -1600,15 +1608,11 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok result -> result
 
   let collect_necessary_node_ids lane =
-    Graph.necessary_ids graph lane reachable_ops
-      ~collect_live_nodes:collect_live_weak_signals
-      ~roots:observer_demand_roots
+    Graph.necessary_ids graph lane (graph_reachable_plan ())
 
   let update_necessity_counters_unlocked lane =
     ignore
-      (Graph.update_necessity graph lane reachable_ops
-         ~collect_live_nodes:collect_live_weak_signals
-         ~roots:observer_demand_roots
+      (Graph.update_necessity graph lane (graph_reachable_plan ())
         : Graph.necessary_snapshot)
 
   let signal_timer (P signal) =
@@ -1622,10 +1626,7 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.fail (err :> stabilize_error))
 
   let timer_demand_unlocked lane =
-    Graph.timer_demand graph lane reachable_ops
-      ~collect_live_nodes:collect_live_weak_signals
-      ~roots:observer_demand_roots
-      ~timer:signal_timer
+    Graph.timer_demand graph lane (graph_reachable_plan ()) ~timer:signal_timer
 
   let timer_demand_plan_unlocked lane =
     let demand = timer_demand_unlocked lane in
