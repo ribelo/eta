@@ -25,8 +25,6 @@ type t = {
   after_stream_drop_before_ack : action ref;
   after_timer_due_read_before_commit : action ref;
   after_timer_update_constructed_before_run : action ref;
-  lane_waiter_enqueued_count : int ref;
-  lane_waiter_compaction_count : int ref;
   total_node_count_override : int option ref;
   necessary_node_count_override : int option ref;
   dead_node_count_override : int option ref;
@@ -45,8 +43,6 @@ let create () =
     after_stream_drop_before_ack = ref noop;
     after_timer_due_read_before_commit = ref noop;
     after_timer_update_constructed_before_run = ref noop;
-    lane_waiter_enqueued_count = ref 0;
-    lane_waiter_compaction_count = ref 0;
     total_node_count_override = ref None;
     necessary_node_count_override = ref None;
     dead_node_count_override = ref None;
@@ -93,8 +89,6 @@ let clear state =
       After_timer_due_read_before_commit;
       After_timer_update_constructed_before_run;
     ];
-  state.lane_waiter_enqueued_count := 0;
-  state.lane_waiter_compaction_count := 0;
   state.total_node_count_override := None;
   state.necessary_node_count_override := None;
   state.dead_node_count_override := None;
@@ -104,17 +98,6 @@ let clear state =
 let run state hook =
   let slot = slot state hook in
   (!slot).run ()
-
-let note_lane_waiter_enqueued state =
-  state.lane_waiter_enqueued_count := !(state.lane_waiter_enqueued_count) + 1
-
-let lane_waiter_enqueued_count state = !(state.lane_waiter_enqueued_count)
-
-let note_lane_waiter_compaction state =
-  state.lane_waiter_compaction_count :=
-    !(state.lane_waiter_compaction_count) + 1
-
-let lane_waiter_compaction_count state = !(state.lane_waiter_compaction_count)
 
 let set_stats_count_override state count value =
   stats_count_slot state count := value

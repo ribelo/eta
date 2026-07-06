@@ -429,17 +429,6 @@ module Make (Observer_error : Observer_error) () = struct
     let with_hook hook action f = Test_hooks.with_hook state hook action f
     let clear () = Test_hooks.clear state
     let run hook = Test_hooks.run state hook
-    let note_lane_waiter_enqueued () =
-      Test_hooks.note_lane_waiter_enqueued state
-
-    let lane_waiter_enqueued_count () =
-      Test_hooks.lane_waiter_enqueued_count state
-
-    let note_lane_waiter_compaction () =
-      Test_hooks.note_lane_waiter_compaction state
-
-    let lane_waiter_compaction_count () =
-      Test_hooks.lane_waiter_compaction_count state
 
     let set_stats_count_override count value =
       Test_hooks.set_stats_count_override state count value
@@ -674,10 +663,8 @@ module Make (Observer_error : Observer_error) () = struct
       ~depth_local:graph_lane_depth_local
       ~hooks:
         (Graph.lane_hooks
-           ~note_waiter_enqueued:
-             Private_test_hooks.note_lane_waiter_enqueued
-           ~note_waiter_compaction:
-             Private_test_hooks.note_lane_waiter_compaction)
+           ~note_waiter_enqueued:ignore
+           ~note_waiter_compaction:ignore)
       ~after_acquired:(fun () ->
         Private_test_hooks.run After_graph_lane_acquired)
       f

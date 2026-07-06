@@ -23,10 +23,6 @@ val create : unit -> t
 val with_hook : t -> hook -> action -> (unit -> 'a) -> 'a
 val clear : t -> unit
 val run : t -> hook -> (unit, 'err) Eta.Effect.t
-val note_lane_waiter_enqueued : t -> unit
-val lane_waiter_enqueued_count : t -> int
-val note_lane_waiter_compaction : t -> unit
-val lane_waiter_compaction_count : t -> int
 val set_stats_count_override : t -> stats_count -> int option -> unit
 val stats_count_override : t -> stats_count -> int option
 val set_timer_runtime_mismatch_hook : t -> (unit -> unit) -> unit
