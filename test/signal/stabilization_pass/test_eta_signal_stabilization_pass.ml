@@ -185,17 +185,23 @@ let ops ?(stage_pending = fun _ -> ())
         | Graph_failure -> Some `Graph
         | _ -> None)
   in
-  let pure =
-    Pass.pure_ops
+  let generation =
+    Pass.pure_generation_plan
       ~advance_generation:(fun context ->
         check_pure_context context;
         record events "advance_generation";
         maybe_fail fail_at failure_kind Advance_generation)
+  in
+  let staging =
+    Pass.pure_staging_plan
       ~begin_staging:(fun context ->
         check_pure_context context;
         record events "begin_staging";
         maybe_fail fail_at failure_kind Begin_staging;
         "staging")
+  in
+  let pending =
+    Pass.pure_pending_plan
       ~drain_pending:(fun context ->
         check_pure_context context;
         record events "drain_pending";
@@ -205,6 +211,14 @@ let ops ?(stage_pending = fun _ -> ())
         check_pure_context context;
         record events ("release_pending_marks:" ^ String.concat "," pending);
         maybe_fail fail_at failure_kind Release_pending_marks)
+      ~stage_pending:(fun context pending ->
+        check_pure_context context;
+        record events ("stage_pending:" ^ String.concat "," pending);
+        maybe_fail fail_at failure_kind Stage_pending;
+        stage_pending pending)
+  in
+  let observers =
+    Pass.pure_observer_plan
       ~observer_plan:(fun context ->
         check_pure_context context;
         record events "observer_plan";
@@ -219,15 +233,13 @@ let ops ?(stage_pending = fun _ -> ())
             check_pure_context context;
             record events
               ("mark_events_pending:" ^ String.concat "," events_to_mark)))
-      ~stage_pending:(fun context pending ->
-        check_pure_context context;
-        record events ("stage_pending:" ^ String.concat "," pending);
-        maybe_fail fail_at failure_kind Stage_pending;
-        stage_pending pending)
       ~plan_staged_binds:(fun context observers ->
         check_pure_context context;
         record events ("plan_staged_binds:" ^ String.concat "," observers);
         maybe_fail fail_at failure_kind Plan_staged_binds)
+  in
+  let commit =
+    Pass.pure_commit_plan
       ~commit_staging:(fun context staging ->
         check_pure_context context;
         check_staging staging;
@@ -241,6 +253,9 @@ let ops ?(stage_pending = fun _ -> ())
       ~update_necessity:(fun context ->
         check_pure_context context;
         record events "update_necessity")
+  in
+  let pure =
+    Pass.pure_ops ~generation ~staging ~pending ~observers ~commit
   in
   let rollback =
     Pass.rollback_ops

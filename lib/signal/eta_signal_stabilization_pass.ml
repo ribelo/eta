@@ -43,33 +43,75 @@ type ('capability, 'observer, 'event) observer_plan = {
 let observer_plan ~observers ~collect_events ~mark_events_pending =
   { observers; collect_events; mark_events_pending }
 
-type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
-  advance_generation : 'capability pure_context -> unit;
-  begin_staging : 'capability pure_context -> 'staging;
-  drain_pending : 'capability pure_context -> 'pending list;
-  release_pending_marks : 'capability pure_context -> 'pending list -> unit;
-  observer_plan :
-    'capability pure_context ->
-    ('capability, 'observer, 'event) observer_plan;
-  stage_pending : 'capability pure_context -> 'pending list -> unit;
-  plan_staged_binds : 'capability pure_context -> 'observer list -> unit;
-  commit_staging : 'capability pure_context -> 'staging -> 'hook list;
-  update_necessity : 'capability pure_context -> unit;
+type 'capability pure_generation_plan = {
+  pure_generation_advance : 'capability pure_context -> unit;
 }
 
-let pure_ops ~advance_generation ~begin_staging ~drain_pending
-    ~release_pending_marks ~observer_plan ~stage_pending
-    ~plan_staged_binds ~commit_staging ~update_necessity =
+let pure_generation_plan ~advance_generation =
+  { pure_generation_advance = advance_generation }
+
+type ('capability, 'staging) pure_staging_plan = {
+  pure_staging_begin : 'capability pure_context -> 'staging;
+}
+
+let pure_staging_plan ~begin_staging =
+  { pure_staging_begin = begin_staging }
+
+type ('capability, 'pending) pure_pending_plan = {
+  pure_pending_drain : 'capability pure_context -> 'pending list;
+  pure_pending_release_marks :
+    'capability pure_context -> 'pending list -> unit;
+  pure_pending_stage : 'capability pure_context -> 'pending list -> unit;
+}
+
+let pure_pending_plan ~drain_pending ~release_pending_marks
+    ~stage_pending =
   {
-    advance_generation;
-    begin_staging;
-    drain_pending;
-    release_pending_marks;
-    observer_plan;
-    stage_pending;
-    plan_staged_binds;
-    commit_staging;
-    update_necessity;
+    pure_pending_drain = drain_pending;
+    pure_pending_release_marks = release_pending_marks;
+    pure_pending_stage = stage_pending;
+  }
+
+type ('capability, 'observer, 'event) pure_observer_plan = {
+  pure_observer_plan :
+    'capability pure_context ->
+    ('capability, 'observer, 'event) observer_plan;
+  pure_observer_plan_staged_binds :
+    'capability pure_context -> 'observer list -> unit;
+}
+
+let pure_observer_plan ~observer_plan ~plan_staged_binds =
+  {
+    pure_observer_plan = observer_plan;
+    pure_observer_plan_staged_binds = plan_staged_binds;
+  }
+
+type ('capability, 'hook, 'staging) pure_commit_plan = {
+  pure_commit_staging : 'capability pure_context -> 'staging -> 'hook list;
+  pure_commit_update_necessity : 'capability pure_context -> unit;
+}
+
+let pure_commit_plan ~commit_staging ~update_necessity =
+  {
+    pure_commit_staging = commit_staging;
+    pure_commit_update_necessity = update_necessity;
+  }
+
+type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure = {
+  generation_plan : 'capability pure_generation_plan;
+  staging_plan : ('capability, 'staging) pure_staging_plan;
+  pending_plan : ('capability, 'pending) pure_pending_plan;
+  observer_plan : ('capability, 'observer, 'event) pure_observer_plan;
+  commit_plan : ('capability, 'hook, 'staging) pure_commit_plan;
+}
+
+let pure_ops ~generation ~staging ~pending ~observers ~commit =
+  {
+    generation_plan = generation;
+    staging_plan = staging;
+    pending_plan = pending;
+    observer_plan = observers;
+    commit_plan = commit;
   }
 
 type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
@@ -156,24 +198,34 @@ let run state capability ops =
               timer_refresh_context ops !observers !pending staging
       in
       try
-        ops.pure.advance_generation pure_context;
-        let staging_value = ops.pure.begin_staging pure_context in
+        ops.pure.generation_plan.pure_generation_advance pure_context;
+        let staging_value =
+          ops.pure.staging_plan.pure_staging_begin pure_context
+        in
         staging := Some staging_value;
-        let pending_value = ops.pure.drain_pending pure_context in
+        let pending_value =
+          ops.pure.pending_plan.pure_pending_drain pure_context
+        in
         pending := pending_value;
-        ops.pure.release_pending_marks pure_context pending_value;
-        let observer_plan = ops.pure.observer_plan pure_context in
+        ops.pure.pending_plan.pure_pending_release_marks pure_context
+          pending_value;
+        let observer_plan =
+          ops.pure.observer_plan.pure_observer_plan pure_context
+        in
         let observers_value = observer_plan.observers in
         observers := observers_value;
         let staging = staging_value in
         let pending = pending_value in
         let observers = observers_value in
-        ops.pure.stage_pending pure_context pending;
-        ops.pure.plan_staged_binds pure_context observers;
+        ops.pure.pending_plan.pure_pending_stage pure_context pending;
+        ops.pure.observer_plan.pure_observer_plan_staged_binds pure_context
+          observers;
         let events = observer_plan.collect_events pure_context observers in
-        let hooks = ops.pure.commit_staging pure_context staging in
+        let hooks =
+          ops.pure.commit_plan.pure_commit_staging pure_context staging
+        in
         observer_plan.mark_events_pending pure_context events;
-        ops.pure.update_necessity pure_context;
+        ops.pure.commit_plan.pure_commit_update_necessity pure_context;
         ops.timer_refresh.clear_active_timer_refresh timer_refresh_context;
         let delivering_token =
           Eta_signal_stabilization.commit_to_delivering state pure_token

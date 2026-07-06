@@ -48,21 +48,51 @@ val observer_plan :
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure
 
-val pure_ops :
+type 'capability pure_generation_plan
+
+val pure_generation_plan :
   advance_generation:('capability pure_context -> unit) ->
+  'capability pure_generation_plan
+
+type ('capability, 'staging) pure_staging_plan
+
+val pure_staging_plan :
   begin_staging:('capability pure_context -> 'staging) ->
+  ('capability, 'staging) pure_staging_plan
+
+type ('capability, 'pending) pure_pending_plan
+
+val pure_pending_plan :
   drain_pending:('capability pure_context -> 'pending list) ->
   release_pending_marks:
     ('capability pure_context -> 'pending list -> unit) ->
+  stage_pending:('capability pure_context -> 'pending list -> unit) ->
+  ('capability, 'pending) pure_pending_plan
+
+type ('capability, 'observer, 'event) pure_observer_plan
+
+val pure_observer_plan :
   observer_plan:
     ('capability pure_context ->
     ('capability, 'observer, 'event) observer_plan) ->
-  stage_pending:('capability pure_context -> 'pending list -> unit) ->
   plan_staged_binds:
     ('capability pure_context -> 'observer list -> unit) ->
+  ('capability, 'observer, 'event) pure_observer_plan
+
+type ('capability, 'hook, 'staging) pure_commit_plan
+
+val pure_commit_plan :
   commit_staging:
     ('capability pure_context -> 'staging -> 'hook list) ->
   update_necessity:('capability pure_context -> unit) ->
+  ('capability, 'hook, 'staging) pure_commit_plan
+
+val pure_ops :
+  generation:'capability pure_generation_plan ->
+  staging:('capability, 'staging) pure_staging_plan ->
+  pending:('capability, 'pending) pure_pending_plan ->
+  observers:('capability, 'observer, 'event) pure_observer_plan ->
+  commit:('capability, 'hook, 'staging) pure_commit_plan ->
   ('capability, 'pending, 'observer, 'event, 'hook, 'staging) pure
 
 type ('capability, 'pending, 'observer, 'hook, 'staging) rollback

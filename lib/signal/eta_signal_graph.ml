@@ -862,38 +862,54 @@ let pass_errors ops =
       | exn -> ops.classify_graph_error exn)
 
 let pass_pure t timer_refresh pure =
-  Eta_signal_stabilization_pass.pure_ops
-    ~advance_generation:(fun _context ->
+  let generation =
+    Eta_signal_stabilization_pass.pure_generation_plan
+      ~advance_generation:(fun _context ->
       match advance_generation t with
       | Ok () -> ()
       | Error err -> raise (Graph_phase_error err))
-    ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
-    ~drain_pending:(fun _context -> drain_pending t)
-    ~release_pending_marks:(fun context pending ->
-      pure.pending_plan.pending_release_marks
-        (Eta_signal_stabilization_pass.pure_capability context)
-        pending)
-    ~observer_plan:(fun context ->
-      pure.observer_plan.observer_plan
-        (Eta_signal_stabilization_pass.pure_capability context)
-        (require_active_staging t))
-    ~stage_pending:(fun context pending ->
-      pure.pending_plan.pending_stage
-        (Eta_signal_stabilization_pass.pure_capability context)
-        (require_active_staging t)
-        pending)
-    ~plan_staged_binds:(fun context observers ->
-      pure.observer_plan.observer_plan_staged_binds
-        (Eta_signal_stabilization_pass.pure_capability context)
-        (require_active_staging t)
-        observers)
-    ~commit_staging:(fun context staging ->
-      pure.commit_plan.stabilization_commit_staging
-        (Eta_signal_stabilization_pass.pure_capability context)
-        staging)
-    ~update_necessity:(fun context ->
-      pure.commit_plan.stabilization_update_necessity
-        (Eta_signal_stabilization_pass.pure_capability context))
+  in
+  let staging =
+    Eta_signal_stabilization_pass.pure_staging_plan
+      ~begin_staging:(fun _context -> begin_staging t ~timer_refresh)
+  in
+  let pending =
+    Eta_signal_stabilization_pass.pure_pending_plan
+      ~drain_pending:(fun _context -> drain_pending t)
+      ~release_pending_marks:(fun context pending ->
+        pure.pending_plan.pending_release_marks
+          (Eta_signal_stabilization_pass.pure_capability context)
+          pending)
+      ~stage_pending:(fun context pending ->
+        pure.pending_plan.pending_stage
+          (Eta_signal_stabilization_pass.pure_capability context)
+          (require_active_staging t)
+          pending)
+  in
+  let observers =
+    Eta_signal_stabilization_pass.pure_observer_plan
+      ~observer_plan:(fun context ->
+        pure.observer_plan.observer_plan
+          (Eta_signal_stabilization_pass.pure_capability context)
+          (require_active_staging t))
+      ~plan_staged_binds:(fun context observers ->
+        pure.observer_plan.observer_plan_staged_binds
+          (Eta_signal_stabilization_pass.pure_capability context)
+          (require_active_staging t)
+          observers)
+  in
+  let commit =
+    Eta_signal_stabilization_pass.pure_commit_plan
+      ~commit_staging:(fun context staging ->
+        pure.commit_plan.stabilization_commit_staging
+          (Eta_signal_stabilization_pass.pure_capability context)
+          staging)
+      ~update_necessity:(fun context ->
+        pure.commit_plan.stabilization_update_necessity
+          (Eta_signal_stabilization_pass.pure_capability context))
+  in
+  Eta_signal_stabilization_pass.pure_ops ~generation ~staging ~pending
+    ~observers ~commit
 
 let pass_rollback rollback =
   Eta_signal_stabilization_pass.rollback_ops
