@@ -496,6 +496,46 @@ let test_explicit_stabilization_boundary () =
    | _ -> Alcotest.fail "unexpected explicit stabilization updates");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_functor_instances_stabilize_independently () =
+  let module First = Eta_signal.Make (Observer_error) () in
+  let module Second = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let first_source = First.Var.create 1 in
+  let second_source = Second.Var.create 10 in
+  let first_events = ref 0 in
+  let second_events = ref 0 in
+  let first_observer =
+    run_ok runtime
+      (First.Observer.observe (First.Var.watch first_source) (fun _ ->
+           E.sync (fun () -> incr first_events)))
+  in
+  let second_observer =
+    run_ok runtime
+      (Second.Observer.observe (Second.Var.watch second_source) (fun _ ->
+           E.sync (fun () -> incr second_events)))
+  in
+  run_ok runtime First.stabilize;
+  Alcotest.(check int) "first graph initialized" 1
+    (run_ok runtime (First.Observer.read first_observer));
+  expect_fail "second graph remains uninitialized"
+    (( = ) `Uninitialized_observer)
+    (run runtime (Second.Observer.read second_observer));
+  run_ok runtime (First.Var.set first_source 2);
+  run_ok runtime (Second.Var.set second_source 20);
+  run_ok runtime First.stabilize;
+  Alcotest.(check int) "first graph changed" 2
+    (run_ok runtime (First.Observer.read first_observer));
+  expect_fail "second graph is still uninitialized"
+    (( = ) `Uninitialized_observer)
+    (run runtime (Second.Observer.read second_observer));
+  run_ok runtime Second.stabilize;
+  Alcotest.(check int) "second graph initializes with latest source" 20
+    (run_ok runtime (Second.Observer.read second_observer));
+  Alcotest.(check int) "first graph event count" 2 !first_events;
+  Alcotest.(check int) "second graph event count" 1 !second_events;
+  run_ok runtime (First.Observer.dispose first_observer);
+  run_ok runtime (Second.Observer.dispose second_observer)
+
 let test_observer_read_does_not_force_recompute () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1998,6 +2038,8 @@ let () =
             `Quick test_repeated_dependencies_are_deduplicated_in_diagnostics;
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
+          Alcotest.test_case "functor instances stabilize independently" `Quick
+            test_functor_instances_stabilize_independently;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
           Alcotest.test_case "observer graph delivery order is deterministic"

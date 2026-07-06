@@ -14,10 +14,9 @@ module Observer_error = struct
 end
 
 (* Most tests shadow [Signal] with a fresh functor instance so graph indexes do
-   not accumulate across cases. These public top-level instances are kept for
-   tests that deliberately exercise cross-instance behavior. *)
+   not accumulate across cases. This top-level instance provides the shared
+   error row used by helpers below. *)
 module Signal = Eta_signal.Make (Observer_error) ()
-module Other_signal = Eta_signal.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -445,61 +444,6 @@ let test_unnecessary_root_nodes_are_gc_reclaimable () =
   let after_gc = run_ok rt (Signal.stats ()) in
   Alcotest.(check int) "temporary root nodes reclaimed"
     before.Signal.total_node_count after_gc.Signal.total_node_count
-
-let test_functor_instances_stabilize_independently () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let other_source = Other_signal.Var.create 10 in
-  let events = ref [] in
-  let other_events = ref [] in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source)
-         (record_observer events))
-  in
-  let other_observer =
-    run_ok rt
-      (Other_signal.Observer.observe
-         (Other_signal.Var.watch other_source)
-         (record_observer other_events))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "first graph initialized" 1
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     Eta_eio.Runtime.run rt
-       (widen (Other_signal.Observer.read other_observer))
-   with
-   | Exit.Error (Cause.Fail `Uninitialized_observer) -> ()
-   | Exit.Error cause ->
-       Alcotest.failf "expected second graph to remain uninitialized, got %a"
-         (Cause.pp pp_hidden) cause
-   | Exit.Ok _ ->
-       Alcotest.fail "second graph initialized during first graph stabilize");
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt (Other_signal.Var.set other_source 20);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "first graph changed" 2
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     Eta_eio.Runtime.run rt
-       (widen (Other_signal.Observer.read other_observer))
-   with
-   | Exit.Error (Cause.Fail `Uninitialized_observer) -> ()
-   | Exit.Error cause ->
-       Alcotest.failf "expected second graph to still be uninitialized, got %a"
-         (Cause.pp pp_hidden) cause
-   | Exit.Ok _ ->
-       Alcotest.fail "second graph updated during first graph stabilize");
-  run_ok rt Other_signal.stabilize;
-  Alcotest.(check int) "second graph initialized with its latest source" 20
-    (run_ok rt (Other_signal.Observer.read other_observer));
-  Alcotest.(check int) "first graph event count" 2 (List.length !events);
-  Alcotest.(check int) "second graph event count" 1
-    (List.length !other_events);
-  run_ok rt (Signal.Observer.dispose observer);
-  run_ok rt (Other_signal.Observer.dispose other_observer)
 
 let test_recompute_order_is_topological () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -4066,8 +4010,6 @@ let () =
         [
           Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
             test_unnecessary_root_nodes_are_gc_reclaimable;
-          Alcotest.test_case "functor instances stabilize independently" `Quick
-            test_functor_instances_stabilize_independently;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
           Alcotest.test_case "observer callbacks run in registration order"
