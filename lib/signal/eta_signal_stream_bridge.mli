@@ -6,11 +6,6 @@ type metrics
 
 val create_metrics : ?drop_count:int -> unit -> metrics
 val drop_count : metrics -> int
-val record_drop : metrics -> unit
-
-val create_queue :
-  capacity:int ->
-  (('update, 'queue_error) Eta.Queue.t, [> `Invalid_capacity ]) result
 
 type ('token, 'update, 'error) observer_delivery =
   ('token, 'update, unit -> unit) Eta_signal_observer.Delivery_handle.t

@@ -57,9 +57,7 @@ let make_delivery_port live =
       List.iter (fun hook -> hook ()) hooks)
 
 let make_queue capacity =
-  match Bridge.create_queue ~capacity with
-  | Ok queue -> queue
-  | Error `Invalid_capacity -> Alcotest.fail "unexpected invalid capacity"
+  Eta.Queue.create ~overflow:(Eta.Queue.Drop_new { capacity }) ()
 
 let check_delivered label expected live =
   match Observer.Snapshot.delivery live.snapshot with
