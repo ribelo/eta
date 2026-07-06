@@ -3432,30 +3432,6 @@ let test_dispose_unlinks_observer_from_graph () =
   in
   force_collection 20
 
-let test_pure_failure_does_not_publish_partial_snapshot_and_can_retry () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal =
-    Signal.Var.watch source
-    |> Signal.map (fun n ->
-           if n = 2 then failwith "boom";
-           n)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  expect_die "pure callback defect"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int) "old snapshot remains after defect" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "later stabilization retries graph" 3
-    (run_ok rt (Signal.Observer.read observer))
-
 let test_signal_version_overflow_does_not_publish_partial_snapshot () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8777,8 +8753,6 @@ let () =
             test_dispose_before_initialization_removes_demand;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
             test_dispose_unlinks_observer_from_graph;
-          Alcotest.test_case "pure failure does not publish snapshot" `Quick
-            test_pure_failure_does_not_publish_partial_snapshot_and_can_retry;
           Alcotest.test_case "version overflow does not publish snapshot" `Quick
             test_signal_version_overflow_does_not_publish_partial_snapshot;
           Alcotest.test_case "var create counter overflow raises graph error"

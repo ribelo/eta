@@ -770,7 +770,42 @@ let test_observer_failure_retry_matches_model () =
         (generate_delivery_trace ~seed ~steps:36))
     [ 11; 23; 37; 41; 53 ]
 
-let test_pure_failure_matches_model () =
+type pure_failure_op =
+  | Pure_set of int
+  | Pure_stabilize
+  | Pure_read
+
+let pp_pure_failure_op formatter = function
+  | Pure_set value -> Format.fprintf formatter "Set %d" value
+  | Pure_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Pure_read -> Format.pp_print_string formatter "Read"
+
+let generate_pure_failure_trace ~seed ~steps =
+  let random = Random.State.make [| seed; steps; 2 |] in
+  let next_value () =
+    match Random.State.int random 6 with
+    | 0 | 1 -> 2
+    | 2 -> -1
+    | 3 -> 0
+    | 4 -> 1
+    | _ -> 3
+  in
+  let next_op index =
+    if index mod 5 = 0 then Pure_stabilize
+    else
+      match Random.State.int random 10 with
+      | 0 | 1 | 2 | 3 | 4 -> Pure_set (next_value ())
+      | 5 -> Pure_read
+      | _ -> Pure_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then
+      List.rev (Pure_stabilize :: Pure_set 3 :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  Pure_stabilize :: loop 1 []
+
+let run_pure_failure_trace name ops =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = Signal.Var.create 1 in
   let signal =
@@ -808,32 +843,50 @@ let test_pure_failure_matches_model () =
     Alcotest.(check (list observed_update))
       (label ^ " updates") (List.rev !model_updates) (List.rev !actual_updates);
     match !model_current with
-    | None -> ()
+    | None ->
+        expect_uninitialized_observer label runtime
+          (Signal.Observer.read observer)
     | Some expected ->
         Alcotest.(check int) (label ^ " read") expected
           (run_ok runtime (Signal.Observer.read observer))
   in
-  Alcotest.(check bool) "initial model commits" true
-    (match stabilize_model () with `Committed -> true | `Pure_failure -> false);
-  run_ok runtime Signal.stabilize;
-  check_model "initial";
-  model_pending := 2;
-  run_ok runtime (Signal.Var.set source 2);
-  Alcotest.(check bool) "failing model does not commit" true
-    (match stabilize_model () with `Pure_failure -> true | `Committed -> false);
-  expect_die "pure failure" runtime Signal.stabilize;
-  check_model "after pure failure";
-  Alcotest.(check bool) "pending failure retries" true
-    (match stabilize_model () with `Pure_failure -> true | `Committed -> false);
-  expect_die "pure failure retry" runtime Signal.stabilize;
-  check_model "after pure failure retry";
-  model_pending := 3;
-  run_ok runtime (Signal.Var.set source 3);
-  Alcotest.(check bool) "recovered model commits" true
-    (match stabilize_model () with `Committed -> true | `Pure_failure -> false);
-  run_ok runtime Signal.stabilize;
-  check_model "after recovery";
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_pure_failure_op op
+      in
+      (match op with
+      | Pure_set value ->
+          model_pending := value;
+          run_ok runtime (Signal.Var.set source value)
+      | Pure_stabilize -> (
+          match stabilize_model () with
+          | `Committed -> run_ok runtime Signal.stabilize
+          | `Pure_failure -> expect_die label runtime Signal.stabilize)
+      | Pure_read -> ());
+      check_model label)
+    ops;
   run_ok runtime (Signal.Observer.dispose observer)
+
+let test_pure_failure_matches_model () =
+  run_pure_failure_trace "pure-failure-scripted"
+    [
+      Pure_stabilize;
+      Pure_read;
+      Pure_set 2;
+      Pure_stabilize;
+      Pure_read;
+      Pure_stabilize;
+      Pure_set 3;
+      Pure_stabilize;
+      Pure_read;
+    ];
+  List.iter
+    (fun seed ->
+      run_pure_failure_trace
+        (Format.asprintf "pure-failure-seed-%d" seed)
+        (generate_pure_failure_trace ~seed ~steps:48))
+    [ 5; 17; 29; 41; 61 ]
 
 let test_dynamic_cycle_preserves_snapshot_matches_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
