@@ -302,6 +302,9 @@ let test_scope_ops =
 
 let live_nodes_from_cells _keep cells = (cells, cells)
 
+let test_live_registry =
+  Graph.live_node_registry ~collect_live_nodes:live_nodes_from_cells
+
 let collect_demand_live_nodes keep cells =
   let cells = List.filter (fun node -> node.demand_live && keep node) cells in
   (cells, cells)
@@ -338,6 +341,9 @@ let demand_reachable_ops =
     ~valid:(fun node -> node.demand_live)
     ~children:(fun node -> node.demand_children)
 
+let demand_live_registry =
+  Graph.live_node_registry ~collect_live_nodes:collect_demand_live_nodes
+
 let optional_demand_roots =
   Graph.demand_roots ~demand:Option.is_some ~root:(function
     | Some node -> node
@@ -345,8 +351,7 @@ let optional_demand_roots =
 
 let demand_reachable_plan =
   Graph.reachable_plan ~ops:demand_reachable_ops
-    ~collect_live_nodes:collect_demand_live_nodes
-    ~roots:optional_demand_roots
+    ~registry:demand_live_registry ~roots:optional_demand_roots
 
 let compute_ops =
   Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
@@ -440,7 +445,7 @@ let test_create_live_node_owns_lifecycle_context () =
   Alcotest.(check (list int)) "scope nodes" [ 0 ] scope.scope_nodes;
   let live_node_ids =
     with_graph_lane graph (fun lane ->
-        Graph.live_nodes graph lane ~collect_live_nodes:live_nodes_from_cells)
+        Graph.live_nodes graph lane test_live_registry)
     |> List.map (fun node -> node.node_id)
   in
   Alcotest.(check (list int)) "live nodes" [ 0 ] live_node_ids;
@@ -1121,8 +1126,7 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     timers;
   let remaining_live_ids =
     with_graph_lane graph (fun lane ->
-        Graph.live_nodes graph lane
-          ~collect_live_nodes:collect_demand_live_nodes)
+        Graph.live_nodes graph lane demand_live_registry)
     |> List.map (fun node -> Id.signal_int node.demand_id)
     |> List.sort Int.compare
   in
@@ -1185,8 +1189,7 @@ let test_post_commit_necessary_timers_uses_reachability () =
     timers;
   let remaining_live_ids =
     with_graph_lane graph (fun lane ->
-        Graph.live_nodes graph lane
-          ~collect_live_nodes:collect_demand_live_nodes)
+        Graph.live_nodes graph lane demand_live_registry)
     |> List.map (fun node -> Id.signal_int node.demand_id)
     |> List.sort Int.compare
   in

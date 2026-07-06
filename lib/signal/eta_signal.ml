@@ -605,12 +605,15 @@ module Make (Observer_error : Observer_error) () = struct
   let collect_live_weak_signals keep cells =
     Graph_algorithms.Weak_cell.collect ~pack:pack_weak_signal ~keep cells
 
+  let live_signal_registry =
+    Graph.live_node_registry ~collect_live_nodes:collect_live_weak_signals
+
   let all_nodes_unlocked lane =
-    Graph.live_nodes graph lane ~collect_live_nodes:collect_live_weak_signals
+    Graph.live_nodes graph lane live_signal_registry
 
   let prune_all_nodes_unlocked lane =
-    Graph.prune_live_nodes graph lane
-      ~collect_live_nodes:collect_live_weak_signals ~keep:(fun _ -> true)
+    Graph.prune_live_nodes graph lane live_signal_registry
+      ~keep:(fun _ -> true)
 
   let children_with_scope_owner signal children =
     Scope.children_with_scope_owner
@@ -821,8 +824,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let graph_reachable_plan () =
     Graph.reachable_plan ~ops:reachable_ops
-      ~collect_live_nodes:collect_live_weak_signals
-      ~roots:observer_demand_roots
+      ~registry:live_signal_registry ~roots:observer_demand_roots
 
   let observer_active_roots observers =
     observer_roots observer_active observers
@@ -1006,8 +1008,7 @@ module Make (Observer_error : Observer_error) () = struct
     signal
 
   let prune_invalid_nodes_unlocked lane =
-    Graph.prune_live_nodes graph lane
-      ~collect_live_nodes:collect_live_weak_signals
+    Graph.prune_live_nodes graph lane live_signal_registry
       ~keep:(fun (P signal) -> signal.valid)
 
   let timer_debug_snapshot timer =
@@ -1247,7 +1248,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let plan =
       Graph.reachable_plan ~ops:reachable_ops
-        ~collect_live_nodes:collect_live_weak_signals
+        ~registry:live_signal_registry
         ~roots:observer_demand_roots
     in
     Graph.post_commit_necessary_timers graph lane plan

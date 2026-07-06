@@ -786,18 +786,23 @@ val invalidate_live_node :
     tombstone recording, observer cleanup planning, edge detachment, dependent
     invalidation, then kind-specific cleanup. *)
 
+type ('node, 'weak_node) live_node_registry
+
+val live_node_registry :
+  collect_live_nodes:
+    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  ('node, 'weak_node) live_node_registry
+
 val live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   lane_access ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  ('node, 'weak_node) live_node_registry ->
   'node list
 
 val prune_live_nodes :
   (_, _, _, _, _, _, _, 'weak_node, _, _, _) t ->
   lane_access ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  ('node, 'weak_node) live_node_registry ->
   keep:('node -> bool) ->
   unit
 
@@ -820,8 +825,7 @@ type ('observer, 'node, 'weak_node) reachable_plan
 
 val reachable_plan :
   ops:(Eta_signal_id.signal, 'node) reachable_ops ->
-  collect_live_nodes:
-    (('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list) ->
+  registry:('node, 'weak_node) live_node_registry ->
   roots:('observer, 'node) demand_roots ->
   ('observer, 'node, 'weak_node) reachable_plan
 (** Package graph-shape reachability with live-node pruning and observer root

@@ -1093,11 +1093,24 @@ let rec invalidate_live_node t lane edge_ops lifecycle ~invalidate_scope node =
     timer_hooks @ observer_hooks @ dependent_hooks @ kind_hooks)
   else []
 
-let live_nodes t _lane ~collect_live_nodes =
-  collect_live_node_registry t ~collect_live_nodes ~keep:(fun _ -> true)
+type ('node, 'weak_node) live_node_registry = {
+  registry_collect_live_nodes :
+    ('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list;
+}
 
-let prune_live_nodes t _lane ~collect_live_nodes ~keep =
-  ignore (collect_live_node_registry t ~collect_live_nodes ~keep : _ list)
+let live_node_registry ~collect_live_nodes =
+  { registry_collect_live_nodes = collect_live_nodes }
+
+let live_nodes t _lane registry =
+  collect_live_node_registry t
+    ~collect_live_nodes:registry.registry_collect_live_nodes
+    ~keep:(fun _ -> true)
+
+let prune_live_nodes t _lane registry ~keep =
+  ignore
+    (collect_live_node_registry t
+       ~collect_live_nodes:registry.registry_collect_live_nodes ~keep
+      : _ list)
 
 type necessary_snapshot = (Eta_signal_id.signal, unit) Hashtbl.t
 
@@ -1114,15 +1127,14 @@ let demand_roots ~demand ~root =
 
 type ('observer, 'node, 'weak_node) reachable_plan = {
   reachable_plan_ops : (Eta_signal_id.signal, 'node) reachable_ops;
-  reachable_plan_collect_live_nodes :
-    ('node -> bool) -> 'weak_node list -> 'weak_node list * 'node list;
+  reachable_plan_registry : ('node, 'weak_node) live_node_registry;
   reachable_plan_roots : ('observer, 'node) demand_roots;
 }
 
-let reachable_plan ~ops ~collect_live_nodes ~roots =
+let reachable_plan ~ops ~registry ~roots =
   {
     reachable_plan_ops = ops;
-    reachable_plan_collect_live_nodes = collect_live_nodes;
+    reachable_plan_registry = registry;
     reachable_plan_roots = roots;
   }
 
@@ -1135,7 +1147,7 @@ let demand_root_nodes roots observers =
     observers
 
 let reachable_live_nodes t lane plan =
-  live_nodes t lane ~collect_live_nodes:plan.reachable_plan_collect_live_nodes
+  live_nodes t lane plan.reachable_plan_registry
 
 let reachable_root_nodes t plan =
   demand_root_nodes plan.reachable_plan_roots t.observers
