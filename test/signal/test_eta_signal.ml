@@ -18,7 +18,6 @@ end
    tests that deliberately exercise cross-instance behavior. *)
 module Signal = Eta_signal.Make (Observer_error) ()
 module Other_signal = Eta_signal.Make (Observer_error) ()
-module Dot_signal = Eta_signal.Make (Observer_error) ()
 
 type test_error =
   [ `Update_failed
@@ -3752,76 +3751,6 @@ let test_stats_and_dot_stay_read_only_through_nested_bind_churn () =
   Alcotest.(check int) "final dot hides disposed observers" 0
     (count_occurrences final_dot "observer:")
 
-let test_to_dot_debug_options_expose_hidden_state () =
-  with_logger_test_clock @@ fun _sw _clock rt _logger ->
-  let source = Dot_signal.Var.create 1 in
-  let observed =
-    Dot_signal.Var.watch source |> Dot_signal.map (fun value -> value + 1)
-  in
-  let unobserved =
-    Dot_signal.Var.watch (Dot_signal.Var.create 10)
-    |> Dot_signal.map (fun value -> value + 1)
-  in
-  let timer = run_ok rt (Dot_signal.Time.interval (Duration.ms 50)) in
-  let branch = Dot_signal.Var.create true in
-  let scoped =
-    Dot_signal.bind (Dot_signal.Var.watch branch) (fun enabled ->
-        if enabled then Dot_signal.const 1 else Dot_signal.const 0)
-  in
-  let observer =
-    run_ok rt (Dot_signal.Observer.observe observed (fun _ -> Effect.unit))
-  in
-  let timer_observer =
-    run_ok rt (Dot_signal.Observer.observe timer (fun _ -> Effect.unit))
-  in
-  let scoped_observer =
-    run_ok rt (Dot_signal.Observer.observe scoped (fun _ -> Effect.unit))
-  in
-  run_ok rt Dot_signal.stabilize;
-  run_ok rt (Dot_signal.Var.set source 2);
-  let necessary_dot = run_ok rt (Dot_signal.to_dot ()) in
-  let debug_options : Dot_signal.dot_options =
-    {
-      dot_scope = `All_valid;
-      dot_observers = true;
-      dot_timers = true;
-      dot_state = true;
-      dot_dynamic_scopes = true;
-    }
-  in
-  let debug_dot =
-    ignore (Sys.opaque_identity unobserved);
-    run_ok rt (Dot_signal.to_dot ~options:debug_options ())
-  in
-  Alcotest.(check bool) "debug dot shows more than necessary graph" true
-    (count_occurrences debug_dot "[label="
-     > count_occurrences necessary_dot "[label=");
-  Alcotest.(check bool) "debug dot shows observers" true
-    (count_occurrences debug_dot "observer:" > 0);
-  Alcotest.(check bool) "debug dot shows timer state" true
-    (count_occurrences debug_dot "timer_active=true" > 0);
-  Alcotest.(check bool) "debug dot shows timer lifecycle state" true
-    (count_occurrences debug_dot "timer_state=" > 0);
-  Alcotest.(check bool) "debug dot shows queued source state" true
-    (count_occurrences debug_dot "queued=true" > 0);
-  Alcotest.(check bool) "debug dot shows dirty state" true
-    (count_occurrences debug_dot "dirty=true" > 0);
-  Alcotest.(check bool) "debug dot shows dynamic scope state" true
-    (count_occurrences debug_dot "scope=" > 0);
-  Alcotest.(check bool) "debug dot labels signal identities" true
-    (count_occurrences debug_dot "signal_id=s" > 0);
-  Alcotest.(check bool) "debug dot labels source identities" true
-    (count_occurrences debug_dot "var_id=v" > 0);
-  Alcotest.(check bool) "debug dot labels scope identities" true
-    (count_occurrences debug_dot "scope_id=sc" > 0);
-  Alcotest.(check bool) "debug dot labels scope owners" true
-    (count_occurrences debug_dot "scope_owner=s" > 0);
-  Alcotest.(check bool) "debug dot labels scope parents" true
-    (count_occurrences debug_dot "scope_parent=" > 0);
-  run_ok rt (Dot_signal.Observer.dispose observer);
-  run_ok rt (Dot_signal.Observer.dispose timer_observer);
-  run_ok rt (Dot_signal.Observer.dispose scoped_observer)
-
 let test_fanout_fanin_cutoff_and_partial_disposal () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6593,8 +6522,6 @@ let () =
             test_observer_delivery_acknowledgement_uses_graph_lane;
           Alcotest.test_case "stats and dot survive nested bind churn" `Quick
             test_stats_and_dot_stay_read_only_through_nested_bind_churn;
-          Alcotest.test_case "to_dot debug options expose hidden state" `Quick
-            test_to_dot_debug_options_expose_hidden_state;
           Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
             test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick

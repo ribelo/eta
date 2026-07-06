@@ -614,6 +614,76 @@ let test_diagnostics_track_observation_and_disposal () =
     (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
      <= before_dot_nodes)
 
+let test_diagnostic_dot_options_expose_public_metadata () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let observed =
+    S.Var.watch source |> S.map (fun value -> value + 1)
+  in
+  let unobserved =
+    S.Var.watch (S.Var.create 10) |> S.map (fun value -> value + 1)
+  in
+  let timer = run_ok runtime (S.Time.interval (Eta.Duration.ms 50)) in
+  let branch = S.Var.create true in
+  let scoped =
+    S.bind (S.Var.watch branch) (fun enabled ->
+        if enabled then S.const 1 else S.const 0)
+  in
+  let observer =
+    run_ok runtime (S.Observer.observe observed (fun _ -> E.unit))
+  in
+  let timer_observer =
+    run_ok runtime (S.Observer.observe timer (fun _ -> E.unit))
+  in
+  let scoped_observer =
+    run_ok runtime (S.Observer.observe scoped (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set source 2);
+  let necessary_dot = run_ok runtime (S.to_dot ()) in
+  let debug_options : S.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = true;
+      dot_timers = true;
+      dot_state = true;
+      dot_dynamic_scopes = true;
+    }
+  in
+  let debug_dot =
+    ignore (Sys.opaque_identity unobserved);
+    run_ok runtime (S.to_dot ~options:debug_options ())
+  in
+  Alcotest.(check bool) "debug dot shows more than necessary graph" true
+    (count_occurrences debug_dot "[label="
+     > count_occurrences necessary_dot "[label=");
+  Alcotest.(check bool) "debug dot shows observers" true
+    (count_occurrences debug_dot "observer:" > 0);
+  Alcotest.(check bool) "debug dot shows timer activity" true
+    (count_occurrences debug_dot "timer_active=true" > 0);
+  Alcotest.(check bool) "debug dot shows timer lifecycle" true
+    (count_occurrences debug_dot "timer_state=" > 0);
+  Alcotest.(check bool) "debug dot shows queued source state" true
+    (count_occurrences debug_dot "queued=true" > 0);
+  Alcotest.(check bool) "debug dot shows dirty state" true
+    (count_occurrences debug_dot "dirty=true" > 0);
+  Alcotest.(check bool) "debug dot shows dynamic scope state" true
+    (count_occurrences debug_dot "scope=" > 0);
+  Alcotest.(check bool) "debug dot labels signal identities" true
+    (count_occurrences debug_dot "signal_id=s" > 0);
+  Alcotest.(check bool) "debug dot labels source identities" true
+    (count_occurrences debug_dot "var_id=v" > 0);
+  Alcotest.(check bool) "debug dot labels scope identities" true
+    (count_occurrences debug_dot "scope_id=sc" > 0);
+  Alcotest.(check bool) "debug dot labels scope owners" true
+    (count_occurrences debug_dot "scope_owner=s" > 0);
+  Alcotest.(check bool) "debug dot labels scope parents" true
+    (count_occurrences debug_dot "scope_parent=" > 0);
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime (S.Observer.dispose timer_observer);
+  run_ok runtime (S.Observer.dispose scoped_observer)
+
 let test_invalidated_branch_diagnostics_are_retained () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1521,6 +1591,8 @@ let () =
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "diagnostics track observation and disposal"
             `Quick test_diagnostics_track_observation_and_disposal;
+          Alcotest.test_case "diagnostic dot options expose metadata" `Quick
+            test_diagnostic_dot_options_expose_public_metadata;
           Alcotest.test_case "diagnostics retain invalidated branches" `Quick
             test_invalidated_branch_diagnostics_are_retained;
           Alcotest.test_case "diagnostics survive tombstone eviction" `Quick
