@@ -172,6 +172,24 @@ let test_observer_read_does_not_force_recompute () =
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_unsafe_read_exn_reports_invalid_state () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let observer =
+    run_ok runtime (S.Observer.observe (S.Var.watch source) (fun _ -> E.unit))
+  in
+  Alcotest.check_raises "unsafe read before stabilize"
+    (Invalid_argument "Eta_signal observer is not initialized")
+    (fun () -> ignore (S.Observer.unsafe_read_exn observer : int));
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "unsafe read stabilized value" 1
+    (S.Observer.unsafe_read_exn observer);
+  run_ok runtime (S.Observer.dispose observer);
+  Alcotest.check_raises "unsafe read after dispose"
+    (Invalid_argument "Eta_signal observer is disposed")
+    (fun () -> ignore (S.Observer.unsafe_read_exn observer : int))
+
 let test_diagnostics_track_observation_and_disposal () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -519,6 +537,8 @@ let () =
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
+          Alcotest.test_case "observer unsafe read reports invalid state"
+            `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "diagnostics track observation and disposal"
             `Quick test_diagnostics_track_observation_and_disposal;
           Alcotest.test_case "default cutoff is physical equality" `Quick

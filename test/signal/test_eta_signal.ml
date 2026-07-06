@@ -489,25 +489,6 @@ let test_unnecessary_root_nodes_are_gc_reclaimable () =
   Alcotest.(check int) "temporary root nodes reclaimed"
     before.Signal.total_node_count after_gc.Signal.total_node_count
 
-let test_observer_unsafe_read_exn_reports_invalid_state () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (fun _ -> Effect.unit))
-  in
-  Alcotest.check_raises "unsafe read before stabilize"
-    (Invalid_argument "Eta_signal observer is not initialized")
-    (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "unsafe read stabilized value" 1
-    (Signal.Observer.unsafe_read_exn observer);
-  run_ok rt (Signal.Observer.dispose observer);
-  Alcotest.check_raises "unsafe read after dispose"
-    (Invalid_argument "Eta_signal observer is disposed")
-    (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int))
-
 let test_functor_instances_stabilize_independently () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8086,8 +8067,6 @@ let () =
         [
           Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
             test_unnecessary_root_nodes_are_gc_reclaimable;
-          Alcotest.test_case "observer unsafe read reports invalid state"
-            `Quick test_observer_unsafe_read_exn_reports_invalid_state;
           Alcotest.test_case "functor instances stabilize independently" `Quick
             test_functor_instances_stabilize_independently;
           Alcotest.test_case "graph rejects cross-domain synchronous APIs" `Quick
