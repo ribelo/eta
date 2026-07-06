@@ -14,7 +14,8 @@ type test_error =
   | Signal.observer_read_error
   | Signal.stabilize_error
   | Signal.time_error
-  | Signal.stream_error ]
+  | Signal.stream_error
+  | `Update_failed ]
 
 type observed_update =
   | Initialized of int
@@ -81,6 +82,14 @@ let expect_die label runtime eff =
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected die, got Ok" label
   | Eta.Exit.Error cause ->
       Alcotest.failf "%s: expected die, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
+let expect_update_failed label runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Fail `Update_failed) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected update failure, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected update failure, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
 let expect_uninitialized_observer label runtime eff =
@@ -791,6 +800,203 @@ let publish_int current updates next =
 let check_int_updates label expected actual =
   Alcotest.(check (list observed_update))
     (label ^ " updates") (List.rev !expected) (List.rev !actual)
+
+type effectful_update_op =
+  | Effectful_set_left of int
+  | Effectful_set_right of int
+  | Effectful_update_left of int
+  | Effectful_update_right of int
+  | Effectful_update_left_and_right of int * int
+  | Effectful_fail_left
+  | Effectful_defect_right
+  | Effectful_stabilize
+  | Effectful_read
+
+let pp_effectful_update_op formatter = function
+  | Effectful_set_left value -> Format.fprintf formatter "Set_left %d" value
+  | Effectful_set_right value -> Format.fprintf formatter "Set_right %d" value
+  | Effectful_update_left delta ->
+      Format.fprintf formatter "Update_left %+d" delta
+  | Effectful_update_right delta ->
+      Format.fprintf formatter "Update_right %+d" delta
+  | Effectful_update_left_and_right (left_delta, right_delta) ->
+      Format.fprintf formatter "Update_left_and_right { left = %+d; right = %+d }"
+        left_delta right_delta
+  | Effectful_fail_left -> Format.pp_print_string formatter "Fail_left"
+  | Effectful_defect_right -> Format.pp_print_string formatter "Defect_right"
+  | Effectful_stabilize -> Format.pp_print_string formatter "Stabilize"
+  | Effectful_read -> Format.pp_print_string formatter "Read"
+
+let generate_effectful_update_trace ~seed ~steps =
+  let random = Random.State.make [| seed; steps; 131 |] in
+  let next_value () = Random.State.int random 21 - 10 in
+  let next_delta () = Random.State.int random 7 - 3 in
+  let scripted =
+    [
+      Effectful_read;
+      Effectful_stabilize;
+      Effectful_set_left 2;
+      Effectful_update_left 1;
+      Effectful_read;
+      Effectful_stabilize;
+      Effectful_update_left_and_right (1, 5);
+      Effectful_read;
+      Effectful_stabilize;
+      Effectful_fail_left;
+      Effectful_defect_right;
+      Effectful_stabilize;
+    ]
+  in
+  let next_op index =
+    if index mod 6 = 0 then Effectful_stabilize
+    else
+      match Random.State.int random 14 with
+      | 0 | 1 -> Effectful_set_left (next_value ())
+      | 2 | 3 -> Effectful_set_right (next_value ())
+      | 4 | 5 | 6 -> Effectful_update_left (next_delta ())
+      | 7 | 8 | 9 -> Effectful_update_right (next_delta ())
+      | 10 -> Effectful_update_left_and_right (next_delta (), next_delta ())
+      | 11 -> Effectful_fail_left
+      | 12 -> Effectful_defect_right
+      | _ -> Effectful_read
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Effectful_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  scripted @ loop 0 []
+
+let test_effectful_update_trace_matches_model () =
+  let run_trace name ops =
+    Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+    let left = Signal.Var.create 1 in
+    let right = Signal.Var.create 10 in
+    let combined =
+      Signal.map2 ( + ) (Signal.Var.watch left) (Signal.Var.watch right)
+    in
+    let actual_updates = ref [] in
+    let observer =
+      run_ok runtime
+        (Signal.Observer.observe combined (fun update ->
+             E.sync (fun () ->
+                 actual_updates :=
+                   observed_of_signal_update update :: !actual_updates)))
+    in
+    let pending_left = ref 1 in
+    let pending_right = ref 10 in
+    let current = ref None in
+    let model_updates = ref [] in
+    let check_sources label =
+      Alcotest.(check int) (label ^ " left source") !pending_left
+        (Signal.Var.value left);
+      Alcotest.(check int) (label ^ " right source") !pending_right
+        (Signal.Var.value right)
+    in
+    let check_read label =
+      match !current with
+      | None ->
+          expect_uninitialized_observer label runtime
+            (Signal.Observer.read observer)
+      | Some expected ->
+          Alcotest.(check int) label expected
+            (run_ok runtime (Signal.Observer.read observer))
+    in
+    let set var pending value =
+      pending := value;
+      run_ok runtime (Signal.Var.set var value)
+    in
+    let update label var pending delta =
+      let before = !pending in
+      let seen = ref None in
+      let expected = before + delta in
+      let actual =
+        run_ok runtime
+          (Signal.Var.update_effect var (fun current ->
+               E.sync (fun () -> seen := Some current)
+               |> E.map (fun () -> current + delta)))
+      in
+      Alcotest.(check (option int))
+        (label ^ " callback sees pending value")
+        (Some before) !seen;
+      Alcotest.(check int) (label ^ " update result") expected actual;
+      pending := expected
+    in
+    let update_left_and_right left_delta right_delta =
+      let before_left = !pending_left in
+      let before_right = !pending_right in
+      let seen_left = ref None in
+      let seen_right = ref None in
+      let expected_left = before_left + left_delta in
+      let expected_right = before_right + right_delta in
+      let actual =
+        run_ok runtime
+          (Signal.Var.update_effect left (fun current_left ->
+               E.sync (fun () -> seen_left := Some current_left)
+               |> E.bind (fun () ->
+                      Signal.Var.update_effect right (fun current_right ->
+                          E.sync (fun () -> seen_right := Some current_right)
+                          |> E.map (fun () -> current_right + right_delta)))
+               |> E.map (fun _ -> current_left + left_delta)))
+      in
+      Alcotest.(check (option int)) "left nested callback sees pending value"
+        (Some before_left) !seen_left;
+      Alcotest.(check (option int)) "right nested callback sees pending value"
+        (Some before_right) !seen_right;
+      Alcotest.(check int) "nested left update result" expected_left actual;
+      pending_left := expected_left;
+      pending_right := expected_right
+    in
+    let fail_left_then_update () =
+      let before = !pending_left in
+      expect_update_failed "typed update failure" runtime
+        (Signal.Var.update_effect left (fun _ -> E.fail `Update_failed));
+      Alcotest.(check int) "typed failure preserves left" before
+        (Signal.Var.value left);
+      update "left after failure" left pending_left 1
+    in
+    let defect_right_then_update () =
+      let before = !pending_right in
+      expect_die "update callback defect" runtime
+        (Signal.Var.update_effect right (fun _ -> failwith "update defect"));
+      Alcotest.(check int) "defect preserves right" before
+        (Signal.Var.value right);
+      update "right after defect" right pending_right 1
+    in
+    let stabilize label =
+      publish_int current model_updates (!pending_left + !pending_right);
+      run_ok runtime Signal.stabilize;
+      check_int_updates label model_updates actual_updates;
+      check_read (label ^ " read")
+    in
+    List.iteri
+      (fun index op ->
+        let label =
+          Format.asprintf "%s step %d %a" name index
+            pp_effectful_update_op op
+        in
+        (match op with
+        | Effectful_set_left value -> set left pending_left value
+        | Effectful_set_right value -> set right pending_right value
+        | Effectful_update_left delta ->
+            update "left" left pending_left delta
+        | Effectful_update_right delta ->
+            update "right" right pending_right delta
+        | Effectful_update_left_and_right (left_delta, right_delta) ->
+            update_left_and_right left_delta right_delta
+        | Effectful_fail_left -> fail_left_then_update ()
+        | Effectful_defect_right -> defect_right_then_update ()
+        | Effectful_stabilize -> stabilize label
+        | Effectful_read -> check_read label);
+        check_sources label)
+      ops;
+    run_ok runtime (Signal.Observer.dispose observer)
+  in
+  List.iter
+    (fun seed ->
+      run_trace
+        (Format.asprintf "effectful-update-seed-%d" seed)
+        (generate_effectful_update_trace ~seed ~steps:75))
+    [ 13; 29; 61; 113 ]
 
 let int_list_equal = List.equal Int.equal
 let cutoff_payload value = [ value mod 2 ]
@@ -3211,6 +3417,8 @@ let () =
             test_time_bind_demand_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
+          Alcotest.test_case "effectful update trace matches model" `Quick
+            test_effectful_update_trace_matches_model;
           Alcotest.test_case "source equality trace matches model" `Quick
             test_source_equality_trace_matches_model;
           Alcotest.test_case

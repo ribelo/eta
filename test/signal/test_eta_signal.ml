@@ -2815,119 +2815,6 @@ let test_effectful_update_rejects_concurrent_set_same_variable () =
        (Signal.Var.update_effect source (fun current ->
             Effect.pure (current + 1))))
 
-let test_effectful_update_success_publishes_once () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe observed (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  events := [];
-  Alcotest.(check int) "update result" 2
-    (run_ok rt
-       (Signal.Var.update_effect source (fun current ->
-            Effect.pure (current + 1))));
-  Alcotest.(check int) "source updated" 2 (Signal.Var.value source);
-  Alcotest.(check int) "observer waits for stabilization" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "no event before stabilization" 0 (List.length !events);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer sees update" 2
-    (run_ok rt (Signal.Observer.read observer));
-  (match !events with
-   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
-   | _ -> Alcotest.fail "expected one changed event");
-  events := [];
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "no duplicate event" 0 (List.length !events);
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_effectful_update_sees_pending_source_value () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let seen = ref None in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe observed (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  events := [];
-  run_ok rt (Signal.Var.set source 2);
-  Alcotest.(check int) "observer still has old snapshot" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "update result" 3
-    (run_ok rt
-       (Signal.Var.update_effect source (fun current ->
-            Effect.sync (fun () -> seen := Some current)
-            |> Effect.map (fun () -> current + 1))));
-  Alcotest.(check (option int)) "callback sees pending source value" (Some 2)
-    !seen;
-  Alcotest.(check int) "source stores update result" 3 (Signal.Var.value source);
-  Alcotest.(check int) "no event before stabilization" 0 (List.length !events);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer sees coalesced update" 3
-    (run_ok rt (Signal.Observer.read observer));
-  (match !events with
-   | [ Signal.Changed { old_value = 1; new_value = 3 } ] -> ()
-   | _ -> Alcotest.fail "expected pending set and effectful update to coalesce");
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_effectful_update_allows_other_variable_mutation () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let left = Signal.Var.create 1 in
-  let right = Signal.Var.create 10 in
-  let combined =
-    Signal.map2 ( + ) (Signal.Var.watch left) (Signal.Var.watch right)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe combined (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial observer value" 11
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "left update result" 2
-    (run_ok rt
-       (Signal.Var.update_effect left (fun current ->
-            Signal.Var.update_effect right (fun other ->
-                Effect.pure (other + 5))
-            |> Effect.map (fun _ -> current + 1))));
-  Alcotest.(check int) "left source updated" 2 (Signal.Var.value left);
-  Alcotest.(check int) "right source updated" 15 (Signal.Var.value right);
-  Alcotest.(check int) "observer waits for stabilization" 11
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer sees both updates" 17
-    (run_ok rt (Signal.Observer.read observer))
-
-let test_effectful_update_failures_preserve_value_and_release_slot () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  expect_fail "typed update failure" (( = ) `Update_failed)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Var.update_effect source (fun _ -> Effect.fail `Update_failed))));
-  Alcotest.(check int) "typed failure leaves value unchanged" 1
-    (Signal.Var.value source);
-  Alcotest.(check int) "slot released after typed failure" 2
-    (run_ok rt
-       (Signal.Var.update_effect source (fun current ->
-            Effect.pure (current + 1))));
-  expect_die "update callback defect"
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Var.update_effect source (fun _ -> failwith "update defect"))));
-  Alcotest.(check int) "defect leaves value unchanged" 2
-    (Signal.Var.value source);
-  Alcotest.(check int) "slot released after defect" 3
-    (run_ok rt
-       (Signal.Var.update_effect source (fun current ->
-            Effect.pure (current + 1))))
-
 let test_effectful_update_interruption_preserves_value_and_releases_slot () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
@@ -5455,15 +5342,6 @@ let () =
           Alcotest.test_case
             "effectful update rejects concurrent set on same variable" `Quick
             test_effectful_update_rejects_concurrent_set_same_variable;
-          Alcotest.test_case "effectful update publishes once" `Quick
-            test_effectful_update_success_publishes_once;
-          Alcotest.test_case "effectful update sees pending source value"
-            `Quick test_effectful_update_sees_pending_source_value;
-          Alcotest.test_case "effectful update allows other variable mutation"
-            `Quick
-            test_effectful_update_allows_other_variable_mutation;
-          Alcotest.test_case "effectful update failure cleanup" `Quick
-            test_effectful_update_failures_preserve_value_and_release_slot;
           Alcotest.test_case "effectful update interruption cleanup" `Quick
             test_effectful_update_interruption_preserves_value_and_releases_slot;
           Alcotest.test_case "effectful update acquire interruption cleanup"
