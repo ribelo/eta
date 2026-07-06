@@ -453,16 +453,6 @@ module Make (Observer_error : Observer_error) () = struct
           publish_timer_current snapshot_cell
             (Timer_policy.snapshot_with_generation snapshot generation)
 
-    let set_observer_on_finish observer hooks =
-      let live =
-        match Observer_lifecycle.live observer.obs_state with
-        | Some live -> live
-        | None ->
-            invalid_arg
-              "Eta_signal.Private_test_hooks: expected live observer state"
-      in
-      live.obs_on_finish <- hooks
-
   end
 
   type disposal_hook = Cleanup.hook

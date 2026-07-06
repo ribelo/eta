@@ -6332,17 +6332,18 @@ let test_disposal_hooks_continue_after_failure () =
   let module Signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let source = Signal.Var.create 1 in
-  let observer =
-    run_ok rt (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
-        Effect.unit))
-  in
   let later_hook_ran = ref false in
-  Signal.Private_test_hooks.set_observer_on_finish observer
-    [
-      (fun _ -> failwith "first dispose hook failure");
-      (fun _ -> later_hook_ran := true);
-      (fun _ -> failwith "third dispose hook failure");
-    ];
+  let observer =
+    run_ok rt
+      (Signal.Observer.observe_with_hooks
+         ~on_finish:
+           [
+             (fun _ -> failwith "first dispose hook failure");
+             (fun _ -> later_hook_ran := true);
+             (fun _ -> failwith "third dispose hook failure");
+           ]
+         (Signal.Var.watch source) (fun _ -> Effect.unit))
+  in
   let exit = Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)) in
   expect_finalizer_die "first dispose hook failure"
     "first dispose hook failure" exit;
@@ -6379,11 +6380,12 @@ let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
     | Some branch -> branch
     | None -> Alcotest.fail "expected captured dynamic branch"
   in
-  let branch_observer =
-    run_ok rt (Signal.Observer.observe branch (fun _ -> Effect.unit))
+  let _branch_observer =
+    run_ok rt
+      (Signal.Observer.observe_with_hooks
+         ~on_finish:[ (fun _ -> failwith "branch dispose hook failure") ]
+         branch (fun _ -> Effect.unit))
   in
-  Signal.Private_test_hooks.set_observer_on_finish branch_observer
-    [ (fun _ -> failwith "branch dispose hook failure") ];
   run_ok rt (Signal.Var.set use_branch false);
   expect_finalizer_die "branch dispose hook failure"
     "branch dispose hook failure"
@@ -6411,16 +6413,15 @@ let test_observer_dispose_interruption_runs_finish_hooks () =
       ()
   in
   let source = Signal.Var.create 1 in
+  let hook_ran = ref false in
   let observer =
     expect_exit_ok "observer registration"
       (Runtime.run rt
          (widen
-            (Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
-                 Effect.unit))))
+            (Signal.Observer.observe_with_hooks
+               ~on_finish:[ (fun _ -> hook_ran := true) ]
+               (Signal.Var.watch source) (fun _ -> Effect.unit))))
   in
-  let hook_ran = ref false in
-  Signal.Private_test_hooks.set_observer_on_finish observer
-    [ (fun _ -> hook_ran := true) ];
   Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
   (match Runtime.run rt (widen (Signal.Observer.dispose observer)) with
   | Exit.Error _ -> ()
@@ -6462,14 +6463,15 @@ let test_stabilize_interruption_runs_invalidation_hooks () =
     | Some branch -> branch
     | None -> Alcotest.fail "expected captured dynamic branch"
   in
-  let branch_observer =
+  let hook_ran = ref false in
+  let _branch_observer =
     expect_exit_ok "branch observer registration"
       (Runtime.run rt
-         (widen (Signal.Observer.observe branch (fun _ -> Effect.unit))))
+         (widen
+            (Signal.Observer.observe_with_hooks
+               ~on_finish:[ (fun _ -> hook_ran := true) ]
+               branch (fun _ -> Effect.unit))))
   in
-  let hook_ran = ref false in
-  Signal.Private_test_hooks.set_observer_on_finish branch_observer
-    [ (fun _ -> hook_ran := true) ];
   ignore
     (expect_exit_ok "switch branch"
        (Runtime.run rt (widen (Signal.Var.set use_branch false)))
@@ -6490,11 +6492,12 @@ let test_time_timer_dispose_hook_failure_still_cleans_graph () =
   Eta_test.with_test_clock @@ fun sw clock rt ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    run_ok rt
+      (Signal.Observer.observe_with_hooks
+         ~on_finish:[ (fun _ -> failwith "dispose hook failure") ]
+         signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
-  Signal.Private_test_hooks.set_observer_on_finish observer
-    [ (fun _ -> failwith "dispose hook failure") ];
   expect_finalizer_die "dispose hook failure" "dispose hook failure"
     (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
   let drained =
