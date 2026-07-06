@@ -1547,22 +1547,26 @@ module Make (Observer_error : Observer_error) () = struct
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
     let eval =
+      let scope_plan =
+        Bind.dynamic_scope_plan
+          ~new_scope:(fun _lane -> new_scope signal)
+          ~with_scope:(fun _lane scope f ->
+            Graph.with_current_scope graph scope_ops scope f)
+          ~on_switch_failure:(fun lane scope ->
+            remember_pure_disposal_hooks lane staging
+              (invalidate_scope lane scope))
+      in
+      let inner_plan =
+        Bind.dynamic_inner_plan ~selector:bind.selector
+          ~validate_inner:(fun _lane scope inner ->
+            Scope_validation.validate_inner ~scope (P inner))
+          ~compute_inner:(fun lane inner -> compute lane staging inner)
+      in
       Bind.dynamic_eval_context ~source_equal:bind.source.equal
         ~dependencies:
           (Bind.dynamic_dependencies ~source:(P bind.source)
              ~pack_inner:(fun inner -> P inner))
-        ~scope:
-          (Bind.dynamic_scope_context
-             ~new_scope:(fun _lane -> new_scope signal)
-             ~selector:bind.selector
-             ~with_scope:(fun _lane scope f ->
-               Graph.with_current_scope graph scope_ops scope f)
-             ~validate_inner:(fun _lane scope inner ->
-               Scope_validation.validate_inner ~scope (P inner))
-             ~compute_inner:(fun lane inner -> compute lane staging inner)
-             ~on_switch_failure:(fun lane scope ->
-               remember_pure_disposal_hooks lane staging
-                 (invalidate_scope lane scope)))
+        ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
         ~dirty:signal.dirty ~initialized
         ~dependencies_changed:(fun lane dependencies ->
           dependencies_changed lane signal dependencies)

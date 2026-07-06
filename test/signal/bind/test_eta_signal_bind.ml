@@ -246,40 +246,45 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   let with_scope, validate_inner, compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
+  let scope_plan =
+    Bind.dynamic_scope_plan
+      ~new_scope:(fun cap ->
+        check_cap cap;
+        events := !events @ [ "new_scope" ];
+        7)
+      ~with_scope:(fun cap scope f ->
+        check_cap cap;
+        with_scope scope f)
+      ~on_switch_failure:
+        (match on_switch_failure_override with
+        | Some on_switch_failure -> on_switch_failure
+        | None ->
+            fun cap _scope ->
+              check_cap cap;
+              Alcotest.fail "unexpected cleanup")
+  in
+  let inner_plan =
+    Bind.dynamic_inner_plan
+      ~selector:(fun source ->
+        events := !events @ [ "select:" ^ string_of_int source ];
+        source + 1)
+      ~validate_inner:
+        (match validate_inner_override with
+        | Some validate_inner -> validate_inner
+        | None ->
+            fun cap scope inner ->
+              check_cap cap;
+              validate_inner scope inner)
+      ~compute_inner:(fun cap inner ->
+        check_cap cap;
+        compute_inner inner)
+  in
   let eval =
     Bind.dynamic_eval_context ~source_equal:Int.equal
       ~dependencies:
         (Bind.dynamic_dependencies ~source:100
            ~pack_inner:(fun inner -> inner + 1000))
-      ~scope:
-        (Bind.dynamic_scope_context
-           ~new_scope:(fun cap ->
-             check_cap cap;
-             events := !events @ [ "new_scope" ];
-             7)
-           ~selector:(fun source ->
-             events := !events @ [ "select:" ^ string_of_int source ];
-             source + 1)
-           ~with_scope:(fun cap scope f ->
-             check_cap cap;
-             with_scope scope f)
-           ~validate_inner:
-             (match validate_inner_override with
-             | Some validate_inner -> validate_inner
-             | None ->
-                 fun cap scope inner ->
-                   check_cap cap;
-                   validate_inner scope inner)
-           ~compute_inner:(fun cap inner ->
-             check_cap cap;
-             compute_inner inner)
-           ~on_switch_failure:
-             (match on_switch_failure_override with
-             | Some on_switch_failure -> on_switch_failure
-             | None ->
-                 fun cap _scope ->
-                   check_cap cap;
-                   Alcotest.fail "unexpected cleanup"))
+      ~scope:(Bind.dynamic_scope_context ~scope:scope_plan ~inner:inner_plan)
       ~dirty ~initialized:(fun () -> initialized)
       ~dependencies_changed:(fun cap dependencies ->
         check_cap cap;

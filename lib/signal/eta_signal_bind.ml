@@ -12,30 +12,47 @@ type ('inner, 'dependency) dynamic_dependencies = {
 let dynamic_dependencies ~source ~pack_inner =
   { dependency_source = source; dependency_pack_inner = pack_inner }
 
-type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_scope_context = {
+type ('capability, 'inner, 'scope) dynamic_scope_plan = {
   scope_new : 'capability -> 'scope;
-  scope_select : 'source -> 'inner;
   scope_with_current : 'capability -> 'scope -> (unit -> 'inner) -> 'inner;
+  scope_on_switch_failure : 'capability -> 'scope -> unit;
+}
+
+let dynamic_scope_plan ~new_scope ~with_scope ~on_switch_failure =
+  {
+    scope_new = new_scope;
+    scope_with_current = with_scope;
+    scope_on_switch_failure = on_switch_failure;
+  }
+
+type ('capability, 'source, 'inner, 'scope, 'value, 'error)
+     dynamic_inner_plan = {
+  inner_select : 'source -> 'inner;
   scope_validate_inner :
     'capability ->
     'scope ->
     'inner ->
     (unit, ([> `Invalid_scope ] as 'error)) result;
   scope_compute_inner : 'capability -> 'inner -> 'value * bool;
-  scope_on_switch_failure : 'capability -> 'scope -> unit;
 }
 
-let dynamic_scope_context ~new_scope ~selector ~with_scope
-    ~validate_inner ~compute_inner ~on_switch_failure =
+let dynamic_inner_plan ~selector ~validate_inner ~compute_inner =
   {
-    scope_new = new_scope;
-    scope_select = selector;
-    scope_with_current = with_scope;
+    inner_select = selector;
     scope_validate_inner = validate_inner;
     scope_compute_inner = compute_inner;
-    scope_on_switch_failure = on_switch_failure;
   }
+
+type ('capability, 'source, 'inner, 'scope, 'value, 'error)
+     dynamic_scope_context = {
+  scope_plan : ('capability, 'inner, 'scope) dynamic_scope_plan;
+  inner_plan :
+    ('capability, 'source, 'inner, 'scope, 'value, 'error)
+    dynamic_inner_plan;
+}
+
+let dynamic_scope_context ~scope ~inner =
+  { scope_plan = scope; inner_plan = inner }
 
 type 'inner eval_plan =
   | Switch
@@ -212,12 +229,13 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
   match eval_plan ~equal snapshot ~source_value with
   | Error _ as error -> error
   | Ok Switch ->
-      let dynamic_scope = scope.scope_new capability in
+      let dynamic_scope = scope.scope_plan.scope_new capability in
       eval_switch ~capability ~scope:dynamic_scope ~source_value
-        ~selector:scope.scope_select ~with_scope:scope.scope_with_current
-        ~validate_inner:scope.scope_validate_inner
-        ~compute_inner:scope.scope_compute_inner
-        ~on_failure:scope.scope_on_switch_failure
+        ~selector:scope.inner_plan.inner_select
+        ~with_scope:scope.scope_plan.scope_with_current
+        ~validate_inner:scope.inner_plan.scope_validate_inner
+        ~compute_inner:scope.inner_plan.scope_compute_inner
+        ~on_failure:scope.scope_plan.scope_on_switch_failure
       |> Result.map (fun eval ->
              Dynamic_switch
                {
@@ -233,7 +251,8 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
       let dependency_list = dynamic_dependency_list dependencies (Some inner) in
       match
         eval_reuse ~dependencies:dependency_list ~source_changed
-          ~compute_inner:(fun () -> scope.scope_compute_inner capability inner)
+          ~compute_inner:(fun () ->
+            scope.inner_plan.scope_compute_inner capability inner)
           ~dirty ~initialized
           ~dependencies_changed:(fun dependencies ->
             dependencies_changed capability dependencies)

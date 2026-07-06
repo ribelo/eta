@@ -9,21 +9,38 @@ val dynamic_dependencies :
   pack_inner:('inner -> 'dependency) ->
   ('inner, 'dependency) dynamic_dependencies
 
+type ('capability, 'inner, 'scope) dynamic_scope_plan
+
+val dynamic_scope_plan :
+  new_scope:('capability -> 'scope) ->
+  with_scope:('capability -> 'scope -> (unit -> 'inner) -> 'inner) ->
+  on_switch_failure:('capability -> 'scope -> unit) ->
+  ('capability, 'inner, 'scope) dynamic_scope_plan
+
 type ('capability, 'source, 'inner, 'scope, 'value, 'error)
-     dynamic_scope_context
+     dynamic_inner_plan
   constraint 'error = [> `Invalid_scope ]
 
-val dynamic_scope_context :
-  new_scope:('capability -> 'scope) ->
+val dynamic_inner_plan :
   selector:('source -> 'inner) ->
-  with_scope:('capability -> 'scope -> (unit -> 'inner) -> 'inner) ->
   validate_inner:
     ('capability ->
     'scope ->
     'inner ->
     (unit, ([> `Invalid_scope ] as 'error)) result) ->
   compute_inner:('capability -> 'inner -> 'value * bool) ->
-  on_switch_failure:('capability -> 'scope -> unit) ->
+  ('capability, 'source, 'inner, 'scope, 'value, 'error)
+  dynamic_inner_plan
+
+type ('capability, 'source, 'inner, 'scope, 'value, 'error)
+     dynamic_scope_context
+  constraint 'error = [> `Invalid_scope ]
+
+val dynamic_scope_context :
+  scope:('capability, 'inner, 'scope) dynamic_scope_plan ->
+  inner:
+    ('capability, 'source, 'inner, 'scope, 'value, 'error)
+    dynamic_inner_plan ->
   ('capability, 'source, 'inner, 'scope, 'value, 'error)
   dynamic_scope_context
 
