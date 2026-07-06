@@ -464,6 +464,56 @@ let test_stream_dispose_closes_queue_after_buffered_updates () =
       ()
   | _ -> Alcotest.fail "expected buffered stream updates before clean close"
 
+let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let use_branch = S.Var.create true in
+  let branch_source = S.Var.create 0 in
+  let captured = ref None in
+  let selected =
+    S.bind (S.Var.watch use_branch) (fun active ->
+        if active then (
+          let branch = S.Var.watch branch_source in
+          captured := Some branch;
+          branch)
+        else S.const 42)
+  in
+  let selected_observer =
+    run_ok runtime (S.Observer.observe selected (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let branch =
+    match !captured with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured branch signal"
+  in
+  let branch_observer, stream =
+    run_ok runtime (S.Stream.observe ~capacity:4 branch)
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set branch_source 1);
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set use_branch false);
+  run_ok runtime S.stabilize;
+  (match
+     run_ok runtime (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)
+   with
+   | [
+    S.Initialized 0;
+    S.Changed { old_value = 0; new_value = 1 };
+   ] ->
+       ()
+   | _ -> Alcotest.fail "expected buffered branch stream updates before error");
+  expect_fail "invalidated branch stream after buffered updates"
+    (( = ) `Invalid_scope)
+    (run runtime (Eta_stream.run_collect stream));
+  expect_fail "branch observer invalidated after stream error"
+    (( = ) `Invalid_scope)
+    (run runtime (S.Observer.read branch_observer));
+  Alcotest.(check int) "selected switched after branch invalidation" 42
+    (run_ok runtime (S.Observer.read selected_observer));
+  run_ok runtime (S.Observer.dispose selected_observer)
+
 let test_stream_with_observed_disposes_on_exit () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -590,6 +640,9 @@ let () =
           Alcotest.test_case
             "stream dispose closes queue after buffered updates" `Quick
             test_stream_dispose_closes_queue_after_buffered_updates;
+          Alcotest.test_case
+            "stream invalid scope closes queue with invalid scope" `Quick
+            test_stream_invalid_scope_closes_queue_with_invalid_scope;
           Alcotest.test_case "stream scoped observation disposes observer"
             `Quick test_stream_with_observed_disposes_on_exit;
           Alcotest.test_case "stream bridge full queue drops newest" `Quick

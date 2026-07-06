@@ -7502,56 +7502,6 @@ let test_stream_bridge_invalidated_scope_fails_stream () =
     (run_ok rt (Signal.Observer.read selected_observer));
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_stream_invalid_scope_closes_queue_with_invalid_scope () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let use_branch = Signal.Var.create true in
-  let branch_source = Signal.Var.create 0 in
-  let captured = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
-        if active then (
-          let branch = Signal.Var.watch branch_source in
-          captured := Some branch;
-          branch)
-        else Signal.const 42)
-  in
-  let selected_observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let branch =
-    match !captured with
-    | Some branch -> branch
-    | None -> Alcotest.fail "expected captured branch signal"
-  in
-  let branch_observer, stream =
-    run_ok rt (Signal.Stream.observe ~capacity:4 branch)
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set branch_source 1);
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set use_branch false);
-  run_ok rt Signal.stabilize;
-  (match
-     run_ok rt (Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect)
-   with
-   | [
-    Signal.Initialized 0;
-    Signal.Changed { old_value = 0; new_value = 1 };
-   ] ->
-       ()
-   | _ -> Alcotest.fail "expected buffered branch stream updates before error");
-  expect_fail "invalidated branch stream after buffered updates"
-    (( = ) `Invalid_scope)
-    (Eta_eio.Runtime.run rt (widen (Eta_stream.run_collect stream)));
-  expect_fail "branch observer invalidated after stream error"
-    (( = ) `Invalid_scope)
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
-  Alcotest.(check int) "selected switched after branch invalidation" 42
-    (run_ok rt (Signal.Observer.read selected_observer));
-  run_ok rt (Signal.Observer.dispose selected_observer)
-
 let test_stream_bridge_full_queue_does_not_block () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
@@ -8279,9 +8229,6 @@ let () =
             `Quick test_stream_bridge_rejects_cross_domain_consumer;
           Alcotest.test_case "stream bridge invalidated scope fails stream"
             `Quick test_stream_bridge_invalidated_scope_fails_stream;
-          Alcotest.test_case
-            "stream invalid scope closes queue with invalid scope" `Quick
-            test_stream_invalid_scope_closes_queue_with_invalid_scope;
           Alcotest.test_case "stream bridge full queue does not block"
             `Quick test_stream_bridge_full_queue_does_not_block;
           Alcotest.test_case "stream bridge drop callback reports loss"
