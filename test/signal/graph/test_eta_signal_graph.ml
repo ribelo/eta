@@ -1146,8 +1146,11 @@ let test_stage_bind_switch_owns_transaction_staging () =
     Graph.stage_bind_switch graph lane staging "bind" staged ~source_value:2
       ~inner:"next" ~scope:3;
     let snapshot = Graph.read_effective graph staged in
-    Alcotest.(check (option string)) "staged inner" (Some "next")
-      (Bind.inner snapshot);
+    Alcotest.(check (list string))
+      "staged dependencies" [ "source"; "next" ]
+      (Bind.dependencies ~source:"source"
+         ~inner_dependency:(fun inner -> inner)
+         snapshot);
     Alcotest.(check (option int)) "staged scope" (Some 3)
       (Bind.inner_scope snapshot);
     let invalidation_plan =
@@ -1268,8 +1271,10 @@ let test_stage_bind_switch_owns_transaction_staging () =
     "commit events" [ "preflight"; "commit_bind:bind"; "update_necessity" ]
     !events;
   let snapshot = Graph.read_effective graph staged in
-  Alcotest.(check (option string)) "committed inner" (Some "next")
-    (Bind.inner snapshot);
+  Alcotest.(check (list string))
+    "committed dependencies" [ "source"; "next" ]
+    (Bind.dependencies ~source:"source" ~inner_dependency:(fun inner -> inner)
+       snapshot);
   Alcotest.(check (option int)) "committed scope" (Some 3)
     (Bind.inner_scope snapshot)
 
@@ -1345,9 +1350,10 @@ let test_staged_bind_rollback_owns_protocol () =
       Alcotest.(check string)
         "defect" "Failure(\"rollback\")" (Printexc.to_string exn);
       Alcotest.(check (list string)) "hooks" [ "hook:2" ] hooks);
-  Alcotest.(check (option string))
-    "current inner" (Some "old")
-    (Bind.inner (Transaction.current staged));
+  Alcotest.(check (list string))
+    "current dependencies" [ "source"; "old" ]
+    (Bind.dependencies ~source:"source" ~inner_dependency:(fun inner -> inner)
+       (Transaction.current staged));
   Alcotest.(check (list string))
     "rollback events"
     [ "stage"; "preflight"; "rollback_bind:bind"; "invalidate:2" ]

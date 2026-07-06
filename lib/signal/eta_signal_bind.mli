@@ -86,11 +86,13 @@ val switch :
   scope:'scope ->
     ('source, 'inner, 'scope) snapshot
 
-val inner : (_, 'inner, _) snapshot -> 'inner option
 val inner_scope : (_, _, 'scope) snapshot -> 'scope option
 
 val dependencies :
-  source:'dependency -> inner:'dependency option -> 'dependency list
+  source:'dependency ->
+  inner_dependency:('inner -> 'dependency) ->
+  (_, 'inner, _) snapshot ->
+  'dependency list
 
 val run_dynamic :
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)

@@ -1136,9 +1136,6 @@ module Make (Observer_error : Observer_error) () = struct
       (a, b signal, scope) Bind.snapshot =
     Graph.read_effective graph bind.snapshot
 
-  let bind_effective_inner bind =
-    Bind.inner (bind_effective_snapshot bind)
-
   let bind_staged_snapshot (type a b) lane staging (bind : (a, b) bind) :
       (a, b signal, scope) Bind.snapshot option =
     Graph.staged_value graph lane staging bind.snapshot
@@ -1228,9 +1225,8 @@ module Make (Observer_error : Observer_error) () = struct
             match signal.kind with
             | Bind bind ->
                 Bind.dependencies ~source:(P bind.source)
-                  ~inner:
-                    (Option.map (fun inner -> P inner)
-                       (bind_effective_inner bind))
+                  ~inner_dependency:(fun inner -> P inner)
+                  (bind_effective_snapshot bind)
             | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
             | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
                 signal.dependencies
@@ -1761,7 +1757,8 @@ module Make (Observer_error : Observer_error) () = struct
     match signal.kind with
     | Bind bind ->
         Bind.dependencies ~source:(P bind.source)
-          ~inner:(Option.map (fun inner -> P inner) (bind_effective_inner bind))
+          ~inner_dependency:(fun inner -> P inner)
+          (bind_effective_snapshot bind)
     | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _
     | Map7 _ | Map8 _ | Map9 _ | All _ ->
         signal.dependencies

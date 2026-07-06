@@ -6,15 +6,20 @@ let capability = "bind-capability"
 let check_cap cap =
   Alcotest.(check string) "capability" capability cap
 
+let string_dependencies snapshot =
+  Bind.dependencies ~source:"source" ~inner_dependency:(fun inner -> inner)
+    snapshot
+
 let test_empty_snapshot () =
   let snapshot = Bind.empty in
-  Alcotest.(check (option string)) "inner" None (Bind.inner snapshot);
+  Alcotest.(check (list string)) "dependencies" [ "source" ]
+    (string_dependencies snapshot);
   Alcotest.(check (option int)) "scope" None (Bind.inner_scope snapshot)
 
 let test_switch_snapshot () =
   let snapshot = Bind.switch ~source_value:1 ~inner:"inner" ~scope:2 in
-  Alcotest.(check (option string)) "inner" (Some "inner")
-    (Bind.inner snapshot);
+  Alcotest.(check (list string)) "dependencies" [ "source"; "inner" ]
+    (string_dependencies snapshot);
   Alcotest.(check (option int)) "scope" (Some 2) (Bind.inner_scope snapshot)
 
 let test_stage_transaction_switch_remembers_once () =
@@ -28,14 +33,15 @@ let test_stage_transaction_switch_remembers_once () =
     !effects;
   Alcotest.(check bool) "staged" true (T.staged tx staged);
   let first = T.read tx staged in
-  Alcotest.(check (option string)) "inner" (Some "inner") (Bind.inner first);
+  Alcotest.(check (list string)) "dependencies" [ "source"; "inner" ]
+    (string_dependencies first);
   Alcotest.(check (option int)) "scope" (Some 2) (Bind.inner_scope first);
   Bind.stage_transaction_switch tx staged ~remember ~source_value:2
     ~inner:"next" ~scope:3;
   Alcotest.(check (list string)) "remembered once" [ "remember" ] !effects;
   let updated = T.read tx staged in
-  Alcotest.(check (option string)) "updated inner" (Some "next")
-    (Bind.inner updated);
+  Alcotest.(check (list string)) "updated dependencies"
+    [ "source"; "next" ] (string_dependencies updated);
   Alcotest.(check (option int)) "updated scope" (Some 3)
     (Bind.inner_scope updated)
 
@@ -204,13 +210,15 @@ let test_staged_switch_rejects_incomplete_staged_snapshot () =
        (Bind.preflight_staged_switch switch ~collect_old_scope:(fun _ _ ->
             ())))
 
-let test_dependencies_include_source_and_current_inner () =
+let test_dependencies_include_source_and_current_snapshot_inner () =
   Alcotest.(check (list int))
     "source only" [ 1 ]
-    (Bind.dependencies ~source:1 ~inner:None);
+    (Bind.dependencies ~source:1 ~inner_dependency:(fun inner -> inner)
+       Bind.empty);
   Alcotest.(check (list int))
     "source then inner" [ 1; 2 ]
-    (Bind.dependencies ~source:1 ~inner:(Some 2))
+    (Bind.dependencies ~source:1 ~inner_dependency:(fun inner -> inner)
+       (Bind.switch ~source_value:0 ~inner:2 ~scope:()))
 
 let dynamic_common_callbacks ?(inner_changed = false)
     ?(dependencies_changed = false) events =
@@ -560,7 +568,7 @@ let () =
           Alcotest.test_case "incomplete switch rejected" `Quick
             test_staged_switch_rejects_incomplete_staged_snapshot;
           Alcotest.test_case "dependencies include source and inner" `Quick
-            test_dependencies_include_source_and_current_inner;
+            test_dependencies_include_source_and_current_snapshot_inner;
           Alcotest.test_case "run dynamic switch" `Quick
             test_run_dynamic_switch_owns_eval_and_apply_order;
           Alcotest.test_case "run dynamic reuse" `Quick

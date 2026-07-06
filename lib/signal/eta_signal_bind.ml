@@ -172,17 +172,19 @@ let switch ~source_value ~inner ~scope =
     inner_scope = Some scope;
   }
 
-let source_value snapshot = snapshot.source_value
-let inner snapshot = snapshot.inner
 let inner_scope snapshot = snapshot.inner_scope
 
-let dependencies ~source ~inner =
+let dependencies_from_inner ~source ~inner =
   match inner with
   | None -> [ source ]
   | Some inner -> [ source; inner ]
 
+let dependencies ~source ~inner_dependency snapshot =
+  dependencies_from_inner ~source
+    ~inner:(Option.map inner_dependency snapshot.inner)
+
 let dynamic_dependency_list source inner =
-  dependencies ~source:source.source_dependency
+  dependencies_from_inner ~source:source.source_dependency
     ~inner:(Option.map source.source_inner_dependency inner)
 
 let needs_new_inner ~equal snapshot source_value =
