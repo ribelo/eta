@@ -4370,63 +4370,6 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
-let test_time_interval_restarts_after_reobserve () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let first_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt (Signal.Observer.dispose first_observer);
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "disposed timer stopped" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  let second_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reobserved initial tick" 0
-    (run_ok rt (Signal.Observer.read second_observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reobserved timer ticked" 1
-    (run_ok rt (Signal.Observer.read second_observer));
-  run_ok rt (Signal.Observer.dispose second_observer)
-
-let test_time_interval_reobserve_ignores_stale_sleep () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let first_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Observer.dispose first_observer);
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  let second_observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reobserved interval starts from cached value" 0
-    (run_ok rt (Signal.Observer.read second_observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "old half-elapsed sleep does not tick reobserve" 0
-    (run_ok rt (Signal.Observer.read second_observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 5);
-  Eta_test.Async.yield ();
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "fresh reobserve sleep ticks after full interval" 1
-    (run_ok rt (Signal.Observer.read second_observer));
-  run_ok rt (Signal.Observer.dispose second_observer)
-
 let test_time_timer_becomes_inert_after_bind_switch () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -5867,10 +5810,6 @@ let () =
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
-          Alcotest.test_case "time interval restarts after reobserve" `Quick
-            test_time_interval_restarts_after_reobserve;
-          Alcotest.test_case "time interval ignores stale sleep after reobserve"
-            `Quick test_time_interval_reobserve_ignores_stale_sleep;
           Alcotest.test_case "time timer inert after bind switch" `Quick
             test_time_timer_becomes_inert_after_bind_switch;
           Alcotest.test_case "time branch churn keeps single sleeper" `Quick

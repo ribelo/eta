@@ -256,6 +256,9 @@ type timer_model_op =
   | Timer_observe_after
   | Timer_dispose_after
   | Timer_read_after
+  | Timer_observe_interval
+  | Timer_dispose_interval
+  | Timer_read_interval
 
 let pp_timer_model_op formatter = function
   | Timer_advance ms -> Format.fprintf formatter "Timer_advance %d" ms
@@ -266,6 +269,12 @@ let pp_timer_model_op formatter = function
   | Timer_observe_after -> Format.pp_print_string formatter "Timer_observe_after"
   | Timer_dispose_after -> Format.pp_print_string formatter "Timer_dispose_after"
   | Timer_read_after -> Format.pp_print_string formatter "Timer_read_after"
+  | Timer_observe_interval ->
+      Format.pp_print_string formatter "Timer_observe_interval"
+  | Timer_dispose_interval ->
+      Format.pp_print_string formatter "Timer_dispose_interval"
+  | Timer_read_interval ->
+      Format.pp_print_string formatter "Timer_read_interval"
 
 type 'a timer_observer_state = {
   mutable timer_observer : 'a Signal.observer option;
@@ -310,7 +319,7 @@ let generate_timer_model_ops ~seed ~steps =
   let next_op index =
     if index mod 6 = 0 then Timer_stabilize
     else
-      match Random.State.int random 16 with
+      match Random.State.int random 20 with
       | 0 | 1 | 2 -> Timer_advance (1 + Random.State.int random 9)
       | 3 | 4 -> Timer_observe_now
       | 5 -> Timer_dispose_now
@@ -318,33 +327,55 @@ let generate_timer_model_ops ~seed ~steps =
       | 8 | 9 -> Timer_observe_after
       | 10 -> Timer_dispose_after
       | 11 | 12 -> Timer_read_after
+      | 13 | 14 -> Timer_observe_interval
+      | 15 -> Timer_dispose_interval
+      | 16 | 17 -> Timer_read_interval
       | _ -> Timer_stabilize
   in
   let scripted =
     [
       Timer_observe_now;
       Timer_observe_after;
+      Timer_observe_interval;
       Timer_stabilize;
       Timer_read_now;
       Timer_read_after;
+      Timer_read_interval;
       Timer_advance 5;
       Timer_stabilize;
       Timer_read_now;
       Timer_read_after;
+      Timer_read_interval;
       Timer_advance 5;
       Timer_stabilize;
       Timer_read_now;
       Timer_read_after;
+      Timer_read_interval;
+      Timer_dispose_interval;
+      Timer_advance 5;
+      Timer_observe_interval;
+      Timer_stabilize;
+      Timer_read_interval;
+      Timer_advance 5;
+      Timer_stabilize;
+      Timer_read_interval;
+      Timer_advance 5;
+      Timer_stabilize;
+      Timer_read_interval;
       Timer_dispose_now;
       Timer_dispose_after;
+      Timer_dispose_interval;
       Timer_advance 7;
       Timer_observe_now;
       Timer_observe_after;
+      Timer_observe_interval;
       Timer_read_now;
       Timer_read_after;
+      Timer_read_interval;
       Timer_stabilize;
       Timer_read_now;
       Timer_read_after;
+      Timer_read_interval;
     ]
   in
   let rec loop index acc =
@@ -364,14 +395,45 @@ let run_timer_model_trace name ~seed =
     run_ok runtime
       (Signal.Time.after ~every:(Eta.Duration.ms 5) (Eta.Duration.ms 10))
   in
+  let interval_signal =
+    run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10))
+  in
   let now_state = create_timer_observer_state () in
   let after_state = create_timer_observer_state () in
+  let interval_state = create_timer_observer_state () in
+  let interval_next_due = ref None in
+  let interval_value = ref 0 in
   let after_value () = !clock_ms >= 10 in
+  let observe_interval () =
+    match interval_state.timer_observer with
+    | Some _ -> ()
+    | None ->
+        timer_model_observe runtime interval_signal interval_state;
+        interval_next_due := Some (!clock_ms + 10)
+  in
+  let dispose_interval () =
+    timer_model_dispose runtime interval_state;
+    interval_next_due := None
+  in
+  let stabilize_interval () =
+    match interval_state.timer_observer with
+    | None -> ()
+    | Some _ ->
+        (match !interval_next_due with
+         | None -> interval_next_due := Some (!clock_ms + 10)
+         | Some next_due when !clock_ms >= next_due ->
+             let missed = ((!clock_ms - next_due) / 10) + 1 in
+             interval_value := !interval_value + missed;
+             interval_next_due := Some (next_due + (missed * 10))
+         | Some _ -> ());
+        timer_model_stabilize_state interval_state !interval_value
+  in
   let ops = generate_timer_model_ops ~seed ~steps:80 in
   Fun.protect
     ~finally:(fun () ->
       timer_model_dispose runtime now_state;
-      timer_model_dispose runtime after_state)
+      timer_model_dispose runtime after_state;
+      dispose_interval ())
     (fun () ->
       List.iteri
         (fun index op ->
@@ -386,7 +448,8 @@ let run_timer_model_trace name ~seed =
           | Timer_stabilize ->
               run_ok runtime Signal.stabilize;
               timer_model_stabilize_state now_state !clock_ms;
-              timer_model_stabilize_state after_state (after_value ())
+              timer_model_stabilize_state after_state (after_value ());
+              stabilize_interval ()
           | Timer_observe_now ->
               timer_model_observe runtime now_signal now_state
           | Timer_dispose_now ->
@@ -398,10 +461,16 @@ let run_timer_model_trace name ~seed =
           | Timer_dispose_after ->
               timer_model_dispose runtime after_state
           | Timer_read_after ->
-              timer_model_read runtime label after_state Alcotest.bool)
+              timer_model_read runtime label after_state Alcotest.bool
+          | Timer_observe_interval ->
+              observe_interval ()
+          | Timer_dispose_interval ->
+              dispose_interval ()
+          | Timer_read_interval ->
+              timer_model_read runtime label interval_state Alcotest.int)
         ops)
 
-let test_time_now_after_lifecycle_trace_matches_model () =
+let test_time_now_after_interval_lifecycle_trace_matches_model () =
   List.iter
     (fun seed ->
       run_timer_model_trace
@@ -2924,8 +2993,9 @@ let () =
             test_scripted_trace_matches_model;
           Alcotest.test_case "randomized trace matches model" `Quick
             test_randomized_trace_matches_model;
-          Alcotest.test_case "time now/after lifecycle trace matches model"
-            `Quick test_time_now_after_lifecycle_trace_matches_model;
+          Alcotest.test_case
+            "time now/after/interval lifecycle trace matches model" `Quick
+            test_time_now_after_interval_lifecycle_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
           Alcotest.test_case "source equality trace matches model" `Quick
