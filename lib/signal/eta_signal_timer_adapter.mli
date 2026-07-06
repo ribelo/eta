@@ -23,9 +23,9 @@ val access :
     ('a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t) ->
   ('capability, 'error) access
 
-type 'error callbacks
+type 'error loop_due_plan
 
-val callbacks :
+val loop_due_plan :
   read_next_due:
     (generation:int -> fallback:int -> (int option, 'error) Eta.Effect.t) ->
   advance_next_due:
@@ -33,28 +33,56 @@ val callbacks :
     expected:int ->
     next_due_ms:int ->
     (advance, 'error) Eta.Effect.t) ->
+  after_due_read_before_commit:(unit -> (unit, 'error) Eta.Effect.t) ->
+  'error loop_due_plan
+
+type 'error loop_update_plan
+
+val loop_update_plan :
   after_update_state:
     (generation:int -> (continue, 'error) Eta.Effect.t) ->
-  finish_saturated:(generation:int -> (unit, 'error) Eta.Effect.t) ->
   construct_update:
     (generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
-  after_due_read_before_commit:(unit -> (unit, 'error) Eta.Effect.t) ->
   after_update_constructed_before_run:
     (unit -> (unit, 'error) Eta.Effect.t) ->
-  'error callbacks
+  'error loop_update_plan
 
-type 'error start_callbacks
+type 'error loop_finish_plan
 
-val start_callbacks :
+val loop_finish_plan :
+  finish_saturated:(generation:int -> (unit, 'error) Eta.Effect.t) ->
+  'error loop_finish_plan
+
+type 'error loop_plan
+
+val loop_plan :
+  due:'error loop_due_plan ->
+  updates:'error loop_update_plan ->
+  finish:'error loop_finish_plan ->
+  'error loop_plan
+
+type 'error start_gate_plan
+
+val start_gate_plan :
   begin_start:(generation:int -> (continue, 'error) Eta.Effect.t) ->
   set_next_due:
     (generation:int ->
     next_due_ms:int ->
     (continue, 'error) Eta.Effect.t) ->
-  after_start_update:
-    (generation:int -> (continue, 'error) Eta.Effect.t) ->
+  'error start_gate_plan
+
+type 'error start_update_plan
+
+val start_update_plan :
   construct_start_update:
     (generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
+  after_start_update:
+    (generation:int -> (continue, 'error) Eta.Effect.t) ->
+  'error start_update_plan
+
+type 'error start_daemon_plan
+
+val start_daemon_plan :
   install_cancel:
     (generation:int ->
     cancel:(unit -> unit) ->
@@ -67,7 +95,15 @@ val start_callbacks :
     (generation:int ->
     (unit, 'error) Eta.Exit.t ->
     (unit, 'error) Eta.Effect.t) ->
-  'error start_callbacks
+  'error start_daemon_plan
+
+type 'error start_plan
+
+val start_plan :
+  gate:'error start_gate_plan ->
+  update:'error start_update_plan ->
+  daemon:'error start_daemon_plan ->
+  'error start_plan
 
 type ('attempt, 'cancel_hook) demand_claim
 
@@ -114,7 +150,7 @@ val refresh_demand :
   (unit, 'error) Eta.Effect.t
 
 val run_loop :
-  'error callbacks ->
+  'error loop_plan ->
   generation:int ->
   interval_ms:int ->
   next_due_ms:int ->
@@ -122,8 +158,8 @@ val run_loop :
   (unit, 'error) Eta.Effect.t
 
 val start :
-  'error start_callbacks ->
-  'error callbacks ->
+  'error start_plan ->
+  'error loop_plan ->
   generation:int ->
   interval_ms:int ->
   update_on_start:bool ->

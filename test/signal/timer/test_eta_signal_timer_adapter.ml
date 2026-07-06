@@ -55,6 +55,33 @@ let demand_plan ~acquire ~rollback_unclaimed ~run_cancel_hooks
   in
   Adapter.demand_plan ~claim ~effects
 
+let loop_plan ~read_next_due ~advance_next_due ~after_update_state
+    ~finish_saturated ~construct_update ~after_due_read_before_commit
+    ~after_update_constructed_before_run =
+  let due =
+    Adapter.loop_due_plan ~read_next_due ~advance_next_due
+      ~after_due_read_before_commit
+  in
+  let updates =
+    Adapter.loop_update_plan ~after_update_state ~construct_update
+      ~after_update_constructed_before_run
+  in
+  let finish = Adapter.loop_finish_plan ~finish_saturated in
+  Adapter.loop_plan ~due ~updates ~finish
+
+let start_plan ~begin_start ~set_next_due ~after_start_update
+    ~construct_start_update ~install_cancel ~cleanup_after_exit
+    ~cleanup_failed_start =
+  let gate = Adapter.start_gate_plan ~begin_start ~set_next_due in
+  let update =
+    Adapter.start_update_plan ~construct_start_update ~after_start_update
+  in
+  let daemon =
+    Adapter.start_daemon_plan ~install_cancel ~cleanup_after_exit
+      ~cleanup_failed_start
+  in
+  Adapter.start_plan ~gate ~update ~daemon
+
 let check_demand_failed cause =
   match Cause.failures cause with
   | [ `Demand_failed ] -> ()
@@ -177,8 +204,8 @@ let test_loop_orders_due_advance_and_update () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
   let updates = ref 0 in
-  let callbacks =
-    Adapter.callbacks
+  let plan =
+    loop_plan
       ~read_next_due:(fun ~generation ~fallback ->
         Effect.sync (fun () ->
             record events
@@ -211,7 +238,7 @@ let test_loop_orders_due_advance_and_update () =
         Effect.sync (fun () -> record events "after_construct"))
   in
   run_ok runtime
-    (Adapter.run_loop callbacks ~generation:7 ~interval_ms:10 ~next_due_ms:0
+    (Adapter.run_loop plan ~generation:7 ~interval_ms:10 ~next_due_ms:0
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
   Alcotest.(check (list string))
     "events"
@@ -232,8 +259,8 @@ let test_start_runs_update_before_initial_due () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
   let fail_effect label = Effect.sync (fun () -> Alcotest.fail label) in
-  let loop_callbacks =
-    Adapter.callbacks
+  let failing_loop_plan =
+    loop_plan
       ~read_next_due:(fun ~generation:_ ~fallback:_ ->
         fail_effect "read_next_due")
       ~advance_next_due:(fun ~generation:_ ~expected:_ ~next_due_ms:_ ->
@@ -248,8 +275,8 @@ let test_start_runs_update_before_initial_due () =
       ~after_update_constructed_before_run:(fun () ->
         fail_effect "after_update_constructed_before_run")
   in
-  let start_callbacks =
-    Adapter.start_callbacks
+  let start =
+    start_plan
       ~begin_start:(fun ~generation ->
         Effect.sync (fun () ->
             record events ("begin:" ^ string_of_int generation);
@@ -278,7 +305,7 @@ let test_start_runs_update_before_initial_due () =
             record events ("cleanup_failed:" ^ string_of_int generation)))
   in
   run_ok runtime
-    (Adapter.start start_callbacks loop_callbacks ~generation:3 ~interval_ms:10
+    (Adapter.start start failing_loop_plan ~generation:3 ~interval_ms:10
        ~update_on_start:true
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
   Alcotest.(check (list string))
@@ -300,13 +327,13 @@ let () =
         [
           Alcotest.test_case "cancellable stop skips loop" `Quick
             test_cancellable_stop_skips_loop;
-          Alcotest.test_case "refresh demand callback order" `Quick
+          Alcotest.test_case "refresh demand plan order" `Quick
             test_refresh_demand_orders_cancel_start_and_rollback;
           Alcotest.test_case "refresh demand release does not rerun cancel hooks"
             `Quick test_refresh_demand_release_does_not_rerun_cancel_hooks;
           Alcotest.test_case "refresh demand acquire failure skips cleanup"
             `Quick test_refresh_demand_acquire_failure_skips_use_and_release;
-          Alcotest.test_case "loop callback order" `Quick
+          Alcotest.test_case "loop plan order" `Quick
             test_loop_orders_due_advance_and_update;
           Alcotest.test_case "start update before initial due" `Quick
             test_start_runs_update_before_initial_due;

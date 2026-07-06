@@ -27,7 +27,7 @@ let access :
     (capability, error) access =
  fun ~with_access -> { with_access }
 
-type 'error callbacks = {
+type 'error loop_due_plan = {
   read_next_due :
     generation:int -> fallback:int -> (int option, 'error) Effect.t;
   advance_next_due :
@@ -35,33 +35,66 @@ type 'error callbacks = {
     expected:int ->
     next_due_ms:int ->
     (advance, 'error) Effect.t;
-  after_update_state : generation:int -> (continue, 'error) Effect.t;
-  finish_saturated : generation:int -> (unit, 'error) Effect.t;
-  construct_update : generation:int -> missed:int -> (unit, 'error) Effect.t;
   after_due_read_before_commit : unit -> (unit, 'error) Effect.t;
-  after_update_constructed_before_run : unit -> (unit, 'error) Effect.t;
 }
 
-let callbacks ~read_next_due ~advance_next_due ~after_update_state
-    ~finish_saturated ~construct_update ~after_due_read_before_commit
-    ~after_update_constructed_before_run =
+let loop_due_plan ~read_next_due ~advance_next_due
+    ~after_due_read_before_commit =
   {
     read_next_due;
     advance_next_due;
-    after_update_state;
-    finish_saturated;
-    construct_update;
     after_due_read_before_commit;
+  }
+
+type 'error loop_update_plan = {
+  after_update_state : generation:int -> (continue, 'error) Effect.t;
+  construct_update : generation:int -> missed:int -> (unit, 'error) Effect.t;
+  after_update_constructed_before_run : unit -> (unit, 'error) Effect.t;
+}
+
+let loop_update_plan ~after_update_state ~construct_update
+    ~after_update_constructed_before_run =
+  {
+    after_update_state;
+    construct_update;
     after_update_constructed_before_run;
   }
 
-type 'error start_callbacks = {
+type 'error loop_finish_plan = {
+  finish_saturated : generation:int -> (unit, 'error) Effect.t;
+}
+
+let loop_finish_plan ~finish_saturated =
+  { finish_saturated }
+
+type 'error loop_plan = {
+  loop_due_plan : 'error loop_due_plan;
+  loop_update_plan : 'error loop_update_plan;
+  loop_finish_plan : 'error loop_finish_plan;
+}
+
+let loop_plan ~due ~updates ~finish =
+  { loop_due_plan = due; loop_update_plan = updates; loop_finish_plan = finish }
+
+type 'error start_gate_plan = {
   begin_start : generation:int -> (continue, 'error) Effect.t;
   set_next_due :
     generation:int -> next_due_ms:int -> (continue, 'error) Effect.t;
+}
+
+let start_gate_plan ~begin_start ~set_next_due =
+  { begin_start; set_next_due }
+
+type 'error start_update_plan = {
   after_start_update : generation:int -> (continue, 'error) Effect.t;
   construct_start_update :
     generation:int -> missed:int -> (unit, 'error) Effect.t;
+}
+
+let start_update_plan ~construct_start_update ~after_start_update =
+  { after_start_update; construct_start_update }
+
+type 'error start_daemon_plan = {
   install_cancel :
     generation:int -> cancel:(unit -> unit) -> (continue, 'error) Effect.t;
   cleanup_after_exit :
@@ -70,17 +103,25 @@ type 'error start_callbacks = {
     generation:int -> (unit, 'error) Exit.t -> (unit, 'error) Effect.t;
 }
 
-let start_callbacks ~begin_start ~set_next_due ~after_start_update
-    ~construct_start_update ~install_cancel ~cleanup_after_exit
+let start_daemon_plan ~install_cancel ~cleanup_after_exit
     ~cleanup_failed_start =
   {
-    begin_start;
-    set_next_due;
-    after_start_update;
-    construct_start_update;
     install_cancel;
     cleanup_after_exit;
     cleanup_failed_start;
+  }
+
+type 'error start_plan = {
+  start_gate_plan : 'error start_gate_plan;
+  start_update_plan : 'error start_update_plan;
+  start_daemon_plan : 'error start_daemon_plan;
+}
+
+let start_plan ~gate ~update ~daemon =
+  {
+    start_gate_plan = gate;
+    start_update_plan = update;
+    start_daemon_plan = daemon;
   }
 
 type ('attempt, 'cancel_hook) demand_claim = {
@@ -186,49 +227,52 @@ let refresh_demand access plan =
       let* () = run_pending_cancel_hooks effects cancel_hooks_ref in
       effects.run_start_attempts start_attempts)
 
-let rec run_update_batch callbacks generation remaining ~missed =
+let rec run_update_batch updates generation remaining ~missed =
   let open Syntax in
   if remaining <= 0 then Effect.pure `Continue
   else
-    let* status = callbacks.after_update_state ~generation in
+    let* status = updates.after_update_state ~generation in
     match status with
     | `Stop -> Effect.pure `Stop
     | `Continue ->
         let* update =
-          Effect.sync (fun () -> callbacks.construct_update ~generation ~missed)
+          Effect.sync (fun () -> updates.construct_update ~generation ~missed)
         in
-        let* () = callbacks.after_update_constructed_before_run () in
+        let* () = updates.after_update_constructed_before_run () in
         let* () = update in
-        run_update_batch callbacks generation (remaining - 1) ~missed
+        run_update_batch updates generation (remaining - 1) ~missed
 
-let rec run_updates callbacks generation remaining ~missed =
+let rec run_updates updates generation remaining ~missed =
   let open Syntax in
   match Timer_policy.update_batch ~remaining with
   | None -> Effect.unit
   | Some batch ->
       Timer_policy.update_batch_result batch
         ~plan:(fun ~count ~remaining ~yield ->
-          let* status = run_update_batch callbacks generation count ~missed in
+          let* status = run_update_batch updates generation count ~missed in
           match status with
           | `Stop -> Effect.unit
           | `Continue ->
               if not yield then Effect.unit
               else
                 let* () = Effect.yield in
-                run_updates callbacks generation remaining ~missed)
+                run_updates updates generation remaining ~missed)
 
-let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
+let rec run_loop plan ~generation ~interval_ms ~next_due_ms
     ~catch_up_policy =
   let open Syntax in
-  let* next_due = callbacks.read_next_due ~generation ~fallback:next_due_ms in
+  let due = plan.loop_due_plan in
+  let updates = plan.loop_update_plan in
+  let finish = plan.loop_finish_plan in
+  let* next_due = due.read_next_due ~generation ~fallback:next_due_ms in
   match next_due with
   | None -> Effect.unit
   | Some next_due_ms ->
       let* now_ms = Effect.now in
       let delay_ms = Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms in
       let* () = Effect.sleep (Duration.ms delay_ms) in
-      let* due = callbacks.read_next_due ~generation ~fallback:next_due_ms in
-      (match due with
+      let* next_due = due.read_next_due ~generation ~fallback:next_due_ms in
+      (match next_due with
       | None -> Effect.unit
       | Some due_ms ->
           let* now_ms = Effect.now in
@@ -240,12 +284,12 @@ let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
             ~plan:
               (fun ~next_due_ms ~saturated_due ~update_count ~update_missed ->
                 let continue () =
-                  run_loop callbacks ~generation ~interval_ms ~next_due_ms
+                  run_loop plan ~generation ~interval_ms ~next_due_ms
                     ~catch_up_policy
                 in
-                let* () = callbacks.after_due_read_before_commit () in
+                let* () = due.after_due_read_before_commit () in
                 let* advance =
-                  callbacks.advance_next_due ~generation ~expected:due_ms
+                  due.advance_next_due ~generation ~expected:due_ms
                     ~next_due_ms
                 in
                 match advance with
@@ -253,53 +297,55 @@ let rec run_loop callbacks ~generation ~interval_ms ~next_due_ms
                 | `Stale -> continue ()
                 | `Advanced ->
                     let* () =
-                      run_updates callbacks generation update_count
+                      run_updates updates generation update_count
                         ~missed:update_missed
                     in
                     let* () =
                       if saturated_due then
-                        callbacks.finish_saturated ~generation
+                        finish.finish_saturated ~generation
                       else Effect.unit
                     in
-                    let* status = callbacks.after_update_state ~generation in
+                    let* status = updates.after_update_state ~generation in
                     match status with
                     | `Continue -> continue ()
                     | `Stop -> Effect.unit))
 
-let start start_callbacks loop_callbacks ~generation ~interval_ms
+let start plan loop_plan ~generation ~interval_ms
     ~update_on_start ~catch_up_policy =
   let open Syntax in
+  let gate = plan.start_gate_plan in
+  let update = plan.start_update_plan in
+  let daemon = plan.start_daemon_plan in
   let start_loop () =
     let* now_ms = Effect.now in
     let next_due_ms =
       Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
     in
-    let* status = start_callbacks.set_next_due ~generation ~next_due_ms in
+    let* status = gate.set_next_due ~generation ~next_due_ms in
     match status with
     | `Stop -> Effect.unit
     | `Continue ->
         Effect.daemon
           (run_cancellable
              ~install_cancel:(fun ~cancel ->
-               start_callbacks.install_cancel ~generation ~cancel)
+               daemon.install_cancel ~generation ~cancel)
              ~loop:
-               (run_loop loop_callbacks ~generation ~interval_ms ~next_due_ms
+               (run_loop loop_plan ~generation ~interval_ms ~next_due_ms
                   ~catch_up_policy
                |> Effect.on_exit
-                    (start_callbacks.cleanup_after_exit ~generation)))
+                    (daemon.cleanup_after_exit ~generation)))
   in
   let start () =
     if update_on_start then
-      let* () = start_callbacks.construct_start_update ~generation ~missed:1 in
-      let* status = start_callbacks.after_start_update ~generation in
+      let* () = update.construct_start_update ~generation ~missed:1 in
+      let* status = update.after_start_update ~generation in
       match status with
       | `Continue -> start_loop ()
       | `Stop -> Effect.unit
     else start_loop ()
   in
-  let* status = start_callbacks.begin_start ~generation in
+  let* status = gate.begin_start ~generation in
   match status with
   | `Stop -> Effect.unit
   | `Continue ->
-      start ()
-      |> Effect.on_exit (start_callbacks.cleanup_failed_start ~generation)
+      start () |> Effect.on_exit (daemon.cleanup_failed_start ~generation)

@@ -505,40 +505,60 @@ let start_daemon context timer ~generation ~interval_ms ~update_on_start
   let after_update_state ~generation =
     with_state (fun () -> after_update_state port timer ~generation)
   in
-  let loop_callbacks =
-    Eta_signal_timer_adapter.callbacks
+  let loop_due =
+    Eta_signal_timer_adapter.loop_due_plan
       ~read_next_due:(fun ~generation ~fallback ->
         with_state (fun () ->
             read_next_due port timer ~generation ~fallback))
       ~advance_next_due:(fun ~generation ~expected ~next_due_ms ->
         with_state (fun () ->
             advance_next_due port timer ~generation ~expected ~next_due_ms))
+      ~after_due_read_before_commit:hooks.daemon_after_due_read_before_commit
+  in
+  let loop_updates =
+    Eta_signal_timer_adapter.loop_update_plan
       ~after_update_state
-      ~finish_saturated:(fun ~generation ->
-        with_state (fun () ->
-            finish_saturated ~advance_generation port timer ~generation))
       ~construct_update:(fun ~generation ~missed ->
         update.daemon_update timer ~generation ~missed)
-      ~after_due_read_before_commit:hooks.daemon_after_due_read_before_commit
       ~after_update_constructed_before_run:
         hooks.daemon_after_update_constructed_before_run
   in
-  let start_callbacks =
-    Eta_signal_timer_adapter.start_callbacks
+  let loop_finish =
+    Eta_signal_timer_adapter.loop_finish_plan
+      ~finish_saturated:(fun ~generation ->
+        with_state (fun () ->
+            finish_saturated ~advance_generation port timer ~generation))
+  in
+  let loop_plan =
+    Eta_signal_timer_adapter.loop_plan ~due:loop_due ~updates:loop_updates
+      ~finish:loop_finish
+  in
+  let start_gate =
+    Eta_signal_timer_adapter.start_gate_plan
       ~begin_start:(fun ~generation ->
         with_state (fun () -> begin_start port timer ~generation))
       ~set_next_due:(fun ~generation ~next_due_ms ->
         with_state (fun () ->
             set_next_due port timer ~generation ~next_due_ms))
-      ~after_start_update:after_update_state
+  in
+  let start_update =
+    Eta_signal_timer_adapter.start_update_plan
       ~construct_start_update:(fun ~generation ~missed ->
         update.daemon_update timer ~generation ~missed)
+      ~after_start_update:after_update_state
+  in
+  let start_daemon =
+    Eta_signal_timer_adapter.start_daemon_plan
       ~install_cancel:(fun ~generation ~cancel ->
         with_state (fun () ->
             install_cancel port timer ~generation ~cancel))
       ~cleanup_after_exit ~cleanup_failed_start
   in
-  Eta_signal_timer_adapter.start start_callbacks loop_callbacks ~generation
+  let start_plan =
+    Eta_signal_timer_adapter.start_plan ~gate:start_gate
+      ~update:start_update ~daemon:start_daemon
+  in
+  Eta_signal_timer_adapter.start start_plan loop_plan ~generation
     ~interval_ms ~update_on_start ~catch_up_policy
 
 let create_daemon_node ~runtime_contract ~refresh_when_inactive
