@@ -110,9 +110,17 @@ for src in "$fixture_dir"/*_negative.ml; do
     stream_to_signal_negative.ml)
       expected_substrings=('Unbound value "Signal.Stream.to_signal"')
       ;;
+    time_deadline_raw_int_negative.ml)
+      expected_substrings=(
+        'This expression has type "int"'
+        'but an expression was expected of type'
+        'Signal.Time.monotonic_time'
+      )
+      ;;
     time_constructor_effectful_negative.ml)
       expected_substrings=(
-        '(int Signal.signal, Signal.time_error) Eta.Effect.t'
+        '(Signal.Time.monotonic_time Signal.signal, Signal.time_error)'
+        'Eta.Effect.t'
         'but an expression was expected of type "int Signal.signal"'
       )
       ;;

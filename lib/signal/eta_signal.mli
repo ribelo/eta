@@ -575,19 +575,40 @@ module Make (Observer_error : Observer_error) () : sig
         daemon-published step value while [interval] has already caught up for
         the same clock sample. *)
 
+    type monotonic_time
+    (** Runtime monotonic timestamp. Values are comparable only inside the Eta
+        runtime clock that produced them; they are not wall/civil time. *)
+
+    val to_ms : monotonic_time -> int
+    (** Return the runtime-clock millisecond value for display, metrics, or
+        persistence. Do not feed wall-clock integers back into signal timers;
+        use {!add}, {!after}, or a timestamp read from {!now}. *)
+
+    val add :
+      monotonic_time ->
+      Eta.Duration.t ->
+      (monotonic_time, [> `Deadline_overflow | `Past_deadline ]) result
+    (** [add timestamp duration] returns the monotonic timestamp [duration]
+        after [timestamp]. It fails with [`Past_deadline] for non-positive
+        durations and [`Deadline_overflow] when the sum cannot be represented. *)
+
     val now :
-      every:Eta.Duration.t -> unit -> (int signal, time_error) Eta.Effect.t
-    (** Signal containing the runtime clock in milliseconds. The timer source
+      every:Eta.Duration.t ->
+      unit ->
+      (monotonic_time signal, time_error) Eta.Effect.t
+    (** Signal containing the runtime monotonic timestamp. The timer source
         updates the signal at [every] while the signal is necessary. It does
-        not call {!stabilize}. *)
+        not call {!stabilize}. Use {!to_ms} only when an integer representation
+        is needed at the edge. *)
 
     val deadline :
       every:Eta.Duration.t ->
-      int ->
+      monotonic_time ->
       (bool signal, time_error) Eta.Effect.t
-    (** [deadline ~every deadline_ms] becomes [true] after the monotonic
-        runtime clock reaches [deadline_ms]. [deadline_ms] must be in the
-        future on that clock when the signal is created. *)
+    (** [deadline ~every timestamp] becomes [true] after the monotonic runtime
+        clock reaches [timestamp]. [timestamp] must be in the future on that
+        clock when the signal is created. Prefer {!after} for ordinary
+        relative one-shot deadlines. *)
 
     val after :
       every:Eta.Duration.t ->

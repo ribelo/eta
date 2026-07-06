@@ -2553,6 +2553,10 @@ module Make (Observer_error : Observer_error) () = struct
       ~observers:dot_observers
 
   module Time = struct
+    type monotonic_time = int
+
+    let to_ms timestamp = timestamp
+
     let validate_interval duration =
       Timer_policy.validate_interval_ms (Duration.to_ms duration)
 
@@ -2574,6 +2578,9 @@ module Make (Observer_error : Observer_error) () = struct
               Var.queue_var lane source))
 
     let add_relative_deadline = Timer_policy.add_relative_deadline
+
+    let add timestamp duration =
+      add_relative_deadline timestamp (Duration.to_ms duration)
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
@@ -2678,7 +2685,8 @@ module Make (Observer_error : Observer_error) () = struct
                            |> Effect.map (fun _ -> ())));
             })
 
-    let deadline ~every deadline_ms =
+    let deadline ~every deadline =
+      let deadline_ms = to_ms deadline in
       Effect.sync (fun () -> validate_interval every)
       |> Effect.flatten_result
       |> Effect.bind (fun () ->

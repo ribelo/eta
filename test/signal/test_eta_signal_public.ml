@@ -201,6 +201,42 @@ let test_interval_catches_up_with_test_clock () =
     (run_ok runtime (Signal.Observer.read observer));
   run_ok runtime (Signal.Observer.dispose observer)
 
+let test_deadline_uses_monotonic_time () =
+  Eta_test.with_test_clock @@ fun _sw clock runtime ->
+  let now_signal =
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 1) ())
+  in
+  let now_observer =
+    run_ok runtime (Signal.Observer.observe now_signal (fun _ -> E.unit))
+  in
+  run_ok runtime Signal.stabilize;
+  let start = run_ok runtime (Signal.Observer.read now_observer) in
+  Alcotest.(check int) "start timestamp" 0 (Signal.Time.to_ms start);
+  let deadline =
+    match Signal.Time.add start (Eta.Duration.ms 10) with
+    | Ok deadline -> deadline
+    | Error _ -> Alcotest.fail "expected future monotonic deadline"
+  in
+  let due =
+    run_ok runtime (Signal.Time.deadline ~every:(Eta.Duration.ms 1) deadline)
+  in
+  let due_observer =
+    run_ok runtime (Signal.Observer.observe due (fun _ -> E.unit))
+  in
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check bool) "initial deadline" false
+    (run_ok runtime (Signal.Observer.read due_observer));
+  Eta_test.Test_clock.set_time clock 9;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check bool) "before deadline" false
+    (run_ok runtime (Signal.Observer.read due_observer));
+  Eta_test.Test_clock.set_time clock 10;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check bool) "deadline reached" true
+    (run_ok runtime (Signal.Observer.read due_observer));
+  run_ok runtime (Signal.Observer.dispose due_observer);
+  run_ok runtime (Signal.Observer.dispose now_observer)
+
 let with_late_timer_wake ?(jump_ms = 1_000_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -538,6 +574,8 @@ let () =
             test_stream_bridge_emits_and_closes;
           Alcotest.test_case "interval catches up with test clock" `Quick
             test_interval_catches_up_with_test_clock;
+          Alcotest.test_case "deadline uses monotonic time" `Quick
+            test_deadline_uses_monotonic_time;
           Alcotest.test_case "step bounds large late wake" `Quick
             test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
