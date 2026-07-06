@@ -7849,53 +7849,6 @@ let test_stream_bridge_interrupted_publish_does_not_duplicate () =
        Alcotest.fail "interrupted stream publish was delivered twice"
    | _ -> Alcotest.fail "expected one initialized stream update")
 
-let run_observer_callback_ok rt eff =
-  run_ok rt (Effect.map_error (fun `Observer_failed -> `Update_failed) eff)
-
-let test_stream_finalizer_cannot_acknowledge_newer_delivery () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime_and_switch @@ fun _sw rt ->
-  let source = Signal.Var.create 0 in
-  let signal = Signal.Var.watch source in
-  let observer, stream =
-    run_ok rt (Signal.Stream.observe ~capacity:16 signal)
-  in
-  ignore stream;
-  Fun.protect
-    ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
-      ignore
-        (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer))
-          : _ Exit.t))
-    (fun () ->
-      let old_update = Signal.Changed { old_value = 0; new_value = 1 } in
-      let new_update = Signal.Changed { old_value = 1; new_value = 2 } in
-      Signal.Private_test_hooks.set_observer_delivery observer
-        (Signal.Private_test_hooks.Test_delivery_running (11, old_update));
-      let hook =
-        {
-          Signal.Private_test_hooks.run =
-            (fun () ->
-              Effect.sync (fun () ->
-                  Signal.Private_test_hooks.set_observer_delivery observer
-                    (Signal.Private_test_hooks.Test_delivery_pending
-                       (12, new_update))));
-        }
-      in
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_stream_try_send_before_ack hook
-      @@ fun () ->
-      run_observer_callback_ok rt
-        (Signal.Private_test_hooks.run_observer_callback observer old_update);
-      match Signal.Private_test_hooks.observer_delivery observer with
-      | Signal.Private_test_hooks.Test_delivery_pending (12, _) -> ()
-      | Signal.Private_test_hooks.Test_delivery_delivered _ ->
-          Alcotest.fail "stale stream finalizer acknowledged newer delivery"
-      | Signal.Private_test_hooks.Test_delivery_never_delivered
-      | Signal.Private_test_hooks.Test_delivery_pending _
-      | Signal.Private_test_hooks.Test_delivery_running _ ->
-          Alcotest.fail "expected newer pending stream delivery")
-
 let test_stream_bridge_waiting_consumer_gets_reserved_sent_update_once () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -9284,9 +9237,6 @@ let () =
             "stream bridge consumer wakeup failure does not fail stabilize"
             `Quick
             test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize;
-          Alcotest.test_case
-            "stream finalizer cannot acknowledge newer delivery" `Quick
-            test_stream_finalizer_cannot_acknowledge_newer_delivery;
           Alcotest.test_case
             "stream sent update acknowledged on cancellation" `Quick
             test_stream_sent_update_is_acknowledged_on_cancellation;

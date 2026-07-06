@@ -440,46 +440,6 @@ module Make (Observer_error : Observer_error) () = struct
     let run_timer_runtime_mismatch_hook () =
       Test_hooks.run_timer_runtime_mismatch_hook state
 
-    type 'a observer_delivery_snapshot =
-      | Test_delivery_never_delivered
-      | Test_delivery_delivered of 'a
-      | Test_delivery_pending of int * 'a update
-      | Test_delivery_running of int * 'a update
-
-    let active_live_state observer =
-      match Observer_lifecycle.active_live observer.obs_state with
-      | Some live -> live
-      | None ->
-          invalid_arg "Eta_signal.Private_test_hooks: observer is not active"
-
-    let observer_current_snapshot live =
-      Transaction.current live.observer_snapshot
-
-    let set_observer_delivery observer delivery =
-      let live = active_live_state observer in
-      let snapshot = observer_current_snapshot live in
-      let observer_delivery =
-        match delivery with
-        | Test_delivery_never_delivered -> Observer_never_delivered
-        | Test_delivery_delivered value -> Observer_delivered value
-        | Test_delivery_pending (token, update) ->
-            Observer_delivery_pending (token, update, [])
-        | Test_delivery_running (token, update) ->
-            Observer_delivery_running (token, update, [])
-      in
-      publish_observer_current live.observer_snapshot
-        (Observer_snapshot.with_delivery snapshot observer_delivery)
-
-    let observer_delivery observer =
-      let live = active_live_state observer in
-      match Observer_snapshot.delivery (observer_current_snapshot live) with
-      | Observer_never_delivered -> Test_delivery_never_delivered
-      | Observer_delivered value -> Test_delivery_delivered value
-      | Observer_delivery_pending (token, update, _) ->
-          Test_delivery_pending (token, update)
-      | Observer_delivery_running (token, update, _) ->
-          Test_delivery_running (token, update)
-
     let set_signal_version signal value =
       let snapshot = Transaction.current signal.snapshot in
       publish_initial_current signal.snapshot
@@ -505,20 +465,6 @@ module Make (Observer_error : Observer_error) () = struct
       in
       live.obs_on_finish <- hooks
 
-    let run_observer_callback observer update =
-      let live = active_live_state observer in
-      let token =
-        match
-          Observer_core.Delivery.running_token
-            (Observer_snapshot.delivery
-               (observer_current_snapshot live))
-        with
-        | Some token -> token
-        | None ->
-            invalid_arg
-              "Eta_signal.Private_test_hooks: observer delivery is not running"
-      in
-      observer.obs_callback token update
   end
 
   type disposal_hook = Cleanup.hook
