@@ -6840,7 +6840,7 @@ let test_time_invalidated_timer_cancels_sleeping_daemon () =
   run_ok rt (Signal.Observer.dispose observer)
 
 let test_time_timer_dispose_during_step_prevents_update () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let observer_ref = ref None in
   let disposed_during_step = ref false in
