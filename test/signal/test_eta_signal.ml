@@ -560,95 +560,6 @@ let test_recompute_order_is_topological () =
   Alcotest.(check int) "updated value" 15
     (run_ok rt (Signal.Observer.read observer))
 
-let test_unnecessary_derived_recomputes_after_dependency_change () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let watched = Signal.Var.watch source in
-  let mapped_calls = ref 0 in
-  let mapped =
-    Signal.map
-      (fun value ->
-        incr mapped_calls;
-        value + 1)
-      watched
-  in
-  let source_observer =
-    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
-  in
-  let mapped_observer =
-    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial mapped value" 1
-    (run_ok rt (Signal.Observer.read mapped_observer));
-  Alcotest.(check int) "initial mapped recompute" 1 !mapped_calls;
-  run_ok rt (Signal.Observer.dispose mapped_observer);
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "source stayed necessary" 1
-    (run_ok rt (Signal.Observer.read source_observer));
-  Alcotest.(check int) "unnecessary mapped not recomputed" 1 !mapped_calls;
-  let reobserved =
-    run_ok rt (Signal.Observer.observe mapped (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reobserved mapped value is fresh" 2
-    (run_ok rt (Signal.Observer.read reobserved));
-  Alcotest.(check int) "mapped recomputed on reobserve" 2 !mapped_calls;
-  run_ok rt (Signal.Observer.dispose source_observer);
-  run_ok rt (Signal.Observer.dispose reobserved)
-
-let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let watched = Signal.Var.watch source in
-  let first_calls = ref 0 in
-  let second_calls = ref 0 in
-  let first =
-    Signal.map
-      (fun value ->
-        incr first_calls;
-        value + 1)
-      watched
-  in
-  let second =
-    Signal.map
-      (fun value ->
-        incr second_calls;
-        value * 10)
-      first
-  in
-  let source_observer =
-    run_ok rt (Signal.Observer.observe watched (fun _ -> Effect.unit))
-  in
-  let second_observer =
-    run_ok rt (Signal.Observer.observe second (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial chain value" 10
-    (run_ok rt (Signal.Observer.read second_observer));
-  Alcotest.(check int) "initial first recompute" 1 !first_calls;
-  Alcotest.(check int) "initial second recompute" 1 !second_calls;
-  run_ok rt (Signal.Observer.dispose second_observer);
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "source remained necessary" 1
-    (run_ok rt (Signal.Observer.read source_observer));
-  Alcotest.(check int) "unnecessary first not recomputed" 1 !first_calls;
-  Alcotest.(check int) "unnecessary second not recomputed" 1 !second_calls;
-  let reobserved =
-    run_ok rt (Signal.Observer.observe second (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "reactivated chain value is fresh" 20
-    (run_ok rt (Signal.Observer.read reobserved));
-  Alcotest.(check int) "first recomputed on reactivation" 2 !first_calls;
-  Alcotest.(check int) "second recomputed on reactivation" 2 !second_calls;
-  run_ok rt (Signal.Observer.dispose source_observer);
-  run_ok rt (Signal.Observer.dispose reobserved)
-
 let test_observer_callbacks_run_in_registration_order () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -7324,12 +7235,6 @@ let () =
             test_functor_instances_stabilize_independently;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
-          Alcotest.test_case
-            "unnecessary derived recomputes after dependency change" `Quick
-            test_unnecessary_derived_recomputes_after_dependency_change;
-          Alcotest.test_case
-            "newly necessary derived chain refreshes dependency versions" `Quick
-            test_newly_necessary_derived_chain_refreshes_dependency_versions;
           Alcotest.test_case "observer callbacks run in registration order"
             `Quick
             test_observer_callbacks_run_in_registration_order;

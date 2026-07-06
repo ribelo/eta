@@ -680,6 +680,90 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
    | _ -> Alcotest.fail "expected failed delivery to retry");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_derived_demand_reactivates_fresh () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let single_source = S.Var.create 0 in
+  let single_watched = S.Var.watch single_source in
+  let single_calls = ref 0 in
+  let single =
+    single_watched
+    |> S.map (fun value ->
+           incr single_calls;
+           value + 1)
+  in
+  let single_source_observer =
+    run_ok runtime (S.Observer.observe single_watched (fun _ -> E.unit))
+  in
+  let single_observer =
+    run_ok runtime (S.Observer.observe single (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "single derived initial value" 1
+    (run_ok runtime (S.Observer.read single_observer));
+  Alcotest.(check int) "single derived initial recompute" 1 !single_calls;
+  run_ok runtime (S.Observer.dispose single_observer);
+  run_ok runtime (S.Var.set single_source 1);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "single source stayed necessary" 1
+    (run_ok runtime (S.Observer.read single_source_observer));
+  Alcotest.(check int) "unnecessary single derived did not recompute" 1
+    !single_calls;
+  let single_reobserved =
+    run_ok runtime (S.Observer.observe single (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "reobserved single derived value is fresh" 2
+    (run_ok runtime (S.Observer.read single_reobserved));
+  Alcotest.(check int) "single derived recomputed on reobserve" 2
+    !single_calls;
+  run_ok runtime (S.Observer.dispose single_source_observer);
+  run_ok runtime (S.Observer.dispose single_reobserved);
+  let chain_source = S.Var.create 0 in
+  let chain_watched = S.Var.watch chain_source in
+  let first_calls = ref 0 in
+  let second_calls = ref 0 in
+  let first =
+    chain_watched
+    |> S.map (fun value ->
+           incr first_calls;
+           value + 1)
+  in
+  let second =
+    first
+    |> S.map (fun value ->
+           incr second_calls;
+           value * 10)
+  in
+  let chain_source_observer =
+    run_ok runtime (S.Observer.observe chain_watched (fun _ -> E.unit))
+  in
+  let second_observer =
+    run_ok runtime (S.Observer.observe second (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "initial chain value" 10
+    (run_ok runtime (S.Observer.read second_observer));
+  Alcotest.(check int) "initial first recompute" 1 !first_calls;
+  Alcotest.(check int) "initial second recompute" 1 !second_calls;
+  run_ok runtime (S.Observer.dispose second_observer);
+  run_ok runtime (S.Var.set chain_source 1);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "chain source stayed necessary" 1
+    (run_ok runtime (S.Observer.read chain_source_observer));
+  Alcotest.(check int) "unnecessary first did not recompute" 1 !first_calls;
+  Alcotest.(check int) "unnecessary second did not recompute" 1 !second_calls;
+  let chain_reobserved =
+    run_ok runtime (S.Observer.observe second (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "reactivated chain value is fresh" 20
+    (run_ok runtime (S.Observer.read chain_reobserved));
+  Alcotest.(check int) "first recomputed on reactivation" 2 !first_calls;
+  Alcotest.(check int) "second recomputed on reactivation" 2 !second_calls;
+  run_ok runtime (S.Observer.dispose chain_source_observer);
+  run_ok runtime (S.Observer.dispose chain_reobserved)
+
 let test_demand_boundary_for_derived_nodes_and_timers () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
@@ -1000,6 +1084,8 @@ let () =
           Alcotest.test_case
             "observer failure commits snapshot and retries delivery" `Quick
             test_observer_failure_commits_snapshot_and_retries_delivery;
+          Alcotest.test_case "derived demand reactivates fresh" `Quick
+            test_derived_demand_reactivates_fresh;
           Alcotest.test_case "demand boundary for derived nodes and timers"
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
