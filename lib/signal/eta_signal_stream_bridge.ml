@@ -171,9 +171,10 @@ let offer ~queue ~observer_delivery ~hooks ~on_drop =
        | `Closed_with_error err -> hooks.on_closed_with_error err)
       |> Effect.on_exit (fun _exit -> acknowledge_published_sent ())
 
-let observe ~capacity ?on_drop ?equal ~hooks ~map_observe_error
-    ~observe_delivery signal =
+let observe ~capacity ?on_drop ?equal ~metrics ~on_closed_with_error
+    ~map_observe_error ~observe_delivery signal =
   let open Eta.Syntax in
+  let hooks = hooks ~metrics ~on_closed_with_error () in
   let* queue, stream =
     Effect.sync (fun () -> create_stream ~capacity)
     |> Effect.flatten_result

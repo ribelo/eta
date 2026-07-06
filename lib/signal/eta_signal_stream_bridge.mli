@@ -1,4 +1,4 @@
-(** Queue/drop policy for Eta_signal stream bridges. *)
+(** Lossy stream observer bridge for Eta_signal. *)
 
 val default_capacity : int
 
@@ -11,13 +11,6 @@ val record_drop : metrics -> unit
 val create_queue :
   capacity:int ->
   (('update, 'queue_error) Eta.Queue.t, [> `Invalid_capacity ]) result
-
-val create_stream :
-  capacity:int ->
-  ( ('update, 'queue_error) Eta.Queue.t
-    * ('update, 'queue_error) Eta_stream.Stream.t,
-    [> `Invalid_capacity ] )
-  result
 
 type ('token, 'update, 'error) observer_delivery =
   ('token, 'update, unit -> unit) Eta_signal_observer.Delivery_handle.t
@@ -33,24 +26,6 @@ val hooks :
   unit ->
   ('queue_error, 'error) hooks
 
-type ('finish_reason, 'queue_error) finish_policy
-
-val finish_policy :
-  is_invalid_scope:('finish_reason -> bool) ->
-  invalid_scope_error:'queue_error ->
-  ('finish_reason, 'queue_error) finish_policy
-
-val finish_hook :
-  queue:('update, 'queue_error) Eta.Queue.t ->
-  policy:('finish_reason, 'queue_error) finish_policy ->
-  'finish_reason ->
-  unit
-
-val observer_finish_hook :
-  queue:('update, [> `Invalid_scope ]) Eta.Queue.t ->
-  Eta_signal_observer.Lifecycle.finish_reason ->
-  unit
-
 val offer :
   queue:('update, 'queue_error) Eta.Queue.t ->
   observer_delivery:('token, 'update, 'error) observer_delivery ->
@@ -62,7 +37,10 @@ val observe :
   capacity:int ->
   ?on_drop:('update -> unit) ->
   ?equal:('value -> 'value -> bool) ->
-  hooks:(([> `Invalid_scope ] as 'queue_error), 'callback_error) hooks ->
+  metrics:metrics ->
+  on_closed_with_error:
+    (([> `Invalid_scope ] as 'queue_error) ->
+    (unit, 'callback_error) Eta.Effect.t) ->
   map_observe_error:('observe_error -> ([> `Invalid_capacity ] as 'stream_error)) ->
   observe_delivery:
     (?equal:('value -> 'value -> bool) ->

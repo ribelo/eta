@@ -2665,15 +2665,11 @@ module Make (Observer_error : Observer_error) () = struct
   module Stream = struct
     let default_capacity = Stream_bridge.default_capacity
 
-    let bridge_hooks () =
-      Stream_bridge.hooks ~metrics:(graph_stream_bridge_metrics ())
-        ~on_closed_with_error:(fun err ->
-          Effect.sync (fun () -> raise (Graph_error err)))
-        ()
-
     let observe ?(capacity = default_capacity) ?on_drop ?equal signal =
       Stream_bridge.observe ~capacity ?on_drop ?equal
-        ~hooks:(bridge_hooks ())
+        ~metrics:(graph_stream_bridge_metrics ())
+        ~on_closed_with_error:(fun err ->
+          Effect.sync (fun () -> raise (Graph_error err)))
         ~map_observe_error:(fun err -> (err :> stream_error))
         ~observe_delivery:
           (fun ?equal ~on_finish signal callback ->
