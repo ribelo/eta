@@ -7499,27 +7499,6 @@ let test_stream_bridge_closes_on_observer_dispose () =
   | [ Signal.Initialized 1 ] -> ()
   | _ -> Alcotest.fail "expected stream to drain buffered update and close"
 
-let test_stream_dispose_closes_queue_after_buffered_updates () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 0 in
-  let signal = Signal.Var.watch source in
-  let observer, stream = run_ok rt (Signal.Stream.observe ~capacity:4 signal) in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 1);
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Observer.dispose observer);
-  match run_ok rt (Eta_stream.run_collect stream) with
-  | [
-   Signal.Initialized 0;
-   Signal.Changed { old_value = 0; new_value = 1 };
-   Signal.Changed { old_value = 1; new_value = 2 };
-  ] ->
-      ()
-  | _ -> Alcotest.fail "expected buffered stream updates before clean close"
-
 let test_stream_bridge_take_does_not_dispose_observer () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8486,9 +8465,6 @@ let () =
             `Quick test_stream_bridge_rejects_cross_domain_consumer;
           Alcotest.test_case "stream bridge closes on dispose" `Quick
             test_stream_bridge_closes_on_observer_dispose;
-          Alcotest.test_case
-            "stream dispose closes queue after buffered updates" `Quick
-            test_stream_dispose_closes_queue_after_buffered_updates;
           Alcotest.test_case "stream bridge take keeps observer" `Quick
             test_stream_bridge_take_does_not_dispose_observer;
           Alcotest.test_case "stream bridge multiple bridges dispose separately"

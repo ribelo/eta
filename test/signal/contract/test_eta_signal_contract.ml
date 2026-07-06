@@ -435,6 +435,27 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
+let test_stream_dispose_closes_queue_after_buffered_updates () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 0 in
+  let signal = S.Var.watch source in
+  let observer, stream = run_ok runtime (S.Stream.observe ~capacity:4 signal) in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set source 1);
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Observer.dispose observer);
+  match run_ok runtime (Eta_stream.run_collect stream) with
+  | [
+   S.Initialized 0;
+   S.Changed { old_value = 0; new_value = 1 };
+   S.Changed { old_value = 1; new_value = 2 };
+  ] ->
+      ()
+  | _ -> Alcotest.fail "expected buffered stream updates before clean close"
+
 let test_stream_with_observed_disposes_on_exit () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -556,6 +577,9 @@ let () =
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
+          Alcotest.test_case
+            "stream dispose closes queue after buffered updates" `Quick
+            test_stream_dispose_closes_queue_after_buffered_updates;
           Alcotest.test_case "stream scoped observation disposes observer"
             `Quick test_stream_with_observed_disposes_on_exit;
           Alcotest.test_case "stream bridge full queue drops newest" `Quick
