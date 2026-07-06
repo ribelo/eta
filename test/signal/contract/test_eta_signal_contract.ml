@@ -1232,6 +1232,22 @@ let test_ambiguous_scope_failures_are_typed () =
   expect_ambiguous "observer effect construction" S.stabilize;
   run_ok runtime (S.Observer.dispose observer_effect_observer)
 
+let test_bind_self_cycle_is_typed_failure () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let trigger = S.Var.create () in
+  let holder = ref None in
+  let cyclic =
+    S.bind (S.Var.watch trigger) (fun () ->
+        match !holder with
+        | Some signal -> signal
+        | None -> Alcotest.fail "cycle holder was not initialized")
+  in
+  holder := Some cyclic;
+  let observer = run_ok runtime (S.Observer.observe cyclic (fun _ -> E.unit)) in
+  expect_fail "self cycle" (( = ) `Cycle) (run runtime S.stabilize);
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2065,6 +2081,8 @@ let () =
             `Quick test_equality_defects_preserve_committed_snapshots;
           Alcotest.test_case "ambiguous scope failures are typed" `Quick
             test_ambiguous_scope_failures_are_typed;
+          Alcotest.test_case "bind self-cycle failure is typed" `Quick
+            test_bind_self_cycle_is_typed_failure;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick

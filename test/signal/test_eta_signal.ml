@@ -1546,25 +1546,6 @@ let test_bind_switch_is_not_committed_when_later_pure_node_fails () =
   run_ok rt (Signal.Observer.dispose old_inner_observer);
   run_ok rt (Signal.Observer.dispose selected_observer)
 
-let test_bind_cycle_detection_is_typed_failure () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let trigger = Signal.Var.create () in
-  let holder = ref None in
-  let cyclic =
-    Signal.bind (Signal.Var.watch trigger) (fun () ->
-        match !holder with
-        | Some signal -> signal
-        | None -> Alcotest.fail "cycle holder was not initialized")
-  in
-  holder := Some cyclic;
-  let observer =
-    run_ok rt (Signal.Observer.observe cyclic (fun _ -> Effect.unit))
-  in
-  expect_fail "cycle" (( = ) `Cycle)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_dispose_unlinks_observer_from_graph () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -4023,8 +4004,6 @@ let () =
             test_bind_selector_failure_preserves_previous_branch;
           Alcotest.test_case "bind switch rollback preserves old branch" `Quick
             test_bind_switch_is_not_committed_when_later_pure_node_fails;
-          Alcotest.test_case "bind cycle detection typed failure" `Quick
-            test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
             test_dispose_unlinks_observer_from_graph;
           Alcotest.test_case "observer lifecycle changes inside callback"
