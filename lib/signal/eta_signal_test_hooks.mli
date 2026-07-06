@@ -7,7 +7,6 @@ type hook =
   | After_stream_try_send_before_ack
   | After_stream_drop_before_ack
   | After_timer_due_read_before_commit
-  | After_timer_update_constructed_before_run
 
 type stats_count =
   | Stats_total_node_count

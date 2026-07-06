@@ -413,7 +413,6 @@ module Make (Observer_error : Observer_error) () = struct
       | After_stream_try_send_before_ack
       | After_stream_drop_before_ack
       | After_timer_due_read_before_commit
-      | After_timer_update_constructed_before_run
 
     type stats_count = Test_hooks.stats_count =
       | Stats_total_node_count
@@ -2529,12 +2528,11 @@ module Make (Observer_error : Observer_error) () = struct
                     update.timer_update timer generation ~missed))
              ~hooks:
                (Timer.daemon_hooks
-                  ~after_due_read_before_commit:(fun () ->
-                    Private_test_hooks.run
-                      After_timer_due_read_before_commit)
-                  ~after_update_constructed_before_run:(fun () ->
-                    Private_test_hooks.run
-                      After_timer_update_constructed_before_run)))
+                 ~after_due_read_before_commit:(fun () ->
+                   Private_test_hooks.run
+                     After_timer_due_read_before_commit)
+                 ~after_update_constructed_before_run:(fun () ->
+                   Effect.unit)))
           ~interval_ms:(Duration.to_ms interval) ~update_on_start
           ~catch_up_policy:update.timer_catch_up_policy
       in

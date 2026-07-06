@@ -255,6 +255,66 @@ let test_loop_orders_due_advance_and_update () =
     ]
     !events
 
+let test_loop_update_rechecks_state_after_construction () =
+  with_runtime @@ fun runtime ->
+  let events = ref [] in
+  let running = ref true in
+  let user_calls = ref 0 in
+  let plan =
+    loop_plan
+      ~read_next_due:(fun ~generation:_ ~fallback ->
+        Effect.sync (fun () ->
+            record events "read";
+            Some fallback))
+      ~advance_next_due:(fun ~generation:_ ~expected:_ ~next_due_ms:_ ->
+        Effect.sync (fun () ->
+            record events "advance";
+            `Advanced))
+      ~after_update_state:(fun ~generation:_ ->
+        Effect.sync (fun () ->
+            if !running then (
+              record events "state:running";
+              `Continue)
+            else (
+              record events "state:stopped";
+              `Stop)))
+      ~finish_saturated:(fun ~generation:_ ->
+        Effect.sync (fun () -> record events "finish"))
+      ~construct_update:(fun ~generation:_ ~missed:_ ->
+        record events "construct";
+        Effect.sync (fun () ->
+            record events "run";
+            if !running then (
+              incr user_calls;
+              record events "user")
+            else record events "skip"))
+      ~after_due_read_before_commit:(fun () ->
+        Effect.sync (fun () -> record events "due_hook"))
+      ~after_update_constructed_before_run:(fun () ->
+        Effect.sync (fun () ->
+            running := false;
+            record events "after_construct"))
+  in
+  run_ok runtime
+    (Adapter.run_loop plan ~generation:7 ~interval_ms:10 ~next_due_ms:0
+       ~catch_up_policy:Timer_policy.Catch_up_coalesced);
+  Alcotest.(check int) "user update calls" 0 !user_calls;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "read";
+      "read";
+      "due_hook";
+      "advance";
+      "state:running";
+      "construct";
+      "after_construct";
+      "run";
+      "skip";
+      "state:stopped";
+    ]
+    !events
+
 let test_start_runs_update_before_initial_due () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
@@ -335,6 +395,8 @@ let () =
             `Quick test_refresh_demand_acquire_failure_skips_use_and_release;
           Alcotest.test_case "loop plan order" `Quick
             test_loop_orders_due_advance_and_update;
+          Alcotest.test_case "loop update rechecks state after construction"
+            `Quick test_loop_update_rechecks_state_after_construction;
           Alcotest.test_case "start update before initial due" `Quick
             test_start_runs_update_before_initial_due;
         ] );
