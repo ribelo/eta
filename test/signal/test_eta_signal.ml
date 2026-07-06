@@ -1057,74 +1057,6 @@ let test_newly_necessary_derived_chain_refreshes_dependency_versions () =
   run_ok rt (Signal.Observer.dispose source_observer);
   run_ok rt (Signal.Observer.dispose reobserved)
 
-let test_default_cutoff_is_physical_equality () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let initial = Array.make 1 1 in
-  let next = Array.copy initial in
-  Alcotest.(check bool) "test values are distinct blocks" false (initial == next);
-  let source = Signal.Var.create initial in
-  let events = ref [] in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe (Signal.Var.watch source) (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source next);
-  run_ok rt Signal.stabilize;
-  (match List.rev !events with
-   | [ Signal.Initialized initialized; Changed { old_value; new_value } ] ->
-       Alcotest.(check (list int)) "initialized value" [ 1 ]
-         (Array.to_list initialized);
-       Alcotest.(check bool) "old value is initial block" true
-         (old_value == initial);
-       Alcotest.(check bool) "new value is next block" true
-         (new_value == next)
-   | _ -> Alcotest.fail "expected initialized and changed events");
-  Alcotest.(check bool) "observer current is next block" true
-    (run_ok rt (Signal.Observer.read observer) == next);
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_default_physical_cutoff_suppresses_in_place_mutation () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let block = Array.make 1 1 in
-  let source = Signal.Var.create block in
-  let mapped_calls = ref 0 in
-  let mapped =
-    Signal.Var.watch source
-    |> Signal.map (fun value ->
-           incr mapped_calls;
-           Array.get value 0)
-  in
-  let events = ref [] in
-  let callbacks = ref 0 in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe mapped (fun update ->
-           Effect.sync (fun () ->
-               incr callbacks;
-               events := update :: !events)))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial callback delivered" 1 !callbacks;
-  Alcotest.(check int) "initial mapped value" 1
-    (run_ok rt (Signal.Observer.read observer));
-  Array.set block 0 2;
-  run_ok rt (Signal.Var.set source block);
-  Alcotest.(check int) "direct source exposes mutated block" 2
-    (Array.get (Signal.Var.value source) 0);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "physical cutoff suppresses recompute" 1 !mapped_calls;
-  Alcotest.(check int) "same-block mutation emits no second callback" 1
-    !callbacks;
-  Alcotest.(check int) "observer keeps previous derived snapshot" 1
-    (run_ok rt (Signal.Observer.read observer));
-  (match List.rev !events with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected no event after same-block mutation");
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_observer_callbacks_run_in_registration_order () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8283,10 +8215,6 @@ let () =
           Alcotest.test_case
             "newly necessary derived chain refreshes dependency versions" `Quick
             test_newly_necessary_derived_chain_refreshes_dependency_versions;
-          Alcotest.test_case "default cutoff is physical equality" `Quick
-            test_default_cutoff_is_physical_equality;
-          Alcotest.test_case "physical cutoff suppresses in-place mutation"
-            `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "observer callbacks run in registration order"
             `Quick
             test_observer_callbacks_run_in_registration_order;

@@ -122,6 +122,75 @@ let test_observer_read_does_not_force_recompute () =
     (run_ok runtime (S.Observer.read observer));
   run_ok runtime (S.Observer.dispose observer)
 
+let test_default_cutoff_is_physical_equality () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let initial = Array.make 1 1 in
+  let next = Array.copy initial in
+  Alcotest.(check bool) "test values are distinct blocks" false
+    (initial == next);
+  let source = S.Var.create initial in
+  let events = ref [] in
+  let observer =
+    run_ok runtime (S.Observer.observe (S.Var.watch source) (record events))
+  in
+  run_ok runtime S.stabilize;
+  run_ok runtime (S.Var.set source next);
+  run_ok runtime S.stabilize;
+  (match List.rev !events with
+   | [ S.Initialized initialized; S.Changed { old_value; new_value } ] ->
+       Alcotest.(check (list int)) "initialized value" [ 1 ]
+         (Array.to_list initialized);
+       Alcotest.(check bool) "old value is initial block" true
+         (old_value == initial);
+       Alcotest.(check bool) "new value is next block" true
+         (new_value == next)
+   | _ -> Alcotest.fail "expected initialized and changed events");
+  Alcotest.(check bool) "observer current is next block" true
+    (run_ok runtime (S.Observer.read observer) == next);
+  run_ok runtime (S.Observer.dispose observer)
+
+let test_default_physical_cutoff_suppresses_in_place_mutation () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let block = Array.make 1 1 in
+  let source = S.Var.create block in
+  let mapped_calls = ref 0 in
+  let mapped =
+    S.Var.watch source
+    |> S.map (fun value ->
+           incr mapped_calls;
+           Array.get value 0)
+  in
+  let events = ref [] in
+  let callbacks = ref 0 in
+  let observer =
+    run_ok runtime
+      (S.Observer.observe mapped (fun update ->
+           E.sync (fun () ->
+               incr callbacks;
+               events := update :: !events)))
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "initial callback delivered" 1 !callbacks;
+  Alcotest.(check int) "initial mapped value" 1
+    (run_ok runtime (S.Observer.read observer));
+  Array.set block 0 2;
+  run_ok runtime (S.Var.set source block);
+  Alcotest.(check int) "direct source exposes mutated block" 2
+    (Array.get (S.Var.value source) 0);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "physical cutoff suppresses recompute" 1
+    !mapped_calls;
+  Alcotest.(check int) "same-block mutation emits no second callback" 1
+    !callbacks;
+  Alcotest.(check int) "observer keeps previous derived snapshot" 1
+    (run_ok runtime (S.Observer.read observer));
+  (match List.rev !events with
+   | [ S.Initialized 1 ] -> ()
+   | _ -> Alcotest.fail "expected no event after same-block mutation");
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -363,6 +432,10 @@ let () =
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
             test_observer_read_does_not_force_recompute;
+          Alcotest.test_case "default cutoff is physical equality" `Quick
+            test_default_cutoff_is_physical_equality;
+          Alcotest.test_case "physical cutoff suppresses in-place mutation"
+            `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
