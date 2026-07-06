@@ -2572,6 +2572,45 @@ let test_time_timer_dispose_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
+let test_time_timer_wrong_runtime_dispose_cleanup_is_retryable () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock_a = Eta_test.Test_clock.create () in
+  let clock_b = Eta_test.Test_clock.create () in
+  let rt_a =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_a)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
+      ()
+  in
+  let rt_b =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_b)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
+      ()
+  in
+  let signal = run_ok rt_a (Signal.Time.interval (Duration.days 1)) in
+  let observer =
+    run_ok rt_a (Signal.Observer.observe signal (fun _ -> Effect.unit))
+  in
+  wait_for_sleepers clock_a 1;
+  expect_exact_runtime_mismatch "timer dispose from wrong runtime"
+    (Eta_eio.Runtime.run rt_b (widen (Signal.Observer.dispose observer)));
+  Alcotest.(check int) "wrong-runtime dispose left sleeper running" 1
+    (Eta_test.Test_clock.sleeper_count clock_a);
+  run_ok rt_a (Signal.Observer.dispose observer);
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt_a)
+  in
+  for _ = 1 to 5 do
+    Eta_test.Async.yield ()
+  done;
+  Alcotest.(check bool)
+    "retrying dispose on timer runtime drains daemon" true
+    (Eio.Promise.is_resolved drained);
+  Eio.Promise.await_exn drained
+
 let with_timer_cancel_tracking_host f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -3887,6 +3926,9 @@ let () =
             test_time_timer_becomes_inert_after_dispose;
           Alcotest.test_case "time timer dispose cancels sleeping daemon" `Quick
             test_time_timer_dispose_cancels_sleeping_daemon;
+          Alcotest.test_case
+            "time timer wrong-runtime dispose cleanup is retryable" `Quick
+            test_time_timer_wrong_runtime_dispose_cleanup_is_retryable;
           Alcotest.test_case "time timer cancel outside graph lifecycle" `Quick
             test_time_timer_cancel_runs_outside_graph_lifecycle;
           Alcotest.test_case

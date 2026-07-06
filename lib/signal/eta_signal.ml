@@ -1686,6 +1686,32 @@ module Make (Observer_error : Observer_error) () = struct
              timer_demand_plan_unlocked lane))
     |> Timer.run_node_demand_refresh
 
+  let timer_demand_cleanup_pending = ref false
+
+  let mark_timer_demand_cleanup_pending_unlocked () =
+    timer_demand_cleanup_pending := true
+
+  let claim_timer_demand_cleanup () =
+    with_graph_lane_access (fun _lane ->
+        if !timer_demand_cleanup_pending then (
+          timer_demand_cleanup_pending := false;
+          true)
+        else false)
+
+  let restore_timer_demand_cleanup () =
+    with_graph_lane_access (fun _lane ->
+        timer_demand_cleanup_pending := true)
+
+  let run_pending_timer_demand_cleanup () =
+    claim_timer_demand_cleanup ()
+    |> Effect.bind (function
+         | false -> Effect.unit
+         | true ->
+             refresh_timer_demand ()
+             |> Effect.on_exit (function
+                  | Eta.Exit.Ok () -> Effect.unit
+                  | Eta.Exit.Error _ -> restore_timer_demand_cleanup ()))
+
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
     fail_with_pending_disposal_hooks hooks_ref
       (Effect.sync (fun () -> Printexc.raise_with_backtrace exn backtrace))
@@ -1701,16 +1727,11 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.uninterruptible
     else Cleanup.run_pending_as_finalizers hooks_ref
 
-  let run_pending_dispose_cleanup hooks_ref refresh_timers =
-    if !refresh_timers || Cleanup.pending hooks_ref then
-      ((if !refresh_timers then
-          Effect.sync (fun () -> refresh_timers := false)
-          |> Effect.bind (fun () -> refresh_timer_demand ())
-        else Effect.unit)
-       |> Effect.bind (fun () ->
-              Cleanup.run_pending_as_finalizers hooks_ref))
-      |> Effect.uninterruptible
-    else Effect.unit
+  let run_pending_dispose_cleanup hooks_ref =
+    (run_pending_timer_demand_cleanup ()
+    |> Effect.on_exit (fun _exit ->
+           Cleanup.run_pending_as_finalizers hooks_ref))
+    |> Effect.uninterruptible
 
   let run_pending_registration_abort_cleanup hooks_ref refresh_timers =
     let best_effort eff = Effect.exit eff |> Effect.map (fun _ -> ()) in
@@ -1729,21 +1750,27 @@ module Make (Observer_error : Observer_error) () = struct
 
   let dispose_observer_with_cleanup cleanup observer =
     let hooks_ref = ref [] in
-    let refresh_timers = ref false in
+    let lane_entered = ref false in
+    let cleanup_started = ref false in
+    let run_cleanup () =
+      cleanup_started := true;
+      cleanup hooks_ref
+    in
     with_graph_lane_access
       (fun lane ->
+        lane_entered := true;
         (match observer.obs_state with
          | Observer_lifecycle.Disposed _ -> ()
          | Observer_lifecycle.Registering _ | Observer_lifecycle.Active _
          | Observer_lifecycle.Invalid_scope _ ->
           let hooks = dispose_observer_unlocked lane observer in
           hooks_ref := hooks;
-          refresh_timers := true;
+          mark_timer_demand_cleanup_pending_unlocked ();
           update_necessity_counters_unlocked lane))
-    |> Effect.bind (fun () ->
-           cleanup hooks_ref refresh_timers)
+    |> Effect.bind (fun () -> run_cleanup ())
     |> Effect.on_exit (fun _exit ->
-           cleanup hooks_ref refresh_timers)
+           if !cleanup_started || not !lane_entered then Effect.unit
+           else run_cleanup ())
 
   let dispose_observer_effect observer =
     dispose_observer_with_cleanup run_pending_dispose_cleanup observer

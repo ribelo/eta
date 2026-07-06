@@ -651,7 +651,7 @@ let test_demand_effects_classifies_resources () =
   | Error _ -> Alcotest.fail "unexpected demand validation failure"
   | Ok effects ->
       Alcotest.(check (list string))
-        "validated necessary timers" [ "start" ] !validated;
+        "validated active timers" [ "stop"; "start" ] !validated;
       Timer_policy.demand_effects_result effects
         ~plan:(fun ~start_attempts ~cancel_hooks ->
           Alcotest.(check (list string))

@@ -514,16 +514,23 @@ let classify_demand context resources =
     | resource :: resources ->
         let timer = resource.demand_resource_timer in
         let necessary = context.demand_resource_necessary resource.demand_resource_id in
+        let effective_state = context.demand_resource_effective_state timer in
+        let current_state = context.demand_resource_current_state timer in
+        let action = demand_action ~necessary ~effective_state ~current_state in
+        let validate =
+          necessary
+          ||
+          match action with
+          | Demand_start | Demand_stop -> true
+          | Demand_none -> false
+        in
         let continue () =
           loop
-            (demand_item ~item:timer ~necessary
-               ~effective_state:
-                 (context.demand_resource_effective_state timer)
-               ~current_state:(context.demand_resource_current_state timer)
-              :: items)
+            (demand_item ~item:timer ~necessary ~effective_state
+               ~current_state :: items)
             resources
         in
-        if necessary then
+        if validate then
           match context.demand_resource_validate timer with
           | Ok () -> continue ()
           | Error _ as error -> error
