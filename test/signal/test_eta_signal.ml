@@ -4982,62 +4982,6 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_invalid_intervals_fail_cleanly () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
-  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 1) ()) in
-  let now_observer =
-    run_ok rt (Signal.Observer.observe now_signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let future_deadline =
-    match
-      Signal.Time.add
-        (run_ok rt (Signal.Observer.read now_observer))
-        (Duration.ms 1)
-    with
-    | Ok timestamp -> timestamp
-    | Error _ -> Alcotest.fail "expected future monotonic timestamp"
-  in
-  run_ok rt (Signal.Observer.dispose now_observer);
-  expect_fail "invalid now cadence" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.now ~every:Duration.zero ())));
-  expect_fail "invalid deadline cadence" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.deadline ~every:Duration.zero future_deadline)));
-  expect_fail "invalid interval" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.interval Duration.zero)));
-  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen
-          (Signal.Time.step ~every:Duration.zero ~initial:0
-             (fun ~missed value -> value + missed))))
-
-let test_time_deadline_validation_errors () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw _clock rt ->
-  let now_signal = run_ok rt (Signal.Time.now ~every:(Duration.ms 1) ()) in
-  let now_observer =
-    run_ok rt (Signal.Observer.observe now_signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let now = run_ok rt (Signal.Observer.read now_observer) in
-  run_ok rt (Signal.Observer.dispose now_observer);
-  expect_fail "invalid after interval" (( = ) `Invalid_interval)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.after ~every:Duration.zero (Duration.ms 1))));
-  expect_fail "past after duration" (( = ) `Past_deadline)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.after ~every:(Duration.ms 1) Duration.zero)));
-  expect_fail "clamped past after duration" (( = ) `Past_deadline)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms (-1)))));
-  expect_fail "past deadline" (( = ) `Past_deadline)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.deadline ~every:(Duration.ms 1) now)))
-
 let with_yield_after_daemon_fork_runtime f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -5802,10 +5746,6 @@ let () =
             test_time_step_function;
           Alcotest.test_case "time step defect logs diagnostic" `Quick
             test_time_step_defect_logs_daemon_diagnostic_and_restarts;
-          Alcotest.test_case "time invalid intervals fail cleanly" `Quick
-            test_time_invalid_intervals_fail_cleanly;
-          Alcotest.test_case "time deadline validation errors" `Quick
-            test_time_deadline_validation_errors;
           Alcotest.test_case "stream observe timer initialization race" `Quick
             test_stream_observe_timer_initialization_race;
           Alcotest.test_case

@@ -1468,6 +1468,58 @@ let test_demand_boundary_for_derived_nodes_and_timers () =
   run_ok runtime (S.Observer.dispose timer_observer);
   run_ok runtime (S.Observer.dispose derived_observer)
 
+let test_time_invalid_intervals_fail_cleanly () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
+  let now_observer =
+    run_ok runtime (S.Observer.observe now_signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let future_deadline =
+    match
+      S.Time.add
+        (run_ok runtime (S.Observer.read now_observer))
+        (Eta.Duration.ms 1)
+    with
+    | Ok timestamp -> timestamp
+    | Error _ -> Alcotest.fail "expected future monotonic timestamp"
+  in
+  run_ok runtime (S.Observer.dispose now_observer);
+  expect_fail "invalid now cadence" (( = ) `Invalid_interval)
+    (run runtime (S.Time.now ~every:Eta.Duration.zero ()));
+  expect_fail "invalid deadline cadence" (( = ) `Invalid_interval)
+    (run runtime
+       (S.Time.deadline ~every:Eta.Duration.zero future_deadline));
+  expect_fail "invalid interval" (( = ) `Invalid_interval)
+    (run runtime (S.Time.interval Eta.Duration.zero));
+  expect_fail "invalid step cadence" (( = ) `Invalid_interval)
+    (run runtime
+       (S.Time.step ~every:Eta.Duration.zero ~initial:0
+          (fun ~missed value -> value + missed)))
+
+let test_time_deadline_validation_errors () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let now_signal = run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
+  let now_observer =
+    run_ok runtime (S.Observer.observe now_signal (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  let now = run_ok runtime (S.Observer.read now_observer) in
+  run_ok runtime (S.Observer.dispose now_observer);
+  expect_fail "invalid after interval" (( = ) `Invalid_interval)
+    (run runtime
+       (S.Time.after ~every:Eta.Duration.zero (Eta.Duration.ms 1)));
+  expect_fail "past after duration" (( = ) `Past_deadline)
+    (run runtime
+       (S.Time.after ~every:(Eta.Duration.ms 1) Eta.Duration.zero));
+  expect_fail "clamped past after duration" (( = ) `Past_deadline)
+    (run runtime
+       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms (-1))));
+  expect_fail "past deadline" (( = ) `Past_deadline)
+    (run runtime (S.Time.deadline ~every:(Eta.Duration.ms 1) now))
+
 let test_stream_bridge_is_observer_plus_queue () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1776,6 +1828,10 @@ let () =
             test_derived_demand_reactivates_fresh;
           Alcotest.test_case "demand boundary for derived nodes and timers"
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
+          Alcotest.test_case "time invalid intervals fail cleanly" `Quick
+            test_time_invalid_intervals_fail_cleanly;
+          Alcotest.test_case "time deadline validation errors" `Quick
+            test_time_deadline_validation_errors;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
           Alcotest.test_case "stream bridge rejects cross-domain consumer"
