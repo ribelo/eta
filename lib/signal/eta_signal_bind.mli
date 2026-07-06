@@ -47,18 +47,34 @@ val dynamic_eval_context :
   ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   dynamic_eval_context
 
-type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
+type 'value dynamic_value_context
 
-val dynamic_apply_context :
+val dynamic_value_context :
   current_value:(unit -> 'value option) ->
   cached_value:(unit -> 'value) ->
   initialized:(unit -> bool) ->
   value_equal:('value -> 'value -> bool) ->
   bump_recompute:(unit -> unit) ->
+  'value dynamic_value_context
+
+type ('source, 'inner, 'scope, 'dependency, 'value)
+     dynamic_staging_context
+
+val dynamic_staging_context :
   stage_switch:
     (source_value:'source -> inner:'inner -> scope:'scope -> unit) ->
   stage_dependencies:('dependency list -> unit) ->
   stage_value:('value -> unit) ->
+  ('source, 'inner, 'scope, 'dependency, 'value)
+  dynamic_staging_context
+
+type ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
+
+val dynamic_apply_context :
+  value:'value dynamic_value_context ->
+  staging:
+    ('source, 'inner, 'scope, 'dependency, 'value)
+    dynamic_staging_context ->
   ('source, 'inner, 'scope, 'dependency, 'value) dynamic_apply_context
 
 val dynamic_context :

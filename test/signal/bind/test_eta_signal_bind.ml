@@ -280,8 +280,8 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
         check_cap cap;
         dependencies_changed dependencies)
   in
-  let apply =
-    Bind.dynamic_apply_context
+  let apply_value =
+    Bind.dynamic_value_context
       ~current_value:(fun () -> current)
       ~cached_value:(fun () ->
         events := !events @ [ "cached" ];
@@ -291,6 +291,9 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
       ~initialized:(fun () -> initialized)
       ~value_equal:Int.equal
       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
+  in
+  let apply_staging =
+    Bind.dynamic_staging_context
       ~stage_switch:(fun ~source_value ~inner ~scope ->
         events :=
           !events
@@ -308,6 +311,9 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
             ])
       ~stage_value:(fun value ->
         events := !events @ [ "stage_value:" ^ string_of_int value ])
+  in
+  let apply =
+    Bind.dynamic_apply_context ~value:apply_value ~staging:apply_staging
   in
   Bind.dynamic_context ~eval ~apply
 

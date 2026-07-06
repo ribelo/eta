@@ -1558,18 +1558,24 @@ module Make (Observer_error : Observer_error) () = struct
         ~dependencies_changed:(fun lane dependencies ->
           dependencies_changed lane signal dependencies)
     in
-    let apply =
-      Bind.dynamic_apply_context
+    let apply_value =
+      Bind.dynamic_value_context
         ~current_value:(fun () ->
           Signal_snapshot.value (signal_effective_snapshot signal))
         ~cached_value:(fun () -> current_or_raise signal) ~initialized
         ~value_equal:signal.equal
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)
+    in
+    let apply_staging =
+      Bind.dynamic_staging_context
         ~stage_switch:(fun ~source_value ~inner ~scope ->
           stage_bind_switch lane staging bind source_value inner scope)
         ~stage_dependencies:(stage_dependency_versions lane staging signal)
         ~stage_value:(stage_signal lane staging signal)
+    in
+    let apply =
+      Bind.dynamic_apply_context ~value:apply_value ~staging:apply_staging
     in
     let context = Bind.dynamic_context ~eval ~apply in
     match
