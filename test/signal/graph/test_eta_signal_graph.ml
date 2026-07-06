@@ -221,7 +221,10 @@ let staging_reset_context
                  ~attach_new_inner:(fun () () -> ()))
   in
   Graph.staging_reset_context ~rollback_bind
-    ~rollback_timer_refresh_dirty ~clear_timer_refresh_timer
+    ~rollback_timer_refresh_dirty
+    ~clear_timer_refresh_timer:(fun _staging timer ->
+      Graph.staged_timer_reset ~reset:(fun () ->
+          clear_timer_refresh_timer timer))
 
 let stabilization_pure_ops
     ?(release_pending_marks = fun _context _pending -> ())
@@ -1506,6 +1509,97 @@ let test_timer_refresh_commit_plan_owns_staging () =
     ]
     !events
 
+let test_timer_refresh_reset_plan_owns_staging () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let cell = Transaction.create_staged 0 in
+  let timer = ref (-1) in
+  let pure =
+    stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~stage_pending:(fun context staging _pending ->
+        Graph.stage_cell graph context staging cell 1;
+        Graph.remember_timer_refresh_timer graph context staging timer
+          ~refresh_token:(fun refresh -> refresh)
+          ~staged_token:(fun timer -> !timer)
+          ~set_staged_token:(fun timer token ->
+            record events ("set_token:" ^ string_of_int token);
+            timer := token)
+          ~stage_refresh_token:(fun _timer token ->
+            record events ("stage_token:" ^ string_of_int token));
+        record events "stage")
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
+      ~staging:(fun _context _staging ->
+        staging_commit_plan
+          ~preflight:(fun _staging ->
+            record events "preflight";
+            failwith "rollback")
+          ())
+      ~update_necessity:(fun _context ->
+        Alcotest.fail "update_necessity should not run")
+      ()
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context staging ->
+        let rollback_bind _staging _bind =
+          Graph.staged_bind_rollback ~staged:None
+            ~lifecycle:
+              (Bind.staged_switch_lifecycle
+                 ~detach_old_inner:(fun () () -> ())
+                 ~invalidate_scope:(fun () -> [])
+                 ~attach_new_inner:(fun () () -> ()))
+        in
+        Graph.staging_reset_context ~rollback_bind
+          ~rollback_timer_refresh_dirty:(fun refresh ->
+            record events ("rollback_dirty:" ^ string_of_int refresh))
+          ~clear_timer_refresh_timer:(fun callback_staging timer ->
+            if not (callback_staging == staging) then
+              Alcotest.fail "timer reset received stale staging token";
+            Graph.staged_timer_reset ~reset:(fun () ->
+                Alcotest.(check int)
+                  "transaction rolled back before timer reset" 0
+                  (Transaction.current cell);
+                Alcotest.(check int) "staged token" 7 !timer;
+                timer := -1;
+                record events "clear_timer")))
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:(Some 7)
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "expected defect")
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks exn _backtrace ->
+      Alcotest.(check string)
+        "defect" "Failure(\"rollback\")" (Printexc.to_string exn);
+      Alcotest.(check (list string)) "hooks" [] hooks);
+  Alcotest.(check int) "current" 0 (Transaction.current cell);
+  Alcotest.(check int) "timer token cleared" (-1) !timer;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "set_token:7";
+      "stage_token:7";
+      "stage";
+      "preflight";
+      "rollback_dirty:7";
+      "clear_timer";
+    ]
+    !events
+
 let test_staged_bind_switch_protocol_maps_graph_errors () =
   let events = ref [] in
   let graph =
@@ -1630,5 +1724,7 @@ let () =
             test_timer_refresh_token_owned_by_graph;
           Alcotest.test_case "refresh commit plan" `Quick
             test_timer_refresh_commit_plan_owns_staging;
+          Alcotest.test_case "refresh reset plan" `Quick
+            test_timer_refresh_reset_plan_owns_staging;
         ] );
     ]

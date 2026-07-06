@@ -1325,7 +1325,9 @@ module Make (Observer_error : Observer_error) () = struct
         Graph.restore_dirty graph lane dirty_ops
           (Timer_policy.refresh_dirty_items context);
         Timer_policy.clear_refresh_dirty_items context)
-      ~clear_timer_refresh_timer:clear_timer_refresh_timer_staging
+      ~clear_timer_refresh_timer:(fun _staging timer ->
+        Graph.staged_timer_reset ~reset:(fun () ->
+            clear_timer_refresh_timer_staging timer))
 
   let staging_commit_plan lane _staging =
     Graph.staging_commit_plan

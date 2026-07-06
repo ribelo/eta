@@ -358,12 +358,16 @@ val staged_bind_rollback :
     Eta_signal_bind.staged_switch_lifecycle ->
   'hook staged_bind_rollback
 
+type staged_timer_reset
+
+val staged_timer_reset : reset:(unit -> unit) -> staged_timer_reset
+
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
   rollback_bind:(staging -> 'bind -> 'hook staged_bind_rollback) ->
   rollback_timer_refresh_dirty:('refresh -> unit) ->
-  clear_timer_refresh_timer:('timer -> unit) ->
+  clear_timer_refresh_timer:(staging -> 'timer -> staged_timer_reset) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 type 'hook staged_bind_commit

@@ -546,7 +546,8 @@ type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
   staging_reset_rollback_bind :
     staging -> 'bind -> 'hook staged_bind_rollback;
   staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
-  staging_reset_clear_timer_refresh_timer : 'timer -> unit;
+  staging_reset_clear_timer_refresh_timer :
+    staging -> 'timer -> staged_timer_reset;
 }
 
 and 'hook staged_bind_rollback =
@@ -559,12 +560,16 @@ and 'hook staged_bind_rollback =
     }
       -> 'hook staged_bind_rollback
 
+and staged_timer_reset = Staged_timer_reset of { timer_reset : unit -> unit }
+
 let staged_bind_rollback ~staged ~lifecycle =
   Staged_bind_rollback
     {
       staged_bind_rollback_snapshot = staged;
       staged_bind_rollback_lifecycle = lifecycle;
     }
+
+let staged_timer_reset ~reset = Staged_timer_reset { timer_reset = reset }
 
 let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
     ~clear_timer_refresh_timer =
@@ -584,6 +589,10 @@ let rollback_staging_bind staging bind context =
       rollback_staged_bind_switch ~staged:staged_bind_rollback_snapshot
         staged_bind_rollback_lifecycle
 
+let reset_staging_timer staging timer context =
+  match context.staging_reset_clear_timer_refresh_timer staging timer with
+  | Staged_timer_reset { timer_reset } -> timer_reset ()
+
 let reset_staging t _lane staging context =
   let exception Rollback_error of Eta_signal_error.graph_error in
   let state_context =
@@ -596,8 +605,8 @@ let reset_staging t _lane staging context =
         Eta_signal_stabilization.rollback_transaction t.stabilization)
       ~rollback_timer_refresh_dirty:
         context.staging_reset_rollback_timer_refresh_dirty
-      ~clear_timer_refresh_timer:
-        context.staging_reset_clear_timer_refresh_timer
+      ~clear_timer_refresh_timer:(fun timer ->
+        reset_staging_timer staging timer context)
   in
   Eta_signal_graph_state.reset_staging t.state staging state_context
 
