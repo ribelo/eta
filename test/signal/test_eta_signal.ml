@@ -7340,8 +7340,9 @@ let test_time_interval_catches_up_arithmetically_without_daemon_yield () =
         (run_ok rt (Signal.Observer.read observer)))
 
 let test_time_interval_does_not_recount_saturated_due () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_blocked_timer_daemon @@ fun rt now_ms sleep_calls ->
+  now_ms := max_int - 1;
   let signal = run_ok rt (Signal.Time.interval (Duration.ms 1)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -7354,7 +7355,6 @@ let test_time_interval_does_not_recount_saturated_due () =
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "initial interval" 0
         (run_ok rt (Signal.Observer.read observer));
-      Signal.Private_test_hooks.set_timer_next_due signal max_int;
       now_ms := max_int;
       run_ok rt Signal.stabilize;
       Alcotest.(check int) "saturated due counted once" 1
