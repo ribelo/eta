@@ -7814,24 +7814,6 @@ let test_stream_bridge_drop_callback_failure_is_best_effort () =
     after_delivery.Signal.stream_bridge_drop_count;
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_stream_bridge_full_queue_dispose_closes_without_waiting () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream =
-    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer snapshot advances while bridge full" 2
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer);
-  (match run_ok rt (Eta_stream.run_collect stream) with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected buffered update to drain after dispose")
-
 let test_stream_bridge_full_queue_failure_releases_phase () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -7910,40 +7892,6 @@ let test_stream_bridge_dispose_during_observer_phase_is_deterministic () =
   Alcotest.(check int) "disposer observer remains alive after bridge disposal" 3
     (run_ok rt (Signal.Observer.read disposer));
   run_ok rt (Signal.Observer.dispose disposer)
-
-let test_stream_bridge_repeated_full_queue_keeps_lane () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream =
-    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer snapshot advances through dropped updates" 3
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected initial stream update after drops");
-  run_ok rt (Signal.Var.set source 4);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "graph lane remains available" 4
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Changed { old_value = 3; new_value = 4 } ] -> ()
-   | _ -> Alcotest.fail "expected later changed stream update");
-  run_ok rt (Signal.Observer.dispose observer);
-  (match run_ok rt (Eta_stream.run_collect stream) with
-   | [] -> ()
-   | _ -> Alcotest.fail "expected stream to close after dispose")
 
 let () =
   Alcotest.run "eta_signal"
@@ -8386,15 +8334,11 @@ let () =
           Alcotest.test_case
             "stream bridge failed drop callback is best effort" `Quick
             test_stream_bridge_drop_callback_failure_is_best_effort;
-          Alcotest.test_case "stream bridge full queue dispose closes"
-            `Quick test_stream_bridge_full_queue_dispose_closes_without_waiting;
           Alcotest.test_case
             "stream bridge full queue plus observer failure releases phase"
             `Quick test_stream_bridge_full_queue_failure_releases_phase;
           Alcotest.test_case "stream bridge dispose during observer phase"
             `Quick
             test_stream_bridge_dispose_during_observer_phase_is_deterministic;
-          Alcotest.test_case "stream bridge repeated full queue keeps lane"
-            `Quick test_stream_bridge_repeated_full_queue_keeps_lane;
         ] );
     ]

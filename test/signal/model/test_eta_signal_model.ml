@@ -2451,6 +2451,7 @@ type stream_model_op =
   | Stream_observe of int
   | Stream_dispose of int
   | Stream_take of int
+  | Stream_read of int
   | Stream_stabilize
 
 type stream_equal_policy =
@@ -2474,6 +2475,7 @@ let pp_stream_model_op formatter = function
   | Stream_observe slot -> Format.fprintf formatter "Observe slot%d" slot
   | Stream_dispose slot -> Format.fprintf formatter "Dispose slot%d" slot
   | Stream_take slot -> Format.fprintf formatter "Take slot%d" slot
+  | Stream_read slot -> Format.fprintf formatter "Read slot%d" slot
   | Stream_stabilize -> Format.pp_print_string formatter "Stabilize"
 
 let stream_model_equal policy left right =
@@ -2562,6 +2564,18 @@ let stream_model_take label runtime slot =
         [ expected ] actual;
       slot.stream_queue <- rest
 
+let stream_model_read label runtime slot =
+  match slot.stream_observer with
+  | None -> ()
+  | Some observer -> (
+      match slot.stream_current with
+      | None ->
+          expect_uninitialized_observer label runtime
+            (Signal.Observer.read observer)
+      | Some expected ->
+          Alcotest.(check int) (label ^ " read") expected
+            (run_ok runtime (Signal.Observer.read observer)))
+
 let stream_model_dispose label runtime slot =
   match slot.stream_observer with
   | None -> ()
@@ -2611,8 +2625,9 @@ let generate_stream_model_ops ~seed ~slot_count ~steps =
       match Random.State.int random 14 with
       | 0 | 1 | 2 | 3 | 4 -> Stream_set (next_value ())
       | 5 | 6 -> Stream_take (next_slot ())
-      | 7 | 8 -> Stream_observe (next_slot ())
-      | 9 | 10 -> Stream_dispose (next_slot ())
+      | 7 | 8 -> Stream_read (next_slot ())
+      | 9 | 10 -> Stream_observe (next_slot ())
+      | 11 | 12 -> Stream_dispose (next_slot ())
       | _ -> Stream_stabilize
   in
   let rec loop index acc =
@@ -2622,16 +2637,32 @@ let generate_stream_model_ops ~seed ~slot_count ~steps =
   List.init slot_count (fun slot -> Stream_observe slot)
   @ [
       Stream_stabilize;
+      Stream_read 0;
+      Stream_read 1;
+      Stream_read 2;
+      Stream_read 3;
       Stream_take 0;
       Stream_take 1;
       Stream_set 3;
       Stream_stabilize;
+      Stream_read 0;
       Stream_take 0;
       Stream_dispose 0;
       Stream_set 4;
       Stream_stabilize;
+      Stream_read 1;
       Stream_take 1;
       Stream_take 1;
+      Stream_set 5;
+      Stream_stabilize;
+      Stream_set 6;
+      Stream_stabilize;
+      Stream_read 3;
+      Stream_take 3;
+      Stream_set 7;
+      Stream_stabilize;
+      Stream_read 3;
+      Stream_take 3;
     ]
   @ loop 1 []
 
@@ -2641,7 +2672,8 @@ let run_stream_model_trace name ~seed =
   let signal = Signal.Var.watch source in
   let slots =
     [| create_stream_model_slot 1; create_stream_model_slot 2;
-       create_stream_model_slot ~equal_policy:(Stream_mod_equal 3) 3 |]
+       create_stream_model_slot ~equal_policy:(Stream_mod_equal 3) 3;
+       create_stream_model_slot 1 |]
   in
   let base_stats = run_ok runtime (Signal.stats ()) in
   let base_drops = base_stats.Signal.stream_bridge_drop_count in
@@ -2668,6 +2700,8 @@ let run_stream_model_trace name ~seed =
           stream_model_dispose label runtime slots.(slot)
       | Stream_take slot ->
           stream_model_take label runtime slots.(slot)
+      | Stream_read slot ->
+          stream_model_read label runtime slots.(slot)
       | Stream_stabilize ->
           committed := !pending;
           Array.iter
