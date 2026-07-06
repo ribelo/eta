@@ -243,8 +243,9 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   in
   let eval =
     Bind.dynamic_eval_context ~source_equal:Int.equal
-      ~source_dependency:100
-      ~pack_inner:(fun inner -> inner + 1000)
+      ~dependencies:
+        (Bind.dynamic_dependencies ~source:100
+           ~pack_inner:(fun inner -> inner + 1000))
       ~new_scope:(fun cap ->
         check_cap cap;
         events := !events @ [ "new_scope" ];

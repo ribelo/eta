@@ -1539,8 +1539,9 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let eval =
       Bind.dynamic_eval_context ~source_equal:bind.source.equal
-        ~source_dependency:(P bind.source)
-        ~pack_inner:(fun inner -> P inner)
+        ~dependencies:
+          (Bind.dynamic_dependencies ~source:(P bind.source)
+             ~pack_inner:(fun inner -> P inner))
         ~new_scope:(fun _lane -> new_scope signal)
         ~selector:bind.selector
         ~with_scope:(fun _lane scope f ->

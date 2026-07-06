@@ -2,6 +2,13 @@
 
 type ('source, 'inner, 'scope) snapshot
 
+type ('inner, 'dependency) dynamic_dependencies
+
+val dynamic_dependencies :
+  source:'dependency ->
+  pack_inner:('inner -> 'dependency) ->
+  ('inner, 'dependency) dynamic_dependencies
+
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_context
   constraint 'error = [> `Invalid_scope ]
@@ -12,8 +19,7 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
 
 val dynamic_eval_context :
   source_equal:('source -> 'source -> bool) ->
-  source_dependency:'dependency ->
-  pack_inner:('inner -> 'dependency) ->
+  dependencies:('inner, 'dependency) dynamic_dependencies ->
   new_scope:('capability -> 'scope) ->
   selector:('source -> 'inner) ->
   with_scope:('capability -> 'scope -> (unit -> 'inner) -> 'inner) ->
