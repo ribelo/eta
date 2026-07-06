@@ -4370,64 +4370,6 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
-let test_time_timer_becomes_inert_after_bind_switch () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let use_timer = Signal.Var.create true in
-  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
-        if use_timer then timer else Signal.const 0)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  Alcotest.(check int) "bind timer waits for branch materialization" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  run_ok rt Signal.stabilize;
-  wait_for_sleepers clock 1;
-  run_ok rt (Signal.Var.set use_timer false);
-  run_ok rt Signal.stabilize;
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "detached timer did not reschedule" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_time_branch_churn_keeps_single_active_sleeper () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let use_timer = Signal.Var.create false in
-  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
-        if use_timer then timer else Signal.const (-1))
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "inactive timer has no sleeper" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  for i = 1 to 4 do
-    run_ok rt (Signal.Var.set use_timer true);
-    run_ok rt Signal.stabilize;
-    wait_for_sleepers clock 1;
-    Alcotest.(check int)
-      (Printf.sprintf "active branch %d has one sleeper" i)
-      1
-      (Eta_test.Test_clock.sleeper_count clock);
-    run_ok rt (Signal.Var.set use_timer false);
-    run_ok rt Signal.stabilize;
-    Eta_test.Test_clock.adjust clock (Duration.ms 10);
-    Eta_test.Async.yield ();
-    Alcotest.(check int)
-      (Printf.sprintf "inactive branch %d has no sleeper" i)
-      0
-      (Eta_test.Test_clock.sleeper_count clock)
-  done;
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_time_now_bind_activation_refreshes_current_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -5810,10 +5752,6 @@ let () =
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
-          Alcotest.test_case "time timer inert after bind switch" `Quick
-            test_time_timer_becomes_inert_after_bind_switch;
-          Alcotest.test_case "time branch churn keeps single sleeper" `Quick
-            test_time_branch_churn_keeps_single_active_sleeper;
           Alcotest.test_case "time now bind activation refreshes current" `Quick
             test_time_now_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time now uses one clock snapshot" `Quick

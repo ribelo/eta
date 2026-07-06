@@ -282,9 +282,9 @@ let start_attempt_effects attempts =
 
 let apply_start_plan ~set_current_state ~start_effect timer plan =
   Eta_signal_timer_policy.start_plan_result plan
-    ~plan:(fun ~state ~generation:_ ->
+    ~plan:(fun ~state ~generation:_ ~cancel_hooks ->
       set_current_state timer state;
-      start_attempt ~timer ~effect:(start_effect timer))
+      (start_attempt ~timer ~effect:(start_effect timer), cancel_hooks))
 
 let apply_stop_plan port timer plan =
   Eta_signal_timer_policy.stop_plan_result plan

@@ -128,6 +128,7 @@ type stop_plan = {
 type start_plan = {
   start_state : state;
   start_generation : int;
+  start_cancel_hooks : (unit -> unit) list;
 }
 
 type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
@@ -135,7 +136,7 @@ type ('id, 'timer, 'start, 'hook, 'error) demand_context = {
   demand_resource_validate : 'timer -> (unit, 'error) result;
   demand_resource_effective_state : 'timer -> state;
   demand_resource_current_state : 'timer -> state;
-  demand_plan_start : 'timer -> start_plan -> 'start;
+  demand_plan_start : 'timer -> start_plan -> 'start * 'hook list;
   demand_plan_stop : 'timer -> stop_plan -> 'hook list;
 }
 
@@ -491,6 +492,12 @@ let needs_stop ~effective_state =
   || Option.is_some (state_running_generation effective_state)
   || state_has_cancel effective_state
 
+let running_cancel_hooks = function
+  | Timer_running (_, _, cancel) -> [ cancel ]
+  | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
+  | Timer_finished _ ->
+      []
+
 let demand_action ~necessary ~effective_state ~current_state =
   if necessary then
     if needs_start ~effective_state ~current_state then Demand_start
@@ -531,6 +538,7 @@ let start ~advance_generation ~effective_state ~current_state =
       {
         start_state = Timer_starting generation;
         start_generation = generation;
+        start_cancel_hooks = running_cancel_hooks current_state;
       }
   else None
 
@@ -619,7 +627,9 @@ let apply_demand_plans ~start ~stop plans =
   List.iter
     (function
       | Demand_plan_start (timer, plan) ->
-          start_attempts := start timer plan :: !start_attempts
+          let start_attempt, start_cancel_hooks = start timer plan in
+          start_attempts := start_attempt :: !start_attempts;
+          cancel_hooks := List.rev_append start_cancel_hooks !cancel_hooks
       | Demand_plan_stop (timer, Some plan) ->
           cancel_hooks := List.rev_append (stop timer plan) !cancel_hooks
       | Demand_plan_stop (_, None) -> ())
@@ -631,6 +641,7 @@ let apply_demand_plans ~start ~stop plans =
 
 let start_plan_result plan ~plan:result =
   result ~state:plan.start_state ~generation:plan.start_generation
+    ~cancel_hooks:plan.start_cancel_hooks
 
 let stop_plan_result plan ~plan:result =
   result ~state:plan.stop_state ~cancel_hooks:plan.stop_cancel_hooks
@@ -709,16 +720,10 @@ let can_refresh_on_demand ~refresh_operation ~current_token ~staged_token ~token
   && (refresh_when_inactive || active)
   && not finished
 
-let finish_cancel_hooks = function
-  | Timer_running (_, _, cancel) -> [ cancel ]
-  | Timer_inactive _ | Timer_starting _ | Timer_running_uncancellable _
-  | Timer_finished _ ->
-      []
-
 let finish ~advance_generation state =
   {
     finish_state = finish_state ~advance_generation state;
-    finish_cancel_hooks = finish_cancel_hooks state;
+    finish_cancel_hooks = running_cancel_hooks state;
   }
 
 let finish_plan_result plan ~plan:result =

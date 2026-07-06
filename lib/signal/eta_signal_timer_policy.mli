@@ -219,7 +219,7 @@ val demand_context :
   validate:('timer -> (unit, 'error) result) ->
   effective_state:('timer -> state) ->
   current_state:('timer -> state) ->
-  start:('timer -> start_plan -> 'start) ->
+  start:('timer -> start_plan -> 'start * 'hook list) ->
   stop:('timer -> stop_plan -> 'hook list) ->
   ('id, 'timer, 'start, 'hook, 'error) demand_context
 
@@ -259,14 +259,18 @@ val demand_plan_result :
   'result
 
 val apply_demand_plans :
-  start:('timer -> start_plan -> 'start) ->
+  start:('timer -> start_plan -> 'start * 'hook list) ->
   stop:('timer -> stop_plan -> 'hook list) ->
   'timer demand_plan list ->
   ('start, 'hook) demand_effects
 
 val start_plan_result :
   start_plan ->
-  plan:(state:state -> generation:int -> 'a) ->
+  plan:
+    (state:state ->
+    generation:int ->
+    cancel_hooks:(unit -> unit) list ->
+    'a) ->
   'a
 
 val stop_plan_result :

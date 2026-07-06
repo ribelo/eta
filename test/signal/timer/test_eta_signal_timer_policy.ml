@@ -52,15 +52,20 @@ let stop_plan_label plan =
       ^ string_of_int (List.length cancel_hooks))
 
 let start_plan_state plan =
-  Timer_policy.start_plan_result plan ~plan:(fun ~state ~generation:_ ->
-      state)
+  Timer_policy.start_plan_result plan
+    ~plan:(fun ~state ~generation:_ ~cancel_hooks:_ -> state)
 
 let start_plan_generation plan =
-  Timer_policy.start_plan_result plan ~plan:(fun ~state:_ ~generation ->
-      generation)
+  Timer_policy.start_plan_result plan
+    ~plan:(fun ~state:_ ~generation ~cancel_hooks:_ -> generation)
+
+let start_plan_cancel_hooks plan =
+  Timer_policy.start_plan_result plan
+    ~plan:(fun ~state:_ ~generation:_ ~cancel_hooks -> cancel_hooks)
 
 let start_plan_label plan =
-  Timer_policy.start_plan_result plan ~plan:(fun ~state ~generation ->
+  Timer_policy.start_plan_result plan ~plan:(fun ~state ~generation
+      ~cancel_hooks:_ ->
       "start:" ^ string_of_int generation ^ ":"
       ^ Timer_policy.state_label state)
 
@@ -433,6 +438,22 @@ let test_start_and_refresh_policy () =
     true
     (Timer_policy.needs_start ~effective_state:running_uncancellable
        ~current_state:inactive);
+  (let cancelled = ref false in
+   let current_running =
+     timer_running 3 (Some 20) (fun () -> cancelled := true)
+   in
+   match
+     Timer_policy.start ~advance_generation:succ
+       ~effective_state:inactive ~current_state:current_running
+   with
+   | Some plan ->
+       Alcotest.(check int) "restart generation" 4
+         (start_plan_generation plan);
+       Alcotest.(check int) "restart carries old cancel" 1
+         (List.length (start_plan_cancel_hooks plan));
+       List.iter (fun hook -> hook ()) (start_plan_cancel_hooks plan);
+       Alcotest.(check bool) "restart cancel hook runs" true !cancelled
+   | None -> Alcotest.fail "expected restart start plan");
   Alcotest.(check bool) "finished does not need start" false
     (Timer_policy.needs_start ~effective_state:finished ~current_state:finished);
   Alcotest.(check bool) "eligible refresh" true
@@ -536,10 +557,13 @@ let test_demand_plans_policy () =
 
 let test_apply_demand_plans_preserves_effect_order () =
   let running = timer_running 1 (Some 10) noop in
+  let restart_running = timer_running 4 (Some 10) noop in
   let effects =
     Timer_policy.apply_demand_plans
       ~start:(fun item plan ->
-        item ^ ":start:" ^ string_of_int (start_plan_generation plan))
+        let start_cancel_hooks = start_plan_cancel_hooks plan in
+        ( item ^ ":start:" ^ string_of_int (start_plan_generation plan),
+          List.map (fun _hook -> item ^ ":cancel-old") start_cancel_hooks ))
       ~stop:(fun item plan ->
         let generation =
           Timer_policy.state_generation (stop_plan_state plan)
@@ -563,13 +587,16 @@ let test_apply_demand_plans_preserves_effect_order () =
              ~current_state:(timer_inactive 2);
            Timer_policy.demand_item ~item:"d" ~necessary:false
              ~effective_state:running ~current_state:(timer_starting 3);
+           Timer_policy.demand_item ~item:"restart" ~necessary:true
+             ~effective_state:(timer_inactive 4)
+             ~current_state:restart_running;
          ])
   in
   Timer_policy.demand_effects_result effects
     ~plan:(fun ~start_attempts ~cancel_hooks ->
       Alcotest.(check (list string))
         "start attempts"
-        [ "a:start:1"; "c:start:3" ]
+        [ "a:start:1"; "c:start:3"; "restart:start:5" ]
         start_attempts;
       Alcotest.(check (list string))
         "cancel hooks"
@@ -578,6 +605,7 @@ let test_apply_demand_plans_preserves_effect_order () =
           "b:stop:2:second";
           "d:stop:4:first";
           "d:stop:4:second";
+          "restart:cancel-old";
         ]
         cancel_hooks)
 
@@ -608,8 +636,9 @@ let test_demand_effects_classifies_resources () =
       ~effective_state:state ~current_state:state
       ~start:
         (fun timer plan ->
-          timer ^ ":start:"
-          ^ string_of_int (start_plan_generation plan))
+          ( timer ^ ":start:"
+            ^ string_of_int (start_plan_generation plan),
+            [] ))
       ~stop:
         (fun timer plan ->
           if List.length (stop_plan_cancel_hooks plan) = 0 then []
@@ -647,7 +676,7 @@ let test_demand_effects_validation_failure_short_circuits () =
       ~start:
         (fun _timer _plan ->
           started := true;
-          "started")
+          ("started", []))
       ~stop:
         (fun _timer _plan ->
           stopped := true;

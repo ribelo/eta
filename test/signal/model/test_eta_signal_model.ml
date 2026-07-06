@@ -49,6 +49,16 @@ let run_ok runtime eff =
   | Eta.Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
 
+let wait_until label predicate =
+  let rec loop attempts =
+    if predicate () then ()
+    else if attempts = 0 then Alcotest.failf "timed out waiting for %s" label
+    else (
+      Eta_test.Async.yield ();
+      loop (attempts - 1))
+  in
+  loop 200
+
 let expect_observer_failed label runtime eff =
   match Eta.Runtime.run runtime (widen eff) with
   | Eta.Exit.Error (Eta.Cause.Fail (`Observer_error `Observer_failed)) -> ()
@@ -477,6 +487,173 @@ let test_time_now_after_interval_lifecycle_trace_matches_model () =
         (Format.asprintf "timer-lifecycle-seed-%d" seed)
         ~seed)
     [ 19; 43; 71; 131 ]
+
+type timer_bind_op =
+  | Timer_bind_set of bool
+  | Timer_bind_advance of int
+  | Timer_bind_stabilize
+  | Timer_bind_read
+
+let pp_timer_bind_op formatter = function
+  | Timer_bind_set active ->
+      Format.fprintf formatter "Timer_bind_set %b" active
+  | Timer_bind_advance ms ->
+      Format.fprintf formatter "Timer_bind_advance %d" ms
+  | Timer_bind_stabilize ->
+      Format.pp_print_string formatter "Timer_bind_stabilize"
+  | Timer_bind_read -> Format.pp_print_string formatter "Timer_bind_read"
+
+let generate_timer_bind_ops ~seed ~steps =
+  let random = Random.State.make [| seed; steps; 79 |] in
+  let next_op index =
+    if index mod 5 = 0 then Timer_bind_stabilize
+    else
+      match Random.State.int random 10 with
+      | 0 | 1 | 2 -> Timer_bind_set (Random.State.bool random)
+      | 3 | 4 | 5 -> Timer_bind_advance (1 + Random.State.int random 12)
+      | 6 | 7 -> Timer_bind_read
+      | _ -> Timer_bind_stabilize
+  in
+  let scripted =
+    [
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_set true;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_advance 10;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_set false;
+      Timer_bind_stabilize;
+      Timer_bind_advance 10;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_set true;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_advance 5;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_advance 5;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+    ]
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Timer_bind_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  scripted @ loop 1 []
+
+let run_timer_bind_model_trace name ~seed =
+  Eta_test.with_test_clock @@ fun _sw clock runtime ->
+  let clock_ms = ref 0 in
+  let pending_active = ref false in
+  let active = ref false in
+  let stale_sleeper_dues = ref [] in
+  let interval_next_due = ref None in
+  let interval_value = ref 0 in
+  let observer_current = ref None in
+  let use_timer = Signal.Var.create false in
+  let timer = run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10)) in
+  let selected =
+    Signal.bind (Signal.Var.watch use_timer) (fun active ->
+        if active then timer else Signal.const (-1))
+  in
+  let observer =
+    run_ok runtime (Signal.Observer.observe selected (fun _ -> E.unit))
+  in
+  let prune_stale_sleepers () =
+    stale_sleeper_dues :=
+      List.filter (fun due -> !clock_ms < due) !stale_sleeper_dues
+  in
+  let check_demand label =
+    prune_stale_sleepers ();
+    let sleepers = Eta_test.Test_clock.sleeper_count clock in
+    let stale_count = List.length !stale_sleeper_dues in
+    if !active then (
+      wait_until (label ^ " active timer sleeper") (fun () ->
+          Eta_test.Test_clock.sleeper_count clock >= 1);
+      let sleepers = Eta_test.Test_clock.sleeper_count clock in
+      Alcotest.(check bool)
+        (label ^ " active timer has one live sleeper")
+        true (sleepers >= 1 && sleepers <= stale_count + 1))
+    else if stale_count > 0 then
+      Alcotest.(check bool)
+        (label ^ " inactive timer sleepers are stale")
+        true (sleepers <= stale_count)
+    else (
+      wait_until (label ^ " inactive timer clears sleepers") (fun () ->
+          Eta_test.Test_clock.sleeper_count clock = 0);
+      Alcotest.(check int) (label ^ " inactive timer has no sleeper") 0
+        (Eta_test.Test_clock.sleeper_count clock))
+  in
+  let model_stabilize label =
+    run_ok runtime Signal.stabilize;
+    let was_active = !active in
+    let previous_next_due = !interval_next_due in
+    let next_due_after_catchup =
+      match previous_next_due with
+      | Some next_due when was_active && !clock_ms >= next_due ->
+          let missed = ((!clock_ms - next_due) / 10) + 1 in
+          interval_value := !interval_value + missed;
+          Some (next_due + (missed * 10))
+      | _ -> previous_next_due
+    in
+    active := !pending_active;
+    if !active then (
+      if not was_active then interval_next_due := Some (!clock_ms + 10)
+      else
+        match next_due_after_catchup with
+        | None -> interval_next_due := Some (!clock_ms + 10)
+        | Some next_due -> interval_next_due := Some next_due)
+    else (
+      interval_next_due := None;
+      if was_active then
+        Option.iter
+          (fun due -> stale_sleeper_dues := due :: !stale_sleeper_dues)
+          next_due_after_catchup);
+    let expected = if !active then !interval_value else -1 in
+    observer_current := Some expected;
+    Alcotest.(check int) (label ^ " selected value") expected
+      (run_ok runtime (Signal.Observer.read observer));
+    if !active || not was_active then check_demand label
+  in
+  Fun.protect
+    ~finally:(fun () -> run_ok runtime (Signal.Observer.dispose observer))
+    (fun () ->
+      generate_timer_bind_ops ~seed ~steps:90
+      |> List.iteri (fun index op ->
+             let label =
+               Format.asprintf "%s step %d %a" name index pp_timer_bind_op op
+             in
+             match op with
+             | Timer_bind_set active ->
+                 pending_active := active;
+                 run_ok runtime (Signal.Var.set use_timer active)
+             | Timer_bind_advance ms ->
+                 clock_ms := !clock_ms + ms;
+                 Eta_test.Test_clock.adjust clock (Eta.Duration.ms ms);
+                 Eta_test.Async.yield ();
+                 check_demand label
+             | Timer_bind_stabilize -> model_stabilize label
+             | Timer_bind_read -> (
+                 match !observer_current with
+                 | None ->
+                     expect_uninitialized_observer label runtime
+                       (Signal.Observer.read observer)
+                 | Some expected ->
+                     Alcotest.(check int) label expected
+                       (run_ok runtime (Signal.Observer.read observer)))))
+
+let test_time_bind_interval_demand_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_timer_bind_model_trace
+        (Format.asprintf "timer-bind-seed-%d" seed)
+        ~seed)
+    [ 23; 41; 89; 167 ]
 
 let test_coalesced_sets_match_model () =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2996,6 +3173,9 @@ let () =
           Alcotest.test_case
             "time now/after/interval lifecycle trace matches model" `Quick
             test_time_now_after_interval_lifecycle_trace_matches_model;
+          Alcotest.test_case
+            "time bind interval demand trace matches model" `Quick
+            test_time_bind_interval_demand_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
           Alcotest.test_case "source equality trace matches model" `Quick
