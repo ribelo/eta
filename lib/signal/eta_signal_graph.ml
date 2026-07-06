@@ -543,10 +543,28 @@ let saturating_succ value =
   if value = max_int then max_int else value + 1
 
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
-  staging_reset_rollback_bind : staging -> 'bind -> 'hook list;
+  staging_reset_rollback_bind :
+    staging -> 'bind -> 'hook staged_bind_rollback;
   staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
   staging_reset_clear_timer_refresh_timer : 'timer -> unit;
 }
+
+and 'hook staged_bind_rollback =
+  | Staged_bind_rollback : {
+      staged_bind_rollback_snapshot :
+        ('source, 'inner, 'scope) Eta_signal_bind.snapshot option;
+      staged_bind_rollback_lifecycle :
+        ('owner, 'inner, 'scope, 'hook)
+        Eta_signal_bind.staged_switch_lifecycle;
+    }
+      -> 'hook staged_bind_rollback
+
+let staged_bind_rollback ~staged ~lifecycle =
+  Staged_bind_rollback
+    {
+      staged_bind_rollback_snapshot = staged;
+      staged_bind_rollback_lifecycle = lifecycle;
+    }
 
 let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
     ~clear_timer_refresh_timer =
@@ -556,10 +574,24 @@ let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
     staging_reset_clear_timer_refresh_timer = clear_timer_refresh_timer;
   }
 
+let rollback_staging_bind staging bind context =
+  match context.staging_reset_rollback_bind staging bind with
+  | Staged_bind_rollback
+      {
+        staged_bind_rollback_snapshot;
+        staged_bind_rollback_lifecycle;
+      } ->
+      rollback_staged_bind_switch ~staged:staged_bind_rollback_snapshot
+        staged_bind_rollback_lifecycle
+
 let reset_staging t _lane staging context =
+  let exception Rollback_error of Eta_signal_error.graph_error in
   let state_context =
     Eta_signal_graph_state.reset_context
-      ~rollback_bind:(context.staging_reset_rollback_bind staging)
+      ~rollback_bind:(fun bind ->
+        match rollback_staging_bind staging bind context with
+        | Ok hooks -> hooks
+        | Error err -> raise (Rollback_error err))
       ~rollback_transaction:(fun () ->
         Eta_signal_stabilization.rollback_transaction t.stabilization)
       ~rollback_timer_refresh_dirty:

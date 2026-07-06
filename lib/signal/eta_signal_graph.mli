@@ -319,12 +319,6 @@ val stage_bind_switch :
   scope:'scope ->
   unit
 
-val rollback_staged_bind_switch :
-  staged:
-    ('source, 'inner, 'scope) Eta_signal_bind.snapshot option ->
-  ('owner, 'inner, 'scope, 'hook) Eta_signal_bind.staged_switch_lifecycle ->
-  ('hook list, Eta_signal_error.graph_error) result
-
 type ('bind, 'scope, 'owner, 'acc) staged_bind_invalidation_plan
 
 val staged_bind_invalidation_plan :
@@ -355,10 +349,19 @@ val remember_timer_refresh_disposal_hooks :
   'hook list ->
   unit
 
+type 'hook staged_bind_rollback
+
+val staged_bind_rollback :
+  staged:('source, 'inner, 'scope) Eta_signal_bind.snapshot option ->
+  lifecycle:
+    ('owner, 'inner, 'scope, 'hook)
+    Eta_signal_bind.staged_switch_lifecycle ->
+  'hook staged_bind_rollback
+
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
-  rollback_bind:(staging -> 'bind -> 'hook list) ->
+  rollback_bind:(staging -> 'bind -> 'hook staged_bind_rollback) ->
   rollback_timer_refresh_dirty:('refresh -> unit) ->
   clear_timer_refresh_timer:('timer -> unit) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context

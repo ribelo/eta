@@ -1162,15 +1162,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~invalidate_scope:(invalidate_scope lane)
       ~attach_new_inner:(attach_dependency lane)
 
-  let rollback_bind lane staging (B bind) =
-    match
-      Graph.rollback_staged_bind_switch
-        ~staged:(bind_staged_snapshot lane staging bind)
-        (bind_switch_lifecycle lane)
-    with
-    | Ok hooks -> hooks
-    | Error err -> raise (Graph_error err)
-
   let collect_scope_invalidations_into ?exclude_signal_id seen collected scope =
     Scope_invalidation.collect ?exclude_node_id:exclude_signal_id seen
       collected scope
@@ -1324,7 +1315,11 @@ module Make (Observer_error : Observer_error) () = struct
     clear_timer_refresh_timer_staging timer
 
   let staging_reset_context lane _staging =
-    Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
+    Graph.staging_reset_context
+      ~rollback_bind:(fun staging (B bind) ->
+        Graph.staged_bind_rollback
+          ~staged:(bind_staged_snapshot lane staging bind)
+          ~lifecycle:(bind_switch_lifecycle lane))
       ~rollback_timer_refresh_dirty:(fun context ->
         Graph.restore_dirty graph lane dirty_ops
           (Timer_policy.refresh_dirty_items context);
