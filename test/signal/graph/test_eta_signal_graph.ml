@@ -1048,6 +1048,27 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
     [ demand_id live_root; demand_id live_timer; demand_id live_without_timer ]
     remaining_live_ids
 
+let test_filter_map_reachable_owns_valid_dedup () =
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let root = create_demand_node graph () in
+  let child = create_demand_node graph () in
+  let invalid = create_demand_node graph ~live:false () in
+  root.demand_children <- [ child; invalid; child ];
+  let ids =
+    with_graph_lane graph (fun lane ->
+        Graph.filter_map_reachable graph lane demand_reachable_ops
+          ~roots:[ root; child ]
+          ~f:(fun node -> Some (Id.signal_int node.demand_id)))
+    |> List.sort Int.compare
+  in
+  Alcotest.(check (list int))
+    "valid deduplicated reachable ids"
+    [ Id.signal_int root.demand_id; Id.signal_int child.demand_id ]
+    ids
+
 let test_post_commit_necessary_timers_uses_reachability () =
   let graph =
     Graph.create ~create_scope_context:(fun () -> ())
@@ -1199,6 +1220,8 @@ let () =
         ] );
       ( "timer demand",
         [
+          Alcotest.test_case "reachable selection" `Quick
+            test_filter_map_reachable_owns_valid_dedup;
           Alcotest.test_case "plan bridge" `Quick
             test_timer_demand_plan_owns_live_pruning_and_roots;
           Alcotest.test_case "post-commit reachability" `Quick

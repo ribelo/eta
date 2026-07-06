@@ -450,6 +450,10 @@ let fold_reachable _t _lane ops ~roots ~init ~f =
   in
   List.fold_left visit init roots
 
+let filter_map_reachable t lane ops ~roots ~f =
+  fold_reachable t lane ops ~roots ~init:[] ~f:(fun selected node ->
+      match f node with None -> selected | Some value -> value :: selected)
+
 let collect_reachable_ids t lane ops ~roots =
   fold_reachable t lane ops ~roots ~init:(Hashtbl.create 16)
     ~f:(fun seen node ->

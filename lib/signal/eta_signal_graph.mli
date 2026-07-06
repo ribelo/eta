@@ -289,14 +289,16 @@ val compare_order :
   'node ->
   int
 
-val fold_reachable :
+val filter_map_reachable :
   (_, _, _, _, _, _, _, _, _, _, _) t ->
   lane_access ->
   ('id, 'node) reachable_ops ->
   roots:'node list ->
-  init:'acc ->
-  f:('acc -> 'node -> 'acc) ->
-  'acc
+  f:('node -> 'a option) ->
+  'a list
+(** Traverse valid reachable nodes from [roots], deduplicate by node id, and
+    return selected values. The graph owns traversal mechanics; callers supply
+    only graph-shape operations and a projection. *)
 
 val stage_bind_switch :
   (_, 'bind, _, _, _, _, _, _, _, _, _) t ->

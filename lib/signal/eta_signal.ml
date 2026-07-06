@@ -1761,14 +1761,14 @@ module Make (Observer_error : Observer_error) () = struct
 
   let collect_observed_bind_nodes lane observers =
     prune_all_nodes_unlocked lane;
-    Graph.fold_reachable graph lane reachable_ops
-      ~roots:(observer_active_roots observers) ~init:[]
-      ~f:(fun binds (P signal as packed) ->
+    Graph.filter_map_reachable graph lane reachable_ops
+      ~roots:(observer_active_roots observers)
+      ~f:(fun (P signal as packed) ->
         match signal.kind with
-        | Bind _ -> packed :: binds
+        | Bind _ -> Some packed
         | Const _ | Var _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _
         | Map6 _ | Map7 _ | Map8 _ | Map9 _ | All _ ->
-            binds)
+            None)
     |> List.sort compare_signal_scope_then_id
 
   let signal_will_be_invalidated_by_staged_bind lane staging (P signal) =
