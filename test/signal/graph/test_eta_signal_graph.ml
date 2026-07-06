@@ -239,9 +239,10 @@ let test_observer_registry_traversal_uses_lane () =
         Graph.remove_observer graph lane
           ~same:(fun left right -> left.id = right.id)
           inactive;
-        ( Graph.collect_observer_hooks graph lane
-            ~selected:(fun observer -> observer.active)
-            ~collect:(fun observer -> [ observer.id ]),
+        ( Graph.collect_observer_cleanup_hooks graph lane
+            (Graph.observer_cleanup
+               ~selected:(fun observer -> observer.active)
+               ~cleanup:(fun observer -> [ observer.id ])),
           Graph.observer_counts graph lane
             ~active:(fun observer -> observer.active)
             ~invalid:(fun observer -> not observer.active),

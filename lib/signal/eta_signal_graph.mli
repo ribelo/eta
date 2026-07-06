@@ -509,12 +509,21 @@ val remove_observer :
   'observer ->
   unit
 
-val collect_observer_hooks :
+type ('observer, 'hook) observer_cleanup
+
+val observer_cleanup :
+  selected:('observer -> bool) ->
+  cleanup:('observer -> 'hook list) ->
+  ('observer, 'hook) observer_cleanup
+
+val collect_observer_cleanup_hooks :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  selected:('observer -> bool) ->
-  collect:('observer -> 'hook list) ->
+  ('observer, 'hook) observer_cleanup ->
   'hook list
+(** Observer cleanup for node invalidation. The graph owns registry traversal;
+    callers supply lifecycle predicates and cleanup-hook construction for their
+    concrete observer representation. *)
 
 type observer_counts
 
@@ -540,9 +549,9 @@ val collect_observer_diagnostics :
   lane_access ->
   ('observer, 'diagnostic) observer_diagnostics ->
   'diagnostic list
-(** Observer registry operations. The graph owns list traversal and mutation;
-    callers supply lifecycle predicates and diagnostic projections for their
-    concrete observer representation. *)
+(** Observer registry diagnostics. The graph owns registry traversal; callers
+    supply lifecycle predicates and diagnostic projections for their concrete
+    observer representation. *)
 
 val observer_delivery_plan :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

@@ -669,8 +669,21 @@ let remove_observer t _lane ~same observer =
   t.observers <-
     List.filter (fun candidate -> not (same candidate observer)) t.observers
 
-let collect_observer_hooks t _lane ~selected ~collect =
-  List.filter selected t.observers |> List.concat_map collect
+type ('observer, 'hook) observer_cleanup = {
+  observer_cleanup_selected : 'observer -> bool;
+  observer_cleanup_hooks : 'observer -> 'hook list;
+}
+
+let observer_cleanup ~selected ~cleanup =
+  {
+    observer_cleanup_selected = selected;
+    observer_cleanup_hooks = cleanup;
+  }
+
+let collect_observer_cleanup_hooks t _lane cleanup =
+  t.observers
+  |> List.filter cleanup.observer_cleanup_selected
+  |> List.concat_map cleanup.observer_cleanup_hooks
 
 type observer_counts = {
   active_count : int;
