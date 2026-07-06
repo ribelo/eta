@@ -1244,17 +1244,26 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let source = S.Var.create 0 in
+  let watched = S.Var.watch source in
   let delivered = ref [] in
+  let later_delivered = ref [] in
   let fail_next_change = ref false in
   let observer =
     run_ok runtime
-      (S.Observer.observe (S.Var.watch source) (fun update ->
+      (S.Observer.observe watched (fun update ->
            match update with
            | S.Initialized _ -> record delivered update
            | S.Changed _ when !fail_next_change ->
                fail_next_change := false;
                E.fail `Observer_failed
            | S.Changed _ -> record delivered update))
+  in
+  let later_observer =
+    run_ok runtime
+      (S.Observer.observe watched (fun update ->
+           match update with
+           | S.Initialized _ -> E.unit
+           | S.Changed _ -> record later_delivered update))
   in
   run_ok runtime S.stabilize;
   fail_next_change := true;
@@ -1276,6 +1285,15 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
     before_failure.S.dead_node_count after_failure.S.dead_node_count;
   Alcotest.(check int) "snapshot committed despite observer failure" 1
     (run_ok runtime (S.Observer.read observer));
+  Alcotest.(check int) "later observer sees committed snapshot" 1
+    (run_ok runtime (S.Observer.read later_observer));
+  Alcotest.(check (list int))
+    "later observer delivery waits for retry" []
+    (List.map
+       (function
+         | S.Initialized value -> value
+         | S.Changed { new_value; _ } -> new_value)
+       (List.rev !later_delivered));
   run_ok runtime S.stabilize;
   let after_retry = run_ok runtime (S.stats ()) in
   Alcotest.(check int) "retry commits another pure snapshot"
@@ -1287,7 +1305,11 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
   (match List.rev !delivered with
    | [ S.Initialized 0; S.Changed { old_value = 0; new_value = 1 } ] -> ()
    | _ -> Alcotest.fail "expected failed delivery to retry");
-  run_ok runtime (S.Observer.dispose observer)
+  (match List.rev !later_delivered with
+   | [ S.Changed { old_value = 0; new_value = 1 } ] -> ()
+   | _ -> Alcotest.fail "expected skipped observer delivery to retry");
+  run_ok runtime (S.Observer.dispose observer);
+  run_ok runtime (S.Observer.dispose later_observer)
 
 let test_observer_callback_failure_channels_are_distinct () =
   let module S = Eta_signal.Make (Observer_error) () in

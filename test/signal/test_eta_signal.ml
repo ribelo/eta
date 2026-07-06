@@ -2434,34 +2434,6 @@ let test_stats_counter_saturation_is_typed_failure () =
   check_stats_count "stats lane_cancelled_waiter_count"
     Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
 
-let test_observer_failure_is_fail_fast () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let later_ran = ref false in
-  let failing_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ -> Effect.fail `Observer_failed))
-  in
-  let later_observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _ ->
-           Effect.sync (fun () -> later_ran := true)))
-  in
-  expect_fail "observer failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check bool) "later observer did not run" false !later_ran;
-  Alcotest.(check int) "failing observer snapshot published" 1
-    (run_ok rt (Signal.Observer.read failing_observer));
-  Alcotest.(check int) "skipped observer snapshot published" 1
-    (run_ok rt (Signal.Observer.read later_observer));
-  run_ok rt (Signal.Observer.dispose failing_observer);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check bool) "skipped observer event retries" true !later_ran;
-  run_ok rt (Signal.Observer.dispose later_observer)
-
 let test_observer_registration_and_self_disposal_inside_callback () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6099,8 +6071,6 @@ let () =
             test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "stats counter saturation is typed failure" `Quick
             test_stats_counter_saturation_is_typed_failure;
-          Alcotest.test_case "observer failure is fail-fast" `Quick
-            test_observer_failure_is_fail_fast;
           Alcotest.test_case "observer lifecycle changes inside callback"
             `Quick test_observer_registration_and_self_disposal_inside_callback;
           Alcotest.test_case "observer effects survive later failure" `Quick
