@@ -1167,13 +1167,22 @@ type 'timer timer_demand = {
   timer_demand_timers : (Eta_signal_id.signal * 'timer) list;
 }
 
-let timer_demand t lane plan ~timer =
-  let nodes = reachable_live_nodes t lane plan in
+type ('observer, 'node, 'weak_node, 'timer) timer_demand_source = {
+  timer_demand_reachable : ('observer, 'node, 'weak_node) reachable_plan;
+  timer_demand_select : 'node -> (Eta_signal_id.signal * 'timer) option;
+}
+
+let timer_demand_source ~reachable ~timer =
+  { timer_demand_reachable = reachable; timer_demand_select = timer }
+
+let timer_demand t lane source =
+  let reachable = source.timer_demand_reachable in
+  let nodes = reachable_live_nodes t lane reachable in
   {
     timer_demand_necessary_ids =
-      collect_reachable_ids t lane plan.reachable_plan_ops
-        ~roots:(reachable_root_nodes t plan);
-    timer_demand_timers = List.filter_map timer nodes;
+      collect_reachable_ids t lane reachable.reachable_plan_ops
+        ~roots:(reachable_root_nodes t reachable);
+    timer_demand_timers = List.filter_map source.timer_demand_select nodes;
   }
 
 let timer_demand_plan demand ~plan =
@@ -1181,13 +1190,16 @@ let timer_demand_plan demand ~plan =
     ~is_necessary:(necessary_mem demand.timer_demand_necessary_ids)
     ~timers:demand.timer_demand_timers
 
-let post_commit_necessary_timers t lane plan ~timer =
-  ignore (reachable_live_nodes t lane plan : _ list);
-  fold_reachable t lane plan.reachable_plan_ops
-    ~roots:(reachable_root_nodes t plan)
+let post_commit_necessary_timers t lane source =
+  let reachable = source.timer_demand_reachable in
+  ignore (reachable_live_nodes t lane reachable : _ list);
+  fold_reachable t lane reachable.reachable_plan_ops
+    ~roots:(reachable_root_nodes t reachable)
     ~init:(Hashtbl.create 8)
     ~f:(fun timers node ->
-      Option.iter (fun (id, timer) -> Hashtbl.replace timers id timer) (timer node);
+      Option.iter
+        (fun (id, timer) -> Hashtbl.replace timers id timer)
+        (source.timer_demand_select node);
       timers)
 
 let dead_node_count t _lane = List.length t.dead_nodes

@@ -850,15 +850,23 @@ val update_necessity :
 
 type 'timer timer_demand
 
+type ('observer, 'node, 'weak_node, 'timer) timer_demand_source
+
+val timer_demand_source :
+  reachable:('observer, 'node, 'weak_node) reachable_plan ->
+  timer:('node -> (Eta_signal_id.signal * 'timer) option) ->
+  ('observer, 'node, 'weak_node, 'timer) timer_demand_source
+(** Package graph reachability with timer extraction so timer-demand snapshots
+    and post-commit preflight use one assembled graph-demand source. *)
+
 val timer_demand :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
-  ('observer, 'node, 'weak_node) reachable_plan ->
-  timer:('node -> (Eta_signal_id.signal * 'timer) option) ->
+  ('observer, 'node, 'weak_node, 'timer) timer_demand_source ->
   'timer timer_demand
 (** Snapshot graph demand inputs for the timer subsystem. The graph owns the
-    live-node registry traversal and observer-root necessary set; the caller
-    supplies graph-shape projections for reachability and timer extraction. *)
+    live-node registry traversal and observer-root necessary set; callers pass
+    an assembled demand source rather than per-call projection callbacks. *)
 
 val timer_demand_plan :
   'timer timer_demand ->
@@ -873,13 +881,12 @@ val timer_demand_plan :
 val post_commit_necessary_timers :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
-  ('observer, 'node, 'weak_node) reachable_plan ->
-  timer:('node -> (Eta_signal_id.signal * 'timer) option) ->
+  ('observer, 'node, 'weak_node, 'timer) timer_demand_source ->
   (Eta_signal_id.signal, 'timer) Hashtbl.t
 (** Collect the timers that will remain necessary after committing graph
     staging. The graph owns live-node pruning and observer-root traversal;
-    callers supply graph-shape reachability and timer projections because
-    staged bind invalidation is graph-shape specific. *)
+    callers supply one demand source because staged bind invalidation is
+    graph-shape specific. *)
 
 val dead_node_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int

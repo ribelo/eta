@@ -1227,6 +1227,9 @@ module Make (Observer_error : Observer_error) () = struct
         (invalidated_ids, !invalidated_nodes)
     | Error err -> raise (Graph_error err)
 
+  let signal_timer (P signal) =
+    Option.map (fun timer -> (signal.id, timer)) signal.timer
+
   let collect_post_commit_necessary_timers lane invalidated_ids =
     let reachable_ops =
       Graph.reachable_ops ~id:(fun (P signal) -> signal.id)
@@ -1251,9 +1254,8 @@ module Make (Observer_error : Observer_error) () = struct
         ~registry:live_signal_registry
         ~roots:observer_demand_roots
     in
-    Graph.post_commit_necessary_timers graph lane plan
-      ~timer:(fun (P signal) ->
-        Option.map (fun timer -> (signal.id, timer)) signal.timer)
+    Graph.post_commit_necessary_timers graph lane
+      (Graph.timer_demand_source ~reachable:plan ~timer:signal_timer)
 
   let preflight_post_commit_timer_starts lane invalidated_ids =
     collect_post_commit_necessary_timers lane invalidated_ids
@@ -1616,8 +1618,9 @@ module Make (Observer_error : Observer_error) () = struct
       (Graph.update_necessity graph lane (graph_reachable_plan ())
         : Graph.necessary_snapshot)
 
-  let signal_timer (P signal) =
-    Option.map (fun timer -> (signal.id, timer)) signal.timer
+  let signal_timer_demand_source () =
+    Graph.timer_demand_source ~reachable:(graph_reachable_plan ())
+      ~timer:signal_timer
 
   let fail_with_pending_disposal_hooks hooks_ref eff =
     Cleanup.fail_with_pending hooks_ref eff
@@ -1627,7 +1630,7 @@ module Make (Observer_error : Observer_error) () = struct
       (Effect.fail (err :> stabilize_error))
 
   let timer_demand_unlocked lane =
-    Graph.timer_demand graph lane (graph_reachable_plan ()) ~timer:signal_timer
+    Graph.timer_demand graph lane (signal_timer_demand_source ())
 
   let timer_demand_plan_unlocked lane =
     let demand = timer_demand_unlocked lane in

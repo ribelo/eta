@@ -353,6 +353,11 @@ let demand_reachable_plan =
   Graph.reachable_plan ~ops:demand_reachable_ops
     ~registry:demand_live_registry ~roots:optional_demand_roots
 
+let demand_timer_source =
+  Graph.timer_demand_source ~reachable:demand_reachable_plan
+    ~timer:(fun node ->
+      Option.map (fun timer -> (node.demand_id, timer)) node.demand_timer)
+
 let compute_ops =
   Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
     ~seen_generation:(fun node -> node.compute_seen_generation)
@@ -1104,11 +1109,7 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
       Graph.add_observer graph lane (Some live_root));
   let demand =
     with_graph_lane graph (fun lane ->
-        Graph.timer_demand graph lane demand_reachable_plan
-          ~timer:(fun node ->
-            Option.map
-              (fun timer -> (node.demand_id, timer))
-              node.demand_timer))
+        Graph.timer_demand graph lane demand_timer_source)
   in
   let root_necessary, leaf_necessary, timers =
     Graph.timer_demand_plan demand ~plan:(fun ~is_necessary ~timers ->
@@ -1173,11 +1174,7 @@ let test_post_commit_necessary_timers_uses_reachability () =
       Graph.add_observer graph lane (Some root));
   let timers =
     with_graph_lane graph (fun lane ->
-        Graph.post_commit_necessary_timers graph lane demand_reachable_plan
-          ~timer:(fun node ->
-            Option.map
-              (fun timer -> (node.demand_id, timer))
-              node.demand_timer))
+        Graph.post_commit_necessary_timers graph lane demand_timer_source)
     |> Hashtbl.to_seq
     |> List.of_seq
     |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
