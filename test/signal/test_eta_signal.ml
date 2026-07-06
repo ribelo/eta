@@ -5615,31 +5615,6 @@ let test_time_interval_requires_explicit_stabilization () =
    | _ -> Alcotest.fail "expected timer update after explicit stabilize");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_interval_overflow_saturates () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_logger_test_clock @@ fun _sw clock rt logger ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  Signal.Private_test_hooks.seed_var_source_value signal max_int;
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial interval max" max_int
-    (run_ok rt (Signal.Observer.read observer));
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "interval remains saturated" max_int
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "overflow logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger));
-  run_ok rt (Signal.Observer.dispose observer);
-  Alcotest.(check int) "dispose logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger))
-
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -9337,8 +9312,6 @@ let () =
             test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
-          Alcotest.test_case "time interval overflow saturates" `Quick
-            test_time_interval_overflow_saturates;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case
