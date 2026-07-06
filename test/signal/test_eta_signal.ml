@@ -7499,64 +7499,6 @@ let test_stream_bridge_closes_on_observer_dispose () =
   | [ Signal.Initialized 1 ] -> ()
   | _ -> Alcotest.fail "expected stream to drain buffered update and close"
 
-let test_stream_bridge_take_does_not_dispose_observer () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream = run_ok rt (Signal.Stream.observe signal) in
-  run_ok rt Signal.stabilize;
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected initialized stream update");
-  Alcotest.(check int) "observer remains alive after take" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer still updates after take" 2
-    (run_ok rt (Signal.Observer.read observer));
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
-   | _ -> Alcotest.fail "expected changed stream update after take");
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_stream_bridge_multiple_bridges_dispose_independently () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let first_observer, first_stream = run_ok rt (Signal.Stream.observe signal) in
-  let second_observer, second_stream = run_ok rt (Signal.Stream.observe signal) in
-  run_ok rt Signal.stabilize;
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 first_stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected first bridge initialization");
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 second_stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected second bridge initialization");
-  run_ok rt (Signal.Observer.dispose first_observer);
-  (match run_ok rt (Eta_stream.run_collect first_stream) with
-   | [] -> ()
-   | _ -> Alcotest.fail "expected first bridge to close");
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "second observer remains alive" 2
-    (run_ok rt (Signal.Observer.read second_observer));
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 second_stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Changed { old_value = 1; new_value = 2 } ] -> ()
-   | _ -> Alcotest.fail "expected second bridge changed update");
-  run_ok rt (Signal.Observer.dispose second_observer)
-
 let test_stream_bridge_invalidated_scope_fails_stream () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8429,10 +8371,6 @@ let () =
             `Quick test_stream_bridge_rejects_cross_domain_consumer;
           Alcotest.test_case "stream bridge closes on dispose" `Quick
             test_stream_bridge_closes_on_observer_dispose;
-          Alcotest.test_case "stream bridge take keeps observer" `Quick
-            test_stream_bridge_take_does_not_dispose_observer;
-          Alcotest.test_case "stream bridge multiple bridges dispose separately"
-            `Quick test_stream_bridge_multiple_bridges_dispose_independently;
           Alcotest.test_case "stream bridge invalidated scope fails stream"
             `Quick test_stream_bridge_invalidated_scope_fails_stream;
           Alcotest.test_case

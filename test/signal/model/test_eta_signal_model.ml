@@ -2622,10 +2622,16 @@ let generate_stream_model_ops ~seed ~slot_count ~steps =
   List.init slot_count (fun slot -> Stream_observe slot)
   @ [
       Stream_stabilize;
+      Stream_take 0;
+      Stream_take 1;
       Stream_set 3;
       Stream_stabilize;
+      Stream_take 0;
+      Stream_dispose 0;
       Stream_set 4;
       Stream_stabilize;
+      Stream_take 1;
+      Stream_take 1;
     ]
   @ loop 1 []
 
