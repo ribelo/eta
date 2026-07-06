@@ -9,12 +9,13 @@ val dynamic_dependencies :
   pack_inner:('inner -> 'dependency) ->
   ('inner, 'dependency) dynamic_dependencies
 
-type ('source, 'inner, 'dependency) dynamic_source_plan
+type ('capability, 'source, 'inner, 'dependency) dynamic_source_plan
 
 val dynamic_source_plan :
   equal:('source -> 'source -> bool) ->
+  compute_source:('capability -> 'source * bool) ->
   dependencies:('inner, 'dependency) dynamic_dependencies ->
-  ('source, 'inner, 'dependency) dynamic_source_plan
+  ('capability, 'source, 'inner, 'dependency) dynamic_source_plan
 
 type ('capability, 'inner, 'scope) dynamic_scope_plan
 
@@ -73,7 +74,7 @@ val dynamic_staging_context :
   dynamic_staging_context
 
 val dynamic_context :
-  source:('source, 'inner, 'dependency) dynamic_source_plan ->
+  source:('capability, 'source, 'inner, 'dependency) dynamic_source_plan ->
   scope:('capability, 'inner, 'scope) dynamic_scope_plan ->
   inner:
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
@@ -105,8 +106,6 @@ val run_dynamic :
   dynamic_context ->
   'capability ->
   ('source, 'inner, 'scope) snapshot ->
-  source_value:'source ->
-  source_changed:bool ->
   ('value * bool, 'error) result
 
 val stage_transaction_switch :

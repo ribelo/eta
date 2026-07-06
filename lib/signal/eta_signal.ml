@@ -1527,8 +1527,7 @@ module Make (Observer_error : Observer_error) () = struct
         in
         finish_static (Graph_algorithms.Static_eval.all children)
     | Bind bind ->
-        let source_value, source_changed = compute lane staging bind.source in
-        compute_bind_dynamic lane staging signal bind source_value source_changed
+        compute_bind_dynamic lane staging signal bind
 
   and compute_bind_dynamic :
       type source value.
@@ -1536,10 +1535,8 @@ module Make (Observer_error : Observer_error) () = struct
       Graph.staging ->
       value signal ->
       (source, value) bind ->
-      source ->
-      bool ->
       value * bool =
-   fun lane staging signal bind source_value source_changed ->
+   fun lane staging signal bind ->
     let initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in
@@ -1565,6 +1562,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let source =
       Bind.dynamic_source_plan ~equal:bind.source.equal
+        ~compute_source:(fun lane -> compute lane staging bind.source)
         ~dependencies:
           (Bind.dynamic_dependencies ~source:(P bind.source)
              ~pack_inner:(fun inner -> P inner))
@@ -1591,7 +1589,6 @@ module Make (Observer_error : Observer_error) () = struct
     in
     match
       Bind.run_dynamic context lane (bind_effective_snapshot bind)
-        ~source_value ~source_changed
     with
     | Error `Invalid_scope -> raise (Graph_error `Invalid_scope)
     | Ok result -> result

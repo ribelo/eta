@@ -12,13 +12,18 @@ type ('inner, 'dependency) dynamic_dependencies = {
 let dynamic_dependencies ~source ~pack_inner =
   { dependency_source = source; dependency_pack_inner = pack_inner }
 
-type ('source, 'inner, 'dependency) dynamic_source_plan = {
+type ('capability, 'source, 'inner, 'dependency) dynamic_source_plan = {
   source_equal : 'source -> 'source -> bool;
+  source_compute : 'capability -> 'source * bool;
   source_dependencies : ('inner, 'dependency) dynamic_dependencies;
 }
 
-let dynamic_source_plan ~equal ~dependencies =
-  { source_equal = equal; source_dependencies = dependencies }
+let dynamic_source_plan ~equal ~compute_source ~dependencies =
+  {
+    source_equal = equal;
+    source_compute = compute_source;
+    source_dependencies = dependencies;
+  }
 
 type ('capability, 'inner, 'scope) dynamic_scope_plan = {
   scope_new : 'capability -> 'scope;
@@ -97,7 +102,8 @@ type ('capability, 'dependency) dynamic_reuse_plan = {
 
 type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
      dynamic_eval_context = {
-  eval_source : ('source, 'inner, 'dependency) dynamic_source_plan;
+  eval_source :
+    ('capability, 'source, 'inner, 'dependency) dynamic_source_plan;
   eval_scope :
     ('capability, 'source, 'inner, 'scope, 'value, 'error)
     dynamic_scope_context;
@@ -275,8 +281,9 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
                  dynamic_reuse_value = reuse_value;
                }))
 
-let plan_dynamic eval_context capability snapshot ~source_value ~source_changed =
+let plan_dynamic eval_context capability snapshot =
   let source = eval_context.eval_source in
+  let source_value, source_changed = source.source_compute capability in
   plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
     ~source_value ~dependencies:source.source_dependencies
     ~source_changed ~scope:eval_context.eval_scope
@@ -331,10 +338,9 @@ let apply_dynamic_plan context plan =
       publish_computed_value ~value_context ~staging_context
         dynamic_reuse_value changed
 
-let run_dynamic context capability snapshot ~source_value ~source_changed =
+let run_dynamic context capability snapshot =
   match
-    plan_dynamic context.dynamic_eval capability snapshot ~source_value
-      ~source_changed
+    plan_dynamic context.dynamic_eval capability snapshot
   with
   | Error _ as error -> error
   | Ok plan -> Ok (apply_dynamic_plan context.dynamic_apply plan)

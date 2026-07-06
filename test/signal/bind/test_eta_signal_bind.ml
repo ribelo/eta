@@ -242,8 +242,10 @@ let dynamic_common_callbacks ?(inner_changed = false)
 
 let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
     ?(dirty = false) ?(initialized = true) ?(current = Some (-1))
-    ?validate_inner_override ?on_switch_failure_override events =
-  let with_scope, validate_inner, compute_inner, dependencies_changed =
+    ?(source_value = 3) ?(source_changed = false) ?selector_override
+    ?validate_inner_override ?compute_inner_override
+    ?on_switch_failure_override events =
+  let with_scope, validate_inner, default_compute_inner, dependencies_changed =
     dynamic_common_callbacks ~inner_changed ~dependencies_changed events
   in
   let scope_plan =
@@ -265,9 +267,13 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   in
   let inner_plan =
     Bind.dynamic_inner_plan
-      ~selector:(fun source ->
-        events := !events @ [ "select:" ^ string_of_int source ];
-        source + 1)
+      ~selector:
+        (match selector_override with
+        | Some selector -> selector
+        | None ->
+            fun source ->
+              events := !events @ [ "select:" ^ string_of_int source ];
+              source + 1)
       ~validate_inner:
         (match validate_inner_override with
         | Some validate_inner -> validate_inner
@@ -275,9 +281,13 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
             fun cap scope inner ->
               check_cap cap;
               validate_inner scope inner)
-      ~compute_inner:(fun cap inner ->
-        check_cap cap;
-        compute_inner inner)
+      ~compute_inner:
+        (match compute_inner_override with
+        | Some compute_inner -> compute_inner
+        | None ->
+            fun cap inner ->
+              check_cap cap;
+              default_compute_inner inner)
   in
   let reuse =
     Bind.dynamic_reuse_plan ~dirty ~initialized:(fun () -> initialized)
@@ -287,6 +297,11 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   in
   let source =
     Bind.dynamic_source_plan ~equal:Int.equal
+      ~compute_source:(fun cap ->
+        check_cap cap;
+        events :=
+          !events @ [ "compute_source:" ^ string_of_int source_value ];
+        (source_value, source_changed))
       ~dependencies:
         (Bind.dynamic_dependencies ~source:100
            ~pack_inner:(fun inner -> inner + 1000))
@@ -326,10 +341,9 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   Bind.dynamic_context ~source ~scope:scope_plan ~inner:inner_plan ~reuse
     ~value ~staging
 
-let run_dynamic context snapshot ~source_value ~source_changed =
+let run_dynamic context snapshot =
   match
-    Bind.run_dynamic context capability snapshot ~source_value
-      ~source_changed
+    Bind.run_dynamic context capability snapshot
   with
   | Ok result -> result
   | Error `Invalid_scope -> Alcotest.fail "expected valid dynamic bind"
@@ -338,10 +352,11 @@ let test_run_dynamic_switch_owns_eval_and_apply_order () =
   let events = ref [] in
   let context = dynamic_contexts events in
   Alcotest.(check (pair int bool)) "result" (40, true)
-    (run_dynamic context Bind.empty ~source_value:3 ~source_changed:true);
+    (run_dynamic context Bind.empty);
   Alcotest.(check (list string))
     "events"
     [
+      "compute_source:3";
       "new_scope";
       "scope:7";
       "select:3";
@@ -362,27 +377,28 @@ let test_run_dynamic_reuse_paths () =
   let missing_current = dynamic_contexts ~current:None events in
   Alcotest.(check (pair int bool))
     "cached result" (-1, false)
-    (run_dynamic cached snapshot ~source_value:3 ~source_changed:false);
+    (run_dynamic cached snapshot);
   Alcotest.(check (pair int bool))
     "recomputed result" (40, true)
-    (run_dynamic recomputed snapshot ~source_value:3 ~source_changed:false);
+    (run_dynamic recomputed snapshot);
   Alcotest.check_raises "cached missing current"
     (Invalid_argument "missing current")
     (fun () ->
-      ignore
-        (run_dynamic missing_current snapshot ~source_value:3
-           ~source_changed:false));
+      ignore (run_dynamic missing_current snapshot));
   Alcotest.(check (list string))
     "events"
     [
+      "compute_source:3";
       "compute:4";
       "dependencies:100,1004";
       "cached";
+      "compute_source:3";
       "compute:4";
       "dependencies:100,1004";
       "bump";
       "stage_dependencies:100,1004";
       "stage_value:40";
+      "compute_source:3";
       "compute:4";
       "dependencies:100,1004";
       "cached";
@@ -394,10 +410,11 @@ let test_run_dynamic_dirty_reuse_recomputes_with_cutoff () =
   let snapshot = Bind.switch ~source_value:3 ~inner:4 ~scope:7 in
   let context = dynamic_contexts ~dirty:true ~current:(Some 40) events in
   Alcotest.(check (pair int bool)) "result" (40, false)
-    (run_dynamic context snapshot ~source_value:3 ~source_changed:false);
+    (run_dynamic context snapshot);
   Alcotest.(check (list string))
     "events"
     [
+      "compute_source:3";
       "compute:4";
       "bump";
       "stage_dependencies:100,1004";
@@ -405,10 +422,69 @@ let test_run_dynamic_dirty_reuse_recomputes_with_cutoff () =
     ]
     !events
 
-let test_run_dynamic_validation_failure_runs_cleanup () =
+type dynamic_switch_failure =
+  | Selector_defect
+  | Validation_error
+  | Validation_defect
+  | Compute_defect
+
+exception Dynamic_switch_failure of string
+
+let dynamic_switch_failure_name = function
+  | Selector_defect -> "selector defect"
+  | Validation_error -> "validation error"
+  | Validation_defect -> "validation defect"
+  | Compute_defect -> "compute defect"
+
+let dynamic_switch_failure_defect = function
+  | Selector_defect -> "selector"
+  | Validation_defect -> "validation"
+  | Compute_defect -> "compute"
+  | Validation_error -> invalid_arg "validation error has no defect"
+
+let dynamic_switch_failure_cases =
+  [
+    Selector_defect;
+    Validation_error;
+    Validation_defect;
+    Compute_defect;
+  ]
+
+let expected_dynamic_switch_failure_events = function
+  | Selector_defect ->
+      [ "compute_source:3"; "new_scope"; "scope:7"; "select:3"; "cleanup:7" ]
+  | Validation_error | Validation_defect ->
+      [
+        "compute_source:3";
+        "new_scope";
+        "scope:7";
+        "select:3";
+        "validate:7:4";
+        "cleanup:7";
+      ]
+  | Compute_defect ->
+      [
+        "compute_source:3";
+        "new_scope";
+        "scope:7";
+        "select:3";
+        "validate:7:4";
+        "compute:4";
+        "cleanup:7";
+      ]
+
+let check_dynamic_switch_failure_runs_cleanup failure =
   let events = ref [] in
+  let label = dynamic_switch_failure_name failure in
+  let defect slot = Dynamic_switch_failure slot in
   let context =
     dynamic_contexts events
+      ~selector_override:(fun source ->
+        events := !events @ [ "select:" ^ string_of_int source ];
+        match failure with
+        | Selector_defect -> raise (defect "selector")
+        | Validation_error | Validation_defect | Compute_defect ->
+            source + 1)
       ~validate_inner_override:(fun cap scope inner ->
         check_cap cap;
         events :=
@@ -417,27 +493,41 @@ let test_run_dynamic_validation_failure_runs_cleanup () =
               "validate:"
               ^ String.concat ":" (List.map string_of_int [ scope; inner ]);
             ];
-        Error `Invalid_scope)
+        match failure with
+        | Validation_error -> Error `Invalid_scope
+        | Validation_defect -> raise (defect "validation")
+        | Selector_defect | Compute_defect -> Ok ())
+      ~compute_inner_override:(fun cap inner ->
+        check_cap cap;
+        events := !events @ [ "compute:" ^ string_of_int inner ];
+        match failure with
+        | Compute_defect -> raise (defect "compute")
+        | Selector_defect | Validation_error | Validation_defect ->
+            (inner * 10, false))
       ~on_switch_failure_override:(fun cap scope ->
         check_cap cap;
         events := !events @ [ "cleanup:" ^ string_of_int scope ])
   in
-  (match
-     Bind.run_dynamic context capability Bind.empty
-       ~source_value:3 ~source_changed:true
-   with
-  | Error `Invalid_scope -> ()
-  | Ok _ -> Alcotest.fail "expected invalid scope");
+  (match failure with
+  | Validation_error -> (
+      match
+        Bind.run_dynamic context capability Bind.empty
+      with
+      | Error `Invalid_scope -> ()
+      | Ok _ -> Alcotest.failf "%s: expected invalid scope" label)
+  | Selector_defect | Validation_defect | Compute_defect ->
+      Alcotest.check_raises label
+        (defect (dynamic_switch_failure_defect failure))
+        (fun () ->
+          ignore (Bind.run_dynamic context capability Bind.empty)));
   Alcotest.(check (list string))
-    "events"
-    [
-      "new_scope";
-      "scope:7";
-      "select:3";
-      "validate:7:4";
-      "cleanup:7";
-    ]
+    (label ^ ": events")
+    (expected_dynamic_switch_failure_events failure)
     !events
+
+let test_generated_dynamic_switch_failures_run_cleanup () =
+  List.iter check_dynamic_switch_failure_runs_cleanup
+    dynamic_switch_failure_cases
 
 let () =
   Alcotest.run "eta_signal_bind"
@@ -471,7 +561,7 @@ let () =
             test_run_dynamic_reuse_paths;
           Alcotest.test_case "run dynamic dirty reuse" `Quick
             test_run_dynamic_dirty_reuse_recomputes_with_cutoff;
-          Alcotest.test_case "run dynamic validation failure" `Quick
-            test_run_dynamic_validation_failure_runs_cleanup;
+          Alcotest.test_case "generated dynamic switch failures" `Quick
+            test_generated_dynamic_switch_failures_run_cleanup;
         ] );
     ]
