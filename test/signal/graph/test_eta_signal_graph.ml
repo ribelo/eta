@@ -163,15 +163,33 @@ let run_effect label eff =
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error _ -> Alcotest.fail (label ^ " failed")
 
+let noop_bind_commit_plan () =
+  Graph.staging_bind_commit_plan
+    ~commit:(fun _staging _bind ->
+      Graph.staged_bind_commit
+        ~switch:
+          (Bind.staged_switch ~owner:(Some ())
+             ~current:(Bind.empty : (unit, unit, unit) Bind.snapshot)
+             ~staged:None)
+        ~lifecycle:
+          (Bind.staged_switch_lifecycle
+             ~detach_old_inner:(fun () () -> ())
+             ~invalidate_scope:(fun () -> [])
+             ~attach_new_inner:(fun () () -> ())))
+
 let staging_commit_plan ?(preflight = fun _staging -> ())
-    ?(commit_bind = fun _staging _bind -> [])
+    ?binds
     ?(prepare_signal = fun _staging _node -> ())
     ?(commit_timer_refresh = fun _timer -> ())
     ?(commit_signal = fun _node -> ()) () =
+  let binds =
+    match binds with
+    | Some binds -> binds
+    | None -> noop_bind_commit_plan ()
+  in
   Graph.staging_commit_plan ~preflight
-    ~binds:(Graph.staging_bind_commit_plan ~commit:commit_bind)
-    ~signals:
-      (Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
+    ~binds
+    ~signals:(Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
     ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
 
 let staging_reset_context
@@ -755,7 +773,6 @@ let test_computed_nodes_are_staging_scoped () =
             Graph.iter_computed graph context callback_staging ~f:(fun node ->
                 record events
                   ("preflight:" ^ string_of_int node.compute_id)))
-          ~commit_bind:(fun _staging _bind -> [])
           ~prepare_signal:(fun _staging node ->
             record events ("prepare:" ^ string_of_int node.compute_id))
           ~commit_timer_refresh:(fun _timer -> ())
@@ -877,14 +894,30 @@ let test_stage_bind_switch_owns_transaction_staging () =
           if not (actual == staging) then
             Alcotest.failf "%s received stale staging token" label
         in
+        let bind_commit =
+          Graph.staging_bind_commit_plan
+            ~commit:(fun callback_staging bind ->
+              check_staging "commit_bind" callback_staging;
+              record events ("commit_bind:" ^ bind);
+              Alcotest.(check string) "bind" "bind" bind;
+              Graph.staged_bind_commit
+                ~switch:
+                  (Bind.staged_switch ~owner:(Some "owner")
+                     ~current:(Transaction.current staged)
+                     ~staged:
+                       (Graph.staged_value graph context staging staged))
+                ~lifecycle:
+                  (Bind.staged_switch_lifecycle
+                     ~detach_old_inner:(fun _owner _inner -> ())
+                     ~invalidate_scope:(fun _scope -> [])
+                     ~attach_new_inner:(fun _owner _inner -> ()))
+            )
+        in
         staging_commit_plan
           ~preflight:(fun callback_staging ->
             check_staging "preflight" callback_staging;
             record events "preflight")
-          ~commit_bind:(fun callback_staging bind ->
-            check_staging "commit_bind" callback_staging;
-            record events ("commit_bind:" ^ bind);
-            [])
+          ~binds:bind_commit
           ~prepare_signal:(fun callback_staging _node ->
             check_staging "prepare_signal" callback_staging)
           ~commit_timer_refresh:(fun _timer -> ())
@@ -1004,7 +1037,6 @@ let test_stabilization_observer_plan_uses_collection_order () =
         check_cap cap;
         staging_commit_plan
           ~preflight:(fun _staging -> record events "preflight")
-          ~commit_bind:(fun _staging _bind -> [])
           ~prepare_signal:(fun _staging _node -> ())
           ~commit_timer_refresh:(fun _timer -> ())
           ~commit_signal:(fun _node -> ())
@@ -1199,60 +1231,76 @@ let test_timer_refresh_token_owned_by_graph () =
 
 let test_staged_bind_switch_protocol_maps_graph_errors () =
   let events = ref [] in
-  let current = Bind.switch ~source_value:0 ~inner:10 ~scope:1 in
-  let staged = Bind.switch ~source_value:1 ~inner:20 ~scope:2 in
-  let switch =
-    Bind.staged_switch ~owner:(Some 99) ~current ~staged:(Some staged)
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
   in
-  let commit_lifecycle =
-    Bind.staged_switch_lifecycle
-      ~detach_old_inner:(fun owner inner ->
-        record events
-          ("detach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
-      ~invalidate_scope:(fun scope ->
-        record events ("invalidate:" ^ string_of_int scope);
-        [ "hook:" ^ string_of_int scope ])
-      ~attach_new_inner:(fun owner inner ->
-        record events
-          ("attach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+  let staged =
+    Transaction.create_staged
+      (Bind.switch ~source_value:0 ~inner:10 ~scope:1)
   in
-  let hooks =
-    match
-      Graph.commit_staged_bind_switch switch commit_lifecycle
-    with
-    | Ok hooks -> hooks
-    | Error err ->
-        Alcotest.failf "unexpected graph error: %s"
-          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  let stage_bind context staging _pending =
+    Graph.stage_bind_switch graph context staging "bind" staged
+      ~source_value:1 ~inner:20 ~scope:2
   in
-  Alcotest.(check (list string))
-    "commit events"
-    [ "detach:99:10"; "invalidate:1"; "attach:99:20" ]
-    !events;
-  Alcotest.(check (list string)) "commit hooks" [ "hook:1" ] hooks;
-  let rollback_lifecycle =
-    Bind.staged_switch_lifecycle
-      ~detach_old_inner:(fun _ _ ->
-        Alcotest.fail "rollback should not detach")
-      ~invalidate_scope:(fun scope ->
-        record events ("rollback:" ^ string_of_int scope);
-        [ "rollback-hook:" ^ string_of_int scope ])
-      ~attach_new_inner:(fun _ _ ->
-        Alcotest.fail "rollback should not attach")
+  let pure =
+    stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~stage_pending:stage_bind
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
+      ~staging:(fun context staging ->
+        let bind_commit =
+          Graph.staging_bind_commit_plan
+            ~commit:(fun callback_staging bind ->
+              if not (callback_staging == staging) then
+                Alcotest.fail "commit received stale staging token";
+              record events ("switch:" ^ bind);
+              Graph.staged_bind_commit
+                ~switch:
+                  (Bind.staged_switch ~owner:None
+                     ~current:(Transaction.current staged)
+                     ~staged:
+                       (Graph.staged_value graph context callback_staging
+                          staged))
+                ~lifecycle:
+                  (Bind.staged_switch_lifecycle
+                     ~detach_old_inner:(fun _owner _inner ->
+                       Alcotest.fail "missing owner should not detach")
+                     ~invalidate_scope:(fun _scope ->
+                       Alcotest.fail "missing owner should not invalidate")
+                     ~attach_new_inner:(fun _owner _inner ->
+                       Alcotest.fail "missing owner should not attach"))
+            )
+        in
+        staging_commit_plan ~binds:bind_commit ())
+      ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
   in
-  let rollback_hooks =
-    match
-      Graph.rollback_staged_bind_switch ~staged:(Some staged)
-        rollback_lifecycle
-    with
-    | Ok hooks -> hooks
-    | Error err ->
-        Alcotest.failf "unexpected graph error: %s"
-          (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context _staging -> staging_reset_context ())
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
   in
-  Alcotest.(check (list string))
-    "rollback hooks" [ "rollback-hook:2" ] rollback_hooks;
-  ()
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "expected invalid scope")
+    ~graph_error:(fun ~hooks:_ -> function
+      | `Invalid_scope -> ()
+      | err ->
+          Alcotest.failf "expected invalid scope, got %s"
+            (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+               err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Alcotest.(check (list string)) "events" [ "switch:bind" ] !events
 
 let () =
   Alcotest.run "eta_signal_graph"

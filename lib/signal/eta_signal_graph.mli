@@ -319,11 +319,6 @@ val stage_bind_switch :
   scope:'scope ->
   unit
 
-val commit_staged_bind_switch :
-  ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
-  ('owner, 'inner, 'scope, 'hook) Eta_signal_bind.staged_switch_lifecycle ->
-  ('hook list, Eta_signal_error.graph_error) result
-
 val rollback_staged_bind_switch :
   staged:
     ('source, 'inner, 'scope) Eta_signal_bind.snapshot option ->
@@ -368,10 +363,20 @@ val staging_reset_context :
   clear_timer_refresh_timer:('timer -> unit) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
+type 'hook staged_bind_commit
+
+val staged_bind_commit :
+  switch:
+    ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
+  lifecycle:
+    ('owner, 'inner, 'scope, 'hook)
+    Eta_signal_bind.staged_switch_lifecycle ->
+  'hook staged_bind_commit
+
 type ('bind, 'hook) staging_bind_commit_plan
 
 val staging_bind_commit_plan :
-  commit:(staging -> 'bind -> 'hook list) ->
+  commit:(staging -> 'bind -> 'hook staged_bind_commit) ->
   ('bind, 'hook) staging_bind_commit_plan
 
 type 'node staging_signal_commit_plan

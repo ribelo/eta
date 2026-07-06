@@ -1171,14 +1171,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~invalidate_scope:(invalidate_scope lane)
       ~attach_new_inner:(attach_dependency lane)
 
-  let commit_bind lane staging (B bind) =
-    match
-      Graph.commit_staged_bind_switch (bind_staged_switch lane staging bind)
-        (bind_switch_lifecycle lane)
-    with
-    | Ok hooks -> hooks
-    | Error err -> raise (Graph_error err)
-
   let rollback_bind lane staging (B bind) =
     match
       Graph.rollback_staged_bind_switch
@@ -1351,7 +1343,12 @@ module Make (Observer_error : Observer_error) () = struct
   let staging_commit_plan lane _staging =
     Graph.staging_commit_plan
       ~preflight:(preflight_commit_staging lane)
-      ~binds:(Graph.staging_bind_commit_plan ~commit:(commit_bind lane))
+      ~binds:
+        (Graph.staging_bind_commit_plan
+           ~commit:(fun staging (B bind) ->
+             Graph.staged_bind_commit
+               ~switch:(bind_staged_switch lane staging bind)
+               ~lifecycle:(bind_switch_lifecycle lane)))
       ~signals:
         (Graph.staging_signal_commit_plan
            ~prepare_signal:(prepare_signal_commit lane)

@@ -569,11 +569,31 @@ let reset_staging t _lane staging context =
   in
   Eta_signal_graph_state.reset_staging t.state staging state_context
 
+type 'hook staged_bind_commit =
+  | Staged_bind_commit : {
+      staged_bind_switch :
+        ('source, 'inner, 'scope, 'owner)
+        Eta_signal_bind.staged_switch;
+      staged_bind_lifecycle :
+        ('owner, 'inner, 'scope, 'hook)
+        Eta_signal_bind.staged_switch_lifecycle;
+    }
+      -> 'hook staged_bind_commit
+
+let staged_bind_commit ~switch ~lifecycle =
+  Staged_bind_commit
+    { staged_bind_switch = switch; staged_bind_lifecycle = lifecycle }
+
 type ('bind, 'hook) staging_bind_commit_plan = {
-  staging_bind_commit : staging -> 'bind -> 'hook list;
+  staging_bind_commit : staging -> 'bind -> 'hook staged_bind_commit;
 }
 
 let staging_bind_commit_plan ~commit = { staging_bind_commit = commit }
+
+let commit_staging_bind staging bind context =
+  match context.staging_bind_commit staging bind with
+  | Staged_bind_commit { staged_bind_switch; staged_bind_lifecycle } ->
+      commit_staged_bind_switch staged_bind_switch staged_bind_lifecycle
 
 type 'node staging_signal_commit_plan = {
   staging_signal_prepare : staging -> 'node -> unit;
@@ -614,8 +634,12 @@ let commit_staging t _lane staging context =
       ~preflight:(fun () -> context.staging_commit_preflight staging)
       ~binds:
         (Eta_signal_graph_state.bind_commit_plan
-           ~commit:
-             (context.staging_commit_binds.staging_bind_commit staging))
+           ~commit:(fun bind ->
+             match
+               commit_staging_bind staging bind context.staging_commit_binds
+             with
+             | Ok hooks -> hooks
+             | Error err -> raise (Commit_error err)))
       ~signals:
         (Eta_signal_graph_state.signal_commit_plan
            ~prepare_signal:
