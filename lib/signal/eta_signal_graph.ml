@@ -1065,15 +1065,24 @@ type
       staging ->
       ('bind, 'hook, 'timer, 'refresh) staging_reset_context;
     mark_observers_failed_without_current :
-      lane_access -> 'observer list -> unit;
+      lane_access -> 'observer list -> stabilization_observer_failure_mark;
     requeue_pending : lane_access -> 'pending list -> stabilization_pending_requeue;
   }
 
 and stabilization_pending_requeue =
   | Stabilization_pending_requeue of { requeue_pending : unit -> unit }
 
+and stabilization_observer_failure_mark =
+  | Stabilization_observer_failure_mark of {
+      mark_observers_failed_without_current : unit -> unit;
+    }
+
 let stabilization_pending_requeue ~requeue =
   Stabilization_pending_requeue { requeue_pending = requeue }
+
+let stabilization_observer_failure_mark ~mark =
+  Stabilization_observer_failure_mark
+    { mark_observers_failed_without_current = mark }
 
 let stabilization_rollback_ops ~staging
     ~mark_observers_failed_without_current ~requeue_pending =
@@ -1087,6 +1096,12 @@ let run_stabilization_pending_requeue lane pending plan =
   match plan lane pending with
   | Stabilization_pending_requeue { requeue_pending } ->
       requeue_pending ()
+
+let run_stabilization_observer_failure_mark lane observers plan =
+  match plan lane observers with
+  | Stabilization_observer_failure_mark
+      { mark_observers_failed_without_current } ->
+      mark_observers_failed_without_current ()
 
 type
   ( 'pending,
@@ -1208,9 +1223,9 @@ let pass_rollback t rollback =
     Eta_signal_stabilization_pass.rollback_observer_plan
       ~mark_observers_failed_without_current:
       (fun context observers ->
-        rollback.mark_observers_failed_without_current
+        run_stabilization_observer_failure_mark
           (Eta_signal_stabilization_pass.rollback_capability context)
-          observers)
+          observers rollback.mark_observers_failed_without_current)
   in
   let pending =
     Eta_signal_stabilization_pass.rollback_pending_plan

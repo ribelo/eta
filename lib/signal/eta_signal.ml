@@ -1933,7 +1933,8 @@ module Make (Observer_error : Observer_error) () = struct
         ~staging:staging_reset_context
         ~mark_observers_failed_without_current:
           (fun lane observers ->
-            List.iter (mark_failed_without_current lane) observers)
+            Graph.stabilization_observer_failure_mark ~mark:(fun () ->
+                List.iter (mark_failed_without_current lane) observers))
         ~requeue_pending:(fun lane pending ->
           Graph.stabilization_pending_requeue ~requeue:(fun () ->
               List.iter (requeue_if_needed lane) pending))

@@ -279,7 +279,8 @@ let empty_stabilization_ops graph =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -314,7 +315,8 @@ let test_pending_actions_run_in_graph_order () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -375,7 +377,8 @@ let test_pending_requeue_runs_as_rollback_action () =
       ~staging:(fun _context _staging ->
         record events "rollback_staging";
         staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () ->
             List.iter
@@ -415,6 +418,73 @@ let create_observer ?(active = true) id =
               ~delivery:Observer.Delivery.Observer_never_delivered;
         };
   }
+
+let test_observer_failure_mark_runs_as_rollback_action () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let first = create_observer 1 in
+  let inactive = create_observer ~active:false 0 in
+  let second = create_observer 2 in
+  let observer_delivery _context _staging =
+    let selection =
+      Observer.delivery_selection_plan
+        ~active:(fun observer -> observer.active)
+        ~compare:(fun left right -> Int.compare left.id right.id)
+    in
+    Observer.delivery_collection ~selection
+      ~events:
+        (Observer.delivery_event_plan
+           ~collect_event:(fun _context _observer -> None)
+           ~mark_pending:(fun _context _events -> ()))
+  in
+  let pure =
+    stabilization_pure_ops ~observer_delivery
+      ~staging:(fun _context _staging ->
+        staging_commit_plan
+          ~preflight:(fun _staging ->
+            record events "preflight";
+            failwith "commit failed")
+          ())
+      ()
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context _staging ->
+        record events "rollback_staging";
+        staging_reset_context ())
+      ~mark_observers_failed_without_current:(fun _context observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () ->
+            List.iter
+              (fun observer ->
+                record events ("mark:" ^ string_of_int observer.id))
+              observers))
+      ~requeue_pending:(fun _context _pending ->
+        Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
+  in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.add_observer graph lane second;
+        Graph.add_observer graph lane inactive;
+        Graph.add_observer graph lane first;
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.fail "expected commit failure")
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ _exn _backtrace -> ());
+  Alcotest.(check (list string))
+    "events"
+    [ "preflight"; "rollback_staging"; "mark:1"; "mark:2" ]
+    !events
 
 let test_observer_registry_traversal_uses_lane () =
   let graph =
@@ -937,7 +1007,8 @@ let test_computed_nodes_are_staging_scoped () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1025,7 +1096,8 @@ let test_signal_commit_discards_invalid_staging () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1164,7 +1236,8 @@ let test_stage_bind_switch_owns_transaction_staging () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1250,7 +1323,8 @@ let test_staged_bind_rollback_owns_protocol () =
                    ~attach_new_inner:(fun _owner _inner ->
                      Alcotest.fail "rollback should not attach new inner")))
           ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1367,7 +1441,8 @@ let test_stabilization_observer_plan_uses_collection_order () =
         check_cap cap;
         staging_reset_context ())
       ~mark_observers_failed_without_current:(fun cap _observers ->
-        check_cap cap)
+        Graph.stabilization_observer_failure_mark ~mark:(fun () ->
+            check_cap cap))
       ~requeue_pending:(fun cap _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () ->
             check_cap cap))
@@ -1603,7 +1678,8 @@ let test_timer_refresh_commit_plan_owns_staging () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1704,7 +1780,8 @@ let test_timer_refresh_reset_plan_owns_staging () =
                 Alcotest.(check int) "staged token" 7 !timer;
                 timer := -1;
                 record events "clear_timer")))
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1789,7 +1866,8 @@ let test_staged_bind_switch_protocol_maps_graph_errors () =
   let rollback =
     Graph.stabilization_rollback_ops
       ~staging:(fun _context _staging -> staging_reset_context ())
-      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~mark_observers_failed_without_current:(fun _context _observers ->
+        Graph.stabilization_observer_failure_mark ~mark:(fun () -> ()))
       ~requeue_pending:(fun _context _pending ->
         Graph.stabilization_pending_requeue ~requeue:(fun () -> ()))
   in
@@ -1855,6 +1933,8 @@ let () =
             test_observer_registry_traversal_uses_lane;
           Alcotest.test_case "sorted collection" `Quick
             test_stabilization_observer_plan_uses_collection_order;
+          Alcotest.test_case "failure mark action" `Quick
+            test_observer_failure_mark_runs_as_rollback_action;
         ] );
       ( "timer demand",
         [
