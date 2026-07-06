@@ -97,13 +97,31 @@ val pure_ops :
 
 type ('capability, 'pending, 'observer, 'hook, 'staging) rollback
 
-val rollback_ops :
+type ('capability, 'hook, 'staging) rollback_staging_plan
+
+val rollback_staging_plan :
   rollback_staging:
     ('capability rollback_context -> 'staging -> 'hook list) ->
+  ('capability, 'hook, 'staging) rollback_staging_plan
+
+type ('capability, 'observer) rollback_observer_plan
+
+val rollback_observer_plan :
   mark_observers_failed_without_current:
     ('capability rollback_context -> 'observer list -> unit) ->
+  ('capability, 'observer) rollback_observer_plan
+
+type ('capability, 'pending) rollback_pending_plan
+
+val rollback_pending_plan :
   requeue_pending:
     ('capability rollback_context -> 'pending list -> unit) ->
+  ('capability, 'pending) rollback_pending_plan
+
+val rollback_ops :
+  staging:('capability, 'hook, 'staging) rollback_staging_plan ->
+  observers:('capability, 'observer) rollback_observer_plan ->
+  pending:('capability, 'pending) rollback_pending_plan ->
   ('capability, 'pending, 'observer, 'hook, 'staging) rollback
 
 type 'capability timer_refresh

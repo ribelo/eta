@@ -257,22 +257,32 @@ let ops ?(stage_pending = fun _ -> ())
   let pure =
     Pass.pure_ops ~generation ~staging ~pending ~observers ~commit
   in
-  let rollback =
-    Pass.rollback_ops
+  let rollback_staging =
+    Pass.rollback_staging_plan
       ~rollback_staging:(fun context staging ->
         check_rollback_context context;
         check_staging staging;
         record events "rollback_staging";
         S.rollback_transaction state;
         [ "rollback-hook" ])
+  in
+  let rollback_observers =
+    Pass.rollback_observer_plan
       ~mark_observers_failed_without_current:(fun context observers ->
         check_rollback_context context;
         record events
           ("mark_observers_failed_without_current:" ^ String.concat ","
              observers))
+  in
+  let rollback_pending =
+    Pass.rollback_pending_plan
       ~requeue_pending:(fun context pending ->
         check_rollback_context context;
         record events ("requeue_pending:" ^ String.concat "," pending))
+  in
+  let rollback =
+    Pass.rollback_ops ~staging:rollback_staging
+      ~observers:rollback_observers ~pending:rollback_pending
   in
   let timer_refresh =
     Pass.timer_refresh_ops ~clear_active_timer_refresh:(fun context ->

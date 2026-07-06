@@ -912,20 +912,29 @@ let pass_pure t timer_refresh pure =
     ~observers ~commit
 
 let pass_rollback rollback =
-  Eta_signal_stabilization_pass.rollback_ops
-    ~rollback_staging:(fun context staging ->
-      rollback.rollback_staging
-        (Eta_signal_stabilization_pass.rollback_capability context)
-        staging)
-    ~mark_observers_failed_without_current:
+  let staging =
+    Eta_signal_stabilization_pass.rollback_staging_plan
+      ~rollback_staging:(fun context staging ->
+        rollback.rollback_staging
+          (Eta_signal_stabilization_pass.rollback_capability context)
+          staging)
+  in
+  let observers =
+    Eta_signal_stabilization_pass.rollback_observer_plan
+      ~mark_observers_failed_without_current:
       (fun context observers ->
         rollback.mark_observers_failed_without_current
           (Eta_signal_stabilization_pass.rollback_capability context)
           observers)
-    ~requeue_pending:(fun context pending ->
-      rollback.requeue_pending
-        (Eta_signal_stabilization_pass.rollback_capability context)
-        pending)
+  in
+  let pending =
+    Eta_signal_stabilization_pass.rollback_pending_plan
+      ~requeue_pending:(fun context pending ->
+        rollback.requeue_pending
+          (Eta_signal_stabilization_pass.rollback_capability context)
+          pending)
+  in
+  Eta_signal_stabilization_pass.rollback_ops ~staging ~observers ~pending
 
 let clear_timer_refresh t _context =
   Eta_signal_graph_state.clear_active_timer_refresh t.state

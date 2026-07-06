@@ -114,19 +114,39 @@ let pure_ops ~generation ~staging ~pending ~observers ~commit =
     commit_plan = commit;
   }
 
-type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
+type ('capability, 'hook, 'staging) rollback_staging_plan = {
   rollback_staging : 'capability rollback_context -> 'staging -> 'hook list;
+}
+
+let rollback_staging_plan ~rollback_staging =
+  { rollback_staging }
+
+type ('capability, 'observer) rollback_observer_plan = {
   mark_observers_failed_without_current :
     'capability rollback_context -> 'observer list -> unit;
+}
+
+let rollback_observer_plan ~mark_observers_failed_without_current =
+  { mark_observers_failed_without_current }
+
+type ('capability, 'pending) rollback_pending_plan = {
   requeue_pending : 'capability rollback_context -> 'pending list -> unit;
 }
 
-let rollback_ops ~rollback_staging ~mark_observers_failed_without_current
-    ~requeue_pending =
+let rollback_pending_plan ~requeue_pending =
+  { requeue_pending }
+
+type ('capability, 'pending, 'observer, 'hook, 'staging) rollback = {
+  rollback_staging_plan : ('capability, 'hook, 'staging) rollback_staging_plan;
+  rollback_observer_plan : ('capability, 'observer) rollback_observer_plan;
+  rollback_pending_plan : ('capability, 'pending) rollback_pending_plan;
+}
+
+let rollback_ops ~staging ~observers ~pending =
   {
-    rollback_staging;
-    mark_observers_failed_without_current;
-    requeue_pending;
+    rollback_staging_plan = staging;
+    rollback_observer_plan = observers;
+    rollback_pending_plan = pending;
   }
 
 type 'capability timer_refresh = {
@@ -173,10 +193,14 @@ let delivery_ops ~cleanup ~events =
 
 let rollback state pure_token rollback_context timer_refresh_context ops
     observers pending staging =
-  let hooks = ops.rollback.rollback_staging rollback_context staging in
-  ops.rollback.mark_observers_failed_without_current rollback_context
-    observers;
-  ops.rollback.requeue_pending rollback_context pending;
+  let hooks =
+    ops.rollback.rollback_staging_plan.rollback_staging rollback_context
+      staging
+  in
+  ops.rollback.rollback_observer_plan.mark_observers_failed_without_current
+    rollback_context observers;
+  ops.rollback.rollback_pending_plan.requeue_pending rollback_context
+    pending;
   ops.timer_refresh.clear_active_timer_refresh timer_refresh_context;
   ignore
     (Eta_signal_stabilization.rollback_to_idle state pure_token
