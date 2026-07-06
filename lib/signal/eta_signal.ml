@@ -1534,8 +1534,11 @@ module Make (Observer_error : Observer_error) () = struct
       bool ->
       value * bool =
    fun lane staging signal bind source_value source_changed ->
-    let context =
-      Bind.dynamic_context ~source_equal:bind.source.equal
+    let initialized () =
+      Signal_snapshot.is_initialized (signal_effective_snapshot signal)
+    in
+    let eval =
+      Bind.dynamic_eval_context ~source_equal:bind.source.equal
         ~source_dependency:(P bind.source)
         ~pack_inner:(fun inner -> P inner)
         ~new_scope:(fun _lane -> new_scope signal)
@@ -1547,15 +1550,15 @@ module Make (Observer_error : Observer_error) () = struct
         ~compute_inner:(fun lane inner -> compute lane staging inner)
         ~on_switch_failure:(fun lane scope ->
           remember_pure_disposal_hooks lane staging (invalidate_scope lane scope))
-        ~dirty:signal.dirty
-        ~initialized:(fun () ->
-          Signal_snapshot.is_initialized
-            (signal_effective_snapshot signal))
+        ~dirty:signal.dirty ~initialized
         ~dependencies_changed:(fun lane dependencies ->
           dependencies_changed lane signal dependencies)
+    in
+    let apply =
+      Bind.dynamic_apply_context
         ~current_value:(fun () ->
           Signal_snapshot.value (signal_effective_snapshot signal))
-        ~cached_value:(fun () -> current_or_raise signal)
+        ~cached_value:(fun () -> current_or_raise signal) ~initialized
         ~value_equal:signal.equal
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)
@@ -1564,6 +1567,7 @@ module Make (Observer_error : Observer_error) () = struct
         ~stage_dependencies:(stage_dependency_versions lane staging signal)
         ~stage_value:(stage_signal lane staging signal)
     in
+    let context = Bind.dynamic_context ~eval ~apply in
     match
       Bind.run_dynamic context lane (bind_effective_snapshot bind)
         ~source_value ~source_changed
