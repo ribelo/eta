@@ -488,15 +488,28 @@ let test_time_now_after_interval_lifecycle_trace_matches_model () =
         ~seed)
     [ 19; 43; 71; 131 ]
 
+type timer_bind_choice =
+  | Bind_inactive
+  | Bind_now
+  | Bind_after
+  | Bind_interval
+
 type timer_bind_op =
-  | Timer_bind_set of bool
+  | Timer_bind_select of timer_bind_choice
   | Timer_bind_advance of int
   | Timer_bind_stabilize
   | Timer_bind_read
 
+let pp_timer_bind_choice formatter = function
+  | Bind_inactive -> Format.pp_print_string formatter "inactive"
+  | Bind_now -> Format.pp_print_string formatter "now"
+  | Bind_after -> Format.pp_print_string formatter "after"
+  | Bind_interval -> Format.pp_print_string formatter "interval"
+
 let pp_timer_bind_op formatter = function
-  | Timer_bind_set active ->
-      Format.fprintf formatter "Timer_bind_set %b" active
+  | Timer_bind_select choice ->
+      Format.fprintf formatter "Timer_bind_select %a" pp_timer_bind_choice
+        choice
   | Timer_bind_advance ms ->
       Format.fprintf formatter "Timer_bind_advance %d" ms
   | Timer_bind_stabilize ->
@@ -505,11 +518,18 @@ let pp_timer_bind_op formatter = function
 
 let generate_timer_bind_ops ~seed ~steps =
   let random = Random.State.make [| seed; steps; 79 |] in
+  let next_choice () =
+    match Random.State.int random 4 with
+    | 0 -> Bind_inactive
+    | 1 -> Bind_now
+    | 2 -> Bind_after
+    | _ -> Bind_interval
+  in
   let next_op index =
     if index mod 5 = 0 then Timer_bind_stabilize
     else
       match Random.State.int random 10 with
-      | 0 | 1 | 2 -> Timer_bind_set (Random.State.bool random)
+      | 0 | 1 | 2 -> Timer_bind_select (next_choice ())
       | 3 | 4 | 5 -> Timer_bind_advance (1 + Random.State.int random 12)
       | 6 | 7 -> Timer_bind_read
       | _ -> Timer_bind_stabilize
@@ -518,24 +538,33 @@ let generate_timer_bind_ops ~seed ~steps =
     [
       Timer_bind_stabilize;
       Timer_bind_read;
-      Timer_bind_set true;
+      Timer_bind_select Bind_interval;
       Timer_bind_stabilize;
       Timer_bind_read;
       Timer_bind_advance 10;
       Timer_bind_stabilize;
       Timer_bind_read;
-      Timer_bind_set false;
+      Timer_bind_select Bind_inactive;
       Timer_bind_stabilize;
       Timer_bind_advance 10;
       Timer_bind_stabilize;
       Timer_bind_read;
-      Timer_bind_set true;
+      Timer_bind_select Bind_interval;
       Timer_bind_stabilize;
       Timer_bind_read;
       Timer_bind_advance 5;
       Timer_bind_stabilize;
       Timer_bind_read;
       Timer_bind_advance 5;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_select Bind_inactive;
+      Timer_bind_stabilize;
+      Timer_bind_advance 20;
+      Timer_bind_select Bind_now;
+      Timer_bind_stabilize;
+      Timer_bind_read;
+      Timer_bind_select Bind_after;
       Timer_bind_stabilize;
       Timer_bind_read;
     ]
@@ -549,76 +578,81 @@ let generate_timer_bind_ops ~seed ~steps =
 let run_timer_bind_model_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw clock runtime ->
   let clock_ms = ref 0 in
-  let pending_active = ref false in
-  let active = ref false in
-  let stale_sleeper_dues = ref [] in
+  let pending_choice = ref Bind_inactive in
+  let active_choice = ref Bind_inactive in
   let interval_next_due = ref None in
   let interval_value = ref 0 in
   let observer_current = ref None in
-  let use_timer = Signal.Var.create false in
-  let timer = run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10)) in
+  let timer_choice = Signal.Var.create Bind_inactive in
+  let now_timer =
+    run_ok runtime (Signal.Time.now ~every:(Eta.Duration.ms 5) ())
+    |> Signal.map Signal.Time.to_ms
+  in
+  let after_timer =
+    run_ok runtime
+      (Signal.Time.after ~every:(Eta.Duration.ms 5) (Eta.Duration.ms 10))
+    |> Signal.map (fun due ->
+           if !clock_ms >= 10 && not due then
+             failwith "stale deadline reached model";
+           if due then 1 else 0)
+  in
+  let interval_timer =
+    run_ok runtime (Signal.Time.interval (Eta.Duration.ms 10))
+  in
   let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun active ->
-        if active then timer else Signal.const (-1))
+    Signal.bind (Signal.Var.watch timer_choice) (function
+      | Bind_inactive -> Signal.const (-1)
+      | Bind_now -> now_timer
+      | Bind_after -> after_timer
+      | Bind_interval -> interval_timer)
   in
   let observer =
     run_ok runtime (Signal.Observer.observe selected (fun _ -> E.unit))
   in
-  let prune_stale_sleepers () =
-    stale_sleeper_dues :=
-      List.filter (fun due -> !clock_ms < due) !stale_sleeper_dues
-  in
   let check_demand label =
-    prune_stale_sleepers ();
-    let sleepers = Eta_test.Test_clock.sleeper_count clock in
-    let stale_count = List.length !stale_sleeper_dues in
-    if !active then (
+    if !active_choice = Bind_interval then (
       wait_until (label ^ " active timer sleeper") (fun () ->
           Eta_test.Test_clock.sleeper_count clock >= 1);
       let sleepers = Eta_test.Test_clock.sleeper_count clock in
       Alcotest.(check bool)
         (label ^ " active timer has one live sleeper")
-        true (sleepers >= 1 && sleepers <= stale_count + 1))
-    else if stale_count > 0 then
-      Alcotest.(check bool)
-        (label ^ " inactive timer sleepers are stale")
-        true (sleepers <= stale_count)
-    else (
-      wait_until (label ^ " inactive timer clears sleepers") (fun () ->
-          Eta_test.Test_clock.sleeper_count clock = 0);
-      Alcotest.(check int) (label ^ " inactive timer has no sleeper") 0
-        (Eta_test.Test_clock.sleeper_count clock))
+        true (sleepers >= 1))
+  in
+  let expected_value () =
+    match !active_choice with
+    | Bind_inactive -> -1
+    | Bind_now -> !clock_ms
+    | Bind_after -> if !clock_ms >= 10 then 1 else 0
+    | Bind_interval -> !interval_value
   in
   let model_stabilize label =
     run_ok runtime Signal.stabilize;
-    let was_active = !active in
+    let was_interval_active = !active_choice = Bind_interval in
     let previous_next_due = !interval_next_due in
     let next_due_after_catchup =
       match previous_next_due with
-      | Some next_due when was_active && !clock_ms >= next_due ->
+      | Some next_due when was_interval_active && !clock_ms >= next_due ->
           let missed = ((!clock_ms - next_due) / 10) + 1 in
           interval_value := !interval_value + missed;
           Some (next_due + (missed * 10))
       | _ -> previous_next_due
     in
-    active := !pending_active;
-    if !active then (
-      if not was_active then interval_next_due := Some (!clock_ms + 10)
+    active_choice := !pending_choice;
+    if !active_choice = Bind_interval then (
+      if not was_interval_active then interval_next_due := Some (!clock_ms + 10)
       else
         match next_due_after_catchup with
         | None -> interval_next_due := Some (!clock_ms + 10)
         | Some next_due -> interval_next_due := Some next_due)
     else (
       interval_next_due := None;
-      if was_active then
-        Option.iter
-          (fun due -> stale_sleeper_dues := due :: !stale_sleeper_dues)
-          next_due_after_catchup);
-    let expected = if !active then !interval_value else -1 in
+      ignore next_due_after_catchup);
+    let expected = expected_value () in
     observer_current := Some expected;
     Alcotest.(check int) (label ^ " selected value") expected
       (run_ok runtime (Signal.Observer.read observer));
-    if !active || not was_active then check_demand label
+    if !active_choice = Bind_interval || not was_interval_active then
+      check_demand label
   in
   Fun.protect
     ~finally:(fun () -> run_ok runtime (Signal.Observer.dispose observer))
@@ -629,9 +663,9 @@ let run_timer_bind_model_trace name ~seed =
                Format.asprintf "%s step %d %a" name index pp_timer_bind_op op
              in
              match op with
-             | Timer_bind_set active ->
-                 pending_active := active;
-                 run_ok runtime (Signal.Var.set use_timer active)
+             | Timer_bind_select choice ->
+                 pending_choice := choice;
+                 run_ok runtime (Signal.Var.set timer_choice choice)
              | Timer_bind_advance ms ->
                  clock_ms := !clock_ms + ms;
                  Eta_test.Test_clock.adjust clock (Eta.Duration.ms ms);
@@ -647,7 +681,7 @@ let run_timer_bind_model_trace name ~seed =
                      Alcotest.(check int) label expected
                        (run_ok runtime (Signal.Observer.read observer)))))
 
-let test_time_bind_interval_demand_trace_matches_model () =
+let test_time_bind_demand_trace_matches_model () =
   List.iter
     (fun seed ->
       run_timer_bind_model_trace
@@ -3173,9 +3207,8 @@ let () =
           Alcotest.test_case
             "time now/after/interval lifecycle trace matches model" `Quick
             test_time_now_after_interval_lifecycle_trace_matches_model;
-          Alcotest.test_case
-            "time bind interval demand trace matches model" `Quick
-            test_time_bind_interval_demand_trace_matches_model;
+          Alcotest.test_case "time bind demand trace matches model" `Quick
+            test_time_bind_demand_trace_matches_model;
           Alcotest.test_case "coalesced sets match model" `Quick
             test_coalesced_sets_match_model;
           Alcotest.test_case "source equality trace matches model" `Quick

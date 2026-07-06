@@ -4370,34 +4370,6 @@ let test_time_timer_dispose_during_step_prevents_update () =
     (run_ok rt (Signal.Observer.read second_observer));
   run_ok rt (Signal.Observer.dispose second_observer)
 
-let test_time_now_bind_activation_refreshes_current_stabilization () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let use_timer = Signal.Var.create false in
-  let now_signal =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 5) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
-        if use_timer then now_signal else Signal.const (-1))
-  in
-  Eta_test.Test_clock.adjust clock (Duration.ms 20);
-  Eta_test.Async.yield ();
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  Fun.protect
-    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
-    (fun () ->
-      run_ok rt Signal.stabilize;
-      Alcotest.(check int) "inactive branch value" (-1)
-        (run_ok rt (Signal.Observer.read observer));
-      run_ok rt (Signal.Var.set use_timer true);
-      run_ok rt Signal.stabilize;
-      Alcotest.(check int) "dynamic activation refreshes current snapshot" 20
-        (run_ok rt (Signal.Observer.read observer)))
-
 let test_time_now_backward_clock_refresh_overrides_pending_update () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -4419,70 +4391,6 @@ let test_time_now_backward_clock_refresh_overrides_pending_update () =
   Alcotest.(check int) "backward refresh wins over pending update" 0
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
-
-let test_time_after_bind_activation_refreshes_current_stabilization () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let use_timer = Signal.Var.create false in
-  let deadline =
-    run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
-  in
-  let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
-        if use_timer then deadline else Signal.const false)
-  in
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  Fun.protect
-    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
-    (fun () ->
-      run_ok rt Signal.stabilize;
-      Alcotest.(check bool) "inactive branch value" false
-        (run_ok rt (Signal.Observer.read observer));
-      run_ok rt (Signal.Var.set use_timer true);
-      run_ok rt Signal.stabilize;
-      Alcotest.(check bool)
-        "dynamic activation refreshes elapsed deadline" true
-        (run_ok rt (Signal.Observer.read observer)))
-
-let test_time_after_bind_activation_does_not_compute_stale_deadline () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let use_timer = Signal.Var.create false in
-  let deadline =
-    run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 5) (Duration.ms 10))
-  in
-  let selected =
-    Signal.bind (Signal.Var.watch use_timer) (fun use_timer ->
-        if use_timer then
-          Signal.map
-            (fun due ->
-              if due then "elapsed"
-              else failwith "stale deadline reached user code")
-            deadline
-        else Signal.const "inactive")
-  in
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  Fun.protect
-    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
-    (fun () ->
-      run_ok rt Signal.stabilize;
-      Alcotest.(check string) "inactive branch value" "inactive"
-        (run_ok rt (Signal.Observer.read observer));
-      run_ok rt (Signal.Var.set use_timer true);
-      run_ok rt Signal.stabilize;
-      Alcotest.(check string)
-        "dynamic activation computes only refreshed deadline" "elapsed"
-        (run_ok rt (Signal.Observer.read observer)))
 
 let with_blocked_timer_daemon f =
   Eio_main.run @@ fun env ->
@@ -5637,16 +5545,9 @@ let () =
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
-          Alcotest.test_case "time now bind activation refreshes current" `Quick
-            test_time_now_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time now backward refresh overrides pending update"
             `Quick
             test_time_now_backward_clock_refresh_overrides_pending_update;
-          Alcotest.test_case "time after bind activation refreshes current"
-            `Quick test_time_after_bind_activation_refreshes_current_stabilization;
-          Alcotest.test_case "time after bind activation skips stale compute"
-            `Quick
-            test_time_after_bind_activation_does_not_compute_stale_deadline;
           Alcotest.test_case "time deadline catches up without daemon yield"
             `Quick test_time_deadline_catches_up_without_daemon_yield;
           Alcotest.test_case
