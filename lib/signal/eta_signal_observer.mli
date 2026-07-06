@@ -29,11 +29,10 @@ module Delivery_handle : sig
        (unit, 'error) Eta.Effect.t) ->
     ('token, 'update, 'after_ack) t
 
-  val token : ('token, _, _) t -> 'token
-  val update : (_, 'update, _) t -> 'update
-
-  val current_token :
-    ('token, _, _) t -> unit -> ('token option, 'error) Eta.Effect.t
+  val current :
+    ('token, 'update, _) t ->
+    unit ->
+    (('token * 'update) option, 'error) Eta.Effect.t
 
   val acknowledge_sent :
     ('token, 'update, _) t ->

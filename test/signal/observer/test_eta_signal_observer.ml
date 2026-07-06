@@ -1079,20 +1079,20 @@ let test_delivery_event_finishes_error () =
     ]
     !events
 
-let test_delivery_handle_accessors () =
+let test_delivery_handle_current_and_acknowledge_functions () =
   let handle =
     Observer.Delivery_handle.create ~token:7 ~update:update_changed
       ~current_token:(fun () -> Eta.Effect.pure (Some 7))
       ~acknowledge_sent:(fun _token _update -> Eta.Effect.unit)
       ~acknowledge_drop:(fun ~after_ack:_ _token _update -> Eta.Effect.unit)
   in
-  Alcotest.(check int) "token" 7
-    (Observer.Delivery_handle.token handle);
-  Alcotest.check update "update" update_changed
-    (Observer.Delivery_handle.update handle);
   ignore
-    (Observer.Delivery_handle.current_token handle
-      : unit -> (int option, [ `Any ]) Eta.Effect.t);
+    (Observer.Delivery_handle.current handle
+      : unit -> ((int * int Observer.Update.t) option, [ `Any ]) Eta.Effect.t);
+  Alcotest.(check (option (pair int update)))
+    "current" (Some (7, update_changed))
+    (expect_effect_ok "handle current"
+       (Observer.Delivery_handle.current handle ()));
   ignore
     (Observer.Delivery_handle.acknowledge_sent handle
       : int -> int Observer.Update.t -> (unit, [ `Any ]) Eta.Effect.t);
@@ -1421,9 +1421,10 @@ let test_make_delivery_handle_owns_token_and_acknowledge () =
     Observer.make_delivery_handle ~access:(observer_event_access events)
       (observer_delivery_port events) ~observer ~token:7 update_changed
   in
-  Alcotest.(check (option int)) "current token" (Some 7)
-    (expect_effect_ok "handle current token"
-       (Observer.Delivery_handle.current_token handle ()));
+  Alcotest.(check (option (pair int update)))
+    "current" (Some (7, update_changed))
+    (expect_effect_ok "handle current"
+       (Observer.Delivery_handle.current handle ()));
   Alcotest.(check (list string)) "current token events" [ "access" ] !events;
   events := [];
   expect_effect_ok "handle sent"
@@ -1457,9 +1458,9 @@ let test_make_delivery_handle_owns_token_and_acknowledge () =
     ]
     !events;
   events := [];
-  Alcotest.(check (option int)) "stale current token" None
-    (expect_effect_ok "handle stale current token"
-       (Observer.Delivery_handle.current_token drop_handle ()));
+  Alcotest.(check (option (pair int update))) "stale current" None
+    (expect_effect_ok "handle stale current"
+       (Observer.Delivery_handle.current drop_handle ()));
   Alcotest.(check (list string)) "stale events" [ "access" ] !events
 
 let test_make_delivery_event_owns_success_transitions () =
@@ -1730,9 +1731,9 @@ let () =
             test_delivery_event_marks_and_runs_claimed_events;
           Alcotest.test_case "event finish error" `Quick
             test_delivery_event_finishes_error;
-          Alcotest.test_case "handle accessors" `Quick
-            test_delivery_handle_accessors;
-          Alcotest.test_case "make handle token and acknowledge" `Quick
+          Alcotest.test_case "handle current and acknowledgements" `Quick
+            test_delivery_handle_current_and_acknowledge_functions;
+          Alcotest.test_case "make handle current and acknowledge" `Quick
             test_make_delivery_handle_owns_token_and_acknowledge;
           Alcotest.test_case "port claim acknowledge finish" `Quick
             test_delivery_port_claim_acknowledge_and_finish;

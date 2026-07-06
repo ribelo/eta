@@ -45,9 +45,12 @@ module Delivery_handle = struct
    fun ~token ~update ~current_token ~acknowledge_sent ~acknowledge_drop ->
     { token; update; current_token; acknowledge_sent; acknowledge_drop }
 
-  let token handle = handle.token
-  let update handle = handle.update
-  let current_token handle = handle.current_token
+  let current handle () =
+    handle.current_token ()
+    |> Eta.Effect.map (function
+         | None -> None
+         | Some token -> Some (token, handle.update))
+
   let acknowledge_sent handle = handle.acknowledge_sent
   let acknowledge_drop handle = handle.acknowledge_drop
 end

@@ -107,11 +107,10 @@ let report_dropped_update ~on_drop ~after_drop_before_ack
   |> Effect.on_exit (fun _exit -> acknowledge_published_drop ())
 
 let offer ~queue ~observer_delivery ~hooks ~on_drop =
-  Delivery_handle.current_token observer_delivery ()
+  Delivery_handle.current observer_delivery ()
   |> Effect.bind (function
        | None -> Effect.unit
-       | Some token ->
-           let update = Delivery_handle.update observer_delivery in
+       | Some (token, update) ->
            Effect.sync (fun () -> Queue.sent_token queue)
            |> Effect.bind (fun sent_before ->
                   let sent_published = ref false in
