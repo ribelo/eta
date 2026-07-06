@@ -1934,8 +1934,9 @@ module Make (Observer_error : Observer_error) () = struct
         ~mark_observers_failed_without_current:
           (fun lane observers ->
             List.iter (mark_failed_without_current lane) observers)
-        ~requeue_pending:
-          (fun lane pending -> List.iter (requeue_if_needed lane) pending)
+        ~requeue_pending:(fun lane pending ->
+          Graph.stabilization_pending_requeue ~requeue:(fun () ->
+              List.iter (requeue_if_needed lane) pending))
     in
     Graph.run_stabilization graph lane ~timer_refresh
       (Graph.stabilization_ops

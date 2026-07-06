@@ -1066,8 +1066,14 @@ type
       ('bind, 'hook, 'timer, 'refresh) staging_reset_context;
     mark_observers_failed_without_current :
       lane_access -> 'observer list -> unit;
-    requeue_pending : lane_access -> 'pending list -> unit;
+    requeue_pending : lane_access -> 'pending list -> stabilization_pending_requeue;
   }
+
+and stabilization_pending_requeue =
+  | Stabilization_pending_requeue of { requeue_pending : unit -> unit }
+
+let stabilization_pending_requeue ~requeue =
+  Stabilization_pending_requeue { requeue_pending = requeue }
 
 let stabilization_rollback_ops ~staging
     ~mark_observers_failed_without_current ~requeue_pending =
@@ -1076,6 +1082,11 @@ let stabilization_rollback_ops ~staging
     mark_observers_failed_without_current;
     requeue_pending;
   }
+
+let run_stabilization_pending_requeue lane pending plan =
+  match plan lane pending with
+  | Stabilization_pending_requeue { requeue_pending } ->
+      requeue_pending ()
 
 type
   ( 'pending,
@@ -1204,9 +1215,9 @@ let pass_rollback t rollback =
   let pending =
     Eta_signal_stabilization_pass.rollback_pending_plan
       ~requeue_pending:(fun context pending ->
-        rollback.requeue_pending
+        run_stabilization_pending_requeue
           (Eta_signal_stabilization_pass.rollback_capability context)
-          pending)
+          pending rollback.requeue_pending)
   in
   Eta_signal_stabilization_pass.rollback_ops ~staging ~observers ~pending
 

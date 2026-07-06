@@ -696,13 +696,18 @@ type
     'refresh )
   stabilization_rollback
 
+type stabilization_pending_requeue
+
+val stabilization_pending_requeue :
+  requeue:(unit -> unit) -> stabilization_pending_requeue
+
 val stabilization_rollback_ops :
   staging:
     (lane_access ->
     staging ->
     ('bind, 'hook, 'timer, 'refresh) staging_reset_context) ->
   mark_observers_failed_without_current:(lane_access -> 'observer list -> unit) ->
-  requeue_pending:(lane_access -> 'pending list -> unit) ->
+  requeue_pending:(lane_access -> 'pending list -> stabilization_pending_requeue) ->
   ( 'pending,
     'bind,
     'observer,
