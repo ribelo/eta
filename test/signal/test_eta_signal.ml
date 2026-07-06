@@ -445,11 +445,6 @@ let with_logger_test_clock f =
 let record_observer events update =
   Effect.sync (fun () -> events := update :: !events)
 
-let render pp value = Format.asprintf "%a" pp value
-
-let check_render label pp value expected =
-  Alcotest.(check string) label expected (render pp value)
-
 let count_occurrences text needle =
   let text_len = String.length text in
   let needle_len = String.length needle in
@@ -460,40 +455,6 @@ let count_occurrences text needle =
     else loop (index + 1) count
   in
   loop 0 0
-
-let test_error_pretty_printers_are_clear () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  check_render "ambiguous scope" Signal.pp_graph_error `Ambiguous_scope
-    "ambiguous dynamic scope";
-  check_render "cycle" Signal.pp_graph_error `Cycle "cycle detected";
-  check_render "invalid scope" Signal.pp_graph_error `Invalid_scope
-    "invalid dynamic scope";
-  check_render "reentrant stabilization" Signal.pp_graph_error
-    `Reentrant_stabilization "reentrant stabilization";
-  check_render "reentrant update" Signal.pp_graph_error `Reentrant_update
-    "same-variable effectful update reentry";
-  check_render "disposed observer" Signal.pp_observer_read_error
-    `Disposed_observer "disposed observer";
-  check_render "invalid observer scope" Signal.pp_observer_read_error
-    `Invalid_scope "invalid dynamic scope";
-  check_render "no current observer value" Signal.pp_observer_read_error
-    `No_current_value "no current observer value";
-  check_render "uninitialized observer" Signal.pp_observer_read_error
-    `Uninitialized_observer "uninitialized observer";
-  check_render "stabilize graph error" Signal.pp_stabilize_error
-    `Reentrant_stabilization "reentrant stabilization";
-  check_render "stabilize observer error" Signal.pp_stabilize_error
-    (`Observer_error `Observer_failed) "observer callback failed: observer failed";
-  check_render "deadline overflow" Signal.pp_time_error `Deadline_overflow
-    "deadline arithmetic overflow";
-  check_render "invalid interval" Signal.pp_time_error `Invalid_interval
-    "invalid interval";
-  check_render "past deadline" Signal.pp_time_error `Past_deadline
-    "deadline is in the past";
-  check_render "stream graph error" Signal.pp_stream_error `Cycle
-    "cycle detected";
-  check_render "invalid stream capacity" Signal.pp_stream_error
-    `Invalid_capacity "stream bridge capacity must be positive"
 
 let force_signal_gc () =
   Gc.full_major ();
@@ -8123,8 +8084,6 @@ let () =
     [
       ( "core",
         [
-          Alcotest.test_case "error pretty printers are clear" `Quick
-            test_error_pretty_printers_are_clear;
           Alcotest.test_case "unnecessary root nodes are gc reclaimable" `Quick
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "observer unsafe read reports invalid state"

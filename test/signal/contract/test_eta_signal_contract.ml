@@ -43,6 +43,11 @@ let expect_die label = function
         (Eta.Cause.pp pp_hidden) cause
   | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected defect, got Ok" label
 
+let render pp value = Format.asprintf "%a" pp value
+
+let check_render label pp value expected =
+  Alcotest.(check string) label expected (render pp value)
+
 let record updates update =
   E.sync (fun () -> updates := update :: !updates)
 
@@ -66,6 +71,40 @@ let wait_until label predicate =
       loop (attempts - 1))
   in
   loop 200
+
+let test_error_pretty_printers_are_clear () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  check_render "ambiguous scope" S.pp_graph_error `Ambiguous_scope
+    "ambiguous dynamic scope";
+  check_render "cycle" S.pp_graph_error `Cycle "cycle detected";
+  check_render "invalid scope" S.pp_graph_error `Invalid_scope
+    "invalid dynamic scope";
+  check_render "reentrant stabilization" S.pp_graph_error
+    `Reentrant_stabilization "reentrant stabilization";
+  check_render "reentrant update" S.pp_graph_error `Reentrant_update
+    "same-variable effectful update reentry";
+  check_render "disposed observer" S.pp_observer_read_error
+    `Disposed_observer "disposed observer";
+  check_render "invalid observer scope" S.pp_observer_read_error
+    `Invalid_scope "invalid dynamic scope";
+  check_render "no current observer value" S.pp_observer_read_error
+    `No_current_value "no current observer value";
+  check_render "uninitialized observer" S.pp_observer_read_error
+    `Uninitialized_observer "uninitialized observer";
+  check_render "stabilize graph error" S.pp_stabilize_error
+    `Reentrant_stabilization "reentrant stabilization";
+  check_render "stabilize observer error" S.pp_stabilize_error
+    (`Observer_error `Observer_failed) "observer callback failed: observer failed";
+  check_render "deadline overflow" S.pp_time_error `Deadline_overflow
+    "deadline arithmetic overflow";
+  check_render "invalid interval" S.pp_time_error `Invalid_interval
+    "invalid interval";
+  check_render "past deadline" S.pp_time_error `Past_deadline
+    "deadline is in the past";
+  check_render "stream graph error" S.pp_stream_error `Cycle
+    "cycle detected";
+  check_render "invalid stream capacity" S.pp_stream_error
+    `Invalid_capacity "stream bridge capacity must be positive"
 
 let test_explicit_stabilization_boundary () =
   let module S = Eta_signal.Make (Observer_error) () in
@@ -474,6 +513,8 @@ let () =
     [
       ( "contract",
         [
+          Alcotest.test_case "error pretty printers are clear" `Quick
+            test_error_pretty_printers_are_clear;
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
           Alcotest.test_case "observer read does not force recompute" `Quick
