@@ -1694,27 +1694,39 @@ type small_graph_node =
 
 type small_graph_op =
   | Small_set of int * int
+  | Small_observe of int
+  | Small_dispose of int
   | Small_stabilize
-  | Small_read
+  | Small_read of int
 
 type small_graph_model = {
   small_pending : int array;
   small_committed : int array;
-  mutable small_current : int option;
-  mutable small_updates : observed_update list;
+  small_observers : small_graph_observer array;
+}
+
+and small_graph_observer = {
+  small_observed_node : int;
+  mutable small_actual_observer : int Signal.Observer.t option;
+  mutable small_actual_updates : observed_update list;
+  mutable small_model_active : bool;
+  mutable small_model_current : int option;
+  mutable small_model_updates : observed_update list;
 }
 
 let pp_small_graph_op formatter = function
   | Small_set (var, value) -> Format.fprintf formatter "Set v%d %d" var value
+  | Small_observe slot -> Format.fprintf formatter "Observe slot%d" slot
+  | Small_dispose slot -> Format.fprintf formatter "Dispose slot%d" slot
   | Small_stabilize -> Format.pp_print_string formatter "Stabilize"
-  | Small_read -> Format.pp_print_string formatter "Read"
+  | Small_read slot -> Format.fprintf formatter "Read slot%d" slot
 
 let small_graph_apply_map ~scale ~bias value = (value * scale) + bias
 
 let small_graph_apply_map2 ~left_scale ~right_scale ~bias left right =
   (left * left_scale) + (right * right_scale) + bias
 
-let small_graph_eval ast committed =
+let small_graph_eval_all ast committed =
   let values = Array.make (Array.length ast) 0 in
   Array.iteri
     (fun index node ->
@@ -1735,30 +1747,47 @@ let small_graph_eval ast committed =
               (values.(even_child) * even_scale) + bias
             else (values.(odd_child) * odd_scale) + bias))
     ast;
-  values.(Array.length values - 1)
+  values
 
-let create_small_graph_model initial_values =
+let create_small_graph_observer node =
+  {
+    small_observed_node = node;
+    small_actual_observer = None;
+    small_actual_updates = [];
+    small_model_active = false;
+    small_model_current = None;
+    small_model_updates = [];
+  }
+
+let create_small_graph_model initial_values observer_nodes =
   {
     small_pending = Array.copy initial_values;
     small_committed = Array.copy initial_values;
-    small_current = None;
-    small_updates = [];
+    small_observers = Array.map create_small_graph_observer observer_nodes;
   }
 
 let small_graph_model_stabilize ast model =
   Array.blit model.small_pending 0 model.small_committed 0
     (Array.length model.small_pending);
-  let next = small_graph_eval ast model.small_committed in
-  let update =
-    match model.small_current with
-    | None -> Some (Initialized next)
-    | Some current ->
-        if current = next then None else Some (Changed (current, next))
-  in
-  model.small_current <- Some next;
-  Option.iter
-    (fun update -> model.small_updates <- update :: model.small_updates)
-    update
+  let values = small_graph_eval_all ast model.small_committed in
+  Array.iter
+    (fun observer ->
+      if observer.small_model_active then (
+        let next = values.(observer.small_observed_node) in
+        let update =
+          match observer.small_model_current with
+          | None -> Some (Initialized next)
+          | Some current ->
+              if current = next then None
+              else Some (Changed (current, next))
+        in
+        observer.small_model_current <- Some next;
+        Option.iter
+          (fun update ->
+            observer.small_model_updates <-
+              update :: observer.small_model_updates)
+          update))
+    model.small_observers
 
 let small_graph_coeff random =
   match Random.State.int random 5 with
@@ -1829,23 +1858,31 @@ let generate_small_graph_ast ~seed ~var_count ~node_count =
                 bias = Random.State.int random 7 - 3;
               })
 
-let generate_small_graph_ops ~seed ~var_count ~steps =
-  let random = Random.State.make [| seed; steps; var_count; 17 |] in
+let generate_small_graph_ops ~seed ~var_count ~observer_count ~steps =
+  let random =
+    Random.State.make [| seed; steps; var_count; observer_count; 17 |]
+  in
   let next_value () = Random.State.int random 17 - 8 in
+  let next_slot () = Random.State.int random observer_count in
   let next_op index =
     if index mod 6 = 0 then Small_stabilize
     else
-      match Random.State.int random 10 with
+      match Random.State.int random 14 with
       | 0 | 1 | 2 | 3 | 4 ->
           Small_set (Random.State.int random var_count, next_value ())
-      | 5 | 6 -> Small_read
+      | 5 | 6 -> Small_read (next_slot ())
+      | 7 | 8 -> Small_observe (next_slot ())
+      | 9 | 10 -> Small_dispose (next_slot ())
       | _ -> Small_stabilize
   in
   let rec loop index acc =
     if index = steps then List.rev (Small_stabilize :: acc)
     else loop (index + 1) (next_op index :: acc)
   in
-  Small_stabilize :: loop 1 []
+  let initial_observers =
+    List.init observer_count (fun slot -> Small_observe slot)
+  in
+  initial_observers @ (Small_stabilize :: loop 1 [])
 
 let small_graph_signal_of_node signals = function
   | Small_var _ -> Alcotest.fail "var node is built directly"
@@ -1872,11 +1909,66 @@ let small_graph_signal_of_node signals = function
               (fun value -> (value * odd_scale) + bias)
               signals.(odd_child))
 
+let small_graph_observer_nodes ~node_count =
+  [| 0; node_count / 2; node_count - 1 |]
+
+let small_graph_record observer update =
+  E.sync (fun () ->
+      observer.small_actual_updates <-
+        observed_of_signal_update update :: observer.small_actual_updates)
+
+let small_graph_observe runtime signals observer =
+  match observer.small_actual_observer with
+  | Some _ -> ()
+  | None ->
+      let actual_observer =
+        run_ok runtime
+          (Signal.Observer.observe signals.(observer.small_observed_node)
+             (small_graph_record observer))
+      in
+      observer.small_actual_observer <- Some actual_observer;
+      observer.small_model_active <- true;
+      observer.small_model_current <- None
+
+let small_graph_dispose runtime observer =
+  match observer.small_actual_observer with
+  | None -> ()
+  | Some actual_observer ->
+      run_ok runtime (Signal.Observer.dispose actual_observer);
+      observer.small_actual_observer <- None;
+      observer.small_model_active <- false;
+      observer.small_model_current <- None
+
+let small_graph_check_observer label slot observer =
+  Alcotest.(check (list observed_update))
+    (Format.asprintf "%s slot%d node%d updates" label slot
+       observer.small_observed_node)
+    (List.rev observer.small_model_updates)
+    (List.rev observer.small_actual_updates)
+
+let small_graph_read label runtime observer =
+  match observer.small_actual_observer with
+  | None -> ()
+  | Some actual_observer -> (
+      match observer.small_model_current with
+      | None ->
+          expect_uninitialized_observer label runtime
+            (Signal.Observer.read actual_observer)
+      | Some expected ->
+          Alcotest.(check int) label expected
+            (run_ok runtime (Signal.Observer.read actual_observer)))
+
+let small_graph_check_observers label model =
+  Array.iteri
+    (fun slot observer -> small_graph_check_observer label slot observer)
+    model.small_observers
+
 let run_small_graph_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let var_count = 3 in
   let node_count = 14 in
   let initial_values = [| -1; 0; 2 |] in
+  let observer_nodes = small_graph_observer_nodes ~node_count in
   let ast = generate_small_graph_ast ~seed ~var_count ~node_count in
   let vars = Array.map Signal.Var.create initial_values in
   let signals = Array.make node_count (Signal.const 0) in
@@ -1888,17 +1980,12 @@ let run_small_graph_trace name ~seed =
         | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_bind_select _ ->
             small_graph_signal_of_node signals node))
     ast;
-  let updates = ref [] in
-  let record update =
-    E.sync (fun () ->
-        updates := observed_of_signal_update update :: !updates)
+  let model = create_small_graph_model initial_values observer_nodes in
+  let ops =
+    generate_small_graph_ops ~seed ~var_count
+      ~observer_count:(Array.length model.small_observers)
+      ~steps:90
   in
-  let observer =
-    run_ok runtime
-      (Signal.Observer.observe signals.(node_count - 1) record)
-  in
-  let model = create_small_graph_model initial_values in
-  let ops = generate_small_graph_ops ~seed ~var_count ~steps:90 in
   List.iteri
     (fun index op ->
       let label =
@@ -1908,22 +1995,18 @@ let run_small_graph_trace name ~seed =
       | Small_set (var, value) ->
           model.small_pending.(var) <- value;
           run_ok runtime (Signal.Var.set vars.(var) value)
+      | Small_observe slot ->
+          small_graph_observe runtime signals model.small_observers.(slot)
+      | Small_dispose slot ->
+          small_graph_dispose runtime model.small_observers.(slot)
       | Small_stabilize ->
           small_graph_model_stabilize ast model;
           run_ok runtime Signal.stabilize;
-          Alcotest.(check (list observed_update))
-            (label ^ " updates") (List.rev model.small_updates)
-            (List.rev !updates)
-      | Small_read -> (
-          match model.small_current with
-          | None ->
-              expect_uninitialized_observer label runtime
-                (Signal.Observer.read observer)
-          | Some expected ->
-              Alcotest.(check int) label expected
-                (run_ok runtime (Signal.Observer.read observer))))
+          small_graph_check_observers label model
+      | Small_read slot ->
+          small_graph_read label runtime model.small_observers.(slot))
     ops;
-  run_ok runtime (Signal.Observer.dispose observer)
+  Array.iter (small_graph_dispose runtime) model.small_observers
 
 let test_generated_small_graphs_match_model () =
   List.iter
@@ -1964,7 +2047,8 @@ let () =
             test_retained_branch_trace_matches_model;
           Alcotest.test_case "diamond trace matches model" `Quick
             test_diamond_trace_matches_model;
-          Alcotest.test_case "generated small graphs match model" `Quick
+          Alcotest.test_case
+            "generated small graphs with observers match model" `Quick
             test_generated_small_graphs_match_model;
         ] );
     ]
