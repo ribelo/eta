@@ -2614,51 +2614,6 @@ let test_stats_counter_saturation_is_typed_failure () =
   check_stats_count "stats lane_cancelled_waiter_count"
     Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
 
-let test_observer_failure_fails_stabilize () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe observed (function
-        | Initialized _ -> Effect.fail `Observer_failed
-        | Changed _ -> Effect.unit))
-  in
-  expect_fail "observer failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_callback_construction_exception_is_defect_not_observer_error () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _update ->
-           failwith "boom before returning effect"))
-  in
-  expect_die "callback construction exception"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  run_ok rt (Signal.Observer.dispose observer)
-
-let test_observer_effect_typed_failure_is_observer_error () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe observed (fun _update ->
-           Effect.fail `Observer_failed))
-  in
-  expect_fail "observer effect typed failure"
-    (function `Observer_error `Observer_failed -> true | _ -> false)
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_observer_failure_is_fail_fast () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -4146,7 +4101,7 @@ let test_to_dot_debug_options_expose_hidden_state () =
   let observed =
     Dot_signal.Var.watch source |> Dot_signal.map (fun value -> value + 1)
   in
-  let _unobserved =
+  let unobserved =
     Dot_signal.Var.watch (Dot_signal.Var.create 10)
     |> Dot_signal.map (fun value -> value + 1)
   in
@@ -4178,6 +4133,7 @@ let test_to_dot_debug_options_expose_hidden_state () =
     }
   in
   let debug_dot =
+    ignore (Sys.opaque_identity unobserved);
     run_ok rt (Dot_signal.to_dot ~options:debug_options ())
   in
   Alcotest.(check bool) "debug dot shows more than necessary graph" true
@@ -7093,14 +7049,6 @@ let () =
             test_timer_refresh_token_overflow_is_typed_failure;
           Alcotest.test_case "stats counter saturation is typed failure" `Quick
             test_stats_counter_saturation_is_typed_failure;
-          Alcotest.test_case "observer failure fails stabilize" `Quick
-            test_observer_failure_fails_stabilize;
-          Alcotest.test_case
-            "callback construction exception is defect not observer error" `Quick
-            test_callback_construction_exception_is_defect_not_observer_error;
-          Alcotest.test_case
-            "observer effect typed failure is observer error" `Quick
-            test_observer_effect_typed_failure_is_observer_error;
           Alcotest.test_case "observer failure is fail-fast" `Quick
             test_observer_failure_is_fail_fast;
           Alcotest.test_case "observer lifecycle changes inside callback"

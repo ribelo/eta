@@ -899,6 +899,29 @@ let test_observer_failure_commits_snapshot_and_retries_delivery () =
    | _ -> Alcotest.fail "expected failed delivery to retry");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_callback_failure_channels_are_distinct () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let typed_source = S.Var.create 1 in
+  let typed_observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch typed_source) (fun _update ->
+           E.fail `Observer_failed))
+  in
+  expect_fail "observer typed failure"
+    (function `Observer_error `Observer_failed -> true | _ -> false)
+    (run runtime S.stabilize);
+  run_ok runtime (S.Observer.dispose typed_observer);
+
+  let defect_source = S.Var.create 1 in
+  let defect_observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch defect_source) (fun _update ->
+           failwith "contract callback construction defect"))
+  in
+  expect_die "callback construction defect" (run runtime S.stabilize);
+  run_ok runtime (S.Observer.dispose defect_observer)
+
 let test_derived_demand_reactivates_fresh () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1309,6 +1332,8 @@ let () =
           Alcotest.test_case
             "observer failure commits snapshot and retries delivery" `Quick
             test_observer_failure_commits_snapshot_and_retries_delivery;
+          Alcotest.test_case "observer callback failure channels are distinct"
+            `Quick test_observer_callback_failure_channels_are_distinct;
           Alcotest.test_case "derived demand reactivates fresh" `Quick
             test_derived_demand_reactivates_fresh;
           Alcotest.test_case "demand boundary for derived nodes and timers"
