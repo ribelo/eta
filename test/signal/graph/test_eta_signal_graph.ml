@@ -253,7 +253,9 @@ let stabilization_pure_ops
          ~release_marks:release_pending_marks ~stage:stage_pending)
     ~observers:
       (Graph.stabilization_observer_plan ~delivery:observer_delivery
-         ~plan_staged_binds)
+         ~plan_staged_binds:(fun context staging observers ->
+           Graph.staged_bind_planning ~plan:(fun () ->
+               plan_staged_binds context staging observers)))
     ~commit:
       (Graph.stabilization_commit_plan ~staging
          ~update_necessity:(fun context ->

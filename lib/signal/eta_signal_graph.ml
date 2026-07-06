@@ -967,14 +967,23 @@ type ('observer, 'event) stabilization_observer_plan = {
     staging ->
     (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection;
   observer_plan_staged_binds :
-    lane_access -> staging -> 'observer list -> unit;
+    lane_access -> staging -> 'observer list -> staged_bind_planning;
 }
+
+and staged_bind_planning =
+  | Staged_bind_planning of { plan_staged_binds : unit -> unit }
+
+let staged_bind_planning ~plan =
+  Staged_bind_planning { plan_staged_binds = plan }
 
 let stabilization_observer_plan ~delivery ~plan_staged_binds =
   {
     observer_delivery = delivery;
     observer_plan_staged_binds = plan_staged_binds;
   }
+
+let run_staged_bind_planning = function
+  | Staged_bind_planning { plan_staged_binds } -> plan_staged_binds ()
 
 type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan = {
   stabilization_commit_staging_plan :
@@ -1121,10 +1130,13 @@ let pass_pure t timer_refresh pure =
         in
         observer_delivery_plan t lane delivery)
       ~plan_staged_binds:(fun context observers ->
-        pure.observer_plan.observer_plan_staged_binds
-          (Eta_signal_stabilization_pass.pure_capability context)
-          (require_active_staging t)
-          observers)
+        let plan =
+          pure.observer_plan.observer_plan_staged_binds
+            (Eta_signal_stabilization_pass.pure_capability context)
+            (require_active_staging t)
+            observers
+        in
+        run_staged_bind_planning plan)
   in
   let commit =
     Eta_signal_stabilization_pass.pure_commit_plan

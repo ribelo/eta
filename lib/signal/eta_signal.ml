@@ -1913,7 +1913,8 @@ module Make (Observer_error : Observer_error) () = struct
           Observer_core.delivery_event_collection ~selection
             (observer_delivery_event_source staging))
         ~plan_staged_binds:(fun lane staging observers ->
-          plan_staged_bind_switches lane staging observers)
+          Graph.staged_bind_planning ~plan:(fun () ->
+              plan_staged_bind_switches lane staging observers))
     in
     let commit =
       Graph.stabilization_commit_plan

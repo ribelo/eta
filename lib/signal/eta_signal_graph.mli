@@ -621,12 +621,17 @@ val stabilization_pending_plan :
 
 type ('observer, 'event) stabilization_observer_plan
 
+type staged_bind_planning
+
+val staged_bind_planning : plan:(unit -> unit) -> staged_bind_planning
+
 val stabilization_observer_plan :
   delivery:
     (lane_access ->
     staging ->
     (lane_access, 'observer, 'event) Eta_signal_observer.delivery_collection) ->
-  plan_staged_binds:(lane_access -> staging -> 'observer list -> unit) ->
+  plan_staged_binds:
+    (lane_access -> staging -> 'observer list -> staged_bind_planning) ->
   ('observer, 'event) stabilization_observer_plan
 (** Capture active observers and defer graph-ordered delivery event collection
     until the stabilization pass reaches the event collection phase. The graph
