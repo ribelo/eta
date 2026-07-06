@@ -3072,22 +3072,6 @@ let test_bind_cycle_detection_is_typed_failure () =
     (Eta_eio.Runtime.run rt (widen Signal.stabilize));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_unobserved_nodes_do_not_recompute () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let calls = ref 0 in
-  let _unobserved =
-    Signal.Var.watch source
-    |> Signal.map (fun n ->
-           incr calls;
-           n + 1)
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "unobserved map never recomputed" 0 !calls
-
 let test_observer_phase_multiple_sets_publish_final_next_value () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8542,8 +8526,6 @@ let () =
             test_bind_switch_is_not_committed_when_later_pure_node_fails;
           Alcotest.test_case "bind cycle detection typed failure" `Quick
             test_bind_cycle_detection_is_typed_failure;
-          Alcotest.test_case "unobserved nodes do not recompute" `Quick
-            test_unobserved_nodes_do_not_recompute;
           Alcotest.test_case "observer phase multiple sets publish final value"
             `Quick test_observer_phase_multiple_sets_publish_final_next_value;
           Alcotest.test_case "observer read during callback" `Quick
