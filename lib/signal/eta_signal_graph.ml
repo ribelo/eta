@@ -57,9 +57,16 @@ type counter =
 
 type staging = Eta_signal_graph_state.staging
 
+type ('id, 'node) node_identity = {
+  identity_id : 'node -> 'id;
+  identity_equal_id : 'id -> 'id -> bool;
+}
+
+let node_identity ~id ~equal_id =
+  { identity_id = id; identity_equal_id = equal_id }
+
 type ('id, 'node) edge_ops = {
-  edge_id : 'node -> 'id;
-  edge_equal_id : 'id -> 'id -> bool;
+  edge_identity : ('id, 'node) node_identity;
   edge_dependencies : 'node -> 'node list;
   edge_set_dependencies : 'node -> 'node list -> unit;
   edge_dependents : 'node -> 'node list;
@@ -67,8 +74,7 @@ type ('id, 'node) edge_ops = {
 }
 
 type ('id, 'node) dirty_ops = {
-  dirty_id : 'node -> 'id;
-  dirty_equal_id : 'id -> 'id -> bool;
+  dirty_identity : ('id, 'node) node_identity;
   dirty : 'node -> bool;
   dirty_set : 'node -> bool -> unit;
 }
@@ -87,14 +93,12 @@ type ('node, 'compute_node) compute_ops = {
 }
 
 type ('id, 'node) version_ops = {
-  version_id : 'node -> 'id;
-  version_equal_id : 'id -> 'id -> bool;
+  version_identity : ('id, 'node) node_identity;
   version : 'node -> int;
 }
 
 type ('id, 'node) order_ops = {
-  order_id : 'node -> 'id;
-  order_equal_id : 'id -> 'id -> bool;
+  order_identity : ('id, 'node) node_identity;
   order_compare_id : 'id -> 'id -> int;
   order_children : 'node -> 'node list;
 }
@@ -124,21 +128,19 @@ let scope_ops (type scope_context scope)
     scope_with_current = with_current;
   }
 
-let edge_ops ~id ~equal_id ~dependencies ~set_dependencies ~dependents
+let edge_ops ~identity ~dependencies ~set_dependencies ~dependents
     ~set_dependents =
   {
-    edge_id = id;
-    edge_equal_id = equal_id;
+    edge_identity = identity;
     edge_dependencies = dependencies;
     edge_set_dependencies = set_dependencies;
     edge_dependents = dependents;
     edge_set_dependents = set_dependents;
   }
 
-let dirty_ops ~id ~equal_id ~dirty ~set_dirty =
+let dirty_ops ~identity ~dirty ~set_dirty =
   {
-    dirty_id = id;
-    dirty_equal_id = equal_id;
+    dirty_identity = identity;
     dirty;
     dirty_set = set_dirty;
   }
@@ -159,13 +161,11 @@ let compute_ops ~node ~pack ~seen_generation ~set_seen_generation
     compute_set_computed_generation = set_computed_generation;
   }
 
-let version_ops ~id ~equal_id ~version =
-  { version_id = id; version_equal_id = equal_id; version }
+let version_ops ~identity ~version = { version_identity = identity; version }
 
-let order_ops ~id ~equal_id ~compare_id ~children =
+let order_ops ~identity ~compare_id ~children =
   {
-    order_id = id;
-    order_equal_id = equal_id;
+    order_identity = identity;
     order_compare_id = compare_id;
     order_children = children;
   }
@@ -272,33 +272,49 @@ let set_counter t _lane target value =
 let bump_counter t lane target =
   Eta_signal_graph_core.bump_counter t.core lane (core_counter target)
 
-let remove_by_id ops id node =
-  not (ops.edge_equal_id (ops.edge_id node) id)
+let identity_id identity node = identity.identity_id node
+let identity_equal identity left right = identity.identity_equal_id left right
+
+let edge_id ops node = identity_id ops.edge_identity node
+let edge_equal_id ops left right = identity_equal ops.edge_identity left right
+let dirty_id ops node = identity_id ops.dirty_identity node
+let dirty_equal_id ops left right =
+  identity_equal ops.dirty_identity left right
+
+let version_id ops node = identity_id ops.version_identity node
+let version_equal_id ops left right =
+  identity_equal ops.version_identity left right
+
+let order_id ops node = identity_id ops.order_identity node
+let order_equal_id ops left right =
+  identity_equal ops.order_identity left right
+
+let remove_by_id ops id node = not (edge_equal_id ops (edge_id ops node) id)
 
 let has_id ops id node =
-  ops.edge_equal_id (ops.edge_id node) id
+  edge_equal_id ops (edge_id ops node) id
 
 let remove_dependent _t ops ~child ~parent =
   ops.edge_set_dependents child
     (List.filter
-       (remove_by_id ops (ops.edge_id parent))
+       (remove_by_id ops (edge_id ops parent))
        (ops.edge_dependents child))
 
 let detach_dependency t _lane ops ~parent ~child =
   remove_dependent t ops ~child ~parent;
   ops.edge_set_dependencies parent
     (List.filter
-       (remove_by_id ops (ops.edge_id child))
+       (remove_by_id ops (edge_id ops child))
        (ops.edge_dependencies parent))
 
 let has_dependency _t ops ~parent ~child =
   List.exists
-    (has_id ops (ops.edge_id child))
+    (has_id ops (edge_id ops child))
     (ops.edge_dependencies parent)
 
 let has_dependent _t ops ~child ~parent =
   List.exists
-    (has_id ops (ops.edge_id parent))
+    (has_id ops (edge_id ops parent))
     (ops.edge_dependents child)
 
 let attach_dependency t _lane ops ~parent ~child =
@@ -320,7 +336,7 @@ let detach_node_edges t _lane ops node =
 let mark_dirty _t _lane ops node = ops.dirty_set node true
 
 let same_dirty_node ops node (candidate, _) =
-  ops.dirty_equal_id (ops.dirty_id node) (ops.dirty_id candidate)
+  dirty_equal_id ops (dirty_id ops node) (dirty_id ops candidate)
 
 let mark_dirty_recording_previous t lane ops entries node =
   let entries =
@@ -401,14 +417,14 @@ let compute_cached t lane ops node ~current ~cycle ~compute =
       ~compute:(fun () -> compute compute_node)
 
 let version_snapshot _t _lane ops nodes =
-  List.map (fun node -> (ops.version_id node, ops.version node)) nodes
+  List.map (fun node -> (version_id ops node, ops.version node)) nodes
 
 let rec same_version_snapshot ops left right =
   match (left, right) with
   | [], [] -> true
   | (left_id, left_version) :: left_rest,
     (right_id, right_version) :: right_rest ->
-      ops.version_equal_id left_id right_id
+      version_equal_id ops left_id right_id
       && Int.equal left_version right_version
       && same_version_snapshot ops left_rest right_rest
   | [], _ :: _ | _ :: _, [] -> false
@@ -418,14 +434,14 @@ let versions_changed t lane ops ~current nodes =
     (same_version_snapshot ops current (version_snapshot t lane ops nodes))
 
 let same_order_node ops left right =
-  ops.order_equal_id (ops.order_id left) (ops.order_id right)
+  order_equal_id ops (order_id ops left) (order_id ops right)
 
 let order_depends_on ops node dependency =
-  let target_id = ops.order_id dependency in
+  let target_id = order_id ops dependency in
   let seen = Hashtbl.create 16 in
   let rec visit candidate =
-    let candidate_id = ops.order_id candidate in
-    if ops.order_equal_id candidate_id target_id then true
+    let candidate_id = order_id ops candidate in
+    if order_equal_id ops candidate_id target_id then true
     else if Hashtbl.mem seen candidate_id then false
     else (
       Hashtbl.add seen candidate_id ();
@@ -437,7 +453,7 @@ let compare_order _t _lane ops left right =
   if same_order_node ops left right then 0
   else if order_depends_on ops left right then 1
   else if order_depends_on ops right left then -1
-  else ops.order_compare_id (ops.order_id left) (ops.order_id right)
+  else ops.order_compare_id (order_id ops left) (order_id ops right)
 
 let fold_reachable _t _lane ops ~roots ~init ~f =
   let seen = Hashtbl.create 16 in

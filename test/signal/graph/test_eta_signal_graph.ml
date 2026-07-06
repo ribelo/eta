@@ -366,7 +366,11 @@ let invalidating_node ?kind_scope id =
   }
 
 let invalidating_edge_ops events =
-  Graph.edge_ops ~id:(fun node -> node.invalid_id) ~equal_id:Int.equal
+  let identity =
+    Graph.node_identity ~id:(fun node -> node.invalid_id)
+      ~equal_id:Int.equal
+  in
+  Graph.edge_ops ~identity
     ~dependencies:(fun node -> node.invalid_dependencies)
     ~set_dependencies:(fun node dependencies ->
       record events

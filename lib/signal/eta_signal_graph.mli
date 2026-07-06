@@ -37,11 +37,17 @@ type counter =
 
 type staging
 
+type ('id, 'node) node_identity
+
+val node_identity :
+  id:('node -> 'id) ->
+  equal_id:('id -> 'id -> bool) ->
+  ('id, 'node) node_identity
+
 type ('id, 'node) edge_ops
 
 val edge_ops :
-  id:('node -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
+  identity:('id, 'node) node_identity ->
   dependencies:('node -> 'node list) ->
   set_dependencies:('node -> 'node list -> unit) ->
   dependents:('node -> 'node list) ->
@@ -51,8 +57,7 @@ val edge_ops :
 type ('id, 'node) dirty_ops
 
 val dirty_ops :
-  id:('node -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
+  identity:('id, 'node) node_identity ->
   dirty:('node -> bool) ->
   set_dirty:('node -> bool -> unit) ->
   ('id, 'node) dirty_ops
@@ -75,16 +80,14 @@ val compute_ops :
 type ('id, 'node) version_ops
 
 val version_ops :
-  id:('node -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
+  identity:('id, 'node) node_identity ->
   version:('node -> int) ->
   ('id, 'node) version_ops
 
 type ('id, 'node) order_ops
 
 val order_ops :
-  id:('node -> 'id) ->
-  equal_id:('id -> 'id -> bool) ->
+  identity:('id, 'node) node_identity ->
   compare_id:('id -> 'id -> int) ->
   children:('node -> 'node list) ->
   ('id, 'node) order_ops

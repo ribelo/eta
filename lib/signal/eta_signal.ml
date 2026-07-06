@@ -332,9 +332,12 @@ module Make (Observer_error : Observer_error) () = struct
 
   let graph_edge_node signal = Graph_edge_node.Packed signal
 
-  let edge_ops =
-    Graph.edge_ops ~id:(fun (P signal) -> signal.id)
+  let graph_node_identity =
+    Graph.node_identity ~id:(fun (P signal) -> signal.id)
       ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+
+  let edge_ops =
+    Graph.edge_ops ~identity:graph_node_identity
       ~dependencies:(fun (P signal) -> signal.dependencies)
       ~set_dependencies:(fun (P signal) dependencies ->
         signal.dependencies <- dependencies)
@@ -361,8 +364,7 @@ module Make (Observer_error : Observer_error) () = struct
   end)
 
   let dirty_ops =
-    Graph.dirty_ops ~id:(fun (P signal) -> signal.id)
-      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+    Graph.dirty_ops ~identity:graph_node_identity
       ~dirty:(fun (P signal) -> signal.dirty)
       ~set_dirty:(fun (P signal) dirty -> signal.dirty <- dirty)
 
@@ -750,8 +752,7 @@ module Make (Observer_error : Observer_error) () = struct
     Signal_snapshot.version (signal_effective_snapshot signal)
 
   let version_ops =
-    Graph.version_ops ~id:(fun (P signal) -> signal.id)
-      ~equal_id:(fun left right -> signal_id_int left = signal_id_int right)
+    Graph.version_ops ~identity:graph_node_identity
       ~version:(fun (P signal) -> effective_signal_version signal)
 
   let update_signal_staging lane staging signal f =
@@ -1772,9 +1773,7 @@ module Make (Observer_error : Observer_error) () = struct
         signal.dependencies
 
   let order_ops =
-    Graph.order_ops ~id:(fun (P signal) -> signal.id)
-      ~equal_id:(fun left right ->
-        Int.equal (signal_id_int left) (signal_id_int right))
+    Graph.order_ops ~identity:graph_node_identity
       ~compare_id:(fun left right ->
         Int.compare (signal_id_int left) (signal_id_int right))
       ~children:(fun (P signal) -> observer_order_dependencies signal)
