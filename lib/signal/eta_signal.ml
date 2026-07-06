@@ -1537,9 +1537,6 @@ module Make (Observer_error : Observer_error) () = struct
       (source, value) bind ->
       value * bool =
    fun lane staging signal bind ->
-    let initialized () =
-      Signal_snapshot.is_initialized (signal_effective_snapshot signal)
-    in
     let scope_plan =
       Bind.dynamic_scope_plan
         ~new_scope:(fun _lane -> new_scope signal)
@@ -1569,9 +1566,12 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let value =
       Bind.dynamic_value_context
-        ~current_value:(fun () ->
-          Signal_snapshot.value (signal_effective_snapshot signal))
-        ~cached_value:(fun () -> current_or_raise signal) ~initialized
+        ~state:(fun () ->
+          let snapshot = signal_effective_snapshot signal in
+          Bind.dynamic_value_state
+            ~initialized:(Signal_snapshot.is_initialized snapshot)
+            ~current:(Signal_snapshot.value snapshot))
+        ~cached_value:(fun () -> current_or_raise signal)
         ~value_equal:signal.equal
         ~bump_recompute:(fun () ->
           Graph.bump_counter graph lane Graph.Recompute_count)

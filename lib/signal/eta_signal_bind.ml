@@ -109,10 +109,14 @@ type ('capability, 'source, 'inner, 'scope, 'dependency, 'value, 'error)
   eval_reuse : ('capability, 'dependency) dynamic_reuse_plan;
 }
 
+type 'value dynamic_value_state = {
+  state_initialized : bool;
+  state_current : 'value option;
+}
+
 type 'value dynamic_value_context = {
-  value_current : unit -> 'value option;
+  value_state : unit -> 'value dynamic_value_state;
   value_cached : unit -> 'value;
-  value_initialized : unit -> bool;
   value_equal : 'value -> 'value -> bool;
   value_bump_recompute : unit -> unit;
 }
@@ -147,12 +151,14 @@ let dynamic_reuse_plan ~dirty ~dependencies_changed =
     reuse_dependencies_changed = dependencies_changed;
   }
 
-let dynamic_value_context ~current_value ~cached_value ~initialized
-    ~value_equal ~bump_recompute =
+let dynamic_value_state ~initialized ~current =
+  { state_initialized = initialized; state_current = current }
+
+let dynamic_value_context ~state ~cached_value ~value_equal
+    ~bump_recompute =
   {
-    value_current = current_value;
+    value_state = state;
     value_cached = cached_value;
-    value_initialized = initialized;
     value_equal;
     value_bump_recompute = bump_recompute;
   }
@@ -282,15 +288,17 @@ let plan_dynamic_unlocked ~capability ~equal snapshot ~dependencies
 let plan_dynamic eval_context value_context capability snapshot =
   let source = eval_context.eval_source in
   let source_value, source_changed = source.source_compute capability in
+  let value_state = value_context.value_state () in
   plan_dynamic_unlocked ~capability ~equal:source.source_equal snapshot
     ~source_value ~dependencies:source.source_dependencies
     ~source_changed ~scope:eval_context.eval_scope ~reuse:eval_context.eval_reuse
-    ~initialized:(value_context.value_initialized ())
+    ~initialized:value_state.state_initialized
 
 let value_changed context value =
-  (not (context.value_initialized ()))
+  let state = context.value_state () in
+  (not state.state_initialized)
   ||
-  match context.value_current () with
+  match state.state_current with
   | None -> true
   | Some current -> not (context.value_equal current value)
 

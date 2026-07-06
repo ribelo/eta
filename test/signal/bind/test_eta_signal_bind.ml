@@ -308,13 +308,12 @@ let dynamic_contexts ?(inner_changed = false) ?(dependencies_changed = false)
   in
   let value =
     Bind.dynamic_value_context
-      ~current_value:(fun () -> current)
+      ~state:(fun () -> Bind.dynamic_value_state ~initialized ~current)
       ~cached_value:(fun () ->
         events := !events @ [ "cached" ];
         match current with
         | Some value -> value
         | None -> invalid_arg "missing current")
-      ~initialized:(fun () -> initialized)
       ~value_equal:Int.equal
       ~bump_recompute:(fun () -> events := !events @ [ "bump" ])
   in

@@ -51,12 +51,16 @@ val dynamic_reuse_plan :
   dependencies_changed:('capability -> 'dependency list -> bool) ->
   ('capability, 'dependency) dynamic_reuse_plan
 
+type 'value dynamic_value_state
+
+val dynamic_value_state :
+  initialized:bool -> current:'value option -> 'value dynamic_value_state
+
 type 'value dynamic_value_context
 
 val dynamic_value_context :
-  current_value:(unit -> 'value option) ->
+  state:(unit -> 'value dynamic_value_state) ->
   cached_value:(unit -> 'value) ->
-  initialized:(unit -> bool) ->
   value_equal:('value -> 'value -> bool) ->
   bump_recompute:(unit -> unit) ->
   'value dynamic_value_context
