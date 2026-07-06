@@ -1420,14 +1420,29 @@ let test_demand_boundary_for_derived_nodes_and_timers () =
   Eio.Fiber.yield ();
   Alcotest.(check int) "constructing timer does not start sleeper" 0
     (Eta_test.Test_clock.sleeper_count clock);
+  let timer_updates = ref [] in
   let timer_observer =
-    run_ok runtime (S.Observer.observe timer (fun _ -> E.unit))
+    run_ok runtime (S.Observer.observe timer (record timer_updates))
   in
   wait_until "timer sleeper" (fun () ->
       Eta_test.Test_clock.sleeper_count clock >= 1);
   run_ok runtime S.stabilize;
   Alcotest.(check int) "observed timer initializes at zero" 0
     (run_ok runtime (S.Observer.read timer_observer));
+  Alcotest.(check int) "initial timer callback delivered" 1
+    (List.length !timer_updates);
+  Eta_test.Test_clock.adjust clock (Eta.Duration.ms 10);
+  Eio.Fiber.yield ();
+  Alcotest.(check int) "timer read before stabilize remains old" 0
+    (run_ok runtime (S.Observer.read timer_observer));
+  Alcotest.(check int) "timer tick did not run callback before stabilize" 1
+    (List.length !timer_updates);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "timer update requires explicit stabilize" 1
+    (run_ok runtime (S.Observer.read timer_observer));
+  (match List.rev !timer_updates with
+   | [ S.Initialized 0; S.Changed { old_value = 0; new_value = 1 } ] -> ()
+   | _ -> Alcotest.fail "expected timer update after explicit stabilize");
   run_ok runtime (S.Observer.dispose timer_observer);
   run_ok runtime (S.Observer.dispose derived_observer)
 

@@ -3617,31 +3617,6 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
        (Runtime.run rt (widen (Signal.Observer.dispose observer)))
       : unit)
 
-let test_time_interval_requires_explicit_stabilization () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (record_observer events))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial observer event" 1 (List.length !events);
-  Eta_test.Test_clock.adjust clock (Duration.ms 10);
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "read before stabilize remains old" 0
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "timer tick did not run callback" 1
-    (List.length !events);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "stabilized tick" 1
-    (run_ok rt (Signal.Observer.read observer));
-  (match List.rev !events with
-   | [ Signal.Initialized 0; Changed { old_value = 0; new_value = 1 } ] -> ()
-   | _ -> Alcotest.fail "expected timer update after explicit stabilize");
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_time_timer_generation_overflow_fails_loudly () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -6315,8 +6290,6 @@ let () =
           Alcotest.test_case
             "observer delivery acknowledgement uses graph lane" `Quick
             test_observer_delivery_acknowledgement_uses_graph_lane;
-          Alcotest.test_case "time interval needs stabilization" `Quick
-            test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time timer generation overflow fails loudly"
             `Quick test_time_timer_generation_overflow_fails_loudly;
           Alcotest.test_case
