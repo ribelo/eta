@@ -669,6 +669,70 @@ let test_equality_defects_preserve_committed_snapshots () =
     (List.length !observer_events);
   run_ok runtime (S.Observer.dispose observer)
 
+let test_ambiguous_scope_failures_are_typed () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let expect_ambiguous label eff =
+    expect_fail label (( = ) `Ambiguous_scope) (run runtime eff)
+  in
+  let pure_source = S.Var.create 1 in
+  let pure_signal =
+    S.Var.watch pure_source
+    |> S.map (fun value ->
+           ignore (S.const value : int S.signal);
+           value)
+  in
+  let pure_observer =
+    run_ok runtime (S.Observer.observe pure_signal (fun _ -> E.unit))
+  in
+  expect_ambiguous "pure node construction" S.stabilize;
+  run_ok runtime (S.Observer.dispose pure_observer);
+
+  let explicit_source = S.Var.create 1 in
+  let hidden_source = S.Var.create 10 in
+  let var_value_signal =
+    S.Var.watch explicit_source
+    |> S.map (fun value -> value + S.Var.value hidden_source)
+  in
+  let var_value_observer =
+    run_ok runtime (S.Observer.observe var_value_signal (fun _ -> E.unit))
+  in
+  expect_ambiguous "pure Var.value" S.stabilize;
+  run_ok runtime (S.Observer.dispose var_value_observer);
+
+  let create_watch_source = S.Var.create 1 in
+  let create_watch_signal =
+    S.Var.watch create_watch_source
+    |> S.map (fun value ->
+           let created = S.Var.create value in
+           ignore (S.Var.watch created : int S.signal);
+           value)
+  in
+  let create_watch_observer =
+    run_ok runtime (S.Observer.observe create_watch_signal (fun _ -> E.unit))
+  in
+  expect_ambiguous "pure Var.watch after Var.create" S.stabilize;
+  run_ok runtime (S.Observer.dispose create_watch_observer);
+
+  let observer_callback_source = S.Var.create 1 in
+  let observer_callback_observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch observer_callback_source) (fun _ ->
+           ignore (S.const 1 : int S.signal);
+           E.unit))
+  in
+  expect_ambiguous "observer callback construction" S.stabilize;
+  run_ok runtime (S.Observer.dispose observer_callback_observer);
+
+  let observer_effect_source = S.Var.create 1 in
+  let observer_effect_observer =
+    run_ok runtime
+      (S.Observer.observe (S.Var.watch observer_effect_source) (fun _ ->
+           E.sync (fun () -> ignore (S.const 1 : int S.signal))))
+  in
+  expect_ambiguous "observer effect construction" S.stabilize;
+  run_ok runtime (S.Observer.dispose observer_effect_observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1234,6 +1298,8 @@ let () =
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
           Alcotest.test_case "equality defects preserve committed snapshots"
             `Quick test_equality_defects_preserve_committed_snapshots;
+          Alcotest.test_case "ambiguous scope failures are typed" `Quick
+            test_ambiguous_scope_failures_are_typed;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
