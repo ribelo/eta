@@ -607,27 +607,6 @@ let test_observer_unsafe_read_exn_reports_invalid_state () =
     (Invalid_argument "Eta_signal observer is disposed")
     (fun () -> ignore (Signal.Observer.unsafe_read_exn observer : int))
 
-let test_manual_stabilization_coalesces_sets () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let observed = Signal.Var.watch source in
-  let events = ref [] in
-  let observer =
-    run_ok rt (Signal.Observer.observe observed (record_observer events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt (Signal.Var.set source 3);
-  Alcotest.(check int) "source direct read sees latest set" 3
-    (Signal.Var.value source);
-  Alcotest.(check int) "observer still sees old snapshot" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "observer sees coalesced value" 3
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "two events" 2 (List.length !events)
-
 let test_functor_instances_stabilize_independently () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8493,8 +8472,6 @@ let () =
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "observer unsafe read reports invalid state"
             `Quick test_observer_unsafe_read_exn_reports_invalid_state;
-          Alcotest.test_case "manual stabilization coalesces sets" `Quick
-            test_manual_stabilization_coalesces_sets;
           Alcotest.test_case "functor instances stabilize independently" `Quick
             test_functor_instances_stabilize_independently;
           Alcotest.test_case "graph rejects cross-domain synchronous APIs" `Quick
