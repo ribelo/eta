@@ -822,8 +822,9 @@ module Make (Observer_error : Observer_error) () = struct
     observer_roots observer_active observers
 
   let remove_observer lane observer =
-    Graph.remove_observers graph lane ~keep:(fun (O candidate) ->
-        candidate.obs_id <> observer.obs_id)
+    Graph.remove_observer graph lane
+      ~same:(fun (O candidate) (O target) -> candidate.obs_id = target.obs_id)
+      (O observer)
 
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish

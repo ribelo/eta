@@ -661,7 +661,10 @@ let ensure_not_pure t =
 let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t _lane metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
-let remove_observers t _lane ~keep = t.observers <- List.filter keep t.observers
+
+let remove_observer t _lane ~same observer =
+  t.observers <-
+    List.filter (fun candidate -> not (same candidate observer)) t.observers
 
 let collect_observer_hooks t _lane ~selected ~collect =
   List.filter selected t.observers |> List.concat_map collect

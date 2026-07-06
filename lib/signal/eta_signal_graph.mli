@@ -494,10 +494,11 @@ val add_observer :
   'observer ->
   unit
 
-val remove_observers :
+val remove_observer :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  keep:('observer -> bool) ->
+  same:('observer -> 'observer -> bool) ->
+  'observer ->
   unit
 
 val collect_observer_hooks :

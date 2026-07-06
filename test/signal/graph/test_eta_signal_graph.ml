@@ -233,6 +233,9 @@ let test_observer_registry_traversal_uses_lane () =
         Graph.add_observer graph lane second;
         Graph.add_observer graph lane inactive;
         Graph.add_observer graph lane first;
+        Graph.remove_observer graph lane
+          ~same:(fun left right -> left.id = right.id)
+          inactive;
         ( Graph.collect_observer_hooks graph lane
             ~selected:(fun observer -> observer.active)
             ~collect:(fun observer -> [ observer.id ]),
@@ -243,7 +246,7 @@ let test_observer_registry_traversal_uses_lane () =
   in
   Alcotest.(check (list int)) "active hooks" [ 1; 2 ] active_hooks;
   Alcotest.(check int) "active count" 2 active_count;
-  Alcotest.(check (list int)) "even ids" [ 0; 2 ] even_ids
+  Alcotest.(check (list int)) "even ids" [ 2 ] even_ids
 
 let update_label = function
   | Observer.Update.Initialized value ->
