@@ -51,8 +51,6 @@ let set_staged_refresh_token timer token =
   timer.timer_staged_refresh_token <- token
 
 let runtime_contract timer = timer.timer_runtime_contract
-let refresh_when_inactive timer = timer.timer_refresh_when_inactive
-let refresh_operation timer = timer.timer_refresh_operation
 let start_effect timer = timer.timer_start timer
 
 let can_refresh_on_demand ~token ~current_snapshot ~effective_state timer =

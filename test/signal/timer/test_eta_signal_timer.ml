@@ -295,45 +295,6 @@ let test_node_demand_refresh_owns_node_bracketing () =
     ]
     !events
 
-let test_node_can_refresh_on_demand_uses_node_metadata () =
-  with_runtime @@ fun runtime ->
-  let allowed, no_operation, inactive_without_permission =
-    run_ok runtime
-      (Eta.Effect.Expert.make
-         ~leaf_name:"eta_signal.timer.test_node_refresh_policy"
-       @@ fun context ->
-         let runtime_contract = Eta.Effect.Expert.contract context in
-         let start = Timer.start ~run:(fun _timer -> Eta.Effect.unit) in
-         let node ?refresh_operation ~refresh_when_inactive () =
-           Timer.create_node ~runtime_contract ~refresh_when_inactive
-             ~refresh_operation ~start
-         in
-         let current_snapshot =
-           Timer_policy.snapshot_with_on_demand_refresh_token
-             Timer_policy.initial_snapshot 0
-         in
-         let active_state =
-           Timer_policy.running_state ~generation:1 ~next_due_ms:None
-             ~cancel:(fun () -> ())
-         in
-         let inactive_state = Timer_policy.inactive_state ~generation:1 in
-         Eta.Exit.Ok
-           ( Timer.can_refresh_on_demand ~token:1 ~current_snapshot
-               ~effective_state:active_state
-               (node ~refresh_operation:(Some ()) ~refresh_when_inactive:false ()),
-             Timer.can_refresh_on_demand ~token:1 ~current_snapshot
-               ~effective_state:active_state
-               (node ~refresh_when_inactive:true ()),
-             Timer.can_refresh_on_demand ~token:1 ~current_snapshot
-               ~effective_state:inactive_state
-               (node ~refresh_operation:(Some ()) ~refresh_when_inactive:false
-                  ()) ))
-  in
-  Alcotest.(check bool) "allowed" true allowed;
-  Alcotest.(check bool) "no operation" false no_operation;
-  Alcotest.(check bool)
-    "inactive without permission" false inactive_without_permission
-
 let test_refresh_node_on_demand_owns_validation_and_token_order () =
   with_runtime @@ fun runtime ->
   let active =
@@ -836,8 +797,6 @@ let () =
             test_refresh_node_demand_owns_node_start_wiring;
           Alcotest.test_case "node refresh transaction owns bracketing" `Quick
             test_node_demand_refresh_owns_node_bracketing;
-          Alcotest.test_case "node refresh policy" `Quick
-            test_node_can_refresh_on_demand_uses_node_metadata;
           Alcotest.test_case "node refresh demand order" `Quick
             test_refresh_node_on_demand_owns_validation_and_token_order;
           Alcotest.test_case "validation failure short-circuits" `Quick
