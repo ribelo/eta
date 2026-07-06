@@ -2223,6 +2223,21 @@ let small_graph_check_observers label model =
     (fun slot observer -> small_graph_check_observer label slot observer)
     model.small_observers
 
+let small_graph_active_observer_count model =
+  Array.fold_left
+    (fun count observer ->
+      if observer.small_model_active then count + 1 else count)
+    0 model.small_observers
+
+let small_graph_check_stats label runtime model =
+  let stats = run_ok runtime (Signal.stats ()) in
+  Alcotest.(check int)
+    (label ^ " active observers")
+    (small_graph_active_observer_count model)
+    stats.Signal.active_observer_count;
+  Alcotest.(check int) (label ^ " invalid observers") 0
+    stats.Signal.invalid_observer_count
+
 let run_small_graph_trace name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
   let var_count = 3 in
@@ -2251,7 +2266,7 @@ let run_small_graph_trace name ~seed =
       let label =
         Format.asprintf "%s step %d %a" name index pp_small_graph_op op
       in
-      match op with
+      (match op with
       | Small_set (var, value) ->
           model.small_pending.(var) <- value;
           run_ok runtime (Signal.Var.set vars.(var) value)
@@ -2264,7 +2279,8 @@ let run_small_graph_trace name ~seed =
           run_ok runtime Signal.stabilize;
           small_graph_check_observers label model
       | Small_read slot ->
-          small_graph_read label runtime model.small_observers.(slot))
+          small_graph_read label runtime model.small_observers.(slot));
+      small_graph_check_stats label runtime model)
     ops;
   Array.iter (small_graph_dispose runtime) model.small_observers
 
@@ -2313,7 +2329,7 @@ let () =
           Alcotest.test_case "diamond trace matches model" `Quick
             test_diamond_trace_matches_model;
           Alcotest.test_case
-            "generated small graphs with observers match model" `Quick
+            "generated small graphs with observers and stats match model" `Quick
             test_generated_small_graphs_match_model;
         ] );
     ]
