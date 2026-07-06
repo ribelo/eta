@@ -1057,8 +1057,8 @@ type observe_protect_result =
   | Observe_returned
   | Observe_failed of test_error Cause.t
 
-let observer_observe_with_protect_interrupt target ~on_finish =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+let observer_observe_with_protect_interrupt target =
+  let module Signal = Eta_signal.Make (Observer_error) () in
   reset_cleanup_interrupt_runtime ();
   let rt = cleanup_interrupt_runtime () in
   let before_stats = run_ok rt (Signal.stats ()) in
@@ -1070,7 +1070,7 @@ let observer_observe_with_protect_interrupt target ~on_finish =
   let result =
     Runtime.run rt
       (widen
-         (Signal.Observer.observe_with_hooks ?on_finish signal (fun _update ->
+         (Signal.Observer.observe signal (fun _update ->
               Effect.sync (fun () -> incr callbacks))))
   in
   Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
@@ -1101,26 +1101,15 @@ let protect_interrupt_targets = [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 ]
 
 let test_observer_activation_interruption_disposes_unowned_observer () =
   let saw_interruption = ref false in
-  let saw_abort_cleanup = ref false in
   Fun.protect
     ~finally:(fun () ->
       Cleanup_interrupt_runtime.interrupt_on_protect_count := None)
     (fun () ->
       List.iter
         (fun target ->
-          let finish_hooks = ref 0 in
-          match
-            observer_observe_with_protect_interrupt target
-              ~on_finish:
-                (Some
-                   [
-                     (fun _reason ->
-                       finish_hooks := !finish_hooks + 1);
-                   ])
-          with
+          match observer_observe_with_protect_interrupt target with
           | Observe_failed cause when Cause.is_interrupt_only cause ->
-              saw_interruption := true;
-              if !finish_hooks > 0 then saw_abort_cleanup := true
+              saw_interruption := true
           | Observe_failed cause ->
               Alcotest.failf
                 "target %d: expected injected interruption, got %a" target
@@ -1128,42 +1117,7 @@ let test_observer_activation_interruption_disposes_unowned_observer () =
           | Observe_returned -> ())
         protect_interrupt_targets);
   Alcotest.(check bool) "at least one protected return interrupted observe" true
-    !saw_interruption;
-  Alcotest.(check bool) "at least one interrupted observe ran abort cleanup"
-    true !saw_abort_cleanup
-
-let test_observer_activation_abort_cleanup_does_not_mask_failure () =
-  let saw_abort_cleanup = ref false in
-  Fun.protect
-    ~finally:(fun () ->
-      Cleanup_interrupt_runtime.interrupt_on_protect_count := None)
-    (fun () ->
-      List.iter
-        (fun target ->
-          let hook_started = ref false in
-          match
-            observer_observe_with_protect_interrupt target
-              ~on_finish:
-                (Some
-                   [
-                     (fun _reason ->
-                       hook_started := true;
-                       failwith "abort cleanup hook failure");
-                   ])
-          with
-          | Observe_failed cause ->
-              if
-                cause_has_finalizer_die_message
-                  "abort cleanup hook failure" cause
-              then
-                Alcotest.failf
-                  "target %d: abort cleanup hook masked interruption: %a"
-                  target (Cause.pp pp_hidden) cause;
-              if !hook_started then saw_abort_cleanup := true
-          | Observe_returned -> ())
-        protect_interrupt_targets);
-  Alcotest.(check bool) "failing abort cleanup hook was exercised" true
-    !saw_abort_cleanup
+    !saw_interruption
 
 let test_observer_observe_invalidated_before_transfer_fails () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -3773,189 +3727,6 @@ let test_time_timer_cancel_failure_preserves_committed_snapshot () =
     (List.rev !callback_values);
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_disposal_hooks_continue_after_failure () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let later_hook_ran = ref false in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe_with_hooks
-         ~on_finish:
-           [
-             (fun _ -> failwith "first dispose hook failure");
-             (fun _ -> later_hook_ran := true);
-             (fun _ -> failwith "third dispose hook failure");
-           ]
-         (Signal.Var.watch source) (fun _ -> Effect.unit))
-  in
-  let exit = Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)) in
-  expect_finalizer_die "first dispose hook failure"
-    "first dispose hook failure" exit;
-  expect_finalizer_die "third dispose hook failure"
-    "third dispose hook failure" exit;
-  Alcotest.(check bool) "later hook still ran" true !later_hook_ran
-
-let test_stabilize_disposal_hook_failure_preserves_committed_snapshot () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let use_branch = Signal.Var.create true in
-  let captured_branch = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
-        if active then (
-          let branch = Signal.const 1 in
-          captured_branch := Some branch;
-          branch)
-        else Signal.const 2)
-  in
-  let callback_values = ref [] in
-  let selected_observer =
-    run_ok rt
-      (Signal.Observer.observe selected (function
-        | Signal.Initialized value | Changed { new_value = value; _ } ->
-            Effect.sync (fun () ->
-                callback_values := value :: !callback_values)))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list int))
-    "initial callback delivered" [ 1 ] (List.rev !callback_values);
-  let branch =
-    match !captured_branch with
-    | Some branch -> branch
-    | None -> Alcotest.fail "expected captured dynamic branch"
-  in
-  let _branch_observer =
-    run_ok rt
-      (Signal.Observer.observe_with_hooks
-         ~on_finish:[ (fun _ -> failwith "branch dispose hook failure") ]
-         branch (fun _ -> Effect.unit))
-  in
-  run_ok rt (Signal.Var.set use_branch false);
-  expect_finalizer_die "branch dispose hook failure"
-    "branch dispose hook failure"
-    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
-  Alcotest.(check int)
-    "snapshot committed before disposal hook failure" 2
-    (run_ok rt (Signal.Observer.read selected_observer));
-  Alcotest.(check (list int))
-    "disposal hook failure did not deliver callback" [ 1 ]
-    (List.rev !callback_values);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list int))
-    "retry delivers pending branch switch" [ 1; 2 ]
-    (List.rev !callback_values);
-  run_ok rt (Signal.Observer.dispose selected_observer)
-
-let test_observer_dispose_interruption_runs_finish_hooks () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
-  Cleanup_interrupt_runtime.now := 0;
-  Hashtbl.clear Cleanup_interrupt_runtime.locals;
-  let rt =
-    Runtime.create_with_runtime
-      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
-      ()
-  in
-  let source = Signal.Var.create 1 in
-  let hook_ran = ref false in
-  let observer =
-    expect_exit_ok "observer registration"
-      (Runtime.run rt
-         (widen
-            (Signal.Observer.observe_with_hooks
-               ~on_finish:[ (fun _ -> hook_ran := true) ]
-               (Signal.Var.watch source) (fun _ -> Effect.unit))))
-  in
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
-  (match Runtime.run rt (widen (Signal.Observer.dispose observer)) with
-  | Exit.Error _ -> ()
-  | Exit.Ok () -> Alcotest.fail "expected injected disposal interruption");
-  Alcotest.(check bool)
-    "interrupted dispose still runs finish hook" true !hook_ran
-
-let test_stabilize_interruption_runs_invalidation_hooks () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
-  Cleanup_interrupt_runtime.now := 0;
-  Hashtbl.clear Cleanup_interrupt_runtime.locals;
-  let rt =
-    Runtime.create_with_runtime
-      (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
-      ()
-  in
-  let use_branch = Signal.Var.create true in
-  let captured_branch = ref None in
-  let selected =
-    Signal.bind (Signal.Var.watch use_branch) (fun active ->
-        if active then (
-          let branch = Signal.const 1 in
-          captured_branch := Some branch;
-          branch)
-        else Signal.const 0)
-  in
-  let selected_observer =
-    expect_exit_ok "selected observer registration"
-      (Runtime.run rt
-         (widen (Signal.Observer.observe selected (fun _ -> Effect.unit))))
-  in
-  ignore
-    (expect_exit_ok "initial stabilize"
-       (Runtime.run rt (widen Signal.stabilize))
-      : unit);
-  let branch =
-    match !captured_branch with
-    | Some branch -> branch
-    | None -> Alcotest.fail "expected captured dynamic branch"
-  in
-  let hook_ran = ref false in
-  let _branch_observer =
-    expect_exit_ok "branch observer registration"
-      (Runtime.run rt
-         (widen
-            (Signal.Observer.observe_with_hooks
-               ~on_finish:[ (fun _ -> hook_ran := true) ]
-               branch (fun _ -> Effect.unit))))
-  in
-  ignore
-    (expect_exit_ok "switch branch"
-       (Runtime.run rt (widen (Signal.Var.set use_branch false)))
-      : unit);
-  Cleanup_interrupt_runtime.interrupt_next_protect_return := true;
-  (match Runtime.run rt (widen Signal.stabilize) with
-  | Exit.Error _ -> ()
-  | Exit.Ok () -> Alcotest.fail "expected injected stabilize interruption");
-  Alcotest.(check bool)
-    "interrupted stabilize still runs invalidation hook" true !hook_ran;
-  ignore
-    (expect_exit_ok "selected observer dispose"
-       (Runtime.run rt (widen (Signal.Observer.dispose selected_observer)))
-      : unit)
-
-let test_time_timer_dispose_hook_failure_still_cleans_graph () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe_with_hooks
-         ~on_finish:[ (fun _ -> failwith "dispose hook failure") ]
-         signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  expect_finalizer_die "dispose hook failure" "dispose hook failure"
-    (Eta_eio.Runtime.run rt (widen (Signal.Observer.dispose observer)));
-  let drained =
-    Eio.Fiber.fork_promise ~sw (fun () -> Eta_eio.Runtime.drain rt)
-  in
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check bool)
-    "failing dispose hook did not skip timer cleanup" true
-    (Eio.Promise.is_resolved drained);
-  Eio.Promise.await_exn drained
-
 let test_time_invalidated_timer_cancels_sleeping_daemon () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun sw clock rt ->
@@ -5010,10 +4781,6 @@ let () =
             "observer interrupted activation disposes unowned observer" `Quick
             test_observer_activation_interruption_disposes_unowned_observer;
           Alcotest.test_case
-            "observer activation abort cleanup preserves original failure"
-            `Quick
-            test_observer_activation_abort_cleanup_does_not_mask_failure;
-          Alcotest.test_case
             "observer observe invalidated before transfer fails" `Quick
             test_observer_observe_invalidated_before_transfer_fails;
           Alcotest.test_case
@@ -5161,17 +4928,6 @@ let () =
             test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle;
           Alcotest.test_case "time timer cancel failure keeps snapshot" `Quick
             test_time_timer_cancel_failure_preserves_committed_snapshot;
-          Alcotest.test_case "disposal hooks continue after failure" `Quick
-            test_disposal_hooks_continue_after_failure;
-          Alcotest.test_case "stabilize disposal hook failure keeps snapshot"
-            `Quick
-            test_stabilize_disposal_hook_failure_preserves_committed_snapshot;
-          Alcotest.test_case "observer dispose interruption runs finish hooks"
-            `Quick test_observer_dispose_interruption_runs_finish_hooks;
-          Alcotest.test_case "stabilize interruption runs invalidation hooks"
-            `Quick test_stabilize_interruption_runs_invalidation_hooks;
-          Alcotest.test_case "time timer dispose hook failure cleans graph"
-            `Quick test_time_timer_dispose_hook_failure_still_cleans_graph;
           Alcotest.test_case "time invalidated timer cancels sleeping daemon"
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
           Alcotest.test_case "time timer dispose during step prevents update"

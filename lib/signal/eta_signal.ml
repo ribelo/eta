@@ -2110,8 +2110,8 @@ module Make (Observer_error : Observer_error) () = struct
             observer)
       |> Effect.flatten_result
 
-    let observe_with_hooks_delivery_callback ?(equal = default_equal)
-        ?(on_finish = []) signal callback =
+    let observe_delivery_callback ?(equal = default_equal) ?(on_finish = [])
+        signal callback =
       let registered = ref None in
       cleanup_observer_registration_on_error
         (fun () ->
@@ -2151,20 +2151,14 @@ module Make (Observer_error : Observer_error) () = struct
                (refresh_timer_demand ()
                |> Effect.bind (fun () -> transfer_active_observer observer)))
 
-    let observe_with_hooks_callback ?equal ?on_finish signal callback =
-      observe_with_hooks_delivery_callback ?equal ?on_finish signal
-        (fun observer _token update -> callback observer update)
-
     let observe_delivery ?equal ?on_finish signal callback =
-      observe_with_hooks_delivery_callback ?equal ?on_finish signal
+      observe_delivery_callback ?equal ?on_finish signal
         (fun observer token update ->
           callback (delivery observer token update))
 
-    let observe_with_hooks ?equal ?on_finish signal callback =
-      observe_with_hooks_callback ?equal ?on_finish signal
-        (fun _observer update -> callback update)
-
-    let observe ?equal signal callback = observe_with_hooks ?equal signal callback
+    let observe ?equal signal callback =
+      observe_delivery_callback ?equal signal (fun _observer _token update ->
+          callback update)
 
     let read observer =
       with_graph_lane_sync (fun () ->

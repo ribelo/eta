@@ -1731,6 +1731,28 @@ let test_stream_with_observed_disposes_on_exit () =
   let after_later_stabilize = run_ok runtime (S.stats ()) in
   Alcotest.(check int) "scoped stream stays disposed" 0
     after_later_stabilize.S.active_observer_count;
+  let failed_stream = ref None in
+  expect_fail "scoped stream consumer failure" (( = ) `Invalid_capacity)
+    (run runtime
+       (S.Stream.with_observed ~capacity:4 signal (fun stream ->
+            failed_stream := Some stream;
+            E.fail `Invalid_capacity)));
+  let after_failed_scope = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "failed scoped stream observer disposed" 0
+    after_failed_scope.S.active_observer_count;
+  let stream =
+    match !failed_stream with
+    | Some stream -> stream
+    | None -> Alcotest.fail "expected stream to be passed to failed consumer"
+  in
+  Alcotest.(check (list int))
+    "failed scoped stream closes after consumer failure"
+    []
+    (List.map
+       (function
+         | S.Initialized value -> value
+         | S.Changed { new_value; _ } -> new_value)
+       (run_ok runtime (Eta_stream.run_collect stream |> stream_error)));
   let manual_observer, _manual_stream =
     run_ok runtime
       (S.Stream.observe ~capacity:4 signal)
