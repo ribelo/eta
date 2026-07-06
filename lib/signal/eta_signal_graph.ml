@@ -995,13 +995,20 @@ let finish_recorded_stabilization_effect t finish context =
   else Eta.Effect.unit
 
 let stabilization_delivery_ops t finish context =
-  Eta_signal_stabilization_pass.delivery_ops
-    ~run_pending_cleanup:context.delivery_run_pending_cleanup
-    ~run_events:context.delivery_run_events
-    ~mark_complete:(fun () ->
-      context.delivery_with_lane_access (fun lane ->
-          bump_counter t lane Callback_delivery_count))
-    ~finish:(fun () -> finish_recorded_stabilization_effect t finish context)
+  let cleanup =
+    Eta_signal_stabilization_pass.delivery_cleanup_plan
+      ~run_pending_cleanup:context.delivery_run_pending_cleanup
+      ~finish:(fun () ->
+        finish_recorded_stabilization_effect t finish context)
+  in
+  let events =
+    Eta_signal_stabilization_pass.delivery_event_plan
+      ~run_events:context.delivery_run_events
+      ~mark_complete:(fun () ->
+        context.delivery_with_lane_access (fun lane ->
+            bump_counter t lane Callback_delivery_count))
+  in
+  Eta_signal_stabilization_pass.delivery_ops ~cleanup ~events
 
 let max_dead_node_tombstones = 1024
 

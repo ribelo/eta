@@ -444,16 +444,23 @@ let test_generated_pure_failure_slots_roll_back () =
     failure_slots
 
 let delivery_ops ?(run_events = fun _events -> Eta.Effect.unit) events =
-  Pass.delivery_ops
-    ~run_pending_cleanup:(fun () ->
-      Eta.Effect.sync (fun () -> record events "cleanup"))
-    ~run_events:(fun delivery_events ->
-      Eta.Effect.sync (fun () ->
-          record events ("events:" ^ String.concat "," delivery_events))
-      |> Eta.Effect.bind (fun () -> run_events delivery_events))
-    ~mark_complete:(fun () ->
-      Eta.Effect.sync (fun () -> record events "complete"))
-    ~finish:(fun () -> Eta.Effect.sync (fun () -> record events "finish"))
+  let cleanup =
+    Pass.delivery_cleanup_plan
+      ~run_pending_cleanup:(fun () ->
+        Eta.Effect.sync (fun () -> record events "cleanup"))
+      ~finish:(fun () ->
+        Eta.Effect.sync (fun () -> record events "finish"))
+  in
+  let delivery_events =
+    Pass.delivery_event_plan
+      ~run_events:(fun delivery_events ->
+        Eta.Effect.sync (fun () ->
+            record events ("events:" ^ String.concat "," delivery_events))
+        |> Eta.Effect.bind (fun () -> run_events delivery_events))
+      ~mark_complete:(fun () ->
+        Eta.Effect.sync (fun () -> record events "complete"))
+  in
+  Pass.delivery_ops ~cleanup ~events:delivery_events
 
 let test_delivery_success_brackets_cleanup_and_finish () =
   let events = ref [] in

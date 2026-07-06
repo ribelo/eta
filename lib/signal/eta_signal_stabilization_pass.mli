@@ -137,15 +137,27 @@ val run :
 
 type ('event, 'error) delivery
 
-val delivery_ops :
+type 'error delivery_cleanup_plan
+
+val delivery_cleanup_plan :
   run_pending_cleanup:(unit -> (unit, 'error) Eta.Effect.t) ->
+  finish:(unit -> (unit, 'error) Eta.Effect.t) ->
+  'error delivery_cleanup_plan
+
+type ('event, 'error) delivery_event_plan
+
+val delivery_event_plan :
   run_events:('event list -> (unit, 'error) Eta.Effect.t) ->
   mark_complete:(unit -> (unit, 'error) Eta.Effect.t) ->
-  finish:(unit -> (unit, 'error) Eta.Effect.t) ->
+  ('event, 'error) delivery_event_plan
+
+val delivery_ops :
+  cleanup:'error delivery_cleanup_plan ->
+  events:('event, 'error) delivery_event_plan ->
   ('event, 'error) delivery
-(** Callback surface for the delivering phase. The module owns delivery
-    bracketing: cleanup before callbacks, callbacks, completion marking, final
-    cleanup, and phase finish. *)
+(** Plan surface for the delivering phase. The module owns delivery bracketing:
+    cleanup before callbacks, callbacks, completion marking, final cleanup, and
+    phase finish. *)
 
 val deliver :
   ('event, 'error) delivery ->

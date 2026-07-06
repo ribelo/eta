@@ -147,15 +147,29 @@ type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t = {
 let pass_ops ~errors ~pure ~rollback ~timer_refresh =
   { errors; pure; rollback; timer_refresh }
 
-type ('event, 'error) delivery = {
+type 'error delivery_cleanup_plan = {
   run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
-  run_events : 'event list -> (unit, 'error) Eta.Effect.t;
-  mark_complete : unit -> (unit, 'error) Eta.Effect.t;
   finish : unit -> (unit, 'error) Eta.Effect.t;
 }
 
-let delivery_ops ~run_pending_cleanup ~run_events ~mark_complete ~finish =
-  { run_pending_cleanup; run_events; mark_complete; finish }
+let delivery_cleanup_plan ~run_pending_cleanup ~finish =
+  { run_pending_cleanup; finish }
+
+type ('event, 'error) delivery_event_plan = {
+  run_events : 'event list -> (unit, 'error) Eta.Effect.t;
+  mark_complete : unit -> (unit, 'error) Eta.Effect.t;
+}
+
+let delivery_event_plan ~run_events ~mark_complete =
+  { run_events; mark_complete }
+
+type ('event, 'error) delivery = {
+  delivery_cleanup : 'error delivery_cleanup_plan;
+  delivery_events : ('event, 'error) delivery_event_plan;
+}
+
+let delivery_ops ~cleanup ~events =
+  { delivery_cleanup = cleanup; delivery_events = events }
 
 let rollback state pure_token rollback_context timer_refresh_context ops
     observers pending staging =
@@ -239,14 +253,14 @@ let run state capability ops =
         | None -> Pure_defect (hooks, exn, backtrace))
 
 let finish_delivery ops =
-  ops.run_pending_cleanup ()
-  |> Eta.Effect.on_exit (fun _exit -> ops.finish ())
+  ops.delivery_cleanup.run_pending_cleanup ()
+  |> Eta.Effect.on_exit (fun _exit -> ops.delivery_cleanup.finish ())
 
 let deliver ops events =
   let open Eta.Syntax in
   let delivery =
-    let* () = ops.run_pending_cleanup () in
-    let* () = ops.run_events events in
-    ops.mark_complete ()
+    let* () = ops.delivery_cleanup.run_pending_cleanup () in
+    let* () = ops.delivery_events.run_events events in
+    ops.delivery_events.mark_complete ()
   in
   Eta.Effect.on_exit (fun _exit -> finish_delivery ops) delivery
