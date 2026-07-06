@@ -379,11 +379,18 @@ val staging_bind_commit_plan :
   commit:(staging -> 'bind -> 'hook staged_bind_commit) ->
   ('bind, 'hook) staging_bind_commit_plan
 
+type staged_signal_commit
+
+val staged_signal_commit :
+  valid:bool ->
+  cell:'snapshot Eta_signal_transaction.staged ->
+  commit:(unit -> unit) ->
+  staged_signal_commit
+
 type 'node staging_signal_commit_plan
 
 val staging_signal_commit_plan :
-  prepare_signal:(staging -> 'node -> unit) ->
-  commit_signal:('node -> unit) ->
+  commit:(staging -> 'node -> staged_signal_commit) ->
   'node staging_signal_commit_plan
 
 type 'timer staging_timer_commit_plan

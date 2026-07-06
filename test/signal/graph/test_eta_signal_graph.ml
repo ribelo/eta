@@ -187,9 +187,17 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
     | Some binds -> binds
     | None -> noop_bind_commit_plan ()
   in
+  let signals =
+    Graph.staging_signal_commit_plan
+      ~commit:(fun staging node ->
+        prepare_signal staging node;
+        Graph.staged_signal_commit ~valid:true
+          ~cell:(Transaction.create_staged ())
+          ~commit:(fun () -> commit_signal node))
+  in
   Graph.staging_commit_plan ~preflight
     ~binds
-    ~signals:(Graph.staging_signal_commit_plan ~prepare_signal ~commit_signal)
+    ~signals
     ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
 
 let staging_reset_context
@@ -823,6 +831,82 @@ let test_computed_nodes_are_staging_scoped () =
     ]
     !events
 
+let test_signal_commit_discards_invalid_staging () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let cell = Transaction.create_staged 0 in
+  let node =
+    {
+      compute_id = 8;
+      compute_seen_generation = 0;
+      compute_changed_seen = false;
+      compute_computing = false;
+      compute_computed_generation = 0;
+      compute_current = 0;
+    }
+  in
+  let pure =
+    stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~stage_pending:(fun context staging _pending ->
+        Graph.stage_cell graph context staging cell 1;
+        Graph.remember_computed graph context staging compute_ops node;
+        record events "stage")
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
+      ~staging:(fun _context _staging ->
+        let signals =
+          Graph.staging_signal_commit_plan
+            ~commit:(fun _staging _node ->
+              record events "plan_signal";
+              Graph.staged_signal_commit ~valid:false ~cell
+                ~commit:(fun () -> record events "commit_signal"))
+        in
+        Graph.staging_commit_plan
+          ~preflight:(fun _staging -> record events "preflight")
+          ~binds:(noop_bind_commit_plan ())
+          ~signals
+          ~timers:(Graph.staging_timer_commit_plan ~commit:(fun _timer -> ())))
+      ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context _staging -> staging_reset_context ())
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "delivery events" [] delivery_events;
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane finish))
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Alcotest.(check int) "current" 0 (Transaction.current cell);
+  Alcotest.(check (list string))
+    "events"
+    [ "stage"; "preflight"; "plan_signal"; "update_necessity" ]
+    !events
+
 let test_stage_bind_switch_owns_transaction_staging () =
   let events = ref [] in
   let graph =
@@ -1322,6 +1406,8 @@ let () =
             test_stabilization_delivery_ops_own_counter_and_finish;
           Alcotest.test_case "computed staging token" `Quick
             test_computed_nodes_are_staging_scoped;
+          Alcotest.test_case "signal commit invalid discard" `Quick
+            test_signal_commit_discards_invalid_staging;
         ] );
       ( "bind switch",
         [

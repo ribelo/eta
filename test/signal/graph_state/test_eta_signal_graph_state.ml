@@ -8,10 +8,10 @@ let create () : (string, string, string, string, string, string) State.t =
   State.create ()
 
 let commit_plan ?(preflight = fun () -> ())
-    ?(commit_bind = fun _bind -> []) ?(prepare_signal = fun _node -> ())
+    ?(commit_bind = fun _bind -> []) ?(prepare_signal = fun node -> node)
     ?(commit_transaction = fun () -> ())
     ?(commit_timer_refresh = fun _timer -> ())
-    ?(commit_signal = fun _node -> ())
+    ?(commit_signal = fun _prepared -> ())
     ?(advance_snapshot = fun value -> value + 1) () =
   State.commit_plan ~preflight
     ~binds:(State.bind_commit_plan ~commit:commit_bind)
@@ -96,7 +96,9 @@ let test_commit_staging_owns_state_cleanup_order () =
          ~commit_bind:(fun bind ->
            record events ("commit_bind:" ^ bind);
            [ "bind-hook" ])
-         ~prepare_signal:(fun node -> record events ("prepare:" ^ node))
+         ~prepare_signal:(fun node ->
+           record events ("prepare:" ^ node);
+           node)
          ~commit_transaction:(fun () -> record events "commit_transaction")
          ~commit_timer_refresh:(fun timer ->
            record events ("commit_timer:" ^ timer))
@@ -179,7 +181,8 @@ let test_commit_staging_generated_matrix () =
                record events ("commit_bind:" ^ bind);
                [ "bind-hook:" ^ bind ])
              ~prepare_signal:(fun node ->
-               record events ("prepare:" ^ node))
+               record events ("prepare:" ^ node);
+               node)
              ~commit_transaction:(fun () ->
                record events "commit_transaction")
              ~commit_timer_refresh:(fun timer ->

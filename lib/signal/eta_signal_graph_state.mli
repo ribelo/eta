@@ -84,12 +84,12 @@ val bind_commit_plan :
   commit:('bind -> 'hook list) ->
   ('bind, 'hook) bind_commit_plan
 
-type 'node signal_commit_plan
+type ('node, 'prepared) signal_commit_plan
 
 val signal_commit_plan :
-  prepare_signal:('node -> unit) ->
-  commit_signal:('node -> unit) ->
-  'node signal_commit_plan
+  prepare_signal:('node -> 'prepared) ->
+  commit_signal:('prepared -> unit) ->
+  ('node, 'prepared) signal_commit_plan
 
 type 'timer timer_commit_plan
 
@@ -104,20 +104,20 @@ val snapshot_commit_plan :
   advance_snapshot:(int -> int) ->
   snapshot_commit_plan
 
-type ('bind, 'node, 'hook, 'timer) commit_plan
+type ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan
 
 val commit_plan :
   preflight:(unit -> unit) ->
   binds:('bind, 'hook) bind_commit_plan ->
-  signals:'node signal_commit_plan ->
+  signals:('node, 'prepared) signal_commit_plan ->
   timers:'timer timer_commit_plan ->
   snapshot:snapshot_commit_plan ->
-  ('bind, 'node, 'hook, 'timer) commit_plan
+  ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan
 
 val commit_staging :
   ('pending, 'bind, 'node, 'hook, 'timer, 'refresh) t ->
   staging ->
-  ('bind, 'node, 'hook, 'timer) commit_plan ->
+  ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan ->
   'hook list
 
 val pure_snapshot_commit_count : (_, _, _, _, _, _) t -> int

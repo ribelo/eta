@@ -595,16 +595,43 @@ let commit_staging_bind staging bind context =
   | Staged_bind_commit { staged_bind_switch; staged_bind_lifecycle } ->
       commit_staged_bind_switch staged_bind_switch staged_bind_lifecycle
 
+type staged_signal_commit =
+  | Staged_signal_commit : {
+      signal_valid : bool;
+      signal_cell : 'snapshot Eta_signal_transaction.staged;
+      signal_commit : unit -> unit;
+    }
+      -> staged_signal_commit
+
+let staged_signal_commit ~valid ~cell ~commit =
+  Staged_signal_commit
+    { signal_valid = valid; signal_cell = cell; signal_commit = commit }
+
 type 'node staging_signal_commit_plan = {
-  staging_signal_prepare : staging -> 'node -> unit;
-  staging_signal_commit : 'node -> unit;
+  staging_signal_commit : staging -> 'node -> staged_signal_commit;
 }
 
-let staging_signal_commit_plan ~prepare_signal ~commit_signal =
-  {
-    staging_signal_prepare = prepare_signal;
-    staging_signal_commit = commit_signal;
-  }
+let staging_signal_commit_plan ~commit = { staging_signal_commit = commit }
+
+let signal_staged_in_active_transaction t cell =
+  match Eta_signal_stabilization.transaction t.stabilization with
+  | Some transaction -> Eta_signal_transaction.staged transaction cell
+  | None -> false
+
+let prepare_staging_signal t _staging = function
+  | Staged_signal_commit { signal_valid; signal_cell; _ } as commit ->
+      if
+        (not signal_valid)
+        && signal_staged_in_active_transaction t signal_cell
+      then
+        Eta_signal_transaction.discard
+          (Eta_signal_stabilization.active_transaction t.stabilization)
+          signal_cell;
+      commit
+
+let commit_staging_signal = function
+  | Staged_signal_commit { signal_valid; signal_commit; _ } ->
+      if signal_valid then signal_commit ()
 
 type 'timer staging_timer_commit_plan = {
   staging_timer_commit : 'timer -> unit;
@@ -642,11 +669,11 @@ let commit_staging t _lane staging context =
              | Error err -> raise (Commit_error err)))
       ~signals:
         (Eta_signal_graph_state.signal_commit_plan
-           ~prepare_signal:
-             (context.staging_commit_signals.staging_signal_prepare
-                staging)
-           ~commit_signal:
-             context.staging_commit_signals.staging_signal_commit)
+           ~prepare_signal:(fun node ->
+             context.staging_commit_signals.staging_signal_commit
+               staging node
+             |> prepare_staging_signal t staging)
+           ~commit_signal:commit_staging_signal)
       ~timers:
         (Eta_signal_graph_state.timer_commit_plan
            ~commit:context.staging_commit_timers.staging_timer_commit)

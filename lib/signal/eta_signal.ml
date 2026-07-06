@@ -764,9 +764,6 @@ module Make (Observer_error : Observer_error) () = struct
   let signal_staged_in_active_transaction lane staging signal =
     Graph.staged_in_active_transaction graph lane staging signal.snapshot
 
-  let discard_signal_staging lane staging signal =
-    Graph.discard_staging graph lane staging signal.snapshot
-
   let stage_signal lane staging signal value =
     update_signal_staging lane staging signal (fun snapshot ->
         let current = signal_current_snapshot signal in
@@ -1103,15 +1100,9 @@ module Make (Observer_error : Observer_error) () = struct
     | Some value -> value
     | None -> raise (Graph_error `Invalid_scope)
 
-  let prepare_signal_commit lane staging (P signal) =
-    if
-      (not signal.valid)
-      && signal_staged_in_active_transaction lane staging signal
-    then
-      discard_signal_staging lane staging signal
-
-  let commit_signal (P signal) =
-    if signal.valid then signal.dirty <- false
+  let signal_commit (P signal) =
+    Graph.staged_signal_commit ~valid:signal.valid ~cell:signal.snapshot
+      ~commit:(fun () -> signal.dirty <- false)
 
   let stage_bind_switch (type a b) lane staging (bind : (a, b) bind)
       source_value inner scope =
@@ -1351,8 +1342,7 @@ module Make (Observer_error : Observer_error) () = struct
                ~lifecycle:(bind_switch_lifecycle lane)))
       ~signals:
         (Graph.staging_signal_commit_plan
-           ~prepare_signal:(prepare_signal_commit lane)
-           ~commit_signal)
+           ~commit:(fun _staging signal -> signal_commit signal))
       ~timers:
         (Graph.staging_timer_commit_plan ~commit:commit_timer_refresh_staging)
 

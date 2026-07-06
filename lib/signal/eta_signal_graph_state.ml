@@ -156,9 +156,9 @@ type ('bind, 'hook) bind_commit_plan = {
 
 let bind_commit_plan ~commit = { bind_commit = commit }
 
-type 'node signal_commit_plan = {
-  signal_prepare : 'node -> unit;
-  signal_commit : 'node -> unit;
+type ('node, 'prepared) signal_commit_plan = {
+  signal_prepare : 'node -> 'prepared;
+  signal_commit : 'prepared -> unit;
 }
 
 let signal_commit_plan ~prepare_signal ~commit_signal =
@@ -181,10 +181,10 @@ let snapshot_commit_plan ~commit_transaction ~advance_snapshot =
     snapshot_advance = advance_snapshot;
   }
 
-type ('bind, 'node, 'hook, 'timer) commit_plan = {
+type ('bind, 'node, 'prepared, 'hook, 'timer) commit_plan = {
   commit_preflight : unit -> unit;
   commit_binds : ('bind, 'hook) bind_commit_plan;
-  commit_signals : 'node signal_commit_plan;
+  commit_signals : ('node, 'prepared) signal_commit_plan;
   commit_timers : 'timer timer_commit_plan;
   commit_snapshot : snapshot_commit_plan;
 }
@@ -205,10 +205,12 @@ let commit_staging t staging context =
     List.concat_map context.commit_binds.bind_commit t.staged_binds
   in
   remember_pure_disposal_hooks t staging bind_hooks;
-  List.iter context.commit_signals.signal_prepare t.computed_nodes;
+  let signal_commits =
+    List.map context.commit_signals.signal_prepare t.computed_nodes
+  in
   context.commit_snapshot.snapshot_commit_transaction ();
   List.iter context.commit_timers.timer_commit t.timer_refresh_staged_timers;
-  List.iter context.commit_signals.signal_commit t.computed_nodes;
+  List.iter context.commit_signals.signal_commit signal_commits;
   let hooks = t.pure_disposal_hooks @ t.timer_refresh_disposal_hooks in
   t.computed_nodes <- [];
   t.staged_binds <- [];
