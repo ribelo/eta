@@ -1156,12 +1156,16 @@ module Make (Observer_error : Observer_error) () = struct
          ~current:(bind_current_snapshot bind)
          ~staged:(bind_staged_snapshot lane staging bind))
 
+  let bind_switch_lifecycle lane =
+    Bind.staged_switch_lifecycle
+      ~detach_old_inner:(detach_dependency lane)
+      ~invalidate_scope:(invalidate_scope lane)
+      ~attach_new_inner:(attach_dependency lane)
+
   let commit_bind lane staging (B bind) =
     match
       Graph.commit_staged_bind_switch (bind_staged_switch lane staging bind)
-        ~detach_old_inner:(detach_dependency lane)
-        ~invalidate_old_scope:(invalidate_scope lane)
-        ~attach_new_inner:(attach_dependency lane)
+        (bind_switch_lifecycle lane)
     with
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)
@@ -1170,7 +1174,7 @@ module Make (Observer_error : Observer_error) () = struct
     match
       Graph.rollback_staged_bind_switch
         ~staged:(bind_staged_snapshot lane staging bind)
-        ~invalidate_new_scope:(invalidate_scope lane)
+        (bind_switch_lifecycle lane)
     with
     | Ok hooks -> hooks
     | Error err -> raise (Graph_error err)

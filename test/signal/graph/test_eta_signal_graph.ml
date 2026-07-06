@@ -1196,18 +1196,21 @@ let test_staged_bind_switch_protocol_maps_graph_errors () =
   let switch =
     Bind.staged_switch ~owner:(Some 99) ~current ~staged:(Some staged)
   in
+  let commit_lifecycle =
+    Bind.staged_switch_lifecycle
+      ~detach_old_inner:(fun owner inner ->
+        record events
+          ("detach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+      ~invalidate_scope:(fun scope ->
+        record events ("invalidate:" ^ string_of_int scope);
+        [ "hook:" ^ string_of_int scope ])
+      ~attach_new_inner:(fun owner inner ->
+        record events
+          ("attach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+  in
   let hooks =
     match
-      Graph.commit_staged_bind_switch switch
-        ~detach_old_inner:(fun owner inner ->
-          record events
-            ("detach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
-        ~invalidate_old_scope:(fun scope ->
-          record events ("invalidate:" ^ string_of_int scope);
-          [ "hook:" ^ string_of_int scope ])
-        ~attach_new_inner:(fun owner inner ->
-          record events
-            ("attach:" ^ string_of_int owner ^ ":" ^ string_of_int inner))
+      Graph.commit_staged_bind_switch switch commit_lifecycle
     with
     | Ok hooks -> hooks
     | Error err ->
@@ -1219,12 +1222,20 @@ let test_staged_bind_switch_protocol_maps_graph_errors () =
     [ "detach:99:10"; "invalidate:1"; "attach:99:20" ]
     !events;
   Alcotest.(check (list string)) "commit hooks" [ "hook:1" ] hooks;
+  let rollback_lifecycle =
+    Bind.staged_switch_lifecycle
+      ~detach_old_inner:(fun _ _ ->
+        Alcotest.fail "rollback should not detach")
+      ~invalidate_scope:(fun scope ->
+        record events ("rollback:" ^ string_of_int scope);
+        [ "rollback-hook:" ^ string_of_int scope ])
+      ~attach_new_inner:(fun _ _ ->
+        Alcotest.fail "rollback should not attach")
+  in
   let rollback_hooks =
     match
       Graph.rollback_staged_bind_switch ~staged:(Some staged)
-        ~invalidate_new_scope:(fun scope ->
-          record events ("rollback:" ^ string_of_int scope);
-          [ "rollback-hook:" ^ string_of_int scope ])
+        rollback_lifecycle
     with
     | Ok hooks -> hooks
     | Error err ->

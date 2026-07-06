@@ -47,15 +47,18 @@ let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
   let switch = Bind.staged_switch ~owner:(Some "owner") ~current
       ~staged:(Some staged)
   in
-  match
-    Bind.commit_staged_switch switch
+  let lifecycle =
+    Bind.staged_switch_lifecycle
       ~detach_old_inner:(fun owner inner ->
         record ("detach:" ^ owner ^ ":" ^ inner))
-      ~invalidate_old_scope:(fun scope ->
+      ~invalidate_scope:(fun scope ->
         record ("invalidate:" ^ string_of_int scope);
         [ "cleanup:" ^ string_of_int scope ])
       ~attach_new_inner:(fun owner inner ->
         record ("attach:" ^ owner ^ ":" ^ inner))
+  in
+  match
+    Bind.commit_staged_switch switch lifecycle
   with
   | Ok hooks ->
       Alcotest.(check (list string))
@@ -73,13 +76,16 @@ let test_staged_switch_no_staged_snapshot_is_noop () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let effects = ref [] in
   let switch = Bind.staged_switch ~owner:None ~current ~staged:None in
+  let lifecycle =
+    Bind.staged_switch_lifecycle
+      ~detach_old_inner:(fun _ _ -> effects := "detach" :: !effects)
+      ~invalidate_scope:(fun _ ->
+        effects := "invalidate" :: !effects;
+        [])
+      ~attach_new_inner:(fun _ _ -> effects := "attach" :: !effects)
+  in
   (match
-     Bind.commit_staged_switch switch
-       ~detach_old_inner:(fun _ _ -> effects := "detach" :: !effects)
-       ~invalidate_old_scope:(fun _ ->
-         effects := "invalidate" :: !effects;
-         [])
-       ~attach_new_inner:(fun _ _ -> effects := "attach" :: !effects)
+     Bind.commit_staged_switch switch lifecycle
    with
   | Ok hooks -> Alcotest.(check (list string)) "commit hooks" [] hooks
   | Error `Invalid_scope -> Alcotest.fail "expected noop commit");
@@ -90,9 +96,7 @@ let test_staged_switch_no_staged_snapshot_is_noop () =
   | Ok () -> ()
   | Error `Invalid_scope -> Alcotest.fail "expected noop preflight");
   (match
-     Bind.rollback_staged_switch ~staged:None ~invalidate_new_scope:(fun _ ->
-         effects := "rollback" :: !effects;
-         [])
+     Bind.rollback_staged_switch ~staged:None lifecycle
    with
   | Ok hooks -> Alcotest.(check (list string)) "rollback hooks" [] hooks
   | Error `Invalid_scope -> Alcotest.fail "expected noop rollback");
@@ -104,12 +108,13 @@ let test_staged_switch_rejects_missing_owner () =
   let switch =
     Bind.staged_switch ~owner:None ~current ~staged:(Some staged)
   in
+  let lifecycle =
+    Bind.staged_switch_lifecycle ~detach_old_inner:(fun _ _ -> ())
+      ~invalidate_scope:(fun _ -> []) ~attach_new_inner:(fun _ _ -> ())
+  in
   Alcotest.(check bool) "commit rejected" true
     (Result.is_error
-       (Bind.commit_staged_switch switch
-          ~detach_old_inner:(fun _ _ -> ())
-          ~invalidate_old_scope:(fun _ -> [])
-          ~attach_new_inner:(fun _ _ -> ())));
+       (Bind.commit_staged_switch switch lifecycle));
   Alcotest.(check bool) "preflight rejected" true
     (Result.is_error
        (Bind.preflight_staged_switch switch ~collect_old_scope:(fun _ _ ->
@@ -184,16 +189,16 @@ let test_staged_switch_rejects_incomplete_staged_snapshot () =
     Bind.staged_switch ~owner:(Some "owner") ~current
       ~staged:(Some Bind.empty)
   in
+  let lifecycle =
+    Bind.staged_switch_lifecycle ~detach_old_inner:(fun _ _ -> ())
+      ~invalidate_scope:(fun _ -> []) ~attach_new_inner:(fun _ _ -> ())
+  in
   Alcotest.(check bool) "commit rejected" true
     (Result.is_error
-       (Bind.commit_staged_switch switch
-          ~detach_old_inner:(fun _ _ -> ())
-          ~invalidate_old_scope:(fun _ -> [])
-          ~attach_new_inner:(fun _ _ -> ())));
+       (Bind.commit_staged_switch switch lifecycle));
   Alcotest.(check bool) "rollback rejected" true
     (Result.is_error
-       (Bind.rollback_staged_switch ~staged:(Some Bind.empty)
-          ~invalidate_new_scope:(fun _ -> [])));
+       (Bind.rollback_staged_switch ~staged:(Some Bind.empty) lifecycle));
   Alcotest.(check bool) "preflight rejected" true
     (Result.is_error
        (Bind.preflight_staged_switch switch ~collect_old_scope:(fun _ _ ->

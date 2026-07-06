@@ -318,15 +318,13 @@ val stage_bind_switch :
 
 val commit_staged_bind_switch :
   ('source, 'inner, 'scope, 'owner) Eta_signal_bind.staged_switch ->
-  detach_old_inner:('owner -> 'inner -> unit) ->
-  invalidate_old_scope:('scope -> 'hook list) ->
-  attach_new_inner:('owner -> 'inner -> unit) ->
+  ('owner, 'inner, 'scope, 'hook) Eta_signal_bind.staged_switch_lifecycle ->
   ('hook list, Eta_signal_error.graph_error) result
 
 val rollback_staged_bind_switch :
   staged:
     ('source, 'inner, 'scope) Eta_signal_bind.snapshot option ->
-  invalidate_new_scope:('scope -> 'hook list) ->
+  ('owner, 'inner, 'scope, 'hook) Eta_signal_bind.staged_switch_lifecycle ->
   ('hook list, Eta_signal_error.graph_error) result
 
 val collect_staged_bind_switch_invalidations :

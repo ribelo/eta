@@ -485,14 +485,12 @@ let map_bind_switch_result = function
   | Ok _ as ok -> ok
   | Error err -> Error (graph_error_of_bind_switch_error err)
 
-let commit_staged_bind_switch switch ~detach_old_inner
-    ~invalidate_old_scope ~attach_new_inner =
-  Eta_signal_bind.commit_staged_switch switch ~detach_old_inner
-    ~invalidate_old_scope ~attach_new_inner
+let commit_staged_bind_switch switch lifecycle =
+  Eta_signal_bind.commit_staged_switch switch lifecycle
   |> map_bind_switch_result
 
-let rollback_staged_bind_switch ~staged ~invalidate_new_scope =
-  Eta_signal_bind.rollback_staged_switch ~staged ~invalidate_new_scope
+let rollback_staged_bind_switch ~staged lifecycle =
+  Eta_signal_bind.rollback_staged_switch ~staged lifecycle
   |> map_bind_switch_result
 
 let collect_staged_bind_switch_invalidations t _lane _staging ~init ~staged_switch

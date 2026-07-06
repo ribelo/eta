@@ -369,21 +369,36 @@ type ('scope, 'owner) packed_staged_switch =
 
 let pack_staged_switch switch = Packed_staged_switch switch
 
-let commit_staged_switch switch ~detach_old_inner ~invalidate_old_scope
+type ('owner, 'inner, 'scope, 'hook) staged_switch_lifecycle = {
+  switch_detach_old_inner : 'owner -> 'inner -> unit;
+  switch_invalidate_scope : 'scope -> 'hook list;
+  switch_attach_new_inner : 'owner -> 'inner -> unit;
+}
+
+let staged_switch_lifecycle ~detach_old_inner ~invalidate_scope
     ~attach_new_inner =
+  {
+    switch_detach_old_inner = detach_old_inner;
+    switch_invalidate_scope = invalidate_scope;
+    switch_attach_new_inner = attach_new_inner;
+  }
+
+let commit_staged_switch switch lifecycle =
   match (switch.owner, switch.staged) with
   | _, None -> Ok []
   | Some owner, Some staged ->
       commit_switch ~current:switch.current ~staged
-        ~detach_old_inner:(detach_old_inner owner)
-        ~invalidate_old_scope
-        ~attach_new_inner:(attach_new_inner owner)
+        ~detach_old_inner:(lifecycle.switch_detach_old_inner owner)
+        ~invalidate_old_scope:lifecycle.switch_invalidate_scope
+        ~attach_new_inner:(lifecycle.switch_attach_new_inner owner)
   | None, Some _ -> Error `Invalid_scope
 
-let rollback_staged_switch ~staged ~invalidate_new_scope =
+let rollback_staged_switch ~staged lifecycle =
   match staged with
   | None -> Ok []
-  | Some staged -> rollback_switch ~staged ~invalidate_new_scope
+  | Some staged ->
+      rollback_switch ~staged
+        ~invalidate_new_scope:lifecycle.switch_invalidate_scope
 
 let preflight_staged_switch switch ~collect_old_scope =
   match (switch.owner, switch.staged) with

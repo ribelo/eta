@@ -131,16 +131,22 @@ val pack_staged_switch :
   ('source, 'inner, 'scope, 'owner) staged_switch ->
   ('scope, 'owner) packed_staged_switch
 
+type ('owner, 'inner, 'scope, 'hook) staged_switch_lifecycle
+
+val staged_switch_lifecycle :
+  detach_old_inner:('owner -> 'inner -> unit) ->
+  invalidate_scope:('scope -> 'hook list) ->
+  attach_new_inner:('owner -> 'inner -> unit) ->
+  ('owner, 'inner, 'scope, 'hook) staged_switch_lifecycle
+
 val commit_staged_switch :
   ('source, 'inner, 'scope, 'owner) staged_switch ->
-  detach_old_inner:('owner -> 'inner -> unit) ->
-  invalidate_old_scope:('scope -> 'hook list) ->
-  attach_new_inner:('owner -> 'inner -> unit) ->
+  ('owner, 'inner, 'scope, 'hook) staged_switch_lifecycle ->
   ('hook list, [> `Invalid_scope ]) result
 
 val rollback_staged_switch :
   staged:('source, 'inner, 'scope) snapshot option ->
-  invalidate_new_scope:('scope -> 'hook list) ->
+  ('owner, 'inner, 'scope, 'hook) staged_switch_lifecycle ->
   ('hook list, [> `Invalid_scope ]) result
 
 val preflight_staged_switch :
