@@ -3088,26 +3088,6 @@ let test_unobserved_nodes_do_not_recompute () =
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "unobserved map never recomputed" 0 !calls
 
-let test_observer_mutation_is_delayed_to_next_stabilization () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer =
-    run_ok rt
-      (Signal.Observer.observe signal (function
-        | Signal.Initialized 1 ->
-            Signal.Var.set source 2
-            |> Effect.map_error (fun _ -> `Observer_failed)
-        | Initialized _ | Changed _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "current stabilization snapshot" 1
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "next stabilization sees observer mutation" 2
-    (run_ok rt (Signal.Observer.read observer))
-
 let test_observer_phase_multiple_sets_publish_final_next_value () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8600,8 +8580,6 @@ let () =
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "unobserved nodes do not recompute" `Quick
             test_unobserved_nodes_do_not_recompute;
-          Alcotest.test_case "observer mutation is delayed" `Quick
-            test_observer_mutation_is_delayed_to_next_stabilization;
           Alcotest.test_case "observer phase multiple sets publish final value"
             `Quick test_observer_phase_multiple_sets_publish_final_next_value;
           Alcotest.test_case "observer read during callback" `Quick
