@@ -847,22 +847,31 @@ let stabilization_observer_plan ~delivery ~plan_staged_binds =
     observer_plan_staged_binds = plan_staged_binds;
   }
 
-type 'hook stabilization_commit_plan = {
-  stabilization_commit_staging : lane_access -> staging -> 'hook list;
+type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan = {
+  stabilization_commit_staging_plan :
+    lane_access -> staging -> ('bind, 'node, 'hook, 'timer) staging_commit_plan;
   stabilization_update_necessity : lane_access -> unit;
 }
 
-let stabilization_commit_plan ~commit_staging ~update_necessity =
+let stabilization_commit_plan ~staging ~update_necessity =
   {
-    stabilization_commit_staging = commit_staging;
+    stabilization_commit_staging_plan = staging;
     stabilization_update_necessity = update_necessity;
   }
 
-type ('pending, 'observer, 'event, 'hook) stabilization_pure =
+type
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_pure =
   {
     pending_plan : 'pending stabilization_pending_plan;
     observer_plan : ('observer, 'event) stabilization_observer_plan;
-    commit_plan : 'hook stabilization_commit_plan;
+    commit_plan : ('bind, 'node, 'hook, 'timer) stabilization_commit_plan;
   }
 
 let stabilization_pure_ops ~pending ~observers ~commit =
@@ -885,14 +894,25 @@ let stabilization_rollback_ops ~rollback_staging
     requeue_pending;
   }
 
-type ('pending, 'observer, 'event, 'hook) stabilization_ops =
+type
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_ops =
   {
     classify_graph_error : exn -> Eta_signal_error.graph_error option;
     pure :
       ( 'pending,
+        'bind,
+        'node,
         'observer,
         'event,
-        'hook )
+        'hook,
+        'timer )
       stabilization_pure;
     rollback :
       ('pending, 'observer, 'hook) stabilization_rollback;
@@ -953,9 +973,13 @@ let pass_pure t timer_refresh pure =
   let commit =
     Eta_signal_stabilization_pass.pure_commit_plan
       ~commit_staging:(fun context staging ->
-        pure.commit_plan.stabilization_commit_staging
-          (Eta_signal_stabilization_pass.pure_capability context)
-          staging)
+        let lane = Eta_signal_stabilization_pass.pure_capability context in
+        let plan =
+          pure.commit_plan.stabilization_commit_staging_plan lane staging
+        in
+        match commit_staging t lane staging plan with
+        | Ok hooks -> hooks
+        | Error err -> raise (Graph_phase_error err))
       ~update_necessity:(fun context ->
         pure.commit_plan.stabilization_update_necessity
           (Eta_signal_stabilization_pass.pure_capability context))

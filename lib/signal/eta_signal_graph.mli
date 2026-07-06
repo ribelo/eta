@@ -403,13 +403,6 @@ val staging_commit_plan :
   timers:'timer staging_timer_commit_plan ->
   ('bind, 'node, 'hook, 'timer) staging_commit_plan
 
-val commit_staging :
-  ('pending, 'bind, 'node, 'hook, 'timer, 'refresh, _, _, _, _, _) t ->
-  lane_access ->
-  staging ->
-  ('bind, 'node, 'hook, 'timer) staging_commit_plan ->
-  ('hook list, Eta_signal_error.graph_error) result
-
 val pure_snapshot_commit_count :
   (_, _, _, _, _, _, _, _, _, _, _) t -> lane_access -> int
 
@@ -614,20 +607,38 @@ val stabilization_observer_plan :
     owns registry traversal; the observer subsystem owns active filtering,
     delivery ordering, event collection, and pending-state marking. *)
 
-type 'hook stabilization_commit_plan
+type ('bind, 'node, 'hook, 'timer) stabilization_commit_plan
 
 val stabilization_commit_plan :
-  commit_staging:(lane_access -> staging -> 'hook list) ->
+  staging:
+    (lane_access ->
+    staging ->
+    ('bind, 'node, 'hook, 'timer) staging_commit_plan) ->
   update_necessity:(lane_access -> unit) ->
-  'hook stabilization_commit_plan
+  ('bind, 'node, 'hook, 'timer) stabilization_commit_plan
 
-type ('pending, 'observer, 'event, 'hook) stabilization_pure
+type
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_pure
 
 val stabilization_pure_ops :
   pending:'pending stabilization_pending_plan ->
   observers:('observer, 'event) stabilization_observer_plan ->
-  commit:'hook stabilization_commit_plan ->
-  ('pending, 'observer, 'event, 'hook) stabilization_pure
+  commit:('bind, 'node, 'hook, 'timer) stabilization_commit_plan ->
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_pure
 
 type ('pending, 'observer, 'hook) stabilization_rollback
 
@@ -637,14 +648,36 @@ val stabilization_rollback_ops :
   requeue_pending:(lane_access -> 'pending list -> unit) ->
   ('pending, 'observer, 'hook) stabilization_rollback
 
-type ('pending, 'observer, 'event, 'hook) stabilization_ops
+type
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_ops
 
 val stabilization_ops :
   classify_graph_error:(exn -> Eta_signal_error.graph_error option) ->
   pure:
-    ('pending, 'observer, 'event, 'hook) stabilization_pure ->
+    ( 'pending,
+      'bind,
+      'node,
+      'observer,
+      'event,
+      'hook,
+      'timer )
+    stabilization_pure ->
   rollback:('pending, 'observer, 'hook) stabilization_rollback ->
-  ('pending, 'observer, 'event, 'hook) stabilization_ops
+  ( 'pending,
+    'bind,
+    'node,
+    'observer,
+    'event,
+    'hook,
+    'timer )
+  stabilization_ops
 
 val run_stabilization :
   ( 'pending,
@@ -662,9 +695,12 @@ val run_stabilization :
   lane_access ->
   timer_refresh:'refresh option ->
   ( 'pending,
+    'bind,
+    'node,
     'observer,
     'event,
-    'hook )
+    'hook,
+    'timer )
   stabilization_ops ->
   ( ( 'pending,
       'bind,

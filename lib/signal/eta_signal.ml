@@ -1351,22 +1351,16 @@ module Make (Observer_error : Observer_error) () = struct
     in
     Graph.reset_staging graph lane staging context
 
-  let commit_staging lane staging =
-    let plan =
-      Graph.staging_commit_plan
-        ~preflight:(preflight_commit_staging lane)
-        ~binds:(Graph.staging_bind_commit_plan ~commit:(commit_bind lane))
-        ~signals:
-          (Graph.staging_signal_commit_plan
-             ~prepare_signal:(prepare_signal_commit lane)
-             ~commit_signal)
-        ~timers:
-          (Graph.staging_timer_commit_plan
-             ~commit:commit_timer_refresh_staging)
-    in
-    match Graph.commit_staging graph lane staging plan with
-    | Ok hooks -> hooks
-    | Error err -> raise (Graph_error err)
+  let staging_commit_plan lane _staging =
+    Graph.staging_commit_plan
+      ~preflight:(preflight_commit_staging lane)
+      ~binds:(Graph.staging_bind_commit_plan ~commit:(commit_bind lane))
+      ~signals:
+        (Graph.staging_signal_commit_plan
+           ~prepare_signal:(prepare_signal_commit lane)
+           ~commit_signal)
+      ~timers:
+        (Graph.staging_timer_commit_plan ~commit:commit_timer_refresh_staging)
 
   let requeue_if_needed lane (V var as packed) =
     if not var.queued then (
@@ -1942,7 +1936,7 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let commit =
       Graph.stabilization_commit_plan
-        ~commit_staging:(fun lane staging -> commit_staging lane staging)
+        ~staging:staging_commit_plan
         ~update_necessity:(fun lane ->
           update_necessity_counters_unlocked lane)
     in
