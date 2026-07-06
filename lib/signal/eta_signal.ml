@@ -2632,6 +2632,18 @@ module Make (Observer_error : Observer_error) () = struct
       with_graph_lane_sync (fun () ->
           Timer.after_update_state timer_state_port timer ~generation)
 
+    let timer_run_user_update_if_continuing timer generation user_update =
+      timer_continue_after_update timer generation
+      |> Effect.bind (function
+           | `Stop -> Effect.unit
+           | `Continue ->
+               (* Close the demand-drop window between daemon admission and
+                  caller code. *)
+               timer_continue_after_update timer generation
+               |> Effect.bind (function
+                    | `Stop -> Effect.unit
+                    | `Continue -> user_update ()))
+
     let timer_set_source timer generation (source : 'a var) value =
       with_graph_lane_access (fun lane ->
           Timer.publish_if_running timer_state_port timer ~generation
@@ -2815,20 +2827,18 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed source ->
-                                timer_continue_after_update timer generation
-                                |> Effect.bind (function
-                                     | `Stop -> Effect.unit
-                                     | `Continue ->
-                                         Effect.sync (fun () ->
-                                             f ~missed (Var.value source))
-                                         |> Effect.annotate
-                                              ~key:"eta_signal.timer.kind"
-                                              ~value:"step"
-                                         |> Effect.named "eta_signal.time.step"
-                                         |> Effect.bind (fun next ->
-                                                timer_set_source timer generation
-                                                  source next
-                                                |> Effect.map (fun _ -> ()))));
+                                timer_run_user_update_if_continuing timer
+                                  generation (fun () ->
+                                    Effect.sync (fun () ->
+                                        f ~missed (Var.value source))
+                                    |> Effect.annotate
+                                         ~key:"eta_signal.timer.kind"
+                                         ~value:"step"
+                                    |> Effect.named "eta_signal.time.step"
+                                    |> Effect.bind (fun next ->
+                                           timer_set_source timer generation
+                                             source next
+                                           |> Effect.map (fun _ -> ()))));
                           })))
 
     let step_replay ~every ~initial f =
@@ -2843,21 +2853,18 @@ module Make (Observer_error : Observer_error) () = struct
                           {
                             source_timer_update =
                               (fun timer generation ~missed:_ source ->
-                                timer_continue_after_update timer generation
-                                |> Effect.bind (function
-                                     | `Stop -> Effect.unit
-                                     | `Continue ->
-                                         Effect.sync (fun () ->
-                                             f (Var.value source))
-                                         |> Effect.annotate
-                                              ~key:"eta_signal.timer.kind"
-                                              ~value:"step"
-                                         |> Effect.named
-                                              "eta_signal.time.step_replay"
-                                         |> Effect.bind (fun next ->
-                                                timer_set_source timer generation
-                                                  source next
-                                                |> Effect.map (fun _ -> ()))));
+                                timer_run_user_update_if_continuing timer
+                                  generation (fun () ->
+                                    Effect.sync (fun () -> f (Var.value source))
+                                    |> Effect.annotate
+                                         ~key:"eta_signal.timer.kind"
+                                         ~value:"step"
+                                    |> Effect.named
+                                         "eta_signal.time.step_replay"
+                                    |> Effect.bind (fun next ->
+                                           timer_set_source timer generation
+                                             source next
+                                           |> Effect.map (fun _ -> ()))));
                           })))
   end
 

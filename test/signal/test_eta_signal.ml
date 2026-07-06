@@ -2611,7 +2611,7 @@ let test_time_timer_wrong_runtime_dispose_cleanup_is_retryable () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained
 
-let with_timer_cancel_tracking_host f =
+let with_timer_cancel_tracking_host ?(run_cancel = true) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
@@ -2620,6 +2620,10 @@ let with_timer_cancel_tracking_host f =
   let cancel_inside_local_binding = ref false in
   let cancel_outside_owner_domain = ref false in
   let fail_next_cancel = ref false in
+  let graph_lifecycle_exit_count = ref 0 in
+  let after_graph_lifecycle_exit : (int * (unit -> unit)) option ref =
+    ref None
+  in
   let graph_lifecycle_depth () =
     try Option.value (Eio.Fiber.get graph_lifecycle_depth_key) ~default:0
     with Stdlib.Effect.Unhandled _ -> 0
@@ -2664,13 +2668,22 @@ let with_timer_cancel_tracking_host f =
       let get = Eio.Fiber.get
 
       let with_binding key value f =
+        let graph_lifecycle_binding = context_has_graph_lifecycle_depth value in
         let depth =
-          if context_has_graph_lifecycle_depth value then
-            graph_lifecycle_depth () + 1
+          if graph_lifecycle_binding then graph_lifecycle_depth () + 1
           else graph_lifecycle_depth ()
         in
         Eio.Fiber.with_binding graph_lifecycle_depth_key depth
-          (fun () -> Eio.Fiber.with_binding key value f)
+          (fun () ->
+            let result = Eio.Fiber.with_binding key value f in
+            if graph_lifecycle_binding then (
+              incr graph_lifecycle_exit_count;
+              match !after_graph_lifecycle_exit with
+              | Some (target_count, hook)
+                when Int.equal target_count !graph_lifecycle_exit_count ->
+                  hook ()
+              | Some _ | None -> ());
+            result)
 
       let first = Eio.Fiber.first
       let await_cancel = Eio.Fiber.await_cancel
@@ -2690,7 +2703,7 @@ let with_timer_cancel_tracking_host f =
           cancel_outside_owner_domain := true;
         if graph_lifecycle_depth () > 0 then
           cancel_inside_local_binding := true;
-        Eio.Cancel.cancel cancel_context exn;
+        if run_cancel then Eio.Cancel.cancel cancel_context exn;
         if !fail_next_cancel then (
           fail_next_cancel := false;
           failwith "timer cancel failure")
@@ -2702,13 +2715,14 @@ let with_timer_cancel_tracking_host f =
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
     ~tracer:Tracer.noop @@ fun rt ->
   f clock rt cancel_inside_local_binding cancel_outside_owner_domain
-    fail_next_cancel
+    fail_next_cancel sw graph_lifecycle_exit_count after_graph_lifecycle_exit
 
 let test_time_timer_cancel_runs_outside_graph_lifecycle () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
-         _fail_next_cancel ->
+         _fail_next_cancel _sw _graph_lifecycle_exit_count
+         _after_graph_lifecycle_exit ->
   let signal = run_ok rt (Signal.Time.interval (Duration.days 1)) in
   let observer =
     run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
@@ -2725,7 +2739,8 @@ let test_time_invalidated_timer_cancel_runs_outside_graph_lifecycle () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt cancel_inside_local_binding cancel_outside_owner_domain
-         _fail_next_cancel ->
+         _fail_next_cancel _sw _graph_lifecycle_exit_count
+         _after_graph_lifecycle_exit ->
   let use_timer = Signal.Var.create true in
   let selected =
     Signal.bind (Signal.Var.watch use_timer) (fun active ->
@@ -2751,7 +2766,8 @@ let test_time_timer_cancel_failure_preserves_committed_snapshot () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_timer_cancel_tracking_host
   @@ fun clock rt _cancel_inside_local_binding _cancel_outside_owner_domain
-         fail_next_cancel ->
+         fail_next_cancel _sw _graph_lifecycle_exit_count
+         _after_graph_lifecycle_exit ->
   let use_timer = Signal.Var.create true in
   let selected =
     Signal.bind (Signal.Var.watch use_timer) (fun active ->
@@ -2817,6 +2833,65 @@ let test_time_invalidated_timer_cancels_sleeping_daemon () =
     (Eio.Promise.is_resolved drained);
   Eio.Promise.await_exn drained;
   run_ok rt (Signal.Observer.dispose observer)
+
+let test_time_step_like_skips_f_after_demand_drop_before_user_code () =
+  let check label kind =
+    let module Signal = Eta_signal.Make (Observer_error) () in
+    (* Keep cancellation from preempting the daemon so the test exercises the
+       demand-state check before user code. *)
+    with_timer_cancel_tracking_host ~run_cancel:false
+    @@ fun clock rt _cancel_inside_local_binding _cancel_outside_owner_domain
+           _fail_next_cancel sw graph_lifecycle_exit_count
+           after_graph_lifecycle_exit ->
+    let f_calls = ref 0 in
+    let signal =
+      match kind with
+      | `Step ->
+          run_ok rt
+            (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
+               (fun ~missed:_ value ->
+                 incr f_calls;
+                 value + 1))
+      | `Step_replay ->
+          run_ok rt
+            (Signal.Time.step_replay ~every:(Duration.ms 10) ~initial:0
+               (fun value ->
+                 incr f_calls;
+                 value + 1))
+    in
+    let observer =
+      run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
+    in
+    wait_for_sleepers clock 1;
+    run_ok rt Signal.stabilize;
+    let dispose_requested, dispose_requested_resolver = Eio.Promise.create () in
+    let disposed_before_f = ref false in
+    let disposer =
+      Eio.Fiber.fork_promise ~sw (fun () ->
+          Eio.Promise.await dispose_requested;
+          run_ok rt (Signal.Observer.dispose observer);
+          disposed_before_f := true)
+    in
+    graph_lifecycle_exit_count := 0;
+    after_graph_lifecycle_exit :=
+      Some
+        ( 4,
+          fun () ->
+            Eio.Promise.resolve dispose_requested_resolver ();
+            Eio.Promise.await_exn disposer );
+    Eta_test.Test_clock.adjust clock (Duration.ms 10);
+    wait_until (label ^ " observer disposed before user code") (fun () ->
+        !disposed_before_f);
+    for _ = 1 to 5 do
+      Eta_test.Async.yield ()
+    done;
+    after_graph_lifecycle_exit := None;
+    Alcotest.(check int)
+      (label ^ " f did not run after demand dropped before user code")
+      0 !f_calls
+  in
+  check "step" `Step;
+  check "step_replay" `Step_replay
 
 let test_time_timer_dispose_during_step_prevents_update () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -3938,6 +4013,8 @@ let () =
             test_time_timer_cancel_failure_preserves_committed_snapshot;
           Alcotest.test_case "time invalidated timer cancels sleeping daemon"
             `Quick test_time_invalidated_timer_cancels_sleeping_daemon;
+          Alcotest.test_case "time step timers skip f after demand drop" `Quick
+            test_time_step_like_skips_f_after_demand_drop_before_user_code;
           Alcotest.test_case "time timer dispose during step prevents update"
             `Quick test_time_timer_dispose_during_step_prevents_update;
           Alcotest.test_case "time now backward refresh overrides pending update"
