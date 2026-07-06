@@ -355,7 +355,7 @@ val remember_timer_refresh_disposal_hooks :
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context
 
 val staging_reset_context :
-  rollback_bind:('bind -> 'hook list) ->
+  rollback_bind:(staging -> 'bind -> 'hook list) ->
   rollback_timer_refresh_dirty:('refresh -> unit) ->
   clear_timer_refresh_timer:('timer -> unit) ->
   ('bind, 'hook, 'timer, 'refresh) staging_reset_context
@@ -370,9 +370,9 @@ val reset_staging :
 type ('bind, 'node, 'hook, 'timer) staging_commit_context
 
 val staging_commit_context :
-  preflight:(unit -> unit) ->
-  commit_bind:('bind -> 'hook list) ->
-  prepare_signal:('node -> unit) ->
+  preflight:(staging -> unit) ->
+  commit_bind:(staging -> 'bind -> 'hook list) ->
+  prepare_signal:(staging -> 'node -> unit) ->
   commit_timer_refresh:('timer -> unit) ->
   commit_signal:('node -> unit) ->
   ('bind, 'node, 'hook, 'timer) staging_commit_context

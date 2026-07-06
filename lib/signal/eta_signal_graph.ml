@@ -499,7 +499,7 @@ let saturating_succ value =
   if value = max_int then max_int else value + 1
 
 type ('bind, 'hook, 'timer, 'refresh) staging_reset_context = {
-  staging_reset_rollback_bind : 'bind -> 'hook list;
+  staging_reset_rollback_bind : staging -> 'bind -> 'hook list;
   staging_reset_rollback_timer_refresh_dirty : 'refresh -> unit;
   staging_reset_clear_timer_refresh_timer : 'timer -> unit;
 }
@@ -515,7 +515,7 @@ let staging_reset_context ~rollback_bind ~rollback_timer_refresh_dirty
 let reset_staging t _lane staging context =
   let state_context =
     Eta_signal_graph_state.reset_context
-      ~rollback_bind:context.staging_reset_rollback_bind
+      ~rollback_bind:(context.staging_reset_rollback_bind staging)
       ~rollback_transaction:(fun () ->
         Eta_signal_stabilization.rollback_transaction t.stabilization)
       ~rollback_timer_refresh_dirty:
@@ -526,9 +526,9 @@ let reset_staging t _lane staging context =
   Eta_signal_graph_state.reset_staging t.state staging state_context
 
 type ('bind, 'node, 'hook, 'timer) staging_commit_context = {
-  staging_commit_preflight : unit -> unit;
-  staging_commit_bind : 'bind -> 'hook list;
-  staging_commit_prepare_signal : 'node -> unit;
+  staging_commit_preflight : staging -> unit;
+  staging_commit_bind : staging -> 'bind -> 'hook list;
+  staging_commit_prepare_signal : staging -> 'node -> unit;
   staging_commit_timer_refresh : 'timer -> unit;
   staging_commit_signal : 'node -> unit;
 }
@@ -547,9 +547,9 @@ let commit_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
   let state_context =
     Eta_signal_graph_state.commit_context
-      ~preflight:context.staging_commit_preflight
-      ~commit_bind:context.staging_commit_bind
-      ~prepare_signal:context.staging_commit_prepare_signal
+      ~preflight:(fun () -> context.staging_commit_preflight staging)
+      ~commit_bind:(context.staging_commit_bind staging)
+      ~prepare_signal:(context.staging_commit_prepare_signal staging)
       ~commit_transaction:(fun () ->
         match Eta_signal_stabilization.commit_transaction t.stabilization with
         | Ok () -> ()

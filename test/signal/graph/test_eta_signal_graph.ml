@@ -177,9 +177,9 @@ let empty_stabilization_ops graph =
       ~commit_staging:(fun context staging ->
         let commit_context =
           Graph.staging_commit_context
-            ~preflight:(fun () -> ())
-            ~commit_bind:(fun _bind -> [])
-            ~prepare_signal:(fun _node -> ())
+            ~preflight:(fun _staging -> ())
+            ~commit_bind:(fun _staging _bind -> [])
+            ~prepare_signal:(fun _staging _node -> ())
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in
@@ -692,13 +692,21 @@ let test_stage_bind_switch_owns_transaction_staging () =
       ~stage_pending:(fun context staging _pending -> stage_twice context staging)
       ~plan_staged_binds:(fun _context _staging _observers -> ())
       ~commit_staging:(fun context staging ->
+        let check_staging label actual =
+          if not (actual == staging) then
+            Alcotest.failf "%s received stale staging token" label
+        in
         let commit_context =
           Graph.staging_commit_context
-            ~preflight:(fun () -> record events "preflight")
-            ~commit_bind:(fun bind ->
+            ~preflight:(fun callback_staging ->
+              check_staging "preflight" callback_staging;
+              record events "preflight")
+            ~commit_bind:(fun callback_staging bind ->
+              check_staging "commit_bind" callback_staging;
               record events ("commit_bind:" ^ bind);
               [])
-            ~prepare_signal:(fun _node -> ())
+            ~prepare_signal:(fun callback_staging _node ->
+              check_staging "prepare_signal" callback_staging)
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in
@@ -819,9 +827,9 @@ let test_observer_delivery_plan_uses_collection_order () =
         check_cap cap;
         let commit_context =
           Graph.staging_commit_context
-            ~preflight:(fun () -> record events "preflight")
-            ~commit_bind:(fun _bind -> [])
-            ~prepare_signal:(fun _node -> ())
+            ~preflight:(fun _staging -> record events "preflight")
+            ~commit_bind:(fun _staging _bind -> [])
+            ~prepare_signal:(fun _staging _node -> ())
             ~commit_timer_refresh:(fun _timer -> ())
             ~commit_signal:(fun _node -> ())
         in

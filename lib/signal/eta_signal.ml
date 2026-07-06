@@ -1325,7 +1325,7 @@ module Make (Observer_error : Observer_error) () = struct
 
   let reset_staging lane staging =
     let context =
-      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane staging)
+      Graph.staging_reset_context ~rollback_bind:(rollback_bind lane)
         ~rollback_timer_refresh_dirty:(fun context ->
           Graph.restore_dirty graph lane dirty_ops
             (Timer_policy.refresh_dirty_items context);
@@ -1337,9 +1337,9 @@ module Make (Observer_error : Observer_error) () = struct
   let commit_staging lane staging =
     let context =
       Graph.staging_commit_context
-        ~preflight:(fun () -> preflight_commit_staging lane staging)
-        ~commit_bind:(commit_bind lane staging)
-        ~prepare_signal:(prepare_signal_commit lane staging)
+        ~preflight:(preflight_commit_staging lane)
+        ~commit_bind:(commit_bind lane)
+        ~prepare_signal:(prepare_signal_commit lane)
         ~commit_timer_refresh:commit_timer_refresh_staging ~commit_signal
     in
     match Graph.commit_staging graph lane staging context with
