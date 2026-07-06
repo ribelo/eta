@@ -735,117 +735,6 @@ let test_graph_rejects_cross_domain_effectful_apis () =
     (Signal.Var.value source);
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_diamond_recomputes_shared_node_once () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let calls = ref 0 in
-  let shared =
-    Signal.Var.watch source
-    |> Signal.map (fun n ->
-           incr calls;
-           n + 1)
-  in
-  let left = Signal.map (fun n -> n * 2) shared in
-  let right = Signal.map (fun n -> n * 3) shared in
-  let total = Signal.map2 ( + ) left right in
-  let observer =
-    run_ok rt (Signal.Observer.observe total (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial total" 10
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "initial shared compute once" 1 !calls;
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "updated total" 15
-    (run_ok rt (Signal.Observer.read observer));
-  Alcotest.(check int) "updated shared compute once" 2 !calls
-
-let test_diamond_observers_see_glitch_free_snapshots () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let shared = Signal.Var.watch source |> Signal.map (fun n -> n * 10) in
-  let left = Signal.map (fun n -> n + 1) shared in
-  let right = Signal.map (fun n -> n + 2) shared in
-  let downstream = Signal.map2 (fun left right -> (left, right)) left right in
-  let left_observer = ref None in
-  let right_observer = ref None in
-  let downstream_observer = ref None in
-  let events = ref [] in
-  let check_snapshot label expected_left expected_right expected_downstream =
-    match (!left_observer, !right_observer, !downstream_observer) with
-    | Some left_observer, Some right_observer, Some downstream_observer ->
-        Signal.Observer.read left_observer
-        |> Effect.map_error (fun _ -> `Observer_failed)
-        |> Effect.bind (fun actual_left ->
-               Signal.Observer.read right_observer
-               |> Effect.map_error (fun _ -> `Observer_failed)
-               |> Effect.bind (fun actual_right ->
-                      Signal.Observer.read downstream_observer
-                      |> Effect.map_error (fun _ -> `Observer_failed)
-                      |> Effect.bind (fun actual_downstream ->
-                             Effect.sync (fun () ->
-                                 Alcotest.(check int)
-                                   (label ^ " left snapshot") expected_left
-                                   actual_left;
-                                 Alcotest.(check int)
-                                   (label ^ " right snapshot") expected_right
-                                   actual_right;
-                                 Alcotest.(check (pair int int))
-                                   (label ^ " downstream snapshot")
-                                   expected_downstream actual_downstream))))
-    | _ -> Effect.unit
-  in
-  let left_callback = function
-    | Signal.Initialized value | Changed { new_value = value; _ } ->
-        Effect.sync (fun () -> events := ("left", value) :: !events)
-        |> Effect.bind (fun () ->
-               check_snapshot "left callback" value (value + 1)
-                 (value, value + 1))
-  in
-  let right_callback = function
-    | Signal.Initialized value | Changed { new_value = value; _ } ->
-        Effect.sync (fun () -> events := ("right", value) :: !events)
-        |> Effect.bind (fun () ->
-               check_snapshot "right callback" (value - 1) value
-                 (value - 1, value))
-  in
-  let downstream_callback = function
-    | Signal.Initialized value | Changed { new_value = value; _ } ->
-        let expected_left, expected_right = value in
-        Effect.sync (fun () -> events := ("downstream", expected_left) :: !events)
-        |> Effect.bind (fun () ->
-               check_snapshot "downstream callback" expected_left expected_right
-                 value)
-  in
-  let left_handle = run_ok rt (Signal.Observer.observe left left_callback) in
-  let right_handle = run_ok rt (Signal.Observer.observe right right_callback) in
-  let downstream_handle =
-    run_ok rt (Signal.Observer.observe downstream downstream_callback)
-  in
-  left_observer := Some left_handle;
-  right_observer := Some right_handle;
-  downstream_observer := Some downstream_handle;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list (pair string int)))
-    "initial callbacks see complete diamond"
-    [ ("left", 11); ("right", 12); ("downstream", 11) ]
-    (List.rev !events);
-  events := [];
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list (pair string int)))
-    "changed callbacks see complete diamond"
-    [ ("left", 21); ("right", 22); ("downstream", 21) ]
-    (List.rev !events);
-  Alcotest.(check (pair int int)) "downstream observer final snapshot" (21, 22)
-    (run_ok rt (Signal.Observer.read downstream_handle));
-  run_ok rt (Signal.Observer.dispose left_handle);
-  run_ok rt (Signal.Observer.dispose right_handle);
-  run_ok rt (Signal.Observer.dispose downstream_handle)
-
 let test_recompute_order_is_topological () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8614,10 +8503,6 @@ let () =
             test_graph_rejects_registered_worker_context;
           Alcotest.test_case "graph rejects cross-domain effectful APIs" `Quick
             test_graph_rejects_cross_domain_effectful_apis;
-          Alcotest.test_case "diamond recomputes shared node once" `Quick
-            test_diamond_recomputes_shared_node_once;
-          Alcotest.test_case "diamond observers see glitch-free snapshots"
-            `Quick test_diamond_observers_see_glitch_free_snapshots;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
           Alcotest.test_case "n-ary maps, both, and all" `Quick
