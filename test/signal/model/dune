@@ -5,3 +5,20 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(executable
+ (name fuzz_eta_signal_model)
+ (modules fuzz_eta_signal_model)
+ (libraries eta eta_signal eta_eio eta_test eio_main unix))
+
+(rule
+ (alias signal-model-fuzz-smoke)
+ (deps fuzz_eta_signal_model.exe)
+ (action
+  (bash "./fuzz_eta_signal_model.exe --seeds ${ETA_SIGNAL_MODEL_FUZZ_SMOKE_SEEDS:-50} --steps ${ETA_SIGNAL_MODEL_FUZZ_SMOKE_STEPS:-80}")))
+
+(rule
+ (alias signal-model-fuzz)
+ (deps fuzz_eta_signal_model.exe)
+ (action
+  (bash "./fuzz_eta_signal_model.exe --seeds ${ETA_SIGNAL_MODEL_FUZZ_SEEDS:-5000} --steps ${ETA_SIGNAL_MODEL_FUZZ_STEPS:-120}")))
