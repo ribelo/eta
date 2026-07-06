@@ -1032,9 +1032,9 @@ let update_necessity t lane reachable_ops ~collect_live_nodes ~roots =
   Eta_signal_graph_core.update_necessary_ids t.core lane next;
   next
 
-type ('id, 'timer) timer_demand = {
+type 'timer timer_demand = {
   timer_demand_necessary_ids : necessary_snapshot;
-  timer_demand_timers : ('id * 'timer) list;
+  timer_demand_timers : (Eta_signal_id.signal * 'timer) list;
 }
 
 let timer_demand t lane reachable_ops ~collect_live_nodes ~roots ~timer =
@@ -1047,7 +1047,8 @@ let timer_demand t lane reachable_ops ~collect_live_nodes ~roots ~timer =
   }
 
 let timer_demand_plan demand ~plan =
-  plan ~necessary:demand.timer_demand_necessary_ids
+  plan
+    ~is_necessary:(necessary_mem demand.timer_demand_necessary_ids)
     ~timers:demand.timer_demand_timers
 
 let post_commit_necessary_timers t lane reachable_ops ~collect_live_nodes

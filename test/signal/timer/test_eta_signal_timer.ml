@@ -132,9 +132,9 @@ let test_refresh_node_demand_owns_node_start_wiring () =
     let stop_node = make_node stop in
     let idle_node = make_node idle in
     let plan =
-      Timer.node_demand_plan ~necessary:[ 1 ]
+      Timer.node_demand_plan
         ~timers:[ (1, start_node); (2, stop_node); (3, idle_node) ]
-        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+        ~is_necessary:(fun id -> id = 1)
         ~validate_runtime:
           (fun actual_runtime timer ->
             let case = find_case timer in
@@ -262,10 +262,9 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
           ~plan:(fun runtime_contract () ->
              record "acquire";
              let start_node, stop_node = nodes runtime_contract in
-             Timer.node_demand_plan ~necessary:[ 1 ]
+             Timer.node_demand_plan
                ~timers:[ (1, start_node); (2, stop_node) ]
-               ~is_necessary:(fun necessary id ->
-                 List.exists (( = ) id) necessary)
+               ~is_necessary:(fun id -> id = 1)
                ~validate_runtime:
                  (fun actual_runtime timer ->
                    let case = find_case timer in
@@ -478,9 +477,9 @@ let test_refresh_node_demand_validation_failure_short_circuits () =
     let bad_node = make_node bad in
     let unreached_node = make_node unreached in
     let plan =
-      Timer.node_demand_plan ~necessary:[ 1 ]
+      Timer.node_demand_plan
         ~timers:[ (1, bad_node); (2, unreached_node) ]
-        ~is_necessary:(fun necessary id -> List.exists (( = ) id) necessary)
+        ~is_necessary:(fun id -> id = 1)
         ~validate_runtime:(fun _runtime _timer -> Error "runtime")
         ~state:
           (Timer.state_port

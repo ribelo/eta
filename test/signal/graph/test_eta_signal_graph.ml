@@ -1071,16 +1071,14 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
               (fun timer -> (node.demand_id, timer))
               node.demand_timer))
   in
-  let necessary_count, root_necessary, leaf_necessary, timers =
-    Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
-        ( Graph.necessary_count necessary,
-          Graph.necessary_mem necessary live_root.demand_id,
-          Graph.necessary_mem necessary live_timer.demand_id,
+  let root_necessary, leaf_necessary, timers =
+    Graph.timer_demand_plan demand ~plan:(fun ~is_necessary ~timers ->
+        ( is_necessary live_root.demand_id,
+          is_necessary live_timer.demand_id,
           timers
           |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
           |> List.sort compare ))
   in
-  Alcotest.(check int) "necessary count" 1 necessary_count;
   Alcotest.(check bool) "root necessary" true root_necessary;
   Alcotest.(check bool) "leaf unnecessary" false leaf_necessary;
   Alcotest.(check (list (pair int string)))

@@ -188,19 +188,16 @@ let demand_port ~collect_necessary ~collect_timers ~is_necessary
     demand_start_effect = start_effect;
   }
 
-type ('id, 'necessary, 'operation, 'runtime, 'error) node_demand_plan = {
-  node_demand_necessary : 'necessary;
+type ('id, 'operation, 'runtime, 'error) node_demand_plan = {
   node_demand_timers : ('id * 'operation node) list;
-  node_demand_is_necessary : 'necessary -> 'id -> bool;
+  node_demand_is_necessary : 'id -> bool;
   node_demand_validate_runtime :
     'runtime -> 'operation node -> (unit, 'error) result;
   node_demand_state : 'operation node state_port;
 }
 
-let node_demand_plan ~necessary ~timers ~is_necessary ~validate_runtime
-    ~state =
+let node_demand_plan ~timers ~is_necessary ~validate_runtime ~state =
   {
-    node_demand_necessary = necessary;
     node_demand_timers = timers;
     node_demand_is_necessary = is_necessary;
     node_demand_validate_runtime = validate_runtime;
@@ -242,17 +239,11 @@ let demand_effect_port ~acquire ~rollback_unclaimed ~run_cancel_hooks
     demand_run_start_attempts = run_start_attempts;
   }
 
-type ('capability, 'id, 'necessary, 'operation, 'error)
-     node_demand_effect_port = {
+type ('capability, 'id, 'operation, 'error) node_demand_effect_port = {
   node_demand_effect_plan :
     Eta.Runtime_contract.t ->
     'capability ->
-    ( 'id,
-      'necessary,
-      'operation,
-      Eta.Runtime_contract.t,
-      'error )
-    node_demand_plan;
+    ('id, 'operation, Eta.Runtime_contract.t, 'error) node_demand_plan;
 }
 
 let node_demand_effect_port ~plan =
@@ -342,9 +333,9 @@ let refresh_demand ~advance_generation ~cancel_running port runtime =
 let refresh_node_demand_plan ~advance_generation ~cancel_running plan runtime =
   refresh_demand ~advance_generation ~cancel_running
     (demand_port
-       ~collect_necessary:(fun () -> plan.node_demand_necessary)
+       ~collect_necessary:(fun () -> ())
        ~collect_timers:(fun () -> plan.node_demand_timers)
-       ~is_necessary:plan.node_demand_is_necessary
+       ~is_necessary:(fun () id -> plan.node_demand_is_necessary id)
        ~validate_runtime:plan.node_demand_validate_runtime
        ~state:plan.node_demand_state ~start_effect)
     runtime

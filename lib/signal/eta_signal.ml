@@ -1605,9 +1605,8 @@ module Make (Observer_error : Observer_error) () = struct
 
   let timer_demand_plan_unlocked lane =
     let demand = timer_demand_unlocked lane in
-    Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
-        Timer.node_demand_plan ~necessary ~timers
-          ~is_necessary:(fun needed id -> Graph.necessary_mem needed id)
+    Graph.timer_demand_plan demand ~plan:(fun ~is_necessary ~timers ->
+        Timer.node_demand_plan ~timers ~is_necessary
           ~validate_runtime:
             (fun runtime_contract timer ->
               match validate_timer_runtime timer runtime_contract with
