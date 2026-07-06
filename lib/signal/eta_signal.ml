@@ -420,12 +420,6 @@ module Make (Observer_error : Observer_error) () = struct
     let clear () = Test_hooks.clear state
     let run hook = Test_hooks.run state hook
 
-    let set_timer_runtime_mismatch_hook hook =
-      Test_hooks.set_timer_runtime_mismatch_hook state hook
-
-    let run_timer_runtime_mismatch_hook () =
-      Test_hooks.run_timer_runtime_mismatch_hook state
-
     let set_signal_version signal value =
       let snapshot = Transaction.current signal.snapshot in
       publish_initial_current signal.snapshot
@@ -800,7 +794,6 @@ module Make (Observer_error : Observer_error) () = struct
       ~current_state:(timer_current_state timer)
 
   let timer_runtime_mismatch _runtime_contract _timer =
-    Private_test_hooks.run_timer_runtime_mismatch_hook ();
     (`Runtime_mismatch : graph_error)
 
   let ensure_timer_runtime timer runtime_contract =
