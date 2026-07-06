@@ -396,10 +396,14 @@ val staging_signal_commit_plan :
   commit:(staging -> 'node -> staged_signal_commit) ->
   'node staging_signal_commit_plan
 
+type staged_timer_commit
+
+val staged_timer_commit : commit:(unit -> unit) -> staged_timer_commit
+
 type 'timer staging_timer_commit_plan
 
 val staging_timer_commit_plan :
-  commit:('timer -> unit) ->
+  commit:(staging -> 'timer -> staged_timer_commit) ->
   'timer staging_timer_commit_plan
 
 type ('bind, 'node, 'hook, 'timer) staging_commit_plan

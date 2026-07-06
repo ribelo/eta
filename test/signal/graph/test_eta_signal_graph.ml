@@ -198,7 +198,11 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
   Graph.staging_commit_plan ~preflight
     ~binds
     ~signals
-    ~timers:(Graph.staging_timer_commit_plan ~commit:commit_timer_refresh)
+    ~timers:
+      (Graph.staging_timer_commit_plan
+         ~commit:(fun _staging timer ->
+           Graph.staged_timer_commit
+             ~commit:(fun () -> commit_timer_refresh timer)))
 
 let staging_reset_context
     ?rollback_bind
@@ -880,7 +884,10 @@ let test_signal_commit_discards_invalid_staging () =
           ~preflight:(fun _staging -> record events "preflight")
           ~binds:(noop_bind_commit_plan ())
           ~signals
-          ~timers:(Graph.staging_timer_commit_plan ~commit:(fun _timer -> ())))
+          ~timers:
+            (Graph.staging_timer_commit_plan
+               ~commit:(fun _staging _timer ->
+                 Graph.staged_timer_commit ~commit:(fun () -> ()))))
       ~update_necessity:(fun _context -> record events "update_necessity")
       ()
   in
@@ -1403,6 +1410,102 @@ let test_timer_refresh_token_owned_by_graph () =
         (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err)
   | Ok token -> Alcotest.failf "expected overflow, got token %d" token
 
+let test_timer_refresh_commit_plan_owns_staging () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let cell = Transaction.create_staged 0 in
+  let timer = ref (-1) in
+  let pure =
+    stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~stage_pending:(fun context staging _pending ->
+        Graph.stage_cell graph context staging cell 1;
+        Graph.remember_timer_refresh_timer graph context staging timer
+          ~refresh_token:(fun refresh -> refresh)
+          ~staged_token:(fun timer -> !timer)
+          ~set_staged_token:(fun timer token ->
+            record events ("set_token:" ^ string_of_int token);
+            timer := token)
+          ~stage_refresh_token:(fun _timer token ->
+            record events ("stage_token:" ^ string_of_int token));
+        record events "stage")
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
+      ~staging:(fun _context staging ->
+        let timers =
+          Graph.staging_timer_commit_plan
+            ~commit:(fun callback_staging timer ->
+              if not (callback_staging == staging) then
+                Alcotest.fail "timer commit received stale staging token";
+              Graph.staged_timer_commit ~commit:(fun () ->
+                  Alcotest.(check int)
+                    "transaction committed before timer commit" 1
+                    (Transaction.current cell);
+                  Alcotest.(check int) "staged token" 7 !timer;
+                  timer := -1;
+                  record events "commit_timer"))
+        in
+        Graph.staging_commit_plan
+          ~preflight:(fun callback_staging ->
+            if not (callback_staging == staging) then
+              Alcotest.fail "preflight received stale staging token";
+            record events "preflight")
+          ~binds:(noop_bind_commit_plan ())
+          ~signals:
+            (Graph.staging_signal_commit_plan
+               ~commit:(fun _staging _node ->
+                 Graph.staged_signal_commit ~valid:true
+                   ~cell:(Transaction.create_staged ())
+                   ~commit:(fun () -> ())))
+          ~timers)
+      ~update_necessity:(fun _context -> record events "update_necessity")
+      ()
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~staging:(fun _context _staging -> staging_reset_context ())
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:(Some 7)
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "delivery events" [] delivery_events;
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane finish))
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Alcotest.(check int) "current" 1 (Transaction.current cell);
+  Alcotest.(check int) "timer token cleared" (-1) !timer;
+  Alcotest.(check (list string))
+    "events"
+    [
+      "set_token:7";
+      "stage_token:7";
+      "stage";
+      "preflight";
+      "commit_timer";
+      "update_necessity";
+    ]
+    !events
+
 let test_staged_bind_switch_protocol_maps_graph_errors () =
   let events = ref [] in
   let graph =
@@ -1525,5 +1628,7 @@ let () =
             test_post_commit_necessary_timers_uses_reachability;
           Alcotest.test_case "refresh token ownership" `Quick
             test_timer_refresh_token_owned_by_graph;
+          Alcotest.test_case "refresh commit plan" `Quick
+            test_timer_refresh_commit_plan_owns_staging;
         ] );
     ]

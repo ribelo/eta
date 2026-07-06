@@ -665,11 +665,19 @@ let commit_staging_signal = function
   | Staged_signal_commit { signal_valid; signal_commit; _ } ->
       if signal_valid then signal_commit ()
 
+type staged_timer_commit = Staged_timer_commit of { timer_commit : unit -> unit }
+
+let staged_timer_commit ~commit = Staged_timer_commit { timer_commit = commit }
+
 type 'timer staging_timer_commit_plan = {
-  staging_timer_commit : 'timer -> unit;
+  staging_timer_commit : staging -> 'timer -> staged_timer_commit;
 }
 
 let staging_timer_commit_plan ~commit = { staging_timer_commit = commit }
+
+let commit_staging_timer staging timer context =
+  match context.staging_timer_commit staging timer with
+  | Staged_timer_commit { timer_commit } -> timer_commit ()
 
 type ('bind, 'node, 'hook, 'timer) staging_commit_plan = {
   staging_commit_preflight : staging -> unit;
@@ -708,7 +716,9 @@ let commit_staging t _lane staging context =
            ~commit_signal:commit_staging_signal)
       ~timers:
         (Eta_signal_graph_state.timer_commit_plan
-           ~commit:context.staging_commit_timers.staging_timer_commit)
+           ~commit:(fun timer ->
+             commit_staging_timer staging timer
+               context.staging_commit_timers))
       ~snapshot:
         (Eta_signal_graph_state.snapshot_commit_plan
            ~commit_transaction:(fun () ->

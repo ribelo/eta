@@ -1311,8 +1311,9 @@ module Make (Observer_error : Observer_error) () = struct
   let clear_timer_refresh_timer_staging timer =
     Timer.set_staged_refresh_token timer (-1)
 
-  let commit_timer_refresh_staging timer =
-    clear_timer_refresh_timer_staging timer
+  let timer_refresh_commit timer =
+    Graph.staged_timer_commit ~commit:(fun () ->
+        clear_timer_refresh_timer_staging timer)
 
   let staging_reset_context lane _staging =
     Graph.staging_reset_context
@@ -1339,7 +1340,8 @@ module Make (Observer_error : Observer_error) () = struct
         (Graph.staging_signal_commit_plan
            ~commit:(fun _staging signal -> signal_commit signal))
       ~timers:
-        (Graph.staging_timer_commit_plan ~commit:commit_timer_refresh_staging)
+        (Graph.staging_timer_commit_plan
+           ~commit:(fun _staging timer -> timer_refresh_commit timer))
 
   let requeue_if_needed lane (V var as packed) =
     if not var.queued then (
