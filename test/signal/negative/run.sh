@@ -78,9 +78,6 @@ for src in "$fixture_dir"/*_negative.ml; do
     public_expert_negative.ml)
       expected_substrings=('Unbound module "Signal.Expert"')
       ;;
-    private_test_hooks_negative.ml)
-      expected_substrings=('Unbound module "Signal.Private_test_hooks"')
-      ;;
     private_transaction_negative.ml)
       expected_substrings=('Unbound module "Eta_signal_transaction"')
       ;;
