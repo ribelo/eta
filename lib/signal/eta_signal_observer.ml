@@ -732,8 +732,22 @@ let delivery_collection ~active ~compare ~collect_event ~mark_pending =
     delivery_mark_pending = mark_pending;
   }
 
-let delivery_event_collection ~active ~compare ~collect_event =
-  delivery_collection ~active ~compare ~collect_event
+type ('capability, 'observer, 'callback, 'error) delivery_event_source = {
+  source_collect_event :
+    'capability ->
+    'observer ->
+    ('capability, 'callback, 'error) Delivery_event.t option;
+}
+
+let delivery_event_source ~collect_event =
+  { source_collect_event = collect_event }
+
+let delivery_event_source_of_collection collection =
+  delivery_event_source ~collect_event:(collect_event collection)
+
+let delivery_event_collection ~active ~compare source =
+  delivery_collection ~active ~compare
+    ~collect_event:source.source_collect_event
     ~mark_pending:Delivery_event.mark_pending
 
 let active_delivery_observers collection observers =

@@ -1855,8 +1855,15 @@ module Make (Observer_error : Observer_error) () = struct
       ~make_event:(fun lane observer update ->
         make_observer_event ~token:(current_generation lane) observer update)
 
-  let collect_observer_event staging lane (O observer) =
-    Observer_core.collect_event (observer_collection_port staging) lane observer
+  let collect_typed_observer_event staging lane (type a)
+      (observer : a observer) =
+    Observer_core.collect_event (observer_collection_port staging) lane
+      observer
+
+  let observer_delivery_event_source staging =
+    Observer_core.delivery_event_source
+      ~collect_event:(fun lane (O observer) ->
+        collect_typed_observer_event staging lane observer)
 
   let run_events events =
     Observer_core.Delivery_event.run
@@ -1875,7 +1882,7 @@ module Make (Observer_error : Observer_error) () = struct
             let delivery =
               Observer_core.delivery_event_collection ~active:observer_active
                 ~compare:(compare_observer_graph_order lane)
-                ~collect_event:(collect_observer_event staging)
+                (observer_delivery_event_source staging)
             in
             Graph.observer_delivery_plan graph lane delivery)
         ~stage_pending:

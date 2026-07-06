@@ -955,13 +955,33 @@ let test_delivery_event_collection_marks_pending () =
   let rank observer =
     if String.equal observer first then 0 else 1
   in
+  let snapshots = Hashtbl.create 3 in
+  let snapshot observer =
+    match Hashtbl.find_opt snapshots observer with
+    | Some snapshot -> snapshot
+    | None ->
+        Observer.Snapshot.create ~value:Observer.Value.uninitialized
+          ~delivery:Observer.Delivery.Observer_never_delivered
+  in
+  let collection_port =
+    Observer.collection_port
+      ~live:(fun () observer -> Some observer)
+      ~skip:(fun () _observer -> false)
+      ~compute:(fun () observer ->
+        record events ("collect:" ^ observer);
+        (observer, true))
+      ~snapshot:(fun () observer -> snapshot observer)
+      ~stage_snapshot:(fun () observer snapshot ->
+        Hashtbl.replace snapshots observer snapshot)
+      ~equal:(fun _observer -> String.equal)
+      ~make_event:(fun () observer _update -> delivery_event events observer)
+  in
   let collection =
+    let source = Observer.delivery_event_source_of_collection collection_port in
     Observer.delivery_event_collection
       ~active:(fun observer -> not (String.equal observer inactive))
       ~compare:(fun left right -> Int.compare (rank left) (rank right))
-      ~collect_event:(fun () observer ->
-        record events ("collect:" ^ observer);
-        Some (delivery_event events observer))
+      source
   in
   let active =
     Observer.active_delivery_observers collection [ second; inactive; first ]

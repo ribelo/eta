@@ -450,13 +450,25 @@ val delivery_collection :
   mark_pending:('capability -> 'event -> unit) ->
   ('capability, 'observer, 'event) delivery_collection
 
-val delivery_event_collection :
-  active:('observer -> bool) ->
-  compare:('observer -> 'observer -> int) ->
+type ('capability, 'observer, 'callback, 'error) delivery_event_source
+
+val delivery_event_source :
   collect_event:
     ('capability ->
     'observer ->
     ('capability, 'callback, 'error) Delivery_event.t option) ->
+  ('capability, 'observer, 'callback, 'error) delivery_event_source
+
+val delivery_event_source_of_collection :
+  ('capability, 'observer, 'live, 'a, 'after_ack,
+   ('capability, 'callback, 'error) Delivery_event.t)
+  collection_port ->
+  ('capability, 'observer, 'callback, 'error) delivery_event_source
+
+val delivery_event_collection :
+  active:('observer -> bool) ->
+  compare:('observer -> 'observer -> int) ->
+  ('capability, 'observer, 'callback, 'error) delivery_event_source ->
   ('capability, 'observer,
    ('capability, 'callback, 'error) Delivery_event.t)
   delivery_collection
