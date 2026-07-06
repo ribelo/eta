@@ -411,12 +411,6 @@ module Make (Observer_error : Observer_error) () = struct
       | After_observer_activation_before_return
       | After_graph_lane_acquired
 
-    type stats_count = Test_hooks.stats_count =
-      | Stats_total_node_count
-      | Stats_necessary_node_count
-      | Stats_dead_node_count
-      | Stats_lane_cancelled_waiter_count
-
     type action = Test_hooks.action = {
       run : 'err. unit -> (unit, 'err) Effect.t;
     }
@@ -425,12 +419,6 @@ module Make (Observer_error : Observer_error) () = struct
     let with_hook hook action f = Test_hooks.with_hook state hook action f
     let clear () = Test_hooks.clear state
     let run hook = Test_hooks.run state hook
-
-    let set_stats_count_override count value =
-      Test_hooks.set_stats_count_override state count value
-
-    let stats_count_override count =
-      Test_hooks.stats_count_override state count
 
     let set_timer_runtime_mismatch_hook hook =
       Test_hooks.set_timer_runtime_mismatch_hook state hook
@@ -2089,9 +2077,6 @@ module Make (Observer_error : Observer_error) () = struct
     | Ok value -> value
     | Error (`Counter_overflow name) -> counter_overflow name
 
-  let stats_count count actual =
-    Option.value (Private_test_hooks.stats_count_override count) ~default:actual
-
   let stats () =
     with_graph_lane_access (fun lane ->
         try
@@ -2106,9 +2091,7 @@ module Make (Observer_error : Observer_error) () = struct
                 stats_counter "stats callback_delivery_count"
                   (Graph.counter graph lane Graph.Callback_delivery_count);
               total_node_count =
-                stats_counter "stats total_node_count"
-                  (stats_count Private_test_hooks.Stats_total_node_count
-                     (List.length all_nodes));
+                stats_counter "stats total_node_count" (List.length all_nodes);
               active_observer_count =
                 stats_counter "stats active_observer_count"
                   (Graph.observer_counts_active observer_counts);
@@ -2117,12 +2100,9 @@ module Make (Observer_error : Observer_error) () = struct
                   (Graph.observer_counts_invalid observer_counts);
               necessary_node_count =
                 stats_counter "stats necessary_node_count"
-                  (stats_count Private_test_hooks.Stats_necessary_node_count
-                     (necessary_node_count lane));
+                  (necessary_node_count lane);
               dead_node_count =
-                stats_counter "stats dead_node_count"
-                  (stats_count Private_test_hooks.Stats_dead_node_count
-                     (dead_node_count lane));
+                stats_counter "stats dead_node_count" (dead_node_count lane);
               live_dirty_node_count =
                 stats_counter "stats live_dirty_node_count"
                   (live_dirty_node_count all_nodes);
@@ -2146,9 +2126,7 @@ module Make (Observer_error : Observer_error) () = struct
                   (Graph.lane_waiting_count graph lane);
               lane_cancelled_waiter_count =
                 stats_counter "stats lane_cancelled_waiter_count"
-                  (stats_count
-                     Private_test_hooks.Stats_lane_cancelled_waiter_count
-                     (Graph.lane_cancelled_count graph lane));
+                  (Graph.lane_cancelled_count graph lane);
             }
         with Graph_error err -> Error err)
     |> Effect.flatten_result

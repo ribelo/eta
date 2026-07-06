@@ -2335,6 +2335,12 @@ let test_timer_refresh_token_overflow_is_typed_failure () =
 let test_stats_counter_saturation_is_typed_failure () =
   let module Overflow_signal = Eta_signal_testable.Make (Observer_error) () in
   with_runtime @@ fun rt ->
+  let check_stats_counter name =
+    match Eta_signal_testable.Debug.stats_counter ~name max_int with
+    | Error (`Counter_overflow actual) ->
+        Alcotest.(check string) (name ^ " pure saturation") name actual
+    | Ok _ -> Alcotest.failf "%s: expected pure counter overflow" name
+  in
   let check name set_counter =
     with_test_graph_lane rt Overflow_signal.graph (fun lane ->
         set_counter lane max_int);
@@ -2343,24 +2349,19 @@ let test_stats_counter_saturation_is_typed_failure () =
     with_test_graph_lane rt Overflow_signal.graph (fun lane ->
         set_counter lane 0)
   in
-  let check_stats_count name count =
-    Fun.protect
-      ~finally:(fun () ->
-        Overflow_signal.Private_test_hooks.set_stats_count_override count None)
-      (fun () ->
-        Overflow_signal.Private_test_hooks.set_stats_count_override count
-          (Some max_int);
-        expect_fail (name ^ " saturation") (counter_overflow name)
-          (Eta_eio.Runtime.run rt (widen (Overflow_signal.stats ()))))
-  in
+  List.iter check_stats_counter
+    [
+      "stats total_node_count";
+      "stats necessary_node_count";
+      "stats dead_node_count";
+      "stats lane_cancelled_waiter_count";
+    ];
   check "stats pure_snapshot_commit_count" (fun lane value ->
       Eta_signal_testable.Graph.set_pure_snapshot_commit_count
         Overflow_signal.graph lane value);
   check "stats callback_delivery_count" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
         lane Eta_signal_testable.Graph.Callback_delivery_count value);
-  check_stats_count "stats total_node_count"
-    Overflow_signal.Private_test_hooks.Stats_total_node_count;
   check "stats recompute_count" (fun lane value ->
       Eta_signal_testable.Graph.set_counter Overflow_signal.graph
         lane Eta_signal_testable.Graph.Recompute_count value);
@@ -2376,14 +2377,7 @@ let test_stats_counter_saturation_is_typed_failure () =
   check "stats stream_bridge_drop_count" (fun lane value ->
       Eta_signal_testable.Graph.set_stream_bridge_metrics
         Overflow_signal.graph lane
-        (Eta_signal_testable.Stream_bridge.create_metrics
-           ~drop_count:value ()));
-  check_stats_count "stats necessary_node_count"
-    Overflow_signal.Private_test_hooks.Stats_necessary_node_count;
-  check_stats_count "stats dead_node_count"
-    Overflow_signal.Private_test_hooks.Stats_dead_node_count;
-  check_stats_count "stats lane_cancelled_waiter_count"
-    Overflow_signal.Private_test_hooks.Stats_lane_cancelled_waiter_count
+        (Eta_signal_testable.Stream_bridge.create_metrics ~drop_count:value ()))
 
 let test_observer_registration_and_self_disposal_inside_callback () =
   let module Signal = Eta_signal.Make (Observer_error) () in

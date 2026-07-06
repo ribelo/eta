@@ -5,22 +5,12 @@ type hook =
   | After_observer_activation_before_return
   | After_graph_lane_acquired
 
-type stats_count =
-  | Stats_total_node_count
-  | Stats_necessary_node_count
-  | Stats_dead_node_count
-  | Stats_lane_cancelled_waiter_count
-
 type action = { run : 'err. unit -> (unit, 'err) Effect.t }
 
 type t = {
   after_observer_delivery_claim : action ref;
   after_observer_activation_before_return : action ref;
   after_graph_lane_acquired : action ref;
-  total_node_count_override : int option ref;
-  necessary_node_count_override : int option ref;
-  dead_node_count_override : int option ref;
-  lane_cancelled_waiter_count_override : int option ref;
   timer_runtime_mismatch_hook : (unit -> unit) ref;
 }
 
@@ -31,10 +21,6 @@ let create () =
     after_observer_delivery_claim = ref noop;
     after_observer_activation_before_return = ref noop;
     after_graph_lane_acquired = ref noop;
-    total_node_count_override = ref None;
-    necessary_node_count_override = ref None;
-    dead_node_count_override = ref None;
-    lane_cancelled_waiter_count_override = ref None;
     timer_runtime_mismatch_hook = ref (fun () -> ());
   }
 
@@ -43,13 +29,6 @@ let slot state = function
   | After_observer_activation_before_return ->
       state.after_observer_activation_before_return
   | After_graph_lane_acquired -> state.after_graph_lane_acquired
-
-let stats_count_slot state = function
-  | Stats_total_node_count -> state.total_node_count_override
-  | Stats_necessary_node_count -> state.necessary_node_count_override
-  | Stats_dead_node_count -> state.dead_node_count_override
-  | Stats_lane_cancelled_waiter_count ->
-      state.lane_cancelled_waiter_count_override
 
 let with_hook state hook action f =
   let slot = slot state hook in
@@ -67,20 +46,11 @@ let clear state =
       After_observer_activation_before_return;
       After_graph_lane_acquired;
     ];
-  state.total_node_count_override := None;
-  state.necessary_node_count_override := None;
-  state.dead_node_count_override := None;
-  state.lane_cancelled_waiter_count_override := None;
   state.timer_runtime_mismatch_hook := (fun () -> ())
 
 let run state hook =
   let slot = slot state hook in
   (!slot).run ()
-
-let set_stats_count_override state count value =
-  stats_count_slot state count := value
-
-let stats_count_override state count = !(stats_count_slot state count)
 
 let set_timer_runtime_mismatch_hook state hook =
   state.timer_runtime_mismatch_hook := hook
