@@ -129,6 +129,14 @@ val node_demand_effect_port :
     ('id, 'operation, Eta.Runtime_contract.t, 'error) node_demand_plan) ->
   ('capability, 'id, 'operation, 'error) node_demand_effect_port
 
+type ('capability, 'id, 'operation, 'error) node_demand_refresh
+
+val node_demand_refresh :
+  advance_generation:(int -> int) ->
+  access:('capability, 'error) demand_effect_access ->
+  demand:('capability, 'id, 'operation, 'error) node_demand_effect_port ->
+  ('capability, 'id, 'operation, 'error) node_demand_refresh
+
 val mark_node_unneeded :
   advance_generation:(int -> int) ->
   cancel_running:bool ->
@@ -155,10 +163,8 @@ val refresh_node_demand_plan :
    'error)
   result
 
-val refresh_node_demand_effect :
-  advance_generation:(int -> int) ->
-  ('capability, 'error) demand_effect_access ->
-  ('capability, 'id, 'operation, 'error) node_demand_effect_port ->
+val run_node_demand_refresh :
+  ('capability, 'id, 'operation, 'error) node_demand_refresh ->
   (unit, 'error) Eta.Effect.t
 
 val begin_start :

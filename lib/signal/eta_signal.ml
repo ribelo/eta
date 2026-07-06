@@ -1666,11 +1666,13 @@ module Make (Observer_error : Observer_error) () = struct
         |> Effect.flatten_result)
 
   let refresh_timer_demand () =
-    Timer.refresh_node_demand_effect
+    Timer.node_demand_refresh
       ~advance_generation:(checked_succ "timer generation")
-      timer_demand_access
-      (Timer.node_demand_effect_port ~plan:(fun _runtime_contract lane ->
-           timer_demand_plan_unlocked lane))
+      ~access:timer_demand_access
+      ~demand:
+        (Timer.node_demand_effect_port ~plan:(fun _runtime_contract lane ->
+             timer_demand_plan_unlocked lane))
+    |> Timer.run_node_demand_refresh
 
   let defect_with_pending_disposal_hooks hooks_ref exn backtrace =
     fail_with_pending_disposal_hooks hooks_ref

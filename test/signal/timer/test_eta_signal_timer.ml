@@ -189,7 +189,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
   in
   run_ok runtime effect
 
-let test_refresh_node_demand_effect_owns_node_bracketing () =
+let test_node_demand_refresh_owns_node_bracketing () =
   with_runtime @@ fun runtime ->
   let events = ref [] in
   let record event = append_event events event in
@@ -251,30 +251,34 @@ let test_refresh_node_demand_effect_owns_node_bracketing () =
         let stop_node = make_node runtime_contract stop in
         (start_node, stop_node)
   in
-  run_ok runtime
-    (Timer.refresh_node_demand_effect ~advance_generation:succ
-       (Timer.demand_effect_access ~with_access:(fun f ->
-            Eta.Effect.sync (fun () ->
-                record "access";
-                f ())
-            |> Eta.Effect.flatten_result))
-       (Timer.node_demand_effect_port
-          ~plan:(fun runtime_contract () ->
-             record "acquire";
-             let start_node, stop_node = nodes runtime_contract in
-             Timer.node_demand_plan
-               ~timers:[ (1, start_node); (2, stop_node) ]
-               ~is_necessary:(fun id -> id = 1)
-               ~validate_runtime:
-                 (fun actual_runtime timer ->
-                   let case = find_case timer in
-                   record ("validate:" ^ case.case_name);
-                   if
-                     Eta.Runtime_contract.same_runtime actual_runtime
-                     (Timer.runtime_contract timer)
-                   then Ok ()
-                   else Error `Runtime_mismatch)
-               ~state:port)));
+  let refresh =
+    Timer.node_demand_refresh ~advance_generation:succ
+      ~access:
+        (Timer.demand_effect_access ~with_access:(fun f ->
+             Eta.Effect.sync (fun () ->
+                 record "access";
+                 f ())
+             |> Eta.Effect.flatten_result))
+      ~demand:
+        (Timer.node_demand_effect_port
+           ~plan:(fun runtime_contract () ->
+              record "acquire";
+              let start_node, stop_node = nodes runtime_contract in
+              Timer.node_demand_plan
+                ~timers:[ (1, start_node); (2, stop_node) ]
+                ~is_necessary:(fun id -> id = 1)
+                ~validate_runtime:
+                  (fun actual_runtime timer ->
+                    let case = find_case timer in
+                    record ("validate:" ^ case.case_name);
+                    if
+                      Eta.Runtime_contract.same_runtime actual_runtime
+                      (Timer.runtime_contract timer)
+                    then Ok ()
+                    else Error `Runtime_mismatch)
+                ~state:port))
+  in
+  run_ok runtime (Timer.run_node_demand_refresh refresh);
   Alcotest.(check (list string))
     "events"
     [
@@ -830,8 +834,8 @@ let () =
         [
           Alcotest.test_case "node helper owns start wiring" `Quick
             test_refresh_node_demand_owns_node_start_wiring;
-          Alcotest.test_case "node effect helper owns bracketing" `Quick
-            test_refresh_node_demand_effect_owns_node_bracketing;
+          Alcotest.test_case "node refresh transaction owns bracketing" `Quick
+            test_node_demand_refresh_owns_node_bracketing;
           Alcotest.test_case "node refresh policy" `Quick
             test_node_can_refresh_on_demand_uses_node_metadata;
           Alcotest.test_case "node refresh demand order" `Quick

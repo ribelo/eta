@@ -249,6 +249,20 @@ type ('capability, 'id, 'operation, 'error) node_demand_effect_port = {
 let node_demand_effect_port ~plan =
   { node_demand_effect_plan = plan }
 
+type ('capability, 'id, 'operation, 'error) node_demand_refresh = {
+  refresh_advance_generation : int -> int;
+  refresh_access : ('capability, 'error) demand_effect_access;
+  refresh_demand :
+    ('capability, 'id, 'operation, 'error) node_demand_effect_port;
+}
+
+let node_demand_refresh ~advance_generation ~access ~demand =
+  {
+    refresh_advance_generation = advance_generation;
+    refresh_access = access;
+    refresh_demand = demand;
+  }
+
 let start_attempt ~timer ~effect =
   { attempt_timer = timer; attempt_effect = effect }
 
@@ -364,14 +378,16 @@ let refresh_demand_effect access port =
          access.demand_with_access f))
     (Eta_signal_timer_adapter.demand_plan ~claim ~effects)
 
-let refresh_node_demand_effect ~advance_generation access port =
+let run_node_demand_refresh refresh =
   let active_plan = ref None in
-  refresh_demand_effect access
+  refresh_demand_effect refresh.refresh_access
     (demand_effect_port
        ~acquire:(fun runtime capability ->
+          let port = refresh.refresh_demand in
           let plan = port.node_demand_effect_plan runtime capability in
           active_plan := Some plan;
-          refresh_node_demand_plan ~advance_generation
+          refresh_node_demand_plan
+            ~advance_generation:refresh.refresh_advance_generation
             ~cancel_running:true plan runtime)
        ~rollback_unclaimed:(fun _capability attempts ->
           match !active_plan with
@@ -379,7 +395,8 @@ let refresh_node_demand_effect ~advance_generation access port =
           | Some plan ->
               active_plan := None;
               Ok
-                (rollback_unclaimed_start_attempts ~advance_generation
+                (rollback_unclaimed_start_attempts
+                   ~advance_generation:refresh.refresh_advance_generation
                    plan.node_demand_state attempts))
        ~run_cancel_hooks:(fun hooks ->
          Eta_signal_cleanup.run_hooks hooks |> Eta.Effect.uninterruptible)
