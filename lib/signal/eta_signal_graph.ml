@@ -929,6 +929,11 @@ let live_nodes t _lane ~collect_live_nodes =
 let prune_live_nodes t _lane ~collect_live_nodes ~keep =
   ignore (collect_live_node_registry t ~collect_live_nodes ~keep : _ list)
 
+type necessary_snapshot = (Eta_signal_id.signal, unit) Hashtbl.t
+
+let necessary_count snapshot = Hashtbl.length snapshot
+let necessary_mem snapshot id = Hashtbl.mem snapshot id
+
 let necessary_ids t lane ~collect_live_nodes ~root ~reachable_ids =
   ignore (live_nodes t lane ~collect_live_nodes : _ list);
   reachable_ids ~roots:(List.filter_map root t.observers)
@@ -939,7 +944,7 @@ let update_necessity t lane ~collect_live_nodes ~root ~reachable_ids =
   next
 
 type ('id, 'timer) timer_demand = {
-  timer_demand_necessary_ids : (Eta_signal_id.signal, unit) Hashtbl.t;
+  timer_demand_necessary_ids : necessary_snapshot;
   timer_demand_timers : ('id * 'timer) list;
 }
 

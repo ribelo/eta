@@ -708,6 +708,11 @@ val prune_live_nodes :
   keep:('node -> bool) ->
   unit
 
+type necessary_snapshot
+
+val necessary_count : necessary_snapshot -> int
+val necessary_mem : necessary_snapshot -> Eta_signal_id.signal -> bool
+
 val necessary_ids :
   (_, _, 'node, _, _, _, 'observer, 'weak_node, _, _, _) t ->
   lane_access ->
@@ -716,7 +721,7 @@ val necessary_ids :
   root:('observer -> 'node option) ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
-  (Eta_signal_id.signal, unit) Hashtbl.t
+  necessary_snapshot
 (** Recompute the current necessary node set from graph-owned observer and
     weak-node registries. The graph owns registry traversal and pruning; the
     caller supplies graph-shape projection and reachability. *)
@@ -729,7 +734,7 @@ val update_necessity :
   root:('observer -> 'node option) ->
   reachable_ids:
     (roots:'node list -> (Eta_signal_id.signal, unit) Hashtbl.t) ->
-  (Eta_signal_id.signal, unit) Hashtbl.t
+  necessary_snapshot
 (** Recompute necessary nodes and update graph-core transition counters from
     the same snapshot. *)
 
@@ -752,9 +757,7 @@ val timer_demand :
 val timer_demand_plan :
   ('id, 'timer) timer_demand ->
   plan:
-    (necessary:(Eta_signal_id.signal, unit) Hashtbl.t ->
-    timers:('id * 'timer) list ->
-    'plan) ->
+    (necessary:necessary_snapshot -> timers:('id * 'timer) list -> 'plan) ->
   'plan
 (** Convert a graph-owned timer-demand snapshot into a caller-owned timer
     plan without exposing the snapshot representation. *)

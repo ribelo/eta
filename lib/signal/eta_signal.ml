@@ -1581,7 +1581,7 @@ module Make (Observer_error : Observer_error) () = struct
          ~collect_live_nodes:collect_live_weak_signals
          ~root:observer_demand_root
          ~reachable_ids:(Graph.reachable_ids graph lane reachable_ops)
-        : (signal_id, unit) Hashtbl.t)
+        : Graph.necessary_snapshot)
 
   let signal_timer (P signal) =
     Option.map (fun timer -> (signal.id, timer)) signal.timer
@@ -1604,7 +1604,7 @@ module Make (Observer_error : Observer_error) () = struct
     let demand = timer_demand_unlocked lane in
     Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
         Timer.node_demand_plan ~necessary ~timers
-          ~is_necessary:(fun needed id -> Hashtbl.mem needed id)
+          ~is_necessary:(fun needed id -> Graph.necessary_mem needed id)
           ~validate_runtime:
             (fun runtime_contract timer ->
               match validate_timer_runtime timer runtime_contract with
@@ -2176,7 +2176,7 @@ module Make (Observer_error : Observer_error) () = struct
         Observer_lifecycle.invalid_scope observer.obs_state)
 
   let necessary_node_count lane =
-    Hashtbl.length (collect_necessary_node_ids lane)
+    Graph.necessary_count (collect_necessary_node_ids lane)
 
   let dead_node_count lane = Graph.dead_node_count graph lane
 
@@ -2256,10 +2256,10 @@ module Make (Observer_error : Observer_error) () = struct
     |> Effect.flatten_result
 
   let signal_selected :
-      type a. dot_options -> (signal_id, unit) Hashtbl.t -> a signal -> bool =
+      type a. dot_options -> Graph.necessary_snapshot -> a signal -> bool =
    fun options necessary signal ->
     match options.dot_scope with
-    | `Necessary -> Hashtbl.mem necessary signal.id
+    | `Necessary -> Graph.necessary_mem necessary signal.id
     | `All_valid -> signal.valid
     | `All_including_invalid -> true
 

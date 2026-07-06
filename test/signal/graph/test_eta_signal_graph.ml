@@ -323,12 +323,6 @@ let demand_reachable_ops =
     ~valid:(fun node -> node.demand_live)
     ~children:(fun node -> node.demand_children)
 
-let sorted_signal_ids table =
-  Hashtbl.to_seq_keys table
-  |> List.of_seq
-  |> List.map Id.signal_int
-  |> List.sort Int.compare
-
 let compute_ops =
   Graph.compute_ops ~node:(fun node -> node) ~pack:(fun node -> node)
     ~seen_generation:(fun node -> node.compute_seen_generation)
@@ -1028,15 +1022,18 @@ let test_timer_demand_plan_owns_live_pruning_and_roots () =
               (fun timer -> (node.demand_id, timer))
               node.demand_timer))
   in
-  let necessary_ids, timers =
+  let necessary_count, root_necessary, leaf_necessary, timers =
     Graph.timer_demand_plan demand ~plan:(fun ~necessary ~timers ->
-        ( sorted_signal_ids necessary,
+        ( Graph.necessary_count necessary,
+          Graph.necessary_mem necessary live_root.demand_id,
+          Graph.necessary_mem necessary live_timer.demand_id,
           timers
           |> List.map (fun (id, timer) -> (Id.signal_int id, timer))
           |> List.sort compare ))
   in
-  Alcotest.(check (list int)) "necessary ids" [ demand_id live_root ]
-    necessary_ids;
+  Alcotest.(check int) "necessary count" 1 necessary_count;
+  Alcotest.(check bool) "root necessary" true root_necessary;
+  Alcotest.(check bool) "leaf unnecessary" false leaf_necessary;
   Alcotest.(check (list (pair int string)))
     "live timer candidates"
     [ (demand_id live_root, "root"); (demand_id live_timer, "leaf") ]
