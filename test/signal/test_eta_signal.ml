@@ -4398,40 +4398,6 @@ let test_time_now_bind_activation_refreshes_current_stabilization () =
       Alcotest.(check int) "dynamic activation refreshes current snapshot" 20
         (run_ok rt (Signal.Observer.read observer)))
 
-let test_time_now_uses_single_clock_snapshot_per_stabilization () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let clock = Eta_test.Test_clock.create () in
-  let current_now_ms = ref 0 in
-  let now_ms () =
-    let current = !current_now_ms in
-    incr current_now_ms;
-    current
-  in
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
-  in
-  let left =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  let right =
-    run_ok rt (Signal.Time.now ~every:(Duration.ms 10) ())
-    |> Signal.map Signal.Time.to_ms
-  in
-  let pair = Signal.map2 (fun left right -> (left, right)) left right in
-  let observer =
-    run_ok rt (Signal.Observer.observe pair (fun _ -> Effect.unit))
-  in
-  Fun.protect
-    ~finally:(fun () -> run_ok rt (Signal.Observer.dispose observer))
-    (fun () ->
-      run_ok rt Signal.stabilize;
-      let left, right = run_ok rt (Signal.Observer.read observer) in
-      Alcotest.(check int) "same stabilization clock snapshot" left right)
-
 let test_time_now_backward_clock_refresh_overrides_pending_update () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -4453,23 +4419,6 @@ let test_time_now_backward_clock_refresh_overrides_pending_update () =
   Alcotest.(check int) "backward refresh wins over pending update" 0
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
-
-let test_time_after_positive_duration_tolerates_advancing_clock () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let current_now_ms = ref 0 in
-  let now_ms () =
-    let current = !current_now_ms in
-    incr current_now_ms;
-    current
-  in
-  let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~now_ms ()
-  in
-  ignore
-    (run_ok rt
-      (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 1)))
 
 let test_time_after_bind_activation_refreshes_current_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -4534,14 +4483,6 @@ let test_time_after_bind_activation_does_not_compute_stale_deadline () =
       Alcotest.(check string)
         "dynamic activation computes only refreshed deadline" "elapsed"
         (run_ok rt (Signal.Observer.read observer)))
-
-let test_time_after_overflow_fails_with_deadline_overflow () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  Eta_test.Test_clock.set_time clock (max_int - 1);
-  expect_fail "overflowing relative deadline" (( = ) `Deadline_overflow)
-    (Eta_eio.Runtime.run rt
-       (widen (Signal.Time.after ~every:(Duration.ms 1) (Duration.ms 10))))
 
 let with_blocked_timer_daemon f =
   Eio_main.run @@ fun env ->
@@ -5698,20 +5639,14 @@ let () =
             `Quick test_time_timer_dispose_during_step_prevents_update;
           Alcotest.test_case "time now bind activation refreshes current" `Quick
             test_time_now_bind_activation_refreshes_current_stabilization;
-          Alcotest.test_case "time now uses one clock snapshot" `Quick
-            test_time_now_uses_single_clock_snapshot_per_stabilization;
           Alcotest.test_case "time now backward refresh overrides pending update"
             `Quick
             test_time_now_backward_clock_refresh_overrides_pending_update;
-          Alcotest.test_case "time after positive duration tolerates advancing clock"
-            `Quick test_time_after_positive_duration_tolerates_advancing_clock;
           Alcotest.test_case "time after bind activation refreshes current"
             `Quick test_time_after_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time after bind activation skips stale compute"
             `Quick
             test_time_after_bind_activation_does_not_compute_stale_deadline;
-          Alcotest.test_case "time after overflow fails with Deadline_overflow"
-            `Quick test_time_after_overflow_fails_with_deadline_overflow;
           Alcotest.test_case "time deadline catches up without daemon yield"
             `Quick test_time_deadline_catches_up_without_daemon_yield;
           Alcotest.test_case

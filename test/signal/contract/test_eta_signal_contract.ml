@@ -1520,6 +1520,65 @@ let test_time_deadline_validation_errors () =
   expect_fail "past deadline" (( = ) `Past_deadline)
     (run runtime (S.Time.deadline ~every:(Eta.Duration.ms 1) now))
 
+let test_time_now_uses_single_clock_snapshot_per_stabilization () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let current_now_ms = ref 0 in
+  let now_ms () =
+    let current = !current_now_ms in
+    incr current_now_ms;
+    current
+  in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let left =
+    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10) ())
+    |> S.map S.Time.to_ms
+  in
+  let right =
+    run_ok runtime (S.Time.now ~every:(Eta.Duration.ms 10) ())
+    |> S.map S.Time.to_ms
+  in
+  let pair = S.map2 (fun left right -> (left, right)) left right in
+  let observer =
+    run_ok runtime (S.Observer.observe pair (fun _ -> E.unit))
+  in
+  Fun.protect
+    ~finally:(fun () -> run_ok runtime (S.Observer.dispose observer))
+    (fun () ->
+      run_ok runtime S.stabilize;
+      let left, right = run_ok runtime (S.Observer.read observer) in
+      Alcotest.(check int) "same stabilization clock snapshot" left right)
+
+let test_time_after_positive_duration_tolerates_advancing_clock () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let current_now_ms = ref 0 in
+  let now_ms () =
+    let current = !current_now_ms in
+    incr current_now_ms;
+    current
+  in
+  let runtime =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ~now_ms ()
+  in
+  ignore
+    (run_ok runtime
+       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms 1)))
+
+let test_time_after_overflow_fails_with_deadline_overflow () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw clock runtime ->
+  Eta_test.Test_clock.set_time clock (max_int - 1);
+  expect_fail "overflowing relative deadline" (( = ) `Deadline_overflow)
+    (run runtime
+       (S.Time.after ~every:(Eta.Duration.ms 1) (Eta.Duration.ms 10)))
+
 let test_stream_bridge_is_observer_plus_queue () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -1832,6 +1891,13 @@ let () =
             test_time_invalid_intervals_fail_cleanly;
           Alcotest.test_case "time deadline validation errors" `Quick
             test_time_deadline_validation_errors;
+          Alcotest.test_case "time now uses one clock snapshot" `Quick
+            test_time_now_uses_single_clock_snapshot_per_stabilization;
+          Alcotest.test_case
+            "time after positive duration tolerates advancing clock" `Quick
+            test_time_after_positive_duration_tolerates_advancing_clock;
+          Alcotest.test_case "time after overflow fails with Deadline_overflow"
+            `Quick test_time_after_overflow_fails_with_deadline_overflow;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
           Alcotest.test_case "stream bridge rejects cross-domain consumer"
