@@ -535,23 +535,6 @@ val delivery_event_collection :
    ('capability, 'callback, 'error) Delivery_event.t)
   delivery_collection
 
-val active_delivery_observers :
-  ('capability, 'observer, 'event) delivery_collection ->
-  'observer list ->
-  'observer list
-
-val collect_delivery_events :
-  ('capability, 'observer, 'event) delivery_collection ->
-  'capability ->
-  'observer list ->
-  'event list
-
-val mark_delivery_events_pending :
-  ('capability, 'observer, 'event) delivery_collection ->
-  'capability ->
-  'event list ->
-  unit
-
 val delivery_plan :
   capability:('context -> 'capability) ->
   make_plan:

@@ -986,13 +986,13 @@ let test_delivery_event_collection_marks_pending () =
     Observer.delivery_event_collection
       ~selection source
   in
-  let active =
-    Observer.active_delivery_observers collection [ second; inactive; first ]
-  in
-  Alcotest.(check (list string))
-    "active observers" [ second; first ] active;
-  let delivery_events = Observer.collect_delivery_events collection () active in
-  Observer.mark_delivery_events_pending collection () delivery_events;
+  Observer.delivery_plan ~capability:(fun () -> ())
+    ~make_plan:(fun ~observers ~collect_events ~mark_events_pending ->
+      Alcotest.(check (list string))
+        "active observers" [ second; first ] observers;
+      let delivery_events = collect_events () observers in
+      mark_events_pending () delivery_events)
+    collection ~observers:[ second; inactive; first ];
   Alcotest.(check (list string))
     "events"
     [
