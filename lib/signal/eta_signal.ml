@@ -1241,15 +1241,17 @@ module Make (Observer_error : Observer_error) () = struct
     |> Hashtbl.iter (fun _ timer -> preflight_timer_start timer)
 
   let preflight_commit_staging lane staging =
-    let invalidated_ids, invalidated_nodes =
-      collect_staged_bind_invalidations lane staging
-    in
-    List.iter
-      (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
-      invalidated_nodes;
-    Graph.iter_computed graph lane staging
-      ~f:(preflight_signal_commit lane staging invalidated_ids);
-    preflight_post_commit_timer_starts lane invalidated_ids
+    Graph.staged_preflight ~preflight:(fun () ->
+        let invalidated_ids, invalidated_nodes =
+          collect_staged_bind_invalidations lane staging
+        in
+        List.iter
+          (fun (P signal) ->
+            Option.iter preflight_timer_invalidation signal.timer)
+          invalidated_nodes;
+        Graph.iter_computed graph lane staging
+          ~f:(preflight_signal_commit lane staging invalidated_ids);
+        preflight_post_commit_timer_starts lane invalidated_ids)
 
   let remember_pure_disposal_hooks lane staging hooks =
     Graph.remember_pure_disposal_hooks graph lane staging hooks

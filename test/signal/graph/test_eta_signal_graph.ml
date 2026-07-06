@@ -195,7 +195,9 @@ let staging_commit_plan ?(preflight = fun _staging -> ())
           ~cell:(Transaction.create_staged ())
           ~commit:(fun () -> commit_signal node))
   in
-  Graph.staging_commit_plan ~preflight
+  Graph.staging_commit_plan
+    ~preflight:(fun staging ->
+      Graph.staged_preflight ~preflight:(fun () -> preflight staging))
     ~binds
     ~signals
     ~timers:
@@ -884,7 +886,9 @@ let test_signal_commit_discards_invalid_staging () =
                 ~commit:(fun () -> record events "commit_signal"))
         in
         Graph.staging_commit_plan
-          ~preflight:(fun _staging -> record events "preflight")
+          ~preflight:(fun _staging ->
+            Graph.staged_preflight ~preflight:(fun () ->
+                record events "preflight"))
           ~binds:(noop_bind_commit_plan ())
           ~signals
           ~timers:
@@ -1452,9 +1456,10 @@ let test_timer_refresh_commit_plan_owns_staging () =
         in
         Graph.staging_commit_plan
           ~preflight:(fun callback_staging ->
-            if not (callback_staging == staging) then
-              Alcotest.fail "preflight received stale staging token";
-            record events "preflight")
+            Graph.staged_preflight ~preflight:(fun () ->
+                if not (callback_staging == staging) then
+                  Alcotest.fail "preflight received stale staging token";
+                record events "preflight"))
           ~binds:(noop_bind_commit_plan ())
           ~signals:
             (Graph.staging_signal_commit_plan

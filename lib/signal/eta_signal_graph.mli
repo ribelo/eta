@@ -410,10 +410,14 @@ val staging_timer_commit_plan :
   commit:(staging -> 'timer -> staged_timer_commit) ->
   'timer staging_timer_commit_plan
 
+type staged_preflight
+
+val staged_preflight : preflight:(unit -> unit) -> staged_preflight
+
 type ('bind, 'node, 'hook, 'timer) staging_commit_plan
 
 val staging_commit_plan :
-  preflight:(staging -> unit) ->
+  preflight:(staging -> staged_preflight) ->
   binds:('bind, 'hook) staging_bind_commit_plan ->
   signals:'node staging_signal_commit_plan ->
   timers:'timer staging_timer_commit_plan ->

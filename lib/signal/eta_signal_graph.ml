@@ -688,8 +688,16 @@ let commit_staging_timer staging timer context =
   match context.staging_timer_commit staging timer with
   | Staged_timer_commit { timer_commit } -> timer_commit ()
 
+type staged_preflight = Staged_preflight of { preflight : unit -> unit }
+
+let staged_preflight ~preflight = Staged_preflight { preflight }
+
+let run_staging_preflight staging preflight =
+  match preflight staging with
+  | Staged_preflight { preflight } -> preflight ()
+
 type ('bind, 'node, 'hook, 'timer) staging_commit_plan = {
-  staging_commit_preflight : staging -> unit;
+  staging_commit_preflight : staging -> staged_preflight;
   staging_commit_binds : ('bind, 'hook) staging_bind_commit_plan;
   staging_commit_signals : 'node staging_signal_commit_plan;
   staging_commit_timers : 'timer staging_timer_commit_plan;
@@ -707,7 +715,8 @@ let commit_staging t _lane staging context =
   let exception Commit_error of Eta_signal_error.graph_error in
   let state_plan =
     Eta_signal_graph_state.commit_plan
-      ~preflight:(fun () -> context.staging_commit_preflight staging)
+      ~preflight:(fun () ->
+        run_staging_preflight staging context.staging_commit_preflight)
       ~binds:
         (Eta_signal_graph_state.bind_commit_plan
            ~commit:(fun bind ->
