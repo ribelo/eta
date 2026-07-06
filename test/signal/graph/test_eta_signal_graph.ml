@@ -625,6 +625,101 @@ let test_generation_owned_by_graph () =
   Alcotest.(check int) "overflow preserves generation" max_int
     (with_graph_lane graph (fun lane -> Graph.generation graph lane))
 
+let test_computed_nodes_are_staging_scoped () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let node =
+    {
+      compute_id = 7;
+      compute_seen_generation = 0;
+      compute_changed_seen = false;
+      compute_computing = false;
+      compute_computed_generation = 0;
+      compute_current = 0;
+    }
+  in
+  let observer_plan _context _staging =
+    Pass.observer_plan ~observers:[]
+      ~collect_events:(fun _context _observers -> [])
+      ~mark_events_pending:(fun _context _events -> ())
+  in
+  let pure =
+    Graph.stabilization_pure_ops
+      ~release_pending_marks:(fun _context _pending -> ())
+      ~observer_plan
+      ~stage_pending:(fun context staging _pending ->
+        Graph.remember_computed graph context staging compute_ops node;
+        record events "remember")
+      ~plan_staged_binds:(fun _context _staging _observers -> ())
+      ~commit_staging:(fun context staging ->
+        Graph.iter_computed graph context staging ~f:(fun node ->
+            record events ("iter:" ^ string_of_int node.compute_id));
+        let commit_context =
+          Graph.staging_commit_context
+            ~preflight:(fun callback_staging ->
+              Graph.iter_computed graph context callback_staging
+                ~f:(fun node ->
+                  record events
+                    ("preflight:" ^ string_of_int node.compute_id)))
+            ~commit_bind:(fun _staging _bind -> [])
+            ~prepare_signal:(fun _staging node ->
+              record events ("prepare:" ^ string_of_int node.compute_id))
+            ~commit_timer_refresh:(fun _timer -> ())
+            ~commit_signal:(fun node ->
+              record events ("commit:" ^ string_of_int node.compute_id))
+        in
+        match Graph.commit_staging graph context staging commit_context with
+        | Ok hooks -> hooks
+        | Error err ->
+            Alcotest.failf "unexpected graph error: %s"
+              (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error
+                 err))
+      ~update_necessity:(fun _context -> record events "update_necessity")
+  in
+  let rollback =
+    Graph.stabilization_rollback_ops
+      ~rollback_staging:(fun _context _staging -> [])
+      ~mark_observers_failed_without_current:(fun _context _observers -> ())
+      ~requeue_pending:(fun _context _pending -> ())
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result =
+    with_graph_lane graph (fun lane ->
+        Graph.run_stabilization graph lane ~timer_refresh:None
+          (Graph.stabilization_ops
+             ~classify_graph_error:(fun _ -> None)
+             ~pure ~rollback))
+  in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:delivery_events ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks;
+      Alcotest.(check (list string)) "delivery events" [] delivery_events;
+      with_graph_lane graph (fun lane ->
+          Graph.finish_recorded_stabilization graph lane finish))
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  Alcotest.(check (list string))
+    "events"
+    [
+      "remember";
+      "iter:7";
+      "preflight:7";
+      "prepare:7";
+      "commit:7";
+      "update_necessity";
+    ]
+    !events
+
 let test_stage_bind_switch_owns_transaction_staging () =
   let events = ref [] in
   let graph =
@@ -1035,6 +1130,8 @@ let () =
             test_compute_cached_owns_cache_and_cycle_dispatch;
           Alcotest.test_case "generation ownership" `Quick
             test_generation_owned_by_graph;
+          Alcotest.test_case "computed staging token" `Quick
+            test_computed_nodes_are_staging_scoped;
         ] );
       ( "bind switch",
         [

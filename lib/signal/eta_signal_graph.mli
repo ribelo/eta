@@ -244,6 +244,7 @@ val enqueue_pending :
 val remember_computed :
   (_, _, 'node, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   ('node, 'compute_node) compute_ops ->
   'node ->
   unit
@@ -251,6 +252,7 @@ val remember_computed :
 val iter_computed :
   (_, _, 'node, _, _, _, _, _, _, _, _) t ->
   lane_access ->
+  staging ->
   f:('node -> unit) ->
   unit
 

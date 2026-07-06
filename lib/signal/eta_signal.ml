@@ -737,8 +737,8 @@ module Make (Observer_error : Observer_error) () = struct
   let effective_var_value (type a) (var : a var) =
     Graph.read_effective graph var.graph_value
 
-  let remember_computed lane (P signal) =
-    Graph.remember_computed graph lane compute_ops (P signal)
+  let remember_computed lane staging (P signal) =
+    Graph.remember_computed graph lane staging compute_ops (P signal)
 
   let signal_current_snapshot signal =
     Transaction.current signal.snapshot
@@ -1256,7 +1256,7 @@ module Make (Observer_error : Observer_error) () = struct
     List.iter
       (fun (P signal) -> Option.iter preflight_timer_invalidation signal.timer)
       invalidated_nodes;
-    Graph.iter_computed graph lane
+    Graph.iter_computed graph lane staging
       ~f:(preflight_signal_commit lane staging invalidated_ids);
     preflight_post_commit_timer_starts lane invalidated_ids
 
@@ -1398,7 +1398,7 @@ module Make (Observer_error : Observer_error) () = struct
   and compute_uncached :
       type a. graph_lane -> Graph.staging -> a signal -> a * bool =
    fun lane staging signal ->
-    remember_computed lane (P signal);
+    remember_computed lane staging (P signal);
     let signal_initialized () =
       Signal_snapshot.is_initialized (signal_effective_snapshot signal)
     in

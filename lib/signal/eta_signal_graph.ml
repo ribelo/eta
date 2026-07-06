@@ -353,7 +353,7 @@ let drain_pending t = Eta_signal_graph_state.drain_pending t.state
 let enqueue_pending t _lane pending =
   Eta_signal_graph_state.enqueue_pending t.state pending
 
-let active_staging t = Eta_signal_graph_state.require_staging t.state
+let require_active_staging t = Eta_signal_graph_state.require_staging t.state
 
 let remember_compute ops ~generation computed node =
   if ops.compute_computed_generation node = generation then computed
@@ -361,12 +361,14 @@ let remember_compute ops ~generation computed node =
     ops.compute_set_computed_generation node generation;
     ops.compute_pack node :: computed)
 
-let remember_computed t lane ops node =
-  Eta_signal_graph_state.remember_computed t.state (active_staging t)
+let remember_computed t lane staging ops node =
+  Eta_signal_graph_state.remember_computed t.state staging
     ~generation:(generation t lane) node ~project:ops.compute_node
     ~remember:(remember_compute ops)
 
-let iter_computed t _lane ~f =
+let iter_computed t _lane staging ~f =
+  if not (Eta_signal_graph_state.require_staging t.state == staging) then
+    invalid_arg "Eta_signal graph staging token is not active";
   List.iter f (Eta_signal_graph_state.computed_nodes t.state)
 
 let compute_seen t lane ops node =
@@ -782,16 +784,16 @@ let pass_pure t timer_refresh pure =
     ~observer_plan:(fun context ->
       pure.observer_plan
         (Eta_signal_stabilization_pass.pure_capability context)
-        (active_staging t))
+        (require_active_staging t))
     ~stage_pending:(fun context pending ->
       pure.stage_pending
         (Eta_signal_stabilization_pass.pure_capability context)
-        (active_staging t)
+        (require_active_staging t)
         pending)
     ~plan_staged_binds:(fun context observers ->
       pure.plan_staged_binds
         (Eta_signal_stabilization_pass.pure_capability context)
-        (active_staging t)
+        (require_active_staging t)
         observers)
     ~commit_staging:(fun context staging ->
       pure.commit_staging
