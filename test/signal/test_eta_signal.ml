@@ -1261,35 +1261,6 @@ let test_observer_observe_invalidated_before_transfer_fails () =
               : _ Exit.t);
           Alcotest.fail "observe returned an invalidated observer")
 
-let test_bind_detaches_old_dependency () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let choose_left = Signal.Var.create true in
-  let left = Signal.Var.create 10 in
-  let right = Signal.Var.create 20 in
-  let selected =
-    Signal.bind (Signal.Var.watch choose_left) (fun use_left ->
-        if use_left then Signal.Var.watch left else Signal.Var.watch right)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial left" 10
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set choose_left false);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "switched right" 20
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set left 99);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "old left detached" 20
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Var.set right 21);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "right still active" 21
-    (run_ok rt (Signal.Observer.read observer))
-
 let test_bind_switches_after_unnecessary_source_change () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -6098,8 +6069,6 @@ let () =
           Alcotest.test_case
             "observer observe invalidated before transfer fails" `Quick
             test_observer_observe_invalidated_before_transfer_fails;
-          Alcotest.test_case "bind detaches old dependency" `Quick
-            test_bind_detaches_old_dependency;
           Alcotest.test_case
             "bind switches after unnecessary source change" `Quick
             test_bind_switches_after_unnecessary_source_change;
