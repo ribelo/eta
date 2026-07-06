@@ -34,7 +34,7 @@ module Stream_bridge = struct
 
   let create_queue ~capacity =
     if capacity <= 0 then Error `Invalid_capacity
-    else Ok (Queue.create ~overflow:(Queue.Drop_new { capacity }) ())
+    else Ok (Queue.dropping ~capacity ())
 
   let create_stream ~capacity =
     create_queue ~capacity
@@ -44,19 +44,19 @@ module Stream_bridge = struct
     ('token, 'update, unit -> unit) Delivery_handle.t
 
   type ('queue_error, 'error) hooks = {
-    after_try_send_before_ack : unit -> (unit, 'error) Effect.t;
+    after_try_offer_before_ack : unit -> (unit, 'error) Effect.t;
     after_drop_before_ack : unit -> (unit, 'error) Effect.t;
     after_drop_acknowledged : unit -> unit;
     on_closed_with_error : 'queue_error -> (unit, 'error) Effect.t;
   }
 
   let hooks ~metrics
-      ?(after_try_send_before_ack = fun () -> Effect.unit)
+      ?(after_try_offer_before_ack = fun () -> Effect.unit)
       ?(after_drop_before_ack = fun () -> Effect.unit)
       ?(after_drop_acknowledged = fun () -> ())
       ~on_closed_with_error () =
     {
-      after_try_send_before_ack;
+      after_try_offer_before_ack;
       after_drop_before_ack;
       after_drop_acknowledged =
         (fun () ->
@@ -172,10 +172,10 @@ module Stream_bridge = struct
           acknowledge_sent_after_published ~queue ~sent_before
             ~sent_published ~sent_acknowledged ~acknowledge_sent_once
         in
-        (let* send_result = Queue.try_send queue update in
+        (let* send_result = Queue.try_offer queue update in
          match send_result with
          | `Sent ->
-             let* () = hooks.after_try_send_before_ack () in
+             let* () = hooks.after_try_offer_before_ack () in
              let* () =
                Effect.sync (fun () -> sent_published := true)
              in

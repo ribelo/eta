@@ -17,14 +17,14 @@ let producer queue =
 
 let program () =
   let open Syntax in
-  let queue = Queue.create () in
+  let queue = Queue.unbounded () in
   let* () = producer queue in
   let stats_after_send = Queue.stats queue in
-  let* first = Queue.recv queue in
-  let* second = Queue.recv queue in
-  let* third = Queue.recv queue in
+  let* first = Queue.take queue in
+  let* second = Queue.take queue in
+  let* third = Queue.take queue in
   let* closed =
-    Queue.recv queue
+    Queue.take queue
     |> Effect.map (fun msg -> "unexpected:" ^ msg)
     |> Effect.recover render_close
   in

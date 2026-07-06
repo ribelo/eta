@@ -50,11 +50,11 @@ let rec queue_send_loop q i n =
 let rec queue_recv_loop q remaining acc =
   if remaining = 0 then Effect.pure acc
   else
-    Queue.recv q
+    Queue.take q
     |> Effect.bind (fun value -> queue_recv_loop q (remaining - 1) (acc + value))
 
 let queue_send_recv n =
-  let q = Queue.create () in
+  let q = Queue.unbounded () in
   queue_send_loop q 0 n
   |> Effect.bind (fun () -> queue_recv_loop q n 0)
   |> Effect.map ignore
@@ -63,7 +63,7 @@ let queue_send_recv n =
 let rec queue_try_send_loop q i n =
   if i = n then Effect.unit
   else
-    Queue.try_send q i
+    Queue.try_offer q i
     |> Effect.bind (function
          | `Sent -> queue_try_send_loop q (i + 1) n
          | `Dropped | `Full | `Closed | `Closed_with_error _ ->
@@ -72,21 +72,21 @@ let rec queue_try_send_loop q i n =
 let rec queue_try_recv_loop q remaining acc =
   if remaining = 0 then Effect.pure acc
   else
-    Queue.try_recv q
+    Queue.poll q
     |> Effect.bind (function
          | `Item value -> queue_try_recv_loop q (remaining - 1) (acc + value)
          | `Empty | `Closed | `Closed_with_error _ ->
              Effect.sync (fun () -> failwith "queue recv missed item during bench"))
 
 let queue_try_send_recv n =
-  let q = Queue.create () in
+  let q = Queue.unbounded () in
   queue_try_send_loop q 0 n
   |> Effect.bind (fun () -> queue_try_recv_loop q n 0)
   |> Effect.map ignore
   |> run_effect
 
 let queue_handoff n =
-  let q = Queue.create () in
+  let q = Queue.unbounded () in
   Effect.par (queue_send_loop q 0 n) (queue_recv_loop q n 0)
   |> Effect.map ignore
   |> run_effect

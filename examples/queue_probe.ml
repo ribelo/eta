@@ -17,14 +17,14 @@ let render_recv = function
 
 let program () =
   let open Syntax in
-  let queue = Queue.create () in
-  let* empty = Queue.try_recv queue in
-  let* sent = Queue.try_send queue "alpha" in
-  let* first = Queue.try_recv queue in
+  let queue = Queue.unbounded () in
+  let* empty = Queue.poll queue in
+  let* sent = Queue.try_offer queue "alpha" in
+  let* first = Queue.poll queue in
   let stats_after_drain = Queue.stats queue in
   let* () = Queue.close_with_error_effect queue (`Upstream_failed "done") in
-  let* closed_send = Queue.try_send queue "beta" in
-  let+ closed_recv = Queue.try_recv queue in
+  let* closed_send = Queue.try_offer queue "beta" in
+  let+ closed_recv = Queue.poll queue in
   (empty, sent, first, stats_after_drain, closed_send, closed_recv)
 
 let pp_error fmt = function _ -> Format.pp_print_string fmt "impossible"

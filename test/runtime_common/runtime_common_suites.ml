@@ -564,9 +564,9 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_queue_channel_semaphore_pubsub () =
     B.with_runtime @@ fun _ctx rt ->
-    let queue = Queue.create () in
+    let queue = Queue.unbounded () in
     let queue_eff =
-      Queue.send queue 11 |> E.bind (fun () -> Queue.recv queue)
+      Queue.send queue 11 |> E.bind (fun () -> Queue.take queue)
     in
     check_ok Alcotest.int "queue" 11 (B.run rt queue_eff);
 
@@ -596,23 +596,23 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_queue_close_and_close_with_error_drain () =
     B.with_runtime @@ fun _ctx rt ->
-    let clean = Queue.create () in
+    let clean = Queue.unbounded () in
     check_ok Alcotest.unit "send before clean close" ()
       (B.run rt (Queue.send clean 1));
     Queue.close clean;
     check_ok Alcotest.int "drain after clean close" 1
-      (B.run rt (Queue.recv clean));
-    expect_fail (( = ) `Closed) (B.run rt (Queue.recv clean));
+      (B.run rt (Queue.take clean));
+    expect_fail (( = ) `Closed) (B.run rt (Queue.take clean));
 
-    let errored = Queue.create () in
+    let errored = Queue.unbounded () in
     check_ok Alcotest.unit "send before error close" ()
       (B.run rt (Queue.send errored 2));
     Queue.close_with_error errored `Boom;
     check_ok Alcotest.int "drain after error close" 2
-      (B.run rt (Queue.recv errored));
+      (B.run rt (Queue.take errored));
     expect_fail
       (function `Closed_with_error `Boom -> true | _ -> false)
-      (B.run rt (Queue.recv errored))
+      (B.run rt (Queue.take errored))
 
   let test_channel_close_and_close_with_error_drain () =
     B.with_runtime @@ fun _ctx rt ->
@@ -653,10 +653,10 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_handoff_close_effect_helpers () =
     B.with_runtime @@ fun _ctx rt ->
-    let queue = Queue.create () in
+    let queue = Queue.unbounded () in
     check_ok Alcotest.unit "queue clean close effect" ()
       (B.run rt (Queue.close_effect queue));
-    expect_fail (( = ) `Closed) (B.run rt (Queue.recv queue));
+    expect_fail (( = ) `Closed) (B.run rt (Queue.take queue));
 
     let channel = Channel.create ~capacity:1 () in
     check_ok Alcotest.unit "channel error close effect" ()
@@ -1029,7 +1029,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_runtime_queue_wakeups_stay_on_owner_domain () =
     B.with_runtime @@ fun ctx rt ->
     let owner = Domain.self () in
-    let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let queue = Queue.bounded ~capacity:1 () in
     run_ok rt (Queue.send queue 1);
     let sender =
       B.fork_run ctx rt
@@ -1039,7 +1039,7 @@ module Make (B : Runtime_backend.S) = struct
     Alcotest.(check bool) "sender waits for queue capacity" false
       (B.is_resolved sender);
     let receiver_domain =
-      run_ok rt (Queue.recv queue |> E.map (fun _ -> Domain.self ()))
+      run_ok rt (Queue.take queue |> E.map (fun _ -> Domain.self ()))
     in
     expect_owner_domain owner "queue receiver resumed on owner" receiver_domain;
     expect_owner_domain owner "queue sender resumed on owner" (expect_ok (B.await sender))

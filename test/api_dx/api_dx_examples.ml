@@ -751,13 +751,13 @@ let queue_current queue close_reason render_closed =
                        Effect.sync (fun () ->
                            Eta.Queue.close_with_error queue close_reason)
                        |> Effect.bind (fun () ->
-                              Eta.Queue.recv queue
+                              Eta.Queue.take queue
                               |> Effect.bind (fun first ->
-                                     Eta.Queue.recv queue
+                                     Eta.Queue.take queue
                                      |> Effect.bind (fun second ->
-                                            Eta.Queue.recv queue
+                                            Eta.Queue.take queue
                                             |> Effect.bind (fun third ->
-                                                   Eta.Queue.recv queue
+                                                   Eta.Queue.take queue
                                                    |> Effect.catch render_closed
                                                    |> Effect.map (fun closed ->
                                                           ( first,
@@ -772,10 +772,10 @@ let queue_proposed queue close_reason render_closed =
   let* () = Eta.Queue.send queue "third" in
   let depth_after_send = (Eta.Queue.stats queue).Eta.Queue.depth in
   let* () = Eta.Queue.close_with_error_effect queue close_reason in
-  let* first = Eta.Queue.recv queue in
-  let* second = Eta.Queue.recv queue in
-  let* third = Eta.Queue.recv queue in
-  let+ closed = Eta.Queue.recv queue |> Effect.catch render_closed in
+  let* first = Eta.Queue.take queue in
+  let* second = Eta.Queue.take queue in
+  let* third = Eta.Queue.take queue in
+  let+ closed = Eta.Queue.take queue |> Effect.catch render_closed in
   (first, second, third, closed, depth_after_send)
 
 let handoff_close_current ch queue hub reason =
@@ -830,7 +830,7 @@ let queue_probe_current queue value recover_send recover_recv =
     if stats.depth = 0 then
       if stats.closed then Effect.pure `Closed else Effect.pure `Empty
     else
-      Eta.Queue.recv queue
+      Eta.Queue.take queue
       |> Effect.map (fun item -> `Item item)
       |> Effect.catch recover_recv
   in
@@ -841,8 +841,8 @@ let queue_probe_current queue value recover_send recover_recv =
 
 let queue_probe_proposed queue value =
   let open Syntax in
-  let* sent = Eta.Queue.try_send queue value in
-  let+ received = Eta.Queue.try_recv queue in
+  let* sent = Eta.Queue.try_offer queue value in
+  let+ received = Eta.Queue.poll queue in
   (sent, received)
 
 let mutable_ref_current state batch =
@@ -1753,13 +1753,13 @@ let+ received = Channel.try_recv ch in
           |> Effect.bind (fun () ->
                Effect.sync (fun () -> Queue.close_with_error q reason)
                |> Effect.bind (fun () ->
-                    Queue.recv q
+                    Queue.take q
                     |> Effect.bind (fun first ->
-                         Queue.recv q
+                         Queue.take q
                          |> Effect.bind (fun second ->
-                              Queue.recv q
+                              Queue.take q
                               |> Effect.bind (fun third ->
-                                   Queue.recv q
+                                   Queue.take q
                                    |> Effect.catch render_closed
                                    |> Effect.map (fun closed ->
                                         (first, second, third, closed))))))))|};
@@ -1774,10 +1774,10 @@ let* () = Queue.send q "second" in
 let* () = Queue.send q "third" in
 let depth_after_send = (Queue.stats q).Queue.depth in
 let* () = Queue.close_with_error_effect q reason in
-let* first = Queue.recv q in
-let* second = Queue.recv q in
-let* third = Queue.recv q in
-let+ closed = Queue.recv q |> Effect.catch render_closed in
+let* first = Queue.take q in
+let* second = Queue.take q in
+let* third = Queue.take q in
+let+ closed = Queue.take q |> Effect.catch render_closed in
 (first, second, third, closed, depth_after_send)|};
     };
     {
@@ -1839,7 +1839,7 @@ let recv =
   if stats.depth = 0 then
     if stats.closed then Effect.pure `Closed else Effect.pure `Empty
   else
-    Queue.recv q
+    Queue.take q
     |> Effect.map (fun item -> `Item item)
     |> Effect.catch recover_recv
 in
@@ -1852,8 +1852,8 @@ let+ received = recv in
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* sent = Queue.try_send q value in
-let+ received = Queue.try_recv q in
+let* sent = Queue.try_offer q value in
+let+ received = Queue.poll q in
 (sent, received)|};
     };
     {
@@ -2912,7 +2912,7 @@ let assert_expected_shape snippet =
         failwith "queue proposed example should use syntax for FIFO drain";
       if
         count_sub snippet.code "Queue.send" <> 3
-        || count_sub snippet.code "Queue.recv" <> 4
+        || count_sub snippet.code "Queue.take" <> 4
         || count_sub snippet.code "Queue.close_with_error_effect" <> 1
         || count_sub snippet.code "Queue.stats" <> 1
         || count_sub snippet.code "Effect.sync" <> 0
@@ -2954,11 +2954,11 @@ let assert_expected_shape snippet =
         failwith
           "queue_probe proposed example should use one let* for two non-blocking probes";
       if
-        count_sub snippet.code "Queue.try_send" <> 1
-        || count_sub snippet.code "Queue.try_recv" <> 1
+        count_sub snippet.code "Queue.try_offer" <> 1
+        || count_sub snippet.code "Queue.poll" <> 1
         || count_sub snippet.code "Queue.stats" <> 0
         || count_sub snippet.code "Queue.send" <> 0
-        || count_sub snippet.code "Queue.recv" <> 0
+        || count_sub snippet.code "Queue.take" <> 0
       then
         failwith
           "queue_probe proposed example should use non-blocking queue probes instead of manual stats checks or blocking operations"

@@ -190,45 +190,45 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_send_recv_close () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create () in
+    let q = Queue.unbounded () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     ignore (run_ok rt (Queue.send q 2) : unit);
     Queue.close q;
-    Alcotest.(check int) "first" 1 (run_ok rt (Queue.recv q));
-    Alcotest.(check int) "second" 2 (run_ok rt (Queue.recv q));
-    expect_fail "clean close" (( = ) `Closed) (B.run rt (Queue.recv q));
+    Alcotest.(check int) "first" 1 (run_ok rt (Queue.take q));
+    Alcotest.(check int) "second" 2 (run_ok rt (Queue.take q));
+    expect_fail "clean close" (( = ) `Closed) (B.run rt (Queue.take q));
     let stats = Queue.stats q in
     Alcotest.(check int) "sent" 2 stats.Queue.sent;
     Alcotest.(check int) "received" 2 stats.Queue.received
 
   let test_queue_close_fence () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create () in
+    let q = Queue.unbounded () in
     Queue.close q;
-    (match run_ok rt (Queue.try_send q 1) with
+    (match run_ok rt (Queue.try_offer q 1) with
     | `Closed -> ()
     | _ -> Alcotest.fail "expected closed send");
-    (match run_ok rt (Queue.try_recv q) with
+    (match run_ok rt (Queue.poll q) with
     | `Closed -> ()
     | _ -> Alcotest.fail "expected closed recv");
     Alcotest.(check int) "depth" 0 (Queue.stats q).depth
 
   let test_queue_close_with_error_drains () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create () in
+    let q = Queue.unbounded () in
     ignore (run_ok rt (Queue.send q "buffered") : unit);
     Queue.close_with_error q "provider failed";
-    Alcotest.(check string) "buffered" "buffered" (run_ok rt (Queue.recv q));
+    Alcotest.(check string) "buffered" "buffered" (run_ok rt (Queue.take q));
     expect_fail "close_with_error"
       (function `Closed_with_error "provider failed" -> true | _ -> false)
-      (B.run rt (Queue.recv q))
+      (B.run rt (Queue.take q))
 
   let test_queue_timeout_blocked_recv_cleans_waiter () =
     B.with_test_clock @@ fun ctx clock rt ->
-    let q = Queue.create () in
+    let q = Queue.unbounded () in
     let receiver =
       B.fork_run ctx rt
-        (Queue.recv q |> E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout)
+        (Queue.take q |> E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout)
     in
     wait_until (fun () -> (Queue.stats q).Queue.waiting_receivers = 1);
     wait_for_sleepers clock 1;
@@ -238,12 +238,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "waiting receivers" 0 stats.Queue.waiting_receivers;
     Alcotest.(check int) "cancelled receivers" 1 stats.Queue.cancelled_receivers;
     ignore (run_ok rt (Queue.send q 42) : unit);
-    Alcotest.(check int) "next recv gets sent value" 42 (run_ok rt (Queue.recv q))
+    Alcotest.(check int) "next recv gets sent value" 42 (run_ok rt (Queue.take q))
 
   let test_queue_cancel_blocked_recv_cleans_waiter () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create () in
-    let receiver = B.fork_run_cancelable ctx rt (Queue.recv q) in
+    let q = Queue.unbounded () in
+    let receiver = B.fork_run_cancelable ctx rt (Queue.take q) in
     wait_until (fun () -> (Queue.stats q).Queue.waiting_receivers = 1);
     B.cancel_fiber receiver;
     expect_cancelled "receiver" (B.await_cancelable receiver);
@@ -253,7 +253,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_offer_unbounded_create_and_alias () =
     B.with_runtime @@ fun _ctx rt ->
-    let created = Queue.create () in
+    let created = Queue.unbounded () in
     let unbounded = Queue.unbounded () in
     Alcotest.(check bool) "created offer" true
       (run_ok rt (Queue.offer created 1));
@@ -261,14 +261,88 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (run_ok rt (Queue.offer unbounded 2));
     Alcotest.(check (list int)) "unbounded offer_all leftovers" []
       (run_ok rt (Queue.offer_all created [ 3; 4 ]));
-    Alcotest.(check int) "created recv" 1 (run_ok rt (Queue.recv created));
+    Alcotest.(check int) "created recv" 1 (run_ok rt (Queue.take created));
     Alcotest.(check (list int)) "created remaining" [ 3; 4 ]
       (run_ok rt (Queue.take_all created));
-    Alcotest.(check int) "unbounded recv" 2 (run_ok rt (Queue.recv unbounded))
+    Alcotest.(check int) "unbounded recv" 2 (run_ok rt (Queue.take unbounded))
+
+  let test_queue_named_constructors_and_views () =
+    B.with_runtime @@ fun _ctx rt ->
+    let q = Queue.bounded ~capacity:1 () in
+    let producer = Queue.enqueue q in
+    let consumer = Queue.dequeue q in
+    Alcotest.(check (option int)) "capacity" (Some 1) (Queue.capacity q);
+    Alcotest.(check bool) "initial empty" true (Queue.Dequeue.is_empty consumer);
+    Alcotest.(check bool)
+      "offered through view" true
+      (run_ok rt (Queue.Enqueue.offer producer 11));
+    Alcotest.(check bool) "full through view" true (Queue.Enqueue.is_full producer);
+    Alcotest.(check int)
+      "taken through view" 11
+      (run_ok rt (Queue.Dequeue.take consumer));
+    Alcotest.(check bool) "empty after take" true (Queue.is_empty q)
+
+  let test_queue_sliding_keeps_latest_capacity () =
+    B.with_runtime @@ fun _ctx rt ->
+    let q = Queue.sliding ~capacity:2 () in
+    Alcotest.(check (list int))
+      "no leftovers" []
+      (run_ok rt (Queue.offer_all q [ 1; 2; 3; 4 ]));
+    Alcotest.(check (list int))
+      "latest retained" [ 3; 4 ]
+      (run_ok rt (Queue.take_all q));
+    let stats = Queue.stats q in
+    Alcotest.(check int) "dropped old values" 2 stats.Queue.dropped;
+    Alcotest.(check int) "sent all offers" 4 stats.Queue.sent;
+    Alcotest.(check int) "received retained values" 2 stats.Queue.received
+
+  let test_queue_logical_size_tracks_waiters () =
+    B.with_runtime @@ fun ctx rt ->
+    let q = Queue.unbounded () in
+    let receiver = B.fork_run ctx rt (Queue.take q) in
+    wait_until (fun () -> (Queue.stats q).Queue.waiting_receivers = 1);
+    Alcotest.(check int) "waiting receiver makes size negative" (-1)
+      (Queue.size q);
+    Alcotest.(check bool) "logically empty" true (Queue.is_empty q);
+    Queue.close q;
+    expect_fail "receiver closed" (( = ) `Closed) (B.await receiver);
+    let bounded = Queue.bounded ~capacity:1 () in
+    ignore (run_ok rt (Queue.send bounded 1) : unit);
+    let sender = B.fork_run ctx rt (Queue.offer bounded 2) in
+    run_ok rt (wait_for_waiting_queue_sender bounded);
+    Alcotest.(check int) "waiting sender contributes pressure" 2
+      (Queue.size bounded);
+    Alcotest.(check bool) "logically full" true (Queue.is_full bounded);
+    Alcotest.(check int) "first value" 1 (run_ok rt (Queue.take bounded));
+    check_exit_ok Alcotest.bool "blocked offer admitted" true (B.await sender);
+    Alcotest.(check int) "second value" 2 (run_ok rt (Queue.take bounded))
+
+  let test_queue_shutdown_is_immediate () =
+    B.with_runtime @@ fun ctx rt ->
+    let q = Queue.unbounded () in
+    let receiver = B.fork_run ctx rt (Queue.take q) in
+    wait_until (fun () -> (Queue.stats q).Queue.waiting_receivers = 1);
+    Queue.shutdown q;
+    expect_fail "blocked receiver closed" (( = ) `Closed) (B.await receiver);
+    Alcotest.(check bool) "shutdown" true (Queue.is_shutdown q);
+    expect_fail "future offer closed" (( = ) `Closed)
+      (B.run rt (Queue.offer q 2));
+    expect_fail "future take closed" (( = ) `Closed) (B.run rt (Queue.take q));
+    expect_fail "future take_all closed" (( = ) `Closed)
+      (B.run rt (Queue.take_all q));
+    ignore (run_ok rt (Queue.await_shutdown q) : unit);
+    let buffered = Queue.unbounded () in
+    ignore (run_ok rt (Queue.send buffered 1) : unit);
+    Queue.shutdown buffered;
+    Alcotest.(check int)
+      "buffered value dropped" 1
+      (Queue.stats buffered).Queue.dropped;
+    expect_fail "buffered value not drainable" (( = ) `Closed)
+      (B.run rt (Queue.take buffered))
 
   let test_queue_drop_new_reports_admission_result () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Drop_new { capacity = 2 }) () in
+    let q = Queue.dropping ~capacity:2 () in
     Alcotest.(check bool) "first" true
       (run_ok rt (Queue.offer q 1));
     Alcotest.(check bool) "second" true
@@ -277,7 +351,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (run_ok rt (Queue.offer q 3));
     Alcotest.(check (list int)) "offer_all leftovers" [ 4; 5 ]
       (run_ok rt (Queue.offer_all q [ 4; 5 ]));
-    (match run_ok rt (Queue.try_send q 4) with
+    (match run_ok rt (Queue.try_offer q 4) with
     | `Dropped -> ()
     | result ->
         Alcotest.failf "expected try_send drop, got %s"
@@ -296,7 +370,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_send_drop_new_fails_on_rejection () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Drop_new { capacity = 1 }) () in
+    let q = Queue.dropping ~capacity:1 () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     expect_fail "send dropped" (( = ) `Dropped) (B.run rt (Queue.send q 2));
     Alcotest.(check (list int)) "only admitted value remains" [ 1 ]
@@ -307,32 +381,32 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_backpressure_offer_waits_for_capacity () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let q = Queue.bounded ~capacity:1 () in
     Alcotest.(check bool) "first" true
       (run_ok rt (Queue.offer q 1));
     let sender = B.fork_run ctx rt (Queue.offer q 2) in
     run_ok rt (wait_for_waiting_queue_sender q);
     Alcotest.(check int) "depth while blocked" 1 (Queue.stats q).Queue.depth;
-    Alcotest.(check int) "first recv" 1 (run_ok rt (Queue.recv q));
+    Alcotest.(check int) "first recv" 1 (run_ok rt (Queue.take q));
     check_exit_ok Alcotest.bool "sender admitted" true (B.await sender);
-    Alcotest.(check int) "second recv" 2 (run_ok rt (Queue.recv q))
+    Alcotest.(check int) "second recv" 2 (run_ok rt (Queue.take q))
 
   let test_queue_backpressure_try_send_reports_full () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let q = Queue.bounded ~capacity:1 () in
     Alcotest.(check bool) "first" true
       (run_ok rt (Queue.offer q 1));
-    (match run_ok rt (Queue.try_send q 2) with
+    (match run_ok rt (Queue.try_offer q 2) with
     | `Full -> ()
     | _ -> Alcotest.fail "expected full try_send result");
-    Alcotest.(check int) "only first value" 1 (run_ok rt (Queue.recv q));
-    (match run_ok rt (Queue.try_recv q) with
+    Alcotest.(check int) "only first value" 1 (run_ok rt (Queue.take q));
+    (match run_ok rt (Queue.poll q) with
     | `Empty -> ()
     | _ -> Alcotest.fail "expected empty after full try_send")
 
   let test_queue_backpressure_cancel_blocked_offer () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let q = Queue.bounded ~capacity:1 () in
     Alcotest.(check bool) "first" true
       (run_ok rt (Queue.offer q 1));
     let sender = B.fork_run_cancelable ctx rt (Queue.offer q 2) in
@@ -344,14 +418,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "waiting senders" 0 stats.Queue.waiting_senders;
     Alcotest.(check int) "cancelled senders" 1 stats.Queue.cancelled_senders;
     Alcotest.(check int) "depth unchanged" 1 stats.Queue.depth;
-    Alcotest.(check int) "original value" 1 (run_ok rt (Queue.recv q));
-    (match run_ok rt (Queue.try_recv q) with
+    Alcotest.(check int) "original value" 1 (run_ok rt (Queue.take q));
+    (match run_ok rt (Queue.poll q) with
     | `Empty -> ()
     | _ -> Alcotest.fail "cancelled offer enqueued a value")
 
   let test_queue_close_wakes_blocked_offer () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let q = Queue.bounded ~capacity:1 () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     let sender = B.fork_run ctx rt (Queue.offer q 2) in
     run_ok rt (wait_for_waiting_queue_sender q);
@@ -362,12 +436,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_offer_closed_failures () =
     B.with_runtime @@ fun _ctx rt ->
-    let clean = Queue.create () in
+    let clean = Queue.unbounded () in
     Queue.close clean;
     expect_fail "offer closed" (( = ) `Closed) (B.run rt (Queue.offer clean 1));
     expect_fail "offer_all closed" (( = ) `Closed)
       (B.run rt (Queue.offer_all clean [ 1; 2 ]));
-    let failed = Queue.create () in
+    let failed = Queue.unbounded () in
     Queue.close_with_error failed "provider failed";
     expect_fail "offer close_with_error"
       (function `Closed_with_error "provider failed" -> true | _ -> false)
@@ -378,7 +452,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_close_with_error_wakes_blocked_offer () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+    let q = Queue.bounded ~capacity:1 () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     let sender = B.fork_run ctx rt (Queue.offer q 2) in
     run_ok rt (wait_for_waiting_queue_sender q);
@@ -391,12 +465,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_take_all_and_batch_drain () =
     B.with_runtime @@ fun _ctx rt ->
-    let q = Queue.create () in
+    let q = Queue.unbounded () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     ignore (run_ok rt (Queue.send q 2) : unit);
     ignore (run_ok rt (Queue.send q 3) : unit);
     Alcotest.(check (list int)) "batch first two" [ 1; 2 ]
-      (run_ok rt (Queue.take_batch q ~max:2));
+      (run_ok rt (Queue.take_up_to q ~max:2));
     Alcotest.(check (list int)) "take rest" [ 3 ]
       (run_ok rt (Queue.take_all q));
     Alcotest.(check (list int)) "open empty" [] (run_ok rt (Queue.take_all q));
@@ -405,7 +479,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_queue_take_all_opens_backpressure_capacity () =
     B.with_runtime @@ fun ctx rt ->
-    let q = Queue.create ~overflow:(Queue.Backpressure { capacity = 2 }) () in
+    let q = Queue.bounded ~capacity:2 () in
     ignore (run_ok rt (Queue.send q 1) : unit);
     ignore (run_ok rt (Queue.send q 2) : unit);
     let sender = B.fork_run ctx rt (Queue.offer_all q [ 3; 4 ]) in
@@ -418,15 +492,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (run_ok rt (Queue.take_all q))
 
   let test_queue_bounded_capacity_rejects_non_positive () =
-    Alcotest.check_raises "drop_new zero"
-      (Invalid_argument "Eta.Queue.create: bounded capacity must be > 0")
+    Alcotest.check_raises "dropping zero"
+      (Invalid_argument "Eta.Queue.dropping: capacity must be > 0")
       (fun () ->
-        ignore (Queue.create ~overflow:(Queue.Drop_new { capacity = 0 }) ()));
+        ignore (Queue.dropping ~capacity:0 ()));
     Alcotest.check_raises "backpressure zero"
-      (Invalid_argument "Eta.Queue.create: bounded capacity must be > 0")
+      (Invalid_argument "Eta.Queue.bounded: capacity must be > 0")
       (fun () ->
         ignore
-          (Queue.create ~overflow:(Queue.Backpressure { capacity = 0 }) ()))
+          (Queue.bounded ~capacity:0 ()))
 
   let test_channel_try_send_try_recv () =
     B.with_runtime @@ fun _ctx rt ->
@@ -1175,7 +1249,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_pubsub_backpressure_canceled_publish_is_atomic () =
     B.with_runtime @@ fun _ctx rt ->
     let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 1 }) () in
-    let ready = Queue.create () in
+    let ready = Queue.unbounded () in
     let program =
       let open Eta.Syntax in
       Pubsub.subscribe hub @@ fun a ->
@@ -1187,7 +1261,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Pubsub.publish hub 2 |> E.map (fun _ -> `Published)
       in
       let cancel_after_blocked =
-        let* () = Queue.recv ready in
+        let* () = Queue.take ready in
         let* () = wait_for_waiting_publisher hub in
         E.pure `Canceled
       in
@@ -1346,18 +1420,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
     let leaked = ref None in
-    let ready = Queue.create () in
-    let never = Queue.create () in
+    let ready = Queue.unbounded () in
+    let never = Queue.unbounded () in
     let program =
       let open Eta.Syntax in
       let body =
         Pubsub.subscribe hub @@ fun sub ->
         let* () = E.sync (fun () -> leaked := Some sub) in
         let* () = Queue.send ready () in
-        Queue.recv never
+        Queue.take never
       in
       let cancel_after_acquire =
-        let* () = Queue.recv ready in
+        let* () = Queue.take ready in
         E.pure ()
       in
       E.race [ body; cancel_after_acquire ]
@@ -1395,18 +1469,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_pubsub_cancelled_blocked_publishers_release_payloads () =
     B.with_runtime @@ fun ctx rt ->
     let hub = Pubsub.create ~overflow:(Pubsub.Backpressure { capacity = 1 }) () in
-    let ready = Queue.create () in
-    let never = Queue.create () in
+    let ready = Queue.unbounded () in
+    let never = Queue.unbounded () in
     let holder = ref None in
     let body =
       let open Eta.Syntax in
       Pubsub.subscribe hub @@ fun sub ->
       let* () = E.sync (fun () -> holder := Some sub) in
       let* () = Queue.send ready () in
-      Queue.recv never
+      Queue.take never
     in
     let body_fiber = B.fork_run ctx rt body in
-    ignore (run_ok rt (Queue.recv ready) : unit);
+    ignore (run_ok rt (Queue.take ready) : unit);
     ignore
       (run_ok rt (Pubsub.publish hub (Bytes.create 1))
         : Pubsub.publish_result);
@@ -1431,18 +1505,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_pubsub_cancel_blocked_recv_cleans_waiter () =
     B.with_runtime @@ fun ctx rt ->
     let hub = Pubsub.create ~overflow:Pubsub.Unbounded () in
-    let ready = Queue.create () in
-    let never = Queue.create () in
+    let ready = Queue.unbounded () in
+    let never = Queue.unbounded () in
     let holder = ref None in
     let body =
       let open Eta.Syntax in
       Pubsub.subscribe hub @@ fun sub ->
       let* () = E.sync (fun () -> holder := Some sub) in
       let* () = Queue.send ready () in
-      Queue.recv never
+      Queue.take never
     in
     let body_fiber = B.fork_run ctx rt body in
-    ignore (run_ok rt (Queue.recv ready) : unit);
+    ignore (run_ok rt (Queue.take ready) : unit);
     let sub =
       match !holder with
       | Some sub -> sub
@@ -1497,19 +1571,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "close fence" `Quick test_queue_close_fence;
           Alcotest.test_case "close with error drains" `Quick
             test_queue_close_with_error_drains;
-          Alcotest.test_case "timeout blocked recv cleans waiter" `Quick
+          Alcotest.test_case "timeout blocked take cleans waiter" `Quick
             test_queue_timeout_blocked_recv_cleans_waiter;
-          Alcotest.test_case "cancel blocked recv" `Quick
+          Alcotest.test_case "cancel blocked take" `Quick
             test_queue_cancel_blocked_recv_cleans_waiter;
-          Alcotest.test_case "offer unbounded create and alias" `Quick
+          Alcotest.test_case "offer unbounded constructor" `Quick
             test_queue_offer_unbounded_create_and_alias;
+          Alcotest.test_case "named constructors and views" `Quick
+            test_queue_named_constructors_and_views;
+          Alcotest.test_case "sliding keeps latest capacity" `Quick
+            test_queue_sliding_keeps_latest_capacity;
+          Alcotest.test_case "logical size tracks waiters" `Quick
+            test_queue_logical_size_tracks_waiters;
+          Alcotest.test_case "shutdown is immediate" `Quick
+            test_queue_shutdown_is_immediate;
           Alcotest.test_case "drop new reports admission result" `Quick
             test_queue_drop_new_reports_admission_result;
           Alcotest.test_case "send drop_new fails on rejection" `Quick
             test_queue_send_drop_new_fails_on_rejection;
           Alcotest.test_case "backpressure offer waits for capacity" `Quick
             test_queue_backpressure_offer_waits_for_capacity;
-          Alcotest.test_case "backpressure try_send reports full" `Quick
+          Alcotest.test_case "backpressure try_offer reports full" `Quick
             test_queue_backpressure_try_send_reports_full;
           Alcotest.test_case "backpressure cancel blocked offer" `Quick
             test_queue_backpressure_cancel_blocked_offer;
@@ -1519,7 +1601,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_queue_offer_closed_failures;
           Alcotest.test_case "close_with_error wakes blocked offer" `Quick
             test_queue_close_with_error_wakes_blocked_offer;
-          Alcotest.test_case "take_all and take_batch drain" `Quick
+          Alcotest.test_case "take_all and take_up_to drain" `Quick
             test_queue_take_all_and_batch_drain;
           Alcotest.test_case "take_all opens backpressure capacity" `Quick
             test_queue_take_all_opens_backpressure_capacity;

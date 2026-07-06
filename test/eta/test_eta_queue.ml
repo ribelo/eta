@@ -114,7 +114,7 @@ let run_in_domain f =
   Domain.join domain
 
 let test_queue_rejects_cross_domain_use () =
-  let queue = Queue.create () in
+  let queue = Queue.unbounded () in
   match
     run_in_domain @@ fun () ->
     try Ok (ignore (Queue.stats queue : Queue.stats))
@@ -145,7 +145,7 @@ let yield_until label predicate =
 let test_queue_backpressure_sender_wakeup_stays_on_owner_domain () =
   Test_eta_support.with_test_clock @@ fun sw _clock rt ->
   let owner = Domain.self () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check unit)
     "initial send" ()
     (Test_eta_support.run_ok rt (Queue.send queue 1));
@@ -161,7 +161,7 @@ let test_queue_backpressure_sender_wakeup_stays_on_owner_domain () =
   yield_until "backpressure sender waiter" (fun () ->
       (Queue.stats queue).Queue.waiting_senders = 1);
   Alcotest.(check int) "first value" 1
-    (Test_eta_support.run_ok rt (Queue.recv queue));
+    (Test_eta_support.run_ok rt (Queue.take queue));
   let admitted, resumed_domain =
     expect_exit_ok "backpressure sender" (Eio.Promise.await_exn sender)
   in
@@ -170,18 +170,18 @@ let test_queue_backpressure_sender_wakeup_stays_on_owner_domain () =
     "sender continuation resumed on owner domain" true
     (resumed_domain = owner);
   Alcotest.(check int) "admitted value" 2
-    (Test_eta_support.run_ok rt (Queue.recv queue))
+    (Test_eta_support.run_ok rt (Queue.take queue))
 
 let test_queue_receiver_wakeup_stays_on_owner_domain () =
   Test_eta_support.with_test_clock @@ fun sw _clock rt ->
   let owner = Domain.self () in
-  let queue = Queue.create () in
+  let queue = Queue.unbounded () in
   let started, started_resolver = Eio.Promise.create () in
   let receiver =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
           (Effect.sync (fun () -> Eio.Promise.resolve started_resolver ())
-          |> Effect.bind (fun () -> Queue.recv queue)
+          |> Effect.bind (fun () -> Queue.take queue)
           |> Effect.map (fun value -> (value, Domain.self ()))))
   in
   Eio.Promise.await started;
@@ -198,7 +198,7 @@ let test_queue_receiver_wakeup_stays_on_owner_domain () =
 
 let test_queue_resolves_sender_outside_lock () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "first offer" true (run_ok rt (Queue.offer queue 1));
   expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
   Alcotest.(check int) "sender waits" 1 (Queue.stats queue).Queue.waiting_senders;
@@ -211,14 +211,14 @@ let test_queue_resolves_sender_outside_lock () =
     Fun.protect
       ~finally:(fun () -> Hooked_runtime.resolve_hook := (fun () -> ()))
       (fun () ->
-        try with_reentry_alarm (fun () -> run_ok rt (Queue.recv queue))
+        try with_reentry_alarm (fun () -> run_ok rt (Queue.take queue))
         with Reentered_locked_queue ->
           Alcotest.fail "queue resolver re-entered while the queue lock was held")
   in
   Alcotest.(check int) "first recv" 1 first;
   Alcotest.(check bool) "resolver hook ran" true !hook_ran;
   Alcotest.(check int) "admitted blocked sender" 2
-    (run_ok rt (Queue.recv queue))
+    (run_ok rt (Queue.take queue))
 
 let reset_hooked_runtime () =
   Hooked_runtime.resolve_hook := (fun () -> ());
@@ -227,7 +227,7 @@ let reset_hooked_runtime () =
 
 let test_queue_receiver_wakeup_reserves_value_for_waiter () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create () in
+  let queue = Queue.unbounded () in
   let late_recv = ref None in
   Fun.protect
     ~finally:reset_hooked_runtime
@@ -238,11 +238,11 @@ let test_queue_receiver_wakeup_reserves_value_for_waiter () =
           Hooked_runtime.resolve_hook :=
             (fun () ->
               Hooked_runtime.resolve_hook := (fun () -> ());
-              late_recv := Some (run_ok rt (Queue.try_recv queue)));
+              late_recv := Some (run_ok rt (Queue.poll queue)));
           run_ok rt (Queue.send queue 7));
       Alcotest.(check int)
         "parked receiver gets sent value" 7
-        (run_ok rt (Queue.recv queue)));
+        (run_ok rt (Queue.take queue)));
   match !late_recv with
   | Some `Empty -> ()
   | Some (`Item value) ->
@@ -254,7 +254,7 @@ let test_queue_receiver_wakeup_reserves_value_for_waiter () =
 
 let test_queue_recv_result_survives_sender_wakeup_failure () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
   let resolve_attempts = ref 0 in
@@ -266,14 +266,14 @@ let test_queue_recv_result_survives_sender_wakeup_failure () =
           incr resolve_attempts;
           if !resolve_attempts = 1 then raise Await_cancelled);
       Alcotest.(check int) "recv returns committed item" 1
-        (run_ok rt (Queue.recv queue)));
+        (run_ok rt (Queue.take queue)));
   Alcotest.(check int) "wakeup retried" 2 !resolve_attempts;
   Alcotest.(check int) "admitted sender value remains" 2
-    (run_ok rt (Queue.recv queue))
+    (run_ok rt (Queue.take queue))
 
 let test_queue_backpressure_admission_wins_racing_cancellation () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   let await_hook_ran = ref false in
   Fun.protect
@@ -285,7 +285,7 @@ let test_queue_backpressure_admission_wins_racing_cancellation () =
           Hooked_runtime.await_hook := (fun () -> ());
           Alcotest.(check int)
             "first value opened capacity" 1
-            (run_ok rt (Queue.recv queue));
+            (run_ok rt (Queue.take queue));
           Hooked_runtime.cancel_after_resolved_await := true);
       match Test_runtime.run rt (Queue.offer queue 2) with
       | Exit.Ok true -> ()
@@ -298,7 +298,7 @@ let test_queue_backpressure_admission_wins_racing_cancellation () =
             "cancellation after queue admission made the sender look uncommitted");
   Alcotest.(check bool) "await hook ran" true !await_hook_ran;
   Alcotest.(check int) "admitted value remains exactly once" 2
-    (run_ok rt (Queue.recv queue));
+    (run_ok rt (Queue.take queue));
   let stats = Queue.stats queue in
   Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
   Alcotest.(check int) "admitted sender not counted cancelled" 0
@@ -306,7 +306,7 @@ let test_queue_backpressure_admission_wins_racing_cancellation () =
 
 let check_queue_drain_interrupted_wakeup_still_admits_sender drain =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   let drain_ran = ref false in
   let interrupted_wakeup = ref false in
@@ -344,7 +344,7 @@ let check_queue_drain_interrupted_wakeup_still_admits_sender drain =
   Alcotest.(check bool) "drain ran" true !drain_ran;
   Alcotest.(check bool) "wakeup was interrupted" true !interrupted_wakeup;
   Alcotest.(check int) "admitted value remains" 2
-    (run_ok rt (Queue.recv queue));
+    (run_ok rt (Queue.take queue));
   let stats = Queue.stats queue in
   Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
   Alcotest.(check int) "admitted sender not counted cancelled" 0
@@ -352,14 +352,14 @@ let check_queue_drain_interrupted_wakeup_still_admits_sender drain =
 
 let test_queue_take_batch_interrupted_wakeup_still_admits_sender () =
   check_queue_drain_interrupted_wakeup_still_admits_sender (fun queue ->
-      Queue.take_batch queue ~max:1)
+      Queue.take_up_to queue ~max:1)
 
 let test_queue_take_all_interrupted_wakeup_still_admits_sender () =
   check_queue_drain_interrupted_wakeup_still_admits_sender Queue.take_all
 
 let check_queue_receive_interrupted_wakeup_still_admits_sender receive =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   let receive_ran = ref false in
   let interrupted_wakeup = ref false in
@@ -395,7 +395,7 @@ let check_queue_receive_interrupted_wakeup_still_admits_sender receive =
   Alcotest.(check bool) "receive ran" true !receive_ran;
   Alcotest.(check bool) "wakeup was interrupted" true !interrupted_wakeup;
   Alcotest.(check int) "admitted value remains" 2
-    (run_ok rt (Queue.recv queue));
+    (run_ok rt (Queue.take queue));
   let stats = Queue.stats queue in
   Alcotest.(check int) "no waiting sender remains" 0 stats.Queue.waiting_senders;
   Alcotest.(check int) "admitted sender not counted cancelled" 0
@@ -403,7 +403,7 @@ let check_queue_receive_interrupted_wakeup_still_admits_sender receive =
 
 let test_queue_try_recv_interrupted_wakeup_still_admits_sender () =
   check_queue_receive_interrupted_wakeup_still_admits_sender (fun queue ->
-      Queue.try_recv queue
+      Queue.poll queue
       |> Effect.map (function
            | `Item 1 -> ()
            | `Item value ->
@@ -415,13 +415,13 @@ let test_queue_try_recv_interrupted_wakeup_still_admits_sender () =
 
 let test_queue_recv_interrupted_wakeup_still_admits_sender () =
   check_queue_receive_interrupted_wakeup_still_admits_sender (fun queue ->
-      Queue.recv queue
+      Queue.take queue
       |> Effect.map (fun value ->
              Alcotest.(check int) "received buffered value" 1 value))
 
 let test_queue_close_interrupted_wakeup_still_wakes_sender () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   let close_ran = ref false in
   let interrupted_wakeup = ref false in
@@ -456,7 +456,7 @@ let test_queue_close_interrupted_wakeup_still_wakes_sender () =
   Alcotest.(check int) "blocked value was not admitted" 1 stats.Queue.depth
 
 let setup_full_backpressure_queue_with_two_senders rt =
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
   expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
   expect_blocked (Test_runtime.run rt (Queue.offer queue 3));
@@ -491,16 +491,16 @@ let check_admitted_sender_woken_after_resolver_failure operation =
   Alcotest.(check int) "admitted value buffered" 1 stats.Queue.depth;
   Alcotest.(check int) "second sender still honestly waiting" 1
     stats.Queue.waiting_senders;
-  Alcotest.(check int) "admitted value" 2 (run_ok rt (Queue.recv queue));
+  Alcotest.(check int) "admitted value" 2 (run_ok rt (Queue.take queue));
   Alcotest.(check int) "second sender resolved after capacity opens" 3
     !resolve_attempts;
   let stats = Queue.stats queue in
   Alcotest.(check int) "no stranded sender" 0 stats.Queue.waiting_senders;
-  Alcotest.(check int) "second waiting value" 3 (run_ok rt (Queue.recv queue))
+  Alcotest.(check int) "second waiting value" 3 (run_ok rt (Queue.take queue))
 
 let test_queue_try_recv_admitted_sender_is_woken_even_if_resolver_raises () =
   check_admitted_sender_woken_after_resolver_failure (fun queue ->
-      Queue.try_recv queue
+      Queue.poll queue
       |> Effect.map (function
            | `Item 1 -> ()
            | `Item value ->
@@ -512,7 +512,7 @@ let test_queue_try_recv_admitted_sender_is_woken_even_if_resolver_raises () =
 
 let test_queue_recv_admitted_sender_is_woken_even_if_resolver_raises () =
   check_admitted_sender_woken_after_resolver_failure (fun queue ->
-      Queue.recv queue
+      Queue.take queue
       |> Effect.map (fun value ->
              Alcotest.(check int) "received buffered value" 1 value))
 
@@ -524,7 +524,7 @@ let test_queue_take_all_admitted_sender_is_woken_even_if_resolver_raises () =
 
 let test_queue_take_batch_admitted_sender_is_woken_even_if_resolver_raises () =
   check_admitted_sender_woken_after_resolver_failure (fun queue ->
-      Queue.take_batch queue ~max:1
+      Queue.take_up_to queue ~max:1
       |> Effect.map (fun values ->
              Alcotest.(check (list int)) "drained values" [ 1 ] values))
 
@@ -538,8 +538,8 @@ let test_queue_close_senders_are_woken_even_if_resolver_raises () =
   Alcotest.(check bool) "queue closed" true stats.Queue.closed;
   Alcotest.(check int) "no stranded sender" 0 stats.Queue.waiting_senders;
   Alcotest.(check int) "buffered value still drains" 1
-    (run_ok rt (Queue.recv queue));
-  (match Test_runtime.run rt (Queue.recv queue) with
+    (run_ok rt (Queue.take queue));
+  (match Test_runtime.run rt (Queue.take queue) with
   | Exit.Error (Cause.Fail (`Closed_with_error `Boom)) -> ()
   | Exit.Error cause ->
       Alcotest.failf "expected close error, got %a" (Cause.pp pp_hidden) cause
@@ -547,7 +547,7 @@ let test_queue_close_senders_are_woken_even_if_resolver_raises () =
 
 let test_queue_unbounded_offer_never_reports_full () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create () in
+  let queue = Queue.unbounded () in
   for value = 1 to 100 do
     Alcotest.(check bool)
       (Printf.sprintf "offer %d" value)
@@ -560,14 +560,14 @@ let test_queue_unbounded_offer_never_reports_full () =
     Alcotest.(check int)
       (Printf.sprintf "recv %d" expected)
       expected
-      (run_ok rt (Queue.recv queue))
+      (run_ok rt (Queue.take queue))
   done
 
 let test_queue_backpressure_offer_waits_instead_of_returning_full () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create ~overflow:(Queue.Backpressure { capacity = 1 }) () in
+  let queue = Queue.bounded ~capacity:1 () in
   Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
-  (match run_ok rt (Queue.try_send queue 2) with
+  (match run_ok rt (Queue.try_offer queue 2) with
   | `Full -> ()
   | result ->
       Alcotest.failf "expected try_send to report Full, got %s"
@@ -583,14 +583,14 @@ let test_queue_backpressure_offer_waits_instead_of_returning_full () =
 
 let test_queue_recv_waits_instead_of_returning_empty () =
   let rt = Test_runtime.create () in
-  let queue = Queue.create () in
-  (match run_ok rt (Queue.try_recv queue) with
+  let queue = Queue.unbounded () in
+  (match run_ok rt (Queue.poll queue) with
   | `Empty -> ()
   | `Item _ -> Alcotest.fail "try_recv unexpectedly returned an item"
   | `Closed -> Alcotest.fail "try_recv unexpectedly reported clean close"
   | `Closed_with_error _ ->
       Alcotest.fail "try_recv unexpectedly reported error close");
-  expect_blocked (Test_runtime.run rt (Queue.recv queue));
+  expect_blocked (Test_runtime.run rt (Queue.take queue));
   Alcotest.(check int) "waiting receiver recorded" 1
     (Queue.stats queue).Queue.waiting_receivers
 
@@ -600,25 +600,25 @@ let set_queue_counter queue field value =
 
 let test_queue_stats_counters_saturate () =
   let rt = Test_runtime.create () in
-  let sent_queue = Queue.create () in
-  set_queue_counter sent_queue 7 (max_int - 1);
+  let sent_queue = Queue.unbounded () in
+  set_queue_counter sent_queue 9 (max_int - 1);
   run_ok rt (Queue.send sent_queue 1);
   run_ok rt (Queue.send sent_queue 2);
   Alcotest.(check int) "sent saturates" max_int
     (Queue.stats sent_queue).Queue.sent;
-  let received_queue = Queue.create () in
+  let received_queue = Queue.unbounded () in
   run_ok rt (Queue.send received_queue 1);
   run_ok rt (Queue.send received_queue 2);
-  set_queue_counter received_queue 8 (max_int - 1);
+  set_queue_counter received_queue 10 (max_int - 1);
   Alcotest.(check int) "first received value" 1
-    (run_ok rt (Queue.recv received_queue));
+    (run_ok rt (Queue.take received_queue));
   Alcotest.(check int) "second received value" 2
-    (run_ok rt (Queue.recv received_queue));
+    (run_ok rt (Queue.take received_queue));
   Alcotest.(check int) "received saturates" max_int
     (Queue.stats received_queue).Queue.received;
-  let dropped_queue = Queue.create ~overflow:(Queue.Drop_new { capacity = 1 }) () in
+  let dropped_queue = Queue.dropping ~capacity:1 () in
   run_ok rt (Queue.send dropped_queue 1);
-  set_queue_counter dropped_queue 9 (max_int - 1);
+  set_queue_counter dropped_queue 11 (max_int - 1);
   Alcotest.(check bool) "first drop" false
     (run_ok rt (Queue.offer dropped_queue 2));
   Alcotest.(check bool) "second drop" false

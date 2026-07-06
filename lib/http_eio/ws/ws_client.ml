@@ -536,7 +536,7 @@ let make_connection ~flow ~selected_protocol ~max_frame_size
   let t =
     {
       flow;
-      incoming = Queue.create ();
+      incoming = Queue.unbounded ();
       write_mutex = Eio.Mutex.create ();
       close_sent = Atomic.make false;
       selected_protocol;

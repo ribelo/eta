@@ -1037,7 +1037,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_from_queue_clean_close_ends_stream () =
     B.with_runtime @@ fun _ctx rt ->
-    let queue = Eta.Queue.create () in
+    let queue = Eta.Queue.unbounded () in
     ignore (run_ok rt (Eta.Queue.send queue 1) : unit);
     ignore (run_ok rt (Eta.Queue.send queue 2) : unit);
     Eta.Queue.close queue;
@@ -1047,7 +1047,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_from_queue_error_close_fails_after_drain () =
     B.with_runtime @@ fun _ctx rt ->
-    let queue = Eta.Queue.create () in
+    let queue = Eta.Queue.unbounded () in
     ignore (run_ok rt (Eta.Queue.send queue 1) : unit);
     ignore (run_ok rt (Eta.Queue.send queue 2) : unit);
     Eta.Queue.close_with_error queue `Broken;

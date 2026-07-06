@@ -716,7 +716,7 @@ and fold_stream :
       loop acc
   | From_queue queue ->
       let rec loop acc =
-        Eta.Queue.recv queue
+        Eta.Queue.take queue
         |> Eta.Effect.map (fun value -> `Item value)
         |> Eta.Effect.catch (function
              | `Closed -> Eta.Effect.pure `Closed

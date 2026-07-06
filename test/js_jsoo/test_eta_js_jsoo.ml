@@ -223,10 +223,10 @@ let test_repeat_schedule done_ =
   run eff ~on_result:(finish done_ (expect_ok_int "repeat schedule" 3))
 
 let test_queue_facade done_ =
-  let queue = Eta_js.Queue.create () in
+  let queue = Eta_js.Queue.unbounded () in
   let eff =
     Eta_js.Queue.send queue 11
-    |> Eta_js.Effect.bind (fun () -> Eta_js.Queue.recv queue)
+    |> Eta_js.Effect.bind (fun () -> Eta_js.Queue.take queue)
   in
   run eff ~on_result:(finish done_ (expect_ok_int "queue facade" 11))
 
