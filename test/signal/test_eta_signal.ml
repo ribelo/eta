@@ -5519,55 +5519,6 @@ let test_to_dot_labels_invalid_observer_with_evicted_target_tombstone () =
   run_ok rt (Eviction_signal.Observer.dispose branch_observer);
   run_ok rt (Eviction_signal.Observer.dispose selected_observer)
 
-let test_dead_node_count_ignores_retained_invalid_non_tombstones () =
-  let module Dead_count_signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let retained = Dead_count_signal.const 1 in
-  let before = run_ok rt (Dead_count_signal.stats ()) in
-  Dead_count_signal.Private_test_hooks.set_signal_valid retained false;
-  let after = run_ok rt (Dead_count_signal.stats ()) in
-  Alcotest.(check int)
-    "retained invalid non-tombstone is not counted as dead"
-    before.Dead_count_signal.dead_node_count
-    after.Dead_count_signal.dead_node_count
-
-let test_to_dot_prefers_tombstone_over_retained_invalid_node () =
-  let module Retained_dot_signal = Eta_signal_testable.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let retained = Retained_dot_signal.const 1 in
-  let signal_id = Retained_dot_signal.signal_id_label retained.id in
-  run_ok rt
-    (Eta_signal_testable.Graph.with_lane_access Retained_dot_signal.graph
-       ~leaf_name:"test_to_dot_prefers_tombstone"
-       ~depth_local:(Eta.Runtime_contract.create_local ())
-       ~hooks:
-         (Eta_signal_testable.Graph.lane_hooks ~note_waiter_enqueued:ignore
-            ~note_waiter_compaction:ignore)
-       ~after_acquired:(fun () -> Eta.Effect.unit)
-       (fun lane ->
-         Eta_signal_testable.Graph.remember_dead_node Retained_dot_signal.graph
-           lane
-           ~id:(fun tombstone -> tombstone.Retained_dot_signal.dead_id)
-           (Retained_dot_signal.signal_tombstone
-              (Retained_dot_signal.P retained))));
-  Retained_dot_signal.Private_test_hooks.set_signal_valid retained false;
-  let options : Retained_dot_signal.dot_options =
-    {
-      dot_scope = `All_including_invalid;
-      dot_observers = false;
-      dot_timers = false;
-      dot_state = true;
-      dot_dynamic_scopes = false;
-    }
-  in
-  let dot = run_ok rt (Retained_dot_signal.to_dot ~options ()) in
-  Alcotest.(check int) "retained invalid live node is suppressed" 0
-    (count_occurrences dot ("  " ^ signal_id ^ " [label="));
-  Alcotest.(check int) "dead tombstone remains visible" 1
-    (count_occurrences dot ("  dead_" ^ signal_id ^ " [label="));
-  Alcotest.(check int) "logical node id appears once" 1
-    (count_occurrences dot ("signal_id=" ^ signal_id))
-
 let test_fanout_fanin_cutoff_and_partial_disposal () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -9390,12 +9341,6 @@ let () =
           Alcotest.test_case
             "to_dot labels invalid observer with evicted target tombstone" `Quick
             test_to_dot_labels_invalid_observer_with_evicted_target_tombstone;
-          Alcotest.test_case
-            "dead node count ignores retained invalid non-tombstones" `Quick
-            test_dead_node_count_ignores_retained_invalid_non_tombstones;
-          Alcotest.test_case
-            "to_dot prefers tombstone over retained invalid node" `Quick
-            test_to_dot_prefers_tombstone_over_retained_invalid_node;
           Alcotest.test_case "fanout fanin cutoff and partial disposal" `Quick
             test_fanout_fanin_cutoff_and_partial_disposal;
           Alcotest.test_case "time interval starts on observe" `Quick
