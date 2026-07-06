@@ -1429,6 +1429,50 @@ let test_observer_phase_mutation_is_delayed () =
    | _ -> Alcotest.fail "unexpected observer-phase updates");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_lifecycle_changes_inside_callback () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  let primary_events = ref [] in
+  let late_events = ref [] in
+  let primary_ref = ref None in
+  let late_ref = ref None in
+  let primary =
+    run_ok runtime
+      (S.Observer.observe signal (fun update ->
+           record primary_events update
+           |> E.bind (fun () ->
+                  match (!primary_ref, update) with
+                  | Some primary, S.Initialized _ ->
+                      S.Observer.observe signal (record late_events)
+                      |> E.map_error (fun _ -> `Observer_failed)
+                      |> E.bind (fun late ->
+                             E.sync (fun () -> late_ref := Some late)
+                             |> E.bind (fun () ->
+                                    S.Observer.dispose primary
+                                    |> E.or_die (fun err ->
+                                           S.Graph_error err)))
+                  | _ -> E.unit)))
+  in
+  primary_ref := Some primary;
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "late observer not run in current stabilization" 0
+    (List.length !late_events);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "late observer initializes next stabilization" 1
+    (List.length !late_events);
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "self-disposed observer has no future callbacks" 1
+    (List.length !primary_events);
+  (match List.rev !late_events with
+   | [ S.Initialized 1; Changed { old_value = 1; new_value = 2 } ] -> ()
+   | _ -> Alcotest.fail "unexpected late observer events");
+  match !late_ref with
+  | Some late -> run_ok runtime (S.Observer.dispose late)
+  | None -> Alcotest.fail "late observer was not registered"
+
 let test_observer_callbacks_read_consistent_published_snapshot () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2182,6 +2226,8 @@ let () =
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
             test_observer_phase_mutation_is_delayed;
+          Alcotest.test_case "observer lifecycle changes inside callback"
+            `Quick test_observer_lifecycle_changes_inside_callback;
           Alcotest.test_case "observer callbacks read consistent snapshot"
             `Quick test_observer_callbacks_read_consistent_published_snapshot;
           Alcotest.test_case

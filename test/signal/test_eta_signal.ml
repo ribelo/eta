@@ -1537,53 +1537,6 @@ let test_dispose_unlinks_observer_from_graph () =
   in
   force_collection 20
 
-let test_observer_registration_and_self_disposal_inside_callback () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let primary_events = ref [] in
-  let late_events = ref [] in
-  let primary_ref = ref None in
-  let late_ref = ref None in
-  let primary =
-    run_ok rt
-      (Signal.Observer.observe signal (fun update ->
-           Effect.sync (fun () -> primary_events := update :: !primary_events)
-           |> Effect.bind (fun () ->
-                  match (!primary_ref, update) with
-                  | Some primary, Signal.Initialized _ ->
-                      Signal.Observer.observe signal (record_observer late_events)
-                      |> Effect.map_error (fun _ -> `Observer_failed)
-                      |> Effect.bind (fun late ->
-                             Effect.sync (fun () -> late_ref := Some late)
-                             |> Effect.bind (fun () ->
-                                    Signal.Observer.dispose primary
-                                    |> Effect.or_die (fun err ->
-                                           Signal.Graph_error err)))
-                  | _ -> Effect.unit)))
-  in
-  primary_ref := Some primary;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "late observer not run in current stabilization" 0
-    (List.length !late_events);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "late observer initializes next stabilization" 1
-    (List.length !late_events);
-  run_ok rt (Signal.Var.set source 2);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "self-disposed observer has no future callbacks" 1
-    (List.length !primary_events);
-  (match List.rev !late_events with
-   | [
-       Signal.Initialized 1;
-       Changed { old_value = 1; new_value = 2 };
-     ] -> ()
-   | _ -> Alcotest.fail "unexpected late observer events");
-  (match !late_ref with
-   | Some late -> run_ok rt (Signal.Observer.dispose late)
-   | None -> Alcotest.fail "late observer was not registered")
-
 let test_observer_callback_interruption_releases_phase () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime_and_switch @@ fun sw rt ->
@@ -3908,8 +3861,6 @@ let () =
             test_bind_switch_is_not_committed_when_later_pure_node_fails;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
             test_dispose_unlinks_observer_from_graph;
-          Alcotest.test_case "observer lifecycle changes inside callback"
-            `Quick test_observer_registration_and_self_disposal_inside_callback;
           Alcotest.test_case "observer interruption releases phase" `Quick
             test_observer_callback_interruption_releases_phase;
           Alcotest.test_case "stream observe failure during timer start"
