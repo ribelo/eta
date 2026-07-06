@@ -1,9 +1,16 @@
-(** Graph container for Eta_signal internals.
+(** Private graph engine for one Eta_signal instance.
 
-    This module owns construction of the graph-owned runtime state and the
-    mutable registries that track observers, weak live nodes, and dead-node
-    tombstones. Lower-level subsystem handles remain exposed while compute and
-    stabilization are still being migrated behind this seam. *)
+    This module owns graph runtime state, lane serialization, counters,
+    registries, transactional staging, demand snapshots, timer demand, and
+    stabilization phase bookkeeping for [Eta_signal.Make]. It is deliberately
+    an internal engine seam, not a reusable public interface.
+
+    Some operations accept callback records from [eta_signal.ml] because there
+    is currently exactly one adapter for node-specific behavior. Those records
+    are implementation protocol between the facade and this engine, not an
+    invitation to add more copied test seams or new external callers. Change
+    this interface only when the change reduces the caller-visible protocol or
+    moves an invariant behind the graph engine. *)
 
 type
   ( 'pending,
