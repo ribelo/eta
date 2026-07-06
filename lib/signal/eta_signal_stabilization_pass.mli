@@ -97,25 +97,44 @@ val pure_ops :
 
 type ('capability, 'pending, 'observer, 'hook, 'staging) rollback
 
+type 'hook rollback_staging_action
+
+val rollback_staging_action :
+  rollback:(unit -> 'hook list) -> 'hook rollback_staging_action
+
 type ('capability, 'hook, 'staging) rollback_staging_plan
 
 val rollback_staging_plan :
   rollback_staging:
-    ('capability rollback_context -> 'staging -> 'hook list) ->
+    ('capability rollback_context ->
+    'staging ->
+    'hook rollback_staging_action) ->
   ('capability, 'hook, 'staging) rollback_staging_plan
+
+type rollback_observer_failure_mark
+
+val rollback_observer_failure_mark :
+  mark:(unit -> unit) -> rollback_observer_failure_mark
 
 type ('capability, 'observer) rollback_observer_plan
 
 val rollback_observer_plan :
   mark_observers_failed_without_current:
-    ('capability rollback_context -> 'observer list -> unit) ->
+    ('capability rollback_context ->
+    'observer list ->
+    rollback_observer_failure_mark) ->
   ('capability, 'observer) rollback_observer_plan
+
+type rollback_pending_requeue
+
+val rollback_pending_requeue :
+  requeue:(unit -> unit) -> rollback_pending_requeue
 
 type ('capability, 'pending) rollback_pending_plan
 
 val rollback_pending_plan :
   requeue_pending:
-    ('capability rollback_context -> 'pending list -> unit) ->
+    ('capability rollback_context -> 'pending list -> rollback_pending_requeue) ->
   ('capability, 'pending) rollback_pending_plan
 
 val rollback_ops :
@@ -126,9 +145,13 @@ val rollback_ops :
 
 type 'capability timer_refresh
 
+type timer_refresh_clear
+
+val timer_refresh_clear : clear:(unit -> unit) -> timer_refresh_clear
+
 val timer_refresh_ops :
   clear_active_timer_refresh:
-    ('capability timer_refresh_context -> unit) ->
+    ('capability timer_refresh_context -> timer_refresh_clear) ->
   'capability timer_refresh
 
 type ('capability, 'pending, 'observer, 'event, 'hook, 'error, 'staging) t

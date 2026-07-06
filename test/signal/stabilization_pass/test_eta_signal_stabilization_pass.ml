@@ -260,25 +260,28 @@ let ops ?(stage_pending = fun _ -> ())
   let rollback_staging =
     Pass.rollback_staging_plan
       ~rollback_staging:(fun context staging ->
-        check_rollback_context context;
-        check_staging staging;
-        record events "rollback_staging";
-        S.rollback_transaction state;
-        [ "rollback-hook" ])
+        Pass.rollback_staging_action ~rollback:(fun () ->
+            check_rollback_context context;
+            check_staging staging;
+            record events "rollback_staging";
+            S.rollback_transaction state;
+            [ "rollback-hook" ]))
   in
   let rollback_observers =
     Pass.rollback_observer_plan
       ~mark_observers_failed_without_current:(fun context observers ->
-        check_rollback_context context;
-        record events
-          ("mark_observers_failed_without_current:" ^ String.concat ","
-             observers))
+        Pass.rollback_observer_failure_mark ~mark:(fun () ->
+            check_rollback_context context;
+            record events
+              ("mark_observers_failed_without_current:" ^ String.concat ","
+                 observers)))
   in
   let rollback_pending =
     Pass.rollback_pending_plan
       ~requeue_pending:(fun context pending ->
-        check_rollback_context context;
-        record events ("requeue_pending:" ^ String.concat "," pending))
+        Pass.rollback_pending_requeue ~requeue:(fun () ->
+            check_rollback_context context;
+            record events ("requeue_pending:" ^ String.concat "," pending)))
   in
   let rollback =
     Pass.rollback_ops ~staging:rollback_staging
@@ -286,8 +289,9 @@ let ops ?(stage_pending = fun _ -> ())
   in
   let timer_refresh =
     Pass.timer_refresh_ops ~clear_active_timer_refresh:(fun context ->
-        check_timer_refresh_context context;
-        record events "clear_timer_refresh")
+        Pass.timer_refresh_clear ~clear:(fun () ->
+            check_timer_refresh_context context;
+            record events "clear_timer_refresh"))
   in
   Pass.pass_ops ~errors ~pure ~rollback ~timer_refresh
 
