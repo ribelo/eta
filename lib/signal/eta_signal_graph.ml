@@ -907,6 +907,36 @@ let finish_recorded_stabilization t lane finish =
       finish.delivering_token <- None;
       finish_stabilization t lane delivering_token
 
+type ('event, 'error) stabilization_delivery_context = {
+  delivery_run_pending_cleanup : unit -> (unit, 'error) Eta.Effect.t;
+  delivery_run_events : 'event list -> (unit, 'error) Eta.Effect.t;
+  delivery_with_lane_access :
+    (lane_access -> unit) -> (unit, 'error) Eta.Effect.t;
+}
+
+let stabilization_delivery_context ~run_pending_cleanup ~run_events
+    ~with_lane_access =
+  {
+    delivery_run_pending_cleanup = run_pending_cleanup;
+    delivery_run_events = run_events;
+    delivery_with_lane_access = with_lane_access;
+  }
+
+let finish_recorded_stabilization_effect t finish context =
+  if stabilization_finish_pending finish then
+    context.delivery_with_lane_access (fun lane ->
+        finish_recorded_stabilization t lane finish)
+  else Eta.Effect.unit
+
+let stabilization_delivery_ops t finish context =
+  Eta_signal_stabilization_pass.delivery_ops
+    ~run_pending_cleanup:context.delivery_run_pending_cleanup
+    ~run_events:context.delivery_run_events
+    ~mark_complete:(fun () ->
+      context.delivery_with_lane_access (fun lane ->
+          bump_counter t lane Callback_delivery_count))
+    ~finish:(fun () -> finish_recorded_stabilization_effect t finish context)
+
 let max_dead_node_tombstones = 1024
 
 let same_signal_id left right =

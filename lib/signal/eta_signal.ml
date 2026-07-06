@@ -1914,10 +1914,6 @@ module Make (Observer_error : Observer_error) () = struct
            | _ -> None)
          ~pure ~rollback)
 
-  let mark_callback_delivery_complete () =
-    with_graph_lane_access (fun lane ->
-        Graph.bump_counter graph lane Graph.Callback_delivery_count)
-
   let begin_stabilize_with_pending_hooks lane timer_refresh hooks_ref
       stabilization_finish =
     let result = begin_stabilize lane timer_refresh in
@@ -1927,18 +1923,13 @@ module Make (Observer_error : Observer_error) () = struct
     hooks_ref := hooks;
     result
 
-  let finish_recorded_stabilize stabilization_finish =
-    if Graph.stabilization_finish_pending stabilization_finish then
-      with_graph_lane_access (fun lane ->
-          Graph.finish_recorded_stabilization graph lane stabilization_finish)
-    else Effect.unit
-
   let stabilization_delivery_ops hooks_ref refresh_timers stabilization_finish =
-    Stabilization_pass.delivery_ops
-      ~run_pending_cleanup:(fun () ->
-        run_pending_stabilize_cleanup hooks_ref refresh_timers)
-      ~run_events ~mark_complete:mark_callback_delivery_complete
-      ~finish:(fun () -> finish_recorded_stabilize stabilization_finish)
+    Graph.stabilization_delivery_ops graph stabilization_finish
+      (Graph.stabilization_delivery_context
+         ~run_pending_cleanup:(fun () ->
+           run_pending_stabilize_cleanup hooks_ref refresh_timers)
+         ~run_events
+         ~with_lane_access:(fun f -> with_graph_lane_access f))
 
   let stabilize =
     Effect.sync (fun () ->

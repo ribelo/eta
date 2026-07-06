@@ -147,21 +147,24 @@ let record events event =
 
 let check_cap (_ : Graph.lane_access) = ()
 
-let with_graph_lane graph f =
+let graph_lane_effect graph f =
+  Graph.with_lane_access graph
+    ~leaf_name:"test_eta_signal_graph"
+    ~depth_local:(Eta.Runtime_contract.create_local ())
+    ~hooks:
+      (Graph.lane_hooks ~note_waiter_enqueued:ignore
+         ~note_waiter_compaction:ignore)
+    ~after_acquired:(fun () -> Eta.Effect.unit)
+    f
+
+let run_effect label eff =
   let runtime = Direct.create () in
-  match
-    Direct.run runtime
-      (Graph.with_lane_access graph
-         ~leaf_name:"test_eta_signal_graph"
-         ~depth_local:(Eta.Runtime_contract.create_local ())
-         ~hooks:
-           (Graph.lane_hooks ~note_waiter_enqueued:ignore
-              ~note_waiter_compaction:ignore)
-         ~after_acquired:(fun () -> Eta.Effect.unit)
-         f)
-  with
+  match Direct.run runtime eff with
   | Eta.Exit.Ok value -> value
-  | Eta.Exit.Error _ -> Alcotest.fail "unexpected lane access failure"
+  | Eta.Exit.Error _ -> Alcotest.fail (label ^ " failed")
+
+let with_graph_lane graph f =
+  run_effect "lane access" (graph_lane_effect graph f)
 
 let empty_stabilization_ops graph =
   let observer_plan _context _staging =
@@ -630,6 +633,51 @@ let test_generation_owned_by_graph () =
       Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
   Alcotest.(check int) "overflow preserves generation" max_int
     (with_graph_lane graph (fun lane -> Graph.generation graph lane))
+
+let test_stabilization_delivery_ops_own_counter_and_finish () =
+  let events = ref [] in
+  let graph =
+    Graph.create ~create_scope_context:(fun () -> ())
+      ~create_stream_bridge_metrics:(fun () -> ()) ()
+  in
+  let finish = Graph.create_stabilization_finish () in
+  let result = run_empty_stabilization graph in
+  let hooks =
+    with_graph_lane graph (fun lane ->
+        Graph.record_stabilization_result finish lane result)
+  in
+  Pass.result result
+    ~pure_ok:(fun ~hooks:_ ~events:_ ~delivering_token:_ ->
+      Alcotest.(check (list string)) "hooks" [] hooks)
+    ~graph_error:(fun ~hooks:_ err ->
+      Alcotest.failf "unexpected graph error: %s"
+        (Format.asprintf "%a" Eta_signal_testable.Error.pp_graph_error err))
+    ~defect:(fun ~hooks:_ exn _backtrace ->
+      Alcotest.failf "unexpected defect: %s" (Printexc.to_string exn));
+  let context =
+    Graph.stabilization_delivery_context
+      ~run_pending_cleanup:(fun () ->
+        Eta.Effect.sync (fun () -> record events "cleanup"))
+      ~run_events:(fun delivery_events ->
+        Eta.Effect.sync (fun () ->
+            List.iter
+              (fun event -> record events ("event:" ^ event))
+              delivery_events))
+      ~with_lane_access:(graph_lane_effect graph)
+  in
+  let delivery_ops = Graph.stabilization_delivery_ops graph finish context in
+  run_effect "delivery" (Pass.deliver delivery_ops [ "one"; "two" ]);
+  Alcotest.(check (list string))
+    "events"
+    [ "cleanup"; "event:one"; "event:two"; "cleanup" ]
+    !events;
+  Alcotest.(check int)
+    "callback delivery count" 1
+    (with_graph_lane graph (fun lane ->
+         Graph.counter graph lane Graph.Callback_delivery_count));
+  Alcotest.(check bool)
+    "finish cleared" false
+    (Graph.stabilization_finish_pending finish)
 
 let test_computed_nodes_are_staging_scoped () =
   let events = ref [] in
@@ -1205,6 +1253,8 @@ let () =
             test_compute_cached_owns_cache_and_cycle_dispatch;
           Alcotest.test_case "generation ownership" `Quick
             test_generation_owned_by_graph;
+          Alcotest.test_case "delivery bookkeeping ownership" `Quick
+            test_stabilization_delivery_ops_own_counter_and_finish;
           Alcotest.test_case "computed staging token" `Quick
             test_computed_nodes_are_staging_scoped;
         ] );

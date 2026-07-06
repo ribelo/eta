@@ -688,6 +688,47 @@ val finish_recorded_stabilization :
   stabilization_finish ->
   unit
 
+type ('event, 'error) stabilization_delivery_context
+
+val stabilization_delivery_context :
+  run_pending_cleanup:(unit -> (unit, 'error) Eta.Effect.t) ->
+  run_events:('event list -> (unit, 'error) Eta.Effect.t) ->
+  with_lane_access:((lane_access -> unit) -> (unit, 'error) Eta.Effect.t) ->
+  ('event, 'error) stabilization_delivery_context
+
+val stabilization_delivery_ops :
+  ( 'pending,
+    'bind,
+    'node,
+    'hook,
+    'timer,
+    'refresh,
+    'observer,
+    'weak_node,
+    'dead_node,
+    'scope_context,
+    'stream_metrics )
+  t ->
+  ( ( 'pending,
+      'bind,
+      'node,
+      'hook,
+      'timer,
+      'refresh,
+      'observer,
+      'weak_node,
+      'dead_node,
+      'scope_context,
+      'stream_metrics )
+    t )
+  stabilization_finish ->
+  ('event, 'error) stabilization_delivery_context ->
+  ('event, 'error) Eta_signal_stabilization_pass.delivery
+(** Build the delivering-phase plan for a recorded graph stabilization. The
+    caller supplies effectful cleanup, observer event execution, and graph-lane
+    acquisition; the graph owns the callback-delivery counter and finishing the
+    recorded stabilization token. *)
+
 val create_live_node :
   (_, _, _, _, _, _, _, 'weak_node, _, 'scope_context, _) t ->
   ('scope_context, 'scope) scope_ops ->
