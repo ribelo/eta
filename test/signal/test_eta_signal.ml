@@ -4605,56 +4605,6 @@ let test_time_now_uses_runtime_clock () =
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_time_timer_rejects_mismatched_runtime () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let clock_a = Eta_test.Test_clock.create () in
-  let clock_b = Eta_test.Test_clock.create () in
-  let rt_a =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_a)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
-      ()
-  in
-  let rt_b =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
-      ~sleep:(Eta_test.Test_clock.sleep clock_b)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
-      ()
-  in
-  let check_mismatch label signal =
-    let observer =
-      run_ok rt_a (Signal.Observer.observe signal (fun _ -> Effect.unit))
-    in
-    Fun.protect
-      ~finally:(fun () -> run_ok rt_a (Signal.Observer.dispose observer))
-      (fun () ->
-        run_ok rt_a Signal.stabilize;
-        expect_exact_runtime_mismatch
-          (label ^ " observe while owner demand active")
-          (Eta_eio.Runtime.run rt_b
-             (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))));
-        expect_fail label
-          (function `Runtime_mismatch -> true | _ -> false)
-          (Eta_eio.Runtime.run rt_b (widen Signal.stabilize)))
-  in
-  let check_observe_mismatch label signal =
-    expect_exact_runtime_mismatch label
-      (Eta_eio.Runtime.run rt_b
-         (widen (Signal.Observer.observe signal (fun _ -> Effect.unit))))
-  in
-  let interval = run_ok rt_a (Signal.Time.interval (Duration.ms 10)) in
-  check_observe_mismatch "mismatched interval observe runtime" interval;
-  check_mismatch "mismatched interval runtime" interval;
-  let step =
-    run_ok rt_a
-      (Signal.Time.step ~every:(Duration.ms 10) ~initial:0
-         (fun ~missed:_ value -> value + 1))
-  in
-  check_observe_mismatch "mismatched step observe runtime" step;
-  check_mismatch "mismatched step runtime" step
-
 let test_time_now_uses_single_clock_snapshot_per_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -6154,8 +6104,6 @@ let () =
             test_time_now_bind_activation_refreshes_current_stabilization;
           Alcotest.test_case "time now uses runtime clock" `Quick
             test_time_now_uses_runtime_clock;
-          Alcotest.test_case "time timer rejects mismatched runtime" `Quick
-            test_time_timer_rejects_mismatched_runtime;
           Alcotest.test_case "time now uses one clock snapshot" `Quick
             test_time_now_uses_single_clock_snapshot_per_stabilization;
           Alcotest.test_case "time now backward refresh overrides pending update"

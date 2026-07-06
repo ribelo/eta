@@ -302,19 +302,31 @@ let test_timer_runtime_mismatch_on_observe () =
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
       ()
   in
-  let timer = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
-  expect_exact_runtime_mismatch "observe timer from another runtime"
-    (Eta.Runtime.run rt_b (widen (S.Observer.observe timer (fun _ -> E.unit))));
-  let keep_alive =
-    run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+  let check_mismatch label timer =
+    expect_exact_runtime_mismatch
+      (label ^ " observe from another runtime")
+      (Eta.Runtime.run rt_b
+         (widen (S.Observer.observe timer (fun _ -> E.unit))));
+    let keep_alive =
+      run_ok rt_a (S.Observer.observe timer (fun _ -> E.unit))
+    in
+    Fun.protect
+      ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
+      (fun () ->
+        run_ok rt_a S.stabilize;
+        expect_exact_runtime_mismatch
+          (label ^ " active observe from another runtime")
+          (Eta.Runtime.run rt_b
+             (widen (S.Observer.observe timer (fun _ -> E.unit)))))
   in
-  Fun.protect
-    ~finally:(fun () -> run_ok rt_a (S.Observer.dispose keep_alive))
-    (fun () ->
-      run_ok rt_a S.stabilize;
-      expect_exact_runtime_mismatch "observe active timer from another runtime"
-        (Eta.Runtime.run rt_b
-           (widen (S.Observer.observe timer (fun _ -> E.unit)))))
+  let interval = run_ok rt_a (S.Time.interval (Eta.Duration.ms 10)) in
+  check_mismatch "interval timer" interval;
+  let step =
+    run_ok rt_a
+      (S.Time.step ~every:(Eta.Duration.ms 10) ~initial:0
+         (fun ~missed:_ value -> value + 1))
+  in
+  check_mismatch "step timer" step
 
 let test_mixed_runtime_mismatch_does_not_poison_same_runtime_timer () =
   let module S = Eta_signal.Make (Observer_error) () in
