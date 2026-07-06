@@ -579,8 +579,14 @@ let mark_failed_without_current port capability observer =
         (Snapshot.with_value snapshot
            (Value.mark_failed_without_current (Snapshot.value snapshot)))
 
-type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
+type ('capability, 'observer) delivery_event_activation_plan = {
   event_active : 'capability -> 'observer -> bool;
+}
+
+let delivery_event_activation_plan ~active = { event_active = active }
+
+type ('capability, 'observer, 'a, 'callback, 'error)
+     delivery_event_callback_plan = {
   event_construct :
     'capability ->
     'observer ->
@@ -594,12 +600,21 @@ type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
     (unit, 'error) Eta.Effect.t;
 }
 
-let delivery_event_port ~active ~construct ~run_callback =
+let delivery_event_callback_plan ~construct ~run_callback =
   {
-    event_active = active;
     event_construct = construct;
     event_run_callback = run_callback;
   }
+
+type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
+  event_activation : ('capability, 'observer) delivery_event_activation_plan;
+  event_callback :
+    ('capability, 'observer, 'a, 'callback, 'error)
+    delivery_event_callback_plan;
+}
+
+let delivery_event_port ~activation ~callback =
+  { event_activation = activation; event_callback = callback }
 
 type 'capability delivery_event_access = {
   event_with_delivery_access :
@@ -643,7 +658,7 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
                (delivery_port.delivery_snapshot capability live)))
     ~active:(fun () ->
       access.event_with_delivery_access (fun capability ->
-          event_port.event_active capability observer))
+          event_port.event_activation.event_active capability observer))
     ~claim:(fun () ->
       access.event_with_delivery_access (fun capability ->
           claim_delivery delivery_port capability observer token))
@@ -653,7 +668,8 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
             running_delivery_token_matches delivery_port capability observer
               token
           then
-            event_port.event_construct capability observer token update
+            event_port.event_callback.event_construct capability observer token
+              update
           else Ok None)
       |> Eta.Effect.flatten_result)
     ~run_callback:(fun callback ->
@@ -663,7 +679,8 @@ let make_delivery_event ~access delivery_port event_port ~observer ~token update
             running_delivery_token_matches delivery_port capability observer
               token)
       in
-      if current then event_port.event_run_callback observer token callback
+      if current then
+        event_port.event_callback.event_run_callback observer token callback
       else Eta.Effect.unit)
     ~acknowledge:(fun () ->
       access.event_with_delivery_access (fun capability ->

@@ -379,10 +379,16 @@ val mark_failed_without_current :
   'observer ->
   unit
 
-type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
+type ('capability, 'observer) delivery_event_activation_plan
 
-val delivery_event_port :
+val delivery_event_activation_plan :
   active:('capability -> 'observer -> bool) ->
+  ('capability, 'observer) delivery_event_activation_plan
+
+type ('capability, 'observer, 'a, 'callback, 'error)
+     delivery_event_callback_plan
+
+val delivery_event_callback_plan :
   construct:
     ('capability ->
     'observer ->
@@ -394,6 +400,16 @@ val delivery_event_port :
     Delivery.token ->
     'callback ->
     (unit, 'error) Eta.Effect.t) ->
+  ('capability, 'observer, 'a, 'callback, 'error)
+  delivery_event_callback_plan
+
+type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
+
+val delivery_event_port :
+  activation:('capability, 'observer) delivery_event_activation_plan ->
+  callback:
+    ('capability, 'observer, 'a, 'callback, 'error)
+    delivery_event_callback_plan ->
   ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
 
 type 'capability delivery_event_access

@@ -1300,19 +1300,24 @@ let test_delivery_port_ignores_missing_or_stale_delivery () =
 
 let observer_event_port ?(run_callback = fun _observer _token _callback ->
     Eta.Effect.unit) events =
-  Observer.delivery_event_port
-    ~active:(fun capability observer ->
+  let activation =
+    Observer.delivery_event_activation_plan ~active:(fun capability observer ->
       check_observer_capability capability;
       record events "active";
       Option.is_some observer.live)
-    ~construct:(fun capability _observer token _update ->
-      check_observer_capability capability;
-      record events ("construct:" ^ string_of_int token);
-      Ok (Some "callback"))
-    ~run_callback:(fun observer token callback ->
-      Eta.Effect.sync (fun () ->
-          record events ("run:" ^ string_of_int token ^ ":" ^ callback))
-      |> Eta.Effect.bind (fun () -> run_callback observer token callback))
+  in
+  let callback =
+    Observer.delivery_event_callback_plan
+      ~construct:(fun capability _observer token _update ->
+        check_observer_capability capability;
+        record events ("construct:" ^ string_of_int token);
+        Ok (Some "callback"))
+      ~run_callback:(fun observer token callback ->
+        Eta.Effect.sync (fun () ->
+            record events ("run:" ^ string_of_int token ^ ":" ^ callback))
+        |> Eta.Effect.bind (fun () -> run_callback observer token callback))
+  in
+  Observer.delivery_event_port ~activation ~callback
 
 let observer_event_access events =
   Observer.delivery_event_access ~with_delivery_access:(fun f ->

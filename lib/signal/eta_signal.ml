@@ -1846,10 +1846,17 @@ module Make (Observer_error : Observer_error) () = struct
     with Graph_error err -> Error (err :> stabilize_error)
 
   let observer_delivery_event_port () =
-    Observer_core.delivery_event_port ~active:event_observer_active
-      ~construct:construct_observer_effect
-      ~run_callback:(fun observer token observer_eff ->
-        run_observer_effect observer token observer_eff)
+    let activation =
+      Observer_core.delivery_event_activation_plan
+        ~active:event_observer_active
+    in
+    let callback =
+      Observer_core.delivery_event_callback_plan
+        ~construct:construct_observer_effect
+        ~run_callback:(fun observer token observer_eff ->
+          run_observer_effect observer token observer_eff)
+    in
+    Observer_core.delivery_event_port ~activation ~callback
 
   let observer_delivery_event_access =
     Observer_core.delivery_event_access
