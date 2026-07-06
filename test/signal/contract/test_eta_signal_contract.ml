@@ -660,7 +660,34 @@ let test_observer_graph_delivery_order_is_deterministic () =
   check_independent_order "independent reverse registration"
     [ "right"; "middle"; "left" ];
   check_independent_order "independent mixed registration"
-    [ "middle"; "right"; "left" ]
+    [ "middle"; "right"; "left" ];
+
+  let source = S.Var.create 1 in
+  let independent_source = S.Var.create 2 in
+  let watched = S.Var.watch source in
+  let independent = S.Var.watch independent_source in
+  let events = ref [] in
+  let record label _update =
+    E.sync (fun () -> events := label :: !events)
+  in
+  let same_first =
+    run_ok runtime (S.Observer.observe watched (record "same-1"))
+  in
+  let same_second =
+    run_ok runtime (S.Observer.observe watched (record "same-2"))
+  in
+  let independent_observer =
+    run_ok runtime (S.Observer.observe independent (record "independent"))
+  in
+  let observers = [ same_first; same_second; independent_observer ] in
+  let expected = [ "same-1"; "same-2"; "independent" ] in
+  run_ok runtime S.stabilize;
+  check_events "same-signal initial observer order" expected events;
+  run_ok runtime (S.Var.set independent_source 20);
+  run_ok runtime (S.Var.set source 10);
+  run_ok runtime S.stabilize;
+  check_events "same-signal changed observer order" expected events;
+  dispose_all observers
 
 let test_observer_unsafe_read_exn_reports_invalid_state () =
   let module S = Eta_signal.Make (Observer_error) () in

@@ -498,41 +498,6 @@ let test_recompute_order_is_topological () =
   Alcotest.(check int) "updated value" 15
     (run_ok rt (Signal.Observer.read observer))
 
-let test_observer_callbacks_run_in_registration_order () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let left = Signal.Var.create 1 in
-  let right = Signal.Var.create 2 in
-  let left_signal = Signal.Var.watch left in
-  let right_signal = Signal.Var.watch right in
-  let events = ref [] in
-  let record label _update =
-    Effect.sync (fun () -> events := label :: !events)
-  in
-  let left_first =
-    run_ok rt (Signal.Observer.observe left_signal (record "left-1"))
-  in
-  let left_second =
-    run_ok rt (Signal.Observer.observe left_signal (record "left-2"))
-  in
-  let right_first =
-    run_ok rt (Signal.Observer.observe right_signal (record "right-1"))
-  in
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "initial observer order" [ "left-1"; "left-2"; "right-1" ]
-    (List.rev !events);
-  events := [];
-  run_ok rt (Signal.Var.set right 20);
-  run_ok rt (Signal.Var.set left 10);
-  run_ok rt Signal.stabilize;
-  Alcotest.(check (list string))
-    "changed observer order" [ "left-1"; "left-2"; "right-1" ]
-    (List.rev !events);
-  run_ok rt (Signal.Observer.dispose left_first);
-  run_ok rt (Signal.Observer.dispose left_second);
-  run_ok rt (Signal.Observer.dispose right_first)
-
 let test_observer_graph_order_precedes_reverse_registration_fail_fast () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -3891,9 +3856,6 @@ let () =
             test_unnecessary_root_nodes_are_gc_reclaimable;
           Alcotest.test_case "recompute order is topological" `Quick
             test_recompute_order_is_topological;
-          Alcotest.test_case "observer callbacks run in registration order"
-            `Quick
-            test_observer_callbacks_run_in_registration_order;
           Alcotest.test_case
             "observer graph order precedes reverse registration fail-fast"
             `Quick
