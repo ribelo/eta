@@ -12,7 +12,8 @@ module Signal = Eta_signal.Make (Observer_error) ()
 type test_error =
   [ Signal.graph_error
   | Signal.observer_read_error
-  | Signal.stabilize_error ]
+  | Signal.stabilize_error
+  | Signal.stream_error ]
 
 type observed_update =
   | Initialized of int
@@ -2292,6 +2293,221 @@ let test_generated_small_graphs_match_model () =
         ~seed)
     [ 101; 203; 307; 409; 503; 607 ]
 
+type stream_model_op =
+  | Stream_set of int
+  | Stream_observe of int
+  | Stream_dispose of int
+  | Stream_take of int
+  | Stream_stabilize
+
+type stream_model_slot = {
+  stream_capacity : int;
+  mutable stream_observer : int Signal.observer option;
+  mutable stream :
+    (int Signal.update, Signal.graph_error) Eta_stream.Stream.t option;
+  mutable stream_current : int option;
+  mutable stream_queue : observed_update list;
+  mutable stream_model_drops : observed_update list;
+  mutable stream_actual_drops : observed_update list;
+}
+
+let pp_stream_model_op formatter = function
+  | Stream_set value -> Format.fprintf formatter "Set %d" value
+  | Stream_observe slot -> Format.fprintf formatter "Observe slot%d" slot
+  | Stream_dispose slot -> Format.fprintf formatter "Dispose slot%d" slot
+  | Stream_take slot -> Format.fprintf formatter "Take slot%d" slot
+  | Stream_stabilize -> Format.pp_print_string formatter "Stabilize"
+
+let create_stream_model_slot capacity =
+  {
+    stream_capacity = capacity;
+    stream_observer = None;
+    stream = None;
+    stream_current = None;
+    stream_queue = [];
+    stream_model_drops = [];
+    stream_actual_drops = [];
+  }
+
+let stream_model_slot_active slot =
+  match slot.stream_observer with
+  | None -> false
+  | Some _ -> true
+
+let stream_model_enqueue slot update total_drops =
+  if List.length slot.stream_queue < slot.stream_capacity then
+    slot.stream_queue <- slot.stream_queue @ [ update ]
+  else (
+    slot.stream_model_drops <- slot.stream_model_drops @ [ update ];
+    incr total_drops)
+
+let stream_model_stabilize_slot committed total_drops slot =
+  if stream_model_slot_active slot then (
+    let update =
+      match slot.stream_current with
+      | None -> Some (Initialized committed)
+      | Some current ->
+          if current = committed then None
+          else Some (Changed (current, committed))
+    in
+    slot.stream_current <- Some committed;
+    Option.iter
+      (fun update -> stream_model_enqueue slot update total_drops)
+      update)
+
+let stream_model_observe runtime signal slot =
+  match slot.stream_observer with
+  | Some _ -> ()
+  | None ->
+      let observer, stream =
+        run_ok runtime
+          (Signal.Stream.observe ~capacity:slot.stream_capacity
+             ~on_drop:(fun update ->
+               slot.stream_actual_drops <-
+                 slot.stream_actual_drops @ [ observed_of_signal_update update ])
+             signal)
+      in
+      slot.stream_observer <- Some observer;
+      slot.stream <- Some stream;
+      slot.stream_current <- None;
+      slot.stream_queue <- []
+
+let stream_model_pop = function
+  | [] -> None
+  | head :: rest -> Some (head, rest)
+
+let stream_model_take label runtime slot =
+  match (slot.stream, stream_model_pop slot.stream_queue) with
+  | None, _ | Some _, None -> ()
+  | Some stream, Some (expected, rest) ->
+      let actual =
+        run_ok runtime
+          (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
+        |> List.map observed_of_signal_update
+      in
+      Alcotest.(check (list observed_update)) (label ^ " taken")
+        [ expected ] actual;
+      slot.stream_queue <- rest
+
+let stream_model_dispose label runtime slot =
+  match slot.stream_observer with
+  | None -> ()
+  | Some observer ->
+      run_ok runtime (Signal.Observer.dispose observer);
+      slot.stream_observer <- None;
+      slot.stream_current <- None;
+      (match slot.stream with
+      | None -> Alcotest.fail (label ^ " missing stream")
+      | Some stream ->
+          let actual =
+            run_ok runtime (Eta_stream.run_collect stream)
+            |> List.map observed_of_signal_update
+          in
+          Alcotest.(check (list observed_update)) (label ^ " drained")
+            slot.stream_queue actual);
+      slot.stream <- None;
+      slot.stream_queue <- []
+
+let stream_model_check_slot label slot_index slot =
+  Alcotest.(check (list observed_update))
+    (Format.asprintf "%s slot%d drops" label slot_index)
+    slot.stream_model_drops slot.stream_actual_drops
+
+let stream_model_active_count slots =
+  Array.fold_left
+    (fun count slot -> if stream_model_slot_active slot then count + 1 else count)
+    0 slots
+
+let stream_model_check_stats label runtime ~base_drops ~base_active
+    ~total_drops slots =
+  let stats = run_ok runtime (Signal.stats ()) in
+  Alcotest.(check int) (label ^ " active observers")
+    (base_active + stream_model_active_count slots)
+    stats.Signal.active_observer_count;
+  Alcotest.(check int) (label ^ " stream drops")
+    (base_drops + !total_drops)
+    stats.Signal.stream_bridge_drop_count
+
+let generate_stream_model_ops ~seed ~slot_count ~steps =
+  let random = Random.State.make [| seed; slot_count; steps; 41 |] in
+  let next_slot () = Random.State.int random slot_count in
+  let next_value () = Random.State.int random 21 - 10 in
+  let next_op index =
+    if index mod 5 = 0 then Stream_stabilize
+    else
+      match Random.State.int random 14 with
+      | 0 | 1 | 2 | 3 | 4 -> Stream_set (next_value ())
+      | 5 | 6 -> Stream_take (next_slot ())
+      | 7 | 8 -> Stream_observe (next_slot ())
+      | 9 | 10 -> Stream_dispose (next_slot ())
+      | _ -> Stream_stabilize
+  in
+  let rec loop index acc =
+    if index = steps then List.rev (Stream_stabilize :: acc)
+    else loop (index + 1) (next_op index :: acc)
+  in
+  [ Stream_observe 0; Stream_observe 1; Stream_stabilize ] @ loop 1 []
+
+let run_stream_model_trace name ~seed =
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = Signal.Var.create 0 in
+  let signal = Signal.Var.watch source in
+  let slots =
+    [| create_stream_model_slot 1; create_stream_model_slot 2;
+       create_stream_model_slot 3 |]
+  in
+  let base_stats = run_ok runtime (Signal.stats ()) in
+  let base_drops = base_stats.Signal.stream_bridge_drop_count in
+  let base_active = base_stats.Signal.active_observer_count in
+  let total_drops = ref 0 in
+  let pending = ref 0 in
+  let committed = ref 0 in
+  let ops =
+    generate_stream_model_ops ~seed ~slot_count:(Array.length slots)
+      ~steps:100
+  in
+  List.iteri
+    (fun index op ->
+      let label =
+        Format.asprintf "%s step %d %a" name index pp_stream_model_op op
+      in
+      (match op with
+      | Stream_set value ->
+          pending := value;
+          run_ok runtime (Signal.Var.set source value)
+      | Stream_observe slot ->
+          stream_model_observe runtime signal slots.(slot)
+      | Stream_dispose slot ->
+          stream_model_dispose label runtime slots.(slot)
+      | Stream_take slot ->
+          stream_model_take label runtime slots.(slot)
+      | Stream_stabilize ->
+          committed := !pending;
+          Array.iter
+            (stream_model_stabilize_slot !committed total_drops)
+            slots;
+          run_ok runtime Signal.stabilize);
+      Array.iteri (stream_model_check_slot label) slots;
+      stream_model_check_stats label runtime ~base_drops ~base_active
+        ~total_drops slots)
+    ops;
+  Array.iteri
+    (fun slot_index slot ->
+      stream_model_dispose
+        (Format.asprintf "%s final slot%d" name slot_index)
+        runtime slot)
+    slots;
+  stream_model_check_stats (name ^ " final") runtime ~base_drops ~base_active
+    ~total_drops slots
+
+let test_stream_bridge_trace_matches_model () =
+  List.iter
+    (fun seed ->
+      run_stream_model_trace
+        (Format.asprintf "stream-bridge-seed-%d" seed)
+        ~seed)
+    [ 17; 37; 73; 109; 211 ]
+
 let () =
   Alcotest.run "eta_signal_model"
     [
@@ -2331,5 +2547,7 @@ let () =
           Alcotest.test_case
             "generated small graphs with observers and stats match model" `Quick
             test_generated_small_graphs_match_model;
+          Alcotest.test_case "stream bridge trace matches model" `Quick
+            test_stream_bridge_trace_matches_model;
         ] );
     ]
