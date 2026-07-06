@@ -676,5 +676,28 @@ module Make (Observer_error : Observer_error) () : sig
         graph owner domain.
 
         Fails with [`Invalid_capacity] when [capacity <= 0]. *)
+
+    val with_observed :
+      ?capacity:int ->
+      ?on_drop:('a update -> unit) ->
+      ?equal:('a -> 'a -> bool) ->
+      'a signal ->
+      (('a update, graph_error) Eta_stream.Stream.t ->
+      ('b, stream_error) Eta.Effect.t) ->
+      ('b, stream_error) Eta.Effect.t
+    (** [with_observed ?capacity signal f] creates a stream observer, runs [f]
+        with the update stream, and disposes the observer when [f] exits on
+        success, typed failure, defect, or cancellation.
+
+        This is the safe default for bounded stream-consumer workflows because
+        the observer is the graph-demand handle. When [f] stops early, returns
+        a value, or fails, Eta still disposes the observer and closes the
+        stream after buffered updates drain. Use {!observe} directly when the
+        observer lifetime intentionally outlives the consumer effect, or when a
+        wider workflow also needs non-stream Eta operations in the same error
+        channel.
+
+        Cleanup uses {!Observer.dispose_checked}; disposal cleanup failures are
+        reported as finalizer diagnostics by Eta's resource semantics. *)
   end
 end

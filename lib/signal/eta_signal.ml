@@ -2808,5 +2808,12 @@ module Make (Observer_error : Observer_error) () = struct
           (fun ?equal ~on_finish signal callback ->
             Observer.observe_delivery ?equal ~on_finish signal callback)
         signal
+
+    let with_observed ?capacity ?on_drop ?equal signal f =
+      Effect.with_resource
+        ~acquire:(observe ?capacity ?on_drop ?equal signal)
+        ~release:(fun (observer, _stream) ->
+          Observer.dispose_checked observer)
+        (fun (_observer, stream) -> f stream)
   end
 end

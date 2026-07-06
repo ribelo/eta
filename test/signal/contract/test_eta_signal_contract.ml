@@ -225,6 +225,50 @@ let test_stream_bridge_is_observer_plus_queue () =
       ()
   | _ -> Alcotest.fail "unexpected stream bridge queue behavior"
 
+let test_stream_with_observed_disposes_on_exit () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let signal = S.Var.watch source in
+  let leaked_stream = ref None in
+  let stream_error eff = E.map_error (fun error -> (error :> test_error)) eff in
+  let before_scope = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "starts without active observers" 0
+    before_scope.S.active_observer_count;
+  run_ok runtime
+    (S.Stream.with_observed ~capacity:4 signal (fun stream ->
+         leaked_stream := Some stream;
+         E.unit));
+  let after_scope = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "scoped stream observer disposed" 0
+    after_scope.S.active_observer_count;
+  let stream =
+    match !leaked_stream with
+    | Some stream -> stream
+    | None -> Alcotest.fail "expected stream to be passed to consumer"
+  in
+  Alcotest.(check (list int))
+    "scoped stream closes after consumer returns"
+    []
+    (List.map
+       (function
+         | S.Initialized value -> value
+         | S.Changed { new_value; _ } -> new_value)
+       (run_ok runtime (Eta_stream.run_collect stream |> stream_error)));
+  run_ok runtime (S.Var.set source 2);
+  run_ok runtime S.stabilize;
+  let after_later_stabilize = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "scoped stream stays disposed" 0
+    after_later_stabilize.S.active_observer_count;
+  let manual_observer, _manual_stream =
+    run_ok runtime
+      (S.Stream.observe ~capacity:4 signal)
+  in
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "manual stream can still be observed" 2
+    (run_ok runtime (S.Observer.read manual_observer));
+  run_ok runtime (S.Observer.dispose manual_observer)
+
 let test_stream_bridge_full_queue_drops_newest () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -290,6 +334,8 @@ let () =
             `Quick test_demand_boundary_for_derived_nodes_and_timers;
           Alcotest.test_case "stream bridge is observer plus queue" `Quick
             test_stream_bridge_is_observer_plus_queue;
+          Alcotest.test_case "stream scoped observation disposes observer"
+            `Quick test_stream_with_observed_disposes_on_exit;
           Alcotest.test_case "stream bridge full queue drops newest" `Quick
             test_stream_bridge_full_queue_drops_newest;
         ] );
