@@ -3099,46 +3099,6 @@ let test_observer_phase_multiple_sets_publish_final_next_value () =
    | _ -> Alcotest.fail "expected coalesced observer-phase mutation events");
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_observer_read_does_not_force_recompute () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime @@ fun rt ->
-  let source = Signal.Var.create 1 in
-  let calls = ref 0 in
-  let signal =
-    Signal.Var.watch source
-    |> Signal.map (fun value ->
-           incr calls;
-           value)
-  in
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  run_ok rt Signal.stabilize;
-  let after_stabilize = run_ok rt (Signal.stats ()) in
-  run_ok rt (Signal.Var.set source 2);
-  let before_read = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "read returns old stabilized snapshot" 1
-    (run_ok rt (Signal.Observer.read observer));
-  let after_read = run_ok rt (Signal.stats ()) in
-  Alcotest.(check int) "observer read does not stabilize"
-    before_read.Signal.pure_snapshot_commit_count
-    after_read.Signal.pure_snapshot_commit_count;
-  Alcotest.(check int) "observer read does not recompute"
-    before_read.Signal.recompute_count after_read.Signal.recompute_count;
-  Alcotest.(check int) "pending update not recomputed by read" 1 !calls;
-  run_ok rt Signal.stabilize;
-  let after_second_stabilize = run_ok rt (Signal.stats ()) in
-  Alcotest.(check bool) "later stabilization recomputes" true
-    (after_second_stabilize.Signal.recompute_count
-     > after_read.Signal.recompute_count);
-  Alcotest.(check int) "map recomputed by later stabilization" 2 !calls;
-  Alcotest.(check bool) "stabilization count advanced" true
-    (after_second_stabilize.Signal.pure_snapshot_commit_count
-     > after_stabilize.Signal.pure_snapshot_commit_count);
-  Alcotest.(check int) "observer sees new snapshot after stabilize" 2
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_dispose_unlinks_observer_from_graph () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
@@ -8427,8 +8387,6 @@ let () =
             test_bind_cycle_detection_is_typed_failure;
           Alcotest.test_case "observer phase multiple sets publish final value"
             `Quick test_observer_phase_multiple_sets_publish_final_next_value;
-          Alcotest.test_case "observer read does not force recompute" `Quick
-            test_observer_read_does_not_force_recompute;
           Alcotest.test_case "dispose unlinks observer from graph" `Quick
             test_dispose_unlinks_observer_from_graph;
           Alcotest.test_case "version overflow does not publish snapshot" `Quick

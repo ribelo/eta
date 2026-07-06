@@ -84,6 +84,44 @@ let test_explicit_stabilization_boundary () =
    | _ -> Alcotest.fail "unexpected explicit stabilization updates");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_observer_read_does_not_force_recompute () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let source = S.Var.create 1 in
+  let recomputes = ref 0 in
+  let signal =
+    S.Var.watch source
+    |> S.map (fun value ->
+           incr recomputes;
+           value)
+  in
+  let observer = run_ok runtime (S.Observer.observe signal (fun _ -> E.unit)) in
+  run_ok runtime S.stabilize;
+  let after_stabilize = run_ok runtime (S.stats ()) in
+  run_ok runtime (S.Var.set source 2);
+  let before_read = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "read returns old stabilized snapshot" 1
+    (run_ok runtime (S.Observer.read observer));
+  let after_read = run_ok runtime (S.stats ()) in
+  Alcotest.(check int) "observer read does not stabilize"
+    before_read.S.pure_snapshot_commit_count
+    after_read.S.pure_snapshot_commit_count;
+  Alcotest.(check int) "observer read does not recompute"
+    before_read.S.recompute_count after_read.S.recompute_count;
+  Alcotest.(check int) "pending update was not recomputed by read" 1
+    !recomputes;
+  run_ok runtime S.stabilize;
+  let after_second_stabilize = run_ok runtime (S.stats ()) in
+  Alcotest.(check bool) "later stabilization recomputes" true
+    (after_second_stabilize.S.recompute_count > after_read.S.recompute_count);
+  Alcotest.(check int) "map recomputed by later stabilization" 2 !recomputes;
+  Alcotest.(check bool) "stabilization count advanced" true
+    (after_second_stabilize.S.pure_snapshot_commit_count
+     > after_stabilize.S.pure_snapshot_commit_count);
+  Alcotest.(check int) "observer sees new snapshot after stabilize" 2
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_pure_failure_preserves_snapshot_and_retries () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -323,6 +361,8 @@ let () =
         [
           Alcotest.test_case "explicit stabilization boundary" `Quick
             test_explicit_stabilization_boundary;
+          Alcotest.test_case "observer read does not force recompute" `Quick
+            test_observer_read_does_not_force_recompute;
           Alcotest.test_case "pure failure preserves snapshot and retries"
             `Quick test_pure_failure_preserves_snapshot_and_retries;
           Alcotest.test_case "observer phase mutation is delayed" `Quick
