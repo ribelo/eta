@@ -482,25 +482,10 @@ module Make (Observer_error : Observer_error) () = struct
       | Observer_delivery_running (token, update, _) ->
           Test_delivery_running (token, update)
 
-    let signal_version signal =
-      Signal_snapshot.version (Transaction.current signal.snapshot)
-
     let set_signal_version signal value =
       let snapshot = Transaction.current signal.snapshot in
       publish_initial_current signal.snapshot
         (Signal_snapshot.with_version snapshot value)
-    let signal_valid signal = signal.valid
-    let set_signal_valid signal value = signal.valid <- value
-
-    let seed_var_source_value (type a) (signal : a signal) (value : a) =
-      match signal.kind with
-      | Var source ->
-          publish_source_current source.source_value value;
-          publish_source_current source.graph_value value
-      | Const _ | Map _ | Map2 _ | Map3 _ | Map4 _ | Map5 _ | Map6 _ | Map7 _
-      | Map8 _ | Map9 _ | All _ | Bind _ ->
-          invalid_arg
-            "Eta_signal.Private_test_hooks: expected source-backed signal"
 
     let set_timer_generation signal generation =
       match signal.timer with
