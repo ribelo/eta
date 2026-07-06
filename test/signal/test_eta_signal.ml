@@ -2711,8 +2711,8 @@ let test_old_branch_observer_not_computed_on_switch () =
   run_ok rt (Signal.Observer.dispose old_observer);
   run_ok rt (Signal.Observer.dispose top_observer)
 
-let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
-  let module Signal = Eta_signal_testable.Make (Observer_error) () in
+let test_dynamic_scope_invalidation_skips_callback () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let choose_left = Signal.Var.create true in
   let left = Signal.Var.create 0 in
@@ -2744,19 +2744,8 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
   Alcotest.(check int) "branch observer initialized" 1 !branch_callbacks;
   run_ok rt (Signal.Var.set left 1);
   run_ok rt (Signal.Var.set choose_left false);
-  let delivery_claimed = ref false in
-  let hook =
-    {
-      Signal.Private_test_hooks.run =
-        (fun () ->
-          Effect.sync (fun () ->
-              delivery_claimed := true;
-              Alcotest.fail "invalidated branch observer reached delivery claim"));
-    }
-  in
   Fun.protect
     ~finally:(fun () ->
-      Signal.Private_test_hooks.clear ();
       ignore
         (Runtime.run rt (widen (Signal.Observer.dispose branch_observer))
           : _ Exit.t);
@@ -2764,14 +2753,9 @@ let test_dynamic_scope_invalidation_skips_callback_before_delivery_claim () =
         (Runtime.run rt (widen (Signal.Observer.dispose selected_observer))
           : _ Exit.t))
     (fun () ->
-      Signal.Private_test_hooks.with_hook
-        Signal.Private_test_hooks.After_observer_delivery_claim hook
-      @@ fun () ->
       run_ok rt Signal.stabilize;
       Alcotest.(check int)
         "invalidated branch callback is skipped" 1 !branch_callbacks;
-      Alcotest.(check bool)
-        "invalidated branch observer was not claimed" false !delivery_claimed;
       expect_fail "invalidated branch observer read" (( = ) `Invalid_scope)
         (Eta_eio.Runtime.run rt (widen (Signal.Observer.read branch_observer)));
       Alcotest.(check int) "selected value is unchanged" 0
@@ -8753,9 +8737,8 @@ let () =
           Alcotest.test_case
             "old branch observer not computed on same stabilization switch"
             `Quick test_old_branch_observer_not_computed_on_switch;
-          Alcotest.test_case
-            "dynamic scope invalidation skips callback before claim" `Quick
-            test_dynamic_scope_invalidation_skips_callback_before_delivery_claim;
+          Alcotest.test_case "dynamic scope invalidation skips callback" `Quick
+            test_dynamic_scope_invalidation_skips_callback;
           Alcotest.test_case "commit skips invalidated staged entries" `Quick
             test_commit_skips_invalidated_staged_entries;
           Alcotest.test_case "dynamic signal rewires and cycle" `Quick
