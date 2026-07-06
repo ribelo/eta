@@ -13,7 +13,7 @@ module Observer_error = struct
     | `Observer_failed -> Format.pp_print_string ppf "observer failed"
 end
 
-module Test_signal = Eta_signal_testable.Make (Observer_error) ()
+module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) ()
 
 type test_error =
   [ Test_signal.graph_error
@@ -57,17 +57,6 @@ let with_runtime f =
   in
   f rt
 
-let with_test_graph_lane rt graph f =
-  run_ok rt
-    (Eta_signal_testable.Graph.with_lane_access graph
-       ~leaf_name:"test_eta_signal_overflow.graph_lane"
-       ~depth_local:(Runtime_contract.create_local ())
-       ~hooks:
-         (Eta_signal_testable.Graph.lane_hooks ~note_waiter_enqueued:ignore
-            ~note_waiter_compaction:ignore)
-       ~after_acquired:(fun () -> Effect.unit)
-       f)
-
 let wait_for_sleepers clock expected =
   let rec loop attempts =
     if Eta_test.Test_clock.sleeper_count clock >= expected then ()
@@ -81,15 +70,8 @@ let wait_for_sleepers clock expected =
   loop 20
 
 let test_signal_version_overflow_does_not_publish_partial_snapshot () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  let set_signal_version (signal : int Test_signal.signal) value =
-    let snapshot =
-      Eta_signal_testable.Transaction.current signal.Test_signal.snapshot
-    in
-    Test_signal.publish_initial_current signal.Test_signal.snapshot
-      (Eta_signal_testable.Signal_snapshot.with_version snapshot value)
-  in
   let source = Test_signal.Var.create 1 in
   let signal = Test_signal.Var.watch source in
   let events = ref [] in
@@ -99,13 +81,13 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
            Effect.sync (fun () -> events := update :: !events)))
   in
   run_ok rt Test_signal.stabilize;
-  set_signal_version signal max_int;
+  Test_signal.Overflow.set_signal_version signal max_int;
   run_ok rt (Test_signal.Var.set source 2);
   expect_fail "signal version overflow" (counter_overflow "signal version")
     (Eta_eio.Runtime.run rt (widen Test_signal.stabilize));
   Alcotest.(check int) "old snapshot remains after version overflow" 1
     (run_ok rt (Test_signal.Observer.read observer));
-  set_signal_version signal 0;
+  Test_signal.Overflow.set_signal_version signal 0;
   run_ok rt Test_signal.stabilize;
   Alcotest.(check int) "retry publishes pending source" 2
     (run_ok rt (Test_signal.Observer.read observer));
@@ -117,11 +99,9 @@ let test_signal_version_overflow_does_not_publish_partial_snapshot () =
   run_ok rt (Test_signal.Observer.dispose observer)
 
 let test_var_create_counter_overflow_raises_graph_error () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  with_test_graph_lane rt Test_signal.graph (fun lane ->
-      Eta_signal_testable.Graph.set_next_node_id Test_signal.graph lane
-        max_int);
+  run_ok rt (Test_signal.Overflow.set_next_node_id max_int);
   match Test_signal.Var.create 1 with
   | exception Test_signal.Graph_error (`Counter_overflow name)
     when String.equal name "node id" ->
@@ -134,40 +114,35 @@ let test_var_create_counter_overflow_raises_graph_error () =
   | _ -> Alcotest.fail "var create counter overflow: expected graph error"
 
 let test_stabilization_generation_overflow_is_typed_failure () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  with_test_graph_lane rt Test_signal.graph (fun lane ->
-      Eta_signal_testable.Graph.set_generation Test_signal.graph lane max_int);
+  run_ok rt (Test_signal.Overflow.set_generation max_int);
   expect_fail "stabilization generation overflow"
     (counter_overflow "stabilization generation")
     (Eta_eio.Runtime.run rt (widen Test_signal.stabilize))
 
 let test_timer_refresh_token_overflow_is_typed_failure () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
-  with_test_graph_lane rt Test_signal.graph (fun lane ->
-      Eta_signal_testable.Graph.set_next_timer_refresh_token Test_signal.graph
-        lane max_int);
+  run_ok rt (Test_signal.Overflow.set_next_timer_refresh_token max_int);
   expect_fail "timer refresh token overflow"
     (counter_overflow "timer refresh token")
     (Eta_eio.Runtime.run rt (widen Test_signal.stabilize))
 
 let test_stats_counter_saturation_is_typed_failure () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   with_runtime @@ fun rt ->
   let check_stats_counter name =
-    match Eta_signal_testable.Debug.stats_counter ~name max_int with
+    match Test_signal.Overflow.stats_counter ~name max_int with
     | Error (`Counter_overflow actual) ->
         Alcotest.(check string) (name ^ " pure saturation") name actual
     | Ok _ -> Alcotest.failf "%s: expected pure counter overflow" name
   in
-  let check name set_counter =
-    with_test_graph_lane rt Test_signal.graph (fun lane ->
-        set_counter lane max_int);
+  let check name counter =
+    run_ok rt (Test_signal.Overflow.set_stats_counter counter max_int);
     expect_fail (name ^ " saturation") (counter_overflow name)
       (Eta_eio.Runtime.run rt (widen (Test_signal.stats ())));
-    with_test_graph_lane rt Test_signal.graph (fun lane ->
-        set_counter lane 0)
+    run_ok rt (Test_signal.Overflow.set_stats_counter counter 0)
   in
   List.iter check_stats_counter
     [
@@ -176,67 +151,39 @@ let test_stats_counter_saturation_is_typed_failure () =
       "stats dead_node_count";
       "stats lane_cancelled_waiter_count";
     ];
-  check "stats pure_snapshot_commit_count" (fun lane value ->
-      Eta_signal_testable.Graph.set_pure_snapshot_commit_count
-        Test_signal.graph lane value);
-  check "stats callback_delivery_count" (fun lane value ->
-      Eta_signal_testable.Graph.set_counter Test_signal.graph lane
-        Eta_signal_testable.Graph.Callback_delivery_count value);
-  check "stats recompute_count" (fun lane value ->
-      Eta_signal_testable.Graph.set_counter Test_signal.graph lane
-        Eta_signal_testable.Graph.Recompute_count value);
-  check "stats dynamic_scope_invalidations" (fun lane value ->
-      Eta_signal_testable.Graph.set_counter Test_signal.graph lane
-        Eta_signal_testable.Graph.Dynamic_scope_invalidations value);
-  check "stats nodes_became_necessary" (fun lane value ->
-      Eta_signal_testable.Graph.set_counter Test_signal.graph lane
-        Eta_signal_testable.Graph.Nodes_became_necessary value);
-  check "stats nodes_became_unnecessary" (fun lane value ->
-      Eta_signal_testable.Graph.set_counter Test_signal.graph lane
-        Eta_signal_testable.Graph.Nodes_became_unnecessary value);
-  check "stats stream_bridge_drop_count" (fun lane value ->
-      Eta_signal_testable.Graph.set_stream_bridge_metrics Test_signal.graph lane
-        (Eta_signal_testable.Stream_bridge.create_metrics ~drop_count:value ()))
+  check "stats pure_snapshot_commit_count"
+    Test_signal.Overflow.Pure_snapshot_commit_count;
+  check "stats callback_delivery_count"
+    Test_signal.Overflow.Callback_delivery_count;
+  check "stats recompute_count" Test_signal.Overflow.Recompute_count;
+  check "stats dynamic_scope_invalidations"
+    Test_signal.Overflow.Dynamic_scope_invalidations;
+  check "stats nodes_became_necessary"
+    Test_signal.Overflow.Nodes_became_necessary;
+  check "stats nodes_became_unnecessary"
+    Test_signal.Overflow.Nodes_became_unnecessary;
+  check "stats stream_bridge_drop_count"
+    Test_signal.Overflow.Stream_bridge_drop_count
 
 let test_time_timer_generation_overflow_fails_loudly () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
-  let set_timer_generation (signal : int Test_signal.signal) generation =
-    match signal.Test_signal.timer with
-    | None -> invalid_arg "expected timer signal"
-    | Some timer ->
-        let snapshot_cell = Eta_signal_testable.Timer.snapshot_cell timer in
-        let snapshot = Eta_signal_testable.Transaction.current snapshot_cell in
-        Test_signal.publish_timer_current snapshot_cell
-          (Eta_signal_testable.Timer_policy.snapshot_with_generation snapshot
-             generation)
-  in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
   let signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
   let observer =
     run_ok rt (Test_signal.Observer.observe signal (fun _ -> Effect.unit))
   in
   wait_for_sleepers clock 1;
-  set_timer_generation signal max_int;
+  Test_signal.Overflow.set_timer_generation signal max_int;
   expect_fail "timer generation overflow"
     (counter_overflow "timer generation")
     (Eta_eio.Runtime.run rt (widen (Test_signal.Observer.dispose observer)))
 
 let test_time_timer_start_generation_overflow_is_precommit_failure () =
-  let module Test_signal = Eta_signal_testable.Make (Observer_error) () in
-  let set_timer_generation (signal : int Test_signal.signal) generation =
-    match signal.Test_signal.timer with
-    | None -> invalid_arg "expected timer signal"
-    | Some timer ->
-        let snapshot_cell = Eta_signal_testable.Timer.snapshot_cell timer in
-        let snapshot = Eta_signal_testable.Transaction.current snapshot_cell in
-        Test_signal.publish_timer_current snapshot_cell
-          (Eta_signal_testable.Timer_policy.snapshot_with_generation snapshot
-             generation)
-  in
+  let module Test_signal = Eta_signal_overflow_harness.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock rt ->
   let use_timer = Test_signal.Var.create false in
   let timer_signal = run_ok rt (Test_signal.Time.interval (Duration.ms 10)) in
-  set_timer_generation timer_signal max_int;
+  Test_signal.Overflow.set_timer_generation timer_signal max_int;
   let selected =
     Test_signal.bind (Test_signal.Var.watch use_timer) (fun active ->
         if active then timer_signal else Test_signal.const (-1))
