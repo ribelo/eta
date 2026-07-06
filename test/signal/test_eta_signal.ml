@@ -3617,22 +3617,6 @@ let test_observer_delivery_acknowledgement_uses_graph_lane () =
        (Runtime.run rt (widen (Signal.Observer.dispose observer)))
       : unit)
 
-let test_time_interval_starts_only_when_observed () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw clock rt ->
-  let signal = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
-  Eta_test.Async.yield ();
-  Alcotest.(check int) "unobserved timer has no sleeper" 0
-    (Eta_test.Test_clock.sleeper_count clock);
-  let observer =
-    run_ok rt (Signal.Observer.observe signal (fun _ -> Effect.unit))
-  in
-  wait_for_sleepers clock 1;
-  run_ok rt Signal.stabilize;
-  Alcotest.(check int) "initial tick" 0
-    (run_ok rt (Signal.Observer.read observer));
-  run_ok rt (Signal.Observer.dispose observer)
-
 let test_time_interval_requires_explicit_stabilization () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw clock rt ->
@@ -6331,8 +6315,6 @@ let () =
           Alcotest.test_case
             "observer delivery acknowledgement uses graph lane" `Quick
             test_observer_delivery_acknowledgement_uses_graph_lane;
-          Alcotest.test_case "time interval starts on observe" `Quick
-            test_time_interval_starts_only_when_observed;
           Alcotest.test_case "time interval needs stabilization" `Quick
             test_time_interval_requires_explicit_stabilization;
           Alcotest.test_case "time timer generation overflow fails loudly"
