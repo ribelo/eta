@@ -81,6 +81,14 @@ let expect_uninitialized_observer label runtime eff =
       Alcotest.failf "%s: expected uninitialized observer, got %a" label
         (Eta.Cause.pp pp_hidden) cause
 
+let expect_disposed_observer label runtime eff =
+  match Eta.Runtime.run runtime (widen eff) with
+  | Eta.Exit.Error (Eta.Cause.Fail `Disposed_observer) -> ()
+  | Eta.Exit.Ok _ -> Alcotest.failf "%s: expected disposed observer, got Ok" label
+  | Eta.Exit.Error cause ->
+      Alcotest.failf "%s: expected disposed observer, got %a" label
+        (Eta.Cause.pp pp_hidden) cause
+
 let pp_observed_update formatter = function
   | Initialized value -> Format.fprintf formatter "Initialized %d" value
   | Changed (old_value, new_value) ->
@@ -1028,11 +1036,11 @@ let test_dispose_demand_matches_model () =
     E.sync (fun () ->
         updates := observed_of_signal_update update :: !updates)
   in
-  let first_observer =
-    run_ok runtime (Signal.Observer.observe signal (record first_updates))
-  in
+  let preinit_updates = ref [] in
   let model_pending = ref 0 in
   let model_recomputes = ref 0 in
+  let preinit_model_current = ref None in
+  let preinit_model_updates = ref [] in
   let first_model_current = ref None in
   let second_model_current = ref None in
   let first_model_updates = ref [] in
@@ -1054,15 +1062,34 @@ let test_dispose_demand_matches_model () =
     Alcotest.(check (list observed_update))
       label (List.rev !model) (List.rev !actual)
   in
+  let preinit_observer =
+    run_ok runtime (Signal.Observer.observe signal (record preinit_updates))
+  in
+  run_ok runtime (Signal.Observer.dispose preinit_observer);
+  model_pending := 1;
+  run_ok runtime (Signal.Var.set source 1);
+  stabilize_model ~demanded:false preinit_model_current preinit_model_updates;
+  run_ok runtime Signal.stabilize;
+  Alcotest.(check int) "disposed uninitialized demand does not recompute"
+    !model_recomputes !recomputes;
+  check_updates "disposed uninitialized observer receives no update"
+    preinit_model_updates preinit_updates;
+  expect_disposed_observer "disposed uninitialized read" runtime
+    (Signal.Observer.read preinit_observer);
+  let first_observer =
+    run_ok runtime (Signal.Observer.observe signal (record first_updates))
+  in
   stabilize_model ~demanded:true first_model_current first_model_updates;
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "initial recompute" !model_recomputes !recomputes;
   check_updates "first observer initialized" first_model_updates first_updates;
-  Alcotest.(check int) "first read" 0
+  Alcotest.(check int) "first read" 1
     (run_ok runtime (Signal.Observer.read first_observer));
   run_ok runtime (Signal.Observer.dispose first_observer);
-  model_pending := 1;
-  run_ok runtime (Signal.Var.set source 1);
+  expect_disposed_observer "disposed initialized read" runtime
+    (Signal.Observer.read first_observer);
+  model_pending := 2;
+  run_ok runtime (Signal.Var.set source 2);
   stabilize_model ~demanded:false first_model_current first_model_updates;
   run_ok runtime Signal.stabilize;
   Alcotest.(check int) "disposed demand does not recompute" !model_recomputes
@@ -1078,7 +1105,7 @@ let test_dispose_demand_matches_model () =
     !model_recomputes !recomputes;
   check_updates "second observer initialized with latest value"
     second_model_updates second_updates;
-  Alcotest.(check int) "second read" 1
+  Alcotest.(check int) "second read" 2
     (run_ok runtime (Signal.Observer.read second_observer));
   run_ok runtime (Signal.Observer.dispose second_observer)
 
