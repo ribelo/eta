@@ -7463,56 +7463,6 @@ let test_stream_bridge_rejects_cross_domain_consumer () =
        (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect));
   run_ok rt (Signal.Observer.dispose observer)
 
-let test_stream_bridge_full_queue_does_not_block () =
-  let module Signal = Eta_signal.Make (Observer_error) () in
-  with_runtime_and_switch @@ fun sw rt ->
-  let source = Signal.Var.create 1 in
-  let signal = Signal.Var.watch source in
-  let observer, stream =
-    run_ok rt (Signal.Stream.observe ~capacity:1 signal)
-  in
-  let later_events = ref [] in
-  let later_observer =
-    run_ok rt (Signal.Observer.observe signal (record_observer later_events))
-  in
-  run_ok rt Signal.stabilize;
-  run_ok rt (Signal.Var.set source 2);
-  let stabilizer =
-    Eio.Fiber.fork_promise ~sw (fun () ->
-        Eta_eio.Runtime.run rt (widen Signal.stabilize))
-  in
-  for _ = 1 to 5 do
-    Eta_test.Async.yield ()
-  done;
-  Alcotest.(check bool)
-    "stabilization does not wait for bridge capacity" true
-    (Eio.Promise.is_resolved stabilizer);
-  ignore
-    (expect_exit_ok "full bridge stabilize"
-       (Eio.Promise.await_exn stabilizer)
-      : unit);
-  (match List.rev !later_events with
-   | [
-    Signal.Initialized 1;
-    Signal.Changed { old_value = 1; new_value = 2 };
-   ] ->
-       ()
-   | _ -> Alcotest.fail "expected later observer to run behind full bridge");
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Initialized 1 ] -> ()
-   | _ -> Alcotest.fail "expected initial stream update");
-  run_ok rt (Signal.Var.set source 3);
-  run_ok rt Signal.stabilize;
-  (match
-     run_ok rt (Eta_stream.Stream.take 1 stream |> Eta_stream.run_collect)
-   with
-   | [ Signal.Changed { old_value = 2; new_value = 3 } ] -> ()
-   | _ -> Alcotest.fail "expected later changed stream update after drop");
-  run_ok rt (Signal.Observer.dispose observer);
-  run_ok rt (Signal.Observer.dispose later_observer)
-
 let test_stream_bridge_interrupted_drop_callback_does_not_duplicate () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Cleanup_interrupt_runtime.interrupt_next_protect_return := false;
@@ -8142,8 +8092,6 @@ let () =
             test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize;
           Alcotest.test_case "stream bridge rejects cross-domain consumer"
             `Quick test_stream_bridge_rejects_cross_domain_consumer;
-          Alcotest.test_case "stream bridge full queue does not block"
-            `Quick test_stream_bridge_full_queue_does_not_block;
           Alcotest.test_case
             "stream bridge interrupted drop callback does not duplicate" `Quick
             test_stream_bridge_interrupted_drop_callback_does_not_duplicate;

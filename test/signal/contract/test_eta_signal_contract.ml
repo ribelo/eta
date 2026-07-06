@@ -560,7 +560,7 @@ let test_stream_with_observed_disposes_on_exit () =
 
 let test_stream_bridge_full_queue_drops_newest () =
   let module S = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  Eta_test.with_test_clock @@ fun sw _clock runtime ->
   let source = S.Var.create 1 in
   let signal = S.Var.watch source in
   let drops = ref [] in
@@ -575,7 +575,16 @@ let test_stream_bridge_full_queue_drops_newest () =
   run_ok runtime S.stabilize;
   let before_drop = run_ok runtime (S.stats ()) in
   run_ok runtime (S.Var.set source 2);
-  run_ok runtime S.stabilize;
+  let stabilizer =
+    Eio.Fiber.fork_promise ~sw (fun () -> run_ok runtime S.stabilize)
+  in
+  for _ = 1 to 5 do
+    Eio.Fiber.yield ()
+  done;
+  Alcotest.(check bool)
+    "full queue stabilization does not wait for stream capacity" true
+    (Eio.Promise.is_resolved stabilizer);
+  Eio.Promise.await_exn stabilizer;
   let after_drop = run_ok runtime (S.stats ()) in
   Alcotest.(check int)
     "drop counted after acknowledgement"
