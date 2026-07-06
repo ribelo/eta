@@ -499,6 +499,9 @@ let test_observer_unsafe_read_exn_reports_invalid_state () =
 let test_diagnostics_track_observation_and_disposal () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let check_stats_unchanged label expected actual =
+    Alcotest.(check bool) label true (expected = actual)
+  in
   run_ok runtime S.stabilize;
   let before = run_ok runtime (S.stats ()) in
   let before_dot_nodes =
@@ -510,13 +513,56 @@ let test_diagnostics_track_observation_and_disposal () =
   let observer =
     run_ok runtime (S.Observer.observe signal (fun _ -> E.unit))
   in
-  run_ok runtime S.stabilize;
   let after_observe = run_ok runtime (S.stats ()) in
+  Alcotest.(check bool) "observe records necessary transition" true
+    (after_observe.S.nodes_became_necessary
+     > before.S.nodes_became_necessary);
+  Alcotest.(check int) "observe increments active observer count"
+    (before.S.active_observer_count + 1)
+    after_observe.S.active_observer_count;
+  Alcotest.(check bool) "observe after stabilization adds demand" true
+    (after_observe.S.necessary_node_count > before.S.necessary_node_count);
+  Alcotest.(check bool) "observe exposes live dirty nodes before stabilize"
+    true
+    (after_observe.S.live_dirty_node_count > before.S.live_dirty_node_count);
+  let after_stats_read = run_ok runtime (S.stats ()) in
+  check_stats_unchanged "stats is read-only" after_observe after_stats_read;
+  run_ok runtime S.stabilize;
+  let after_stabilize = run_ok runtime (S.stats ()) in
   Alcotest.(check int) "observer after prior stabilization sees latest source"
     3
     (run_ok runtime (S.Observer.read observer));
-  Alcotest.(check bool) "observe after stabilization adds demand" true
-    (after_observe.S.necessary_node_count > before.S.necessary_node_count);
+  Alcotest.(check int) "stabilization commits pure snapshot"
+    (before.S.pure_snapshot_commit_count + 1)
+    after_stabilize.S.pure_snapshot_commit_count;
+  Alcotest.(check int) "stabilization delivers observer callbacks"
+    (before.S.callback_delivery_count + 1)
+    after_stabilize.S.callback_delivery_count;
+  Alcotest.(check int) "stabilization keeps invalid observers explicit" 0
+    after_stabilize.S.invalid_observer_count;
+  Alcotest.(check int) "stabilization does not create dead nodes"
+    before.S.dead_node_count after_stabilize.S.dead_node_count;
+  Alcotest.(check bool) "stabilization records recomputation" true
+    (after_stabilize.S.recompute_count > before.S.recompute_count);
+  Alcotest.(check bool) "stabilization clears live dirty nodes" true
+    (after_stabilize.S.live_dirty_node_count
+     < after_observe.S.live_dirty_node_count);
+  let dot_before_unobserved = run_ok runtime (S.to_dot ()) in
+  Alcotest.(check bool) "to_dot returns diagnostics" true
+    (String.length dot_before_unobserved > 0);
+  let necessary_dot_nodes =
+    count_occurrences dot_before_unobserved "[label="
+  in
+  let unobserved =
+    S.Var.watch (S.Var.create 10) |> S.map (fun value -> value + 1)
+  in
+  ignore (Sys.opaque_identity unobserved);
+  let before_dot = run_ok runtime (S.stats ()) in
+  let dot = run_ok runtime (S.to_dot ()) in
+  Alcotest.(check int) "to_dot ignores unobserved nodes" necessary_dot_nodes
+    (count_occurrences dot "[label=");
+  let after_dot = run_ok runtime (S.stats ()) in
+  check_stats_unchanged "to_dot is read-only" before_dot after_dot;
   Alcotest.(check bool) "to_dot shows observed graph" true
     (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
      > before_dot_nodes);
@@ -526,7 +572,11 @@ let test_diagnostics_track_observation_and_disposal () =
   Alcotest.(check int) "disposal returns active observer count to baseline"
     before.S.active_observer_count after_dispose.S.active_observer_count;
   Alcotest.(check bool) "disposal releases necessary graph" true
-    (after_dispose.S.necessary_node_count <= before.S.necessary_node_count);
+    (after_dispose.S.necessary_node_count
+     < after_stabilize.S.necessary_node_count);
+  Alcotest.(check bool) "disposal records unnecessary transition" true
+    (after_dispose.S.nodes_became_unnecessary
+     > after_stabilize.S.nodes_became_unnecessary);
   Alcotest.(check bool) "to_dot returns to baseline necessary graph" true
     (count_occurrences (run_ok runtime (S.to_dot ())) "[label="
      <= before_dot_nodes)
