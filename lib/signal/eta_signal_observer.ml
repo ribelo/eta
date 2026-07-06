@@ -722,20 +722,32 @@ let collect_event port capability observer =
             (port.collection_make_event capability observer)
             update)
 
-type ('capability, 'observer, 'event) delivery_collection = {
+type 'observer delivery_selection_plan = {
   delivery_active : 'observer -> bool;
   delivery_compare : 'observer -> 'observer -> int;
+}
+
+let delivery_selection_plan ~active ~compare =
+  { delivery_active = active; delivery_compare = compare }
+
+type ('capability, 'observer, 'event) delivery_event_plan = {
   delivery_collect_event : 'capability -> 'observer -> 'event option;
   delivery_mark_pending : 'capability -> 'event -> unit;
 }
 
-let delivery_collection ~active ~compare ~collect_event ~mark_pending =
+let delivery_event_plan ~collect_event ~mark_pending =
   {
-    delivery_active = active;
-    delivery_compare = compare;
     delivery_collect_event = collect_event;
     delivery_mark_pending = mark_pending;
   }
+
+type ('capability, 'observer, 'event) delivery_collection = {
+  delivery_selection_plan : 'observer delivery_selection_plan;
+  delivery_event_plan : ('capability, 'observer, 'event) delivery_event_plan;
+}
+
+let delivery_collection ~selection ~events =
+  { delivery_selection_plan = selection; delivery_event_plan = events }
 
 type ('capability, 'observer, 'callback, 'error) delivery_event_source = {
   source_collect_event :
@@ -761,20 +773,24 @@ let delivery_event_source ~access ~delivery ~event ~token collection =
 let collect_delivery_event source capability observer =
   source.source_collect_event capability observer
 
-let delivery_event_collection ~active ~compare source =
-  delivery_collection ~active ~compare
-    ~collect_event:(collect_delivery_event source)
-    ~mark_pending:Delivery_event.mark_pending
+let delivery_event_collection ~selection source =
+  let events =
+    delivery_event_plan ~collect_event:(collect_delivery_event source)
+      ~mark_pending:Delivery_event.mark_pending
+  in
+  delivery_collection ~selection ~events
 
 let active_delivery_observers collection observers =
-  List.filter collection.delivery_active observers
+  List.filter collection.delivery_selection_plan.delivery_active observers
 
 let collect_delivery_events collection capability observers =
-  observers |> List.sort collection.delivery_compare
-  |> List.filter_map (collection.delivery_collect_event capability)
+  observers |> List.sort collection.delivery_selection_plan.delivery_compare
+  |> List.filter_map
+       (collection.delivery_event_plan.delivery_collect_event capability)
 
 let mark_delivery_events_pending collection capability events =
-  List.iter (collection.delivery_mark_pending capability) events
+  List.iter (collection.delivery_event_plan.delivery_mark_pending capability)
+    events
 
 let delivery_plan ~capability ~make_plan collection ~observers =
   let observers = active_delivery_observers collection observers in

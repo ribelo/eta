@@ -978,10 +978,13 @@ let test_delivery_event_collection_marks_pending () =
   in
   let collection =
     let source = Observer.delivery_event_source_of_collection collection_port in
+    let selection =
+      Observer.delivery_selection_plan
+        ~active:(fun observer -> not (String.equal observer inactive))
+        ~compare:(fun left right -> Int.compare (rank left) (rank right))
+    in
     Observer.delivery_event_collection
-      ~active:(fun observer -> not (String.equal observer inactive))
-      ~compare:(fun left right -> Int.compare (rank left) (rank right))
-      source
+      ~selection source
   in
   let active =
     Observer.active_delivery_observers collection [ second; inactive; first ]

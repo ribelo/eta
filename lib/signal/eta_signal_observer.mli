@@ -454,11 +454,23 @@ val collect_event :
 
 type ('capability, 'observer, 'event) delivery_collection
 
-val delivery_collection :
+type 'observer delivery_selection_plan
+
+val delivery_selection_plan :
   active:('observer -> bool) ->
   compare:('observer -> 'observer -> int) ->
+  'observer delivery_selection_plan
+
+type ('capability, 'observer, 'event) delivery_event_plan
+
+val delivery_event_plan :
   collect_event:('capability -> 'observer -> 'event option) ->
   mark_pending:('capability -> 'event -> unit) ->
+  ('capability, 'observer, 'event) delivery_event_plan
+
+val delivery_collection :
+  selection:'observer delivery_selection_plan ->
+  events:('capability, 'observer, 'event) delivery_event_plan ->
   ('capability, 'observer, 'event) delivery_collection
 
 type ('capability, 'observer, 'callback, 'error) delivery_event_source
@@ -492,8 +504,7 @@ val collect_delivery_event :
   ('capability, 'callback, 'error) Delivery_event.t option
 
 val delivery_event_collection :
-  active:('observer -> bool) ->
-  compare:('observer -> 'observer -> int) ->
+  selection:'observer delivery_selection_plan ->
   ('capability, 'observer, 'callback, 'error) delivery_event_source ->
   ('capability, 'observer,
    ('capability, 'callback, 'error) Delivery_event.t)

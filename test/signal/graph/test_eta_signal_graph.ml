@@ -973,14 +973,19 @@ let test_observer_delivery_plan_uses_collection_order () =
       ~release_pending_marks:(fun cap _pending -> check_cap cap)
       ~observer_plan:(fun cap _staging ->
         check_cap cap;
-        let delivery =
-          Observer.delivery_collection
+        let selection =
+          Observer.delivery_selection_plan
             ~active:(fun observer -> observer.active)
             ~compare:(fun left right -> Int.compare left.id right.id)
-            ~collect_event
+        in
+        let event_plan =
+          Observer.delivery_event_plan ~collect_event
             ~mark_pending:(fun cap event ->
               check_cap cap;
               record events ("pending:" ^ event))
+        in
+        let delivery =
+          Observer.delivery_collection ~selection ~events:event_plan
         in
         Graph.observer_delivery_plan graph cap delivery)
       ~stage_pending:(fun cap _staging _pending -> check_cap cap)

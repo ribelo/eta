@@ -1900,9 +1900,12 @@ module Make (Observer_error : Observer_error) () = struct
     let observers =
       Graph.stabilization_observer_plan
         ~observe:(fun lane staging ->
-          let delivery =
-            Observer_core.delivery_event_collection ~active:observer_active
+          let selection =
+            Observer_core.delivery_selection_plan ~active:observer_active
               ~compare:(compare_observer_graph_order lane)
+          in
+          let delivery =
+            Observer_core.delivery_event_collection ~selection
               (observer_delivery_event_source staging)
           in
           Graph.observer_delivery_plan graph lane delivery)
