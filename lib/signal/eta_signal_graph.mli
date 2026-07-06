@@ -531,10 +531,15 @@ val add_observer :
   'observer ->
   unit
 
+type 'observer observer_identity
+
+val observer_identity :
+  same:('observer -> 'observer -> bool) -> 'observer observer_identity
+
 val remove_observer :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  same:('observer -> 'observer -> bool) ->
+  'observer observer_identity ->
   'observer ->
   unit
 
@@ -556,11 +561,17 @@ val collect_observer_cleanup_hooks :
 
 type observer_counts
 
+type 'observer observer_count_plan
+
+val observer_count_plan :
+  active:('observer -> bool) ->
+  invalid:('observer -> bool) ->
+  'observer observer_count_plan
+
 val observer_counts :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  active:('observer -> bool) ->
-  invalid:('observer -> bool) ->
+  'observer observer_count_plan ->
   observer_counts
 
 val observer_counts_active : observer_counts -> int

@@ -249,22 +249,26 @@ let test_observer_registry_traversal_uses_lane () =
   let inactive = create_observer ~active:false 0 in
   let invalid = create_observer ~active:false 3 in
   let second = create_observer 2 in
+  let observer_identity =
+    Graph.observer_identity ~same:(fun left right -> left.id = right.id)
+  in
+  let observer_count_plan =
+    Graph.observer_count_plan
+      ~active:(fun observer -> observer.active)
+      ~invalid:(fun observer -> not observer.active)
+  in
   let active_hooks, observer_counts, even_ids =
     with_graph_lane graph (fun lane ->
         Graph.add_observer graph lane second;
         Graph.add_observer graph lane invalid;
         Graph.add_observer graph lane inactive;
         Graph.add_observer graph lane first;
-        Graph.remove_observer graph lane
-          ~same:(fun left right -> left.id = right.id)
-          inactive;
+        Graph.remove_observer graph lane observer_identity inactive;
         ( Graph.collect_observer_cleanup_hooks graph lane
             (Graph.observer_cleanup
                ~selected:(fun observer -> observer.active)
                ~cleanup:(fun observer -> [ observer.id ])),
-          Graph.observer_counts graph lane
-            ~active:(fun observer -> observer.active)
-            ~invalid:(fun observer -> not observer.active),
+          Graph.observer_counts graph lane observer_count_plan,
           Graph.collect_observer_diagnostics graph lane
             (Graph.observer_diagnostics
                ~visible:(fun observer -> observer.id mod 2 = 0)

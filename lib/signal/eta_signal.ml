@@ -829,10 +829,12 @@ module Make (Observer_error : Observer_error) () = struct
   let observer_active_roots observers =
     observer_roots observer_active observers
 
+  let observer_identity =
+    Graph.observer_identity ~same:(fun (O candidate) (O target) ->
+        candidate.obs_id = target.obs_id)
+
   let remove_observer lane observer =
-    Graph.remove_observer graph lane
-      ~same:(fun (O candidate) (O target) -> candidate.obs_id = target.obs_id)
-      (O observer)
+    Graph.remove_observer graph lane observer_identity (O observer)
 
   let observer_finish_hooks live reason =
     List.map (fun hook () -> hook reason) live.obs_on_finish
@@ -2216,10 +2218,13 @@ module Make (Observer_error : Observer_error) () = struct
   let all ?equal signals = new_signal ?equal (All signals) (List.map (fun s -> P s) signals)
   let bind ?equal source selector = make_bind ?equal source selector
 
-  let observer_counts lane =
-    Graph.observer_counts graph lane ~active:observer_active
+  let observer_count_plan =
+    Graph.observer_count_plan ~active:observer_active
       ~invalid:(fun (O observer) ->
         Observer_lifecycle.invalid_scope observer.obs_state)
+
+  let observer_counts lane =
+    Graph.observer_counts graph lane observer_count_plan
 
   let necessary_node_count lane =
     Graph.necessary_count (collect_necessary_node_ids lane)

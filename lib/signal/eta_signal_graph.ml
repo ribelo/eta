@@ -738,9 +738,17 @@ let stream_bridge_metrics t = t.stream_bridge_metrics
 let set_stream_bridge_metrics t _lane metrics = t.stream_bridge_metrics <- metrics
 let add_observer t _lane observer = t.observers <- observer :: t.observers
 
-let remove_observer t _lane ~same observer =
+type 'observer observer_identity = {
+  observer_same : 'observer -> 'observer -> bool;
+}
+
+let observer_identity ~same = { observer_same = same }
+
+let remove_observer t _lane identity observer =
   t.observers <-
-    List.filter (fun candidate -> not (same candidate observer)) t.observers
+    List.filter
+      (fun candidate -> not (identity.observer_same candidate observer))
+      t.observers
 
 type ('observer, 'hook) observer_cleanup = {
   observer_cleanup_selected : 'observer -> bool;
@@ -763,17 +771,27 @@ type observer_counts = {
   invalid_count : int;
 }
 
+type 'observer observer_count_plan = {
+  observer_count_active : 'observer -> bool;
+  observer_count_invalid : 'observer -> bool;
+}
+
+let observer_count_plan ~active ~invalid =
+  { observer_count_active = active; observer_count_invalid = invalid }
+
 let increment_count count = if count = max_int then max_int else count + 1
 
-let observer_counts t _lane ~active ~invalid =
+let observer_counts t _lane plan =
   List.fold_left
     (fun counts observer ->
       {
         active_count =
-          (if active observer then increment_count counts.active_count
+          (if plan.observer_count_active observer then
+             increment_count counts.active_count
            else counts.active_count);
         invalid_count =
-          (if invalid observer then increment_count counts.invalid_count
+          (if plan.observer_count_invalid observer then
+             increment_count counts.invalid_count
            else counts.invalid_count);
       })
     { active_count = 0; invalid_count = 0 }
