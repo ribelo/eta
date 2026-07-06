@@ -528,14 +528,21 @@ val observer_counts :
 val observer_counts_active : observer_counts -> int
 val observer_counts_invalid : observer_counts -> int
 
-val filter_map_observers :
+type ('observer, 'diagnostic) observer_diagnostics
+
+val observer_diagnostics :
+  visible:('observer -> bool) ->
+  diagnostic:('observer -> 'diagnostic) ->
+  ('observer, 'diagnostic) observer_diagnostics
+
+val collect_observer_diagnostics :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->
   lane_access ->
-  f:('observer -> 'a option) ->
-  'a list
+  ('observer, 'diagnostic) observer_diagnostics ->
+  'diagnostic list
 (** Observer registry operations. The graph owns list traversal and mutation;
-    callers supply lifecycle predicates and projections for their concrete
-    observer representation. *)
+    callers supply lifecycle predicates and diagnostic projections for their
+    concrete observer representation. *)
 
 val observer_delivery_plan :
   (_, _, _, _, _, _, 'observer, _, _, _, _) t ->

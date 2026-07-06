@@ -696,7 +696,24 @@ let observer_counts t _lane ~active ~invalid =
 let observer_counts_active counts = counts.active_count
 let observer_counts_invalid counts = counts.invalid_count
 
-let filter_map_observers t _lane ~f = List.filter_map f t.observers
+type ('observer, 'diagnostic) observer_diagnostics = {
+  observer_diagnostic_visible : 'observer -> bool;
+  observer_diagnostic_value : 'observer -> 'diagnostic;
+}
+
+let observer_diagnostics ~visible ~diagnostic =
+  {
+    observer_diagnostic_visible = visible;
+    observer_diagnostic_value = diagnostic;
+  }
+
+let collect_observer_diagnostics t _lane diagnostics =
+  List.filter_map
+    (fun observer ->
+      if diagnostics.observer_diagnostic_visible observer then
+        Some (diagnostics.observer_diagnostic_value observer)
+      else None)
+    t.observers
 
 let observer_delivery_plan t _lane delivery =
   Eta_signal_observer.delivery_plan delivery ~observers:t.observers

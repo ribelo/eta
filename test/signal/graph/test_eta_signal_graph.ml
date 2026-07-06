@@ -245,8 +245,10 @@ let test_observer_registry_traversal_uses_lane () =
           Graph.observer_counts graph lane
             ~active:(fun observer -> observer.active)
             ~invalid:(fun observer -> not observer.active),
-          Graph.filter_map_observers graph lane ~f:(fun observer ->
-              if observer.id mod 2 = 0 then Some observer.id else None) ))
+          Graph.collect_observer_diagnostics graph lane
+            (Graph.observer_diagnostics
+               ~visible:(fun observer -> observer.id mod 2 = 0)
+               ~diagnostic:(fun observer -> observer.id)) ))
   in
   Alcotest.(check (list int)) "active hooks" [ 1; 2 ] active_hooks;
   Alcotest.(check int) "active count" 2

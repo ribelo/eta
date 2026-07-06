@@ -2488,29 +2488,27 @@ module Make (Observer_error : Observer_error) () = struct
     in
     let dot_observers =
       if options.dot_observers then
-        Graph.filter_map_observers graph lane ~f:(fun (O observer as packed) ->
-               if observer_selected ~include_invalid:include_dead_nodes packed
-               then
-                 let observed_signal_selected =
-                   selected_id observer.obs_signal.id
-                 in
-                 let missing_observed_signal_id =
-                   if include_dead_nodes && not observed_signal_selected then
-                     Some observer.obs_signal.id
-                   else None
-                 in
-                 Some
-                   {
-                     Debug.dot_observer_id =
-                       observer_id_label observer.obs_id;
-                     dot_observer_label =
-                       observer_label ?missing_observed_signal_id packed;
-                     dot_observed_signal_id =
-                       (if observed_signal_selected then
-                          Some (dot_signal_id observer.obs_signal.id)
-                        else None);
-                   }
-               else None)
+        let diagnostics =
+          Graph.observer_diagnostics
+            ~visible:(observer_selected ~include_invalid:include_dead_nodes)
+            ~diagnostic:(fun (O observer as packed) ->
+              let observed_signal_selected = selected_id observer.obs_signal.id in
+              let missing_observed_signal_id =
+                if include_dead_nodes && not observed_signal_selected then
+                  Some observer.obs_signal.id
+                else None
+              in
+              {
+                Debug.dot_observer_id = observer_id_label observer.obs_id;
+                dot_observer_label =
+                  observer_label ?missing_observed_signal_id packed;
+                dot_observed_signal_id =
+                  (if observed_signal_selected then
+                     Some (dot_signal_id observer.obs_signal.id)
+                   else None);
+              })
+        in
+        Graph.collect_observer_diagnostics graph lane diagnostics
       else []
     in
     Debug.render_dot ~nodes:(live_dot_nodes @ dead_dot_nodes)
