@@ -2114,7 +2114,7 @@ module Make (Observer_error : Observer_error) () = struct
       Transaction.current source.source_value
 
     let watch (source : 'a t) =
-      let signal = new_signal (Var source) [] in
+      let signal = new_signal ~equal:source.var_equal (Var source) [] in
       source.watchers <- weak_packed_signal (P signal) :: source.watchers;
       signal
 

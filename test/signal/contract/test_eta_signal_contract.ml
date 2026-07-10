@@ -1126,6 +1126,30 @@ let test_default_physical_cutoff_suppresses_in_place_mutation () =
    | _ -> Alcotest.fail "expected no event after same-block mutation");
   run_ok runtime (S.Observer.dispose observer)
 
+let test_source_cutoff_forces_same_block_propagation () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  let block = Array.make 1 1 in
+  let source = S.Var.create ~equal:(fun _ _ -> false) block in
+  let mapped_calls = ref 0 in
+  let mapped =
+    S.Var.watch source
+    |> S.map (fun value ->
+           incr mapped_calls;
+           Array.get value 0)
+  in
+  let observer =
+    run_ok runtime (S.Observer.observe mapped (fun _ -> E.unit))
+  in
+  run_ok runtime S.stabilize;
+  Array.set block 0 2;
+  run_ok runtime (S.Var.set source block);
+  run_ok runtime S.stabilize;
+  Alcotest.(check int) "source cutoff recomputes downstream map" 2 !mapped_calls;
+  Alcotest.(check int) "source cutoff publishes same-block mutation" 2
+    (run_ok runtime (S.Observer.read observer));
+  run_ok runtime (S.Observer.dispose observer)
+
 let test_equality_defects_preserve_committed_snapshots () =
   let module S = Eta_signal.Make (Observer_error) () in
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
@@ -2255,6 +2279,8 @@ let () =
             test_default_cutoff_is_physical_equality;
           Alcotest.test_case "physical cutoff suppresses in-place mutation"
             `Quick test_default_physical_cutoff_suppresses_in_place_mutation;
+          Alcotest.test_case "source cutoff forces same-block propagation" `Quick
+            test_source_cutoff_forces_same_block_propagation;
           Alcotest.test_case "equality defects preserve committed snapshots"
             `Quick test_equality_defects_preserve_committed_snapshots;
           Alcotest.test_case "ambiguous scope failures are typed" `Quick
