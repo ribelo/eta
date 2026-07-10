@@ -1783,6 +1783,61 @@ let test_time_timer_start_failure_preserves_pending_observer_event () =
     (event_new_values ());
   run_ok rt (Signal.Observer.dispose observer)
 
+let test_time_timer_start_failure_runs_invalidated_stream_cleanup () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock = Eta_test.Test_clock.create () in
+  let fail_next_now = ref false in
+  let now_ms () =
+    if !fail_next_now then (
+      fail_next_now := false;
+      failwith "timer start clock failure")
+    else Eta_test.Test_clock.now_ms clock
+  in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock) ~now_ms ()
+  in
+  let use_old = Signal.Var.create true in
+  let old_source = Signal.Var.create 0 in
+  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  let captured_old = ref None in
+  let selected =
+    Signal.bind (Signal.Var.watch use_old) (fun old ->
+        if old then (
+          let branch = Signal.Var.watch old_source |> Signal.map Fun.id in
+          captured_old := Some branch;
+          branch)
+        else timer)
+  in
+  let selected_observer =
+    run_ok rt (Signal.Observer.observe selected (fun _ -> Effect.unit))
+  in
+  run_ok rt Signal.stabilize;
+  let old_branch =
+    match !captured_old with
+    | Some branch -> branch
+    | None -> Alcotest.fail "expected captured old branch"
+  in
+  let _branch_observer, stream =
+    run_ok rt (Signal.Stream.observe ~capacity:4 old_branch)
+  in
+  run_ok rt Signal.stabilize;
+  let drained =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        Eta_eio.Runtime.run rt (widen (Eta_stream.run_collect stream)))
+  in
+  fail_next_now := true;
+  run_ok rt (Signal.Var.set use_old false);
+  expect_die "timer branch start failure"
+    (Eta_eio.Runtime.run rt (widen Signal.stabilize));
+  wait_until "invalidated stream cleanup after timer start failure" (fun () ->
+      Eio.Promise.is_resolved drained);
+  expect_fail "invalidated stream closes after timer start failure"
+    (( = ) `Invalid_scope) (Eio.Promise.await_exn drained);
+  run_ok rt (Signal.Observer.dispose selected_observer)
+
 let test_time_timer_start_failure_rolls_back_unstarted_timers () =
   let module Signal = Eta_signal.Make (Observer_error) () in
   Eio_main.run @@ fun env ->
@@ -4112,6 +4167,9 @@ let () =
           Alcotest.test_case
             "time timer start failure preserves pending observer event" `Quick
             test_time_timer_start_failure_preserves_pending_observer_event;
+          Alcotest.test_case
+            "time timer start failure runs invalidated stream cleanup" `Quick
+            test_time_timer_start_failure_runs_invalidated_stream_cleanup;
           Alcotest.test_case "time timer start failure rolls back unstarted timers"
             `Quick test_time_timer_start_failure_rolls_back_unstarted_timers;
           Alcotest.test_case "concurrent effectful update fails fast" `Quick

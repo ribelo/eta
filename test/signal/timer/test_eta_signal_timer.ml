@@ -649,6 +649,94 @@ let test_due_lifecycle_transitions () =
     ]
     !events
 
+let test_generated_lifecycle_interleavings_preserve_generation_and_fence_stale_publish
+    () =
+  List.iter
+    (fun seed ->
+      let random = Random.State.make [| seed; 313 |] in
+      for case = 0 to 19 do
+        let initial_generation = case * 3 in
+        let running generation =
+          Timer_policy.running_state ~generation ~next_due_ms:(Some 10)
+            ~cancel:(fun () -> ())
+        in
+        let timer =
+          make_timer "generated" ~current:(running initial_generation)
+            ~effective:(running initial_generation)
+        in
+        let port = state_port () in
+        let last_generation = ref initial_generation in
+        for step = 0 to 79 do
+          let generation = Timer_policy.state_generation timer.current in
+          let stale_generation = if generation = 0 then 1 else generation - 1 in
+          (match Random.State.int random 9 with
+          | 0 ->
+              let published = ref false in
+              ignore
+                (Timer.publish_if_running port timer
+                   ~generation:stale_generation ~publish:(fun () ->
+                     published := true));
+              Alcotest.(check bool)
+                (Format.asprintf "seed %d case %d step %d stale publish" seed
+                   case step)
+                false !published
+          | 1 ->
+              ignore
+                (Timer.publish_if_running port timer ~generation
+                   ~publish:(fun () -> ()))
+          | 2 ->
+              ignore
+                (Timer.set_next_due port timer ~generation
+                   ~next_due_ms:(10 + step))
+          | 3 ->
+              let expected =
+                Option.value
+                  (Timer.read_next_due port timer ~generation ~fallback:10)
+                  ~default:10
+              in
+              ignore
+                (Timer.advance_next_due port timer ~generation ~expected
+                   ~next_due_ms:(expected + 1))
+          | 4 ->
+              ignore (Timer.after_update_state port timer ~generation)
+          | 5 ->
+              Timer.cleanup_after_exit ~advance_generation:succ port timer
+                ~generation Timer_policy.Daemon_error
+          | 6 ->
+              Timer.finish_saturated ~advance_generation:succ port timer
+                ~generation
+          | 7 ->
+              if
+                (not (Timer_policy.state_active timer.current))
+                && not (Timer_policy.state_finished timer.current)
+              then (
+                let generation =
+                  Timer_policy.state_generation timer.current
+                in
+                let starting =
+                  Timer_policy.starting_state ~generation
+                in
+                timer.current <- starting;
+                timer.effective <- starting;
+                ignore (Timer.begin_start port timer ~generation);
+                ignore
+                  (Timer.install_cancel port timer ~generation
+                     ~cancel:(fun () -> ())))
+          | _ ->
+              ignore
+                (Timer.read_next_due port timer ~generation ~fallback:step));
+          let next_generation =
+            Timer_policy.state_generation timer.current
+          in
+          Alcotest.(check bool)
+            (Format.asprintf "seed %d case %d step %d generation monotonic" seed
+               case step)
+            true (next_generation >= !last_generation);
+          last_generation := next_generation
+        done
+      done)
+    [ 7; 31; 73; 127; 211 ]
+
 let test_preflight_and_finish_node_own_state_port () =
   let events = ref [] in
   let record event = append_event events event in
@@ -816,6 +904,9 @@ let () =
             test_daemon_lifecycle_transitions;
           Alcotest.test_case "due lifecycle transitions" `Quick
             test_due_lifecycle_transitions;
+          Alcotest.test_case
+            "generated lifecycle interleavings preserve generation" `Quick
+            test_generated_lifecycle_interleavings_preserve_generation_and_fence_stale_publish;
           Alcotest.test_case "preflight and finish own state port" `Quick
             test_preflight_and_finish_node_own_state_port;
           Alcotest.test_case "start daemon callback ownership" `Quick

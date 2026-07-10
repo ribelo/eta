@@ -457,11 +457,13 @@ let test_generated_pure_failure_slots_roll_back () =
       check_failure_slot Defect slot)
     failure_slots
 
-let delivery_ops ?(run_events = fun _events -> Eta.Effect.unit) events =
+let delivery_ops ?(run_cleanup = fun () -> Eta.Effect.unit)
+    ?(run_events = fun _events -> Eta.Effect.unit) events =
   let cleanup =
     Pass.delivery_cleanup_plan
       ~run_pending_cleanup:(fun () ->
-        Eta.Effect.sync (fun () -> record events "cleanup"))
+        Eta.Effect.sync (fun () -> record events "cleanup")
+        |> Eta.Effect.bind run_cleanup)
       ~finish:(fun () ->
         Eta.Effect.sync (fun () -> record events "finish"))
   in
@@ -503,6 +505,19 @@ let test_delivery_failure_runs_final_cleanup_and_finish () =
     [ "cleanup"; "events:event"; "cleanup"; "finish" ]
     !events
 
+let test_initial_cleanup_failure_retries_final_cleanup () =
+  let events = ref [] in
+  let cleanup_calls = ref 0 in
+  expect_effect_fail "initial cleanup failure"
+    (Pass.deliver
+       (delivery_ops events ~run_cleanup:(fun () ->
+            incr cleanup_calls;
+            if !cleanup_calls = 1 then Eta.Effect.fail `Delivery_failed
+            else Eta.Effect.unit))
+       [ "event" ]);
+  Alcotest.(check (list string))
+    "cleanup retry order" [ "cleanup"; "cleanup"; "finish" ] !events
+
 let () =
   Alcotest.run "eta_signal_stabilization_pass"
     [
@@ -522,5 +537,7 @@ let () =
             test_delivery_success_brackets_cleanup_and_finish;
           Alcotest.test_case "delivery failure bracketing" `Quick
             test_delivery_failure_runs_final_cleanup_and_finish;
+          Alcotest.test_case "initial cleanup failure retries final cleanup"
+            `Quick test_initial_cleanup_failure_retries_final_cleanup;
         ] );
     ]

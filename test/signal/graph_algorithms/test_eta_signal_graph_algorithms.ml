@@ -163,6 +163,45 @@ let test_attach_packed_dependency () =
     (ids parent.dependencies);
   Alcotest.(check (list int)) "child dependents" [ 1 ] (ids child.dependents)
 
+let test_generated_edge_sequences_preserve_bidirectional_consistency () =
+  let contains target packed =
+    List.exists (fun (P candidate) -> candidate == target) packed
+  in
+  let check_consistency label nodes =
+    Array.iter
+      (fun parent ->
+        List.iter
+          (fun (P child) ->
+            Alcotest.(check bool)
+              (Format.asprintf "%s dependency %d -> %d has reverse edge" label
+                 parent.id child.id)
+              true (contains parent child.dependents))
+          parent.dependencies;
+        List.iter
+          (fun (P child) ->
+            Alcotest.(check bool)
+              (Format.asprintf "%s dependent %d <- %d has forward edge" label
+                 parent.id child.id)
+              true (contains parent child.dependencies))
+          parent.dependents)
+      nodes
+  in
+  List.iter
+    (fun seed ->
+      let random = Random.State.make [| seed; 97 |] in
+      let nodes = Array.init 9 node in
+      for step = 0 to 199 do
+        let parent = nodes.(Random.State.int random (Array.length nodes)) in
+        let child = nodes.(Random.State.int random (Array.length nodes)) in
+        if Random.State.bool random then
+          Edges.attach_dependency ~parent ~child
+        else Edges.detach_dependency ~parent ~child;
+        check_consistency
+          (Format.asprintf "seed %d step %d" seed step)
+          nodes
+      done)
+    [ 3; 17; 41; 89; 157 ]
+
 let test_reachable_ids_skip_invalid_and_deduplicate () =
   let root = node 1 in
   let child = node 2 in
@@ -582,6 +621,8 @@ let () =
             test_detach_removes_both_edges;
           Alcotest.test_case "attach packed dependency" `Quick
             test_attach_packed_dependency;
+          Alcotest.test_case "generated edges stay bidirectional" `Quick
+            test_generated_edge_sequences_preserve_bidirectional_consistency;
         ] );
       ( "reachable",
         [

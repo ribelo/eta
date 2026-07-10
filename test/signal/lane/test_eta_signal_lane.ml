@@ -232,6 +232,90 @@ let test_acquisitions_stay_on_owner_domain () =
   Alcotest.(check int) "observed lane acquisitions" 3
     (List.length !acquired_domains)
 
+let test_generated_waiter_cancellation_never_double_grants () =
+  List.iter
+    (fun seed ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      let runtime =
+        Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env) ()
+      in
+      let lane = Lane.create () in
+      let waiter_count = 12 in
+      let random = Random.State.make [| seed; waiter_count; 211 |] in
+      let cancelled =
+        Array.init waiter_count (fun _ -> Random.State.bool random)
+      in
+      let acquired = Array.make waiter_count 0 in
+      let contexts = Array.make waiter_count None in
+      let started, started_resolver = Eio.Promise.create () in
+      let release, release_resolver = Eio.Promise.create () in
+      let holder =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            Eta.Runtime.run runtime
+              (lane_effect
+                 ~after_acquired:(fun () ->
+                   Eta.Effect.sync (fun () ->
+                       Eio.Promise.resolve started_resolver ();
+                       Eio.Promise.await release))
+                 lane (fun _access -> ())))
+      in
+      Eio.Promise.await started;
+      let ready =
+        Array.init waiter_count (fun _ -> Eio.Promise.create ())
+      in
+      let waiters =
+        Array.init waiter_count (fun index ->
+            let _ready_promise, ready_resolver = ready.(index) in
+            Eio.Fiber.fork_promise ~sw (fun () ->
+                Eio.Cancel.sub @@ fun context ->
+                contexts.(index) <- Some context;
+                Eio.Promise.resolve ready_resolver ();
+                Eta.Runtime.run runtime
+                  (lane_effect lane (fun _access ->
+                       acquired.(index) <- acquired.(index) + 1))))
+      in
+      Array.iter (fun (promise, _resolver) -> Eio.Promise.await promise) ready;
+      for _ = 1 to 5 do
+        Eio.Fiber.yield ()
+      done;
+      Array.iteri
+        (fun index should_cancel ->
+          if should_cancel then
+            Option.iter (fun context -> Eio.Cancel.cancel context Exit)
+              contexts.(index))
+        cancelled;
+      Eio.Promise.resolve release_resolver ();
+      ignore (expect_exit_ok "generated holder" (Eio.Promise.await_exn holder));
+      Array.iteri
+        (fun index waiter ->
+          if cancelled.(index) then
+            (match Eio.Promise.await_exn waiter with
+            | exception Eio.Cancel.Cancelled _ -> ()
+            | Eta.Exit.Ok () ->
+                Alcotest.failf "seed %d waiter %d acquired after cancellation"
+                  seed index
+            | Eta.Exit.Error _ ->
+                Alcotest.failf "seed %d waiter %d returned an Eta error" seed
+                  index)
+          else
+            ignore
+              (expect_exit_ok
+                 (Format.asprintf "seed %d waiter %d" seed index)
+                 (Eio.Promise.await_exn waiter)))
+        waiters;
+      Array.iteri
+        (fun index count ->
+          Alcotest.(check int)
+            (Format.asprintf "seed %d waiter %d grant count" seed index)
+            (if cancelled.(index) then 0 else 1)
+            count)
+        acquired;
+      ignore
+        (expect_exit_ok "lane remains usable after generated cancellation"
+           (Eta.Runtime.run runtime (lane_effect lane (fun _access -> ())))))
+    [ 5; 13; 29; 47; 83; 131; 197; 251 ]
+
 let () =
   Alcotest.run "eta_signal_lane"
     [
@@ -246,5 +330,7 @@ let () =
             test_granted_waiter_survives_resolver_failure;
           Alcotest.test_case "acquisitions stay on owner domain" `Quick
             test_acquisitions_stay_on_owner_domain;
+          Alcotest.test_case "generated waiter cancellation never double grants"
+            `Quick test_generated_waiter_cancellation_never_double_grants;
         ] );
     ]

@@ -2794,6 +2794,11 @@ type small_graph_node =
       children : int list;
       bias : int;
     }
+  | Small_both_sum of {
+      left : int;
+      right : int;
+      bias : int;
+    }
   | Small_bind_select of {
       source : int;
       even_child : int;
@@ -2866,6 +2871,8 @@ let small_graph_eval_all ast committed =
         | Small_all_sum { children; bias } ->
             List.fold_left (fun sum child -> sum + values.(child)) bias
               children
+        | Small_both_sum { left; right; bias } ->
+            values.(left) + values.(right) + bias
         | Small_bind_select
             { source; even_child; odd_child; even_scale; odd_scale; bias } ->
             if values.(source) mod 2 = 0 then
@@ -2952,7 +2959,7 @@ let generate_small_graph_ast ~seed ~var_count ~node_count =
   Array.init node_count (fun index ->
       if index < var_count then Small_var index
       else
-        match Random.State.int random 5 with
+        match Random.State.int random 6 with
         | 0 ->
             Small_map
               {
@@ -2976,6 +2983,13 @@ let generate_small_graph_ast ~seed ~var_count ~node_count =
                 bias = Random.State.int random 7 - 3;
               }
         | 3 -> small_graph_bind_select random index
+        | 4 ->
+            Small_both_sum
+              {
+                left = small_graph_child random index;
+                right = small_graph_child random index;
+                bias = Random.State.int random 7 - 3;
+              }
         | _ ->
             let child = small_graph_child random index in
             Small_map2
@@ -3026,6 +3040,9 @@ let small_graph_signal_of_node signals = function
       |> List.map (fun child -> signals.(child))
       |> Signal.all
       |> Signal.map (List.fold_left ( + ) bias)
+  | Small_both_sum { left; right; bias } ->
+      Signal.both signals.(left) signals.(right)
+      |> Signal.map (fun (left, right) -> left + right + bias)
   | Small_bind_select
       { source; even_child; odd_child; even_scale; odd_scale; bias } ->
       Signal.bind signals.(source) (fun source_value ->
@@ -3136,12 +3153,10 @@ let small_graph_check_stats label runtime model =
   Alcotest.(check int) (label ^ " invalid observers") 0
     stats.Signal.invalid_observer_count
 
-let run_small_graph_trace name ~seed =
+let run_small_graph_trace ?(initial_values = [| -1; 0; 2 |])
+    ?(node_count = 14) ?(observer_count = 6) ?(steps = 90) name ~seed =
   Eta_test.with_test_clock @@ fun _sw _clock runtime ->
-  let var_count = 3 in
-  let node_count = 14 in
-  let observer_count = 6 in
-  let initial_values = [| -1; 0; 2 |] in
+  let var_count = Array.length initial_values in
   let observer_specs =
     small_graph_observer_specs ~seed ~node_count ~observer_count
   in
@@ -3153,14 +3168,15 @@ let run_small_graph_trace name ~seed =
       signals.(index) <-
         (match node with
         | Small_var var -> Signal.Var.watch vars.(var)
-        | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_bind_select _ ->
+        | Small_map _ | Small_map2 _ | Small_all_sum _ | Small_both_sum _
+        | Small_bind_select _ ->
             small_graph_signal_of_node signals node))
     ast;
   let model = create_small_graph_model initial_values observer_specs in
   let ops =
     generate_small_graph_ops ~seed ~var_count
       ~observer_count:(Array.length model.small_observers)
-      ~steps:90
+      ~steps
   in
   List.iteri
     (fun index op ->
@@ -3192,6 +3208,15 @@ let test_generated_small_graphs_match_model () =
         (Format.asprintf "small-graph-seed-%d" seed)
         ~seed)
     [ 101; 203; 307; 409; 503; 607 ]
+
+let test_generated_larger_graphs_match_model () =
+  List.iter
+    (fun seed ->
+      run_small_graph_trace ~initial_values:[| -1; 0; 2; 5; -3 |]
+        ~node_count:30 ~observer_count:8 ~steps:120
+        (Format.asprintf "larger-graph-seed-%d" seed)
+        ~seed)
+    [ 401; 503; 607; 719 ]
 
 type stream_model_op =
   | Stream_set of int
@@ -3420,7 +3445,7 @@ let run_stream_model_trace name ~seed =
   let slots =
     [| create_stream_model_slot 1; create_stream_model_slot 2;
        create_stream_model_slot ~equal_policy:(Stream_mod_equal 3) 3;
-       create_stream_model_slot 1 |]
+       create_stream_model_slot 1; create_stream_model_slot 4 |]
   in
   let base_stats = run_ok runtime (Signal.stats ()) in
   let base_drops = base_stats.Signal.stream_bridge_drop_count in
@@ -3522,6 +3547,9 @@ let () =
           Alcotest.test_case
             "generated small graphs with observers and stats match model" `Quick
             test_generated_small_graphs_match_model;
+          Alcotest.test_case
+            "generated larger graphs with observers and stats match model" `Quick
+            test_generated_larger_graphs_match_model;
           Alcotest.test_case "stream bridge trace matches model" `Quick
             test_stream_bridge_trace_matches_model;
         ] );

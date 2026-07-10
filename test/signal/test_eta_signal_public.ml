@@ -324,6 +324,50 @@ let test_deadline_rejects_foreign_monotonic_time () =
        (widen
           (S.Time.deadline ~every:(Eta.Duration.ms 1) foreign_deadline)))
 
+let test_generated_deadlines_preserve_runtime_provenance () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock_a = Eta_test.Test_clock.create () in
+  let clock_b = Eta_test.Test_clock.create () in
+  let rt_a =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_a)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
+      ()
+  in
+  let rt_b =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_b)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
+      ()
+  in
+  let random = Random.State.make [| 17; 71; 193 |] in
+  for case = 0 to 23 do
+    let now_ms = 100 + (case * 100) + Random.State.int random 50 in
+    let duration_ms = 1 + Random.State.int random 80 in
+    Eta_test.Test_clock.set_time clock_a now_ms;
+    let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.days 1) ()) in
+    let observer =
+      run_ok rt_a (S.Observer.observe now_signal (fun _ -> E.unit))
+    in
+    run_ok rt_a S.stabilize;
+    let timestamp = run_ok rt_a (S.Observer.read observer) in
+    run_ok rt_a (S.Observer.dispose observer);
+    let deadline =
+      match S.Time.add timestamp (Eta.Duration.ms duration_ms) with
+      | Ok deadline -> deadline
+      | Error _ -> Alcotest.failf "case %d: expected future timestamp" case
+    in
+    ignore
+      (run_ok rt_a (S.Time.deadline ~every:(Eta.Duration.ms 1) deadline)
+        : bool S.signal);
+    expect_exact_runtime_mismatch
+      (Format.asprintf "generated timestamp provenance case %d" case)
+      (Eta.Runtime.run rt_b
+         (widen (S.Time.deadline ~every:(Eta.Duration.ms 1) deadline)))
+  done
+
 let with_late_timer_wake ?(jump_ms = 1_000_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -624,7 +668,7 @@ let test_observer_failure_retries_pending_delivery () =
 
 let test_stream_overflow_does_not_block_graph_progress () =
   let module S = Eta_signal.Make (Observer_error) () in
-  Eta_test.with_test_clock @@ fun _sw _clock runtime ->
+  Eta_test.with_test_clock @@ fun sw _clock runtime ->
   let source = S.Var.create 0 in
   let signal = S.Var.watch source in
   let stream_observer, stream =
@@ -636,16 +680,24 @@ let test_stream_overflow_does_not_block_graph_progress () =
   in
   run_ok runtime S.stabilize;
   let before_drop = run_ok runtime (S.stats ()) in
-  run_ok runtime (S.Var.set source 1);
-  run_ok runtime S.stabilize;
-  let after_drop = run_ok runtime (S.stats ()) in
+  let progress =
+    Eio.Fiber.fork_promise ~sw (fun () ->
+        run_ok runtime (S.Var.set source 1);
+        run_ok runtime S.stabilize;
+        let after_drop = run_ok runtime (S.stats ()) in
+        let after_first_updates = List.length !observer_updates in
+        run_ok runtime (S.Var.set source 2);
+        run_ok runtime S.stabilize;
+        (after_drop, after_first_updates))
+  in
+  wait_until "full stream bridge stabilization" (fun () ->
+      Eio.Promise.is_resolved progress);
+  let after_drop, after_first_updates = Eio.Promise.await_exn progress in
   Alcotest.(check int) "ordinary observer progressed" 2
-    (List.length !observer_updates);
+    after_first_updates;
   Alcotest.(check int) "full bridge dropped one update"
     (before_drop.S.stream_bridge_drop_count + 1)
     after_drop.S.stream_bridge_drop_count;
-  run_ok runtime (S.Var.set source 2);
-  run_ok runtime S.stabilize;
   Alcotest.(check int) "ordinary observer still progresses" 3
     (List.length !observer_updates);
   (match
@@ -677,6 +729,8 @@ let () =
             test_deadline_uses_monotonic_time;
           Alcotest.test_case "deadline rejects foreign monotonic time" `Quick
             test_deadline_rejects_foreign_monotonic_time;
+          Alcotest.test_case "generated deadlines preserve runtime provenance"
+            `Quick test_generated_deadlines_preserve_runtime_provenance;
           Alcotest.test_case "step bounds large late wake" `Quick
             test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
