@@ -691,9 +691,11 @@ module Make (Observer_error : Observer_error) () : sig
         Disposing the returned observer cleanly closes the stream queue.
         Buffered updates drain before the stream ends. Early stream consumers
         such as {!Eta_stream.Stream.take} do not dispose the observer; the
-        returned observer remains the lifecycle handle. The returned stream is
-        part of the same graph-domain contract and must be consumed on the
-        graph owner domain.
+        returned observer remains the lifecycle handle. Graph operations on that
+        observer remain restricted to the graph owner domain. The stream is
+        backed by a cross-domain {!Eta.Queue.t} and may be consumed from another
+        Eta runtime or domain. The queue does not copy update payloads; callers
+        must ensure values are safe for cross-domain use.
 
         Fails with [`Invalid_capacity] when [capacity <= 0]. *)
 
