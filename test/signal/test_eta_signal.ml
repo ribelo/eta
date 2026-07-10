@@ -185,6 +185,9 @@ module Cleanup_interrupt_runtime = struct
   let protect_count = ref 0
   let interrupt_on_local_binding_count = ref None
   let after_local_binding_count : (int * (unit -> unit)) option ref = ref None
+  let defer_daemons = ref false
+  let deferred_daemons : (unit -> [ `Stop_daemon ]) Stdlib.Queue.t =
+    Stdlib.Queue.create ()
   let now = ref 0
   let root_scope = ()
   let now_ms () = !now
@@ -210,7 +213,9 @@ module Cleanup_interrupt_runtime = struct
   let run_scope ?name:_ f = f ()
   let fail_scope ?bt:_ () exn = raise exn
   let fork () f = f ()
-  let fork_daemon () f = ignore (f () : [ `Stop_daemon ])
+  let fork_daemon () f =
+    if !defer_daemons then Stdlib.Queue.add f deferred_daemons
+    else ignore (f () : [ `Stop_daemon ])
   let await_cancel () = raise Cleanup_interrupt
   let yield () = ()
   let check () = ()
@@ -792,6 +797,8 @@ let reset_cleanup_interrupt_runtime () =
   Cleanup_interrupt_runtime.protect_count := 0;
   Cleanup_interrupt_runtime.interrupt_on_local_binding_count := None;
   Cleanup_interrupt_runtime.after_local_binding_count := None;
+  Cleanup_interrupt_runtime.defer_daemons := false;
+  Stdlib.Queue.clear Cleanup_interrupt_runtime.deferred_daemons;
   Cleanup_interrupt_runtime.now := 0;
   Cleanup_interrupt_runtime.local_binding_count := 0;
   Hashtbl.clear Cleanup_interrupt_runtime.locals
@@ -800,6 +807,60 @@ let cleanup_interrupt_runtime () =
   Runtime.create_with_runtime
     (module Cleanup_interrupt_runtime : Runtime_contract.RUNTIME)
     ()
+
+let run_deferred_cleanup_interrupt_daemons () =
+  Cleanup_interrupt_runtime.defer_daemons := false;
+  while not (Stdlib.Queue.is_empty Cleanup_interrupt_runtime.deferred_daemons) do
+    let daemon = Stdlib.Queue.take Cleanup_interrupt_runtime.deferred_daemons in
+    ignore (daemon () : [ `Stop_daemon ])
+  done
+
+let test_observer_registration_abort_interruption_runs_timer_cleanup () =
+  let module Signal = Eta_signal.Make (Observer_error) () in
+  reset_cleanup_interrupt_runtime ();
+  let rt = cleanup_interrupt_runtime () in
+  let timer = run_ok rt (Signal.Time.interval (Duration.ms 10)) in
+  Cleanup_interrupt_runtime.protect_count := 0;
+  Cleanup_interrupt_runtime.local_binding_count := 0;
+  Cleanup_interrupt_runtime.defer_daemons := true;
+  (* Interrupt after timer refresh, then again after the abort lane mutation
+     returns but before its bind continuation starts cleanup. *)
+  Cleanup_interrupt_runtime.interrupt_on_protect_count := Some 5;
+  Cleanup_interrupt_runtime.after_local_binding_count :=
+    Some (7, fun () -> raise Cleanup_interrupt);
+  let result =
+    Runtime.run rt
+      (widen (Signal.Observer.observe timer (fun _ -> Effect.unit)))
+  in
+  Cleanup_interrupt_runtime.interrupt_on_protect_count := None;
+  (match result with
+  | Exit.Error cause when Cause.is_interrupt_only cause -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected registration interruption, got %a"
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok observer ->
+      ignore
+        (Runtime.run rt (widen (Signal.Observer.dispose observer)) : _ Exit.t);
+      Alcotest.fail "expected interrupted timer observer registration");
+  let stats = run_ok rt (Signal.stats ()) in
+  Alcotest.(check int) "interrupted registration removes observer" 0
+    stats.Signal.active_observer_count;
+  Alcotest.(check int) "timer daemon start was requested" 1
+    (Stdlib.Queue.length Cleanup_interrupt_runtime.deferred_daemons);
+  let options : Signal.dot_options =
+    {
+      dot_scope = `All_valid;
+      dot_observers = false;
+      dot_timers = true;
+      dot_state = false;
+      dot_dynamic_scopes = false;
+    }
+  in
+  let dot = run_ok rt (Signal.to_dot ~options ()) in
+  Alcotest.(check bool)
+    "interrupted registration refreshes timer demand" true
+    (contains_substring dot "timer_active=false");
+  run_deferred_cleanup_interrupt_daemons ()
 
 type observe_protect_result =
   | Observe_returned
@@ -3998,6 +4059,9 @@ let () =
           Alcotest.test_case
             "observer activation waits for transfer before callbacks" `Quick
             test_observer_activation_waits_for_transfer_before_callbacks;
+          Alcotest.test_case
+            "observer registration abort interruption runs timer cleanup" `Quick
+            test_observer_registration_abort_interruption_runs_timer_cleanup;
           Alcotest.test_case
             "observer interrupted activation disposes unowned observer" `Quick
             test_observer_activation_interruption_disposes_unowned_observer;

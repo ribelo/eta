@@ -1774,8 +1774,10 @@ module Make (Observer_error : Observer_error) () = struct
   let abort_observer_registration_effect observer =
     let hooks_ref = ref [] in
     let refresh_timers = ref false in
-    let cleanup_state_checked = ref false in
+    let cleanup_started = ref false in
+    let cleanup_needed = ref false in
     let run_cleanup () =
+      cleanup_started := true;
       run_pending_registration_abort_cleanup hooks_ref refresh_timers
     in
     with_graph_lane_access
@@ -1787,16 +1789,15 @@ module Make (Observer_error : Observer_error) () = struct
             hooks_ref := hooks;
             refresh_timers := true;
             update_necessity_counters_unlocked lane;
-            cleanup_state_checked := true;
+            cleanup_needed := true;
             true
-        | Observer_lifecycle.Disposed _ ->
-            cleanup_state_checked := true;
-            false)
+        | Observer_lifecycle.Disposed _ -> false)
     |> Effect.bind (function
          | true -> run_cleanup ()
          | false -> Effect.unit)
     |> Effect.on_exit (fun _exit ->
-           if !cleanup_state_checked then Effect.unit else run_cleanup ())
+           if !cleanup_started || not !cleanup_needed then Effect.unit
+           else run_cleanup ())
 
   let cleanup_observer_registration_on_error cleanup eff =
     let render_graph_error err =
