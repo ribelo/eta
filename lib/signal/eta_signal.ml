@@ -2631,9 +2631,22 @@ module Make (Observer_error : Observer_error) () = struct
       ~observers:dot_observers
 
   module Time = struct
-    type monotonic_time = int
+    type monotonic_time = {
+      runtime_contract : Runtime_contract.t;
+      ms : int;
+    }
 
-    let to_ms timestamp = timestamp
+    let to_ms timestamp = timestamp.ms
+
+    let monotonic_time_equal left right =
+      Runtime_contract.same_runtime left.runtime_contract right.runtime_contract
+      && Int.equal left.ms right.ms
+
+    let validate_timestamp_runtime runtime_contract timestamp =
+      if
+        Runtime_contract.same_runtime runtime_contract timestamp.runtime_contract
+      then Ok ()
+      else Error `Runtime_mismatch
 
     let validate_interval duration =
       Timer_policy.validate_interval_ms (Duration.to_ms duration)
@@ -2670,7 +2683,8 @@ module Make (Observer_error : Observer_error) () = struct
     let add_relative_deadline = Timer_policy.add_relative_deadline
 
     let add timestamp duration =
-      add_relative_deadline timestamp (Duration.to_ms duration)
+      add_relative_deadline timestamp.ms (Duration.to_ms duration)
+      |> Result.map (fun ms -> { timestamp with ms })
 
     let attach_timer ?(update_on_start = false) ?(refresh_when_inactive = true)
         ?refresh_operation ~runtime_contract signal interval update =
@@ -2737,20 +2751,25 @@ module Make (Observer_error : Observer_error) () = struct
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
                     Effect.now
-                    |> Effect.bind (fun initial ->
+                    |> Effect.bind (fun initial_ms ->
                            construct_timer_signal (fun () ->
-                               make_timer_signal ~equal:Int.equal initial
-                                 every ~runtime_contract
-                                 (Timer_policy.current_time_source_policy ())
-                                 {
-                                   source_timer_update =
-                                     (fun timer generation ~missed:_ source ->
-                                       Effect.now
-                                       |> Effect.bind (fun now_ms ->
-                                              timer_set_source timer generation
-                                                source now_ms
-                                              |> Effect.map (fun _ -> ())));
-                                 }))))
+                               let now_ms_signal =
+                                 make_timer_signal ~equal:Int.equal initial_ms
+                                   every ~runtime_contract
+                                   (Timer_policy.current_time_source_policy ())
+                                   {
+                                     source_timer_update =
+                                       (fun timer generation ~missed:_ source ->
+                                         Effect.now
+                                         |> Effect.bind (fun now_ms ->
+                                                timer_set_source timer generation
+                                                  source now_ms
+                                                |> Effect.map (fun _ -> ())));
+                                   }
+                               in
+                               map ~equal:monotonic_time_equal
+                                 (fun ms -> { runtime_contract; ms })
+                                 now_ms_signal))))
 
     let construct_deadline_signal every deadline_ms ~runtime_contract =
       construct_timer_signal (fun () ->
@@ -2780,13 +2799,16 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
-                    Effect.now
-                    |> Effect.bind (fun now_ms ->
-                           Effect.from_result
-                             (validate_future now_ms deadline_ms)
-                           |> Effect.bind (fun () ->
-                                  construct_deadline_signal every deadline_ms
-                                    ~runtime_contract))))
+                    Effect.from_result
+                      (validate_timestamp_runtime runtime_contract deadline)
+                    |> Effect.bind (fun () ->
+                           Effect.now
+                           |> Effect.bind (fun now_ms ->
+                                  Effect.from_result
+                                    (validate_future now_ms deadline_ms)
+                                  |> Effect.bind (fun () ->
+                                         construct_deadline_signal every
+                                           deadline_ms ~runtime_contract)))))
 
     let after ~every duration =
       Effect.sync (fun () ->

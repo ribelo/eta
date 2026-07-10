@@ -596,8 +596,9 @@ module Make (Observer_error : Observer_error) () : sig
       (bool signal, time_error) Eta.Effect.t
     (** [deadline ~every timestamp] becomes [true] after the monotonic runtime
         clock reaches [timestamp]. [timestamp] must be in the future on that
-        clock when the signal is created. Prefer {!after} for ordinary
-        relative one-shot deadlines. *)
+        clock when the signal is created. It fails with [`Runtime_mismatch] if
+        [timestamp] came from a different Eta runtime. Prefer {!after} for
+        ordinary relative one-shot deadlines. *)
 
     val after :
       every:Eta.Duration.t ->

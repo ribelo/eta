@@ -288,6 +288,42 @@ let test_deadline_uses_monotonic_time () =
   run_ok runtime (Signal.Observer.dispose due_observer);
   run_ok runtime (Signal.Observer.dispose now_observer)
 
+let test_deadline_rejects_foreign_monotonic_time () =
+  let module S = Eta_signal.Make (Observer_error) () in
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let clock_a = Eta_test.Test_clock.create () in
+  let clock_b = Eta_test.Test_clock.create () in
+  Eta_test.Test_clock.set_time clock_a 100;
+  let rt_a =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_a)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_a)
+      ()
+  in
+  let rt_b =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
+      ~sleep:(Eta_test.Test_clock.sleep clock_b)
+      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock_b)
+      ()
+  in
+  let now_signal = run_ok rt_a (S.Time.now ~every:(Eta.Duration.ms 1) ()) in
+  let now_observer =
+    run_ok rt_a (S.Observer.observe now_signal (fun _ -> E.unit))
+  in
+  run_ok rt_a S.stabilize;
+  let foreign_timestamp = run_ok rt_a (S.Observer.read now_observer) in
+  run_ok rt_a (S.Observer.dispose now_observer);
+  let foreign_deadline =
+    match S.Time.add foreign_timestamp (Eta.Duration.ms 10) with
+    | Ok timestamp -> timestamp
+    | Error _ -> Alcotest.fail "expected future foreign timestamp"
+  in
+  expect_exact_runtime_mismatch "deadline timestamp runtime provenance"
+    (Eta.Runtime.run rt_b
+       (widen
+          (S.Time.deadline ~every:(Eta.Duration.ms 1) foreign_deadline)))
+
 let with_late_timer_wake ?(jump_ms = 1_000_000) f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -639,6 +675,8 @@ let () =
             test_interval_catches_up_with_test_clock;
           Alcotest.test_case "deadline uses monotonic time" `Quick
             test_deadline_uses_monotonic_time;
+          Alcotest.test_case "deadline rejects foreign monotonic time" `Quick
+            test_deadline_rejects_foreign_monotonic_time;
           Alcotest.test_case "step bounds large late wake" `Quick
             test_step_bounds_large_late_wake;
           Alcotest.test_case "timer runtime mismatch on observe" `Quick
