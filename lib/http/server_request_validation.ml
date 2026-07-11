@@ -350,20 +350,20 @@ let header_block_bytes headers =
       total + String.length name + String.length value + 4)
     0 headers
 
+let[@inline always] validate_header_limits ~max_bytes ~max_headers ~kind headers =
+  let count = List.length headers in
+  if count > max_headers then
+    Error (Printf.sprintf "%s header count exceeds %d" kind max_headers)
+  else
+    let bytes = header_block_bytes headers in
+    if bytes > max_bytes then
+      Error (Printf.sprintf "%s header section exceeds %d bytes" kind max_bytes)
+    else Ok ()
+
 let validate_header_block ~max_bytes ~max_headers ~kind headers =
   match Header.validate headers with
   | Some _ -> Error ("invalid " ^ kind ^ " header")
-  | None ->
-      let count = List.length headers in
-      if count > max_headers then
-        Error
-          (Printf.sprintf "%s header count exceeds %d" kind max_headers)
-      else
-        let bytes = header_block_bytes headers in
-        if bytes > max_bytes then
-          Error
-            (Printf.sprintf "%s header section exceeds %d bytes" kind max_bytes)
-        else Ok ()
+  | None -> validate_header_limits ~max_bytes ~max_headers ~kind headers
 
 let validate_response_headers ~(limits : Server_config.limits) headers =
   validate_header_block ~max_bytes:limits.max_response_header_bytes
@@ -576,18 +576,8 @@ let validate_h2_request_headers ~(limits : Server_config.limits) headers =
       match h2_request_content_length headers with
       | Error _ as error -> error
       | Ok _ ->
-          let count = List.length headers in
-          if count > limits.max_request_headers then
-            Error
-              (Printf.sprintf "request header count exceeds %d"
-                 limits.max_request_headers)
-          else
-            let bytes = header_block_bytes headers in
-            if bytes > limits.max_request_header_bytes then
-              Error
-                (Printf.sprintf "request header section exceeds %d bytes"
-                   limits.max_request_header_bytes)
-            else Ok ())
+          validate_header_limits ~max_bytes:limits.max_request_header_bytes
+            ~max_headers:limits.max_request_headers ~kind:"request" headers)
 
 let validate_h2_request_trailer_values trailers =
   let rec loop = function
@@ -614,18 +604,8 @@ let validate_h2_request_trailers ~(limits : Server_config.limits) trailers =
   match validate_h2_request_trailer_values trailers with
   | Error _ as error -> error
   | Ok () ->
-      let count = List.length trailers in
-      if count > limits.max_trailers then
-        Error
-          (Printf.sprintf "request trailer count exceeds %d"
-             limits.max_trailers)
-      else
-        let bytes = header_block_bytes trailers in
-        if bytes > limits.max_trailer_bytes then
-          Error
-            (Printf.sprintf "request trailer section exceeds %d bytes"
-               limits.max_trailer_bytes)
-        else Ok ()
+      validate_header_limits ~max_bytes:limits.max_trailer_bytes
+        ~max_headers:limits.max_trailers ~kind:"request trailer" trailers
 
 let validate_h2_response_header_values ?(trailers = false) ~kind headers =
   let rec loop = function
@@ -656,17 +636,7 @@ let validate_h2_response_header_block ?(trailers = false) ~max_bytes
   let headers = Header.to_list headers in
   match validate_h2_response_header_values ~trailers ~kind headers with
   | Error _ as error -> error
-  | Ok () ->
-      let count = List.length headers in
-      if count > max_headers then
-        Error
-          (Printf.sprintf "%s header count exceeds %d" kind max_headers)
-      else
-        let bytes = header_block_bytes headers in
-        if bytes > max_bytes then
-          Error
-            (Printf.sprintf "%s header section exceeds %d bytes" kind max_bytes)
-        else Ok ()
+  | Ok () -> validate_header_limits ~max_bytes ~max_headers ~kind headers
 
 let validate_h2_response_headers ~(limits : Server_config.limits) headers =
   validate_h2_response_header_block
