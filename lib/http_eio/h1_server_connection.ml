@@ -1486,7 +1486,7 @@ let shutdown t policy =
 let run ~sw ~clock ?time ~flow ~connection ~config ~runtime_factory ?on_start
     ?on_close handler =
   validate_config config;
-  let time = Option.value time ~default:(Types.live_time clock) in
+  let time = match time with Some time -> time | None -> Types.live_time clock in
   let closed_signal, close_signal = Eio.Promise.create () in
   let runtime = runtime_factory ~sw ~connection () in
   let t =

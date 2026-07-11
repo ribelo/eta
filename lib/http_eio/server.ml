@@ -466,7 +466,7 @@ let run_https_connection ~conn_sw ~clock ?time ~config ~runtime_factory
   let raw_flow =
     (flow :> [ Eio.Flow.two_way_ty | Eio.Resource.close_ty ] Eio.Resource.t)
   in
-  let time = Option.value time ~default:(live_time clock) in
+  let time = match time with Some time -> time | None -> live_time clock in
   let tls_flow, epoch =
     try
       let result =
