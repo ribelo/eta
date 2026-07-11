@@ -489,7 +489,7 @@ let load_applied_states conn config =
           in
           loop [] rows)
 
-let applied_migration_of_state state =
+let[@inline always] applied_migration_of_state state =
   {
     Applied_migration.version = state.applied_version;
     checksum = state.applied_checksum;
@@ -552,23 +552,11 @@ let validate_applied config migrations applied =
         else (
           match find_migration state.applied_version migrations with
           | None when config.Config.ignore_missing ->
-              loop
-                ({
-                   Applied_migration.version = state.applied_version;
-                   checksum = state.applied_checksum;
-                 }
-                :: already)
-                rest
+              loop (applied_migration_of_state state :: already) rest
           | None -> Result.Error (Version_missing state.applied_version)
           | Some migration ->
               if String.equal migration.Migration.checksum state.applied_checksum then
-                loop
-                  ({
-                     Applied_migration.version = state.applied_version;
-                     checksum = state.applied_checksum;
-                   }
-                  :: already)
-                  rest
+                loop (applied_migration_of_state state :: already) rest
               else
                 Result.Error (Version_mismatch state.applied_version))
   in
