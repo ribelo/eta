@@ -225,8 +225,15 @@ let number_data_points_json key value start_ts end_ts =
 
 let count_json count = `String (string_of_int count)
 
-let finite_bound_json boundary =
-  if boundary = infinity then `Float boundary else `Float boundary
+let finite_bound_json boundary = `Float boundary
+
+let[@inline always] add_min_max fields ~min ~max =
+  let fields =
+    match min with None -> fields | Some value -> ("min", `Float value) :: fields
+  in
+  match max with
+  | None -> fields
+  | Some value -> ("max", `Float value) :: fields
 
 let histogram_data_point_json key
     (state : Metric_aggregation.histogram_state) start_ts end_ts =
@@ -248,17 +255,7 @@ let histogram_data_point_json key
       ("explicitBounds", `List (List.map finite_bound_json bounds));
     ]
   in
-  let fields =
-    match state.min with
-    | None -> fields
-    | Some value -> ("min", `Float value) :: fields
-  in
-  let fields =
-    match state.max with
-    | None -> fields
-    | Some value -> ("max", `Float value) :: fields
-  in
-  `Assoc fields
+  `Assoc (add_min_max fields ~min:state.min ~max:state.max)
 
 let quantile_value_json (quantile, value) : yj =
   `Assoc [ ("quantile", `Float quantile); ("value", `Float value) ]
@@ -275,17 +272,7 @@ let summary_data_point_json key (state : Metric_aggregation.summary_state)
       ("quantileValues", array_map quantile_value_json state.quantiles);
     ]
   in
-  let fields =
-    match state.min with
-    | None -> fields
-    | Some value -> ("min", `Float value) :: fields
-  in
-  let fields =
-    match state.max with
-    | None -> fields
-    | Some value -> ("max", `Float value) :: fields
-  in
-  `Assoc fields
+  `Assoc (add_min_max fields ~min:state.min ~max:state.max)
 
 let frequency_data_points_json key counts start_ts end_ts =
   counts
