@@ -694,15 +694,18 @@ module Make (Backend : BACKEND) = struct
     let value (Set (column, value)) = Param (column.typ, value)
   end
 
+  let[@inline always] add_comma_separated_strings buf strings =
+    List.iteri
+      (fun i value ->
+        if i > 0 then Buffer.add_string buf ", ";
+        Buffer.add_string buf value)
+      strings
+
   let[@inline always] render_returning_sql sql columns =
     let buf = Buffer.create 64 in
     Buffer.add_string buf sql;
     Buffer.add_string buf " RETURNING ";
-    List.iteri
-      (fun i column ->
-        if i > 0 then Buffer.add_string buf ", ";
-        Buffer.add_string buf column)
-      columns;
+    add_comma_separated_strings buf columns;
     Buffer.contents buf
 
   module Insert = struct
@@ -791,21 +794,13 @@ module Make (Backend : BACKEND) = struct
       | Some (Do_nothing target) ->
           let buf = Buffer.create 32 in
           Buffer.add_string buf " ON CONFLICT (";
-          List.iteri
-            (fun i col ->
-              if i > 0 then Buffer.add_string buf ", ";
-              Buffer.add_string buf col)
-            target;
+          add_comma_separated_strings buf target;
           Buffer.add_string buf ") DO NOTHING";
           Buffer.contents buf
       | Some (Do_update_excluded (target, set)) ->
           let buf = Buffer.create 64 in
           Buffer.add_string buf " ON CONFLICT (";
-          List.iteri
-            (fun i col ->
-              if i > 0 then Buffer.add_string buf ", ";
-              Buffer.add_string buf col)
-            target;
+          add_comma_separated_strings buf target;
           Buffer.add_string buf ") DO UPDATE SET ";
           List.iteri
             (fun i col ->
