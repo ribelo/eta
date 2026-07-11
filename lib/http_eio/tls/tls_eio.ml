@@ -297,6 +297,14 @@ let drain_bio t =
       probe_record_drain_bio t drain_started_us;
       !drained)
 
+let[@cold] fail_ssl_error operation code =
+  match Openssl.err_peek_error () with
+  | Some message ->
+      Openssl.err_clear_error ();
+      failwith (operation ^ ": " ^ message)
+  | None ->
+      failwith (operation ^ " failed (code " ^ string_of_int code ^ ")")
+
 (* Drive the TLS handshake to completion. *)
 let do_handshake t =
   Eio.Mutex.use_rw ~protect:false t.handshake_mutex (fun () ->
@@ -316,15 +324,7 @@ let do_handshake t =
               else if code = 3 (* SSL_ERROR_WANT_WRITE *) then (
                 if not (drain_bio t) then Eio.Fiber.yield ();
                 loop ())
-              else (
-                match Openssl.err_peek_error () with
-                | Some msg ->
-                    Openssl.err_clear_error ();
-                    failwith ("TLS handshake: " ^ msg)
-                | None ->
-                    failwith
-                      ("TLS handshake failed (code " ^ string_of_int code ^ ")")
-                ))
+              else fail_ssl_error "TLS handshake" code)
         in
         loop ())
 
@@ -384,13 +384,7 @@ module Flow_impl = struct
           t.closed <- true;
           notify_tls_progress t;
           raise End_of_file)
-        else (
-          match Openssl.err_peek_error () with
-          | Some msg ->
-              Openssl.err_clear_error ();
-              failwith ("TLS read: " ^ msg)
-          | None ->
-              failwith ("TLS read failed (code " ^ string_of_int code ^ ")")))
+        else fail_ssl_error "TLS read" code)
     in
     loop ()
 
@@ -443,15 +437,7 @@ module Flow_impl = struct
                       write_buf offset length)
                     else if code = 6 (* SSL_ERROR_ZERO_RETURN *) then
                       raise End_of_file
-                    else (
-                      match Openssl.err_peek_error () with
-                      | Some msg ->
-                          Openssl.err_clear_error ();
-                          failwith ("TLS write: " ^ msg)
-                      | None ->
-                          failwith
-                            ("TLS write failed (code " ^ string_of_int code
-                           ^ ")"))))
+                    else fail_ssl_error "TLS write" code))
               in
               write_buf 0 len)
             bufs;
