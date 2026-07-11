@@ -62,13 +62,27 @@ let test_cause_pretty () =
     (Cause.pretty render_err cause)
 
 let test_exit_combinators () =
-  let ok = Exit.Ok 21 in
+  let ok = Exit.ok 21 in
+  Alcotest.(check bool) "ok is ok" true (Exit.is_ok ok);
+  Alcotest.(check (option int)) "success" (Some 21) (Exit.get_success ok);
+  Alcotest.(check string) "match ok" "42"
+    (Exit.match_ ~ok:(fun n -> string_of_int (n * 2)) ~error:(fun _ -> "error") ok);
   (match Exit.map (( + ) 1) ok with
   | Exit.Ok 22 -> ()
   | _ -> Alcotest.fail "map did not transform success");
-  let error =
-    Exit.Error (Cause.sequential [ Cause.fail `A; Cause.fail `B ])
-  in
+  Alcotest.(check int) "get_or_else ok" 21
+    (Exit.get_or_else (fun _ -> 0) ok);
+  (match Exit.as_unit ok with
+  | Exit.Ok () -> ()
+  | _ -> Alcotest.fail "as_unit did not preserve success");
+  let error = Exit.error (Cause.sequential [ Cause.fail `A; Cause.fail `B ]) in
+  Alcotest.(check bool) "error is error" true (Exit.is_error error);
+  Alcotest.(check bool) "cause present" true
+    (Option.is_some (Exit.get_cause error));
+  Alcotest.(check string) "match error" "error"
+    (Exit.match_ ~ok:string_of_int ~error:(fun _ -> "error") error);
+  Alcotest.(check int) "get_or_else error" 9
+    (Exit.get_or_else (fun _ -> 9) error);
   (match Exit.map_error (function `A -> `C 1 | `B -> `C 2 | `C n -> `C n) error with
   | Exit.Error cause ->
       Alcotest.(check (list string)) "mapped failures" [ "C:1"; "C:2" ]
