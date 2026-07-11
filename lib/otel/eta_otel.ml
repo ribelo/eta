@@ -670,12 +670,15 @@ let create ~runtime_factory ?flush_runtime_factory ?http_client
     | false, None -> Some metrics_path
   in
   let on_error =
-    Option.value on_error ~default:(fun msg ->
-        prerr_endline ("[eta-otel] export failed: " ^ msg))
+    match on_error with
+    | Some on_error -> on_error
+    | None -> fun msg -> prerr_endline ("[eta-otel] export failed: " ^ msg)
   in
   let on_send =
     let user_on_send =
-      Option.value on_send ~default:(fun ~path:_ ~body:_ -> ())
+      match on_send with
+      | Some on_send -> on_send
+      | None -> fun ~path:_ ~body:_ -> ()
     in
     fun ~path ~body ->
       if debug then debug_on_send ~path ~body;
@@ -711,7 +714,9 @@ let create ~runtime_factory ?flush_runtime_factory ?http_client
     }
   in
   let http_client =
-    Option.value http_client ~default:(Eta_http.Client.make_runtime ())
+    match http_client with
+    | Some http_client -> http_client
+    | None -> Eta_http.Client.make_runtime ()
   in
   let t =
     {
