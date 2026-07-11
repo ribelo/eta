@@ -584,7 +584,6 @@ type param_acc = {
 }
 
 let[@inline always][@zero_alloc] path_get p i = String.unsafe_get p.src (p.off + i)
-let[@inline always][@zero_alloc] path_length p = p.len
 
 let[@inline always] path_drop p n =
   p.off <- p.off + n;

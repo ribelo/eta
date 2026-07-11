@@ -117,8 +117,6 @@ module Writer = struct
       fn buf ~off ~len
     done
 
-  let close_callback t = ref None
-
   let set_close_callback t fn =
     t.close_callback <- Some fn
 

@@ -173,11 +173,6 @@ let[@zero_alloc] decode32u buf off =
   lor (Char.code (Bigstringaf.get buf (off + 2)) lsl 8)
   lor Char.code (Bigstringaf.get buf (off + 3))
 
-let[@zero_alloc] decode24u buf off =
-  (Char.code (Bigstringaf.get buf off) lsl 16)
-  lor (Char.code (Bigstringaf.get buf (off + 1)) lsl 8)
-  lor Char.code (Bigstringaf.get buf (off + 2))
-
 let[@zero_alloc] decode16u buf off =
   (Char.code (Bigstringaf.get buf off) lsl 8) lor Char.code (Bigstringaf.get buf (off + 1))
 
