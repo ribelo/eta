@@ -30,14 +30,7 @@ let tool_json ~schema_value ~shape (tool : A.tool) =
             ("function", Some (Json.object_ function_fields));
           ]
     | Responses_tool ->
-        Json.object_
-          [
-            ("type", Some (Json.string "function"));
-            ("name", Some (Json.string tool.name));
-            ("description", Option.map Json.string tool.description);
-            ("parameters", Some schema);
-            ("strict", Option.map Json.bool tool.strict);
-          ]
+        Json.object_ (("type", Some (Json.string "function")) :: function_fields)
   in
   Stdlib.Ok json
 
@@ -46,25 +39,20 @@ type structured_output_shape =
   | Responses_format
 
 let structured_output_json ~shape output =
+  let schema_fields =
+    [
+      ("name", Some (Json.string output.name));
+      ("schema", Some output.schema);
+      ("strict", Option.map Json.bool output.strict);
+    ]
+  in
   match shape with
   | Chat_response_format ->
       Json.object_
         [
           ("type", Some (Json.string "json_schema"));
-          ( "json_schema",
-            Some
-              (Json.object_
-                 [
-                   ("name", Some (Json.string output.name));
-                   ("schema", Some output.schema);
-                   ("strict", Option.map Json.bool output.strict);
-                 ]) );
+          ("json_schema", Some (Json.object_ schema_fields));
         ]
   | Responses_format ->
       Json.object_
-        [
-          ("type", Some (Json.string "json_schema"));
-          ("name", Some (Json.string output.name));
-          ("schema", Some output.schema);
-          ("strict", Option.map Json.bool output.strict);
-        ]
+        (("type", Some (Json.string "json_schema")) :: schema_fields)

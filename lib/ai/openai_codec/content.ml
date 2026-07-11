@@ -41,6 +41,20 @@ let media_object media =
       ("detail", Option.map Json.string media.detail);
     ]
 
+let audio_content_part (audio : A.audio) =
+  Json.object_
+    [
+      ("type", Some (Json.string "input_audio"));
+      (
+        "input_audio",
+        Some
+          (Json.object_
+             [
+               ("data", Some (Json.string (audio_data_base64 audio.data)));
+               ("format", Some (Json.string (audio_format audio.format)));
+             ]) );
+    ]
+
 let chat_content_part = function
   | A.Text text -> Json.object_ [ ("type", Some (Json.string "text")); ("text", Some (Json.string text)) ]
   | A.Json raw -> Json.object_ [ ("type", Some (Json.string "text")); ("text", Some (Json.string raw)) ]
@@ -50,19 +64,7 @@ let chat_content_part = function
           ("type", Some (Json.string "image_url"));
           ("image_url", Some (media_object media));
         ]
-  | A.Audio audio ->
-      Json.object_
-        [
-          ("type", Some (Json.string "input_audio"));
-          (
-            "input_audio",
-            Some
-              (Json.object_
-                 [
-                   ("data", Some (Json.string (audio_data_base64 audio.data)));
-                   ("format", Some (Json.string (audio_format audio.format)));
-                 ]) );
-        ]
+  | A.Audio audio -> audio_content_part audio
   | A.Video media ->
       Json.object_
         [
@@ -85,19 +87,7 @@ let responses_content_part = function
           ("url", Some (Json.string media.A.url));
           ("detail", Option.map Json.string media.detail);
         ]
-  | A.Audio audio ->
-      Json.object_
-        [
-          ("type", Some (Json.string "input_audio"));
-          (
-            "input_audio",
-            Some
-              (Json.object_
-                 [
-                   ("data", Some (Json.string (audio_data_base64 audio.data)));
-                   ("format", Some (Json.string (audio_format audio.format)));
-                 ]) );
-        ]
+  | A.Audio audio -> audio_content_part audio
   | A.Video media ->
       Json.object_
         [
