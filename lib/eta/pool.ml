@@ -82,12 +82,6 @@ let metric_int t ~name ~kind ~unit_ value =
          Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
            (Capabilities.Number (Capabilities.Int value)))
 
-let metric_float t ~name ~kind ~unit_ value =
-  Effect.sync value
-  |> Effect.bind (fun value ->
-         Effect.metric_update ~attrs:t.attrs ~name ~kind ~unit_
-           (Capabilities.Number (Capabilities.Float value)))
-
 let stats_locked t =
   {
     active = t.active;
@@ -141,16 +135,6 @@ let emit_invalidated t =
   metric_int t ~name:"eta.pool.invalidated"
     ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{connection}" (fun () ->
       Sync_lock.use t.mutex @@ fun () -> t.invalidated)
-
-let emit_cancelled_waiters t =
-  metric_int t ~name:"eta.pool.cancelled_waiters"
-    ~kind:(Capabilities.Counter { monotonic = true }) ~unit_:"{waiter}" (fun () ->
-      Semaphore.cancelled_waiters t.sem)
-
-let emit_wait_ms t started_ms =
-  metric_float t ~name:"eta.pool.acquire_wait_ms"
-    ~kind:Capabilities.Gauge ~unit_:"ms" (fun () ->
-      float_of_int (max 0 (now_ms t - started_ms)))
 
 let with_lock t f =
   Sync_lock.use t.mutex f
