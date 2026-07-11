@@ -231,6 +231,10 @@ let () =
             test_h1_server_connection_rejects_invalid_chunked_body;
           Alcotest.test_case "rejects oversized chunked trailers" `Quick
             test_h1_server_connection_rejects_oversized_chunked_trailers;
+          Alcotest.test_case "rejects oversized request line" `Quick
+            test_h1_server_connection_request_line_too_large;
+          Alcotest.test_case "rejects oversized header section" `Quick
+            test_h1_server_connection_header_section_too_large;
           Alcotest.test_case "request body timeout" `Quick
             test_h1_server_connection_request_body_timeout;
           Alcotest.test_case "handler timeout" `Quick
@@ -247,6 +251,12 @@ let () =
             test_h1_server_connection_no_content_releases_suppressed_stream;
           Alcotest.test_case "205 releases suppressed stream" `Quick
             test_h1_server_connection_reset_content_releases_suppressed_stream;
+          Alcotest.test_case "HEAD preserves content length" `Quick
+            test_h1_server_connection_head_discards_body_preserves_content_length;
+          Alcotest.test_case "HEAD matches GET content length" `Quick
+            test_h1_server_connection_head_matches_get_content_length;
+          Alcotest.test_case "explicit HEAD handler wins" `Quick
+            test_h1_server_connection_head_explicit_handler_wins;
           Alcotest.test_case "stream write failure releases body" `Quick
             test_h1_server_connection_releases_stream_on_write_failure;
           Alcotest.test_case "response write timeout is typed" `Quick
@@ -257,6 +267,10 @@ let () =
             test_h1_server_connection_rejects_response_header_limit;
           Alcotest.test_case "keep-alive sequential requests" `Quick
             test_h1_server_connection_keeps_alive_for_sequential_requests;
+          Alcotest.test_case "HTTP/1.0 defaults to close" `Quick
+            test_h1_server_connection_http10_defaults_to_close;
+          Alcotest.test_case "explicit close header" `Quick
+            test_h1_server_connection_explicit_close_header;
           Alcotest.test_case "keep-alive preserves pipelined bytes" `Quick
             test_h1_server_connection_keeps_pipelined_request_bytes;
           Alcotest.test_case "drains unread body for reuse" `Quick

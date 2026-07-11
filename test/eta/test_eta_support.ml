@@ -210,9 +210,6 @@ let rec string_cause_contains expected = function
       string_cause_contains expected primary
       || finalizer_contains expected finalizer
 
-let check_string_cause_contains label expected cause =
-  Alcotest.(check bool) label true (string_cause_contains expected cause)
-
 let rec string_cause_has_suppressed_finalizer expected = function
   | Cause.Suppressed { primary = Cause.Interrupt _; finalizer } ->
       finalizer_contains expected finalizer
