@@ -7,12 +7,15 @@ type die = {
   annotations : (string * string) list;
 }
 
+let[@inline always] equal_annotations left right =
+  List.equal
+    (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
+    left right
+
 let equal_die left right =
   left.exn == right.exn
   && Option.equal String.equal left.span_name right.span_name
-  && List.equal
-       (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-       left.annotations right.annotations
+  && equal_annotations left.annotations right.annotations
 
 let backtrace_string die = Option.map Printexc.raw_backtrace_to_string die.backtrace
 
@@ -22,9 +25,7 @@ let diagnostic_equal_die left right =
   && String.equal (Printexc.to_string left.exn) (Printexc.to_string right.exn)
   && Option.equal String.equal (backtrace_string left) (backtrace_string right)
   && Option.equal String.equal left.span_name right.span_name
-  && List.equal
-       (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-       left.annotations right.annotations
+  && equal_annotations left.annotations right.annotations
 
 let pp_annotations fmt annotations =
   Format.fprintf fmt "[%a]"
@@ -38,15 +39,18 @@ let pp_backtrace fmt = function
   | Some bt ->
       Format.fprintf fmt "; backtrace=%S" (Printexc.raw_backtrace_to_string bt)
 
-let pp_die fmt die =
-  Format.fprintf fmt "Die{exn=%S" (Printexc.to_string die.exn);
-  (match die.span_name with
+let pp_die_metadata fmt span_name annotations =
+  (match span_name with
   | None -> ()
   | Some name -> Format.fprintf fmt "; span_name=%S" name);
-  (match die.annotations with
+  match annotations with
   | [] -> ()
   | annotations ->
-      Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
+      Format.fprintf fmt "; annotations=%a" pp_annotations annotations
+
+let pp_die fmt die =
+  Format.fprintf fmt "Die{exn=%S" (Printexc.to_string die.exn);
+  pp_die_metadata fmt die.span_name die.annotations;
   pp_backtrace fmt die.backtrace;
   Format.pp_print_string fmt "}"
 
@@ -152,9 +156,7 @@ module Portable = struct
     && String.equal left.message right.message
     && Option.equal String.equal left.backtrace right.backtrace
     && Option.equal String.equal left.span_name right.span_name
-    && List.equal
-         (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-         left.annotations right.annotations
+    && equal_annotations left.annotations right.annotations
 
   let pp_backtrace fmt = function
     | None -> ()
@@ -162,13 +164,7 @@ module Portable = struct
 
   let pp_die fmt die =
     Format.fprintf fmt "Die{kind=%S; message=%S" die.kind die.message;
-    (match die.span_name with
-    | None -> ()
-    | Some name -> Format.fprintf fmt "; span_name=%S" name);
-    (match die.annotations with
-    | [] -> ()
-    | annotations ->
-        Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
+    pp_die_metadata fmt die.span_name die.annotations;
     pp_backtrace fmt die.backtrace;
     Format.pp_print_string fmt "}"
 
