@@ -2387,6 +2387,17 @@ let close_response_writer_best_effort state =
         if not (H2.Body.Writer.is_closed writer) then H2.Body.Writer.close writer
       with _ -> ())
 
+let[@cold] fail_stream t ordinal state error =
+  finish_stream_metrics state;
+  fail_pending_request_read state error;
+  fail_pending_request_discard state error;
+  fail_pending_response_write state error;
+  fail_request_trailers state error;
+  close_request_body state;
+  close_response_writer_best_effort state;
+  response_reset state;
+  forget_stream t ordinal state
+
 let fail_active_streams t request_error =
   let streams =
     Hashtbl.fold (fun ordinal state acc -> (ordinal, state) :: acc) t.streams []
@@ -2397,15 +2408,7 @@ let fail_active_streams t request_error =
       Option.iter
         (fun metrics -> Server_metrics.stream_resets metrics 1)
         state.metrics;
-      finish_stream_metrics state;
-      fail_pending_request_read state request_error;
-      fail_pending_request_discard state request_error;
-      fail_pending_response_write state request_error;
-      fail_request_trailers state request_error;
-      close_request_body state;
-      close_response_writer_best_effort state;
-      response_reset state;
-      forget_stream t ordinal state)
+      fail_stream t ordinal state request_error)
     streams
 
 let finish_remote_reset_stream t ordinal state =
@@ -2413,16 +2416,8 @@ let finish_remote_reset_stream t ordinal state =
   Option.iter
     (fun metrics -> Server_metrics.stream_resets metrics 1)
     state.metrics;
-  finish_stream_metrics state;
   let error = connection_closed_error t Request_body in
-  fail_pending_request_read state error;
-  fail_pending_request_discard state error;
-  fail_pending_response_write state error;
-  fail_request_trailers state error;
-  close_request_body state;
-  close_response_writer_best_effort state;
-  response_reset state;
-  forget_stream t ordinal state
+  fail_stream t ordinal state error
 
 let apply_remote_resets t =
   let ordinals =
@@ -2571,6 +2566,11 @@ let schedule_request_body_timeout t ordinal resolver timeout =
       ignore (enqueue t (Request_body_timeout (ordinal, resolver)));
       `Stop_daemon)
 
+let[@cold] fail_request_body t ordinal state error =
+  fail_request_trailers state error;
+  close_request_body state;
+  forget_if_complete t ordinal state
+
 let arm_request_body_read t ordinal resolver =
   match Hashtbl.find_opt t.streams ordinal with
   | None ->
@@ -2592,9 +2592,7 @@ let arm_request_body_read t ordinal resolver =
           state.request_read_resolver <- None;
           match record_request_body_bytes t state len with
           | Error error ->
-              fail_request_trailers state error;
-              close_request_body state;
-              forget_if_complete t ordinal state;
+              fail_request_body t ordinal state error;
               resolve resolver (Error error)
           | Ok () ->
               trace_request_body_copy t state len;
@@ -2640,9 +2638,7 @@ let handle_request_body_timeout t ordinal resolver =
           in
           state.request_read_resolver <- None;
           resolve resolver (Error error);
-          fail_request_trailers state error;
-          close_request_body state;
-          forget_if_complete t ordinal state
+          fail_request_body t ordinal state error
       | None | Some _ -> ())
 
 let handle_request_body_drain_timeout t ordinal token =
@@ -2656,9 +2652,7 @@ let handle_request_body_drain_timeout t ordinal token =
           in
           let resolver = state.request_discard_resolver in
           Option.iter (fun resolver -> resolve resolver (Error error)) resolver;
-          fail_request_trailers state error;
-          close_request_body state;
-          forget_if_complete t ordinal state
+          fail_request_body t ordinal state error
       | None | Some _ -> ())
 
 let discard_request_body t ordinal _drain resolver =
