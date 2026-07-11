@@ -824,13 +824,14 @@ let encoder_write_literal_with_indexing enc buf pos_ref ~name_index ~name ~value
 let encoded_header_bound (h : header) =
   String.length h.name + String.length h.value + 16
 
+let[@inline always] pending_table_size_update_bound enc =
+  match (enc.pending_min_table_size, enc.pending_table_size) with
+  | None, None -> 0
+  | Some min_size, Some final_size when min_size <> final_size -> 10
+  | Some _, _ | None, Some _ -> 5
+
 let encoded_headers_bound enc headers =
-  let table_update_bound =
-    match (enc.pending_min_table_size, enc.pending_table_size) with
-    | None, None -> 0
-    | Some min_size, Some final_size when min_size <> final_size -> 10
-    | Some _, _ | None, Some _ -> 5
-  in
+  let table_update_bound = pending_table_size_update_bound enc in
   List.fold_left
     (fun total header -> total + encoded_header_bound header)
     (32 + table_update_bound) headers
@@ -909,12 +910,7 @@ let encode_headers enc headers =
    the [:status] string for common codes. Avoids the per-response List.map +
    record allocations and the string_of_int for the status line. *)
 let encode_response_headers enc ~status headers =
-  let table_update_bound =
-    match (enc.pending_min_table_size, enc.pending_table_size) with
-    | None, None -> 0
-    | Some min_size, Some final_size when min_size <> final_size -> 10
-    | Some _, _ | None, Some _ -> 5
-  in
+  let table_update_bound = pending_table_size_update_bound enc in
   let bound =
     List.fold_left
       (fun total (n, v) -> total + String.length n + String.length v + 16)
