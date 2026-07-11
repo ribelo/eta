@@ -122,23 +122,19 @@ let perform_binary ?max_bytes provider client request =
            |> Eta.Effect.map (fun body -> (body, response.headers))
          else fail_response ?max_bytes provider response)
 
-let perform_chat provider client request =
+let[@inline always] perform_decoded provider decode client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
          if successful response then
            read_response_text response.body
-           |> Eta.Effect.bind (fun raw ->
-                  result_effect (provider.decode_chat raw))
+           |> Eta.Effect.bind (fun raw -> result_effect (decode raw))
          else fail_response provider response)
 
+let perform_chat provider client request =
+  perform_decoded provider provider.decode_chat client request
+
 let perform_embeddings provider client request =
-  submit_request client request
-  |> Eta.Effect.bind (fun response ->
-         if successful response then
-           read_response_text response.body
-           |> Eta.Effect.bind (fun raw ->
-                  result_effect (provider.decode_embeddings raw))
-         else fail_response provider response)
+  perform_decoded provider provider.decode_embeddings client request
 
 let perform_stream provider client request =
   submit_request client request
@@ -162,10 +158,7 @@ let run_embeddings_request provider client embedding_request request =
       Observability.with_embeddings_span provider embedding_request
         (perform_embeddings provider client http_request))
 
-let decode_effect decode raw =
-  match decode raw with
-  | Stdlib.Ok response -> Eta.Effect.pure response
-  | Stdlib.Error error -> Eta.Effect.fail error
+let decode_effect decode raw = result_effect (decode raw)
 
 let run_raw_decoded provider client request decode =
   run_request request (fun http_request ->
