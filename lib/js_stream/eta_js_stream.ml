@@ -30,7 +30,7 @@ module Stream = struct
         Eta_js.Effect.pure (Chunk xs)
       end
 
-  let from_iterable xs =
+  let[@inline always] from_iterable xs =
     let remaining = ref xs in
     fun () ->
       match !remaining with
@@ -40,16 +40,7 @@ module Stream = struct
           Eta_js.Effect.pure (Chunk xs)
 
   let range ~start ~stop =
-    let xs =
-      List.init (max 0 (stop - start)) (fun i -> start + i)
-    in
-    let remaining = ref xs in
-    fun () ->
-      match !remaining with
-      | [] -> Eta_js.Effect.pure Done
-      | xs ->
-          remaining := [];
-          Eta_js.Effect.pure (Chunk xs)
+    from_iterable (List.init (max 0 (stop - start)) (fun i -> start + i))
 
   let from_effect eff =
     let sent = ref false in
