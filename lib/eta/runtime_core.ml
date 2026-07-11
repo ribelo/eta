@@ -2,8 +2,6 @@ module P_atomic = Atomic
 module RObs = Runtime_observability
 module Sch = Schedule
 
-let option_map f = function None -> None | Some value -> Some (f value)
-
 (* Typed failures cross runtime fibers through OCaml exceptions. This is the only
    place that may pack/unpack a typed Cause through [Obj.t]. The fresh
    [Typed_fail] key is the dynamic proof that the unpacking interpreter is the
