@@ -69,5 +69,5 @@ let ok = function
       failwith (Format.asprintf "unexpected failure: %a"
         (Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<err>")) cause)
 
-let schedule = Schedule.recurs 0
+let schedule () = Schedule.recurs 0
 let tiny = Duration.ms 1
