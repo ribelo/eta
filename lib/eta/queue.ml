@@ -294,14 +294,6 @@ let enqueue_value_locked wakeups (t : ('a, 'err) t) value =
       t.sent <- saturating_succ t.sent;
       t.sent_token <- new_sent_token ()
 
-let wake_one_receiver_locked wakeups (t : ('a, 'err) t) =
-  match take_active_receiver_locked t with
-  | None -> ()
-  | Some receiver ->
-      t.waiting_receivers <- t.waiting_receivers - 1;
-      receiver.active <- false;
-      add_wakeup wakeups (Wake_receiver receiver)
-
 let rec admit_waiting_senders_locked wakeups (t : ('a, 'err) t) =
   match t.strategy with
   | Unbounded | Dropping _ | Sliding _ -> ()
