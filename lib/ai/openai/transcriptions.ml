@@ -53,18 +53,6 @@ let[@zero_alloc] string_has_substring_at value ~needle index needle_len =
   done;
   !offset = needle_len
 
-let[@zero_alloc] bytes_has_substring_at value ~needle index needle_len =
-  let offset = ref 0 in
-  while
-    !offset < needle_len
-    && Char.equal
-         (Bytes.unsafe_get value (index + !offset))
-         (String.unsafe_get needle !offset)
-  do
-    incr offset
-  done;
-  !offset = needle_len
-
 let[@zero_alloc] contains_substring value ~needle =
   let needle_len = String.length needle in
   let value_len = String.length value in
@@ -79,24 +67,10 @@ let[@zero_alloc] contains_substring value ~needle =
     done;
     !found)
 
-let[@zero_alloc] bytes_contains_substring value ~needle =
-  let needle_len = String.length needle in
-  let value_len = Bytes.length value in
-  if needle_len = 0 then true
-  else (
-    let stop = value_len - needle_len in
-    let index = ref 0 in
-    let found = ref false in
-    while (not !found) && !index <= stop do
-      found := bytes_has_substring_at value ~needle !index needle_len;
-      incr index
-    done;
-    !found)
-
 let multipart_boundary (file : A.binary_file) strings =
   let base = "eta-ai-" ^ Digest.to_hex (Digest.bytes file.data) in
   let collides boundary =
-    bytes_contains_substring file.data ~needle:boundary
+    contains_substring (Bytes.unsafe_to_string file.data) ~needle:boundary
     || List.exists (contains_substring ~needle:boundary) strings
   in
   let rec loop suffix =
