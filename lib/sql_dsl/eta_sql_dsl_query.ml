@@ -130,6 +130,16 @@ module Make (Backend : BACKEND) = struct
       qualified_column_name = column.qualified_column_name;
     }
 
+  let[@inline always] make_column ~table_name ~qualifier name typ =
+    let quoted_column_name = quote_ident name in
+    {
+      table_name;
+      column_name = name;
+      typ;
+      quoted_column_name;
+      qualified_column_name = qualifier ^ "." ^ quoted_column_name;
+    }
+
   module Table = struct
     type 'table t = 'table table
 
@@ -150,14 +160,7 @@ module Make (Backend : BACKEND) = struct
         }
 
       let column name typ =
-        let quoted_column_name = quote_ident name in
-        {
-          table_name = Name.name;
-          column_name = name;
-          typ;
-          quoted_column_name;
-          qualified_column_name = table.column_qualifier ^ "." ^ quoted_column_name;
-        }
+        make_column ~table_name:Name.name ~qualifier:table.column_qualifier name typ
     end
 
     let name (table : _ t) = table.table_name
@@ -171,14 +174,8 @@ module Make (Backend : BACKEND) = struct
       }
 
     let column (table : _ t) name typ =
-      let quoted_column_name = quote_ident name in
-      {
-        table_name = table.table_name;
-        column_name = name;
-        typ;
-        quoted_column_name;
-        qualified_column_name = table.column_qualifier ^ "." ^ quoted_column_name;
-      }
+      make_column ~table_name:table.table_name ~qualifier:table.column_qualifier
+        name typ
   end
 
   module Column = struct
