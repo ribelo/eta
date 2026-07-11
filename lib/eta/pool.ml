@@ -251,6 +251,11 @@ let mark_closed ?(release_permit = true) t =
   t.closed <- t.closed + 1;
   if release_permit then Semaphore.release t.sem 1
 
+let[@inline always] mark_close_finished ?(release_permit = true) t =
+  mark_closed ~release_permit t
+  |> Effect.bind (fun () -> emit_closed t)
+  |> Effect.bind (fun () -> emit_gauges t)
+
 let close_entry_once t entry =
   span t "eta.pool.close"
     (t.release_conn entry.conn
@@ -264,13 +269,9 @@ let finish_close = function
   | `Close_failed err -> Effect.fail err
 
 let close_entry ?(release_permit = true) t entry =
-  let mark_close_finished =
-    mark_closed ~release_permit t
-    |> Effect.bind (fun () -> emit_closed t)
-    |> Effect.bind (fun () -> emit_gauges t)
-  in
+  let close_finished = mark_close_finished ~release_permit t in
   close_entry_once t entry
-  |> Effect.finally mark_close_finished
+  |> Effect.finally close_finished
   |> Effect.bind finish_close
 
 let remove_idle_entry_locked t entry =
@@ -291,24 +292,14 @@ let remove_idle_entry t entry =
   Effect.sync @@ fun () ->
   with_lock t @@ fun () -> remove_idle_entry_locked t entry
 
-let mark_removed_idle_closed t =
-  Effect.sync @@ fun () ->
-  with_lock t @@ fun () ->
-  decr_total_locked t;
-  t.closed <- t.closed + 1
-
 let close_idle_entry t entry =
   remove_idle_entry t entry
   |> Effect.bind (function
        | false -> emit_gauges t
        | true ->
-           let mark_close_finished =
-             mark_removed_idle_closed t
-             |> Effect.bind (fun () -> emit_closed t)
-             |> Effect.bind (fun () -> emit_gauges t)
-           in
+           let close_finished = mark_close_finished ~release_permit:false t in
            close_entry_once t entry
-           |> Effect.finally mark_close_finished
+           |> Effect.finally close_finished
            |> Effect.bind finish_close)
 
 exception Close_entries_failed of string
