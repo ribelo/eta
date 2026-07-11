@@ -317,27 +317,49 @@ let close_locked wakeups (t : ('a, 'err) t) reason =
     close_senders ();
     close_receivers ())
 
+let[@inline always] send_locked wakeups (t : ('a, 'err) t) value =
+  match t.closed with
+  | Some reason -> close_result reason
+  | None when capacity_used t < t.capacity && t.depth = 0 -> (
+      match take_receiver t with
+      | Some receiver ->
+          t.sent <- t.sent + 1;
+          deliver_receiver wakeups t receiver value;
+          `Sent
+      | None ->
+          push_counted t value;
+          `Sent)
+  | None when capacity_used t < t.capacity ->
+      push_counted t value;
+      `Sent
+  | None -> `Full
+
+let[@inline always] recv_locked wakeups (t : ('a, 'err) t) =
+  if t.depth > 0 then (
+    let value = pop t in
+    pump wakeups t;
+    `Item value)
+  else
+    match take_sender t with
+    | Some sender ->
+        t.sent <- t.sent + 1;
+        t.received <- t.received + 1;
+        add_wakeup wakeups (Wake_sender (sender, `Sent));
+        `Item sender.value
+    | None -> (
+        match t.closed with
+        | Some reason -> close_result reason
+        | None -> `Empty)
+
 let send_sync contract (t : ('a, 'err) t) value =
   let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
-    match t.closed with
-    | Some reason -> `Ready (close_result reason)
-    | None when capacity_used t < t.capacity && t.depth = 0 -> (
-        match take_receiver t with
-        | Some receiver ->
-            t.sent <- t.sent + 1;
-            deliver_receiver wakeups t receiver value;
-            `Ready `Sent
-        | None ->
-            push_counted t value;
-            `Ready `Sent)
-    | None when capacity_used t < t.capacity ->
-        push_counted t value;
-        `Ready `Sent
-    | None ->
+    match send_locked wakeups t value with
+    | `Full ->
         let promise, sender = enqueue_sender contract t value in
         `Wait (promise, sender)
+    | result -> `Ready result
   with
   | `Ready result ->
       resolve_wakeups !wakeups;
@@ -355,23 +377,11 @@ let recv_sync contract (t : ('a, 'err) t) =
   let wakeups = ref [] in
   match
     with_lock t @@ fun () ->
-    if t.depth > 0 then (
-      let value = pop t in
-      pump wakeups t;
-      `Ready (`Item value))
-    else
-      match take_sender t with
-      | Some sender ->
-          t.sent <- t.sent + 1;
-          t.received <- t.received + 1;
-          add_wakeup wakeups (Wake_sender (sender, `Sent));
-          `Ready (`Item sender.value)
-      | None -> (
-          match t.closed with
-          | Some reason -> `Ready (close_result reason)
-          | None ->
-              let promise, receiver = enqueue_receiver contract t in
-              `Wait (promise, receiver))
+    match recv_locked wakeups t with
+    | `Empty ->
+        let promise, receiver = enqueue_receiver contract t in
+        `Wait (promise, receiver)
+    | result -> `Ready result
   with
   | `Ready result ->
       resolve_wakeups !wakeups;
@@ -417,48 +427,14 @@ let recv t =
 let try_send (t : ('a, 'err) t) value =
   Effect.sync @@ fun () ->
   let wakeups = ref [] in
-  let result =
-    with_lock t @@ fun () ->
-    match t.closed with
-    | Some reason -> close_result reason
-    | None when capacity_used t < t.capacity && t.depth = 0 -> (
-        match take_receiver t with
-        | Some receiver ->
-            t.sent <- t.sent + 1;
-            deliver_receiver wakeups t receiver value;
-            `Sent
-        | None ->
-            push_counted t value;
-            `Sent)
-    | None when capacity_used t = t.capacity -> `Full
-    | None ->
-        push_counted t value;
-        `Sent
-  in
+  let result = with_lock t @@ fun () -> send_locked wakeups t value in
   resolve_wakeups !wakeups;
   result
 
 let try_recv (t : ('a, 'err) t) =
   Effect.sync @@ fun () ->
   let wakeups = ref [] in
-  let result =
-    with_lock t @@ fun () ->
-    if t.depth > 0 then (
-      let value = pop t in
-      pump wakeups t;
-      `Item value)
-    else
-      match take_sender t with
-      | Some sender ->
-          t.sent <- t.sent + 1;
-          t.received <- t.received + 1;
-          add_wakeup wakeups (Wake_sender (sender, `Sent));
-          `Item sender.value
-      | None -> (
-          match t.closed with
-          | Some reason -> close_result reason
-          | None -> `Empty)
-  in
+  let result = with_lock t @@ fun () -> recv_locked wakeups t in
   resolve_wakeups !wakeups;
   result
 
