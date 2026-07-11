@@ -50,6 +50,19 @@ let if_open t f =
   else
     f ()
 
+let[@inline always] execute_statement t sql params =
+  if_open t @@ fun () ->
+  touch t;
+  Types.with_dynamic_statement t.db sql params @@ fun stmt ->
+  let rc = Sqlite.step stmt in
+  if Sqlite.rc_equal rc Sqlite.done_ then (
+    sync_transaction_state t;
+    Ok (Sqlite.changes t.db)
+  ) else
+    match Types.check_sqlite t.db ~operation:"execute" rc with
+    | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
+    | Result.Error err -> Result.Error err
+
 module Raw = struct
   let query t sql params =
     if_open t @@ fun () ->
@@ -68,18 +81,7 @@ module Raw = struct
     in
     loop []
 
-  let execute t sql params =
-    if_open t @@ fun () ->
-    touch t;
-    Types.with_dynamic_statement t.db sql params @@ fun stmt ->
-    let rc = Sqlite.step stmt in
-    if Sqlite.rc_equal rc Sqlite.done_ then (
-      sync_transaction_state t;
-      Ok (Sqlite.changes t.db)
-    ) else
-      match Types.check_sqlite t.db ~operation:"execute" rc with
-      | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
-      | Result.Error err -> Result.Error err
+  let execute t sql params = execute_statement t sql params
 
   let execute_script t sql =
     if_open t @@ fun () ->
@@ -131,18 +133,7 @@ module Typed = struct
     loop []
 
   let execute_compiled t (query : Compiled.change) =
-    if_open t @@ fun () ->
-    touch t;
-    Types.with_dynamic_statement t.db (Compiled.change_sql query)
-      (Compiled.change_params query) @@ fun stmt ->
-    let rc = Sqlite.step stmt in
-    if Sqlite.rc_equal rc Sqlite.done_ then (
-      sync_transaction_state t;
-      Ok (Sqlite.changes t.db)
-    ) else
-      match Types.check_sqlite t.db ~operation:"execute" rc with
-      | Ok () -> Types.unexpected_sqlite_step ~operation:"execute" rc
-      | Result.Error err -> Result.Error err
+    execute_statement t (Compiled.change_sql query) (Compiled.change_params query)
 
   let run_schema t (schema : Compiled.schema) =
     Raw.execute_script t (Compiled.schema_sql schema)
