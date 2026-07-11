@@ -541,19 +541,6 @@ module Make (Backend : BACKEND) = struct
       limit : int option;
     }
 
-    let from table row =
-      {
-        rev_ctes = [];
-        source = Source.from table;
-        row;
-        distinct = false;
-        where_ = None;
-        rev_group_by = [];
-        having = None;
-        rev_order_by = [];
-        limit = None;
-      }
-
     let from_source source row =
       {
         rev_ctes = [];
@@ -566,6 +553,8 @@ module Make (Backend : BACKEND) = struct
         rev_order_by = [];
         limit = None;
       }
+
+    let[@inline always] from table row = from_source (Source.from table) row
 
     let with_cte ~name (cte : _ Compiled.select) query =
       {
