@@ -295,6 +295,16 @@ let shutdown t policy =
   close_pending_tls t;
   List.iter (shutdown_connection policy) (connections t)
 
+let[@inline always] connection_started connection on_connection_start current =
+  connection := Some current;
+  Option.iter (fun on_start -> on_start current) on_connection_start
+
+let[@inline always] connection_closed connection on_connection_close stats =
+  match !connection with
+  | None -> ()
+  | Some current ->
+      Option.iter (fun on_close -> on_close current stats) on_connection_close
+
 let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?(config = Config.default) ?runtime_factory ?on_error ?on_connection_start
     ?on_connection_close ~(socket : _ Eio.Net.listening_socket) handler =
@@ -311,19 +321,8 @@ let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
         Eio.Switch.run @@ fun conn_sw ->
         let flow = accepted_flow ~peer flow in
         let connection = ref None in
-        let on_start current =
-          connection := Some current;
-          Option.iter (fun on_connection_start -> on_connection_start current)
-            on_connection_start
-        in
-        let on_close stats =
-          match !connection with
-          | None -> ()
-          | Some current ->
-              Option.iter
-                (fun on_connection_close -> on_connection_close current stats)
-                on_connection_close
-        in
+        let on_start = connection_started connection on_connection_start in
+        let on_close = connection_closed connection on_connection_close in
         H1_server_connection.run ~sw:conn_sw ~clock ?time
           ~flow:(flow :> H1_server_connection.flow)
           ~connection:(h1_connection_info peer) ~config ~runtime_factory
@@ -365,19 +364,8 @@ let run_h1_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
         Eio.Switch.run @@ fun conn_sw ->
         let flow = accepted_flow ~peer flow in
         let connection = ref None in
-        let on_start current =
-          connection := Some current;
-          Option.iter (fun on_connection_start -> on_connection_start current)
-            on_connection_start
-        in
-        let on_close stats =
-          match !connection with
-          | None -> ()
-          | Some current ->
-              Option.iter
-                (fun on_connection_close -> on_connection_close current stats)
-                on_connection_close
-        in
+        let on_start = connection_started connection on_connection_start in
+        let on_close = connection_closed connection on_connection_close in
         H1_server_connection.run ~sw:conn_sw ~clock ?time
           ~flow:(flow :> H1_server_connection.flow)
           ~connection:(h1_connection_info peer) ~config ~runtime_factory
@@ -412,19 +400,8 @@ let run_h2c_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
         Eio.Switch.run @@ fun conn_sw ->
         let flow = accepted_flow ~peer flow in
         let connection = ref None in
-        let on_start current =
-          connection := Some current;
-          Option.iter (fun on_connection_start -> on_connection_start current)
-            on_connection_start
-        in
-        let on_close stats =
-          match !connection with
-          | None -> ()
-          | Some current ->
-              Option.iter
-                (fun on_connection_close -> on_connection_close current stats)
-                on_connection_close
-        in
+        let on_start = connection_started connection on_connection_start in
+        let on_close = connection_closed connection on_connection_close in
         H2_server_connection.run_h2c ~sw:conn_sw ~clock ?time
           ~flow:(flow :> H2_server_connection.flow)
           ~peer ~config ~runtime_factory ~on_start ~on_close handler)
@@ -466,19 +443,8 @@ let run_h2c_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
         Eio.Switch.run @@ fun conn_sw ->
         let flow = accepted_flow ~peer flow in
         let connection = ref None in
-        let on_start current =
-          connection := Some current;
-          Option.iter (fun on_connection_start -> on_connection_start current)
-            on_connection_start
-        in
-        let on_close stats =
-          match !connection with
-          | None -> ()
-          | Some current ->
-              Option.iter
-                (fun on_connection_close -> on_connection_close current stats)
-                on_connection_close
-        in
+        let on_start = connection_started connection on_connection_start in
+        let on_close = connection_closed connection on_connection_close in
         H2_server_connection.run_h2c ~sw:conn_sw ~clock ?time
           ~flow:(flow :> H2_server_connection.flow)
           ~peer ~config ~runtime_factory ~on_start ~on_close handler)
