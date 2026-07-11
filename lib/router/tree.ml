@@ -463,14 +463,22 @@ let insert t route value =
                   | i -> i
                 in
                 (match Route.find_wildcard (Escape.slice_until remaining terminator) with
-                | Ok (Some w) ->
-                  let suffix = Escape.slice_off (Escape.slice_until remaining terminator) w.end_ in
-                  if w.start > 0 && suffix_wild_child_in_segment current then
-                    Error (Router_error.Conflict "prefix-suffix conflict")
-                  else if
-                    not (is_empty_or_slash suffix)
-                    && prefix_wild_child_in_segment current
-                  then
+                | Error _ as e -> e
+                | Ok wildcard ->
+                  let prefix_suffix_conflict =
+                    match wildcard with
+                    | None -> false
+                    | Some w ->
+                      let suffix =
+                        Escape.slice_off
+                          (Escape.slice_until remaining terminator)
+                          w.end_
+                      in
+                      (w.start > 0 && suffix_wild_child_in_segment current)
+                      || (not (is_empty_or_slash suffix)
+                         && prefix_wild_child_in_segment current)
+                  in
+                  if prefix_suffix_conflict then
                     Error (Router_error.Conflict "prefix-suffix conflict")
                   else begin
                     current.indices <- append_char current.indices next;
@@ -481,17 +489,7 @@ let insert t route value =
                       last.remapping <- remapping;
                       Ok ()
                     | Error _ as e -> e
-                  end
-                | Error _ as e -> e
-                | Ok None ->
-                  current.indices <- append_char current.indices next;
-                  let child = add_child current (default_node ()) in
-                  let child = update_child_priority current child in
-                  match insert_route current.children.(child) remaining value with
-                  | Ok last ->
-                    last.remapping <- remapping;
-                    Ok ()
-                  | Error _ as e -> e)
+                  end)
               end else begin
                 (* Inserting a wildcard. *)
                 if current.wild_child then begin
