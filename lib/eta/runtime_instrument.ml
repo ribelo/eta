@@ -102,11 +102,6 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
         finish (RObs.status_of_cause ~error_renderer cause);
         raise_cause fail_key cause
 
-let interpret_named ~runtime ~error_renderer ~fail_key ~interpret_ast ~sw
-    ~finalizers ~kind ~name ~attrs e =
-  with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs (fun () ->
-      interpret_ast ~runtime ~error_renderer ~fail_key ~sw ~finalizers e)
-
 let instrument_leaf ~runtime ~error_renderer ~fail_key ~name f =
   with_span ~runtime ~error_renderer ~fail_key ~kind:Capabilities.Internal ~name
     ~attrs:[] f

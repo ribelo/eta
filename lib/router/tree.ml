@@ -590,8 +590,6 @@ let[@inline always] path_drop p n =
   p.off <- p.off + n;
   p.len <- p.len - n
 
-let path_snapshot p = { src = p.src; off = p.off; len = p.len }
-
 let rec path_prefix_equal_loop p prefix len i =
   i >= len
   || (path_get p i = String.unsafe_get prefix i

@@ -797,9 +797,6 @@ type ('capability, 'observer, 'callback, 'error) delivery_event_source = {
 let delivery_event_source_of_collect_event ~collect_event =
   { source_collect_event = collect_event }
 
-let delivery_event_source_of_collection collection =
-  delivery_event_source_of_collect_event ~collect_event:(collect_event collection)
-
 let delivery_event_source context collection =
   delivery_event_source_of_collect_event
     ~collect_event:(fun capability observer ->

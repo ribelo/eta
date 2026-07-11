@@ -324,8 +324,6 @@ let map_cause_error = Cause.map
 let render_cause_error frame cause =
   Cause.finalizer_of_cause (render_error frame) cause
 
-let finalizer_cause frame cause = Cause.finalizer (render_cause_error frame cause)
-
 let map_error (f) eff =
   preserve eff @@ fun frame ->
   match eval frame eff with
