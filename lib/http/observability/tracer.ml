@@ -8,6 +8,10 @@ let method_name method_ = Method.(method_ |> of_string |> to_string)
 let span_name request =
   "HTTP " ^ method_name request.Request.method_
 
+let[@inline always] resolve_protocol client = function
+  | Some protocol -> protocol
+  | None -> Client.protocol client
+
 let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
   let request_attrs =
     attrs @ Semconv.request_attrs ~emit_url_full ~protocol request
@@ -25,18 +29,19 @@ let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
   body |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Client (span_name request)
 
 let request ?(enabled = true) ?(emit_url_full = false) ?protocol client request =
-  let protocol = Option.value ~default:(Client.protocol client) protocol in
   let eff = Client.request client request in
-  if enabled then with_span ~emit_url_full ~protocol request eff
+  if enabled then
+    let protocol = resolve_protocol client protocol in
+    with_span ~emit_url_full ~protocol request eff
   else Eta.Effect.suppress_observability eff
 
 let request_with_retry ?(enabled = true) ?(emit_url_full = false) ?policy
     ?protocol client request =
-  let protocol = Option.value ~default:(Client.protocol client) protocol in
   if not enabled then
     Client.request_with_retry ?policy client request
     |> Eta.Effect.suppress_observability
   else
+    let protocol = resolve_protocol client protocol in
     let attempt = ref 0 in
     let request_once request =
       incr attempt;
