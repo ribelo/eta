@@ -63,7 +63,7 @@ let timestamp_clock ts_ms =
   let millis = day_offset mod 1_000 in
   Printf.sprintf "%02d:%02d:%02d.%03d" hours minutes seconds millis
 
-let needs_quote s =
+let[@inline always] needs_quote s =
   String.equal s ""
   || String.exists
        (function
@@ -89,16 +89,8 @@ let quote_logfmt_value s =
 let format_value s = if needs_quote s then quote_logfmt_value s else s
 
 let validate_label caller label =
-  let valid =
-    (not (String.equal label ""))
-    && not
-         (String.exists
-            (function
-              | ' ' | '\t' | '\n' | '\r' | '"' | '=' -> true
-              | _ -> false)
-            label)
-  in
-  if not valid then invalid_arg (caller ^ ": invalid logfmt label " ^ label)
+  if needs_quote label then
+    invalid_arg (caller ^ ": invalid logfmt label " ^ label)
 
 let logfmt_field caller (key, value) =
   validate_label caller key;
