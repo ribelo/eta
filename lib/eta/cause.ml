@@ -138,6 +138,40 @@ module Portable = struct
     annotations : (string * string) list;
   }
 
+  let die_of_cause die =
+    {
+      kind = Printexc.exn_slot_name die.exn;
+      message = Printexc.to_string die.exn;
+      backtrace = Option.map Printexc.raw_backtrace_to_string die.backtrace;
+      span_name = die.span_name;
+      annotations = die.annotations;
+    }
+
+  let equal_die left right =
+    String.equal left.kind right.kind
+    && String.equal left.message right.message
+    && Option.equal String.equal left.backtrace right.backtrace
+    && Option.equal String.equal left.span_name right.span_name
+    && List.equal
+         (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
+         left.annotations right.annotations
+
+  let pp_backtrace fmt = function
+    | None -> ()
+    | Some bt -> Format.fprintf fmt "; backtrace=%S" bt
+
+  let pp_die fmt die =
+    Format.fprintf fmt "Die{kind=%S; message=%S" die.kind die.message;
+    (match die.span_name with
+    | None -> ()
+    | Some name -> Format.fprintf fmt "; span_name=%S" name);
+    (match die.annotations with
+    | [] -> ()
+    | annotations ->
+        Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
+    pp_backtrace fmt die.backtrace;
+    Format.pp_print_string fmt "}"
+
   module Finalizer = struct
     type t =
       | Fail of string
@@ -147,15 +181,6 @@ module Portable = struct
       | Concurrent of t list
       | Finalizer of t
       | Suppressed of { primary : t; finalizer : t }
-
-    let die_of_cause die =
-      {
-        kind = Printexc.exn_slot_name die.exn;
-        message = Printexc.to_string die.exn;
-        backtrace = Option.map Printexc.raw_backtrace_to_string die.backtrace;
-        span_name = die.span_name;
-        annotations = die.annotations;
-      }
 
     let rec of_finalizer : Finalizer_cause.t -> t = function
       | Finalizer_cause.Fail err -> Fail err
@@ -171,15 +196,6 @@ module Portable = struct
               finalizer = of_finalizer finalizer;
             }
 
-    let equal_die left right =
-      String.equal left.kind right.kind
-      && String.equal left.message right.message
-      && Option.equal String.equal left.backtrace right.backtrace
-      && Option.equal String.equal left.span_name right.span_name
-      && List.equal
-           (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-           left.annotations right.annotations
-
     let rec equal left right =
       match (left, right) with
       | Fail a, Fail b -> String.equal a b
@@ -191,22 +207,6 @@ module Portable = struct
       | Suppressed a, Suppressed b ->
           equal a.primary b.primary && equal a.finalizer b.finalizer
       | _ -> false
-
-    let pp_backtrace fmt = function
-      | None -> ()
-      | Some bt -> Format.fprintf fmt "; backtrace=%S" bt
-
-    let pp_die fmt die =
-      Format.fprintf fmt "Die{kind=%S; message=%S" die.kind die.message;
-      (match die.span_name with
-      | None -> ()
-      | Some name -> Format.fprintf fmt "; span_name=%S" name);
-      (match die.annotations with
-      | [] -> ()
-      | annotations ->
-          Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
-      pp_backtrace fmt die.backtrace;
-      Format.pp_print_string fmt "}"
 
     let rec pp fmt = function
       | Fail err -> Format.fprintf fmt "Fail(%S)" err
@@ -240,15 +240,6 @@ module Portable = struct
     | Finalizer of Finalizer.t
     | Suppressed of { primary : 'err t; finalizer : Finalizer.t }
 
-  let die_of_cause die =
-    {
-      kind = Printexc.exn_slot_name die.exn;
-      message = Printexc.to_string die.exn;
-      backtrace = Option.map Printexc.raw_backtrace_to_string die.backtrace;
-      span_name = die.span_name;
-      annotations = die.annotations;
-    }
-
   let rec of_cause :
       type err portable_err.
       (err -> portable_err) -> err same_domain_t -> portable_err t =
@@ -266,15 +257,6 @@ module Portable = struct
             finalizer = Finalizer.of_finalizer finalizer;
           }
 
-  let equal_die left right =
-    String.equal left.kind right.kind
-    && String.equal left.message right.message
-    && Option.equal String.equal left.backtrace right.backtrace
-    && Option.equal String.equal left.span_name right.span_name
-    && List.equal
-         (fun (ak, av) (bk, bv) -> String.equal ak bk && String.equal av bv)
-         left.annotations right.annotations
-
   let rec equal (equal_err) left right =
     match (left, right) with
     | Fail a, Fail b -> equal_err a b
@@ -287,22 +269,6 @@ module Portable = struct
         equal equal_err a.primary b.primary
         && Finalizer.equal a.finalizer b.finalizer
     | _ -> false
-
-  let pp_backtrace fmt = function
-    | None -> ()
-    | Some bt -> Format.fprintf fmt "; backtrace=%S" bt
-
-  let pp_die fmt die =
-    Format.fprintf fmt "Die{kind=%S; message=%S" die.kind die.message;
-    (match die.span_name with
-    | None -> ()
-    | Some name -> Format.fprintf fmt "; span_name=%S" name);
-    (match die.annotations with
-    | [] -> ()
-    | annotations ->
-        Format.fprintf fmt "; annotations=%a" pp_annotations annotations);
-    pp_backtrace fmt die.backtrace;
-    Format.pp_print_string fmt "}"
 
   let rec pp (pp_err) fmt = function
     | Fail err -> Format.fprintf fmt "Fail(%a)" pp_err err
