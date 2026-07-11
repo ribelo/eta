@@ -208,18 +208,21 @@ module Make (Key : Key) = struct
     | Exit.Ok _ -> ()
     | Exit.Error _ -> t.load_failures <- t.load_failures + 1
 
-  let complete_entry_locked t entry exit (loaded_at_ms, ttl_ms) =
-    entry.state <- Complete { exit; loaded_at_ms; ttl_ms };
+  let[@inline always] install_complete_entry_locked t entry =
     link_front t entry;
     t.current_size <- t.current_size + 1;
     enforce_capacity_locked t
 
+  let complete_entry_locked t entry exit (loaded_at_ms, ttl_ms) =
+    entry.state <- Complete { exit; loaded_at_ms; ttl_ms };
+    install_complete_entry_locked t entry
+
+  let[@inline always] apply_expiry_exit lookup_exit = function
+    | Exit.Ok expiry -> (lookup_exit, expiry)
+    | Exit.Error cause -> (Exit.Error cause, None)
+
   let finish_pending t entry pending lookup_exit expiry_exit =
-    let final_exit, expiry =
-      match expiry_exit with
-      | Exit.Ok expiry -> (lookup_exit, expiry)
-      | Exit.Error cause -> (Exit.Error cause, None)
-    in
+    let final_exit, expiry = apply_expiry_exit lookup_exit expiry_exit in
     Effect.sync
       (fun () ->
         Sync_lock.use t.lock @@ fun () ->
@@ -290,16 +293,10 @@ module Make (Key : Key) = struct
       }
     in
     Table.replace t.table key entry;
-    link_front t entry;
-    t.current_size <- t.current_size + 1;
-    enforce_capacity_locked t
+    install_complete_entry_locked t entry
 
   let finish_refresh t key lookup_exit expiry_exit =
-    let final_exit, expiry =
-      match expiry_exit with
-      | Exit.Ok expiry -> (lookup_exit, expiry)
-      | Exit.Error cause -> (Exit.Error cause, None)
-    in
+    let final_exit, expiry = apply_expiry_exit lookup_exit expiry_exit in
     Effect.sync
       (fun () ->
         Sync_lock.use t.lock @@ fun () ->
