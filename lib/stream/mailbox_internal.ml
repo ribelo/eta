@@ -48,15 +48,18 @@ let dropped mailbox = Eio.Mutex.use_ro mailbox.mutex (fun () -> mailbox.dropped)
 let length mailbox =
   Eio.Mutex.use_ro mailbox.mutex (fun () -> Queue.length mailbox.queue)
 
+let[@inline always] take_first_locked mailbox =
+  while Queue.is_empty mailbox.queue && not mailbox.closed do
+    Eio.Condition.await mailbox.condition mailbox.mutex
+  done;
+  Queue.take_opt mailbox.queue
+
 let take mailbox =
   Eio.Mutex.lock mailbox.mutex;
   Fun.protect
     ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
     (fun () ->
-      while Queue.is_empty mailbox.queue && not mailbox.closed do
-        Eio.Condition.await mailbox.condition mailbox.mutex
-      done;
-      match Queue.take_opt mailbox.queue with
+      match take_first_locked mailbox with
       | Some value -> Item value
       | None -> Take_closed)
 
@@ -66,10 +69,7 @@ let take_batch mailbox max =
   Fun.protect
     ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
     (fun () ->
-      while Queue.is_empty mailbox.queue && not mailbox.closed do
-        Eio.Condition.await mailbox.condition mailbox.mutex
-      done;
-      match Queue.take_opt mailbox.queue with
+      match take_first_locked mailbox with
       | None -> Take_closed
       | Some first ->
           let rec drain remaining acc =
