@@ -406,17 +406,17 @@ let check db ~operation rc =
 
 let raise_error err = raise (Error err)
 
-let check_exn db ~operation rc =
-  match check db ~operation rc with
-  | Ok () -> ()
+let[@inline always] value_or_raise = function
+  | Ok value -> value
   | Result.Error err -> raise_error err
+
+let check_exn db ~operation rc =
+  value_or_raise (check db ~operation rc)
 
 let exec_script_result db sql = check db ~operation:"exec script" (exec_script_raw db sql)
 
 let exec_script db sql =
-  match exec_script_result db sql with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (exec_script_result db sql)
 
 let journal_mode_sql = function
   | `Delete -> "DELETE"
@@ -468,9 +468,7 @@ let prepare_result db sql =
       Result.Error { operation = "prepare"; code = error_code db; message }
 
 let prepare db sql =
-  match prepare_result db sql with
-  | Ok stmt -> stmt
-  | Result.Error err -> raise_error err
+  value_or_raise (prepare_result db sql)
 
 let with_finalized_stmt stmt f =
   match f () with
@@ -495,9 +493,7 @@ let exec_result db sql =
       | `Error err -> Result.Error err)
 
 let exec db sql =
-  match exec_result db sql with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (exec_result db sql)
 
 let transaction_mode_sql = function
   | Deferred -> "DEFERRED"
@@ -508,23 +504,17 @@ let begin_transaction_result ?(mode = Deferred) db =
   exec_result db ("BEGIN " ^ transaction_mode_sql mode)
 
 let begin_transaction ?mode db =
-  match begin_transaction_result ?mode db with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (begin_transaction_result ?mode db)
 
 let commit_result db = exec_result db "COMMIT"
 
 let commit db =
-  match commit_result db with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (commit_result db)
 
 let rollback_result db = exec_result db "ROLLBACK"
 
 let rollback db =
-  match rollback_result db with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (rollback_result db)
 
 let with_transaction_result ?mode db f =
   match begin_transaction_result ?mode db with
@@ -545,9 +535,7 @@ let with_transaction_result ?mode db f =
           raise exn)
 
 let with_transaction ?mode db f =
-  match with_transaction_result ?mode db (fun db -> Ok (f db)) with
-  | Ok value -> value
-  | Result.Error err -> raise_error err
+  value_or_raise (with_transaction_result ?mode db (fun db -> Ok (f db)))
 
 let quote_savepoint_name name =
   if name = "" then
@@ -567,23 +555,17 @@ let quote_savepoint_name name =
 let savepoint_result db name = exec_result db ("SAVEPOINT " ^ quote_savepoint_name name)
 
 let savepoint db name =
-  match savepoint_result db name with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (savepoint_result db name)
 
 let release_result db name = exec_result db ("RELEASE " ^ quote_savepoint_name name)
 
 let release db name =
-  match release_result db name with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (release_result db name)
 
 let rollback_to_result db name = exec_result db ("ROLLBACK TO " ^ quote_savepoint_name name)
 
 let rollback_to db name =
-  match rollback_to_result db name with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (rollback_to_result db name)
 
 external enable_load_extension_raw : raw_db -> bool -> (int[@untagged])
   = "eta_sqlite_enable_load_extension_bc" "eta_sqlite_enable_load_extension"
@@ -601,9 +583,7 @@ let load_extension_result db path =
   check db ~operation:"load extension" (load_extension_raw db path)
 
 let load_extension db path =
-  match load_extension_result db path with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (load_extension_result db path)
 
 external backup_to_path_raw : raw_db -> string -> (int[@untagged])
   = "eta_sqlite_backup_to_path_bc" "eta_sqlite_backup_to_path"
@@ -621,17 +601,13 @@ let backup_to_path_result db path =
   check db ~operation:"backup to path" (backup_to_path_raw db path)
 
 let backup_to_path db path =
-  match backup_to_path_result db path with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (backup_to_path_result db path)
 
 let restore_from_path_result db path =
   check db ~operation:"restore from path" (restore_from_path_raw db path)
 
 let restore_from_path db path =
-  match restore_from_path_result db path with
-  | Ok () -> ()
-  | Result.Error err -> raise_error err
+  value_or_raise (restore_from_path_result db path)
 
 let query_one_int_result db sql =
   match prepare_result db sql with
@@ -655,9 +631,7 @@ let query_one_int_result db sql =
       | `Error err -> Result.Error err)
 
 let query_one_int db sql =
-  match query_one_int_result db sql with
-  | Ok value -> value
-  | Result.Error err -> raise_error err
+  value_or_raise (query_one_int_result db sql)
 
 module Config = struct
   type mode = open_mode =
