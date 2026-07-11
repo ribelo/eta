@@ -551,8 +551,12 @@ let make_request ?prompt_cache provider api_key raw =
   A.provider_request { provider with A.auth_headers = (fun _ -> headers) } api_key
     raw
 
+let[@inline always] resolve_provider = function
+  | Some provider -> provider
+  | None -> provider ()
+
 let messages_request ?prompt_cache ?provider:custom_provider ~api_key request =
-  let provider = Option.value ~default:(provider ()) custom_provider in
+  let provider = resolve_provider custom_provider in
   let encoded =
     match prompt_cache with
     | None -> provider.A.encode_chat request
@@ -564,7 +568,7 @@ let perform_message = A.perform_chat
 let perform_stream = A.perform_stream
 
 let messages ?prompt_cache ?provider:custom_provider client ~api_key request =
-  let provider = Option.value ~default:(provider ()) custom_provider in
+  let provider = resolve_provider custom_provider in
   match messages_request ?prompt_cache ~provider ~api_key request with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
@@ -573,7 +577,7 @@ let messages ?prompt_cache ?provider:custom_provider client ~api_key request =
 
 let stream_messages ?prompt_cache ?provider:custom_provider client ~api_key
     request =
-  let provider = Option.value ~default:(provider ()) custom_provider in
+  let provider = resolve_provider custom_provider in
   let request = { request with A.stream = true } in
   match messages_request ?prompt_cache ~provider ~api_key request with
   | Stdlib.Error error -> E.fail error

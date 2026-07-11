@@ -106,7 +106,9 @@ let responses_provider ?(base_url = "https://api.openai.com") () =
 let provider ?base_url () = responses_provider ?base_url ()
 
 let default_provider default custom_provider =
-  Option.value ~default:(default ()) custom_provider
+  match custom_provider with
+  | Some provider -> provider
+  | None -> default ()
 
 let post_request = A.post_request
 let raw_chat_request = A.chat_request_from_raw

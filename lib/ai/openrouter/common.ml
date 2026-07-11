@@ -250,7 +250,9 @@ let provider ?(base_url = "https://openrouter.ai") ?attribution
   }
 
 let default_provider default custom_provider =
-  Option.value ~default:(default ()) custom_provider
+  match custom_provider with
+  | Some provider -> provider
+  | None -> default ()
 
 let post_request = A.post_request
 let get_request = A.get_request
