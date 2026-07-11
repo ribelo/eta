@@ -97,84 +97,55 @@ let submit_request client request =
   |> Eta.Effect.suppress_observability
   |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
 
+let[@inline always] successful response =
+  response.Eta_http.Response.status >= 200 && response.status < 300
+
+let[@cold] fail_response ?max_bytes provider
+    (response : Eta_http.Response.t) =
+  read_response_text ?max_bytes response.Eta_http.Response.body
+  |> Eta.Effect.bind (fun raw ->
+         Eta.Effect.fail
+           (provider.decode_error ~status:response.status
+              ~headers:response.headers raw))
+
 let perform_raw ?max_bytes provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if
-           response.Eta_http.Response.status >= 200
-           && response.status < 300
-         then read_response_text ?max_bytes response.body
-         else
-           read_response_text ?max_bytes response.body
-           |> Eta.Effect.bind (fun raw ->
-                  Eta.Effect.fail
-                    (provider.decode_error ~status:response.status
-                       ~headers:response.headers raw)))
+         if successful response then read_response_text ?max_bytes response.body
+         else fail_response ?max_bytes provider response)
 
 let perform_binary ?max_bytes provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if
-           response.Eta_http.Response.status >= 200
-           && response.status < 300
-         then
+         if successful response then
            read_response_body ?max_bytes response.body
            |> Eta.Effect.map (fun body -> (body, response.headers))
-         else
-           read_response_text ?max_bytes response.body
-           |> Eta.Effect.bind (fun raw ->
-                  Eta.Effect.fail
-                    (provider.decode_error ~status:response.status
-                       ~headers:response.headers raw)))
+         else fail_response ?max_bytes provider response)
 
 let perform_chat provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if
-           response.Eta_http.Response.status >= 200
-           && response.status < 300
-         then
+         if successful response then
            read_response_text response.body
            |> Eta.Effect.bind (fun raw ->
                   result_effect (provider.decode_chat raw))
-         else
-           read_response_text response.body
-           |> Eta.Effect.bind (fun raw ->
-                  Eta.Effect.fail
-                    (provider.decode_error ~status:response.status
-                       ~headers:response.headers raw)))
+         else fail_response provider response)
 
 let perform_embeddings provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if
-           response.Eta_http.Response.status >= 200
-           && response.status < 300
-         then
+         if successful response then
            read_response_text response.body
            |> Eta.Effect.bind (fun raw ->
                   result_effect (provider.decode_embeddings raw))
-         else
-           read_response_text response.body
-           |> Eta.Effect.bind (fun raw ->
-                  Eta.Effect.fail
-                    (provider.decode_error ~status:response.status
-                       ~headers:response.headers raw)))
-
+         else fail_response provider response)
 
 let perform_stream provider client request =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if
-           response.Eta_http.Response.status >= 200
-           && response.status < 300
-         then Eta.Effect.pure (Sse.stream_of_body provider response.body)
-         else
-           read_response_text response.body
-           |> Eta.Effect.bind (fun raw ->
-                  Eta.Effect.fail
-                    (provider.decode_error ~status:response.status
-                       ~headers:response.headers raw)))
+         if successful response then
+           Eta.Effect.pure (Sse.stream_of_body provider response.body)
+         else fail_response provider response)
 
 let run_chat_request provider client chat_request request =
   run_request request (fun http_request ->
