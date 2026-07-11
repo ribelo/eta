@@ -45,15 +45,18 @@ module Reader = struct
     | Received_eof -> Queue.is_empty t.pending
     | Open -> false
 
+  let[@inline always] deliver_eof t =
+    match t.callbacks with
+    | Some { on_eof; _ } ->
+        t.callbacks <- None;
+        on_eof ()
+    | None -> ()
+
   let close t =
     if t.state <> Closed then (
       t.state <- Closed;
       Queue.clear t.pending;
-      match t.callbacks with
-      | Some { on_eof; _ } ->
-          t.callbacks <- None;
-          on_eof ()
-      | None -> ())
+      deliver_eof t)
 
   let schedule_read t ~on_read ~on_eof =
     match Queue.take_opt t.pending with
@@ -81,12 +84,7 @@ module Reader = struct
     match t.state with
     | Open ->
         t.state <- Received_eof;
-        if Queue.is_empty t.pending then (
-          match t.callbacks with
-          | Some { on_eof; _ } ->
-              t.callbacks <- None;
-              on_eof ()
-          | None -> ())
+        if Queue.is_empty t.pending then deliver_eof t
     | Received_eof | Closed -> ()
 end
 
