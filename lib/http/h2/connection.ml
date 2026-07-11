@@ -139,16 +139,19 @@ and read_state =
 
 let max a b = if a >= b then a else b
 
+let[@inline always] resize_buffer b capacity =
+  let data = Bigstringaf.create capacity in
+  if b.len > 0 then
+    Bigstringaf.blit b.data ~src_off:b.off data ~dst_off:0 ~len:b.len;
+  b.data <- data;
+  b.off <- 0
+
 let ensure_capacity b need =
   let available = Bigstringaf.length b.data - b.off - b.len in
   if available < need then (
     let required = b.len + need in
     let new_cap = max required (Bigstringaf.length b.data * 2) in
-    let new_data = Bigstringaf.create new_cap in
-    if b.len > 0 then
-      Bigstringaf.blit b.data ~src_off:b.off new_data ~dst_off:0 ~len:b.len;
-    b.data <- new_data;
-    b.off <- 0)
+    resize_buffer b new_cap)
 
 let shift b n =
   if n < 0 || n > b.len then invalid_arg "Connection.shift";
@@ -184,11 +187,7 @@ let ensure_capacity_limited b ~limit need =
     let required = b.len + need in
     let doubled = Bigstringaf.length b.data * 2 in
     let new_cap = min limit (max required doubled) in
-    let new_data = Bigstringaf.create new_cap in
-    if b.len > 0 then
-      Bigstringaf.blit b.data ~src_off:b.off new_data ~dst_off:0 ~len:b.len;
-    b.data <- new_data;
-    b.off <- 0)
+    resize_buffer b new_cap)
 
 let append_bigstring_limited b ~limit src ~src_off ~len =
   if len > 0 then (
