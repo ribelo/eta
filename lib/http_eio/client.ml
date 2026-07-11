@@ -42,6 +42,15 @@ let request = Shared.request
 let request_with_retry = Shared.request_with_retry
 let runtime_service = Shared.runtime_service
 
+let[@inline always] validate_max_response_body_bytes constructor value =
+  if value < 0 then
+    invalid_arg
+      ("Eta_http_eio.Client." ^ constructor
+     ^ ": max_response_body_bytes must be >= 0")
+
+let[@inline always] empty_stats protocol =
+  { protocol; active = 0; idle = 0; capacity = 0; opened = 0; released = 0 }
+
 let request_url request =
   match Url.parse request.Request.uri with
   | Ok url -> Ok url
@@ -82,8 +91,7 @@ let request_h2_on_connection = H2.request_on_connection
 
 let make_h1 ~sw ~net
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
-  if max_response_body_bytes < 0 then
-    invalid_arg "Eta_http_eio.Client.make_h1: max_response_body_bytes must be >= 0";
+  validate_max_response_body_bytes "make_h1" max_response_body_bytes;
   let pools = Hashtbl.create 8 in
   let pools_mutex = Eio.Mutex.create () in
   let with_pools_lock f =
@@ -143,14 +151,7 @@ let make_h1 ~sw ~net
                    opened = acc.opened + stats.opened;
                    released = acc.released + stats.closed;
                  })
-               {
-                 protocol = H1;
-                 active = 0;
-                 idle = 0;
-                 capacity = 0;
-                 opened = 0;
-                 released = 0;
-               }))
+               (empty_stats H1)))
   in
   let shutdown_impl () =
     pool_values () |> List.map H1_client.shutdown_pool |> Eta.Effect.concat
@@ -160,9 +161,7 @@ let make_h1 ~sw ~net
 
 let make_h1_direct ~sw ~net ?host_eio
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
-  if max_response_body_bytes < 0 then
-    invalid_arg
-      "Eta_http_eio.Client.make_h1_direct: max_response_body_bytes must be >= 0";
+  validate_max_response_body_bytes "make_h1_direct" max_response_body_bytes;
   let request_impl request =
     match H1.request_of_request request with
     | Error error -> Eta.Effect.fail error
@@ -173,15 +172,7 @@ let make_h1_direct ~sw ~net ?host_eio
   in
   let stats_impl () =
     Eta.Effect.pure
-      (Some
-         {
-           protocol = H1;
-           active = 0;
-           idle = 0;
-           capacity = 0;
-           opened = 0;
-           released = 0;
-         })
+      (Some (empty_stats H1))
   in
   let shutdown_impl () = Eta.Effect.unit in
   Shared.make_custom ~protocol:H1 ~request:request_impl ~stats:stats_impl
@@ -483,14 +474,7 @@ let auto_stats_impl state () =
                  capacity = acc.capacity + stats.max_concurrent;
                  idle = acc.idle + 1;
                })
-             {
-               protocol = H2;
-               active = 0;
-               idle = 0;
-               capacity = 0;
-               opened = 0;
-               released = 0;
-             }
+             (empty_stats H2)
       in
       Some
         {
@@ -510,8 +494,7 @@ let auto_shutdown_impl state () =
 
 let make ~sw ~net ~clock
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
-  if max_response_body_bytes < 0 then
-    invalid_arg "Eta_http_eio.Client.make: max_response_body_bytes must be >= 0";
+  validate_max_response_body_bytes "make" max_response_body_bytes;
   let state =
     {
       sw;
