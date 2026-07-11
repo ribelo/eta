@@ -73,8 +73,12 @@ let request_with_retry ?policy t req =
   ensure_owner_domain t;
   Retry.run ?policy t.request_impl req
 
-let runtime_service_error request =
-  Error.make ~method_:request.Request.method_ ~uri:request.uri
+let[@cold] runtime_service_error request =
+  let method_ =
+    match request with Some request -> request.Request.method_ | None -> "*"
+  in
+  let uri = match request with Some request -> request.uri | None -> "*" in
+  Error.make ~method_ ~uri
     (Connection_protocol_violation
        {
          kind = "runtime_service";
@@ -86,18 +90,8 @@ let runtime_service_effect ?request f =
       match Eta.Effect.Expert.runtime_service ctx service_key with
       | Some service -> Eta.Effect.Expert.eval ctx (f service)
       | None ->
-          let error =
-            match request with
-            | Some request -> runtime_service_error request
-            | None ->
-                Error.make ~method_:"*" ~uri:"*"
-                  (Connection_protocol_violation
-                     {
-                       kind = "runtime_service";
-                       message = "missing eta-http runtime service";
-                     })
-          in
-          Eta.Effect.Expert.eval ctx (Eta.Effect.fail error))
+          Eta.Effect.Expert.eval ctx
+            (Eta.Effect.fail (runtime_service_error request)))
 
 let make_runtime ?(protocol = Auto)
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
