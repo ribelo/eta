@@ -43,8 +43,9 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     invalid_arg
       "Eta_http_eio.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
   let release =
-    Option.value release
-      ~default:(fun () -> H1_client_errors.close_flow request flow)
+    match release with
+    | Some release -> release
+    | None -> fun () -> H1_client_errors.close_flow request flow
   in
   let release_on_error = Option.value release_on_error ~default:release in
   let cleanup_after_error error =

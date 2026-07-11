@@ -193,7 +193,7 @@ let parse_authority ~scheme value =
         value = normalized_value;
         scheme;
         host;
-        port = Option.value ~default:(Url.default_port scheme) port;
+        port = (match port with Some port -> port | None -> Url.default_port scheme);
       }
 
 let target_has_fragment target = Option.is_some (String.index_opt target '#')

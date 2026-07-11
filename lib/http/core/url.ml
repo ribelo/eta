@@ -344,7 +344,8 @@ let scheme_to_string = function Http -> "http" | Https -> "https"
 let host t = lowercase_ascii_slice t.raw t.host.off t.host.len
 let port t = t.port
 let default_port = function Http -> 80 | Https -> 443
-let effective_port t = Option.value ~default:(default_port t.scheme) t.port
+let effective_port t =
+  match t.port with Some port -> port | None -> default_port t.scheme
 let path t = match t.path with None -> "/" | Some span -> slice t.raw span
 let query t = Option.map (slice t.raw) t.query
 let fragment t = Option.map (slice t.raw) t.fragment
