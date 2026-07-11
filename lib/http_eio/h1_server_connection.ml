@@ -617,19 +617,20 @@ let rec drain_fixed_body source =
        | None -> Eta.Effect.unit
        | Some _ -> drain_fixed_body source)
 
+let[@inline always] make_body_source t initial remaining continue_state =
+  {
+    t;
+    initial;
+    off = 0;
+    remaining;
+    close_after_response = false;
+    pending_returned = false;
+    continue_state;
+    scratch = None;
+  }
+
 let fixed_body t initial length continue_state =
-  let source =
-    {
-      t;
-      initial;
-      off = 0;
-      remaining = length;
-      close_after_response = false;
-      pending_returned = false;
-      continue_state;
-      scratch = None;
-    }
-  in
+  let source = make_body_source t initial length continue_state in
   let body =
     Server.Body.of_reader
       ~read_all:(source_read_all source)
@@ -726,18 +727,7 @@ let chunked_read_line source ~limit =
   loop 0 false
 
 let chunked_body t ~head ~initial continue_state =
-  let source =
-    {
-      t;
-      initial;
-      off = 0;
-      remaining = max_int;
-      close_after_response = false;
-      pending_returned = false;
-      continue_state;
-      scratch = None;
-    }
-  in
+  let source = make_body_source t initial max_int continue_state in
   let max_decoded_bytes =
     Option.value t.config.server.limits.max_request_body_bytes ~default:max_int
   in
