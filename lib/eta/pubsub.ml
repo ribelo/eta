@@ -154,6 +154,11 @@ let rec take_active_publisher
     let publisher = Stdlib.Queue.take q in
     if publisher.active then Some publisher else take_active_publisher q
 
+let[@inline always] deactivate_publisher_locked (t : ('a, 'err) t)
+    (publisher : ('a, 'err) publisher) =
+  publisher.active <- false;
+  t.waiting_publishers <- t.waiting_publishers - 1
+
 let compact_cancelled_publishers_locked (t : ('a, 'err) t) =
   if t.cancelled_publishers > 0 then (
     let live = Stdlib.Queue.create () in
@@ -178,10 +183,13 @@ let compact_cancelled_receivers_locked (sub : ('a, 'err) subscription) =
       (fun receiver -> Stdlib.Queue.push receiver sub.receivers)
       live)
 
+let[@inline always] deactivate_receiver_locked t (receiver : receiver) =
+  receiver.active <- false;
+  t.waiting_receivers <- t.waiting_receivers - 1
+
 let wake_receiver wakeups t (receiver : receiver) =
   if receiver.active then (
-    receiver.active <- false;
-    t.waiting_receivers <- t.waiting_receivers - 1;
+    deactivate_receiver_locked t receiver;
     add_wakeup wakeups (Wake_receiver receiver))
 
 let wake_subscription_receivers wakeups t (sub : ('a, 'err) subscription) =
@@ -239,8 +247,7 @@ and admit_waiting_publishers_locked wakeups t =
           match take_active_publisher t.publishers with
           | None -> ()
           | Some publisher ->
-              publisher.active <- false;
-              t.waiting_publishers <- t.waiting_publishers - 1;
+              deactivate_publisher_locked t publisher;
               let result = admit_value_locked wakeups t publisher.value in
               add_wakeup wakeups
                 (Wake_publisher (publisher, `Published result));
@@ -261,8 +268,7 @@ let enqueue_publisher contract t value =
 
 let cancel_publisher wakeups t (publisher : ('a, 'err) publisher) =
   if publisher.active then (
-    publisher.active <- false;
-    t.waiting_publishers <- t.waiting_publishers - 1;
+    deactivate_publisher_locked t publisher;
     t.cancelled_publishers <- t.cancelled_publishers + 1;
     compact_cancelled_publishers_locked t;
     admit_waiting_publishers_locked wakeups t)
@@ -378,8 +384,7 @@ let enqueue_receiver contract sub =
 let cancel_receiver sub (receiver : receiver) =
   let t = sub.hub in
   if receiver.active then (
-    receiver.active <- false;
-    t.waiting_receivers <- t.waiting_receivers - 1;
+    deactivate_receiver_locked t receiver;
     t.cancelled_receivers <- t.cancelled_receivers + 1;
     compact_cancelled_receivers_locked sub)
 
@@ -434,8 +439,7 @@ let close_locked wakeups t reason =
       match take_active_publisher t.publishers with
       | None -> ()
       | Some publisher ->
-          publisher.active <- false;
-          t.waiting_publishers <- t.waiting_publishers - 1;
+          deactivate_publisher_locked t publisher;
           add_wakeup wakeups
             (Wake_publisher (publisher, close_result reason))
     done;
