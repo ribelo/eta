@@ -1829,38 +1829,6 @@ let test_h1_client_connection_failure () =
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp) cause
 
-let rec read_until_headers_end flow buffer =
-  let chunk = Cstruct.create 1024 in
-  match Eio.Flow.single_read flow chunk with
-  | 0 -> Buffer.contents buffer
-  | len ->
-      Buffer.add_string buffer (Cstruct.to_string (Cstruct.sub chunk 0 len));
-      let so_far = Buffer.contents buffer in
-      if Option.is_some (find_sub so_far ~needle:"\r\n\r\n") then so_far
-      else read_until_headers_end flow buffer
-
-let with_raw_server ~on_request f =
-  run_eio @@ fun stdenv ->
-  Eio.Switch.run @@ fun sw ->
-  let net = Eio.Stdenv.net stdenv in
-  let clock = Eio.Stdenv.clock stdenv in
-  let socket =
-    Eio.Net.listen ~sw ~reuse_addr:true ~backlog:4 net
-      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
-  in
-  let port = tcp_port (Eio.Net.listening_addr socket) in
-  Eio.Fiber.fork ~sw (fun () ->
-      Eio.Switch.run @@ fun conn_sw ->
-      let flow, _addr = Eio.Net.accept ~sw:conn_sw socket in
-      Fun.protect
-        ~finally:(fun () -> try Eio.Flow.close flow with _ -> ())
-        (fun () ->
-          on_request flow;
-          (* Keep the connection open until the test finishes or a timeout. *)
-          Eio.Time.with_timeout_exn clock 5.0 (fun () ->
-              Eio.Promise.await (fst (Eio.Promise.create ())))));
-  f sw net clock port
-
 let broken_server_headers_only =
   "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n"
 
@@ -1911,18 +1879,6 @@ let test_h1_client_broken_server_headers_no_body () =
       in
       if not (has_connection_closed cause) then
         Alcotest.failf "unexpected failure: %a" (Eta.Cause.pp Eta_http.Error.pp) cause
-
-let has_response_body_idle_timeout cause =
-  let rec loop = function
-    | Eta.Cause.Fail { Eta_http.Error.kind = Eta_http.Error.Response_body_idle_timeout _; _ }
-      ->
-        true
-    | Eta.Cause.Concurrent causes | Eta.Cause.Sequential causes ->
-        List.exists loop causes
-    | Eta.Cause.Suppressed { primary; _ } -> loop primary
-    | _ -> false
-  in
-  loop cause
 
 let test_h1_pool_broken_server_concurrent_requests_timeout () =
   (* zio-http ClientSpec: a broken server that closes after the response head

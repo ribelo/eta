@@ -620,15 +620,6 @@ let start_frame t =
                 (account_header_bytes t ~frame_type ~flags ~length ~stream_id))
       | _ -> Pass)
 
-let observe_byte t byte =
-  if t.payload_remaining > 0 then (
-    t.payload_remaining <- t.payload_remaining - 1;
-    observe_payload_byte t byte)
-  else (
-    Bytes.set t.header t.header_len byte;
-    t.header_len <- t.header_len + 1;
-    if t.header_len = Frame.header_size then start_frame t else Pass)
-
 let observe_result t bs ~off ~len ~now_ms =
   t.now_ms <- now_ms;
   let stop = off + len in

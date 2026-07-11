@@ -117,16 +117,6 @@ let h2_read_result () =
     stream_errors = 0;
   }
 
-let h2_schedule_body result body =
-  let rec loop () =
-    Eta_http_h2.Body.Reader.schedule_read body
-      ~on_eof:(fun () -> result.eof <- true)
-      ~on_read:(fun bs ~off ~len ->
-        Buffer.add_string result.body (Bigstringaf.substring bs ~off ~len);
-        loop ())
-  in
-  loop ()
-
 let h2_schedule_eta_body result body =
   let rec loop () =
     Eta_http_h2.Body.Reader.schedule_read body

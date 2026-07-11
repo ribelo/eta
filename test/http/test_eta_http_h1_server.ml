@@ -1641,27 +1641,6 @@ let test_h1_server_connection_emits_meter_metrics () =
       Alcotest.(check bool) "protocol error metric" true
         (has_int_metric "eta_http.server.protocol.errors" 1 meter))
 
-let read_h1_response flow =
-  let br = Eio.Buf_read.of_flow ~max_size:65536 flow in
-  let status_line = Eio.Buf_read.line br in
-  let rec headers content_length =
-    match Eio.Buf_read.line br with
-    | "" -> content_length
-    | line -> (
-        match String.split_on_char ':' line with
-        | name :: rest
-          when String.lowercase_ascii (String.trim name) = "content-length" ->
-            headers (int_of_string (String.trim (String.concat ":" rest)))
-        | _ -> headers content_length)
-  in
-  let content_length = headers 0 in
-  let body = Eio.Buf_read.take content_length br in
-  let status =
-    if String.length status_line >= 12 then String.sub status_line 9 3
-    else ""
-  in
-  (int_of_string status, body)
-
 let test_h1_server_handler_exception_returns_500 () =
   let handler (request : Eta_http.Server.Request.t) =
     if request.path = "/boom" then failwith "handler boom"

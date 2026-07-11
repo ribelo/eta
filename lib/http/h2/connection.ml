@@ -420,9 +420,6 @@ let reset_stream t stream_id error_code =
       Stream.reset stream ~error_code;
       retire_stream t stream
 
-let report_stream_error t stream_id error_code =
-  reset_stream t stream_id error_code
-
 (* -------------------------------------------------------------------------- *)
 (* Response helpers *)
 
