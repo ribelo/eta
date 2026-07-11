@@ -705,6 +705,17 @@ module Make (Backend : BACKEND) = struct
     let value (Set (column, value)) = Param (column.typ, value)
   end
 
+  let[@inline always] render_returning_sql sql columns =
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf sql;
+    Buffer.add_string buf " RETURNING ";
+    List.iteri
+      (fun i column ->
+        if i > 0 then Buffer.add_string buf ", ";
+        Buffer.add_string buf column)
+      columns;
+    Buffer.contents buf
+
   module Insert = struct
     type 'table conflict =
       | Do_nothing of string list
@@ -852,17 +863,11 @@ module Make (Backend : BACKEND) = struct
       match render_values (List.rev query.rev_values) with
       | Result.Error err -> raise (Backend.Error err)
       | Ok cols ->
-          let buf = Buffer.create 64 in
-          Buffer.add_string buf (to_sql_precomputed cols query);
-          Buffer.add_string buf " RETURNING ";
-          List.iteri
-            (fun i col ->
-              if i > 0 then Buffer.add_string buf ", ";
-              Buffer.add_string buf col)
-            projection.Projection.columns;
           Compiled.
             {
-              sql = Buffer.contents buf;
+              sql =
+                render_returning_sql (to_sql_precomputed cols query)
+                  projection.Projection.columns;
               params = prepend_values query.rev_values projection.Projection.params;
               decode = (fun row -> projection.decode row 0);
             }
@@ -929,17 +934,9 @@ module Make (Backend : BACKEND) = struct
 
     let returning projection query =
       let _ = render_sets (List.rev query.rev_sets) in
-      let buf = Buffer.create 64 in
-      Buffer.add_string buf (to_sql query);
-      Buffer.add_string buf " RETURNING ";
-      List.iteri
-        (fun i col ->
-          if i > 0 then Buffer.add_string buf ", ";
-          Buffer.add_string buf col)
-        projection.Projection.columns;
       Compiled.
         {
-          sql = Buffer.contents buf;
+          sql = render_returning_sql (to_sql query) projection.Projection.columns;
           params =
             prepend_sets query.rev_sets
               (match query.where_ with
@@ -977,17 +974,9 @@ module Make (Backend : BACKEND) = struct
     let compile query = Compiled.{ sql = to_sql query; params = params query }
 
     let returning projection query =
-      let buf = Buffer.create 64 in
-      Buffer.add_string buf (to_sql query);
-      Buffer.add_string buf " RETURNING ";
-      List.iteri
-        (fun i col ->
-          if i > 0 then Buffer.add_string buf ", ";
-          Buffer.add_string buf col)
-        projection.Projection.columns;
       Compiled.
         {
-          sql = Buffer.contents buf;
+          sql = render_returning_sql (to_sql query) projection.Projection.columns;
           params =
             (match query.where_ with
              | None -> projection.Projection.params
