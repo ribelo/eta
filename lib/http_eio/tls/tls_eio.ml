@@ -162,36 +162,6 @@ let probe_record_retry t code =
       if code = 2 then probe.want_read <- probe.want_read + 1
       else if code = 3 then probe.want_write <- probe.want_write + 1
 
-let sample_percentile samples percentile =
-  match samples with
-  | [] -> 0
-  | _ ->
-      let ordered = List.sort compare samples in
-      let n = List.length ordered in
-      let index =
-        int_of_float
-          (ceil
-             ((float_of_int percentile /. 100.0) *. float_of_int n))
-        - 1
-      in
-      List.nth ordered (max 0 (min (n - 1) index))
-
-let sample_max = function
-  | [] -> 0
-  | x :: xs -> List.fold_left max x xs
-
-let sample_fields name samples =
-  Printf.sprintf "%s_n=%d %s_p50_us=%d %s_p95_us=%d %s_p99_us=%d %s_max_us=%d"
-    name (List.length samples) name (sample_percentile samples 50) name
-    (sample_percentile samples 95) name (sample_percentile samples 99) name
-    (sample_max samples)
-
-let sample_value_fields name samples =
-  Printf.sprintf "%s_n=%d %s_p50=%d %s_p95=%d %s_p99=%d %s_max=%d" name
-    (List.length samples) name (sample_percentile samples 50) name
-    (sample_percentile samples 95) name (sample_percentile samples 99) name
-    (sample_max samples)
-
 let flush_probe t =
   match t.probe with
   | None -> ()
@@ -207,12 +177,12 @@ let flush_probe t =
                 ssl_write_calls=%d want_read=%d want_write=%d"
                probe.id probe.flush_seq probe.raw_writes probe.ssl_write_calls
                probe.want_read probe.want_write;
-             sample_fields "single_write" probe.single_write_us;
-             sample_fields "ssl_write" probe.ssl_write_us;
-             sample_fields "drain_bio" probe.drain_bio_us;
-             sample_fields "write_mutex_wait" probe.write_mutex_wait_us;
-             sample_fields "raw_write" probe.raw_write_us;
-             sample_value_fields "raw_write_bytes" probe.raw_write_bytes;
+             Probe_samples.fields "single_write" probe.single_write_us;
+             Probe_samples.fields "ssl_write" probe.ssl_write_us;
+             Probe_samples.fields "drain_bio" probe.drain_bio_us;
+             Probe_samples.fields "write_mutex_wait" probe.write_mutex_wait_us;
+             Probe_samples.fields "raw_write" probe.raw_write_us;
+             Probe_samples.value_fields "raw_write_bytes" probe.raw_write_bytes;
            ])
 
 let flush_probe_if_due t =

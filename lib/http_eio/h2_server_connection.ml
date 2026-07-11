@@ -420,30 +420,6 @@ let runtime_probe_response_owner_wait t started_us =
       probe.response_owner_wait_us <-
         duration_us :: probe.response_owner_wait_us)
 
-let sample_percentile samples percentile =
-  match samples with
-  | [] -> 0
-  | _ ->
-      let ordered = List.sort compare samples in
-      let n = List.length ordered in
-      let index =
-        int_of_float
-          (ceil
-             ((float_of_int percentile /. 100.0) *. float_of_int n))
-        - 1
-      in
-      List.nth ordered (max 0 (min (n - 1) index))
-
-let sample_max = function
-  | [] -> 0
-  | x :: xs -> List.fold_left max x xs
-
-let sample_fields name samples =
-  Printf.sprintf "%s_n=%d %s_p50_us=%d %s_p95_us=%d %s_p99_us=%d %s_max_us=%d"
-    name (List.length samples) name (sample_percentile samples 50) name
-    (sample_percentile samples 95) name (sample_percentile samples 99) name
-    (sample_max samples)
-
 let flush_runtime_probe t =
   match t.runtime_probe with
   | None -> ()
@@ -465,11 +441,11 @@ let flush_runtime_probe t =
                (Option.value t.connection.peer.port ~default:(-1))
                probe.flush_seq probe.requests probe.handler_forked
                probe.handler_started probe.handler_completed probe.handler_failed;
-             sample_fields "handler_queue" probe.handler_queue_us;
-             sample_fields "handler_runtime" probe.handler_runtime_us;
-             sample_fields "handler_prepare" probe.handler_prepare_us;
-             sample_fields "response_owner_wait" probe.response_owner_wait_us;
-             sample_fields "handler_total" probe.handler_total_us;
+             Probe_samples.fields "handler_queue" probe.handler_queue_us;
+             Probe_samples.fields "handler_runtime" probe.handler_runtime_us;
+             Probe_samples.fields "handler_prepare" probe.handler_prepare_us;
+             Probe_samples.fields "response_owner_wait" probe.response_owner_wait_us;
+             Probe_samples.fields "handler_total" probe.handler_total_us;
              Printf.sprintf
                "minor_words_delta=%.0f promoted_words_delta=%.0f \
                 major_words_delta=%.0f minor_collections_delta=%d \

@@ -19,6 +19,7 @@
   domain-name
   ipaddr
   faraday
-  yojson))
+  yojson)
+ (private_modules probe_samples))
 
 (include_subdirs unqualified)
