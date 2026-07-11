@@ -26,10 +26,6 @@ let set_prefix node prefix =
   node.prefix_str <- Escape.to_string prefix;
   node.prefix_len <- Escape.length prefix
 
-let node_with_prefix prefix node =
-  set_prefix node prefix;
-  node
-
 let char_to_string c =
   let b = Bytes.create 1 in
   Bytes.unsafe_set b 0 c;
@@ -42,17 +38,18 @@ let append_char s c =
   Bytes.unsafe_set b len c;
   Bytes.unsafe_to_string b
 
-let[@inline always] make_node node_type =
+let[@inline always] make_node ?(prefix = empty_prefix) ?(priority = 0) ?value
+    node_type =
   {
-    prefix = empty_prefix;
-    prefix_str = "";
-    prefix_len = 0;
-    priority = 0;
+    prefix;
+    prefix_str = Escape.to_string prefix;
+    prefix_len = Escape.length prefix;
+    priority;
     wild_child = false;
     indices = "";
     node_type;
     children = [||];
-    value = None;
+    value;
     remapping = [];
   }
 
@@ -204,12 +201,8 @@ let rec insert_route node prefix value =
         in
         let child =
           add_child node
-            {
-              (node_with_prefix (Escape.slice_to_owned prefix) (default_node ())) with
-              node_type = Catch_all;
-              value = Some value;
-              priority = 1;
-            }
+            (make_node ~prefix:(Escape.slice_to_owned prefix) ~priority:1 ~value
+               Catch_all)
         in
         node.wild_child <- true;
         Ok node.children.(child)
@@ -236,11 +229,8 @@ let rec insert_route node prefix value =
         let has_suffix = not (is_empty_or_slash suffix) in
         let child =
           add_child node
-            {
-              (node_with_prefix (Escape.slice_to_owned wildcard_slice) (default_node ())) with
-              node_type = Param { suffix = has_suffix };
-              priority = 1;
-            }
+            (make_node ~prefix:(Escape.slice_to_owned wildcard_slice) ~priority:1
+               (Param { suffix = has_suffix }))
         in
         node.wild_child <- true;
         let node = node.children.(child) in
@@ -248,11 +238,8 @@ let rec insert_route node prefix value =
           if Escape.slice_length suffix > 0 then begin
             let child =
               add_suffix_child node
-                {
-                  (node_with_prefix (Escape.slice_to_owned suffix) (default_node ())) with
-                  node_type = Static;
-                  priority = 1;
-                }
+                (make_node ~prefix:(Escape.slice_to_owned suffix) ~priority:1
+                   Static)
             in
             node.children.(child)
           end else node
@@ -262,7 +249,7 @@ let rec insert_route node prefix value =
           Ok node
         end else if Escape.slice_get prefix 0 <> '{' || Escape.slice_is_escaped prefix 0 then begin
           node.indices <- append_char node.indices (Escape.slice_get prefix 0);
-          let child = add_child node { (default_node ()) with priority = 1 } in
+          let child = add_child node (make_node ~priority:1 Static) in
           insert_route node.children.(child) prefix value
         end else
           insert_route node prefix value
@@ -396,11 +383,8 @@ let insert t route value =
                 | Ok None ->
                   let child =
                     add_suffix_child current
-                      {
-                        (node_with_prefix (Escape.slice_to_owned suffix) (default_node ())) with
-                        node_type = Static;
-                        priority = 1;
-                      }
+                      (make_node ~prefix:(Escape.slice_to_owned suffix) ~priority:1
+                         Static)
                   in
                   let has_suffix = has_suffix || not (is_empty_or_slash suffix) in
                   current.node_type <- Param { suffix = has_suffix };
@@ -412,7 +396,7 @@ let insert t route value =
                   end else begin
                     let remaining = Escape.slice_off remaining terminator in
                     if Escape.slice_get remaining 0 <> '{' || Escape.slice_is_escaped remaining 0 then begin
-                      let child = add_child current { (default_node ()) with priority = 1 } in
+                      let child = add_child current (make_node ~priority:1 Static) in
                       current.indices <- append_char current.indices (Escape.slice_get remaining 0);
                       match insert_route current.children.(child) remaining value with
                       | Ok last ->
