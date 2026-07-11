@@ -166,6 +166,22 @@ let[@inline always][@zero_alloc] starts_with_at value ~offset prefix =
 
 let[@zero_alloc] starts_with value ~prefix = starts_with_at value ~offset:0 prefix
 
+let[@inline always][@zero_alloc] starts_with_at_ascii_ci value ~offset prefix =
+  let value_len = String.length value in
+  let prefix_len = String.length prefix in
+  if offset < 0 || value_len - offset < prefix_len then false
+  else (
+    let index = ref 0 in
+    while
+      !index < prefix_len
+      && ascii_equal_ci
+           (String.unsafe_get value (offset + !index))
+           (String.unsafe_get prefix !index)
+    do
+      incr index
+    done;
+    !index = prefix_len)
+
 let[@zero_alloc] ends_with value ~suffix =
   let value_len = String.length value in
   let suffix_len = String.length suffix in
@@ -174,19 +190,7 @@ let[@zero_alloc] ends_with value ~suffix =
 let[@zero_alloc] ends_with_ascii_ci value ~suffix =
   let value_len = String.length value in
   let suffix_len = String.length suffix in
-  if value_len < suffix_len then false
-  else (
-    let offset = value_len - suffix_len in
-    let index = ref 0 in
-    while
-      !index < suffix_len
-      && ascii_equal_ci
-           (String.unsafe_get value (offset + !index))
-           (String.unsafe_get suffix !index)
-    do
-      incr index
-    done;
-    !index = suffix_len)
+  starts_with_at_ascii_ci value ~offset:(value_len - suffix_len) suffix
 
 let[@zero_alloc] trim_equal value literal =
   let value_len = String.length value in
@@ -195,17 +199,7 @@ let[@zero_alloc] trim_equal value literal =
   let len = value_stop - value_start in
   let literal_len = String.length literal in
   if len <> literal_len then false
-  else (
-    let index = ref 0 in
-    while
-      !index < literal_len
-      && Char.equal
-           (String.unsafe_get value (value_start + !index))
-           (String.unsafe_get literal !index)
-    do
-      incr index
-    done;
-    !index = literal_len)
+  else starts_with_at value ~offset:value_start literal
 
 let[@zero_alloc] trim_equal_ascii_ci value literal =
   let value_len = String.length value in
@@ -214,17 +208,7 @@ let[@zero_alloc] trim_equal_ascii_ci value literal =
   let len = value_stop - value_start in
   let literal_len = String.length literal in
   if len <> literal_len then false
-  else (
-    let index = ref 0 in
-    while
-      !index < literal_len
-      && ascii_equal_ci
-           (String.unsafe_get value (value_start + !index))
-           (String.unsafe_get literal !index)
-    do
-      incr index
-    done;
-    !index = literal_len)
+  else starts_with_at_ascii_ci value ~offset:value_start literal
 
 let[@zero_alloc] trim_equal_trimmed_ascii_ci left right =
   let left_len = String.length left in
