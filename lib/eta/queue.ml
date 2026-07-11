@@ -743,8 +743,6 @@ let close_effect t = Effect.sync (fun () -> close t)
 let close_with_error_effect t error =
   Effect.sync (fun () -> close_with_error t error)
 
-let shutdown_effect t = Effect.sync (fun () -> shutdown t)
-
 let await_shutdown t =
   Effect_erasure.effect_to_public
     (Effect_core.sync_frame (fun frame ->
@@ -793,7 +791,6 @@ module Enqueue = struct
   let is_full (Enqueue queue) = is_full queue
   let is_shutdown (Enqueue queue) = is_shutdown queue
   let shutdown (Enqueue queue) = shutdown queue
-  let shutdown_effect (Enqueue queue) = shutdown_effect queue
   let await_shutdown (Enqueue queue) = await_shutdown queue
 end
 
@@ -810,6 +807,5 @@ module Dequeue = struct
   let is_full (Dequeue queue) = is_full queue
   let is_shutdown (Dequeue queue) = is_shutdown queue
   let shutdown (Dequeue queue) = shutdown queue
-  let shutdown_effect (Dequeue queue) = shutdown_effect queue
   let await_shutdown (Dequeue queue) = await_shutdown queue
 end

@@ -181,9 +181,6 @@ val close_with_error_effect :
 val shutdown : ('a, 'err) t -> unit
 (** Stop the queue immediately and wake blocked operations. Idempotent. *)
 
-val shutdown_effect : ('a, 'err) t -> (unit, 'never) Effect.t
-(** Effectful wrapper for {!shutdown}. *)
-
 val await_shutdown : ('a, 'err) t -> (unit, 'never) Effect.t
 (** Wait until [shutdown] commits. *)
 
@@ -217,7 +214,6 @@ module Enqueue : sig
   val is_full : ('a, 'err) t -> bool
   val is_shutdown : ('a, 'err) t -> bool
   val shutdown : ('a, 'err) t -> unit
-  val shutdown_effect : ('a, 'err) t -> (unit, 'never) Effect.t
   val await_shutdown : ('a, 'err) t -> (unit, 'never) Effect.t
 end
 
@@ -245,6 +241,5 @@ module Dequeue : sig
   val is_full : ('a, 'err) t -> bool
   val is_shutdown : ('a, 'err) t -> bool
   val shutdown : ('a, 'err) t -> unit
-  val shutdown_effect : ('a, 'err) t -> (unit, 'never) Effect.t
   val await_shutdown : ('a, 'err) t -> (unit, 'never) Effect.t
 end
