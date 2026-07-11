@@ -42,7 +42,7 @@ let append_char s c =
   Bytes.unsafe_set b len c;
   Bytes.unsafe_to_string b
 
-let default_node () =
+let[@inline always] make_node node_type =
   {
     prefix = empty_prefix;
     prefix_str = "";
@@ -50,28 +50,15 @@ let default_node () =
     priority = 0;
     wild_child = false;
     indices = "";
-    node_type = Static;
+    node_type;
     children = [||];
     value = None;
     remapping = [];
   }
 
-let empty () =
-  {
-    root =
-      {
-        prefix = empty_prefix;
-        prefix_str = "";
-        prefix_len = 0;
-        priority = 0;
-        wild_child = false;
-        indices = "";
-        node_type = Root;
-        children = [||];
-        value = None;
-        remapping = [];
-      };
-  }
+let[@inline always] default_node () = make_node Static
+
+let empty () = { root = make_node Root }
 
 (* Slice helpers ---------------------------------------------------------- *)
 
