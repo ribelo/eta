@@ -79,7 +79,8 @@ let invalid_character raw component index =
     (Invalid_character
        { component; index; char = String.unsafe_get raw index })
 
-let validate_percent_encoded_component raw component start finish is_allowed =
+let[@inline always] validate_percent_encoded_component raw component start finish
+    is_allowed =
   let rec loop index =
     if index >= finish then Ok ()
     else
@@ -112,22 +113,7 @@ let validate_fragment raw start finish =
   validate_query_like "fragment" raw start finish
 
 let validate_reg_name raw component start finish =
-  let rec loop index =
-    if index >= finish then Ok ()
-    else
-      match String.unsafe_get raw index with
-      | '%' ->
-          if index + 2 >= finish then invalid_character raw component index
-          else
-            let first = String.unsafe_get raw (index + 1) in
-            let second = String.unsafe_get raw (index + 2) in
-            if is_hexdig first && is_hexdig second then loop (index + 3)
-            else invalid_character raw component index
-      | char ->
-          if is_reg_name_char char then loop (index + 1)
-          else invalid_character raw component index
-  in
-  loop start
+  validate_percent_encoded_component raw component start finish is_reg_name_char
 
 let validate_ipvfuture raw component start finish =
   let rec version_loop index =
