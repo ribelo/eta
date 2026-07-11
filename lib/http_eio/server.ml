@@ -65,6 +65,10 @@ type t = {
 let default_runtime_factory ~clock ~sw ~connection:_ () =
   Eta_eio.Runtime.create ~sw ~clock ()
 
+let[@inline always] resolve_runtime_factory clock = function
+  | Some runtime_factory -> runtime_factory
+  | None -> default_runtime_factory ~clock
+
 let additional_domains domain_policy domain_manager =
   match (domain_policy, domain_manager) with
   | Single_domain, _ | _, None -> None
@@ -310,9 +314,7 @@ let run_h1_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?on_connection_close ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   ignore sw;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop
       ~max_connections:config.max_connections
@@ -347,9 +349,7 @@ let run_h1_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     handler =
   Config.validate config;
   validate_domain_policy domain_policy;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
@@ -389,9 +389,7 @@ let run_h2c_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ?on_connection_close ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   ignore sw;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop
       ~max_connections:config.max_connections
@@ -426,9 +424,7 @@ let run_h2c_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     handler =
   Config.validate config;
   validate_domain_policy domain_policy;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
@@ -541,9 +537,7 @@ let run_https_on_socket_impl ~(sw : Eio.Switch.t) ~clock ?time ?stop
     ~(socket : _ Eio.Net.listening_socket) handler =
   Config.validate config;
   ignore sw;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let (_ : unit) =
     Eio.Net.run_server socket ?stop
       ~max_connections:config.max_connections
@@ -593,9 +587,7 @@ let run_https_impl ~sw ~net ~clock ?time ?domain_manager ?on_listener_start
     ?on_tls_pending_close ~tls_context ~enabled_protocols ~addr handler =
   Config.validate config;
   validate_domain_policy domain_policy;
-  let runtime_factory =
-    Option.value runtime_factory ~default:(default_runtime_factory ~clock)
-  in
+  let runtime_factory = resolve_runtime_factory clock runtime_factory in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:config.backlog net addr
   in
