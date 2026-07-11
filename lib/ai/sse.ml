@@ -95,9 +95,6 @@ let parse_sse_record_slice record record_start record_finish =
   loop record_start record_start;
   { event = !event; data = Buffer.contents data }
 
-let parse_sse_record record =
-  parse_sse_record_slice record 0 (String.length record)
-
 let blank_record record start finish =
   let rec loop index =
     index >= finish
@@ -140,13 +137,6 @@ let buffer_too_large stream =
           stream.max_buffer_bytes;
       raw = None;
     }
-
-let record_too_large stream record =
-  String.length record > stream.max_buffer_bytes
-
-let parse_sse_record_capped stream record =
-  if record_too_large stream record then Stdlib.Error (buffer_too_large stream)
-  else Stdlib.Ok (parse_sse_record record)
 
 let parse_sse_record_slice_capped stream record start finish =
   if finish - start > stream.max_buffer_bytes then

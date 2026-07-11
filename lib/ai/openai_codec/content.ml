@@ -19,10 +19,6 @@ let contents_text ~provider contents =
   in
   loop [] contents
 
-let content_has_audio = function
-  | A.Audio _ -> true
-  | A.Text _ | A.Json _ | A.Image _ | A.Video _ -> false
-
 let content_is_text = function A.Text _ | A.Json _ -> true | _ -> false
 let contents_are_text contents = List.for_all content_is_text contents
 
@@ -122,19 +118,6 @@ let contents_empty contents =
       | Stdlib.Ok text -> String.equal text ""
       | Stdlib.Error _ -> false)
   | _ -> false
-
-let message_has_audio = function
-  | A.System _ -> false
-  | A.User contents | A.Assistant { content = contents; _ }
-  | A.Tool { content = contents; _ } ->
-      List.exists content_has_audio contents
-
-let reject_audio_prompt ~provider prompt =
-  if List.exists message_has_audio prompt then
-    Stdlib.Error
-      (A.Unsupported
-         { provider; feature = "audio content requires OpenAI Realtime" })
-  else Stdlib.Ok ()
 
 let message_item ~provider role contents =
   responses_content_json ~provider contents

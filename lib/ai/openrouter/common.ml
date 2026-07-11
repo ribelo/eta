@@ -182,10 +182,6 @@ let decode_embeddings raw =
       Codec.decode_embeddings ~usage_extra_raw_names:[ "cost" ]
         ~provider:"openrouter" raw
 
-let openrouter_error ?status raw =
-  Codec.provider_error ?status ~nested_response_error:true
-    ~provider:"openrouter" raw
-
 let decode_error ~status ~headers raw =
   Codec.decode_error ~nested_response_error:true ~provider:"openrouter" ~status
     ~headers raw
