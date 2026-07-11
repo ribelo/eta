@@ -49,6 +49,15 @@ let find_wildcard (path : Escape.slice) :
 let is_catch_all bytes w =
   String.unsafe_get bytes (w.start + 1) = '*'
 
+let[@inline always] copy_escaped route bytes buf esc src dst len =
+  for i = 0 to len - 1 do
+    Bytes.unsafe_set buf (!dst + i) (String.unsafe_get bytes (!src + i));
+    if Escape.is_escaped route (!src + i) then
+      Bytes.unsafe_set esc (!dst + i) '\001'
+  done;
+  src := !src + len;
+  dst := !dst + len
+
 let normalize (route : Escape.t) :
     (Escape.t * remapping, Router_error.insert) result =
   let bytes = Escape.to_string route in
@@ -60,16 +69,6 @@ let normalize (route : Escape.t) :
   let dst = ref 0 in
   let remapping = ref [] in
   let next_char = ref 'a' in
-
-  let copy from_len =
-    for i = 0 to from_len - 1 do
-      Bytes.unsafe_set buf (!dst + i) (String.unsafe_get bytes (!src + i));
-      if Escape.is_escaped route (!src + i) then
-        Bytes.unsafe_set esc (!dst + i) '\001'
-    done;
-    src := !src + from_len;
-    dst := !dst + from_len
-  in
 
   let write bytes_to_write =
     List.iteri
@@ -87,12 +86,12 @@ let normalize (route : Escape.t) :
       with
       | Error _ as e -> e
       | Ok None ->
-          copy (len - !src);
+          copy_escaped route bytes buf esc src dst (len - !src);
           Ok ()
       | Ok (Some w) -> (
           let w_start = !src + w.start in
           let w_end = !src + w.end_ in
-          copy (w_start - !src);
+          copy_escaped route bytes buf esc src dst (w_start - !src);
           let name_len = w_end - w_start - 2 in
           let name = String.sub bytes (w_start + 1) name_len in
           if is_catch_all bytes { start = w_start; end_ = w_end } then (
@@ -130,16 +129,6 @@ let denormalize (route : Escape.t) (remapping : remapping) : Escape.t =
   let dst = ref 0 in
   let remapping = ref remapping in
 
-  let copy from_len =
-    for i = 0 to from_len - 1 do
-      Bytes.unsafe_set buf (!dst + i) (String.unsafe_get bytes (!src + i));
-      if Escape.is_escaped route (!src + i) then
-        Bytes.unsafe_set esc (!dst + i) '\001'
-    done;
-    src := !src + from_len;
-    dst := !dst + from_len
-  in
-
   let rec loop () =
     if !src >= len then ()
     else
@@ -150,7 +139,7 @@ let denormalize (route : Escape.t) (remapping : remapping) : Escape.t =
       | Ok (Some w) -> (
           let w_start = !src + w.start in
           let w_end = !src + w.end_ in
-          copy (w_start - !src);
+          copy_escaped route bytes buf esc src dst (w_start - !src);
           let name =
             match !remapping with
             | [] ->
@@ -169,7 +158,7 @@ let denormalize (route : Escape.t) (remapping : remapping) : Escape.t =
           dst := !dst + 2 + String.length name;
           src := w_end;
           loop ())
-      | _ -> copy (len - !src)
+      | _ -> copy_escaped route bytes buf esc src dst (len - !src)
   in
   loop ();
   Escape.make_unescaped ~bytes:(Bytes.sub_string buf 0 !dst) ~escaped:(Bytes.sub_string esc 0 !dst)
