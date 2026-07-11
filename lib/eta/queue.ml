@@ -443,52 +443,38 @@ let drop_oldest_locked t =
   ignore (Stdlib.Queue.take t.values : _);
   t.dropped <- saturating_succ t.dropped
 
+let[@inline always] offer_locked wakeups (t : ('a, 'err) t) value =
+  match (t.shutdown, t.closed) with
+  | true, _ -> `Closed
+  | false, Some reason -> close_result reason
+  | false, None ->
+      if capacity_available t then (
+        enqueue_value_locked wakeups t value;
+        `Sent)
+      else
+        match t.strategy with
+        | Unbounded -> invariant_failed "unbounded queue reported no capacity"
+        | Dropping _ ->
+            t.dropped <- saturating_succ t.dropped;
+            `Dropped
+        | Sliding _ ->
+            drop_oldest_locked t;
+            enqueue_value_locked wakeups t value;
+            `Sent
+        | Backpressure _ -> `Full
+
 let try_offer_sync t value =
   with_committed_wakeups_sync t @@ fun wakeups ->
-    match (t.shutdown, t.closed) with
-    | true, _ -> `Closed
-    | false, Some reason -> close_result reason
-    | false, None ->
-        if capacity_available t then (
-          enqueue_value_locked wakeups t value;
-          `Sent)
-        else
-          match t.strategy with
-          | Unbounded ->
-              invariant_failed "unbounded queue reported no capacity"
-          | Dropping _ ->
-              t.dropped <- saturating_succ t.dropped;
-              `Dropped
-          | Sliding _ ->
-              drop_oldest_locked t;
-              enqueue_value_locked wakeups t value;
-              `Sent
-          | Backpressure _ -> `Full
+  offer_locked wakeups t value
 
 let offer_sync contract t value =
   match
     with_committed_wakeups_sync t @@ fun wakeups ->
-      match (t.shutdown, t.closed) with
-      | true, _ -> `Ready `Closed
-      | false, Some reason -> `Ready (close_result reason)
-      | false, None ->
-          if capacity_available t then (
-            enqueue_value_locked wakeups t value;
-            `Ready `Sent)
-          else
-            match t.strategy with
-            | Unbounded ->
-                invariant_failed "unbounded queue reported no capacity"
-            | Dropping _ ->
-                t.dropped <- saturating_succ t.dropped;
-                `Ready `Dropped
-            | Sliding _ ->
-                drop_oldest_locked t;
-                enqueue_value_locked wakeups t value;
-                `Ready `Sent
-            | Backpressure _ ->
-                let promise, sender = enqueue_sender contract t value in
-                `Wait (promise, sender)
+      match offer_locked wakeups t value with
+      | `Full ->
+          let promise, sender = enqueue_sender contract t value in
+          `Wait (promise, sender)
+      | result -> `Ready result
   with
   | `Ready result -> result
   | `Wait (promise, sender) -> (
