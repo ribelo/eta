@@ -148,7 +148,7 @@ let[@zero_alloc] contains_token_ascii_ci value token =
   done;
   !found
 
-let[@zero_alloc] starts_with_at value ~offset prefix =
+let[@inline always][@zero_alloc] starts_with_at value ~offset prefix =
   let value_len = String.length value in
   let prefix_len = String.length prefix in
   if offset < 0 || value_len - offset < prefix_len then false
@@ -169,19 +169,7 @@ let[@zero_alloc] starts_with value ~prefix = starts_with_at value ~offset:0 pref
 let[@zero_alloc] ends_with value ~suffix =
   let value_len = String.length value in
   let suffix_len = String.length suffix in
-  if value_len < suffix_len then false
-  else (
-    let offset = value_len - suffix_len in
-    let index = ref 0 in
-    while
-      !index < suffix_len
-      && Char.equal
-           (String.unsafe_get value (offset + !index))
-           (String.unsafe_get suffix !index)
-    do
-      incr index
-    done;
-    !index = suffix_len)
+  starts_with_at value ~offset:(value_len - suffix_len) suffix
 
 let[@zero_alloc] ends_with_ascii_ci value ~suffix =
   let value_len = String.length value in
