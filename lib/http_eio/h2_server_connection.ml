@@ -2668,6 +2668,17 @@ let discard_request_body t ordinal _drain resolver =
       discard_request_body_with_policy ?resolver:(Some resolver) ~drain:_drain t
         ordinal state
 
+let[@inline always] start_streaming_response t ordinal state response resolver =
+  let writer =
+    H2.Connection.Server.Reqd.respond_with_streaming state.reqd
+      (h2_response response)
+  in
+  response_streaming state;
+  state.response_writer <- Some writer;
+  state.response_drain <- Some { resolver; finish_on_complete = false };
+  discard_request_body_with_policy ~drain:true t ordinal state;
+  `Flush (state, resolver)
+
 let start_response t ordinal response resolver =
   match Hashtbl.find_opt t.streams ordinal with
   | None ->
@@ -2681,15 +2692,7 @@ let start_response t ordinal response resolver =
   | Some state -> (
       match response.body with
       | Response_fixed (_, length) when length > max_h2_data_chunk ->
-          let writer =
-            H2.Connection.Server.Reqd.respond_with_streaming state.reqd
-              (h2_response response)
-          in
-          response_streaming state;
-          state.response_writer <- Some writer;
-          state.response_drain <- Some { resolver; finish_on_complete = false };
-          discard_request_body_with_policy ~drain:true t ordinal state;
-          `Flush (state, resolver)
+          start_streaming_response t ordinal state response resolver
       | Response_no_body _ | Response_fixed _ ->
           (match response.body with
           | Response_no_body _ -> ()
@@ -2715,15 +2718,7 @@ let start_response t ordinal response resolver =
           resolve resolver (Ok ());
           `Done
       | Response_stream _ ->
-          let writer =
-            H2.Connection.Server.Reqd.respond_with_streaming state.reqd
-              (h2_response response)
-          in
-          response_streaming state;
-          state.response_writer <- Some writer;
-          state.response_drain <- Some { resolver; finish_on_complete = false };
-          discard_request_body_with_policy ~drain:true t ordinal state;
-          `Flush (state, resolver))
+          start_streaming_response t ordinal state response resolver)
 
 let write_response_chunk t ordinal chunk resolver =
   let fail message = resolve resolver (Error (response_write_error t ~message ())) in
