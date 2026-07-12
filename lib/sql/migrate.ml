@@ -588,29 +588,25 @@ let mark_success conn table migration elapsed =
    ^ " SET checksum = ?, success = 1, execution_time_ms = ? WHERE version = ?")
     [ Value.String migration.Migration.checksum; Int elapsed; Int64 migration.Migration.version ]
 
+let[@inline always] migration_error migration err =
+  Migration_execution_error { version = migration.Migration.version; error = err }
+
 let execute_body_timed conn migration =
   let start = Unix.gettimeofday () in
   match execute_body conn migration with
-  | Result.Error err ->
-      Result.Error
-        (Migration_execution_error { version = migration.Migration.version; error = err })
+  | Result.Error err -> Result.Error (migration_error migration err)
   | Ok () -> Ok (elapsed_ms start)
 
 let apply_one conn config migration =
   let table = table_name config in
   match mark_dirty conn table migration with
-  | Result.Error err ->
-      Result.Error
-        (Migration_execution_error { version = migration.Migration.version; error = err })
+  | Result.Error err -> Result.Error (migration_error migration err)
   | Ok _ -> (
       match execute_body_timed conn migration with
       | Result.Error _ as err -> err
       | Ok elapsed ->
           match mark_success conn table migration elapsed with
-          | Result.Error err ->
-              Result.Error
-                (Migration_execution_error
-                   { version = migration.Migration.version; error = err })
+          | Result.Error err -> Result.Error (migration_error migration err)
           | Ok _ -> Ok { migration; elapsed_ms = elapsed })
 
 let run_migrations config pool migrations =
@@ -701,9 +697,7 @@ let undo ?(config = Config.default) pool source ~target =
                                     [ Value.Int64 state.applied_version ]
                                 with
                                 | Result.Error err ->
-                                    Result.Error
-                                      (Migration_execution_error
-                                         { version = migration.Migration.version; error = err })
+                                    Result.Error (migration_error migration err)
                                 | Ok _ ->
                                     loop
                                       ({ migration; elapsed_ms = elapsed } :: acc)
