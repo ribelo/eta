@@ -520,6 +520,13 @@ module Make (Backend : BACKEND) = struct
     let left_join left right ~on = join ~op:`Left left right ~on
   end
 
+  let[@inline always] render_where_clause buf where_ =
+    match where_ with
+    | None -> ()
+    | Some expr ->
+        Buffer.add_string buf " WHERE ";
+        Buffer.add_string buf expr.Expr.sql
+
   module Select = struct
     type order = {
       sql : string;
@@ -637,11 +644,7 @@ module Make (Backend : BACKEND) = struct
         query.row.Projection.columns;
       Buffer.add_string buf " FROM ";
       Buffer.add_string buf query.source.Source.sql;
-      (match query.where_ with
-       | None -> ()
-       | Some expr ->
-           Buffer.add_string buf " WHERE ";
-           Buffer.add_string buf expr.Expr.sql);
+      render_where_clause buf query.where_;
       (match List.rev query.rev_group_by with
        | [] -> ()
        | columns ->
@@ -900,11 +903,7 @@ module Make (Backend : BACKEND) = struct
       Buffer.add_string buf (table_sql query.table);
       Buffer.add_string buf " SET ";
       Buffer.add_string buf set_sql;
-      (match query.where_ with
-       | None -> ()
-       | Some expr ->
-           Buffer.add_string buf " WHERE ";
-           Buffer.add_string buf expr.Expr.sql);
+      render_where_clause buf query.where_;
       Buffer.contents buf
 
     let compile query =
@@ -943,11 +942,7 @@ module Make (Backend : BACKEND) = struct
       let buf = Buffer.create 32 in
       Buffer.add_string buf "DELETE FROM ";
       Buffer.add_string buf (table_sql query.table);
-      (match query.where_ with
-       | None -> ()
-       | Some expr ->
-           Buffer.add_string buf " WHERE ";
-           Buffer.add_string buf expr.Expr.sql);
+      render_where_clause buf query.where_;
       Buffer.contents buf
 
     let compile query = Compiled.{ sql = to_sql query; params = params query }
