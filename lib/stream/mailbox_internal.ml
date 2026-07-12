@@ -54,21 +54,19 @@ let[@inline always] take_first_locked mailbox =
   done;
   Queue.take_opt mailbox.queue
 
-let take mailbox =
+let with_lock mailbox f =
   Eio.Mutex.lock mailbox.mutex;
-  Fun.protect
-    ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
-    (fun () ->
+  Fun.protect ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex) f
+
+let take mailbox =
+  with_lock mailbox (fun () ->
       match take_first_locked mailbox with
       | Some value -> Item value
       | None -> Take_closed)
 
 let take_batch mailbox max =
   if max <= 0 then invalid_arg "Eta_stream.Mailbox.take_batch: max must be > 0";
-  Eio.Mutex.lock mailbox.mutex;
-  Fun.protect
-    ~finally:(fun () -> Eio.Mutex.unlock mailbox.mutex)
-    (fun () ->
+  with_lock mailbox (fun () ->
       match take_first_locked mailbox with
       | None -> Take_closed
       | Some first ->
