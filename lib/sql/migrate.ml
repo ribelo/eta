@@ -588,6 +588,14 @@ let mark_success conn table migration elapsed =
    ^ " SET checksum = ?, success = 1, execution_time_ms = ? WHERE version = ?")
     [ Value.String migration.Migration.checksum; Int elapsed; Int64 migration.Migration.version ]
 
+let execute_body_timed conn migration =
+  let start = Unix.gettimeofday () in
+  match execute_body conn migration with
+  | Result.Error err ->
+      Result.Error
+        (Migration_execution_error { version = migration.Migration.version; error = err })
+  | Ok () -> Ok (elapsed_ms start)
+
 let apply_one conn config migration =
   let table = table_name config in
   match mark_dirty conn table migration with
@@ -595,14 +603,9 @@ let apply_one conn config migration =
       Result.Error
         (Migration_execution_error { version = migration.Migration.version; error = err })
   | Ok _ -> (
-      let start = Unix.gettimeofday () in
-      match execute_body conn migration with
-      | Result.Error err ->
-          Result.Error
-            (Migration_execution_error
-               { version = migration.Migration.version; error = err })
-      | Ok () ->
-          let elapsed = elapsed_ms start in
+      match execute_body_timed conn migration with
+      | Result.Error _ as err -> err
+      | Ok elapsed ->
           match mark_success conn table migration elapsed with
           | Result.Error err ->
               Result.Error
@@ -689,13 +692,9 @@ let undo ?(config = Config.default) pool source ~target =
                         match down_migration_for state.applied_version migrations with
                         | None -> Result.Error (Version_not_present state.applied_version)
                         | Some migration -> (
-                            let start = Unix.gettimeofday () in
-                            match execute_body conn migration with
-                            | Result.Error err ->
-                                Result.Error
-                                  (Migration_execution_error
-                                     { version = migration.Migration.version; error = err })
-                            | Ok () -> (
+                            match execute_body_timed conn migration with
+                            | Result.Error _ as err -> err
+                            | Ok elapsed -> (
                                 match
                                   Connection.Raw.execute conn
                                     ("DELETE FROM " ^ table ^ " WHERE version = ?")
@@ -707,7 +706,7 @@ let undo ?(config = Config.default) pool source ~target =
                                          { version = migration.Migration.version; error = err })
                                 | Ok _ ->
                                     loop
-                                      ({ migration; elapsed_ms = elapsed_ms start } :: acc)
+                                      ({ migration; elapsed_ms = elapsed } :: acc)
                                       rest)))
                   in
                   loop [] to_undo)
