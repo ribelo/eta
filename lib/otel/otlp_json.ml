@@ -120,23 +120,24 @@ let resource_json resource_attrs : yj =
 
 let scope_json scope_name : yj = `Assoc [ ("name", `String scope_name) ]
 
-let encode_traces_request ~resource_attrs ~scope_name spans =
+let encode_otlp_request ~resource_attrs ~scope_name ~wrapper_key ~scope_key
+    ~records_key encode_item items =
   let payload : yj =
     `Assoc
       [
-        ( "resourceSpans",
+        ( wrapper_key,
           `List
             [
               `Assoc
                 [
                   ("resource", resource_json resource_attrs);
-                  ( "scopeSpans",
+                  ( scope_key,
                     `List
                       [
                         `Assoc
                           [
                             ("scope", scope_json scope_name);
-                            ("spans", array_map span_json spans);
+                            (records_key, array_map encode_item items);
                           ];
                       ] );
                 ];
@@ -144,6 +145,10 @@ let encode_traces_request ~resource_attrs ~scope_name spans =
       ]
   in
   Yojson.Safe.to_string payload
+
+let encode_traces_request ~resource_attrs ~scope_name spans =
+  encode_otlp_request ~resource_attrs ~scope_name ~wrapper_key:"resourceSpans"
+    ~scope_key:"scopeSpans" ~records_key:"spans" span_json spans
 
 let severity_number = function
   | Eta.Capabilities.Trace -> 1
@@ -179,29 +184,8 @@ let log_json (r : Eta.Capabilities.log_record) : yj =
     :: fields)
 
 let encode_logs_request ~resource_attrs ~scope_name records =
-  let payload : yj =
-    `Assoc
-      [
-        ( "resourceLogs",
-          `List
-            [
-              `Assoc
-                [
-                  ("resource", resource_json resource_attrs);
-                  ( "scopeLogs",
-                    `List
-                      [
-                        `Assoc
-                          [
-                            ("scope", scope_json scope_name);
-                            ("logRecords", array_map log_json records);
-                          ];
-                      ] );
-                ];
-            ] );
-      ]
-  in
-  Yojson.Safe.to_string payload
+  encode_otlp_request ~resource_attrs ~scope_name ~wrapper_key:"resourceLogs"
+    ~scope_key:"scopeLogs" ~records_key:"logRecords" log_json records
 
 module Metric_aggregation = Metric_aggregation
 module Metric_key = Metric_aggregation.Metric_key
@@ -336,28 +320,6 @@ let metric_json (key : Metric_key.t) point : yj =
 
 let encode_metrics_request ~resource_attrs ~scope_name points =
   let aggregated = Metric_aggregation.aggregate_points points in
-  let payload : yj =
-    `Assoc
-      [
-        ( "resourceMetrics",
-          `List
-            [
-              `Assoc
-                [
-                  ("resource", resource_json resource_attrs);
-                  ( "scopeMetrics",
-                    `List
-                      [
-                        `Assoc
-                          [
-                            ("scope", scope_json scope_name);
-                            ( "metrics",
-                              array_map (fun (k, v) -> metric_json k v) aggregated
-                            );
-                          ];
-                      ] );
-                ];
-            ] );
-      ]
-  in
-  Yojson.Safe.to_string payload
+  encode_otlp_request ~resource_attrs ~scope_name ~wrapper_key:"resourceMetrics"
+    ~scope_key:"scopeMetrics" ~records_key:"metrics"
+    (fun (k, v) -> metric_json k v) aggregated
