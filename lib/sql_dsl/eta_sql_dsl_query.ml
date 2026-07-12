@@ -758,6 +758,11 @@ module Make (Backend : BACKEND) = struct
           add_values true values;
           Ok (Buffer.contents columns, Buffer.contents placeholders)
 
+    let render_values_or_raise query =
+      match render_values (List.rev query.rev_values) with
+      | Result.Error err -> raise (Backend.Error err)
+      | Ok cols -> cols
+
     let column_idents columns =
       List.map column_ident columns
 
@@ -822,10 +827,7 @@ module Make (Backend : BACKEND) = struct
       Buffer.contents buf
 
     let to_sql query =
-      match render_values (List.rev query.rev_values) with
-      | Result.Error err -> raise (Backend.Error err)
-      | Ok (columns, placeholders) ->
-          to_sql_precomputed (columns, placeholders) query
+      to_sql_precomputed (render_values_or_raise query) query
 
     let rec prepend_values values acc =
       match values with
@@ -835,23 +837,19 @@ module Make (Backend : BACKEND) = struct
     let params query = prepend_values query.rev_values []
 
     let compile query =
-      match render_values (List.rev query.rev_values) with
-      | Result.Error err -> raise (Backend.Error err)
-      | Ok cols ->
-          Compiled.{ sql = to_sql_precomputed cols query; params = params query }
+      let cols = render_values_or_raise query in
+      Compiled.{ sql = to_sql_precomputed cols query; params = params query }
 
     let returning projection query =
-      match render_values (List.rev query.rev_values) with
-      | Result.Error err -> raise (Backend.Error err)
-      | Ok cols ->
-          Compiled.
-            {
-              sql =
-                render_returning_sql (to_sql_precomputed cols query)
-                  projection.Projection.columns;
-              params = prepend_values query.rev_values projection.Projection.params;
-              decode = (fun row -> projection.decode row 0);
-            }
+      let cols = render_values_or_raise query in
+      Compiled.
+        {
+          sql =
+            render_returning_sql (to_sql_precomputed cols query)
+              projection.Projection.columns;
+          params = prepend_values query.rev_values projection.Projection.params;
+          decode = (fun row -> projection.decode row 0);
+        }
   end
 
   module Update = struct
