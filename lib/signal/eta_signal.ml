@@ -710,7 +710,7 @@ module Make (Observer_error : Observer_error) () = struct
   (* Synchronous constructors mutate graph indexes without entering the graph
      lane. Keep this path same-domain, non-effectful, and callback-free;
      effectful public operations must use [with_graph_lane_sync]. *)
-  let graph_result_or_raise = function
+  let[@inline always] graph_result_or_raise = function
     | Ok value -> value
     | Error err -> raise (Graph_error err)
 
@@ -957,12 +957,9 @@ module Make (Observer_error : Observer_error) () = struct
     (`Runtime_mismatch : graph_error)
 
   let ensure_timer_runtime timer runtime_contract =
-    match
-      Timer.validate_runtime ~runtime_mismatch:timer_runtime_mismatch
-        runtime_contract timer
-    with
-    | Ok () -> ()
-    | Error err -> raise (Graph_error err)
+    graph_result_or_raise
+      (Timer.validate_runtime ~runtime_mismatch:timer_runtime_mismatch
+         runtime_contract timer)
 
   let timer_running_generation timer =
     Timer_policy.state_running_generation (timer_effective_state timer)
@@ -1228,12 +1225,11 @@ module Make (Observer_error : Observer_error) () = struct
             seen collected scope;
           (seen, collected))
     in
-    match
-      Graph.collect_staged_bind_switch_invalidations graph lane staging plan
-    with
-    | Ok (invalidated_ids, invalidated_nodes) ->
-        { invalidated_ids; invalidated_nodes = !invalidated_nodes }
-    | Error err -> raise (Graph_error err)
+    let (invalidated_ids, invalidated_nodes) =
+      graph_result_or_raise
+        (Graph.collect_staged_bind_switch_invalidations graph lane staging plan)
+    in
+    { invalidated_ids; invalidated_nodes = !invalidated_nodes }
 
   let signal_timer (P signal) =
     Option.map (fun timer -> (signal.id, timer)) signal.timer
@@ -1407,9 +1403,7 @@ module Make (Observer_error : Observer_error) () = struct
       observer
 
   let next_timer_refresh_token_unlocked lane =
-    match Graph.next_timer_refresh_token graph lane with
-    | Ok token -> token
-    | Error err -> raise (Graph_error err)
+    graph_result_or_raise (Graph.next_timer_refresh_token graph lane)
 
   let stage_pending_var lane staging (V var) =
     let graph_value = Transaction.current var.graph_value in
@@ -1422,18 +1416,15 @@ module Make (Observer_error : Observer_error) () = struct
     Graph.with_timer_refresh_timer graph lane signal.timer
       ~none:(fun () -> ())
       ~some:(fun timer_refresh timer ->
-        match
-          Timer.refresh_node_on_demand
-            ~runtime_mismatch:timer_runtime_mismatch
-            ~current_snapshot:timer_current_snapshot
-            ~effective_state:timer_effective_state
-            ~remember:(remember_timer_refresh_timer lane staging)
-            ~run_operation:(fun timer ~now_ms operation ->
-              stage_timer_refresh_operation lane staging timer now_ms operation)
-            timer_refresh timer
-        with
-        | Ok () -> ()
-        | Error err -> raise (Graph_error err))
+        graph_result_or_raise
+          (Timer.refresh_node_on_demand
+             ~runtime_mismatch:timer_runtime_mismatch
+             ~current_snapshot:timer_current_snapshot
+             ~effective_state:timer_effective_state
+             ~remember:(remember_timer_refresh_timer lane staging)
+             ~run_operation:(fun timer ~now_ms operation ->
+               stage_timer_refresh_operation lane staging timer now_ms operation)
+             timer_refresh timer))
 
   let rec compute : type a. graph_lane -> Graph.staging -> a signal -> a * bool
       =
@@ -2108,9 +2099,7 @@ module Make (Observer_error : Observer_error) () = struct
 
     let value (source : 'a t) =
       ensure_graph_context ();
-      (match Graph.ensure_not_pure graph with
-      | Ok () -> ()
-      | Error err -> raise (Graph_error err));
+      ignore (graph_result_or_raise (Graph.ensure_not_pure graph));
       Transaction.current source.source_value
 
     let watch (source : 'a t) =
