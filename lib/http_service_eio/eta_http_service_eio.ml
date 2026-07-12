@@ -61,25 +61,16 @@ module Serve = struct
     | Some addr -> addr
     | None -> tcp_addr ~host ~port
 
-  let h1 ~sw ~net ~clock ?time ?domain_manager ?domain_policy ?stop ?config
+  let run_protocol run_server ~sw ~net ~clock ?time ?domain_manager ?domain_policy ?stop ?config
       ?runtime_factory ?on_error ?on_connection_close
       ?(ready_path = Some "/ready") ?(host = "127.0.0.1") ?(port = 8080)
       ?addr handler =
     let addr = choose_addr ~host ~port addr in
     run_with_stop ~sw ?external_stop:stop @@ fun ~ready stop ->
     let handler = with_readiness ~ready_path ~ready handler in
-    Eta_http_eio.Server.run_h1 ~sw ~net ~clock ?time ?domain_manager
-      ?domain_policy ~stop ?config ?runtime_factory ?on_error
-      ?on_connection_close ~addr handler
+    run_server ~sw ~net ~clock ?time ?domain_manager ?domain_policy ~stop ?config
+      ?runtime_factory ?on_error ?on_connection_close ~addr handler
 
-  let h2c ~sw ~net ~clock ?time ?domain_manager ?domain_policy ?stop ?config
-      ?runtime_factory ?on_error ?on_connection_close
-      ?(ready_path = Some "/ready") ?(host = "127.0.0.1") ?(port = 8080)
-      ?addr handler =
-    let addr = choose_addr ~host ~port addr in
-    run_with_stop ~sw ?external_stop:stop @@ fun ~ready stop ->
-    let handler = with_readiness ~ready_path ~ready handler in
-    Eta_http_eio.Server.run_h2c ~sw ~net ~clock ?time ?domain_manager
-      ?domain_policy ~stop ?config ?runtime_factory ?on_error
-      ?on_connection_close ~addr handler
+  let h1 = run_protocol Eta_http_eio.Server.run_h1
+  let h2c = run_protocol Eta_http_eio.Server.run_h2c
 end
