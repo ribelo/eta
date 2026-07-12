@@ -438,17 +438,17 @@ let try_recv (t : ('a, 'err) t) =
   resolve_wakeups !wakeups;
   result
 
-let close (t : ('a, 'err) t) =
+let close_with reason t =
   let wakeups = ref [] in
-  with_lock t (fun () -> close_locked wakeups t Clean);
+  with_lock t (fun () -> close_locked wakeups t reason);
   resolve_wakeups !wakeups
 
-let close_with_error (t : ('a, 'err) t) error =
-  let wakeups = ref [] in
-  with_lock t (fun () -> close_locked wakeups t (Error error));
-  resolve_wakeups !wakeups
+let close t = close_with Clean t
+
+let close_with_error t error = close_with (Error error) t
 
 let close_effect t = Effect.sync (fun () -> close t)
+
 let close_with_error_effect t error =
   Effect.sync (fun () -> close_with_error t error)
 
