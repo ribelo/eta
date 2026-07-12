@@ -77,21 +77,6 @@ let next_probe_id =
 
 let now_us () = int_of_float (Unix.gettimeofday () *. 1_000_000.0)
 
-let trace_io_line line =
-  match Lazy.force io_trace_path with
-  | None -> ()
-  | Some path ->
-      let out =
-        open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path
-      in
-      Fun.protect
-        ~finally:(fun () -> close_out_noerr out)
-        (fun () ->
-          output_string out line;
-          output_char out '\n')
-
-let trace_iof fmt = Printf.ksprintf trace_io_line fmt
-
 let append_trace_line path line =
   let out = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
   Fun.protect
@@ -99,6 +84,13 @@ let append_trace_line path line =
     (fun () ->
       output_string out line;
       output_char out '\n')
+
+let trace_io_line line =
+  match Lazy.force io_trace_path with
+  | None -> ()
+  | Some path -> append_trace_line path line
+
+let trace_iof fmt = Printf.ksprintf trace_io_line fmt
 
 let create_probe = function
   | None | Some "" -> None
