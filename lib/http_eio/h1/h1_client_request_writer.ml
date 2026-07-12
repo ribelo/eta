@@ -60,20 +60,22 @@ let write_chunked_stream ?host_eio request flow body =
   in
   loop ()
 
+let flush_to_host_flow host_eio request flow buffer =
+  try
+    let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
+    Flow.write flow [ Cstruct.of_string (Buffer.contents buffer) ];
+    Ok ()
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | _ -> Error (H1_client_errors.io_closed request Http_request)
+
 let write_to_host_flow host_eio request flow ~headers ~body =
   let buffer = Buffer.create 256 in
   match
     Write.write buffer ~method_:request.method_ ~url:request.url ~headers ~body
   with
   | Error _ as error -> error
-  | Ok () -> (
-      try
-        let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
-        Flow.write flow [ Cstruct.of_string (Buffer.contents buffer) ];
-        Ok ()
-      with
-      | Eio.Cancel.Cancelled _ as exn -> raise exn
-      | _ -> Error (H1_client_errors.io_closed request Http_request))
+  | Ok () -> flush_to_host_flow host_eio request flow buffer
 
 let write_stream_headers_to_host_flow host_eio request flow ~headers ~framing =
   let buffer = Buffer.create 256 in
@@ -82,14 +84,7 @@ let write_stream_headers_to_host_flow host_eio request flow ~headers ~framing =
       ~headers ~framing
   with
   | Error _ as error -> error
-  | Ok () -> (
-      try
-        let module Flow = (val Eta_eio.Host.flow host_eio : EIO_FLOW) in
-        Flow.write flow [ Cstruct.of_string (Buffer.contents buffer) ];
-        Ok ()
-      with
-      | Eio.Cancel.Cancelled _ as exn -> raise exn
-      | _ -> Error (H1_client_errors.io_closed request Http_request))
+  | Ok () -> flush_to_host_flow host_eio request flow buffer
 
 let write_headers_effect ?host_eio request flow ~headers ~framing =
   Effect.sync (fun () ->
