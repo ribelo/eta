@@ -328,6 +328,11 @@ let trace_line t line =
           output_string out line;
           output_char out '\n')
 
+let if_tracing t line_thunk =
+  match t.trace_path with
+  | None -> ()
+  | Some _ -> trace_line t (line_thunk ())
+
 let append_trace_line path line =
   let out = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
   Fun.protect
@@ -549,35 +554,25 @@ let trace_request_body_read_return t ordinal called_us
            final)
 
 let trace_request_body_read_armed t state armed_us =
-  match t.trace_path with
-  | None -> ()
-  | Some _ ->
-      trace_line t
-        (Printf.sprintf
-           "h2_request_body_read_armed stream_id=%d read_armed_us=%d"
-           state.stream_id armed_us)
+  if_tracing t (fun () ->
+      Printf.sprintf "h2_request_body_read_armed stream_id=%d read_armed_us=%d"
+        state.stream_id armed_us)
 
 let trace_request_body_chunk t state ~armed_us ~callback_us ~resolved_us ~copy_us
     len =
-  match t.trace_path with
-  | None -> ()
-  | Some _ ->
-      trace_line t
-        (Printf.sprintf
-           "h2_request_body_chunk stream_id=%d read_armed_us=%d callback_us=%d \
-            resolved_us=%d reader_wait_us=%d copy_us=%d bytes=%d"
-           state.stream_id armed_us callback_us resolved_us
-           (callback_us - armed_us) copy_us len)
+  if_tracing t (fun () ->
+      Printf.sprintf
+        "h2_request_body_chunk stream_id=%d read_armed_us=%d callback_us=%d \
+         resolved_us=%d reader_wait_us=%d copy_us=%d bytes=%d"
+        state.stream_id armed_us callback_us resolved_us
+        (callback_us - armed_us) copy_us len)
 
 let trace_request_body_eof t state ~armed_us ~eof_us =
-  match t.trace_path with
-  | None -> ()
-  | Some _ ->
-      trace_line t
-        (Printf.sprintf
-           "h2_request_body_eof stream_id=%d read_armed_us=%d eof_us=%d \
-            eof_wait_us=%d"
-           state.stream_id armed_us eof_us (eof_us - armed_us))
+  if_tracing t (fun () ->
+      Printf.sprintf
+        "h2_request_body_eof stream_id=%d read_armed_us=%d eof_us=%d \
+         eof_wait_us=%d"
+        state.stream_id armed_us eof_us (eof_us - armed_us))
 
 let create_request_trailers () =
   let promise, resolver = Eio.Promise.create () in
@@ -1709,9 +1704,9 @@ let trace_response_start t state length =
 
 let trace_request_body_copy t state len =
   if len > 0 then
-    trace_line t
-      (Printf.sprintf "h2_request_body_copy stream_id=%d bytes=%d"
-         state.stream_id len)
+    if_tracing t (fun () ->
+        Printf.sprintf "h2_request_body_copy stream_id=%d bytes=%d"
+          state.stream_id len)
 
 let trace_request_accepted t stream_id =
   if tracing_enabled t then (
@@ -1730,9 +1725,9 @@ let trace_request_accepted t stream_id =
 
 let trace_response_fixed_copy t state len =
   if len > 0 then
-    trace_line t
-      (Printf.sprintf "h2_response_fixed_copy stream_id=%d bytes=%d"
-         state.stream_id len)
+    if_tracing t (fun () ->
+        Printf.sprintf "h2_response_fixed_copy stream_id=%d bytes=%d"
+          state.stream_id len)
 
 let cstruct_code data index = Cstruct.get_uint8 data index
 
