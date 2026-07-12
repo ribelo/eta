@@ -405,9 +405,7 @@ let recv_sync contract (t : ('a, 'err) t) =
         raise exn)
 
 let send t value =
-  Effect_erasure.effect_to_public
-    (Effect_core.sync_frame (fun frame ->
-         send_sync frame.Effect_core.runtime.Runtime_core.contract t value))
+  Effect_erasure.public_sync t (fun contract t -> send_sync contract t value)
   |> Effect.bind (function
        | `Sent -> Effect.unit
        | `Full -> assert false
@@ -415,9 +413,7 @@ let send t value =
        | `Closed_with_error error -> Effect.fail (`Closed_with_error error))
 
 let recv t =
-  Effect_erasure.effect_to_public
-    (Effect_core.sync_frame (fun frame ->
-         recv_sync frame.Effect_core.runtime.Runtime_core.contract t))
+  Effect_erasure.public_sync t recv_sync
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false

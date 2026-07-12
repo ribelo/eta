@@ -305,9 +305,7 @@ let publish_sync contract t value =
         raise exn)
 
 let publish t value =
-  Effect_erasure.effect_to_public
-    (Effect_core.sync_frame (fun frame ->
-         publish_sync frame.Effect_core.runtime.Runtime_core.contract t value))
+  Effect_erasure.public_sync t (fun contract t -> publish_sync contract t value)
   |> Effect.bind (function
        | `Published result -> Effect.pure result
        | `Closed -> Effect.fail `Closed
@@ -414,9 +412,7 @@ let recv_sync contract sub =
   loop ()
 
 let recv sub =
-  Effect_erasure.effect_to_public
-    (Effect_core.sync_frame (fun frame ->
-         recv_sync frame.Effect_core.runtime.Runtime_core.contract sub))
+  Effect_erasure.public_sync sub recv_sync
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false
