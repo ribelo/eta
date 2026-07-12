@@ -82,13 +82,14 @@ let with_span ~kind ~name ~attrs eff =
   eff |> with_error_type |> Eta.Effect.annotate_all attrs
   |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
 
+let[@inline always] with_response_attrs response_attrs eff =
+  eff
+  |> Eta.Effect.bind (fun response ->
+         Eta.Effect.pure response
+         |> Eta.Effect.annotate_all (response_attrs response))
+
 let with_chat_span provider (request : chat_request) eff =
-  let eff =
-    eff
-    |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response
-           |> Eta.Effect.annotate_all (response_attrs response))
-  in
+  let eff = with_response_attrs response_attrs eff in
   let attrs =
     common_attrs ~operation:"chat" provider ~model:request.model
     @ if request.stream then [ ("gen_ai.request.stream", "true") ] else []
@@ -122,12 +123,7 @@ let embedding_response_attrs (response : Embedding.response) =
   | None -> []
 
 let with_embeddings_span provider (request : Embedding.request) eff =
-  let eff =
-    eff
-    |> Eta.Effect.bind (fun response ->
-           Eta.Effect.pure response
-           |> Eta.Effect.annotate_all (embedding_response_attrs response))
-  in
+  let eff = with_response_attrs embedding_response_attrs eff in
   let attrs =
     common_attrs ~operation:"embeddings" provider
       ~model:request.model
