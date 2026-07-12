@@ -108,27 +108,26 @@ let[@cold] fail_response ?max_bytes provider
            (provider.decode_error ~status:response.status
               ~headers:response.headers raw))
 
-let perform_raw ?max_bytes provider client request =
+let[@inline always] submit_and_handle ?max_bytes provider client request
+    on_success =
   submit_request client request
   |> Eta.Effect.bind (fun response ->
-         if successful response then read_response_text ?max_bytes response.body
+         if successful response then on_success response
          else fail_response ?max_bytes provider response)
+
+let perform_raw ?max_bytes provider client request =
+  submit_and_handle ?max_bytes provider client request (fun response ->
+      read_response_text ?max_bytes response.body)
 
 let perform_binary ?max_bytes provider client request =
-  submit_request client request
-  |> Eta.Effect.bind (fun response ->
-         if successful response then
-           read_response_body ?max_bytes response.body
-           |> Eta.Effect.map (fun body -> (body, response.headers))
-         else fail_response ?max_bytes provider response)
+  submit_and_handle ?max_bytes provider client request (fun response ->
+      read_response_body ?max_bytes response.body
+      |> Eta.Effect.map (fun body -> (body, response.headers)))
 
 let[@inline always] perform_decoded provider decode client request =
-  submit_request client request
-  |> Eta.Effect.bind (fun response ->
-         if successful response then
-           read_response_text response.body
-           |> Eta.Effect.bind (fun raw -> result_effect (decode raw))
-         else fail_response provider response)
+  submit_and_handle provider client request (fun response ->
+      read_response_text response.body
+      |> Eta.Effect.bind (fun raw -> result_effect (decode raw)))
 
 let perform_chat provider client request =
   perform_decoded provider provider.decode_chat client request
@@ -137,11 +136,8 @@ let perform_embeddings provider client request =
   perform_decoded provider provider.decode_embeddings client request
 
 let perform_stream provider client request =
-  submit_request client request
-  |> Eta.Effect.bind (fun response ->
-         if successful response then
-           Eta.Effect.pure (Sse.stream_of_body provider response.body)
-         else fail_response provider response)
+  submit_and_handle provider client request (fun response ->
+      Eta.Effect.pure (Sse.stream_of_body provider response.body))
 
 let run_chat_request provider client chat_request request =
   run_request request (fun http_request ->
