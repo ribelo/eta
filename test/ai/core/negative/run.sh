@@ -33,7 +33,7 @@ for src in "$fixture_dir"/*_negative.ml; do
     echo "expected compile failure, but fixture compiled: $name"
     status=1
   elif ! grep -Fq 'string Eta_redacted.t' "$log" \
-      || ! grep -Fq 'expected of type "string"' "$log"; then
+      || ! grep -Eq 'expected of type "?string"?' "$log"; then
     echo "fixture failed for the wrong reason: $name"
     sed -n '1,120p' "$log"
     status=1
