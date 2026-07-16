@@ -100,15 +100,19 @@ Build and test gates:
 nix develop -c dune build @install         # all installable packages
 nix develop -c dune runtest --force        # full test suite
 nix develop -c eta-oxcaml-test-shipped     # shipped-package subset gate
+nix develop .#ocaml54 -c eta-ocaml54-test-erg # Erg's native OCaml 5.4 dependency gate
 ```
 
 Agents must run repository verification through the Nix flake, not through the
-ambient system OCaml or opam switch. Use `nix develop -c ...` for the
-OxCaml/native gates and `nix develop .#mainline -c ...` for js_of_ocaml gates.
+ambient system OCaml or opam switch. Use `nix develop -c ...` for the OxCaml
+gate, `nix develop .#ocaml54 -c ...` for Erg's upstream OCaml 5.4 native gate,
+and `nix develop .#mainline -c ...` for js_of_ocaml gates.
 Ambient/system opam results are not valid handoff evidence unless the user
 explicitly asks for a non-Nix reproduction.
 
-OxCaml and js_of_ocaml are separate build tracks. The OxCaml `5.2.0+ox`
+OxCaml, upstream OCaml 5.4 native, and js_of_ocaml are separate build tracks.
+The `ocaml54` track covers the Eta packages consumed natively by Erg, including
+the Eio HTTP/TLS transport and OpenRouter. The OxCaml `5.2.0+ox`
 switch cannot build or run js_of_ocaml libraries/tests, and the existing JS
 stanzas are disabled under that compiler with `enabled_if`. Native Nix/OxCaml
 gates therefore do not verify `eta_jsoo`, `eta_js`, `eta_js_stream`,

@@ -148,6 +148,12 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 > and test them through the flake's mainline shell:
 > `nix develop .#mainline -c dune runtest test/http_js --force`.
 
+> Erg pins Eta's native upstream-compiler surface through
+> `nix develop .#ocaml54 -c eta-ocaml54-test-erg`. That gate covers Eta core,
+> Eio, native HTTP/TLS, schemas, test support, and OpenRouter on OCaml 5.4.1;
+> it does not claim coverage for optional SQL, observability, driver, or JS
+> packages.
+
 ## How OCaml's tree-shaking actually works
 
 OCaml has dead-code elimination, but it is coarser than JavaScript bundlers.

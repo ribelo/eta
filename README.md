@@ -523,6 +523,16 @@ The handoff gate is:
 nix develop -c dune runtest --force
 ```
 
+Erg consumes Eta through the pinned upstream OCaml 5.4 native track:
+
+```sh
+nix develop .#ocaml54 -c eta-ocaml54-test-erg
+```
+
+That focused gate covers Eta core, Eio, native HTTP/TLS, schema/test support,
+and OpenRouter without pulling unrelated database and observability packages
+into Erg's dependency contract.
+
 Build all installable packages without running tests:
 
 ```sh
@@ -555,6 +565,8 @@ Footguns:
   packages.
 - `nix develop .#mainline` is an upstream-OCaml comparison shell, not the
   primary development shell.
+- `nix develop .#ocaml54` is the pinned upstream OCaml 5.4 native shell for the
+  package subset consumed by Erg.
 - `test/http` is the low-level protocol test target. `test/http_eio` is the
   green Eio transport gate.
 

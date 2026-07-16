@@ -1,5 +1,7 @@
 open Eta
 
+[@@@alert "-unsafe_multidomain"]
+
 exception Promise_blocked
 exception Await_cancelled
 exception Reentered_locked_queue
@@ -96,14 +98,14 @@ let expect_blocked = function
 
 let with_reentry_alarm f =
   let previous =
-    Sys.Safe.signal Sys.sigalrm
+    Sys.signal Sys.sigalrm
       (Sys.Signal_handle (fun _ -> raise Reentered_locked_queue))
   in
   ignore (Unix.alarm 1 : int);
   Fun.protect
     ~finally:(fun () ->
       ignore (Unix.alarm 0 : int);
-      Sys.Safe.set_signal Sys.sigalrm previous)
+      ignore (Sys.signal Sys.sigalrm previous))
     f
 
 let run_in_domain f =

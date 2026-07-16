@@ -465,6 +465,79 @@
               dune build @bench
             '';
           };
+          ocaml54ShippedTests = pkgs.writeShellApplication {
+            name = "eta-ocaml54-test-erg";
+            runtimeInputs = [
+              pkgs.git
+            ];
+            text = ''
+              repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              cd "$repo_root"
+
+              export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+
+              dune build \
+                lib/redacted \
+                lib/eta \
+                lib/blocking \
+                lib/eio \
+                lib/stream \
+                lib/http \
+                lib/http/h1 \
+                lib/http/h2 \
+                lib/http/ws \
+                lib/http_tls_openssl \
+                lib/http_eio \
+                lib/schema \
+                lib/schema_test \
+                lib/test \
+                lib/ai \
+                lib/ai/openai_codec \
+                lib/ai/openrouter
+
+              dune runtest --force \
+                test/eta \
+                test/redacted_common \
+                test/redacted_eio \
+                test/stream \
+                test/stream_common \
+                test/stream_eio \
+                test/http_common \
+                test/http \
+                test/http/tls \
+                test/http_eio \
+                test/schema_common \
+                test/schema_eio \
+                test/schema_test_common \
+                test/schema_test_eio \
+                test/ai_common \
+                test/ai_eio \
+                test/ai/core \
+                test/ai/openrouter
+            '';
+          };
+          ocaml54HostPackages = [
+            ocaml54ShippedTests
+            ocamlPackages.ocaml
+            ocamlPackages.dune_3
+            ocamlPackages.findlib
+            ocamlPackages.eio
+            ocamlPackages.eio_main
+            ocamlPackages.alcotest
+            ocamlPackages.angstrom
+            ocamlPackages.base64
+            ocamlPackages.bigstringaf
+            ocamlPackages.cstruct
+            ocamlPackages.crowbar
+            ocamlPackages.decompress
+            ocamlPackages.domain-name
+            ocamlPackages.faraday
+            ocamlPackages.ipaddr
+            ocamlPackages.yojson
+            pkgs.git
+            pkgs.openssl
+            pkgs.pkg-config
+          ];
         in
         {
           default = pkgs.mkShell {
@@ -510,6 +583,18 @@
               fi
             '';
           };
+
+          ocaml54 =
+            assert ocamlPackages.ocaml.version == "5.4.1";
+            pkgs.mkShell {
+              packages = ocaml54HostPackages;
+
+              shellHook = ''
+                export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+                echo "Eta Erg native shell (upstream OCaml ${ocamlPackages.ocaml.version})"
+                echo "Run 'eta-ocaml54-test-erg' for the Erg dependency gate."
+              '';
+            };
 
           # Mainline is retained only for before/after performance comparison.
           # It is also the upstream OCaml compatibility gate for this experiment.

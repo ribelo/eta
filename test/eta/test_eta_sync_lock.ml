@@ -1,18 +1,20 @@
 open Eta
 open Test_eta_support
 
+[@@@alert "-unsafe_multidomain"]
+
 exception Sync_lock_reentry_timeout
 
 let with_reentry_alarm f =
   let previous =
-    Sys.Safe.signal Sys.sigalrm
+    Sys.signal Sys.sigalrm
       (Sys.Signal_handle (fun _ -> raise Sync_lock_reentry_timeout))
   in
   ignore (Unix.alarm 1 : int);
   Fun.protect
     ~finally:(fun () ->
       ignore (Unix.alarm 0 : int);
-      Sys.Safe.set_signal Sys.sigalrm previous)
+      ignore (Sys.signal Sys.sigalrm previous))
     f
 
 let test_sync_lock_reentrant_use_fails_fast () =
