@@ -669,7 +669,8 @@ let stream_text events =
   List.iter
     (function
       | Stream_content_delta text -> Buffer.add_string buffer text
-      | Stream_message_start _ | Stream_tool_call_delta _ | Stream_finish _
+      | Stream_message_start _ | Stream_reasoning_delta _
+      | Stream_tool_call_delta _ | Stream_response _ | Stream_finish _
       | Stream_error _ | Stream_done ->
           ())
     events;
@@ -681,7 +682,8 @@ let stream_tool_args events =
     (function
       | Stream_tool_call_delta { arguments_json_delta; _ } ->
           Buffer.add_string buffer arguments_json_delta
-      | Stream_message_start _ | Stream_content_delta _ | Stream_finish _
+      | Stream_message_start _ | Stream_reasoning_delta _
+      | Stream_content_delta _ | Stream_response _ | Stream_finish _
       | Stream_error _ | Stream_done ->
           ())
     events;
@@ -691,8 +693,9 @@ let stream_errors events =
   List.filter_map
     (function
       | Stream_error (Provider_error { message; _ }) -> Some message
-      | Stream_error _ | Stream_message_start _ | Stream_content_delta _
-      | Stream_tool_call_delta _ | Stream_finish _ | Stream_done ->
+      | Stream_error _ | Stream_message_start _ | Stream_reasoning_delta _
+      | Stream_content_delta _ | Stream_tool_call_delta _ | Stream_response _
+      | Stream_finish _ | Stream_done ->
           None)
     events
 
@@ -700,7 +703,8 @@ let stream_has_done events =
   List.exists
     (function
       | Stream_done -> true
-      | Stream_message_start _ | Stream_content_delta _ | Stream_tool_call_delta _
+      | Stream_message_start _ | Stream_reasoning_delta _
+      | Stream_content_delta _ | Stream_tool_call_delta _ | Stream_response _
       | Stream_finish _ | Stream_error _ ->
           false)
     events

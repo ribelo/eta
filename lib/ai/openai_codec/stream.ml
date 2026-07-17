@@ -110,9 +110,40 @@ let response_event_name event json =
   | Some _ as value -> value
   | None -> Json.string_member "type" json
 
+let responses_message_start raw json =
+  match Json.object_member "response" json with
+  | None -> []
+  | Some response ->
+      [
+        A.Stream_message_start
+          {
+            id = Json.string_member "id" response;
+            model = Json.string_member "model" response;
+            raw = Some raw;
+          };
+      ]
+
+let responses_completed ~provider json =
+  match Json.object_member "response" json with
+  | None -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
+  | Some response -> (
+      match Responses.decode_responses ~provider (Json.compact response) with
+      | Stdlib.Ok response ->
+          [
+            A.Stream_response response;
+            A.Stream_finish response.finish_reasons;
+            A.Stream_done;
+          ]
+      | Stdlib.Error error -> [ A.Stream_error error ])
+
 let responses_stream_events ?(nested_response_error = false) ~provider raw
     event_name json =
   match event_name with
+  | Some "response.created" -> responses_message_start raw json
+  | Some "response.reasoning_text.delta" -> (
+      match Json.string_member "delta" json with
+      | Some text -> [ A.Stream_reasoning_delta text ]
+      | None -> [])
   | Some "response.output_text.delta" -> (
       match Json.string_member "delta" json with
       | Some text -> [ A.Stream_content_delta text ]
@@ -120,7 +151,7 @@ let responses_stream_events ?(nested_response_error = false) ~provider raw
   | Some "response.output_item.added" -> responses_stream_tool_added json
   | Some "response.function_call_arguments.delta" ->
       [ responses_stream_tool_delta json ]
-  | Some "response.completed" -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
+  | Some "response.completed" -> responses_completed ~provider json
   | Some "response.incomplete" -> [ A.Stream_finish [ A.Length ] ]
   | Some "response.failed" ->
       [
