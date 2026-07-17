@@ -492,6 +492,17 @@
   (yojson (>= 2.0))))
 
 (package
+ (name eta_exa)
+ (synopsis "Exa HTTP client for Eta")
+ (description
+  "eta_exa provides typed request planning and raw-response execution for Exa search, contents, code-context, and agent-run APIs.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_http
+  eta_redacted))
+
+(package
  (name ppx_eta)
  (synopsis "PPX syntax helpers for Eta")
  (description
