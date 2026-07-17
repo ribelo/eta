@@ -204,6 +204,22 @@ module Eta_schema : sig
 
   val refine : name:string -> ('a -> issue list) -> 'a t -> 'a t
 
+  val describe : string -> 'a t -> 'a t
+  (** Attach a JSON Schema description without changing codec behavior. *)
+
+  val with_keyword : string -> json -> 'a t -> 'a t
+  (** Attach or replace one JSON Schema keyword. Validation constraints should
+      also be represented by [refine] so provider metadata and runtime
+      validation remain one composed schema value. *)
+
+  val closed : 'a t -> 'a t
+  (** Reject fields not declared by an object record schema and derive
+      [additionalProperties: false]. Raises [Invalid_argument] for non-object
+      schemas. *)
+
+  val json_schema : 'a t -> json
+  (** Derive provider-facing JSON Schema from this codec value. *)
+
   val transform :
     name:string ->
     equal:('a -> 'a -> bool) ->

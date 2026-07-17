@@ -860,6 +860,66 @@ let test_tagged_union_rejects_non_object_case_encode () =
   in
   check_int "non-object union issue count" 1 (List.length issues)
 
+type schema_metadata = { command : string; limit : int option }
+
+let schema_metadata_equal left right =
+  String.equal left.command right.command
+  && Option.equal Int.equal left.limit right.limit
+
+let schema_metadata =
+  let command =
+    Eta_schema.string
+    |> Eta_schema.with_keyword "minLength" (Json.int 1)
+    |> Eta_schema.describe "Command to run"
+  in
+  let limit =
+    Eta_schema.int |> Eta_schema.with_keyword "minimum" (Json.int 0)
+  in
+  Eta_schema.record2 ~name:"schema_metadata"
+    (fun command limit -> { command; limit })
+    (Eta_schema.required "command" command (fun value -> value.command))
+    (Eta_schema.optional "limit" limit (fun value -> value.limit))
+    ~equal:schema_metadata_equal ()
+  |> Eta_schema.closed
+
+let test_json_schema_derivation_and_closed_decode () =
+  let expected =
+    Json.object_
+      [
+        ("additionalProperties", Json.bool false);
+        ("type", Json.string "object");
+        ( "properties",
+          Json.object_
+            [
+              ( "command",
+                Json.object_
+                  [
+                    ("description", Json.string "Command to run");
+                    ("minLength", Json.int 1);
+                    ("type", Json.string "string");
+                  ] );
+              ( "limit",
+                Json.object_
+                  [
+                    ("minimum", Json.int 0);
+                    ("type", Json.string "integer");
+                  ] );
+            ] );
+        ("required", Json.array [ Json.string "command" ]);
+      ]
+  in
+  check_bool "derived schema" (Json.equal expected (Eta_schema.json_schema schema_metadata));
+  match
+    Eta_schema.decode_result schema_metadata
+      (Json.object_
+         [ ("command", Json.string "pwd"); ("unknown", Json.bool true) ])
+  with
+  | Ok _ -> failwith "closed schema accepted unknown field"
+  | Error [ issue ] ->
+      check_string "unknown field path" "/unknown"
+        (issue_to_json_pointer issue)
+  | Error _ -> failwith "expected one closed-schema issue"
+
 let tests =
   [
     ( "Eta_schema",
@@ -889,6 +949,8 @@ let tests =
           test_lazy_schema_memoizes_thunk;
         Alcotest.test_case "decode int rejects upper float boundary" `Quick
           test_decode_int_rejects_upper_float_boundary;
+        Alcotest.test_case "json schema derivation and closed decode" `Quick
+          test_json_schema_derivation_and_closed_decode;
       ] );
   ]
 end
