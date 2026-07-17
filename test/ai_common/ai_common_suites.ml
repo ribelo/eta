@@ -49,6 +49,7 @@ let test_provider_error_preserves_raw_body () =
         code = Some "server_error";
         message = "Provider disconnected";
         raw = Some "{\"error\":{\"message\":\"Provider disconnected\"}}";
+        retry_after_s = None;
       }
   in
   match error with
@@ -57,6 +58,119 @@ let test_provider_error_preserves_raw_body () =
       Alcotest.(check (option int)) "status" (Some 502) status;
       Alcotest.(check bool) "raw json" true (String.contains raw '{')
   | _ -> Alcotest.fail "expected provider error"
+
+let check_projection label ~category ~status ~retryable ~retry_after_s error =
+  let actual = project_ai_error error in
+  Alcotest.(check string)
+    (label ^ " category")
+    (ai_error_category_to_string category)
+    (ai_error_category_to_string actual.category);
+  Alcotest.(check (option int)) (label ^ " status") status actual.status;
+  Alcotest.(check bool) (label ^ " retryable") retryable actual.retryable;
+  Alcotest.(check (option int))
+    (label ^ " retry_after_s") retry_after_s actual.retry_after_s;
+  actual
+
+let make_provider_error ?status ?code ?retry_after_s ?(raw = None) ~provider
+    message =
+  Provider_error
+    {
+      provider;
+      status;
+      code;
+      message;
+      raw;
+      retry_after_s;
+    }
+
+let test_project_ai_error_status_and_code_categories () =
+  ignore
+    (check_projection "429 rate limit" ~category:Transient ~status:(Some 429)
+       ~retryable:true ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:429
+          ~code:"rate_limit_exceeded" "Rate limit reached"));
+  ignore
+    (check_projection "500 server" ~category:Transient ~status:(Some 500)
+       ~retryable:true ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:500 ~code:"server_error"
+          "internal"));
+  ignore
+    (check_projection "402 billing status" ~category:Billing ~status:(Some 402)
+       ~retryable:false ~retry_after_s:None
+       (make_provider_error ~provider:"openrouter" ~status:402
+          "Payment required"))
+
+let test_project_ai_error_nonretryable_quota_billing_context () =
+  ignore
+    (check_projection "quota code" ~category:Quota_budget ~status:(Some 429)
+       ~retryable:false ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:429
+          ~code:"insufficient_quota" "You exceeded your current quota"));
+  ignore
+    (check_projection "billing code" ~category:Billing ~status:(Some 400)
+       ~retryable:false ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:400
+          ~code:"billing_not_active" "Billing not active"));
+  ignore
+    (check_projection "context overflow code" ~category:Context_overflow
+       ~status:(Some 400) ~retryable:false ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:400
+          ~code:"context_length_exceeded"
+          "This model's maximum context length is 128000 tokens"));
+  ignore
+    (check_projection "message-only context fallback" ~category:Context_overflow
+       ~status:(Some 400) ~retryable:false ~retry_after_s:None
+       (make_provider_error ~provider:"openai" ~status:400
+          "prompt is too long for the model context window"))
+
+let test_project_ai_error_retry_after_and_transport () =
+  ignore
+    (check_projection "provider retry after" ~category:Transient
+       ~status:(Some 429) ~retryable:true ~retry_after_s:(Some 12)
+       (make_provider_error ~provider:"openai" ~status:429
+          ~code:"rate_limit_exceeded" ~retry_after_s:12 "slow down"));
+  let transport =
+    Eta_http.Error.make ~method_:"POST" ~uri:"https://api.example/v1"
+      (Eta_http.Error.Connect_timeout { timeout_ms = Some 250 })
+  in
+  let failure =
+    check_projection "transport" ~category:Transient ~status:None
+      ~retryable:true ~retry_after_s:None (Eta_http_error transport)
+  in
+  Alcotest.(check bool) "transport diagnostic kind" true
+    (String.starts_with ~prefix:"kind=http_error" failure.diagnostic)
+
+let test_project_ai_error_diagnostic_redaction_and_bounding () =
+  let secret_body =
+    "{\"error\":{\"message\":\"secret body\",\"authorization\":\"Bearer sk-live\"}}"
+  in
+  let long_message = String.make 400 'x' in
+  let failure =
+    project_ai_error
+      (make_provider_error ~provider:"openai" ~status:500 ~code:"server_error"
+         ~raw:(Some secret_body) long_message)
+  in
+  Alcotest.(check bool) "raw body omitted" false
+    (Eta.String_helpers.contains_ascii_ci failure.diagnostic secret_body);
+  Alcotest.(check bool) "auth secret omitted" false
+    (Eta.String_helpers.contains_ascii_ci failure.diagnostic "sk-live");
+  Alcotest.(check bool) "authorization omitted" false
+    (Eta.String_helpers.contains_ascii_ci failure.diagnostic "authorization");
+  Alcotest.(check bool) "message bounded" true
+    (String.length failure.diagnostic < 400);
+  Alcotest.(check bool) "message truncated marker" true
+    (Eta.String_helpers.contains_ascii_ci failure.diagnostic "...");
+  Alcotest.(check bool) "structured fields present" true
+    (Eta.String_helpers.contains_ascii_ci failure.diagnostic
+       "kind=provider_error"
+    && Eta.String_helpers.contains_ascii_ci failure.diagnostic "status=500"
+    && Eta.String_helpers.contains_ascii_ci failure.diagnostic
+         "code=server_error");
+  Alcotest.(check (option int))
+    "header retry after" (Some 7)
+    (retry_after_from_headers
+       (Eta_http.Core.Header.unsafe_of_list
+          [ ("RETRY-AFTER", "7"); ("Authorization", "Bearer sk-live") ]))
 
 let test_api_key_prints_redacted () =
   let key = api_key "sk-live-secret" in
@@ -171,6 +285,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
               code = Some "provider_error";
               message = "provider rejected request";
               raw = Some raw;
+              retry_after_s = None;
             });
     }
   in
@@ -268,6 +383,7 @@ let test_provider_encoder_can_reject_unsupported_features () =
               code = None;
               message = "error";
               raw = Some raw;
+              retry_after_s = None;
             });
     }
   in
@@ -531,6 +647,7 @@ let stream_provider =
                        code = Some "stream_error";
                        message = data;
                        raw = Some data;
+                       retry_after_s = None;
                      });
               ]
         | _ -> Ok []);
@@ -543,6 +660,7 @@ let stream_provider =
             code = None;
             message = "error";
             raw = Some raw;
+            retry_after_s = None;
           });
   }
 
@@ -1024,6 +1142,17 @@ let tests =
             test_provider_error_preserves_raw_body;
           Alcotest.test_case "api key prints redacted" `Quick
             test_api_key_prints_redacted;
+        ] );
+      ( "failure",
+        [
+          Alcotest.test_case "status and code categories" `Quick
+            test_project_ai_error_status_and_code_categories;
+          Alcotest.test_case "nonretryable quota billing context" `Quick
+            test_project_ai_error_nonretryable_quota_billing_context;
+          Alcotest.test_case "retry after and transport" `Quick
+            test_project_ai_error_retry_after_and_transport;
+          Alcotest.test_case "diagnostic redaction and bounding" `Quick
+            test_project_ai_error_diagnostic_redaction_and_bounding;
         ] );
       ( "provider",
         [

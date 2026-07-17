@@ -425,6 +425,52 @@ let test_runner_suppresses_transport_span () =
          String.equal span.name "chat openrouter/auto")
        spans)
 
+let test_openrouter_decode_error_projects_categories () =
+  let headers =
+    H.Core.Header.unsafe_of_list
+      [ ("Content-Type", "application/json"); ("RETRY-AFTER", "3") ]
+  in
+  let error =
+    O.decode_error ~status:429 ~headers
+      "{\"error\":{\"message\":\"Rate limited\",\"code\":\"rate_limit_exceeded\"}}"
+  in
+  (match error with
+  | A.Provider_error
+      {
+        provider = "openrouter";
+        status = Some 429;
+        code = Some "rate_limit_exceeded";
+        retry_after_s = Some 3;
+        _;
+      } ->
+      let failure = A.project_ai_error error in
+      Alcotest.(check string)
+        "category" "transient"
+        (A.ai_error_category_to_string failure.category);
+      Alcotest.(check bool) "retryable" true failure.retryable;
+      Alcotest.(check (option int)) "retry after" (Some 3)
+        failure.retry_after_s
+  | _ -> Alcotest.fail "expected openrouter rate limit provider error");
+  let nested =
+    O.decode_error ~status:400 ~headers:H.Core.Header.empty
+      "{\"response\":{\"error\":{\"message\":\"This model's maximum context length is 8192 tokens\",\"code\":\"context_length_exceeded\"}}}"
+  in
+  let nested_failure = A.project_ai_error nested in
+  Alcotest.(check string)
+    "nested context category" "context_overflow"
+    (A.ai_error_category_to_string nested_failure.category);
+  Alcotest.(check bool) "nested context not retryable" false
+    nested_failure.retryable;
+  let quota =
+    O.decode_error ~status:402 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"Insufficient credits\",\"code\":\"insufficient_quota\"}}"
+  in
+  let quota_failure = A.project_ai_error quota in
+  Alcotest.(check string)
+    "quota category" "quota_budget"
+    (A.ai_error_category_to_string quota_failure.category);
+  Alcotest.(check bool) "quota not retryable" false quota_failure.retryable
+
 let test_provider_error () =
   with_runtime @@ fun rt ->
   let captured = ref None in
@@ -448,6 +494,7 @@ let test_provider_error () =
             code = Some "502";
             message = "Provider disconnected";
             raw = Some _;
+            retry_after_s = None;
           })) ->
       ()
   | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
@@ -706,6 +753,8 @@ let tests =
           Alcotest.test_case "runner suppression" `Quick
             test_runner_suppresses_transport_span;
           Alcotest.test_case "provider error" `Quick test_provider_error;
+          Alcotest.test_case "decode error categories" `Quick
+            test_openrouter_decode_error_projects_categories;
           Alcotest.test_case "embeddings runner" `Quick test_embeddings_runner;
           Alcotest.test_case "task request endpoints and binary runners" `Quick
             test_task_request_endpoints_and_binary_runners;

@@ -151,6 +151,7 @@ val decode_responses :
 val provider_error_json :
   ?status:int ->
   ?raw:Eta_ai.raw_json ->
+  ?retry_after_s:int ->
   ?nested_response_error:bool ->
   provider:string ->
   Eta_ai.Json.t ->
@@ -158,6 +159,7 @@ val provider_error_json :
 
 val provider_error :
   ?status:int ->
+  ?retry_after_s:int ->
   ?nested_response_error:bool ->
   provider:string ->
   Eta_ai.raw_json ->
@@ -167,7 +169,7 @@ val decode_error :
   ?nested_response_error:bool ->
   provider:string ->
   status:int ->
-  headers:'headers ->
+  headers:Eta_ai.headers ->
   Eta_ai.raw_json ->
   Eta_ai.ai_error
 

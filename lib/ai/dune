@@ -3,4 +3,4 @@
  (public_name eta_ai)
  (synopsis "LLM client core for Eta: provider-agnostic chat and streaming")
  (libraries eta eta_redacted eta_http yojson)
- (private_modules json types toolkit transport sse observability))
+ (private_modules json types failure toolkit transport sse observability))

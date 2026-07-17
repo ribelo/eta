@@ -11,8 +11,8 @@ let error_object ?(nested_response_error = false) json =
           (Json.object_member "error")
       else None
 
-let provider_error_json ?status ?raw ?(nested_response_error = false) ~provider
-    json =
+let provider_error_json ?status ?raw ?retry_after_s
+    ?(nested_response_error = false) ~provider json =
   let error = error_object ~nested_response_error json in
   let message =
     Option.bind error (Json.string_member "message")
@@ -23,12 +23,15 @@ let provider_error_json ?status ?raw ?(nested_response_error = false) ~provider
     | Some _ as value -> value
     | None -> Option.bind error (Json.string_member "type")
   in
-  A.Provider_error { provider; status; code; message; raw }
+  A.Provider_error
+    { provider; status; code; message; raw; retry_after_s }
 
-let provider_error ?status ?(nested_response_error = false) ~provider raw =
+let provider_error ?status ?retry_after_s ?(nested_response_error = false)
+    ~provider raw =
   match Json.parse raw with
   | Stdlib.Ok json ->
-      provider_error_json ?status ~raw ~nested_response_error ~provider json
+      provider_error_json ?status ~raw ?retry_after_s ~nested_response_error
+        ~provider json
   | Stdlib.Error _ ->
       A.Provider_error
         {
@@ -37,10 +40,10 @@ let provider_error ?status ?(nested_response_error = false) ~provider raw =
           code = None;
           message = "provider returned an error";
           raw = Some raw;
+          retry_after_s;
         }
 
-let decode_error ?(nested_response_error = false) ~provider ~status ~headers:_
-    raw =
-  provider_error ~status ~nested_response_error ~provider raw
-
-
+let decode_error ?(nested_response_error = false) ~provider ~status ~headers raw
+    =
+  let retry_after_s = A.retry_after_from_headers headers in
+  provider_error ~status ?retry_after_s ~nested_response_error ~provider raw
