@@ -592,6 +592,67 @@ let test_stream_ignores_comment_records () =
     "done" true
     (List.exists (function A.Stream_done -> true | _ -> false) events)
 
+let test_responses_stream_preserves_metadata_and_reasoning () =
+  let created : A.sse_event =
+    {
+      event = None;
+      data =
+        {|{"type":"response.created","response":{"id":"gen-1","model":"deepseek/deepseek-v4-flash"}}|};
+    }
+  in
+  (match O.decode_stream_event created with
+  | Stdlib.Ok
+      [ A.Stream_message_start { id = Some "gen-1"; model = Some model; _ } ] ->
+      Alcotest.(check string) "created model" "deepseek/deepseek-v4-flash" model
+  | Stdlib.Ok _ -> Alcotest.fail "expected response metadata start"
+  | Stdlib.Error _ -> Alcotest.fail "created event decode failed");
+  let reasoning : A.sse_event =
+    {
+      event = None;
+      data =
+        {|{"type":"response.reasoning_text.delta","delta":"because"}|};
+    }
+  in
+  (match O.decode_stream_event reasoning with
+  | Stdlib.Ok [ A.Stream_reasoning_delta "because" ] -> ()
+  | Stdlib.Ok _ -> Alcotest.fail "expected reasoning delta"
+  | Stdlib.Error _ -> Alcotest.fail "reasoning event decode failed");
+  let completed : A.sse_event =
+    {
+      event = None;
+      data =
+        {|{"type":"response.completed","response":{"id":"gen-1","model":"deepseek/deepseek-v4-flash","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":11,"input_tokens_details":{"cached_tokens":3},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":5},"total_tokens":18,"cost":0.25,"cost_details":{"upstream_inference_input_cost":0.1,"upstream_inference_output_cost":0.15}}}}|};
+    }
+  in
+  match O.decode_stream_event completed with
+  | Stdlib.Ok
+      [
+        A.Stream_response
+          {
+            id = Some "gen-1";
+            model = Some "deepseek/deepseek-v4-flash";
+            usage = Some usage;
+            _;
+          };
+        A.Stream_finish [ A.Stop ];
+        A.Stream_done;
+      ] ->
+      Alcotest.(check (option string))
+        "cached tokens" (Some "3") (List.assoc_opt "cached_tokens" usage.raw);
+      Alcotest.(check (option string))
+        "reasoning tokens" (Some "5")
+        (List.assoc_opt "reasoning_tokens" usage.raw);
+      Alcotest.(check (option string))
+        "total cost" (Some "0.25") (List.assoc_opt "cost" usage.raw);
+      Alcotest.(check (option string))
+        "input cost" (Some "0.10000000000000001")
+        (List.assoc_opt "input_cost" usage.raw);
+      Alcotest.(check (option string))
+        "output cost" (Some "0.14999999999999999")
+        (List.assoc_opt "output_cost" usage.raw)
+  | Stdlib.Ok _ -> Alcotest.fail "expected completed response metadata"
+  | Stdlib.Error _ -> Alcotest.fail "completed event decode failed"
+
 let transcription_request () : A.Transcription.request =
   {
     model = "openai/whisper-large-v3";
@@ -778,6 +839,8 @@ let tests =
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
           Alcotest.test_case "stream ignores comment records" `Quick
             test_stream_ignores_comment_records;
+          Alcotest.test_case "stream metadata and reasoning" `Quick
+            test_responses_stream_preserves_metadata_and_reasoning;
         ] );
   ]
 end

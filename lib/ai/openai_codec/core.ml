@@ -79,6 +79,11 @@ let usage ?(raw_prompt_names = false) json =
     if raw_prompt_names then ("prompt_tokens", "completion_tokens")
     else ("input_tokens", "output_tokens")
   in
+  let nested_scalar object_name field_name =
+    Option.bind (Json.object_member object_name json)
+      (Json.scalar_string_member field_name)
+  in
+  let optional_raw name = function None -> [] | Some value -> [ (name, value) ] in
   {
     A.input_tokens;
     output_tokens;
@@ -89,7 +94,16 @@ let usage ?(raw_prompt_names = false) json =
         ( output_name,
           Option.value ~default:"" (Option.map string_of_int output_tokens) );
         ("total_tokens", Option.value ~default:"" (Option.map string_of_int total_tokens));
-      ];
+      ]
+      @ optional_raw "cached_tokens"
+          (nested_scalar "input_tokens_details" "cached_tokens")
+      @ optional_raw "reasoning_tokens"
+          (nested_scalar "output_tokens_details" "reasoning_tokens")
+      @ optional_raw "cost" (Json.scalar_string_member "cost" json)
+      @ optional_raw "input_cost"
+          (nested_scalar "cost_details" "upstream_inference_input_cost")
+      @ optional_raw "output_cost"
+          (nested_scalar "cost_details" "upstream_inference_output_cost");
   }
 
 let raw_json = function

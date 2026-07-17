@@ -404,8 +404,10 @@ type stream_event =
       model : model option;
       raw : raw_json option;
     }
+  | Stream_reasoning_delta of string
   | Stream_content_delta of string
   | Stream_tool_call_delta of tool_call_delta
+  | Stream_response of response
   | Stream_finish of finish_reason list
   | Stream_error of ai_error
   | Stream_done

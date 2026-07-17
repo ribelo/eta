@@ -78,9 +78,9 @@ let responses_tool_call item =
       | _ -> None)
   | _ -> None
 
-let status_finish json =
+let status_finish ~has_tool_calls json =
   match Json.string_member "status" json with
-  | Some "completed" -> [ A.Stop ]
+  | Some "completed" -> if has_tool_calls then [ A.Tool_calls ] else [ A.Stop ]
   | Some "incomplete" -> [ A.Length ]
   | Some status -> [ A.Other status ]
   | None -> []
@@ -105,7 +105,7 @@ let decode_responses ~provider raw =
                   (if String.equal text "" then [] else [ A.Text text ]);
                 tool_calls;
               };
-          finish_reasons = status_finish json;
+          finish_reasons = status_finish ~has_tool_calls:(tool_calls <> []) json;
           usage = Option.map usage (Json.object_member "usage" json);
           raw = Some raw;
         }
