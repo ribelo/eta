@@ -97,6 +97,13 @@ module Eta_schema : sig
   val bool : bool t
   val int : int t
   val float : float t
+  val json : json t
+  (** Identity schema for arbitrary JSON values. Its provider JSON Schema is
+      unconstrained. *)
+
+  val json_object : (string * json) list t
+  (** Free-form JSON object schema. Provider metadata permits arbitrary
+      properties while runtime decoding rejects non-object values. *)
 
   val array : 'a t -> 'a list t
   val option : 'a t -> 'a option t
@@ -125,6 +132,21 @@ module Eta_schema : sig
 
   val lazy_ : (unit -> 'a t) -> 'a t
   (** Recursive schema knot. *)
+
+  val union : name:string -> 'a t list -> equal:('a -> 'a -> bool) -> 'a t
+  (** Untagged union tried in declaration order. The derived provider schema
+      uses [anyOf]. *)
+
+  val custom :
+    equal:('a -> 'a -> bool) ->
+    decode:(json -> ('a, issue list) result) ->
+    encode:('a -> (json, issue list) result) ->
+    json_schema:json ->
+    ?object_fields:string list ->
+    unit ->
+    'a t
+  (** Build a schema from explicit pure codecs and provider metadata. Prefer
+      ordinary combinators when they can express the same contract. *)
 
   type ('record, 'field) field
 
@@ -208,6 +230,31 @@ module Eta_schema : sig
     'record t
   (** Arity-specific builders are the v0 hand-written product API. A PPX can
       generate these calls later without changing ['a t]. *)
+
+  type 'record member
+
+  val required_member :
+    string ->
+    'field t ->
+    get:('record -> 'field) ->
+    set:('record -> 'field -> 'record) ->
+    'record member
+
+  val optional_member :
+    string ->
+    'field t ->
+    get:('record -> 'field option) ->
+    set:('record -> 'field option -> 'record) ->
+    'record member
+
+  val record_fields :
+    name:string ->
+    empty:'record ->
+    equal:('record -> 'record -> bool) ->
+    'record member list ->
+    'record t
+  (** Dynamic-arity record builder for hand-written large product schemas.
+      Members carry typed getters and setters; no heterogeneous values escape. *)
 
   val refine : name:string -> ('a -> issue list) -> 'a t -> 'a t
 

@@ -449,6 +449,35 @@ module Eta_schema = struct
       object_fields = None;
     }
 
+  let json =
+    {
+      decode = (fun value -> Ok value);
+      encode = (fun value -> Ok value);
+      equal = Json.equal;
+      json_schema = (fun () -> Json.Object []);
+      object_fields = None;
+    }
+
+  let json_object =
+    {
+      decode =
+        (function
+        | Json.Object fields -> Ok fields
+        | value ->
+            Error [ type_mismatch ~expected:"object" ~got:(json_got value) () ]);
+      encode = (fun fields -> Ok (Json.Object fields));
+      equal =
+        (fun left right -> Json.equal (Json.Object left) (Json.Object right));
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ("type", Json.String "object");
+              ("additionalProperties", Json.Bool true);
+            ]);
+      object_fields = None;
+    }
+
   let array item =
     let decode = function
       | Json.Array xs ->
@@ -629,7 +658,172 @@ module Eta_schema = struct
       object_fields = None;
     }
 
+  let custom ~equal ~decode ~encode ~json_schema ?object_fields () =
+    {
+      decode;
+      encode;
+      equal;
+      json_schema = (fun () -> json_schema);
+      object_fields;
+    }
+
+  let union ~name alternatives ~equal =
+    let decode json =
+      let rec loop errors = function
+        | [] ->
+            Error
+              (issue ~schema_name:name
+                 ("No union alternative matched for " ^ name)
+              :: List.rev errors)
+        | schema :: rest -> (
+            match schema.decode json with
+            | Ok value -> Ok value
+            | Error issues -> loop (List.rev_append issues errors) rest)
+      in
+      loop [] alternatives
+    in
+    let encode value =
+      let rec loop = function
+        | [] ->
+            Error
+              [ issue ~schema_name:name ("Cannot encode union " ^ name) ]
+        | schema :: rest -> (
+            match schema.encode value with
+            | Ok json -> Ok json
+            | Error _ -> loop rest)
+      in
+      loop alternatives
+    in
+    {
+      decode;
+      encode;
+      equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ( "anyOf",
+                Json.Array
+                  (List.map (fun schema -> schema.json_schema ()) alternatives)
+              );
+            ]);
+      object_fields = None;
+    }
+
   type 'record any_field = Any_field : ('record, 'a) field -> 'record any_field
+
+  type 'record member =
+    | Required_member : {
+        name : string;
+        schema : 'field t;
+        get : 'record -> 'field;
+        set : 'record -> 'field -> 'record;
+      }
+        -> 'record member
+    | Optional_member : {
+        name : string;
+        schema : 'field t;
+        get : 'record -> 'field option;
+        set : 'record -> 'field option -> 'record;
+      }
+        -> 'record member
+
+  let required_member name schema ~get ~set =
+    Required_member { name; schema; get; set }
+
+  let optional_member name schema ~get ~set =
+    Optional_member { name; schema; get; set }
+
+  let member_name = function
+    | Required_member member -> member.name
+    | Optional_member member -> member.name
+
+  let member_schema = function
+    | Required_member member -> member.schema.json_schema ()
+    | Optional_member member -> member.schema.json_schema ()
+
+  let decode_member json record = function
+    | Required_member { name; schema; set; _ } -> (
+        match Json.find name json with
+        | None -> Error [ missing_field ~path:[ Field name ] name ]
+        | Some value ->
+            Result.map (set record)
+              (Result.map_error (at_field name) (schema.decode value)))
+    | Optional_member { name; schema; set; _ } -> (
+        match Json.find name json with
+        | None -> Ok (set record None)
+        | Some value ->
+            Result.map (fun value -> set record (Some value))
+              (Result.map_error (at_field name) (schema.decode value)))
+
+  let encode_member record = function
+    | Required_member { name; schema; get; _ } ->
+        Result.map (fun value -> Some (name, value))
+          (Result.map_error (at_field name) (schema.encode (get record)))
+    | Optional_member { name; schema; get; _ } -> (
+        match get record with
+        | None -> Ok None
+        | Some value ->
+            Result.map (fun value -> Some (name, value))
+              (Result.map_error (at_field name) (schema.encode value)))
+
+  let record_fields ~name ~empty ~equal members =
+    let decode = function
+      | Json.Object _ as json ->
+          let rec loop record issues = function
+            | [] -> if issues = [] then Ok record else Error (List.rev issues)
+            | member :: rest -> (
+                match decode_member json record member with
+                | Ok record -> loop record issues rest
+                | Error member_issues ->
+                    loop record (List.rev_append member_issues issues) rest)
+          in
+          loop empty [] members
+      | value ->
+          Error
+            [
+              type_mismatch ~schema_name:name ~expected:("object " ^ name)
+                ~got:(json_got value) ();
+            ]
+    in
+    let encode record =
+      let rec loop values issues = function
+        | [] ->
+            if issues = [] then Ok (Json.Object (List.rev values))
+            else Error (List.rev issues)
+        | member :: rest -> (
+            match encode_member record member with
+            | Ok None -> loop values issues rest
+            | Ok (Some value) -> loop (value :: values) issues rest
+            | Error member_issues ->
+                loop values (List.rev_append member_issues issues) rest)
+      in
+      loop [] [] members
+    in
+    let properties =
+      List.map (fun member -> (member_name member, member_schema member)) members
+    in
+    let required =
+      List.filter_map
+        (function
+          | Required_member member -> Some (Json.String member.name)
+          | Optional_member _ -> None)
+        members
+    in
+    {
+      decode;
+      encode;
+      equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ("type", Json.String "object");
+              ("properties", Json.Object properties);
+              ("required", Json.Array required);
+            ]);
+      object_fields = Some (List.map member_name members);
+    }
 
   let field_name : type record a. (record, a) field -> string = function
     | Required field -> field.name

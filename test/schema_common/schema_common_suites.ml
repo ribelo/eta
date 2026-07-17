@@ -947,6 +947,99 @@ let test_empty_record_schema () =
           ])
        (Eta_schema.json_schema schema))
 
+type dynamic_record = { name : string; count : int option }
+
+let test_dynamic_record_and_freeform_json () =
+  let schema =
+    Eta_schema.record_fields ~name:"dynamic_record"
+      ~empty:{ name = ""; count = None }
+      ~equal:(fun left right ->
+        String.equal left.name right.name
+        && Option.equal Int.equal left.count right.count)
+      [
+        Eta_schema.required_member "name" Eta_schema.string
+          ~get:(fun value -> value.name)
+          ~set:(fun value name -> { value with name });
+        Eta_schema.optional_member "count" Eta_schema.int
+          ~get:(fun value -> value.count)
+          ~set:(fun value count -> { value with count });
+      ]
+    |> Eta_schema.closed
+  in
+  (match
+     Eta_schema.decode_result schema
+       (Json.Object [ ("name", Json.String "eta"); ("count", Json.int 2) ])
+   with
+  | Ok { name = "eta"; count = Some 2 } -> ()
+  | Ok _ -> failwith "dynamic record decoded wrong values"
+  | Error issues -> failwith (render_issues issues));
+  (match
+     Eta_schema.decode_result schema
+       (Json.Object [ ("name", Json.String "eta"); ("extra", Json.Bool true) ])
+   with
+  | Error _ -> ()
+  | Ok _ -> failwith "closed dynamic record accepted unknown field");
+  let freeform =
+    [ ("nested", Json.Object [ ("answer", Json.int 42) ]) ]
+  in
+  match Eta_schema.decode_result Eta_schema.json_object (Json.Object freeform) with
+  | Ok decoded when Json.equal (Json.Object decoded) (Json.Object freeform) -> ()
+  | Ok _ -> failwith "freeform object changed values"
+  | Error issues -> failwith (render_issues issues)
+
+type scalar = Boolean of bool | Text of string
+
+let test_untagged_union_and_custom () =
+  let boolean =
+    Eta_schema.custom
+      ~equal:(fun left right -> left = right)
+      ~decode:(function
+        | Json.Bool value -> Ok (Boolean value)
+        | _ -> Error [ issue "not boolean" ])
+      ~encode:(function
+        | Boolean value -> Ok (Json.Bool value)
+        | Text _ -> Error [ issue "not boolean" ])
+      ~json_schema:(Json.Object [ ("type", Json.String "boolean") ]) ()
+  in
+  let text =
+    Eta_schema.custom
+      ~equal:(fun left right -> left = right)
+      ~decode:(function
+        | Json.String value -> Ok (Text value)
+        | value ->
+            Error
+              [
+                type_mismatch ~expected:"string" ~got:(
+                  match value with
+                  | Json.Null -> "null"
+                  | Json.Bool _ -> "boolean"
+                  | Json.Number _ -> "number"
+                  | Json.String _ -> "string"
+                  | Json.Array _ -> "array"
+                  | Json.Object _ -> "object") ();
+              ])
+      ~encode:(function
+        | Text value -> Ok (Json.String value)
+        | Boolean _ -> Error [ issue "not text" ])
+      ~json_schema:(Json.Object [ ("type", Json.String "string") ]) ()
+  in
+  let schema =
+    Eta_schema.union ~name:"scalar" [ boolean; text ]
+      ~equal:(fun left right -> left = right)
+  in
+  (match Eta_schema.decode_result schema (Json.Bool true) with
+  | Ok (Boolean true) -> ()
+  | Ok _ | Error _ -> failwith "union boolean decode failed");
+  (match Eta_schema.decode_result schema (Json.String "eta") with
+  | Ok (Text "eta") -> ()
+  | Ok _ | Error _ -> failwith "union text decode failed");
+  (match Eta_schema.encode_result schema (Text "eta") with
+  | Ok (Json.String "eta") -> ()
+  | Ok _ | Error _ -> failwith "union text encode failed");
+  match Eta_schema.json_schema schema with
+  | Json.Object [ ("anyOf", Json.Array [ _; _ ]) ] -> ()
+  | _ -> failwith "union schema must derive anyOf"
+
 let tests =
   [
     ( "Eta_schema",
@@ -979,6 +1072,10 @@ let tests =
         Alcotest.test_case "json schema derivation and closed decode" `Quick
           test_json_schema_derivation_and_closed_decode;
         Alcotest.test_case "empty record schema" `Quick test_empty_record_schema;
+        Alcotest.test_case "dynamic record and freeform JSON" `Quick
+          test_dynamic_record_and_freeform_json;
+        Alcotest.test_case "untagged union and custom schema" `Quick
+          test_untagged_union_and_custom;
       ] );
   ]
 end
