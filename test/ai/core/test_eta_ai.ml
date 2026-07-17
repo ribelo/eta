@@ -54,6 +54,7 @@ let transport_provider =
             code = None;
             message = "error";
             raw = Some raw;
+            retry_after_s = None;
           });
   }
 
@@ -72,6 +73,7 @@ let test_transport_caps_error_body_before_provider_decode () =
               code = None;
               message = "provider decoded oversized error";
               raw = Some raw;
+              retry_after_s = None;
             });
     }
   in

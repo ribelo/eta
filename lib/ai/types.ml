@@ -264,6 +264,7 @@ type ai_error =
       code : string option;
       message : string;
       raw : raw_json option;
+      retry_after_s : int option;
     }
   | Decode_error of {
       provider : provider_name;
@@ -278,6 +279,22 @@ type ai_error =
       provider : provider_name;
       feature : string;
     }
+
+type ai_error_category =
+  | Transient
+  | Context_overflow
+  | Account_limit
+  | Quota_budget
+  | Billing
+  | Other
+
+type ai_failure = {
+  category : ai_error_category;
+  status : int option;
+  retryable : bool;
+  retry_after_s : int option;
+  diagnostic : string;
+}
 
 type sse_event = {
   event : string option;

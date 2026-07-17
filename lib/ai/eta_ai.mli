@@ -299,6 +299,7 @@ type ai_error =
       code : string option;
       message : string;
       raw : raw_json option;
+      retry_after_s : int option;
     }
   | Decode_error of {
       provider : provider_name;
@@ -313,6 +314,37 @@ type ai_error =
       provider : provider_name;
       feature : string;
     }
+
+type ai_error_category =
+  | Transient
+  | Context_overflow
+  | Account_limit
+  | Quota_budget
+  | Billing
+  | Other
+
+type ai_failure = {
+  category : ai_error_category;
+  status : int option;
+  retryable : bool;
+  retry_after_s : int option;
+  diagnostic : string;
+}
+(** Structured, provider-agnostic projection of [ai_error].
+
+    Classification prefers provider status/code over free-form message text.
+    [diagnostic] is intentionally bounded and never includes auth headers or
+    raw response bodies. *)
+
+val project_ai_error : ai_error -> ai_failure
+(** Project an [ai_error] into structured failure metadata for application
+    policy (retry, budget handling, diagnostics). *)
+
+val ai_error_category_to_string : ai_error_category -> string
+
+val retry_after_from_headers : headers -> int option
+(** Parse a numeric HTTP [Retry-After] value when present. Header matching is
+    case-insensitive. HTTP-date values are ignored. *)
 
 module Json_helpers : sig
   val is_blank : raw_json -> bool

@@ -327,6 +327,7 @@ let test_provider_error () =
             code = Some "model_not_found";
             message = "Invalid model";
             raw = Some _;
+            retry_after_s = None;
           })) ->
       ()
   | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"

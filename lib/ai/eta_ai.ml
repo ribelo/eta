@@ -2,6 +2,10 @@ module Json = Json
 
 include Types
 
+let project_ai_error = Failure.project_ai_error
+let ai_error_category_to_string = Failure.ai_error_category_to_string
+let retry_after_from_headers = Failure.retry_after_from_headers
+
 module Json_helpers = struct
   let is_blank = Eta.String_helpers.is_blank
   let trim = Eta.String_helpers.trim

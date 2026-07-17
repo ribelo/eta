@@ -416,7 +416,8 @@ let test_responses_runner_provider_error () =
   with_runtime @@ fun rt ->
   let captured = ref None in
   let headers =
-    H.Core.Header.unsafe_of_list [ ("content-type", "application/json") ]
+    H.Core.Header.unsafe_of_list
+      [ ("content-type", "application/json"); ("Retry-After", "9") ]
   in
   let client =
     test_client
@@ -436,13 +437,74 @@ let test_responses_runner_provider_error () =
             code = Some "rate_limit_exceeded";
             message = "Rate limit reached";
             raw = Some _;
-          })) ->
-      ()
+            retry_after_s = Some 9;
+          } as error)) ->
+      let failure = A.project_ai_error error in
+      Alcotest.(check string)
+        "category" "transient"
+        (A.ai_error_category_to_string failure.category);
+      Alcotest.(check bool) "retryable" true failure.retryable;
+      Alcotest.(check (option int)) "retry after" (Some 9)
+        failure.retry_after_s;
+      Alcotest.(check bool) "message retained in diagnostic" true
+        (contains ~needle:"Rate limit reached" failure.diagnostic);
+      Alcotest.(check bool) "raw body omitted from diagnostic" false
+        (contains ~needle:"raw=" failure.diagnostic)
   | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected error: %a"
         (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<ai-error>"))
         cause
+
+let test_openai_decode_error_projects_categories () =
+  let headers =
+    H.Core.Header.unsafe_of_list
+      [ ("content-type", "application/json"); ("retry-after", "15") ]
+  in
+  let rate_limit =
+    O.decode_error ~status:429 ~headers
+      "{\"error\":{\"message\":\"Rate limit reached\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}"
+  in
+  (match rate_limit with
+  | A.Provider_error { retry_after_s = Some 15; code = Some "rate_limit_exceeded"; _ }
+    ->
+      let failure = A.project_ai_error rate_limit in
+      Alcotest.(check string)
+        "rate limit category" "transient"
+        (A.ai_error_category_to_string failure.category);
+      Alcotest.(check bool) "rate limit retryable" true failure.retryable
+  | _ -> Alcotest.fail "expected rate limit provider error");
+  let quota =
+    O.decode_error ~status:429 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"You exceeded your current quota\",\"code\":\"insufficient_quota\"}}"
+  in
+  let quota_failure = A.project_ai_error quota in
+  Alcotest.(check string)
+    "quota category" "quota_budget"
+    (A.ai_error_category_to_string quota_failure.category);
+  Alcotest.(check bool) "quota not retryable" false quota_failure.retryable;
+  let context =
+    O.decode_error ~status:400 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"This model's maximum context length is 128000 tokens\",\"code\":\"context_length_exceeded\"}}"
+  in
+  let context_failure = A.project_ai_error context in
+  Alcotest.(check string)
+    "context category" "context_overflow"
+    (A.ai_error_category_to_string context_failure.category);
+  Alcotest.(check bool) "context not retryable" false context_failure.retryable;
+  let billing =
+    O.decode_error ~status:400 ~headers:H.Core.Header.empty
+      "{\"error\":{\"message\":\"Billing hard limit reached\",\"code\":\"billing_hard_limit_reached\"}}"
+  in
+  let billing_failure = A.project_ai_error billing in
+  Alcotest.(check string)
+    "billing category" "billing"
+    (A.ai_error_category_to_string billing_failure.category);
+  Alcotest.(check bool) "billing not retryable" false billing_failure.retryable;
+  Alcotest.(check bool) "code retained in diagnostic" true
+    (contains ~needle:"billing_hard_limit_reached" billing_failure.diagnostic);
+  Alcotest.(check bool) "diagnostic omits raw json body" false
+    (contains ~needle:"{\"error\"" billing_failure.diagnostic)
 
 let test_stream_runner () =
   with_runtime @@ fun rt ->
@@ -823,6 +885,8 @@ let tests =
             test_responses_runner_uses_eta_http_and_suppresses_transport_span;
           Alcotest.test_case "provider error" `Quick
             test_responses_runner_provider_error;
+          Alcotest.test_case "decode error categories" `Quick
+            test_openai_decode_error_projects_categories;
           Alcotest.test_case "responses request" `Quick
             test_responses_request_uses_responses_endpoint;
           Alcotest.test_case "embeddings request and decode" `Quick

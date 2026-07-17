@@ -374,7 +374,14 @@ let decode_message raw =
 
 let provider_error ?status ?code ?raw message =
   A.Provider_error
-    { provider = "anthropic"; status; code; message; raw }
+    {
+      provider = "anthropic";
+      status;
+      code;
+      message;
+      raw;
+      retry_after_s = None;
+    }
 
 let decode_provider_error_json ?status raw json =
   match Json.object_member "error" json with
