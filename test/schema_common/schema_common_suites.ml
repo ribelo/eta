@@ -920,6 +920,33 @@ let test_json_schema_derivation_and_closed_decode () =
         (issue_to_json_pointer issue)
   | Error _ -> failwith "expected one closed-schema issue"
 
+let test_empty_record_schema () =
+  let schema =
+    Eta_schema.record0 ~name:"empty" () ~equal:Unit.equal ()
+    |> Eta_schema.closed
+  in
+  (match Eta_schema.decode_result schema (Json.Object []) with
+  | Ok () -> ()
+  | Error issues -> failwith (render_issues issues));
+  (match
+     Eta_schema.decode_result schema
+       (Json.Object [ ("unexpected", Json.Bool true) ])
+   with
+  | Error [ issue ] ->
+      check_string "unknown field" "/unexpected" (issue_to_json_pointer issue)
+  | Error _ -> failwith "expected one unknown-field issue"
+  | Ok () -> failwith "empty closed record accepted a field");
+  check_bool "empty JSON schema"
+    (Json.equal
+       (Json.Object
+          [
+            ("additionalProperties", Json.Bool false);
+            ("type", Json.String "object");
+            ("properties", Json.Object []);
+            ("required", Json.Array []);
+          ])
+       (Eta_schema.json_schema schema))
+
 let tests =
   [
     ( "Eta_schema",
@@ -951,6 +978,7 @@ let tests =
           test_decode_int_rejects_upper_float_boundary;
         Alcotest.test_case "json schema derivation and closed decode" `Quick
           test_json_schema_derivation_and_closed_decode;
+        Alcotest.test_case "empty record schema" `Quick test_empty_record_schema;
       ] );
   ]
 end
