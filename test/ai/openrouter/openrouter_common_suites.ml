@@ -575,6 +575,23 @@ let test_stream_runner () =
   require_contains "routing body" ~needle:"\"provider\":{"
     (request_body_string request)
 
+let test_stream_ignores_comment_records () =
+  with_runtime @@ fun rt ->
+  let body =
+    ": \n\n"
+    ^ "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+    ^ "data: [DONE]\n\n"
+  in
+  let stream =
+    A.stream_of_body (provider ())
+      (H.Body.Stream.of_bytes (chunk_string body))
+  in
+  let events = run_ok rt "comment stream" (A.read_stream_events stream) in
+  Alcotest.(check string) "text after comment" "hi" (stream_text events);
+  Alcotest.(check bool)
+    "done" true
+    (List.exists (function A.Stream_done -> true | _ -> false) events)
+
 let transcription_request () : A.Transcription.request =
   {
     model = "openai/whisper-large-v3";
@@ -759,6 +776,8 @@ let tests =
           Alcotest.test_case "task request endpoints and binary runners" `Quick
             test_task_request_endpoints_and_binary_runners;
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
+          Alcotest.test_case "stream ignores comment records" `Quick
+            test_stream_ignores_comment_records;
         ] );
   ]
 end

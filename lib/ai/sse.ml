@@ -59,6 +59,7 @@ let field_is record start finish literal =
 let parse_sse_record_slice record record_start record_finish =
   let event = ref None in
   let data = Buffer.create 128 in
+  let has_data = ref false in
   let first_data = ref true in
   let handle_line start finish =
     let finish =
@@ -78,6 +79,7 @@ let parse_sse_record_slice record record_start record_finish =
           if field_is record start colon "event" then
             event := Some (String.sub record value_start (finish - value_start))
           else if field_is record start colon "data" then begin
+            has_data := true;
             if !first_data then first_data := false
             else Buffer.add_char data '\n';
             Buffer.add_substring data record value_start (finish - value_start)
@@ -93,7 +95,8 @@ let parse_sse_record_slice record record_start record_finish =
     else loop line_start (index + 1)
   in
   loop record_start record_start;
-  { event = !event; data = Buffer.contents data }
+  if !has_data then Some { event = !event; data = Buffer.contents data }
+  else None
 
 let blank_record record start finish =
   let rec loop index =
@@ -195,7 +198,8 @@ let drain_sse_records stream acc =
         if blank_record contents record_start index then loop next_start next_start acc
         else
           match parse_sse_record_slice_capped stream contents record_start index with
-          | Stdlib.Ok event -> loop next_start next_start (event :: acc)
+          | Stdlib.Ok None -> loop next_start next_start acc
+          | Stdlib.Ok (Some event) -> loop next_start next_start (event :: acc)
           | Stdlib.Error _ as error -> error
   in
   loop 0 stream.scan_pos acc
@@ -217,7 +221,7 @@ let flush_sse stream =
   if record_start = record_stop then Stdlib.Ok []
   else
     Result.map
-      (fun event -> [ event ])
+      (function None -> [] | Some event -> [ event ])
       (parse_sse_record_slice_capped stream record record_start record_stop)
 
 let decode_sse_records stream records =
