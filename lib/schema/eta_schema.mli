@@ -137,6 +137,13 @@ module Eta_schema : sig
     ('record -> 'field option) ->
     ('record, 'field option) field
 
+  val record0 :
+    name:string ->
+    'record ->
+    equal:('record -> 'record -> bool) ->
+    unit ->
+    'record t
+
   val record1 :
     name:string ->
     ('a -> 'record) ->

@@ -737,7 +737,7 @@ module Eta_schema = struct
 
   (* The public v0 product API is arity-specific because OCaml has no variadic
      record builders. Shared encode/decode helpers above hold the object
-     invariants; the record1..record6 functions below only sequence fields into
+     invariants; the record0..record6 functions below only sequence fields into
      ordinary curried constructors. *)
   let record ~name ~fields ~(decode) ~(encode) ~(equal) =
     {
@@ -758,6 +758,10 @@ module Eta_schema = struct
       json_schema = (fun () -> record_json_schema fields);
       object_fields = Some (List.map (fun (Any_field field) -> field_name field) fields);
     }
+
+  let record0 ~name value ~(equal) () =
+    record ~name ~fields:[] ~encode:(fun _ -> Ok (Json.Object []))
+      ~decode:(fun _ -> Ok value) ~equal
 
   let record1 ~name (make) f1 ~(equal) () =
     record ~name ~fields:[ Any_field f1 ] ~encode:(encode_object [ Any_field f1 ])
