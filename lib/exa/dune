@@ -1,0 +1,5 @@
+(library
+ (name eta_exa)
+ (public_name eta_exa)
+ (synopsis "Exa HTTP client for Eta")
+ (libraries eta eta_http eta_redacted))

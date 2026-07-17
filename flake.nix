@@ -95,6 +95,7 @@
             "eta_ai"
             "eta_ai_openai_codec"
             "eta_ai_openrouter"
+            "eta_exa"
             "eta_blocking"
             "eta_eio"
             "eta_http"
@@ -225,7 +226,7 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               eta_url="git+file://$repo_root#master"
-              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
+              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_exa eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
               if [ "$#" -gt 0 ]; then
                 packages="$*"
               fi
@@ -481,6 +482,7 @@
                 lib/eta \
                 lib/blocking \
                 lib/eio \
+                lib/exa \
                 lib/stream \
                 lib/http \
                 lib/http/h1 \
@@ -497,6 +499,7 @@
 
               dune runtest --force \
                 test/eta \
+                test/exa \
                 test/redacted_common \
                 test/redacted_eio \
                 test/stream \
