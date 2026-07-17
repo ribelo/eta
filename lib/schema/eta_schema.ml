@@ -309,7 +309,30 @@ module Eta_schema = struct
     decode : (Json.t -> ('a, issue list) result);
     encode : ('a -> (Json.t, issue list) result);
     equal : ('a -> 'a -> bool);
+    json_schema : (unit -> Json.t);
+    object_fields : string list option;
   }
+
+  let schema_type name = Json.Object [ ("type", Json.String name) ]
+
+  let add_keyword name value = function
+    | Json.Object fields ->
+        Json.Object
+          ((name, value) :: List.remove_assoc name fields)
+    | schema ->
+        Json.Object
+          [ ("allOf", Json.Array [ schema ]); (name, value) ]
+
+  let json_schema schema = schema.json_schema ()
+
+  let with_keyword name value schema =
+    {
+      schema with
+      json_schema = (fun () -> add_keyword name value (schema.json_schema ()));
+    }
+
+  let describe description schema =
+    with_keyword "description" (Json.String description) schema
 
   type ('record, 'field) field =
     | Required : {
@@ -366,6 +389,8 @@ module Eta_schema = struct
             Error [ type_mismatch ~expected:"string" ~got:(json_got json) () ]);
       encode = (fun s -> Ok (Json.String s));
       equal = String.equal;
+      json_schema = (fun () -> schema_type "string");
+      object_fields = None;
     }
 
   let bool =
@@ -377,6 +402,8 @@ module Eta_schema = struct
             Error [ type_mismatch ~expected:"boolean" ~got:(json_got json) () ]);
       encode = (fun b -> Ok (Json.Bool b));
       equal = Bool.equal;
+      json_schema = (fun () -> schema_type "boolean");
+      object_fields = None;
     }
 
   let int =
@@ -392,6 +419,8 @@ module Eta_schema = struct
         | json -> Error [ type_mismatch ~expected:"int" ~got:(json_got json) () ]);
       encode = (fun n -> Ok (Json.int n));
       equal = Int.equal;
+      json_schema = (fun () -> schema_type "integer");
+      object_fields = None;
     }
 
   let float =
@@ -416,6 +445,8 @@ module Eta_schema = struct
                   ~got:(string_of_float n) ();
               ]);
       equal = Float.equal;
+      json_schema = (fun () -> schema_type "number");
+      object_fields = None;
     }
 
   let array item =
@@ -454,6 +485,11 @@ module Eta_schema = struct
           in
           loop 0 [] [] xs);
       equal = List.equal item.equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [ ("type", Json.String "array"); ("items", item.json_schema ()) ]);
+      object_fields = None;
     }
 
   let option item =
@@ -467,6 +503,14 @@ module Eta_schema = struct
         | None -> Ok Json.Null
         | Some value -> item.encode value);
       equal = Option.equal item.equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ( "anyOf",
+                Json.Array [ item.json_schema (); schema_type "null" ] );
+            ]);
+      object_fields = None;
     }
 
   let enum ~name cases ~equal =
@@ -492,6 +536,16 @@ module Eta_schema = struct
       decode;
       encode;
       equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ("type", Json.String "string");
+              ( "enum",
+                Json.Array
+                  (List.map (fun (label, _) -> Json.String label) cases) );
+            ]);
+      object_fields = None;
     }
 
   type 'a case = {
@@ -541,6 +595,28 @@ module Eta_schema = struct
       decode;
       encode;
       equal;
+      json_schema =
+        (fun () ->
+          Json.Object
+            [
+              ("type", Json.String "object");
+              ( "properties",
+                Json.Object
+                  [
+                    ( tag,
+                      Json.Object
+                        [
+                          ("type", Json.String "string");
+                          ( "enum",
+                            Json.Array
+                              (List.map
+                                 (fun case -> Json.String case.tag_value)
+                                 cases) );
+                        ] );
+                  ] );
+              ("required", Json.Array [ Json.String tag ]);
+            ]);
+      object_fields = None;
     }
 
   let lazy_ f =
@@ -549,9 +625,37 @@ module Eta_schema = struct
       decode = (fun json -> (Lazy.force schema).decode json);
       encode = (fun value -> (Lazy.force schema).encode value);
       equal = (fun a b -> (Lazy.force schema).equal a b);
+      json_schema = (fun () -> (Lazy.force schema).json_schema ());
+      object_fields = None;
     }
 
   type 'record any_field = Any_field : ('record, 'a) field -> 'record any_field
+
+  let field_name : type record a. (record, a) field -> string = function
+    | Required field -> field.name
+    | Optional field -> field.name
+
+  let field_schema : type record a. (record, a) field -> Json.t = function
+    | Required field -> field.schema.json_schema ()
+    | Optional field -> field.schema.json_schema ()
+
+  let record_json_schema fields =
+    let properties, required =
+      List.fold_left
+        (fun (properties, required) (Any_field field) ->
+          let name = field_name field in
+          let required =
+            match field with Required _ -> name :: required | Optional _ -> required
+          in
+          ((name, field_schema field) :: properties, required))
+        ([], []) fields
+    in
+    Json.Object
+      [
+        ("type", Json.String "object");
+        ("properties", Json.Object (List.rev properties));
+        ("required", Json.Array (List.rev_map (fun name -> Json.String name) required));
+      ]
 
   let emit_field : type record a.
       (record, a) field -> record -> ((string * Json.t) option, issue list) result =
@@ -635,7 +739,7 @@ module Eta_schema = struct
      record builders. Shared encode/decode helpers above hold the object
      invariants; the record1..record6 functions below only sequence fields into
      ordinary curried constructors. *)
-  let record ~name ~(decode) ~(encode) ~(equal) =
+  let record ~name ~fields ~(decode) ~(encode) ~(equal) =
     {
       decode =
         (function
@@ -651,21 +755,25 @@ module Eta_schema = struct
         (fun record ->
           Result.map_error (with_schema_name name) (encode record));
       equal;
+      json_schema = (fun () -> record_json_schema fields);
+      object_fields = Some (List.map (fun (Any_field field) -> field_name field) fields);
     }
 
   let record1 ~name (make) f1 ~(equal) () =
-    record ~name ~encode:(encode_object [ Any_field f1 ])
+    record ~name ~fields:[ Any_field f1 ] ~encode:(encode_object [ Any_field f1 ])
       ~decode:(fun json -> Ok make <*> decode_field json f1)
       ~equal
 
   let record2 ~name (make) f1 f2 ~(equal) () =
-    record ~name ~encode:(encode_object [ Any_field f1; Any_field f2 ])
+    record ~name ~fields:[ Any_field f1; Any_field f2 ]
+      ~encode:(encode_object [ Any_field f1; Any_field f2 ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2)
       ~equal
 
   let record3 ~name (make) f1 f2 f3 ~(equal) () =
-    record ~name ~encode:(encode_object [ Any_field f1; Any_field f2; Any_field f3 ])
+    record ~name ~fields:[ Any_field f1; Any_field f2; Any_field f3 ]
+      ~encode:(encode_object [ Any_field f1; Any_field f2; Any_field f3 ])
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
         <*> decode_field json f3)
@@ -673,6 +781,7 @@ module Eta_schema = struct
 
   let record4 ~name (make) f1 f2 f3 f4 ~(equal) () =
     record ~name
+      ~fields:[ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ]
       ~encode:
         (encode_object
            [ Any_field f1; Any_field f2; Any_field f3; Any_field f4 ])
@@ -683,6 +792,14 @@ module Eta_schema = struct
 
   let record5 ~name (make) f1 f2 f3 f4 f5 ~(equal) () =
     record ~name
+      ~fields:
+        [
+          Any_field f1;
+          Any_field f2;
+          Any_field f3;
+          Any_field f4;
+          Any_field f5;
+        ]
       ~encode:
         (encode_object
            [
@@ -700,6 +817,15 @@ module Eta_schema = struct
 
   let record6 ~name (make) f1 f2 f3 f4 f5 f6 ~(equal) () =
     record ~name
+      ~fields:
+        [
+          Any_field f1;
+          Any_field f2;
+          Any_field f3;
+          Any_field f4;
+          Any_field f5;
+          Any_field f6;
+        ]
       ~encode:(encode_object6 f1 f2 f3 f4 f5 f6)
       ~decode:(fun json ->
         Ok make <*> decode_field json f1 <*> decode_field json f2
@@ -729,7 +855,38 @@ module Eta_schema = struct
           | Error issues -> Error (with_schema_name name issues));
       encode = (fun value -> Result.map_error (with_schema_name name) (schema.encode (encode value)));
       equal;
+      json_schema = schema.json_schema;
+      object_fields = schema.object_fields;
     }
+
+  let closed schema =
+    match schema.object_fields with
+    | None -> invalid_arg "Eta_schema.closed: expected an object schema"
+    | Some allowed ->
+        let decode json =
+          match json with
+          | Json.Object fields ->
+              let unknown =
+                List.filter_map
+                  (fun (name, _) ->
+                    if List.mem name allowed then None
+                    else
+                      Some
+                        (issue ~path:[ Field name ]
+                           ("Unknown parameter: " ^ name)))
+                  fields
+              in
+              if unknown = [] then schema.decode json else Error unknown
+          | _ -> schema.decode json
+        in
+        {
+          schema with
+          decode;
+          json_schema =
+            (fun () ->
+              add_keyword "additionalProperties" (Json.Bool false)
+                (schema.json_schema ()));
+        }
 
   let decode_result schema json = schema.decode json
   let encode_result schema value = schema.encode value
