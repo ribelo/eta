@@ -12,7 +12,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | ID | Title | Phase | Effort | Risk | Status | SC | Branch | Evidence |
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
-| E24 | Iteration mirrors List; slim Schedule | A | M | low-med | proposed | | | |
+| E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E25 | Family consistency renames | A | S-M | low | proposed | | | |
 | E1 | sync_result / sync_option | B | S | low | proposed | | | |
 | E2 | discard / ignore_errors | B | S | low | proposed | | | |
@@ -404,3 +404,80 @@ Rescoped predictions: iterate cluster 5 → 4 vals / 5 → 4 concepts;
 footguns −1/+0; migration ~265 call lines (for_each_par×2 ~135 + labeled
 retry/repeat call-site updates ~130), mechanical. Executor resumes on the
 same branch with follow-up objective `followup-1.md`.
+
+---
+
+## V-DX-E24-004 — 2026-07-18 — research/dx-e24-iteration-mirrors-list — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`29bd23e9`); mainline `test/cache_jsoo` +
+`test/js_jsoo` compile clean; `signal_jsoo` failure confirmed identical to
+master (executor compared against a master archive — six syntax diagnostics
++ one type error, same files/lines).
+
+**Contract.** Verified verbatim against V-DX-E24-003: `map_par
+?(max_concurrent = 8) f xs` function-first with `min max_concurrent n`
+workers and construction-time `invalid_arg`; `retry`/`retry_or_else`/
+`repeat` labeled data-last; `retry_or_else` two-error form retained;
+`Schedule.t` 3-param with taps untouched. mli documents the default cap
+("the default is 8") and the retry cause-divergence as a *current
+limitation* (not canonized) with cross-references both ways; bonus:
+`map_par`'s doc fences the fibers-vs-domains confusion (`eta_par`).
+
+**Parity suite** (all green in orchestrator re-run): omission yields
+`Effect.t` (the original blocker, now a test); mapper lazy at blueprint
+construction (defect at runtime, capped too); input order under out-of-order
+completion; fail-fast; finalizer cancellation parity; explicit cap
+enforcement; **default cap 8 proven with 9 inputs**; nonpositive rejection;
+`or_else` `None`/latest-`Some`/terminal-`Some`; composite first-typed-
+failure; tap behavior under new call shapes.
+
+**Red-team:** nonpositive bounds (0, −3) fail loudly at construction;
+omission *looks* unbounded but measures peak 8 — verdict honestly notes the
+call site alone cannot communicate the cap and the docs sentence is load-
+bearing. No overclaiming.
+
+**Independent review** `[agent-sim, spot-check]` (oracle, fixed P-OCaml
+persona, randomized blinded pairs): par pair — `map_par` **5** vs
+`for_each_par_bounded` **3**; retry pair — labeled data-last **4** vs
+positional **3**. Cold reads: order, `~while_` rejection→`None`, fallback
+error-type change all correct; composite-cause handling correctly judged
+undecidable-from-call-site (documented in mli). One misreading: omitted
+bound guessed as unbounded — the exact failure the mli sentence +
+`docs/api-dx.md` note + default-cap test address. Preferences: new in both
+pairs; winner's weakness noted (`map_par` doesn't advertise boundedness like
+`_bounded` did — accepted, documented).
+
+**Census/footguns:** iterate cluster 5 → 4 vals / 5 → 4 concepts (verified
+independently); `Schedule.t` unchanged (3 params, 2 tap vals); zero stale
+references; footguns −1/+0.
+
+**Prediction scoring.** Orchestrator V-DX-E24-001: hits — order, fail-fast,
+`~while_` reads, review medians (new ≥4/no ≤2 vs old ≤3), promote outcome;
+misses — census targets (superseded by rescope), slimming-trigger
+prediction (fired; recorded at V-DX-E24-002), omission-misreading direction
+(predicted "expects finite default"; actual guess was "unbounded" — the
+red-team's caveat matters more than my guess). Executor: original set
+mostly superseded/missed by rescope (scored honestly); amendment set all
+hit.
+
+**Protocol compliance:** dual-sealed predictions (two executor sets,
+commit-verified before code); docs-first commit order; blocked-at-contract
+handled per method; rework via follow-up objective; assignment files
+uncommitted; `signal_jsoo` verified unchanged via master-archive
+comparison. Clean.
+
+**Decision: PROMOTE** (amended contract). Merged `--no-ff` (`29bd23e9`),
+master gates green, master + branch pushed, worktree removed, objectives
+archived (incl. `dx-e24-followup-1.md`). The `Schedule.t` slimming remains
+**held** and registered as E24b ("hook ownership: policy vs. driver";
+inventory: `Effect.retry`/`retry_or_else`/`repeat`, `Resource.auto`,
+`Eta_stream` ×4, full driver protocol incl. `step_with_hooks`; "retain
+hooks permanently" is a live outcome). Also registered: retry
+cause-semantics alignment decision (should `retry` adopt composite-cause
+handling?) — both land in the programme backlog at the Phase A synthesis.
+
+**Follow-ups carried:** F1 signal_jsoo bit-rot; F2 `fold ~ok:Fun.id` noise;
+F3 `catch_recovery.ml` filename. New: F4 omission-vs-unbounded misreading —
+mitigated by mli sentence + api-dx note + default-cap test; watch whether
+users read it (candidate input for E5's translation page).

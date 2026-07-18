@@ -1564,7 +1564,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | ID | Title | Phase | Effort | Risk | Status | SC | Branch | Evidence |
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** 2026-07-18 | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
-| E24 | Iteration mirrors List; slim Schedule | A | M | low-med | proposed | | | |
+| E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** 2026-07-18 (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E25 | Family consistency renames | A | S-M | low | proposed | | | |
 | E1 | sync_result / sync_option | B | S | low | proposed | | | |
 | E2 | discard / ignore_errors | B | S | low | proposed | | | |

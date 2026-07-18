@@ -6,14 +6,14 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: A (idiom pass)
-- In flight: **E24 — Iteration mirrors `List`; slimmer `Schedule.t`**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e24`
-  - Branch: `research/dx-e24-iteration-mirrors-list`
-  - Stage: contract amended after oracle consensus (V-DX-E24-003); followup-1.md written; awaiting executor rework
-- Done: **E23 — promoted** (merged `66bad437`, master gates green, pushed)
-- Queue: E24 → E25 (Phase A, strictly sequential) → Phase B batching per plan
-- Open follow-ups: F1 signal_jsoo JS-track bit-rot (pre-existing on
-  master); F2 `fold ~ok:Fun.id` noise (watch); F3 `examples/catch_recovery.ml`
-  filename (cosmetic)
+- In flight: nothing
+- Done: **E23 promoted** (`66bad437`) · **E24 promoted** (`29bd23e9`,
+  amended contract after oracle consensus; Schedule slimming held → E24b)
+- Queue: **E25** (family consistency: `with_scope`, `named ?kind`, `now_ms`,
+  `error_pp`) → Phase A synthesis (V-DX-PHASE-A, incl. E24b + retry
+  cause-alignment backlog) → Phase B
+- Open follow-ups: F1 signal_jsoo JS bit-rot; F2 `fold ~ok:Fun.id` noise;
+  F3 `catch_recovery.ml` filename; F4 omission-vs-unbounded misreading
+  (mitigated; watch); E24b hook-ownership; retry cause-alignment decision
 - Pending decisions: none
-- Last update: 2026-07-18 — E24 launched
+- Last update: 2026-07-18 — E24 promoted

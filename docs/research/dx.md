@@ -12,7 +12,43 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** programme started 2026-07-18. One experiment promoted.
+**Status:** programme started 2026-07-18. Two experiments promoted.
+
+## E24 — Iteration mirrors `List` (promoted 2026-07-18)
+
+`map_par ?max_concurrent f xs` absorbs `for_each_par` and
+`for_each_par_bounded` (both deleted): function-first like `List.map` and
+`Effect.map`, results in input order, fail-fast, and a **documented default
+cap of 8** — what used to be a hidden `min n 8` is now an explicit, tested
+contract. `retry`, `retry_or_else`, and `repeat` are labeled and data-last
+(`eff |> retry ~schedule ~while_`).
+
+Two findings changed the plan en route, and are the real conclusions:
+
+1. **The proposed signatures were unwritable in OCaml** — trailing optional
+   arguments cannot be erased (`map_par ids ~f` would return a partial
+   application, not an effect). Caught by the executor with a reproducible
+   probe before any code was written; fixed by putting optionals before a
+   trailing mandatory argument.
+2. **Absorbing `retry_or_else` into `retry` was a misdiagnosis.** Its
+   two-error form (`'err1 → 'err2`) is genuine typed-error expressiveness
+   that `map_error` cannot recover (the schedule would see the wrong error
+   type; the fallback would lose the schedule output). The two operations
+   also already differ in cause semantics (`retry`: bare `Cause.Fail` only;
+   `retry_or_else`: composite causes) — now documented in the mli as a
+   *current limitation*, with alignment deferred to a registered decision.
+
+`Schedule.t` slimming is **held**: `Resource.auto` and `Eta_stream` (×4)
+publicly drive hook-bearing schedules, and `Schedule.step_plan` is public —
+so hook ownership (policy vs. driver) is an architectural question, not a
+rename. Registered as experiment **E24b** with "keep hooks permanently" as
+a live outcome.
+
+Evidence: parity suite incl. default-cap-8 proven with 9 inputs;
+construction-time `Invalid_argument` red-team; independent review rated the
+new shapes 5 and 4 against 3 and 3 for the old. Provenance:
+`.scratch/research/dx/e24/`, V-DX-E24-001..004, branch
+`research/dx-e24-iteration-mirrors-list`.
 
 ## E23 — Error channel mirrors `Result` (promoted 2026-07-18)
 
