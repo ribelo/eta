@@ -24,7 +24,7 @@ let typed_failure seen =
   Effect.fail `Body_failed |> Effect.finally (mark seen "failure-cleanup")
 
 let cleanup_failure =
-  Effect.with_error_renderer render_error
+  Effect.with_error_pp pp_error
     (Effect.fail `Body_failed |> Effect.finally (Effect.fail `Cleanup_failed))
 
 let cancellation seen =

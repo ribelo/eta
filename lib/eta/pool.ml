@@ -70,7 +70,7 @@ let make_attrs name kind =
 let attrs t = t.attrs
 
 let span t name e =
-  Effect.named_kind ~kind:Capabilities.Internal name
+  Effect.named ~kind:Capabilities.Internal name
     (Effect.annotate_all t.attrs e)
 
 let log t ?(level = Capabilities.Debug) body =
@@ -432,7 +432,7 @@ let with_acquire_guard release f =
   let disarm () = armed := false in
   let set_release release = release_ref := release in
   let release () = if !armed then !release_ref () else Effect.unit in
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release ~acquire:Effect.unit ~release
     |> Effect.bind (fun () -> f ~disarm ~set_release))
 
@@ -440,7 +440,7 @@ let with_fixed_acquire_guard release f =
   let armed = ref true in
   let disarm () = armed := false in
   let release () = if !armed then release () else Effect.unit in
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release ~acquire:Effect.unit ~release
     |> Effect.bind (fun () -> f ~disarm))
 
@@ -524,7 +524,7 @@ let with_lease t body =
            | Some lease -> release_lease ~release_permit:false lease)
     in
     Effect.finally release_acquired
-      (Effect.scoped
+      (Effect.with_scope
          (span t "eta.pool.acquire" (acquire_entry t)
          |> Effect.bind (fun entry ->
                 let lease = make_lease t entry in

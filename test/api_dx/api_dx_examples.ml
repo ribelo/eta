@@ -119,7 +119,7 @@ let release_current db =
   effect_of_result_thunk (fun () -> Domain.close_db db)
 
 let load_user_current id =
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release ~acquire:acquire_current ~release:release_current
     |> Effect.bind (fun db ->
            effect_of_result_thunk (fun () -> Domain.load_user db id)))
@@ -133,7 +133,7 @@ let load_user_proposed id =
   |> Effect.flatten_result
 
 let scoped_resource_current left right =
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release ~acquire:acquire_current ~release:release_current
     |> Effect.bind (fun db ->
            Effect.par
@@ -142,7 +142,7 @@ let scoped_resource_current left right =
 
 let scoped_resource_proposed left right =
   let open Syntax in
-  Effect.scoped
+  Effect.with_scope
     (let* db =
        Effect.acquire_release ~acquire:acquire_current
          ~release:release_current
@@ -1055,7 +1055,7 @@ let trace_context_injection_proposed () =
   | Some ctx -> Effect.pure (Eta.Trace_context.inject ctx)
 
 let span_link_current published consume =
-  Effect.named_kind ~kind:Eta.Capabilities.Consumer "consume"
+  Effect.named ~kind:Eta.Capabilities.Consumer "consume"
     (Effect.annotate_all
        [
          ("linked.trace_id", published.Eta.Capabilities.trace_id);
@@ -1066,7 +1066,7 @@ let span_link_current published consume =
 let span_link_proposed published consume =
   Effect.link_span ~trace_id:published.Eta.Capabilities.trace_id
     ~span_id:published.span_id
-    (Effect.named_kind ~kind:Eta.Capabilities.Consumer "consume" consume)
+    (Effect.named ~kind:Eta.Capabilities.Consumer "consume" consume)
 
 let exit_cause_current exit =
   match exit with
@@ -1165,7 +1165,8 @@ let error_rendering_current name err =
   Effect.named name (Effect.fail err)
 
 let error_rendering_proposed render_error name err =
-  Effect.with_error_renderer render_error (Effect.named name (Effect.fail err))
+  let pp fmt err = Format.pp_print_string fmt (render_error err) in
+  Effect.with_error_pp pp (Effect.named name (Effect.fail err))
 
 let tap_success_current audit body =
   body |> Effect.bind (fun value -> audit value |> Effect.map (fun () -> value))
@@ -1210,7 +1211,7 @@ let snippets =
       area = "resource";
       variant = "current";
       code =
-        {|Effect.scoped
+        {|Effect.with_scope
   (Effect.acquire_release ~acquire ~release
    |> Effect.bind (fun db ->
         Effect.sync (fun () -> load_user db id)
@@ -1301,7 +1302,7 @@ Resource.get resource|};
       area = "scoped_resource";
       variant = "current";
       code =
-        {|Effect.scoped
+        {|Effect.with_scope
   (Effect.acquire_release ~acquire ~release
    |> Effect.bind (fun session ->
         Effect.par (load session "config") (load session "profile")))|};
@@ -1311,7 +1312,7 @@ Resource.get resource|};
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-Effect.scoped
+Effect.with_scope
   (let* session = Effect.acquire_release ~acquire ~release in
    let* config = load session "config"
    and* profile = load session "profile" in
@@ -1437,7 +1438,7 @@ Effect.named name
       area = "error_rendering";
       variant = "proposed";
       code =
-        {|Effect.with_error_renderer render_payment_error
+        {|Effect.with_error_pp render_payment_error
   (Effect.named "payment.charge" (Effect.fail (`Declined reason)))|};
     };
     {
@@ -2089,7 +2090,7 @@ match current with
       area = "span_link";
       variant = "current";
       code =
-        {|Effect.named_kind ~kind:Consumer "consume"
+        {|Effect.named ~kind:Consumer "consume"
   (Effect.annotate_all
      [ ("linked.trace_id", published.trace_id);
        ("linked.span_id", published.span_id) ]
@@ -2100,7 +2101,7 @@ match current with
       variant = "proposed";
       code =
         {|Effect.link_span ~trace_id:published.trace_id ~span_id:published.span_id
-  (Effect.named_kind ~kind:Consumer "consume" consume)|};
+  (Effect.named ~kind:Consumer "consume" consume)|};
     };
     {
       area = "exit_cause";
@@ -2623,7 +2624,7 @@ let assert_expected_shape snippet =
         failwith
           "scoped_resource proposed example should use scoped let* workflow";
       if
-        count_sub snippet.code "Effect.scoped" <> 1
+        count_sub snippet.code "Effect.with_scope" <> 1
         || count_sub snippet.code "Effect.acquire_release" <> 1
       then
         failwith
@@ -2733,7 +2734,7 @@ let assert_expected_shape snippet =
         failwith
           "error_rendering proposed example should be a direct renderer wrapper";
       if
-        count_sub snippet.code "Effect.with_error_renderer" <> 1
+        count_sub snippet.code "Effect.with_error_pp" <> 1
         || count_sub snippet.code "Effect.named" <> 1
         || count_sub snippet.code "<typed failure>" <> 0
       then
@@ -3100,7 +3101,7 @@ let assert_expected_shape snippet =
         failwith "span_link proposed example should be direct span-link metadata";
       if
         count_sub snippet.code "Effect.link_span" <> 1
-        || count_sub snippet.code "Effect.named_kind" <> 1
+        || count_sub snippet.code "Effect.named" <> 1
         || count_sub snippet.code "Effect.annotate_all" <> 0
         || count_sub snippet.code "linked.trace_id" <> 0
       then

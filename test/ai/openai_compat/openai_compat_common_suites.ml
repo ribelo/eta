@@ -108,7 +108,7 @@ let test_client ?(with_http_span = false) response captured =
     captured := Some http_request;
     let eff = E.pure response in
     if with_http_span then
-      E.named_kind ~kind:Eta.Capabilities.Client "HTTP POST" eff
+      E.named ~kind:Eta.Capabilities.Client "HTTP POST" eff
     else eff
   in
   H.Client.make_custom ~protocol:H.Client.H1 ~request

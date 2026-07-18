@@ -238,7 +238,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let starts = ref [] in
     let body =
-      Effect.now
+      Effect.now_ms
       |> Effect.bind (fun now_ms ->
              Effect.sync (fun () -> starts := now_ms :: !starts))
       |> Effect.bind (fun () -> Effect.sleep body_duration)
@@ -373,7 +373,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
     let source =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_use_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.fail "release")
            (fun () -> Effect.sync (fun () -> incr attempts)))
@@ -619,7 +619,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Schedule.both (Schedule.recurs 2) (Schedule.windowed (Duration.ms 10))
     in
     let attempt =
-      Effect.now
+      Effect.now_ms
       |> Effect.bind (fun now_ms ->
              Effect.sync (fun () ->
                  starts := now_ms :: !starts;
@@ -649,7 +649,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Schedule.during (Duration.ms 15))
     in
     let attempt =
-      Effect.now
+      Effect.now_ms
       |> Effect.bind (fun now_ms ->
              Effect.sync (fun () ->
                  starts := now_ms :: !starts;
@@ -761,7 +761,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              else Effect.pure !attempts)
     in
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.retry ~schedule:(Schedule.recurs 5)
            ~while_:(fun (`Retry _) -> true)
            attempt)

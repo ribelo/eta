@@ -88,7 +88,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let trail = ref [] in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release
            ~acquire:(mark trail "acquired" |> E.map (fun () -> 1))
            ~release:(fun _ -> mark trail "released")
@@ -164,7 +164,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let trail = ref [] in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:(mark trail "acq") ~release:(fun () ->
              mark trail "rel")
         |> E.bind (fun () -> E.fail `Boom)
@@ -178,7 +178,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_acquire_release_suppresses_release_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:(E.pure ())
            ~release:(fun () -> E.fail "release")
         |> E.bind (fun () -> E.fail "body"))
@@ -199,7 +199,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_acquire_release_release_failure_after_success () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:(E.pure ())
            ~release:(fun () -> E.fail "release")
         |> E.bind (fun () -> E.pure "body"))
@@ -212,7 +212,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let released = ref false in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:(E.pure ())
            ~release:(fun () -> E.sync (fun () -> released := true))
         |> E.bind (fun () -> E.sync (fun () -> failwith "body defect")))
@@ -229,7 +229,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_acquire_release_suppresses_release_failure_after_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:(E.pure ())
            ~release:(fun () -> E.fail "release")
         |> E.bind (fun () -> E.sync (fun () -> failwith "body defect")))
@@ -249,7 +249,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let trail = ref [] in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release
            ~acquire:(mark trail "acquired" |> E.map (fun () -> 1))
            ~release:(fun resource ->
@@ -290,7 +290,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let released = ref false in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release ~acquire:(E.pure "resource")
            ~release:(fun _ -> E.sync (fun () -> released := true))
            (fun _ -> E.fail `Boom))
@@ -308,7 +308,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let released = ref false in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release ~acquire:(E.pure "resource")
            ~release:(fun _ -> E.sync (fun () -> released := true))
            (fun _ -> E.sync (fun () -> failwith "body defect")))
@@ -325,7 +325,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_acquire_use_release_suppresses_release_failure_after_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release ~acquire:(E.pure ())
            ~release:(fun () -> E.fail "release")
            (fun () -> E.sync (fun () -> failwith "body defect")))
@@ -346,7 +346,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let released = ref 0 in
     let acquired, acquired_u = B.create_promise () in
     let slow =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release
            ~acquire:
              (E.named "acquire_use_release.acquire.cancelled"
@@ -368,7 +368,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_acquire_use_release_release_failure_after_success () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release ~acquire:(E.pure ())
            ~release:(fun () -> E.fail "release")
            (fun () -> E.pure "body"))
@@ -428,7 +428,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                        (Atomic.get b_started);
                      trail := "c" :: !trail)))
     in
-    let eff = E.scoped (E.concat [ a; b; c ] |> E.map (fun _ -> ())) in
+    let eff = E.with_scope (E.concat [ a; b; c ] |> E.map (fun _ -> ())) in
     run_ok rt eff;
     Alcotest.(check (list string)) "lifo order" [ "c"; "b"; "a" ]
       (List.rev !trail)
@@ -440,7 +440,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       E.acquire_release ~acquire:E.unit ~release:(fun () -> E.sync release)
     in
     let eff =
-      E.scoped
+      E.with_scope
         (E.concat
            [
              resource (fun () -> trail := "a" :: !trail);
@@ -620,7 +620,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let eff : (unit, [ `Slow | `Release ]) E.t =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:E.unit
            ~release:(fun () ->
              released := true;

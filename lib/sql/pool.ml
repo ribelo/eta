@@ -100,7 +100,7 @@ let with_connection_timeout : type kind a.
   match runner with
   | Pool_runner state ->
       Eta.Pool.with_resource state.pool (fun conn ->
-          Eta.Effect.scoped
+          Eta.Effect.with_scope
             (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
                ~release:(fun () ->
                  timed_blocking_result ?blocking_pool:state.blocking_pool ~timeout
@@ -235,7 +235,7 @@ let raw_fold ?timeout ?(batch_size = 1024) runner sql params ~init ~f =
   let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
-      Eta.Effect.scoped
+      Eta.Effect.with_scope
         (Eta.Effect.acquire_release
            ~acquire:
              (timed_blocking_result_until ?blocking_pool ~deadline ~conn
@@ -264,7 +264,7 @@ let typed_fold_select ?timeout ?(batch_size = 1024) runner (query : _ Compiled.s
   let deadline = deadline_of_timeout timeout in
   let blocking_pool = blocking_pool runner in
   with_connection_timeout runner ~timeout (fun conn ->
-      Eta.Effect.scoped
+      Eta.Effect.with_scope
         (Eta.Effect.acquire_release
            ~acquire:
              (timed_blocking_result_until ?blocking_pool ~deadline ~conn
@@ -339,7 +339,7 @@ let with_transaction ?timeout (Pool_runner state as runner) body =
   |> Eta.Effect.bind (fun () ->
          Eta.Pool.with_resource state.pool (fun conn ->
              let committed = ref false in
-             Eta.Effect.scoped
+             Eta.Effect.with_scope
                (Eta.Effect.acquire_release
                   ~acquire:
                     (timed_blocking_result ?blocking_pool ~timeout ~conn

@@ -4,9 +4,9 @@ type error =
   [ `Declined of string
   | `Ledger_close_failed of string ]
 
-let render_error = function
-  | `Declined reason -> "declined:" ^ reason
-  | `Ledger_close_failed ledger -> "ledger-close:" ^ ledger
+let render_error fmt = function
+  | `Declined reason -> Format.fprintf fmt "declined:%s" reason
+  | `Ledger_close_failed ledger -> Format.fprintf fmt "ledger-close:%s" ledger
 
 let require label condition =
   if not condition then failwith ("error rendering check failed: " ^ label)
@@ -15,11 +15,11 @@ let attr key attrs =
   List.assoc_opt key attrs
 
 let charge_payment =
-  Effect.with_error_renderer render_error
+  Effect.with_error_pp render_error
     (Effect.named "payment.charge" (Effect.fail (`Declined "card")))
 
 let ledger_use =
-  Effect.with_error_renderer render_error
+  Effect.with_error_pp render_error
     (Effect.named "payment.ledger"
        (Effect.with_resource ~acquire:(Effect.pure "payments")
           ~release:(fun ledger -> Effect.fail (`Ledger_close_failed ledger))

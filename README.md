@@ -250,7 +250,7 @@ let load_user id =
 ```
 
 Use `Effect.acquire_release` directly when a resource should live until an
-enclosing runtime or `Effect.scoped` boundary rather than just one callback body.
+enclosing runtime or `Effect.with_scope` boundary rather than just one callback body.
 
 For one-shot cleanup around a single effect, use `Effect.finally`:
 
@@ -269,7 +269,7 @@ as suppressed under the body failure, using the same cause shape as
 
 Eta does not ship `Layer.t`, `Tag`, `Context`, or `Effect.provide`.
 Build service graphs with ordinary OCaml functions and keep resource lifetime
-inside `Effect.scoped`.
+inside `Effect.with_scope`.
 
 See [Services Without Layer](docs/services.md) for the project convention and
 failure modes.
@@ -428,12 +428,12 @@ unless a named effect supplies a typed renderer:
 ```ocaml
 let save =
   Effect.named
-    ~error_renderer:(function `Db code -> "db:" ^ string_of_int code)
+    ~error_pp:(function `Db code -> "db:" ^ string_of_int code)
     "db.save"
     (Effect.fail (`Db 42))
 ```
 
-Use `Effect.with_error_renderer` when several named spans share the same error
+Use `Effect.with_error_pp` when several named spans share the same error
 channel. The renderer is scoped to that effect subtree; caught inner errors keep
 the conservative default unless they provide their own renderer.
 
@@ -472,7 +472,7 @@ request effect:
 
 ```ocaml
 let handle headers =
-  let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
+  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
   match Trace_context.extract headers with
   | None -> body
   | Some ctx -> Effect.with_context ctx body
@@ -483,7 +483,7 @@ the header list:
 
 ```ocaml
 let handle_request request =
-  let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
+  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
   match Eta_http.Trace_context.extract_request request with
   | None -> body
   | Some ctx -> Effect.with_context ctx body

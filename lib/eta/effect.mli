@@ -370,15 +370,15 @@ val retry_or_else :
     failures become the result normally; the original typed failure is not
     suppressed or reported as a finalizer diagnostic. *)
 
-val now : (int, 'err) t
+val now_ms : (int, 'err) t
 (** Read the active monotonic runtime clock in milliseconds. This is runtime
     elapsed time, not wall/civil time. Runtime constructors and tests can
     override this clock with their [?now_ms] argument. *)
 
 val sleep : Duration.t -> (unit, 'err) t
-(** Sleep through the active monotonic runtime clock. The sleeper and {!now}
-    must use the same time base. Runtime constructors and tests can override
-    this sleeper with their [?sleep] argument. *)
+(** Sleep through the active monotonic runtime clock. The sleeper and
+    {!now_ms} must use the same time base. Runtime constructors and tests can
+    override this sleeper with their [?sleep] argument. *)
 
 val delay : Duration.t -> ('a, 'err) t -> ('a, 'err) t
 val timed : ('a, 'err) t -> (Duration.t * 'a, 'err) t
@@ -425,7 +425,7 @@ val finally : (unit, 'cleanup_err) t -> ('a, 'err) t -> ('a, 'err) t
     {!acquire_release} finalizer reporting.
 
     This is for one-shot cleanup around an eff. Use {!with_resource} for
-    body-bounded resource lifetimes, or {!acquire_release} and {!scoped} when
+    body-bounded resource lifetimes, or {!acquire_release} and {!with_scope} when
     the resource should live until an enclosing runtime or scope boundary. *)
 
 val on_exit :
@@ -513,7 +513,8 @@ val with_resource :
     ]}
 
     Use {!acquire_release} directly when a resource should live until an
-    enclosing runtime or {!scoped} boundary rather than just the callback body. *)
+    enclosing runtime or {!with_scope} boundary rather than just the callback
+    body. *)
 
 val with_resource_exit :
   acquire:('a, 'err) t ->
@@ -522,16 +523,16 @@ val with_resource_exit :
   ('b, 'err) t
 (** Friendly name for {!acquire_use_release_exit}. *)
 
-val scoped : ('a, 'err) t -> ('a, 'err) t
+val with_scope : ('a, 'err) t -> ('a, 'err) t
 (** Open a resource scope around an effect.
 
-    Resources registered with {!acquire_release} inside [scoped] are released
-    when the scope exits, in reverse acquisition order. Finalizers run on
-    success, typed failure, unchecked defect, and cancellation.
+    Resources registered with {!acquire_release} inside [with_scope] are
+    released when the scope exits, in reverse acquisition order. Finalizers run
+    on success, typed failure, unchecked defect, and cancellation.
 
-    Scopes compose: nested [scoped] blocks release their own resources before
-    the outer scope continues. Use this for resource lifetimes that should not
-    extend to the runtime boundary. *)
+    Scopes compose: nested [with_scope] blocks release their own resources
+    before the outer scope continues. Use this for resource lifetimes that
+    should not extend to the runtime boundary. *)
 
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
@@ -556,9 +557,14 @@ val supervisor_scoped :
 (** Low-level abstract supervisor-scope runner used by {!Supervisor}. Prefer
     {!Supervisor.scoped} and {!Supervisor.Scope} in user code. *)
 
-val with_error_renderer : ('err -> string) -> ('a, 'err) t -> ('a, 'err) t
-(** Render typed failures in observability span status and exception events for
-    the wrapped eff. The renderer is scoped to this eff's error channel. *)
+val with_error_pp :
+  (Format.formatter -> 'err -> unit) -> ('a, 'err) t -> ('a, 'err) t
+(** Pretty-print typed failures for observability span status and exception
+    events on the wrapped eff. The printer is scoped to this eff's error
+    channel. Output is rendered at most once per span status or exception
+    event. The printer must be total; a raising [error_pp] becomes a defect
+    through the ordinary capture path. Omitted printers keep the default
+    ["<typed failure>"] status text. *)
 
 val suppress_observability : ('a, 'err) t -> ('a, 'err) t
 (** Run the wrapped eff without emitting tracer, logger, or meter events
@@ -601,11 +607,18 @@ val supervisor_yield : ('s, unit, 'err) supervisor_scope
     They intentionally do not expose the interpreter AST constructors. *)
 
 val named :
-  ?error_renderer:('err -> string) ->
+  ?kind:Capabilities.span_kind ->
+  ?error_pp:(Format.formatter -> 'err -> unit) ->
   string ->
   ('a, 'err) t ->
   ('a, 'err) t
-(** [named name body] attaches a span name for tracing around [body]. *)
+(** [named name body] attaches a span name for tracing around [body].
+
+    [?kind] defaults to {!Capabilities.Internal}. [?error_pp] pretty-prints
+    typed failures for this span's status and exception events; omit it to keep
+    ["<typed failure>"]. Output is rendered at most once per span status or
+    exception event. The printer must be total; a raising [error_pp] becomes a
+    defect through the ordinary capture path. *)
 
 module Expert : sig
   type context
@@ -672,12 +685,6 @@ end
     small: it lets optional packages implement backend-specific leaves while
     keeping the root [Effect.t] representation private. *)
 
-val named_kind :
-  ?error_renderer:('err -> string) ->
-  kind:Capabilities.span_kind ->
-  string ->
-  ('a, 'err) t ->
-  ('a, 'err) t
 val annotate : key:string -> value:string -> ('a, 'err) t -> ('a, 'err) t
 (** Attach a string attribute to the active span. If no span is active, the
     attribute is buffered and attached to the next span opened by the same
@@ -920,7 +927,7 @@ val here_attr : string * int * int * int -> ('a, 'err) t -> ('a, 'err) t
 
 val fn :
   ?kind:Capabilities.span_kind ->
-  ?error_renderer:('err -> string) ->
+  ?error_pp:(Format.formatter -> 'err -> unit) ->
   ?attrs:(string * string) list ->
   string * int * int * int ->
   string ->
@@ -928,7 +935,9 @@ val fn :
   ('a, 'err) t
 (** [fn __POS__ __FUNCTION__ body] names [body] after the current binding and
     records the source location as a [loc] span attribute. [?attrs] attaches
-    additional attributes to the same span. *)
+    additional attributes to the same span. [?error_pp] has the same rendering
+    contract as {!named}: at most once per span status or exception event; must
+    be total; a raising printer becomes a defect. *)
 
 val name : ('a, 'err) t -> string option
 val collect_names : ('a, 'err) t -> string list

@@ -120,7 +120,7 @@ let close_stream_unlocked stream =
   release_stream stream
 
 let fail_and_close stream error =
-  Eta.Effect.scoped
+  Eta.Effect.with_scope
     (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
        ~release:(fun () -> close_stream_unlocked stream)
     |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))

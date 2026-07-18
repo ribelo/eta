@@ -162,7 +162,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                else Effect.pure !attempts)
       in
       let eff =
-        Effect.scoped
+        Effect.with_scope
           (Effect.retry
              ~schedule:(Schedule.recurs (n + 1))
              ~while_:(fun (`Retry _) -> true)
@@ -194,14 +194,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let attempts = ref 0 in
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:(acquire "outer")
            ~release:(release "outer")
         |> Effect.bind (fun () ->
                Effect.retry
                  ~schedule:(Schedule.recurs 3)
                  ~while_:(fun (`Inner_retry _) -> true)
-                 (Effect.scoped
+                 (Effect.with_scope
                     (Effect.acquire_release ~acquire:(acquire "inner")
                        ~release:(release "inner")
                     |> Effect.bind (fun () ->
@@ -238,7 +238,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let fast_branch = Effect.delay (Duration.ms 20) (Effect.pure "fast") in
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.unit)
         |> Effect.bind (fun () -> Effect.race [ retry_branch; fast_branch ]))
@@ -259,7 +259,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = Atomic.make 0 in
     let make_scoped_branch fail =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))
         |> Effect.bind (fun () ->
@@ -292,7 +292,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let released = Atomic.make 0 in
     let make_branch i =
       let delay_ms = (i + 1) * 5 in
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))
         |> Effect.bind (fun () ->
@@ -333,7 +333,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                    if n mod 5 = 0 then Effect.fail (`Fail n)
                    else Effect.pure n)
         | 3 ->
-            Effect.scoped
+            Effect.with_scope
               (Effect.acquire_release
                  ~acquire:(Effect.sync (fun () -> incr active))
                  ~release:(fun () -> Effect.sync (fun () -> decr active))
@@ -422,7 +422,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = Atomic.make false in
     let slow =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () ->
              Effect.sync (fun () -> Atomic.set released true))
@@ -446,7 +446,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let released = Atomic.make 0 in
     let started = Atomic.make 0 in
     let worker i =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release
            ~acquire:(Effect.sync (fun () -> Atomic.incr started))
            ~release:(fun () -> Effect.sync (fun () -> Atomic.incr released))

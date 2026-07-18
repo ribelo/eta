@@ -10,9 +10,21 @@ let local_get frame key =
 let local_with_binding frame key value f =
   frame.runtime.contract.Runtime_contract.local_with_binding key value f
 
-let with_error_renderer (render) eff =
+let string_error_renderer (pp : Format.formatter -> 'err -> unit) : Obj.t -> string =
+  (* Memoize by physical identity so span status and exception-event paths share
+     one render for the same typed failure. *)
+  let cache : (Obj.t * string) option ref = ref None in
+  fun err ->
+    match !cache with
+    | Some (prev, rendered) when prev == err -> rendered
+    | _ ->
+        let rendered = Format.asprintf "%a" pp (Obj.obj err) in
+        cache := Some (err, rendered);
+        rendered
+
+let with_error_pp (pp : Format.formatter -> 'err -> unit) eff =
   preserve eff @@ fun frame ->
-  let frame = { frame with error_renderer = (fun err -> render (Obj.obj err)) } in
+  let frame = { frame with error_renderer = string_error_renderer pp } in
   run_to_exit frame eff
 
 let suppress_observability eff =
@@ -28,12 +40,12 @@ let suppress_observability eff =
   in
   run_to_exit { frame with runtime } eff
 
-let named_kind ?error_renderer ~kind name eff =
+let named ?(kind = Capabilities.Internal) ?error_pp name eff =
   make ~leaf_name:name ~names:(name :: names eff) @@ fun frame ->
   let frame =
-    match error_renderer with
+    match error_pp with
     | None -> frame
-    | Some render -> { frame with error_renderer = (fun err -> render (Obj.obj err)) }
+    | Some pp -> { frame with error_renderer = string_error_renderer pp }
   in
   try
     ok
@@ -41,9 +53,6 @@ let named_kind ?error_renderer ~kind name eff =
          ~error_renderer:frame.error_renderer ~fail_key:frame.fail_key ~kind
          ~name ~attrs:[] (fun () -> run_to_value frame eff))
   with exn -> exit_of_exn frame exn
-
-let named ?error_renderer name eff =
-  named_kind ?error_renderer ~kind:Capabilities.Internal name eff
 
 let annotate ~key ~value eff =
   preserve eff @@ fun frame ->
@@ -318,5 +327,5 @@ let here_attr (file, line, col_start, col_end) eff =
     ~value:(Printf.sprintf "%s:%d:%d-%d" file line col_start col_end)
     eff
 
-let fn ?(kind = Capabilities.Internal) ?error_renderer ?(attrs = []) pos name eff =
-  eff |> annotate_all attrs |> here_attr pos |> named_kind ?error_renderer ~kind name
+let fn ?(kind = Capabilities.Internal) ?error_pp ?(attrs = []) pos name eff =
+  eff |> annotate_all attrs |> here_attr pos |> named ~kind ?error_pp name

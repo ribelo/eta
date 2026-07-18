@@ -20,7 +20,7 @@ let with_span ?(emit_url_full = false) request eff =
            Semconv.request_attrs ~emit_url_full request)
   in
   let span =
-    body |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Server (span_name request)
+    body |> Eta.Effect.named ~kind:Eta.Capabilities.Server (span_name request)
   in
   match Request.trace_context request with
   | None -> span
@@ -29,7 +29,7 @@ let with_span ?(emit_url_full = false) request eff =
 let request ?(enabled = true) ?(emit_url_full = false) handler request =
   if not enabled then Eta.Effect.suppress_observability (handler request)
   else
-    (* Only pay the span-wrapper Effect overhead (bind/catch/named_kind +
+    (* Only pay the span-wrapper Effect overhead (bind/catch/named +
        die-context bindings) when a tracer is actually installed. With no
        tracer the span would never be recorded, so run the handler bare — but
        leave logging/metrics untouched (unlike suppress_observability). *)

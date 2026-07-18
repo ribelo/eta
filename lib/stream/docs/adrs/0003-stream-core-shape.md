@@ -77,7 +77,7 @@ The required behavior, proven by evidence:
 - a typed terminal value emitted on clean upstream EOF;
 - distinct upstream-EOF vs upstream-error handling;
 - typed-error-row preservation through `run` (negative-tested);
-- resource cleanup via the existing `Effect.scoped` mechanism (V-S4).
+- resource cleanup via the existing `Effect.with_scope` mechanism (V-S4).
 
 ## Alternatives considered
 

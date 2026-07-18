@@ -881,17 +881,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     B.set_clock clock 100;
     let program =
-      Effect.now
+      Effect.now_ms
       |> Effect.bind (fun before ->
              Effect.sleep (Duration.ms 25)
              |> Effect.bind (fun () ->
-                    Effect.now
+                    Effect.now_ms
                     |> Effect.bind (fun after_sleep ->
                            Effect.timed
                              (Effect.sleep (Duration.ms 15)
                              |> Effect.map (fun () -> "done"))
                            |> Effect.bind (fun (elapsed, value) ->
-                                  Effect.now
+                                  Effect.now_ms
                                   |> Effect.map (fun after_timed ->
                                          ( before,
                                            after_sleep,
@@ -1019,7 +1019,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_map_error_maps_full_cause () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.fail `Release)
         |> Effect.bind (fun () -> Effect.fail `Body))
@@ -1043,7 +1043,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_map_error_preserves_defects_in_cause_tree () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () ->
              Effect.sync (fun () -> failwith "release defect"))
@@ -1063,7 +1063,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_map_error_preserves_interrupts_in_cause_tree () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> runtime_interrupt_effect ())
         |> Effect.bind (fun () -> Effect.fail `Body))
@@ -1362,7 +1362,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Effect.named "body.span"
     in
     let eff =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:(Effect.pure ()) ~release
         |> Effect.bind (fun () -> body))
     in
@@ -2465,7 +2465,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = ref 0 in
     let body =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:(Effect.pure ())
            ~release:(fun () ->
              Effect.named "release" (Effect.sync (fun () -> incr released)))
@@ -2638,7 +2638,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let acquired, acquired_u = B.create_promise () in
     let release_started = ref false in
     let slow =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release
            ~acquire:(Effect.sync (fun () -> B.resolve acquired_u ()))
            ~release:(fun () ->
@@ -2667,7 +2667,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let release_started, release_started_u = B.create_promise () in
     let release_continue, release_continue_u = B.create_promise () in
     let loser =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () ->
              Effect.sync (fun () -> B.try_resolve release_started_u ())
@@ -2776,7 +2776,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let acquired, acquired_u = B.create_promise () in
     let release_started = ref false in
     let slow =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release
            ~acquire:
              (Effect.named "par.slow.acquire"
@@ -2855,7 +2855,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let acquired, acquired_u = B.create_promise () in
     let release_started = ref false in
     let slow =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release
            ~acquire:
              (Effect.named "slow.acquire"
@@ -2920,7 +2920,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let release_started = ref false in
     let worker = function
       | "slow" ->
-          Effect.scoped
+          Effect.with_scope
             (Effect.acquire_release
                ~acquire:
                  (Effect.named "foreach.slow.acquire"

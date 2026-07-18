@@ -98,9 +98,24 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
         value
       with exn ->
         let cause = cause_of_exn_runtime runtime fail_key exn in
-        emit_exception_event cause;
-        finish (RObs.status_of_cause ~error_renderer cause);
-        raise_cause fail_key cause
+        (* error_pp must be total. A raising printer becomes a defect via the
+           ordinary capture path; still close the span so telemetry degrades
+           honestly instead of leaking an open span. *)
+        (match
+           try
+             emit_exception_event cause;
+             finish (RObs.status_of_cause ~error_renderer cause);
+             None
+           with render_exn ->
+             let render_cause =
+               cause_of_exn_runtime runtime fail_key render_exn
+             in
+             (try finish (RObs.status_of_cause ~error_renderer:RObs.default_error_renderer render_cause)
+              with _ -> finish (Error "<error_pp raised>"));
+             Some render_cause
+         with
+         | None -> raise_cause fail_key cause
+         | Some render_cause -> raise_cause fail_key render_cause)
 
 let instrument_leaf ~runtime ~error_renderer ~fail_key ~name f =
   with_span ~runtime ~error_renderer ~fail_key ~kind:Capabilities.Internal ~name

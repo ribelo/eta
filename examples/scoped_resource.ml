@@ -33,7 +33,7 @@ let session_scope released =
 
 let program released =
   let open Syntax in
-  Effect.scoped
+  Effect.with_scope
     (let* session = session_scope released in
      let* config = Effect.named "load.config" (load session "config") in
      let* profile = Effect.named "load.profile" (load session "profile") in

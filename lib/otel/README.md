@@ -90,7 +90,7 @@ renderer before the runtime emits the span status:
 
 ```ocaml
 Effect.fn
-  ~error_renderer:(function `Boom -> "boom")
+  ~error_pp:(fun fmt -> function `Boom -> Format.pp_print_string fmt "boom")
   __POS__ __FUNCTION__
   (Effect.fail `Boom)
 ```
@@ -103,7 +103,7 @@ boundaries and `Effect.with_context` around the request effect:
 
 ```ocaml
 let request headers =
-  let body = Effect.named_kind ~kind:Capabilities.Server "http.request" work in
+  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
   match Trace_context.extract headers with
   | None -> body
   | Some ctx -> Effect.with_context ctx body

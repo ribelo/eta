@@ -27,7 +27,7 @@ let supervisor_start_await n ~with_finalizer =
           let child_effect =
             if with_finalizer then
               lift
-                (Effect.scoped
+                (Effect.with_scope
                    (Effect.acquire_release ~acquire:(Effect.pure 1)
                       ~release:(fun _ -> Effect.unit)))
             else lift (work 10)

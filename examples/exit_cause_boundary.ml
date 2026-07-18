@@ -19,7 +19,7 @@ let defect_program : (string, error) Effect.t =
     (Effect.sync (fun () -> failwith "decoder exploded"))
 
 let cleanup_program : (string, error) Effect.t =
-  Effect.with_error_renderer render_error
+  Effect.with_error_pp pp_error
     (Effect.with_resource ~acquire:(Effect.pure "handle")
        ~release:(fun _ -> Effect.fail `Close_failed)
        (fun handle -> Effect.pure handle))

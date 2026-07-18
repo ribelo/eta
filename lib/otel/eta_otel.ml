@@ -408,7 +408,7 @@ let max_self_spans = 64
 let export_signal t config signal =
   let name = batch_signal_name signal in
   let signal_kind, path, n = signal_details config signal in
-  Eta.Effect.scoped
+  Eta.Effect.with_scope
     (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
        ~release:(fun () -> decrement_in_flight t n)
     |> Eta.Effect.bind (fun () ->

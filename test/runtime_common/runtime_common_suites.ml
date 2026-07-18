@@ -205,7 +205,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_map_error_maps_full_cause () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:E.unit
            ~release:(fun () -> E.fail `Release)
         |> E.bind (fun () -> E.fail `Body))
@@ -292,7 +292,7 @@ module Make (B : Runtime_backend.S) = struct
     let trail = ref [] in
     let mark name = E.sync (fun () -> trail := name :: !trail) in
     let scoped =
-      E.scoped
+      E.with_scope
         (E.acquire_release
            ~acquire:(mark "acquired" |> E.map (fun () -> 1))
            ~release:(fun _ -> mark "released")
@@ -314,7 +314,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let released = ref false in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:E.unit
            ~release:(fun () -> E.sync (fun () -> released := true))
         |> E.bind (fun () -> E.sync (fun () -> failwith "body defect")))
@@ -360,7 +360,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let released = ref false in
     let eff =
-      E.scoped
+      E.with_scope
         (E.acquire_use_release ~acquire:(E.pure "resource")
            ~release:(fun _ -> E.sync (fun () -> released := true))
            (fun _ -> E.sync (fun () -> failwith "body defect")))
@@ -383,7 +383,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let body =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:E.unit
            ~release:(fun () -> E.sync (fun () -> released := true))
         |> E.bind (fun () -> E.delay (Duration.seconds 1) E.unit))
@@ -520,7 +520,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let slow =
-      E.scoped
+      E.with_scope
         (E.acquire_release ~acquire:E.unit
            ~release:(fun () -> E.sync (fun () -> released := true))
         |> E.bind (fun () -> E.delay (Duration.seconds 1) (E.pure 1)))

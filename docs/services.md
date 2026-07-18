@@ -11,7 +11,7 @@ The rule is simple:
 - a `with_*` helper owns acquire/use/release when the service has a bounded
   lifetime;
 - body-bounded lifetimes are managed with `Effect.with_resource`;
-- wider lifetimes use `Effect.acquire_release` inside `Effect.scoped`;
+- wider lifetimes use `Effect.acquire_release` inside `Effect.with_scope`;
 - dependencies are function arguments, records, modules, or closures;
 - runtime services such as clock, tracing, logging, metrics, random, and Eio
   switch are interpreter configuration, not application dependency rows.
@@ -26,7 +26,7 @@ OCaml gives Eta:
 
 - module-owned types for nominal service handles;
 - functions and records for dependency injection;
-- `Effect.with_resource`, `Effect.scoped`, and `Effect.acquire_release` for
+- `Effect.with_resource`, `Effect.with_scope`, and `Effect.acquire_release` for
   resource lifetime;
 - normal lexical captures for leaf effects.
 
@@ -132,7 +132,7 @@ The compiler reports a partial application because `clock` was not supplied.
 
 A service handle that escapes its intended scope is an application bug. Keep
 body-bounded acquire/release pairs inside `Effect.with_resource`, use
-`Effect.scoped` plus `Effect.acquire_release` for wider lifetimes, and pass
+`Effect.with_scope` plus `Effect.acquire_release` for wider lifetimes, and pass
 handles only to the program that runs inside that scope.
 
 Duplicate services should be solved by names and module boundaries. Do not
@@ -149,7 +149,7 @@ The durable public style is:
 
 - functions for service dependency injection;
 - `Effect.with_resource` for body-bounded service lifetime;
-- `Effect.scoped` plus `Effect.acquire_release` for wider service lifetime;
+- `Effect.with_scope` plus `Effect.acquire_release` for wider service lifetime;
 - runtime-owned interpreter services for clock/tracing/logging/metrics/random;
 - explicit portable inputs and callbacks at island boundaries;
 - no mid-tree dynamic environment replacement.

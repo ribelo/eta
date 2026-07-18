@@ -414,7 +414,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
       |> Eta_stream.Stream.schedule schedule
       |> Eta_stream.Stream.map_effect (fun value ->
-             Eta.Effect.now
+             Eta.Effect.now_ms
              |> Eta.Effect.map (fun now_ms ->
                     emitted := (value, now_ms) :: !emitted;
                     value))
@@ -472,7 +472,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Eta_stream.Stream.succeed 1
       |> Eta_stream.Stream.repeat schedule
       |> Eta_stream.Stream.map_effect (fun value ->
-             Eta.Effect.now
+             Eta.Effect.now_ms
              |> Eta.Effect.map (fun now_ms ->
                     emitted := now_ms :: !emitted;
                     value))

@@ -371,7 +371,7 @@ let with_pool f =
     Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
       (S.memory_config ())
   in
-  Eta.Effect.scoped
+  Eta.Effect.with_scope
     (Eta.Effect.acquire_release ~acquire ~release:Q.Pool.shutdown
      |> Eta.Effect.bind f)
   |> run_effect
@@ -387,7 +387,7 @@ let with_pool_exit f =
     Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
       (S.memory_config ())
   in
-  Eta.Effect.scoped
+  Eta.Effect.with_scope
     (Eta.Effect.acquire_release ~acquire ~release:Q.Pool.shutdown
      |> Eta.Effect.bind f)
   |> run_effect_exit
@@ -978,7 +978,7 @@ let test_sql_pool_typed_fold_select_decode_failure_is_typed () =
     Q.Select.(from Mismatch.table Q.Projection.(one id) |> compile)
   in
   let program =
-    Eta.Effect.scoped
+    Eta.Effect.with_scope
       (Eta.Effect.acquire_release
          ~acquire:
            (Q.Pool.create ~default_timeout:(Eta.Duration.ms 500) ~max_size:1
@@ -1048,7 +1048,7 @@ let test_sql_pool_rejects_detach_started_blocking_pool () =
       Q.Pool.create ~blocking_pool ~default_timeout:(Eta.Duration.ms 500)
         ~max_size:1 (S.memory_config ())
     in
-    Eta.Effect.scoped
+    Eta.Effect.with_scope
       (Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure pool)
          ~release:Q.Pool.shutdown
       |> Eta.Effect.bind (fun pool ->
@@ -1283,7 +1283,7 @@ let with_migrate_pool f =
     Q.Pool.shutdown pool
     |> Eta.Effect.map_error migrate_error_of_pool_error
   in
-  Eta.Effect.scoped
+  Eta.Effect.with_scope
     (Eta.Effect.acquire_release ~acquire ~release |> Eta.Effect.bind f)
   |> run_migrate_effect
 

@@ -108,7 +108,7 @@ let read_all ?(max_bytes = default_max_bytes) t =
              else loop (chunk :: acc) length)
   in
   with_operation t
-    (Effect.scoped
+    (Effect.with_scope
        (Effect.acquire_release ~acquire:Effect.unit
           ~release:(fun () -> release_once t)
        |> Effect.bind (fun () -> loop [] 0)))

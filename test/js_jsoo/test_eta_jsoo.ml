@@ -60,7 +60,7 @@ let test_timeout_releases_resource done_ =
   let acquire = Eta.Effect.unit in
   let release () = Eta.Effect.sync (fun () -> released := true) in
   let body =
-    Eta.Effect.scoped
+    Eta.Effect.with_scope
       (Eta.Effect.acquire_release ~acquire ~release
        |> Eta.Effect.bind (fun () ->
               Eta.Effect.delay (Eta.Duration.seconds 1) Eta.Effect.unit))

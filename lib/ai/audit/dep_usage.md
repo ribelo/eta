@@ -162,7 +162,7 @@ Search:
 - lib/ai/observability.ml:78:         Eta.Effect.fail error
 - lib/ai/observability.ml:79:         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
 - lib/ai/observability.ml:82:  eff |> with_error_type |> Eta.Effect.annotate_all attrs
-- lib/ai/observability.ml:83:  |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
+- lib/ai/observability.ml:83:  |> Eta.Effect.named ~error_pp:ai_error_message ~kind name
 - lib/ai/observability.ml:88:    |> Eta.Effect.bind (fun response ->
 - lib/ai/observability.ml:89:           Eta.Effect.pure response
 - lib/ai/observability.ml:90:           |> Eta.Effect.annotate_all (response_attrs response))
@@ -289,7 +289,7 @@ Search:
 - lib/ai/sse.ml:112:  if stream.released then Eta.Effect.unit
 - lib/ai/sse.ml:115:    Eta_http.Body.Stream.discard stream.body
 - lib/ai/sse.ml:116:    |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error)))
-- lib/ai/sse.ml:126:  Eta.Effect.scoped
+- lib/ai/sse.ml:126:  Eta.Effect.with_scope
 - lib/ai/sse.ml:127:    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
 - lib/ai/sse.ml:129:    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
 - lib/ai/sse.ml:235:    | [] -> Eta.Effect.pure (List.rev acc)

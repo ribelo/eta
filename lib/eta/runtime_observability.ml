@@ -87,14 +87,12 @@ let with_die_annotations contract attrs f =
         f
 
 let default_error_renderer _ = "<typed failure>"
-let error_renderer_raised = "<error renderer raised>"
 
 let render_typed_failure ~error_renderer err =
-  (* Error renderers are user callbacks on the diagnostic path. If one
-     raises, preserve the original cause and close observability spans with a
-     stable fallback instead of reporting the renderer failure as the program
-     failure. *)
-  try error_renderer err with _ -> error_renderer_raised
+  (* error_pp / error_renderer callbacks must be total. A raising printer is
+     not swallowed here; it propagates and becomes a defect through the
+     ordinary capture path at the span/finalizer boundary. *)
+  error_renderer err
 
 let die_of_exn contract ?backtrace ~capture_backtrace exn =
   let backtrace =
