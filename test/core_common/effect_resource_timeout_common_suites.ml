@@ -168,7 +168,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (E.acquire_release ~acquire:(mark trail "acq") ~release:(fun () ->
              mark trail "rel")
         |> E.bind (fun () -> E.fail `Boom)
-        |> E.catch (fun (`Boom : [ `Boom ]) -> mark trail "caught"))
+        |> E.bind_error (fun (`Boom : [ `Boom ]) -> mark trail "caught"))
     in
     run_ok rt eff;
     Alcotest.(check (list string))
@@ -486,7 +486,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       E.pure "done"
       |> E.delay (Duration.seconds 10)
       |> E.timeout (Duration.seconds 5)
-      |> E.catch (fun (`Timeout : [ `Timeout ]) -> E.pure "timeout")
+      |> E.bind_error (fun (`Timeout : [ `Timeout ]) -> E.pure "timeout")
     in
     let promise = B.fork_run ctx rt eff in
     wait_for_sleepers clock 2;
@@ -499,7 +499,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       E.pure "done"
       |> E.delay (Duration.seconds 2)
       |> E.timeout (Duration.seconds 5)
-      |> E.catch (fun (`Timeout : [ `Timeout ]) -> E.pure "timeout")
+      |> E.bind_error (fun (`Timeout : [ `Timeout ]) -> E.pure "timeout")
     in
     let promise = B.fork_run ctx rt eff in
     wait_for_sleepers clock 2;
@@ -535,7 +535,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       inner
       |> E.timeout (Duration.seconds 5)
-      |> E.catch (fun (`Timeout : [ `Timeout ]) -> E.fail `Total_timeout)
+      |> E.bind_error (fun (`Timeout : [ `Timeout ]) -> E.fail `Total_timeout)
     in
     let promise = B.fork_run ctx rt eff in
     wait_for_sleepers clock 3;

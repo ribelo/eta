@@ -40,7 +40,7 @@ let eta_fail_catch_loop n =
   let rec build i acc =
     if i = 0 then acc
     else
-      let next = Effect.catch (fun (_ : [ `Boom ]) -> acc) fail_boom in
+      let next = Effect.bind_error (fun (_ : [ `Boom ]) -> acc) fail_boom in
       build (i - 1) next
   in
   build n leaf

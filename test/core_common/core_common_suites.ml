@@ -833,7 +833,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let sem = Semaphore.make ~permits:5 in
     let eff =
       Semaphore.with_permits sem 3 (fun () -> E.fail `Boom)
-      |> E.catch (fun (`Boom : [ `Boom ]) -> E.pure "caught")
+      |> E.bind_error (fun (`Boom : [ `Boom ]) -> E.pure "caught")
     in
     let result = run_ok rt eff in
     Alcotest.(check string) "caught" "caught" result;
@@ -856,7 +856,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Semaphore.with_permits sem 2 (fun () ->
           E.delay (Duration.ms 100) E.unit)
       |> E.timeout (Duration.ms 10)
-      |> E.catch (fun (`Timeout : [ `Timeout ]) ->
+      |> E.bind_error (fun (`Timeout : [ `Timeout ]) ->
            E.sync (fun () -> timed_out := true))
     in
     let promise = B.fork_run ctx rt eff in
@@ -881,7 +881,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           B.fork_run ctx rt
             (Semaphore.acquire sem 1
              |> E.timeout (Duration.ms 5)
-             |> E.catch (fun (`Timeout : [ `Timeout ]) -> E.pure ())))
+             |> E.bind_error (fun (`Timeout : [ `Timeout ]) -> E.pure ())))
     in
     wait_for_sleepers clock 58;
     B.adjust_clock clock (Duration.ms 5);
@@ -912,7 +912,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           B.fork_run ctx rt
             (Semaphore.acquire sem 1
              |> E.timeout (Duration.ms 5)
-             |> E.catch (fun (`Timeout : [ `Timeout ]) -> E.pure ())))
+             |> E.bind_error (fun (`Timeout : [ `Timeout ]) -> E.pure ())))
     in
     wait_for_sleepers clock 10;
     B.adjust_clock clock (Duration.ms 5);
@@ -1346,7 +1346,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       let blocked_publisher =
         Pubsub.publish hub 2
         |> E.map (fun _ -> `Published)
-        |> E.catch (function
+        |> E.bind_error (function
              | `Closed -> E.pure `Closed
              | `Closed_with_error err -> E.pure (`Closed_with_error err))
       in
@@ -1371,7 +1371,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       let blocked =
         Pubsub.recv sub
         |> E.map (fun _ -> `Received)
-        |> E.catch (function
+        |> E.bind_error (function
              | `Closed -> E.pure `Closed
              | `Closed_with_error err -> E.pure (`Closed_with_error err))
       in
@@ -1402,7 +1402,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       let* second =
         Pubsub.recv sub
         |> E.map (fun value -> `Unexpected_value value)
-        |> E.catch (fun close -> E.pure (`Closed_as close))
+        |> E.bind_error (fun close -> E.pure (`Closed_as close))
       in
       E.pure (first, second)
     in
@@ -1451,7 +1451,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Pubsub.subscribe hub @@ fun sub ->
       Pubsub.recv sub
       |> E.timeout_as (Duration.ms 5) ~on_timeout:`Timeout
-      |> E.catch (function
+      |> E.bind_error (function
            | `Timeout ->
                E.sync (fun () ->
                    let stats = Pubsub.stats hub in

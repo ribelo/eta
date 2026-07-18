@@ -59,7 +59,7 @@ let test_runtime_delay done_ =
 let test_pure_bind_catch done_ =
   let eff =
     Eta_js.Effect.fail `Bad
-    |> Eta_js.Effect.catch (function `Bad -> Eta_js.Effect.pure 40)
+    |> Eta_js.Effect.bind_error (function `Bad -> Eta_js.Effect.pure 40)
     |> Eta_js.Effect.bind (fun value -> Eta_js.Effect.pure (value + 2))
   in
   run eff ~on_result:(finish done_ (expect_ok_int "pure/bind/catch" 42))

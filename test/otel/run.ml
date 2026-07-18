@@ -902,7 +902,7 @@ let live_motel_test net clock =
                  Eio.Time.sleep clock 0.010))
             |> Effect.annotate ~key:"side" ~value:"right"
             |> Effect.bind (fun () -> Effect.fail `Demo_boom)
-            |> Effect.catch (fun (`Demo_boom : [ `Demo_boom ]) ->
+            |> Effect.bind_error (fun (`Demo_boom : [ `Demo_boom ]) ->
                    Effect.pure ()))))
   in
   (match Runtime.run rt demo with

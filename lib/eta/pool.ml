@@ -260,7 +260,7 @@ let close_entry_once t entry =
   span t "eta.pool.close"
     (t.release_conn entry.conn
     |> Effect.map (fun () -> `Closed)
-    |> Effect.catch (fun err ->
+    |> Effect.bind_error (fun err ->
            log t ~level:Capabilities.Warn "eta.pool.close_failed"
            |> Effect.map (fun () -> `Close_failed err)))
 
@@ -413,7 +413,7 @@ let reject_entry ?(release_permit = true) t entry =
 let check_health t entry =
   span t "eta.pool.health_check" (t.health_check entry.conn)
   |> Effect.map (fun () -> `Healthy entry)
-  |> Effect.catch (fun _ -> Effect.pure (`Rejected entry))
+  |> Effect.bind_error (fun _ -> Effect.pure (`Rejected entry))
 
 let make_entry t conn =
   let now = if t.expires_entries then now_ms t else 0 in
@@ -661,7 +661,7 @@ let shutdown ?deadline t =
            release path would make accounting claim a close that did not
            finish. *)
         Effect.timeout_as deadline ~on_timeout:`Pool_shutdown_timeout drain
-        |> Effect.catch (function
+        |> Effect.bind_error (function
              | `Pool_shutdown_timeout ->
                  log t ~level:Capabilities.Warn "eta.pool.shutdown_timeout"
                  |> Effect.bind (fun () -> Effect.fail `Pool_shutdown_timeout)

@@ -26,7 +26,7 @@ let program () =
   let* closed =
     Queue.take queue
     |> Effect.map (fun msg -> "unexpected:" ^ msg)
-    |> Effect.recover render_close
+    |> Effect.fold ~ok:Fun.id ~error:render_close
   in
   let final_stats = Queue.stats queue in
   Effect.pure

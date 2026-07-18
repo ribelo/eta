@@ -50,7 +50,7 @@ let wait_writer client =
   H2.Connection.yield_writer client (fun () -> Eta.Channel.close wake);
   Eta.Channel.recv wake
   |> Eta.Effect.map (fun _ -> ())
-  |> Eta.Effect.catch (function
+  |> Eta.Effect.bind_error (function
        | `Closed | `Closed_with_error _ -> Eta.Effect.unit)
 
 let rec run_client ~write client =

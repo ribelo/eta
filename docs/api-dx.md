@@ -21,13 +21,15 @@ Use ordinary OCaml at the boundary and lift into Eta deliberately:
   runtime backend.
 - `Effect.tap` for success-side observers that should preserve the original
   value. Wrap plain synchronous observers with `Effect.sync`.
-- `Effect.catch` for effectful typed failure recovery inside the Eta blueprint.
-- `Effect.recover` for pure typed failure recovery that should produce a
-  success value without a local `Effect.pure` wrapper.
+- `Effect.bind_error` for effectful typed failure recovery inside the Eta blueprint.
+- `Effect.fold` for pure both-channel recovery that maps success and typed
+  failure to one pure value (mirrors `Result.fold`).
 - `Effect.ignore_errors` for best-effort unit effects where typed failures
   should be suppressed but defects and cancellation must remain visible.
-- `Effect.result` when an Eta workflow should keep going and handle success or
+- `Effect.to_result` when an Eta workflow should keep going and handle success or
   typed failure as an ordinary OCaml `result` value.
+- `Effect.to_option` / `Effect.to_exit` when materializing typed failure as
+  `option` or the full `Exit.t` as data.
 
 Use syntax operators rather than explicit bind in application code:
 
@@ -242,24 +244,24 @@ observability still matter. For a plain synchronous observer, wrap it explicitly
 success-value projection. Use `let+` when the continuation is pure; use `let*`
 when the continuation returns another effect.
 
-`Effect.catch` is not replaced by moving typed failures into successful
+`Effect.bind_error` is not replaced by moving typed failures into successful
 `result` values and then branching with `bind`. Keep expected domain failures
-in Eta's typed error channel and recover them with `catch` or `recover`
+in Eta's typed error channel and recover them with `bind_error` or `fold`
 depending on whether recovery is effectful or pure. Defects, interruptions,
 and finalizer diagnostics remain outside typed recovery.
 
-`Effect.recover` is not a replacement for `Effect.catch`. Use `recover` when
-recovery computes a plain success value; use `catch` when recovery itself is an
+`Effect.fold` is not a replacement for `Effect.bind_error`. Use `fold` when both
+channels collapse to a pure value; use `bind_error` when recovery itself is an
 Eta effect.
 
-`Effect.ignore_errors` is not a replacement for `Effect.catch` or
-`Effect.recover`. Use it only for best-effort unit effects where typed failures
-are intentionally suppressed. It does not catch defects, interruption, or
+`Effect.ignore_errors` is not a replacement for `Effect.bind_error` or
+`Effect.fold`. Use it only for best-effort unit effects where typed failures
+are intentionally suppressed. It does not handle defects, interruption, or
 finalizer diagnostics.
 
-`Effect.result` is not a replacement for typed recovery. Use `catch` or
-`recover` when a typed failure should choose a recovery path and stay in Eta's
-typed error model. Use `result` only when both success and typed failure are
+`Effect.to_result` is not a replacement for typed recovery. Use `bind_error` or
+`fold` when a typed failure should choose a recovery path and stay in Eta's
+typed error model. Use `to_result` only when both success and typed failure are
 ordinary data for the next workflow step. It does not capture defects,
 interruption, or finalizer diagnostics.
 
@@ -273,7 +275,7 @@ fail-fast collection.
 `Effect.with_resource`. They are needed for resources that intentionally live
 until a surrounding runtime, supervisor, daemon, or scope boundary exits.
 
-`Effect.finally` is not replaced by hand-written `catch` cleanup. Manual
+`Effect.finally` is not replaced by hand-written `bind_error` cleanup. Manual
 cleanup around typed success/failure paths misses defects and cancellation, and
 does not preserve cleanup failures with Eta's finalizer/suppressed-cause
 semantics. Use `finally cleanup body` for one-shot cleanup around an existing
@@ -395,8 +397,8 @@ registry of expected workflow names. They inspect the existing effect
 description before interpretation and are useful for documentation, preflight
 checks, and diagnostics. They are intentionally not a complete runtime
 inventory: names created by continuation-producing nodes such as `bind`,
-`catch`, `for_each_par`, or supervisor bodies are not forced just to inspect
-them.
+`bind_error`, `for_each_par`, or supervisor bodies are not forced just to
+inspect them.
 
 `Exit` and `Cause` are not replaced by OCaml `result` or exceptions.
 `Exit.to_result` is intentionally partial: it converts successful values and a
@@ -531,7 +533,7 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `yield`, `tap`, `catch`, `recover`, `ignore_errors`, `result`, `retry`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `all`, `with_resource`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `named_kind`, `fn`, `with_error_renderer`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
+| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `yield`, `tap`, `bind_error`, `fold`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `retry`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `all`, `with_resource`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `named_kind`, `fn`, `with_error_renderer`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
 | Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `for_each_par`, `for_each_par_bounded`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_renderer`, `?error_renderer` on `named` / `named_kind` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`scoped`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Diagnostic/preflight surface | `name`, `collect_names` |
 | Low-level or advanced surface | `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
@@ -561,7 +563,7 @@ Repository: `/home/ribelo/projects/ribelo/camelpie`
 
 Camelpie was migrated from visible raw `Eta.Effect.bind` usage to the preferred
 surface across production code and tests. The final scan found no explicit
-`Eta.Effect.bind`, pipeline-to-`bind`, or `catch (fun _ -> Effect.unit)` shapes
+`Eta.Effect.bind`, pipeline-to-`bind`, or `bind_error (fun _ -> Effect.unit)` shapes
 in the Camelpie repository.
 
 What the migration proved:
@@ -577,8 +579,8 @@ What the migration proved:
   `acquire_release |> bind`.
 - `Effect.ignore_errors` is valuable for best-effort unit effects such as
   cleanup, cancellation, and notifications. It is clearer than repeating
-  `catch (fun _ -> Effect.unit)`.
-- `Effect.result` is useful when a background workflow must publish either
+  `bind_error (fun _ -> Effect.unit)`.
+- `Effect.to_result` is useful when a background workflow must publish either
   success or typed failure as data, as in the Codex realtime stream handoff.
 - Queue close effect helpers are useful when close belongs inside an Eta
   workflow. They avoid ad hoc `Effect.sync (fun () -> Queue.close queue)` at
@@ -607,10 +609,11 @@ Additional package-boundary evidence:
 
 Not yet strengthened by Camelpie:
 
-- `Effect.recover` stayed less important than expected. Camelpie mostly needed
-  effectful `catch`, best-effort `ignore_errors`, or `result` materialization.
-  Keep `recover` as a clear pure-recovery helper, but do not treat it as core
-  consumer evidence until another migration uses it naturally.
+- Pure both-channel `fold` stayed less central than expected in Camelpie.
+  Camelpie mostly needed effectful `bind_error`, best-effort `ignore_errors`, or
+  `to_result` materialization. Keep `fold` as the pure both-channel helper, but
+  do not treat it as core consumer evidence until another migration uses it
+  naturally.
 
 Verification:
 
@@ -618,7 +621,7 @@ Verification:
 cd /home/ribelo/projects/ribelo/camelpie
 nix develop .#oxcaml -c dune build @install
 nix develop .#oxcaml -c dune runtest --force
-rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.catch \\(fun _ -> Eta\\.Effect\\.unit\\)" .
+rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.bind_error \\(fun _ -> Eta\\.Effect\\.unit\\)" .
 git diff --check
 ```
 
@@ -676,9 +679,9 @@ DX pressure found by Exergy:
   `observed_blocking` rather than more Eta primitives. Eta should keep the
   generic building blocks small; applications can name domain-specific
   observation policy.
-- `Effect.recover` again did not become central. Exergy mostly needed
-  effectful `catch`, `from_result`, `result`-as-data patterns, and explicit
-  `tap` observers.
+- `Effect.fold` again did not become central. Exergy mostly needed effectful
+  `bind_error`, `from_result`, `to_result`-as-data patterns, and explicit `tap`
+  observers.
 
 Verification:
 
@@ -686,7 +689,7 @@ Verification:
 nix develop -c dune build @install
 nix develop -c dune runtest --force
 nix develop -c exergy-oxcaml-check
-rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.catch \\(fun _ -> Eta\\.Effect\\.unit\\)|Eta\\.Runtime\\.(create|run)|Eta_blocking\\.result\\b|Eta_blocking\\.result_timeout\\b" \
+rg -n "Eta\\.Effect\\.bind|\\|>\\s*Eta\\.Effect\\.bind|Eta\\.Effect\\.bind_error \\(fun _ -> Eta\\.Effect\\.unit\\)|Eta\\.Runtime\\.(create|run)|Eta_blocking\\.result\\b|Eta_blocking\\.result_timeout\\b" \
   -g '!_build/**' -g '!.opam-oxcaml/**' -g '!var/**' -g '!.motel-data/**' -g '!*.md'
 git diff --check
 ```

@@ -66,7 +66,7 @@ let test_database_pool_shutdown_keeps_parent_open_on_timeout () =
   Alcotest.(check bool)
     "DuckDB database close is not timeout cleanup" false
     (contains_sub duckdb_shutdown ~needle:"Eta.Effect.finally"
-    || contains_sub duckdb_shutdown ~needle:"Eta.Effect.catch");
+    || contains_sub duckdb_shutdown ~needle:"Eta.Effect.bind_error");
   List.iter
     (fun (path, start_marker, end_marker) ->
       let source = read_file (find_source_file path) in
@@ -820,7 +820,7 @@ let test_sql_connection_pool_and_transaction_helpers () =
   in
   let* () =
     rollback
-    |> Eta.Effect.catch (function
+    |> Eta.Effect.bind_error (function
          | `Eta_sql (Q.Invalid_query "force rollback") -> Eta.Effect.unit
          | err -> Eta.Effect.fail err)
   in
@@ -1018,7 +1018,7 @@ let test_sql_pool_timeout_interrupts_and_reuses_connection () =
   Q.Pool.Raw.query ~timeout:(Eta.Duration.ms 5) pool long_sql []
   |> Eta.Effect.bind (fun _ ->
          Eta.Effect.sync (fun () -> Alcotest.fail "expected timeout"))
-  |> Eta.Effect.catch (function
+  |> Eta.Effect.bind_error (function
        | `Timeout ->
            let* rows =
              Q.Pool.Raw.query ~timeout:(Eta.Duration.ms 250) pool
@@ -1338,7 +1338,7 @@ let test_sql_migrations_reject_dirty_checksum_and_missing () =
     M.run pool failing_source
     |> Eta.Effect.bind (fun _ ->
            Eta.Effect.sync (fun () -> Alcotest.fail "bad migration succeeded"))
-    |> Eta.Effect.catch (function
+    |> Eta.Effect.bind_error (function
          | M.Migration_execution_error { version; _ } ->
              Alcotest.(check int64) "failed version" 1L
                (M.Version.to_int64 version);
@@ -1348,7 +1348,7 @@ let test_sql_migrations_reject_dirty_checksum_and_missing () =
   M.run pool failing_source
   |> Eta.Effect.bind (fun _ ->
          Eta.Effect.sync (fun () -> Alcotest.fail "dirty database accepted"))
-  |> Eta.Effect.catch (function
+  |> Eta.Effect.bind_error (function
        | M.Dirty version ->
            Alcotest.(check int64) "dirty version" 1L (M.Version.to_int64 version);
            Eta.Effect.unit
@@ -1520,7 +1520,7 @@ let test_sql_fold_timeout_does_not_bound_total_elapsed () =
     let* result =
       fold_result
       |> Eta.Effect.map (fun value -> `Ok value)
-      |> Eta.Effect.catch (fun _err -> Eta.Effect.pure `Timeout)
+      |> Eta.Effect.bind_error (fun _err -> Eta.Effect.pure `Timeout)
     in
     let elapsed_ms =
       int_of_float ((Unix.gettimeofday () -. started) *. 1000.0)
@@ -1591,7 +1591,7 @@ let test_sql_pool_leaked_transaction_poisons_next_borrower () =
     in
     let* () =
       tx_result
-      |> Eta.Effect.catch (function
+      |> Eta.Effect.bind_error (function
            | `Eta_sql (Q.Invalid_query "simulated failure") -> Eta.Effect.unit
            | err -> Eta.Effect.fail err)
     in

@@ -327,7 +327,7 @@ let post_effect t config ~path ~body =
          Eta_http.Body.Stream.read_all response.Eta_http.Response.body
          |> Eta.Effect.map (fun body ->
                 (response.Eta_http.Response.status, body)))
-  |> Eta.Effect.catch (fun error ->
+  |> Eta.Effect.bind_error (fun error ->
          Eta.Effect.fail (`Export_error (Eta_http.Error.to_string error)))
   |> Eta.Effect.bind (fun (status, body) ->
          if status = 200 || status = 202 then Eta.Effect.unit
@@ -342,7 +342,7 @@ let export_body t config ~path ~body =
   observe_send t ~path ~body
   |> Eta.Effect.bind (fun () ->
          post_or_deadline t config ~path ~body
-         |> Eta.Effect.catch (fun error ->
+         |> Eta.Effect.bind_error (fun error ->
                 observe_error t (render_export_error error)))
 
 let export_batch t config ~signal ~path ~body ~n =

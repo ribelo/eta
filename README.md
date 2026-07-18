@@ -53,7 +53,7 @@ let program () =
      |> Effect.flatten_result
    in
    if n < 3 then Effect.fail `Too_small else Effect.pure n)
-  |> Effect.recover (fun `Too_small -> 3)
+  |> Effect.fold ~ok:Fun.id ~error:(fun `Too_small -> 3)
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -111,14 +111,14 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 - `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
   failures. Catch expected errors by returning `result` from the synchronous
   leaf, then use `Effect.sync f |> Effect.flatten_result`.
-- `Effect.catch` handles typed failures only; it does not catch defects,
+- `Effect.bind_error` handles typed failures only; it does not catch defects,
   interruption, or finalizer failures. Use `Effect.catch_some` when only some
   typed failures should recover and non-matches must preserve the original
   cause.
 - `Effect.ignore_errors` is only for best-effort unit effects. It suppresses
   typed failures, but defects, interruption, and finalizer failures still
   surface.
-- `Effect.result` turns the typed failure channel into an ordinary OCaml
+- `Effect.to_result` turns the typed failure channel into an ordinary OCaml
   `result` value inside the workflow. It does not catch defects, interruption,
   or finalizer failures.
 - `Effect.par`, `all`, `race`, and `for_each_par` run child effects as fibers on

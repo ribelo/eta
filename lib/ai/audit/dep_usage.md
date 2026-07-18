@@ -158,7 +158,7 @@ Search:
 - lib/ai/observability.ml:46:        ("server.address", Eta_http.Core.Url.host url);
 - lib/ai/observability.ml:47:        ("server.port", string_of_int (Eta_http.Core.Url.effective_port url));
 - lib/ai/observability.ml:68:  | Eta_http_error error -> Eta_http.Error.to_string error
-- lib/ai/observability.ml:77:  |> Eta.Effect.catch (fun error ->
+- lib/ai/observability.ml:77:  |> Eta.Effect.bind_error (fun error ->
 - lib/ai/observability.ml:78:         Eta.Effect.fail error
 - lib/ai/observability.ml:79:         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
 - lib/ai/observability.ml:82:  eff |> with_error_type |> Eta.Effect.annotate_all attrs
@@ -288,7 +288,7 @@ Search:
 - lib/ai/sse.ml:46:         (Eta.Effect.sync (fun () -> Atomic.set stream.active false)))
 - lib/ai/sse.ml:112:  if stream.released then Eta.Effect.unit
 - lib/ai/sse.ml:115:    Eta_http.Body.Stream.discard stream.body
-- lib/ai/sse.ml:116:    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
+- lib/ai/sse.ml:116:    |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error)))
 - lib/ai/sse.ml:126:  Eta.Effect.scoped
 - lib/ai/sse.ml:127:    (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
 - lib/ai/sse.ml:129:    |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
@@ -296,7 +296,7 @@ Search:
 - lib/ai/sse.ml:247:      Eta.Effect.pure (Some event)
 - lib/ai/sse.ml:248:  | [] when stream.eof -> Eta.Effect.pure None
 - lib/ai/sse.ml:250:      Eta_http.Body.Stream.read stream.body
-- lib/ai/sse.ml:251:      |> Eta.Effect.catch (fun error ->
+- lib/ai/sse.ml:251:      |> Eta.Effect.bind_error (fun error ->
 - lib/ai/sse.ml:253:      |> Eta.Effect.bind (function
 - lib/ai/sse.ml:260:                   |> Eta.Effect.bind (fun events ->
 - lib/ai/sse.ml:263:                          |> Eta.Effect.bind (fun () -> read_stream_event_unlocked stream)))
@@ -309,14 +309,14 @@ Search:
 - lib/ai/transport.ml:36:    ~body:(Eta_http.Request.Fixed [ Bytes.of_string raw ])
 - lib/ai/transport.ml:41:  Eta_http.Request.make ~headers "GET" (join_url provider.base_url path)
 - lib/ai/transport.ml:80:  Eta_http.Body.Stream.read_all ?max_bytes body
-- lib/ai/transport.ml:81:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+- lib/ai/transport.ml:81:  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 - lib/ai/transport.ml:84:  read_response_body ?max_bytes body |> Eta.Effect.map Bytes.unsafe_to_string
 - lib/ai/transport.ml:87:  | Stdlib.Ok value -> Eta.Effect.pure value
 - lib/ai/transport.ml:88:  | Stdlib.Error error -> Eta.Effect.fail error
 - lib/ai/transport.ml:92:  | Stdlib.Error error -> Eta.Effect.fail error
 - lib/ai/transport.ml:96:  Eta_http.request client request
 - lib/ai/transport.ml:97:  |> Eta.Effect.suppress_observability
-- lib/ai/transport.ml:98:  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+- lib/ai/transport.ml:98:  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 - lib/ai/transport.ml:102:  |> Eta.Effect.bind (fun response ->
 - lib/ai/transport.ml:104:           response.Eta_http.Response.status >= 200
 - lib/ai/transport.ml:109:           |> Eta.Effect.bind (fun raw ->

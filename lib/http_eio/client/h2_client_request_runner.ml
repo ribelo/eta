@@ -119,7 +119,7 @@ let request_on_connection connection request url =
             Request_writer.write_body opened.request_body request.body upload
             |> Eta.Effect.bind (fun () ->
                    Request_writer.close_request_body opened.request_body)
-            |> Eta.Effect.catch (fun error ->
+            |> Eta.Effect.bind_error (fun error ->
                    if not !response_started then resolve_error error;
                    Eta.Effect.fail error)
           in

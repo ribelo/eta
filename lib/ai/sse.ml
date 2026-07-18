@@ -110,7 +110,7 @@ let release_stream stream =
   else (
     stream.released <- true;
     Eta_http.Body.Stream.discard stream.body
-    |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error)))
+    |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error)))
 
 let close_stream_unlocked stream =
   stream.pending <- [];
@@ -238,7 +238,7 @@ let rec read_stream_event_unlocked stream =
   | [] when stream.eof -> Eta.Effect.pure None
   | [] ->
       Eta_http.Body.Stream.read stream.body
-      |> Eta.Effect.catch (fun error ->
+      |> Eta.Effect.bind_error (fun error ->
              fail_and_close stream (Eta_http_error error))
       |> Eta.Effect.bind (function
            | None ->

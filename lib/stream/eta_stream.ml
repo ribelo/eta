@@ -249,13 +249,13 @@ let internal_channel_closed name =
 
 let send_channel name channel value =
   Eta.Channel.send channel value
-  |> Eta.Effect.catch (function
+  |> Eta.Effect.bind_error (function
        | `Closed -> Eta.Effect.sync (fun () -> internal_channel_closed name)
        | `Closed_with_error error -> Eta.Effect.fail error)
 
 let recv_channel name channel =
   Eta.Channel.recv channel
-  |> Eta.Effect.catch (function
+  |> Eta.Effect.bind_error (function
        | `Closed -> Eta.Effect.sync (fun () -> internal_channel_closed name)
        | `Closed_with_error error -> Eta.Effect.fail error)
 
@@ -446,7 +446,7 @@ and fold_stream :
         }
   | Tap_error (inner, observe) ->
       fold_stream inner acc folder
-      |> Eta.Effect.catch (fun error ->
+      |> Eta.Effect.bind_error (fun error ->
              observe error
              |> Eta.Effect.bind (fun () -> Eta.Effect.fail error))
   | Filter (inner, f) ->
@@ -718,7 +718,7 @@ and fold_stream :
       let rec loop acc =
         Eta.Queue.take queue
         |> Eta.Effect.map (fun value -> `Item value)
-        |> Eta.Effect.catch (function
+        |> Eta.Effect.bind_error (function
              | `Closed -> Eta.Effect.pure `Closed
              | `Closed_with_error error -> Eta.Effect.fail error)
         |> Eta.Effect.bind (function
@@ -939,7 +939,7 @@ fun schedule inner acc folder ->
                    latest_acc := acc;
                    (acc, keep_going)));
       }
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            schedule_step ~input:error !driver
            |> Eta.Effect.bind (function
                 | Eta.Schedule.Done _, _ -> Eta.Effect.fail error
@@ -991,7 +991,7 @@ fun duration inner acc folder ->
                       |> Eta.Effect.map (fun () ->
                              ((), not (Atomic.get stopped))));
               }))
-      |> Eta.Effect.catch (fun error -> publish_failure error)
+      |> Eta.Effect.bind_error (fun error -> publish_failure error)
     in
     Eta.Supervisor.scoped
       {
@@ -1091,7 +1091,7 @@ fun left right f acc folder ->
                       |> Eta.Effect.bind (fun () ->
                              recv_channel (name ^ ".ack") ack)));
             }))
-    |> Eta.Effect.catch (fun error -> publish_failure error)
+    |> Eta.Effect.bind_error (fun error -> publish_failure error)
   in
   Eta.Supervisor.scoped
     {
@@ -1208,7 +1208,7 @@ fun left right acc folder ->
                     Eta.Effect.map (fun added -> ((), added))
                       (add_item value));
             }))
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            publish_failure error)
   in
   Eta.Supervisor.scoped
@@ -1310,7 +1310,7 @@ fun ~max_concurrency inner f acc folder ->
                       (send_channel "Eta_stream.flat_map_par.outer"
                          outer_queue (Outer_item value)));
             }))
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            publish_failure error)
   in
   let worker =
@@ -1353,7 +1353,7 @@ fun ~max_concurrency inner f acc folder ->
         (recv_channel "Eta_stream.flat_map_par.outer" outer_queue)
     in
     Eta.Effect.bind (fun () -> publish_done) (loop ())
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            publish_failure error)
   in
   Eta.Supervisor.scoped

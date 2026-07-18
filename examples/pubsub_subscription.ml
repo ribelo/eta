@@ -16,7 +16,7 @@ let program () =
   let* closed =
     Pubsub.recv sub
     |> Effect.map (fun msg -> "unexpected:" ^ msg)
-    |> Effect.recover render_close
+    |> Effect.fold ~ok:Fun.id ~error:render_close
   in
   let stats = Pubsub.stats hub in
   Effect.pure

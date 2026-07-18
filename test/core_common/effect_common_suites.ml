@@ -146,7 +146,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let eff =
       Effect.die_message "boom"
-      |> Effect.catch (fun (`Typed : [ `Typed ]) -> Effect.pure "recovered")
+      |> Effect.bind_error (fun (`Typed : [ `Typed ]) -> Effect.pure "recovered")
     in
     match B.run rt eff with
     | Exit.Error (Cause.Die { exn; _ }) ->
@@ -159,7 +159,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_exit_captures_die_message () =
     B.with_runtime @@ fun _ctx rt ->
-    match run_ok rt (Effect.die_message "boom" |> Effect.exit) with
+    match run_ok rt (Effect.die_message "boom" |> Effect.to_exit) with
     | Exit.Error (Cause.Die { exn; _ }) ->
         check_failure_message "exit die_message" "boom" exn
     | Exit.Error cause ->
@@ -229,17 +229,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected tap defect"
 
-  let test_effect_catch_success_and_failure () =
+  let test_effect_bind_error_success_and_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let success =
       Effect.pure 1
-      |> Effect.catch (fun (`Unexpected : [ `Unexpected ]) ->
+      |> Effect.bind_error (fun (`Unexpected : [ `Unexpected ]) ->
              Effect.fail `Handler_ran)
     in
     let failure =
       Effect.fail `First
-      |> Effect.catch (fun (`First : [ `First ]) -> Effect.fail `Second)
-      |> Effect.catch (fun (`Second : [ `Second ]) -> Effect.pure "recovered")
+      |> Effect.bind_error (fun (`First : [ `First ]) -> Effect.fail `Second)
+      |> Effect.bind_error (fun (`Second : [ `Second ]) -> Effect.pure "recovered")
     in
     Alcotest.(check int) "success bypasses catch" 1 (run_ok rt success);
     Alcotest.(check string) "failure recovers" "recovered" (run_ok rt failure)
@@ -338,14 +338,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
            finalizer = Cause.Finalizer.Fail "cleanup";
          })
 
-  let test_effect_recover () =
+  let test_effect_fold_recover_shape () =
     B.with_runtime @@ fun _ctx rt ->
-    let recovered = Effect.fail `Bad |> Effect.recover (function `Bad -> 42) in
+    let recovered = Effect.fail `Bad |> Effect.fold ~ok:Fun.id ~error:(function `Bad -> 42) in
     Alcotest.(check int) "typed failure recovered" 42 (run_ok rt recovered);
     (match
        B.run rt
          (Effect.sync (fun () -> failwith "boom")
-         |> Effect.recover (fun _ -> 0))
+         |> Effect.fold ~ok:Fun.id ~error:(fun _ -> 0))
      with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
@@ -354,7 +354,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match
       B.run rt
         (Effect.fail `Bad
-        |> Effect.recover (function `Bad -> failwith "recover handler crash"))
+        |> Effect.fold ~ok:Fun.id ~error:(function `Bad -> failwith "recover handler crash"))
     with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
@@ -447,7 +447,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             Alcotest.failf "expected finalizer diagnostic, got %a"
               (Cause.pp pp_hidden) cause)
 
-  let test_effect_or_else_succeed () =
+  let test_effect_fold_pure_error_fallback () =
     B.with_runtime @@ fun _ctx rt ->
     let fallback_calls = ref 0 in
     let fallback () =
@@ -455,12 +455,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "fallback"
     in
     let success =
-      Effect.pure "primary" |> Effect.or_else_succeed fallback
+      Effect.pure "primary"
+      |> Effect.fold ~ok:Fun.id ~error:(fun _ -> fallback ())
     in
     Alcotest.(check string) "success" "primary" (run_ok rt success);
     Alcotest.(check int) "success skips fallback" 0 !fallback_calls;
     let recovered =
-      Effect.fail `Primary |> Effect.or_else_succeed fallback
+      Effect.fail `Primary
+      |> Effect.fold ~ok:Fun.id ~error:(fun _ -> fallback ())
     in
     Alcotest.(check string) "typed failure recovered" "fallback"
       (run_ok rt recovered);
@@ -468,13 +470,59 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match
       B.run rt
         (Effect.sync (fun () -> failwith "boom")
-        |> Effect.or_else_succeed fallback)
+        |> Effect.fold ~ok:Fun.id ~error:(fun _ -> fallback ()))
     with
     | Exit.Error (Cause.Die _) ->
         Alcotest.(check int) "defect skips fallback" 1 !fallback_calls
     | Exit.Error cause ->
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect"
+
+  let test_effect_fold_coherence_with_map_and_bind_error () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ok_source = Effect.pure 21 in
+    let err_source = Effect.fail `Bad in
+    let fold_ok =
+      ok_source |> Effect.fold ~ok:(fun n -> n * 2) ~error:(fun _ -> -1)
+    in
+    let composed_ok =
+      ok_source
+      |> Effect.map (fun n -> n * 2)
+      |> Effect.bind_error (fun _ -> Effect.pure (-1))
+    in
+    Alcotest.(check int) "ok fold" 42 (run_ok rt fold_ok);
+    Alcotest.(check int) "ok composed" 42 (run_ok rt composed_ok);
+    let fold_err =
+      err_source |> Effect.fold ~ok:(fun n -> n * 2) ~error:(function `Bad -> 7)
+    in
+    let composed_err =
+      err_source
+      |> Effect.map (fun n -> n * 2)
+      |> Effect.bind_error (function `Bad -> Effect.pure 7)
+    in
+    Alcotest.(check int) "error fold" 7 (run_ok rt fold_err);
+    Alcotest.(check int) "error composed" 7 (run_ok rt composed_err)
+
+  let test_effect_fold_passes_defect_and_interrupt () =
+    B.with_runtime @@ fun _ctx rt ->
+    (match
+       B.run rt
+         (Effect.sync (fun () -> failwith "boom")
+         |> Effect.fold ~ok:Fun.id ~error:(fun _ -> 0))
+     with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "fold captured defect");
+    match
+      B.run rt
+        (Effect.named "interrupt" (runtime_interrupt_effect ())
+        |> Effect.fold ~ok:Fun.id ~error:(fun _ -> 0))
+    with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "fold captured interrupt"
 
   let test_effect_when_run_and_skip () =
     B.with_runtime @@ fun _ctx rt ->
@@ -734,16 +782,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "ignore swallowed finalizer diagnostic"
 
-  let test_effect_result () =
+  let test_effect_to_result () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check (result int string))
-      "success" (Ok 7) (run_ok rt (Effect.pure 7 |> Effect.result));
+      "success" (Ok 7) (run_ok rt (Effect.pure 7 |> Effect.to_result));
     Alcotest.(check (result int string))
       "typed failure"
       (Error "bad")
-      (run_ok rt (Effect.fail "bad" |> Effect.result));
+      (run_ok rt (Effect.fail "bad" |> Effect.to_result));
     (match
-       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.result)
+       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.to_result)
      with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
@@ -751,7 +799,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected defect");
     match
       B.run rt
-        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.result)
+        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.to_result)
     with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
     | Exit.Error cause ->
@@ -759,14 +807,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected finalizer failure"
 
-  let test_effect_option () =
+  let test_effect_to_option () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check (option int))
-      "success" (Some 7) (run_ok rt (Effect.pure 7 |> Effect.option));
+      "success" (Some 7) (run_ok rt (Effect.pure 7 |> Effect.to_option));
     Alcotest.(check (option int))
-      "typed failure" None (run_ok rt (Effect.fail "bad" |> Effect.option));
+      "typed failure" None (run_ok rt (Effect.fail "bad" |> Effect.to_option));
     (match
-       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.option)
+       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.to_option)
      with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
@@ -774,19 +822,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "option captured defect");
     match
       B.run rt
-        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.option)
+        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.to_option)
     with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "option captured interrupt"
 
-  let test_effect_exit () =
+  let test_effect_to_exit () =
     B.with_runtime @@ fun _ctx rt ->
     let defect = Failure "body defect" in
     Alcotest.(check (testable (Exit.pp pp_hidden Format.pp_print_string) (Exit.equal ( = ) String.equal)))
-      "success" (Exit.Ok 7) (run_ok rt (Effect.pure 7 |> Effect.exit));
-    (match run_ok rt (Effect.fail "bad" |> Effect.exit) with
+      "success" (Exit.Ok 7) (run_ok rt (Effect.pure 7 |> Effect.to_exit));
+    (match run_ok rt (Effect.fail "bad" |> Effect.to_exit) with
     | Exit.Error (Cause.Fail "bad") -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected typed failure exit, got %a"
@@ -795,14 +843,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     (match
        run_ok rt
          (Effect.sync (fun () -> raise defect)
-         |> Effect.exit)
+         |> Effect.to_exit)
      with
     | Exit.Error (Cause.Die { exn; _ }) when exn == defect -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected defect exit, got %a"
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect exit");
-    (match run_ok rt (runtime_interrupt_effect () |> Effect.exit) with
+    (match run_ok rt (runtime_interrupt_effect () |> Effect.to_exit) with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected interrupt exit, got %a" (Cause.pp pp_hidden)
@@ -810,7 +858,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected interrupt exit");
     match
       run_ok rt
-        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.exit)
+        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.to_exit)
     with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
     | Exit.Error cause ->
@@ -886,11 +934,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff = Effect.yield |> Effect.map (fun () -> 42) in
     Alcotest.(check int) "yield returns" 42 (run_ok rt eff)
 
-  let test_effect_catch_handler_failure_uses_outer_key () =
+  let test_effect_bind_error_handler_failure_uses_outer_key () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
       Effect.fail `Inner
-      |> Effect.catch (fun (`Inner : [ `Inner ]) -> Effect.fail `Outer)
+      |> Effect.bind_error (fun (`Inner : [ `Inner ]) -> Effect.fail `Outer)
     in
     expect_typed_failure_eq
       (Alcotest.testable
@@ -1173,7 +1221,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.fail `Boom
       |> Effect.tap_error (fun (`Boom : [ `Boom ]) ->
              Effect.sync (fun () -> observed := true))
-      |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure "recovered")
+      |> Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure "recovered")
     in
     Alcotest.(check string) "recovered" "recovered" (run_ok rt eff);
     Alcotest.(check bool) "observed" true !observed
@@ -1395,7 +1443,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected Interrupt, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected Interrupt"
 
-  let test_effect_catch_does_not_catch_defect () =
+  let test_effect_bind_error_does_not_catch_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let defect = Failure "body defect" in
     let handler_ran = ref false in
@@ -1404,7 +1452,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       body
-      |> Effect.catch (fun (`Expected : [ `Expected ]) ->
+      |> Effect.bind_error (fun (`Expected : [ `Expected ]) ->
              Effect.sync (fun () -> handler_ran := true)
              |> Effect.map (fun () -> "caught"))
     in
@@ -1418,11 +1466,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
     | Exit.Ok value -> Alcotest.failf "catch swallowed defect as %S" value
 
-  let test_effect_catch_does_not_catch_interrupt () =
+  let test_effect_bind_error_does_not_catch_interrupt () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
       Effect.named "interrupt" (runtime_interrupt_effect ())
-      |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
+      |> Effect.bind_error (fun (_ : string) -> Effect.pure "caught")
     in
     match B.run rt eff with
     | Exit.Error (Cause.Interrupt None) -> ()
@@ -1430,7 +1478,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected Interrupt, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok value -> Alcotest.failf "catch swallowed interrupt as %S" value
 
-  let test_effect_catch_does_not_catch_cancellation () =
+  let test_effect_bind_error_does_not_catch_cancellation () =
     B.with_runtime @@ fun ctx rt ->
     let entered, entered_resolver = B.create_promise () in
     let handler_ran = ref false in
@@ -1440,13 +1488,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       body
-      |> Effect.catch (fun (_ : string) ->
+      |> Effect.bind_error (fun (_ : string) ->
              Effect.sync (fun () -> handler_ran := true))
     in
     let fiber = B.fork_run_cancelable ctx rt eff in
     ignore (B.await entered : unit);
     B.cancel_fiber fiber;
-    expect_interrupted "catch" (B.await_cancelable fiber);
+    expect_interrupted "bind_error" (B.await_cancelable fiber);
     Alcotest.(check bool) "handler skipped" false !handler_ran
 
   let test_effect_map_error_does_not_map_cancellation () =
@@ -1484,7 +1532,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.pure 42
       |> Effect.finally (Effect.fail "cleanup")
-      |> Effect.catch (fun (_ : string) -> Effect.pure 0)
+      |> Effect.bind_error (fun (_ : string) -> Effect.pure 0)
     in
     match B.run rt eff with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
@@ -1953,13 +2001,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_exit_ok Alcotest.int "alias value" 3 (B.run rt eff);
     Alcotest.(check bool) "alias released" true !released
 
-  let test_effect_catch_preserves_suppressed_finalizer_failure () =
+  let test_effect_bind_error_preserves_suppressed_finalizer_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let handler_ran = ref false in
     let eff =
       Effect.fail `Body
       |> Effect.finally (Effect.fail `Cleanup)
-      |> Effect.catch (function
+      |> Effect.bind_error (function
            | `Body ->
                Effect.sync (fun () -> handler_ran := true)
                |> Effect.map (fun () -> `Caught))
@@ -1978,13 +2026,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             | `Cleanup -> Format.pp_print_string fmt "cleanup"))
           cause
 
-  let test_effect_catch_preserves_suppressed_finalizer_defect () =
+  let test_effect_bind_error_preserves_suppressed_finalizer_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let defect = Failure "cleanup defect" in
     let eff =
       Effect.fail "body"
       |> Effect.finally (Effect.sync (fun () -> raise defect))
-      |> Effect.catch (fun (_ : string) -> Effect.pure "caught")
+      |> Effect.bind_error (fun (_ : string) -> Effect.pure "caught")
     in
     match B.run rt eff with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Die { exn; _ }))
@@ -1995,13 +2043,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok value -> Alcotest.failf "catch swallowed defect as %S" value
 
-  let test_effect_catch_strips_typed_primary_before_finalizer () =
+  let test_effect_bind_error_strips_typed_primary_before_finalizer () =
     B.with_runtime @@ fun _ctx rt ->
     let handler_ran = ref false in
     let eff =
       Effect.fail `Old_err
       |> Effect.finally (Effect.fail `Old_cleanup)
-      |> Effect.catch (function
+      |> Effect.bind_error (function
            | `Old_err | `Old_cleanup ->
                Effect.sync (fun () -> handler_ran := true)
                |> Effect.map (fun () -> "handled"))
@@ -2016,13 +2064,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp (fun fmt (_ : string) -> Format.pp_print_string fmt "<new>"))
           cause
 
-  let test_effect_catch_composite_typed_failure_no_old_payloads () =
+  let test_effect_bind_error_composite_typed_failure_no_old_payloads () =
     B.with_runtime @@ fun _ctx rt ->
     let handled = ref [] in
     let eff =
       Effect.all
         [ Effect.fail `Fiber_a_err; Effect.fail `Fiber_b_err ]
-      |> Effect.catch (function
+      |> Effect.bind_error (function
            | (`Fiber_a_err as error) | (`Fiber_b_err as error) ->
                Effect.sync (fun () -> handled := error :: !handled)
                |> Effect.map (fun () -> [ () ]))
@@ -2038,7 +2086,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp (fun fmt (_ : string) -> Format.pp_print_string fmt "<new>"))
           cause
 
-  let test_effect_catch_invokes_one_handler_for_concurrent_typed_failure () =
+  let test_effect_bind_error_invokes_one_handler_for_concurrent_typed_failure () =
     B.with_runtime @@ fun ctx rt ->
     let gate, gate_resolver = B.create_promise () in
     let left_ready, left_ready_resolver = B.create_promise () in
@@ -2052,7 +2100,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.all
         [ child left_ready_resolver `Left; child right_ready_resolver `Right ]
-      |> Effect.catch (fun error ->
+      |> Effect.bind_error (fun error ->
              Effect.sync (fun () -> handled := error :: !handled)
              |> Effect.bind (fun () -> Effect.fail `Handler_failed))
     in
@@ -2069,7 +2117,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "catch handler invoked once for composite typed cause" 1
       (List.length !handled)
 
-  let test_effect_catch_preserves_concurrent_defect () =
+  let test_effect_bind_error_preserves_concurrent_defect () =
     B.with_runtime @@ fun ctx rt ->
     let defect = Failure "concurrent defect" in
     let handler_ran = ref false in
@@ -2087,7 +2135,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       Effect.all [ typed; die ]
-      |> Effect.catch (fun (_ : string) ->
+      |> Effect.bind_error (fun (_ : string) ->
              Effect.sync (fun () -> handler_ran := true)
              |> Effect.map (fun () -> [ () ]))
     in
@@ -2736,7 +2784,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.par failing cancelled
       |> Effect.map (fun _ -> "unexpected")
-      |> Effect.catch (fun (`My_error : [ `My_error ]) ->
+      |> Effect.bind_error (fun (`My_error : [ `My_error ]) ->
              Effect.pure "recovered")
     in
     let promise = B.fork_run ctx rt eff in
@@ -2758,7 +2806,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Effect.all [ failing; cancelled ]
       |> Effect.map (fun _ -> "unexpected")
-      |> Effect.catch (fun (`My_error : [ `My_error ]) ->
+      |> Effect.bind_error (fun (`My_error : [ `My_error ]) ->
              Effect.pure "recovered")
     in
     let promise = B.fork_run ctx rt eff in
@@ -2928,7 +2976,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       Effect.par fail_after_acquire slow
-      |> Effect.catch (fun _ ->
+      |> Effect.bind_error (fun _ ->
              Atomic.set handler_observed_release (Atomic.get released);
              Atomic.set caught true;
              Effect.pure ((), ()))
@@ -2958,7 +3006,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       Effect.all [ fail_after_acquire; slow ]
-      |> Effect.catch (fun _ ->
+      |> Effect.bind_error (fun _ ->
              Atomic.set handler_observed_release (Atomic.get released);
              Atomic.set caught true;
              Effect.pure [])
@@ -2989,7 +3037,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let eff =
       Effect.for_each_par [ "body"; "slow" ] worker
-      |> Effect.catch (fun _ ->
+      |> Effect.bind_error (fun _ ->
              Atomic.set handler_observed_release (Atomic.get released);
              Atomic.set caught true;
              Effect.pure [])
@@ -3008,9 +3056,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_never_times_out_and_is_interruptible;
           Alcotest.test_case "die_message produces Failure defect" `Quick
             test_die_message_produces_failure_defect;
-          Alcotest.test_case "catch does not recover die_message" `Quick
+          Alcotest.test_case "bind_error does not recover die_message" `Quick
             test_catch_does_not_recover_die_message;
-          Alcotest.test_case "exit captures die_message" `Quick
+          Alcotest.test_case "to_exit captures die_message" `Quick
             test_exit_captures_die_message;
           Alcotest.test_case "Map" `Quick test_map;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
@@ -3018,8 +3066,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_map_bind_tap_runtime;
           Alcotest.test_case "tap observer runtime" `Quick
             test_effect_tap_observer_runtime;
-          Alcotest.test_case "catch success and failure" `Quick
-            test_effect_catch_success_and_failure;
+          Alcotest.test_case "bind_error success and failure" `Quick
+            test_effect_bind_error_success_and_failure;
           Alcotest.test_case "catch_some matching recovery" `Quick
             test_effect_catch_some_matching_recovery;
           Alcotest.test_case "catch_some non-match preserves composite" `Quick
@@ -3028,7 +3076,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_catch_some_success_noop;
           Alcotest.test_case "catch_some skips uncatchable causes" `Quick
             test_effect_catch_some_does_not_catch_uncatchable_causes;
-          Alcotest.test_case "recover" `Quick test_effect_recover;
+          Alcotest.test_case "fold recover shape" `Quick test_effect_fold_recover_shape;
           Alcotest.test_case "or_else success noop" `Quick
             test_effect_or_else_success_noop;
           Alcotest.test_case "or_else typed failure recovery" `Quick
@@ -3037,8 +3085,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_or_else_fallback_failure;
           Alcotest.test_case "or_else skips uncatchable causes" `Quick
             test_effect_or_else_does_not_catch_uncatchable_causes;
-          Alcotest.test_case "or_else_succeed" `Quick
-            test_effect_or_else_succeed;
+          Alcotest.test_case "fold pure error fallback" `Quick
+            test_effect_fold_pure_error_fallback;
+          Alcotest.test_case "fold coherent with map/bind_error" `Quick
+            test_effect_fold_coherence_with_map_and_bind_error;
+          Alcotest.test_case "fold passes defect and interrupt" `Quick
+            test_effect_fold_passes_defect_and_interrupt;
           Alcotest.test_case "when run and skip" `Quick
             test_effect_when_run_and_skip;
           Alcotest.test_case "when source failure" `Quick
@@ -3061,16 +3113,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_filter_or_fail_finalizer_diagnostic;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
           Alcotest.test_case "ignore" `Quick test_effect_ignore;
-          Alcotest.test_case "result" `Quick test_effect_result;
-          Alcotest.test_case "option" `Quick test_effect_option;
-          Alcotest.test_case "exit" `Quick test_effect_exit;
+          Alcotest.test_case "to_result" `Quick test_effect_to_result;
+          Alcotest.test_case "to_option" `Quick test_effect_to_option;
+          Alcotest.test_case "to_exit" `Quick test_effect_to_exit;
           Alcotest.test_case "sleep now timed runtime clock" `Quick
             test_effect_sleep_now_and_timed_use_runtime_clock;
           Alcotest.test_case "timed preserves failures" `Quick
             test_effect_timed_preserves_failures;
           Alcotest.test_case "yield" `Quick test_effect_yield;
-          Alcotest.test_case "catch handler failure uses outer key" `Quick
-            test_effect_catch_handler_failure_uses_outer_key;
+          Alcotest.test_case "bind_error handler failure uses outer key" `Quick
+            test_effect_bind_error_handler_failure_uses_outer_key;
           Alcotest.test_case "from_result" `Quick test_effect_from_result;
           Alcotest.test_case "from_option" `Quick test_effect_from_option;
           Alcotest.test_case "flatten_result" `Quick
@@ -3116,12 +3168,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_runtime_concurrent_child_die_captures_diagnostics;
           Alcotest.test_case "runtime exit fail die interrupt" `Quick
             test_runtime_exit_fail_die_interrupt;
-          Alcotest.test_case "catch does not catch defect" `Quick
-            test_effect_catch_does_not_catch_defect;
-          Alcotest.test_case "catch does not catch interrupt" `Quick
-            test_effect_catch_does_not_catch_interrupt;
-          Alcotest.test_case "catch does not catch cancellation" `Quick
-            test_effect_catch_does_not_catch_cancellation;
+          Alcotest.test_case "bind_error does not bind_error defect" `Quick
+            test_effect_bind_error_does_not_catch_defect;
+          Alcotest.test_case "bind_error does not bind_error interrupt" `Quick
+            test_effect_bind_error_does_not_catch_interrupt;
+          Alcotest.test_case "bind_error does not bind_error cancellation" `Quick
+            test_effect_bind_error_does_not_catch_cancellation;
           Alcotest.test_case "map_error does not map cancellation" `Quick
             test_effect_map_error_does_not_map_cancellation;
           Alcotest.test_case "finally success and failure" `Quick
@@ -3164,19 +3216,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             `Quick test_acquire_use_release_exit_release_failure_reporting;
           Alcotest.test_case "with_resource_exit alias success" `Quick
             test_with_resource_exit_alias_success;
-          Alcotest.test_case "catch preserves suppressed finalizer failure"
-            `Quick test_effect_catch_preserves_suppressed_finalizer_failure;
-          Alcotest.test_case "catch preserves finalizer defect" `Quick
-            test_effect_catch_preserves_suppressed_finalizer_defect;
-          Alcotest.test_case "catch strips typed primary before finalizer"
-            `Quick test_effect_catch_strips_typed_primary_before_finalizer;
-          Alcotest.test_case "catch composite typed failure no old payloads"
-            `Quick test_effect_catch_composite_typed_failure_no_old_payloads;
+          Alcotest.test_case "bind_error preserves suppressed finalizer failure"
+            `Quick test_effect_bind_error_preserves_suppressed_finalizer_failure;
+          Alcotest.test_case "bind_error preserves finalizer defect" `Quick
+            test_effect_bind_error_preserves_suppressed_finalizer_defect;
+          Alcotest.test_case "bind_error strips typed primary before finalizer"
+            `Quick test_effect_bind_error_strips_typed_primary_before_finalizer;
+          Alcotest.test_case "bind_error composite typed failure no old payloads"
+            `Quick test_effect_bind_error_composite_typed_failure_no_old_payloads;
           Alcotest.test_case
             "catch concurrent typed failure runs one handler" `Quick
-            test_effect_catch_invokes_one_handler_for_concurrent_typed_failure;
-          Alcotest.test_case "catch preserves concurrent defect" `Quick
-            test_effect_catch_preserves_concurrent_defect;
+            test_effect_bind_error_invokes_one_handler_for_concurrent_typed_failure;
+          Alcotest.test_case "bind_error preserves concurrent defect" `Quick
+            test_effect_bind_error_preserves_concurrent_defect;
           Alcotest.test_case "empty cause aggregations reject" `Quick
             test_cause_empty_aggregations_reject;
           Alcotest.test_case "diagnostic cause equality" `Quick
@@ -3219,11 +3271,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_par_simultaneous_failures_records_concurrent_baseline;
           Alcotest.test_case "par finalizer cancellation baseline" `Quick
             test_par_finalizer_failure_during_sibling_cancellation;
-          Alcotest.test_case "par catch recovers after sibling cancel" `Quick
+          Alcotest.test_case "par bind_error recovers after sibling cancel" `Quick
             test_par_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all preserves delayed input order" `Quick
             test_all_preserves_input_order_with_out_of_order_completion;
-          Alcotest.test_case "all catch recovers after sibling cancel" `Quick
+          Alcotest.test_case "all bind_error recovers after sibling cancel" `Quick
             test_all_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all finalizer cancellation baseline" `Quick
             test_all_finalizer_failure_during_sibling_cancellation_baseline;
@@ -3259,9 +3311,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_race_reports_loser_finalizer_failure_after_winner;
           Alcotest.test_case "race timeout during cleanup keeps winner" `Quick
             test_effect_race_timeout_during_loser_cleanup_keeps_winner;
-          Alcotest.test_case "par catch waits for child finalizer" `Quick
+          Alcotest.test_case "par bind_error waits for child finalizer" `Quick
             test_par_catch_runs_after_child_finalizer;
-          Alcotest.test_case "all catch waits for child finalizer" `Quick
+          Alcotest.test_case "all bind_error waits for child finalizer" `Quick
             test_all_catch_runs_after_child_finalizer;
           Alcotest.test_case
             "for_each_par catch waits for child finalizer" `Quick

@@ -1,0 +1,4 @@
+(executable
+ (name probe_bind_error_exception)
+ (modules probe_bind_error_exception)
+ (libraries eta eta_eio eio_main))

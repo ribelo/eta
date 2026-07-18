@@ -89,7 +89,7 @@ let pipeline_bind_catch_1k () =
   let with_failure_then_recover =
     Effect.bind
       (fun acc ->
-        Effect.catch
+        Effect.bind_error
           (fun (_ : [ `Boom ]) -> Effect.pure acc)
           (Effect.fail `Boom))
       prefix

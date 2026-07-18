@@ -423,7 +423,7 @@ let connect_https_leader state key pending target request url =
                     ~method_:request.Request.method_ target tcp))
   in
   connect
-  |> Eta.Effect.catch (fun error ->
+  |> Eta.Effect.bind_error (fun error ->
          cancel_alpn_effect state key pending error)
   |> Eta.Effect.bind (fun (tls, alpn) ->
          dispatch_tls_leader state key pending target (tls, alpn) request url)

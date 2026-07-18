@@ -8,7 +8,7 @@
     [Sequential] preserves ordered failures from sequential composition.
     [Concurrent] preserves failures observed from parallel composition.
     [Finalizer] marks diagnostic failures produced while cleaning up after a
-    successful primary eff; ordinary [Effect.catch] leaves failures under
+    successful primary eff; ordinary [Effect.bind_error] leaves failures under
     this node untouched. Finalizer failures are rendered to strings when they
     leave the cleanup eff, so they are no longer part of the typed error
     channel.

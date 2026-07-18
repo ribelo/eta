@@ -437,7 +437,7 @@ let effect_of_result = function
 let with_pool_connection pool run =
   Pool.Raw.with_connection pool (fun conn ->
       Eta.Effect.sync (fun () -> run conn))
-  |> Eta.Effect.catch (fun err ->
+  |> Eta.Effect.bind_error (fun err ->
          Eta.Effect.pure
            (Result.Error (Sql_error (sql_error_of_pool_error err))))
   |> Eta.Effect.bind effect_of_result

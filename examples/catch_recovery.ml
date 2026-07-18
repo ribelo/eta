@@ -6,11 +6,11 @@ let cache_lookup =
   Effect.fail `Cache_miss
 
 let recovered =
-  cache_lookup |> Effect.recover (function `Cache_miss -> "fallback")
+  cache_lookup |> Effect.fold ~ok:Fun.id ~error:(function `Cache_miss -> "fallback")
 
 let defect =
   Effect.sync (fun () -> failwith "boom")
-  |> Effect.recover (function `Cache_miss -> "fallback")
+  |> Effect.fold ~ok:Fun.id ~error:(function `Cache_miss -> "fallback")
 
 let pp_error fmt = function
   | `Cache_miss -> Format.pp_print_string fmt "cache-miss"

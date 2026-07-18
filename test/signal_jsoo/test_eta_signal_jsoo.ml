@@ -248,7 +248,7 @@ let test_failure_and_defect_propagation done_ =
       Signal.Observer.observe (Signal.Var.watch source) (fun _ ->
           E.fail `Observer_failed)
     in
-    let* exit = E.exit Signal.stabilize in
+    let* exit = E.to_exit Signal.stabilize in
     let+ () = Signal.Observer.dispose observer in
     exit
   in
@@ -263,7 +263,7 @@ let test_failure_and_defect_propagation done_ =
     let* observer = Signal.Observer.observe signal (fun _ -> E.unit) in
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
-    let* exit = E.exit Signal.stabilize in
+    let* exit = E.to_exit Signal.stabilize in
     let+ () = Signal.Observer.dispose observer in
     exit
   in
@@ -344,7 +344,7 @@ let test_stream_bridge_full_queue_drops_without_blocking done_ =
     let* () = Signal.stabilize in
     let* () = Signal.Var.set source 2 in
     let* stabilize_exit =
-      E.exit
+      E.to_exit
         (E.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout
            (widen Signal.stabilize))
     in
@@ -402,7 +402,7 @@ let test_invalidated_bind_rhs_observer_read done_ =
     let* () = Signal.Var.set use_left false in
     let* () = Signal.stabilize in
     let* selected_value = Signal.Observer.read selected_observer in
-    let* branch_read_exit = E.exit (Signal.Observer.read branch_observer) in
+    let* branch_read_exit = E.to_exit (Signal.Observer.read branch_observer) in
     let* () = Signal.Observer.dispose branch_observer in
     let+ () = Signal.Observer.dispose selected_observer in
     (initial_branch, selected_value, branch_read_exit)
@@ -519,8 +519,8 @@ let test_stream_invalid_scope_closes_with_error done_ =
     let* buffered =
       Eta_stream.Stream.take 2 stream |> Eta_stream.run_collect
     in
-    let* stream_exit = E.exit (Eta_stream.run_collect stream) in
-    let* branch_read_exit = E.exit (Signal.Observer.read branch_observer) in
+    let* stream_exit = E.to_exit (Eta_stream.run_collect stream) in
+    let* branch_read_exit = E.to_exit (Signal.Observer.read branch_observer) in
     let* selected_value = Signal.Observer.read selected_observer in
     let+ () = Signal.Observer.dispose selected_observer in
     (buffered, stream_exit, branch_read_exit, selected_value)
@@ -571,7 +571,7 @@ let test_observer_callback_timeout_releases_stabilization done_ =
     let* () = Signal.Var.set source 1 in
     let* () = E.sync (fun () -> block_next := true) in
     let* timeout_exit =
-      E.exit
+      E.to_exit
         (E.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout
            (widen Signal.stabilize))
     in

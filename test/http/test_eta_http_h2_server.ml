@@ -1820,7 +1820,7 @@ let test_h2c_request_trailers_fail_after_rst_stream () =
     |> Eta.Effect.map (fun trailers ->
            Eta_http.Server.Response.text ~status:500
              (Printf.sprintf "unexpected trailers:%d\n" (List.length trailers)))
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            Eta.Effect.sync (fun () ->
                ignore
                  (Eio.Promise.try_resolve resolve_trailer_error
@@ -3337,7 +3337,7 @@ let test_h2c_server_request_body_timeout () =
                      Buffer.contents observed ));
                Eta_http.Server.Response.text ~status:500
                  "unexpected second body\n")
-        |> Eta.Effect.catch (fun error ->
+        |> Eta.Effect.bind_error (fun error ->
                Eta.Effect.sync (fun () ->
                    resolve_result
                      (`Timeout
@@ -3414,7 +3414,7 @@ let test_h2c_server_request_body_too_large () =
         Eta_http.Server.Body.read request.body
         |> Eta.Effect.map (fun _ ->
                Eta_http.Server.Response.text ~status:500 "unexpected body\n")
-        |> Eta.Effect.catch (fun error ->
+        |> Eta.Effect.bind_error (fun error ->
                Eta.Effect.sync (fun () ->
                    ignore
                      (Eio.Promise.try_resolve resolve_body_error
@@ -3815,7 +3815,7 @@ let test_h2c_server_connection_close_fails_pending_body_read () =
         Eta_http.Server.Body.read request.body
         |> Eta.Effect.map (fun _ ->
                Eta_http.Server.Response.text "unexpected body\n")
-        |> Eta.Effect.catch (fun error ->
+        |> Eta.Effect.bind_error (fun error ->
                Eta.Effect.sync (fun () ->
                    ignore (Eio.Promise.try_resolve resolve_body_error error))
                |> Eta.Effect.map (fun () ->

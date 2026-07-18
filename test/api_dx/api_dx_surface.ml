@@ -32,6 +32,25 @@ let count_sub haystack needle =
   in
   loop 0 0
 
+(* Count [needle] occurrences that are not prefixes of a longer identifier
+   token (e.g. [Effect.bind] must not match [Effect.bind_error]). *)
+let count_token haystack needle =
+  let hay_len = String.length haystack in
+  let needle_len = String.length needle in
+  let is_ident_char = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true
+    | _ -> false
+  in
+  let rec loop index acc =
+    if needle_len = 0 || index + needle_len > hay_len then acc
+    else if String.sub haystack index needle_len = needle then
+      let next = index + needle_len in
+      let extends = next < hay_len && is_ident_char haystack.[next] in
+      if extends then loop (index + 1) acc else loop next (acc + 1)
+    else loop (index + 1) acc
+  in
+  loop 0 0
+
 let forbidden_tokens =
   [
     "Effect.bind";
@@ -44,7 +63,10 @@ let check_no_explicit_bind path =
   let contents = read_file source_path in
   forbidden_tokens
   |> List.iter (fun token ->
-         let count = count_sub contents token in
+         let count =
+           if String.equal token ">>=" then count_sub contents token
+           else count_token contents token
+         in
          if count > 0 then
            failwith
              (Printf.sprintf

@@ -56,7 +56,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.named "law.mul" (Effect.sync (fun () -> deps.mul 2));
       Effect.pure 2 |> Effect.map (fun n -> n + 4);
       Effect.pure 3 |> Effect.bind (fun n -> Effect.pure (n * 3));
-      Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure 7);
+      Effect.fail `E0 |> Effect.bind_error (fun `E0 -> Effect.pure 7);
     ]
 
   let law_functions deps : (string * (int -> (int, law_err) Effect.t)) list =
@@ -67,7 +67,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ("deps-add", fun x -> Effect.named "law.f.add" (Effect.sync (fun () -> deps.add x)));
       ("mapped", fun x -> Effect.pure x |> Effect.map (fun n -> n + 3));
       ( "catch-local",
-        fun x -> Effect.fail `E0 |> Effect.catch (fun `E0 -> Effect.pure (x + 5)) );
+        fun x -> Effect.fail `E0 |> Effect.bind_error (fun `E0 -> Effect.pure (x + 5)) );
     ]
 
   let test_properties_monad_laws () =
@@ -119,13 +119,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (fun x ->
         check_law rt
           (Printf.sprintf "catch pure identity x=%d" x)
-          (Effect.catch catch_handler (Effect.pure x))
+          (Effect.bind_error catch_handler (Effect.pure x))
           (Effect.pure x))
       [ -2; 0; 3 ];
     List.iter
       (fun err ->
         check_law rt "catch fail identity"
-          (Effect.catch catch_handler (Effect.fail err))
+          (Effect.bind_error catch_handler (Effect.fail err))
           (catch_handler err))
       ([ `E0; `E1; `Neg; `Retry; `Release; `Timeout ] : law_err list);
     List.iter
@@ -133,14 +133,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         List.iter
           (fun (_fname, f) ->
             check_law rt "catch handles bind source failure"
-              (Effect.catch catch_handler (Effect.bind f (Effect.fail err)))
+              (Effect.bind_error catch_handler (Effect.bind f (Effect.fail err)))
               (catch_handler err))
           (law_functions deps))
       ([ `E0; `E1; `Neg ] : law_err list);
     List.iter
       (fun x ->
         check_law rt "catch handles continuation failure"
-          (Effect.catch catch_handler
+          (Effect.bind_error catch_handler
              (Effect.bind (fun _ -> Effect.fail `E1) (Effect.pure x)))
           (catch_handler `E1))
       [ -2; 0; 3 ]

@@ -67,7 +67,7 @@ let () =
       (Effect.par
          (Effect.named "left"  (Effect.pure ()))
          (Effect.named "right" (Effect.fail `Boom)
-          |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure ())))
+          |> Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure ())))
   in
   let _ = Runtime.run rt work in
   Eta_otel.flush exporter

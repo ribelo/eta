@@ -197,10 +197,10 @@ let workloads =
     core "sync.10000" (fun () -> run_effect (sync_chain 10_000));
     core "catch_success" (fun () ->
         run_effect
-          (Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 0) (Effect.pure 1)));
+          (Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure 0) (Effect.pure 1)));
     core "catch_failure" (fun () ->
         run_effect
-          (Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 1) (Effect.fail `Boom)));
+          (Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure 1) (Effect.fail `Boom)));
     core "tap_error_failure" (fun () ->
         run_effect
           (Effect.tap_error (fun (`Boom : [ `Boom ]) -> Effect.unit)
@@ -208,7 +208,7 @@ let workloads =
     core "fail_then_catch" (fun () ->
         run_effect
           (Effect.fail `Boom
-          |> Effect.catch (fun (`Boom : [ `Boom ]) -> Effect.pure 1)));
+          |> Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure 1)));
     core "runtime_create_run_shutdown" (fun () -> run_effect (Effect.pure 0));
     queue "send_recv.10k" (fun () -> queue_send_recv 10_000);
     queue "send_recv.100k" (fun () -> queue_send_recv 100_000);

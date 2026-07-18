@@ -328,7 +328,7 @@ let test_effect_catch_preserves_concurrent_interrupt () =
   in
   let eff =
     Effect.all [ typed; interrupt ]
-    |> Effect.catch (fun (_ : string) ->
+    |> Effect.bind_error (fun (_ : string) ->
            Effect.sync (fun () -> handler_ran := true)
            |> Effect.map (fun () -> [ () ]))
   in

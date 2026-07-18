@@ -178,16 +178,16 @@ let catch_recovery_current body_as_result fallback =
        | Error `Cache_miss -> fallback)
 
 let catch_recovery_proposed body fallback =
-  body |> Effect.catch (function `Cache_miss -> fallback)
+  body |> Effect.bind_error (function `Cache_miss -> fallback)
 
 let pure_recovery_current render_error body =
-  body |> Effect.catch (fun err -> Effect.pure (render_error err))
+  body |> Effect.bind_error (fun err -> Effect.pure (render_error err))
 
 let pure_recovery_proposed render_error body =
-  body |> Effect.recover render_error
+  body |> Effect.fold ~ok:Fun.id ~error:render_error
 
 let best_effort_current cleanup =
-  cleanup |> Effect.catch (fun _ -> Effect.unit)
+  cleanup |> Effect.bind_error (fun _ -> Effect.unit)
 
 let best_effort_proposed cleanup =
   cleanup |> Effect.ignore_errors
@@ -195,10 +195,10 @@ let best_effort_proposed cleanup =
 let typed_failure_result_current body =
   body
   |> Effect.map (fun value -> Ok value)
-  |> Effect.recover (fun err -> Error err)
+  |> Effect.fold ~ok:Fun.id ~error:(fun err -> Error err)
 
 let typed_failure_result_proposed body =
-  body |> Effect.result
+  body |> Effect.to_result
 
 let validation_boundary_current parse raw =
   effect_of_result_thunk (fun () -> parse raw)
@@ -248,7 +248,7 @@ let schedule_retry_current next_delay retryable call =
   let rec loop remaining =
     Effect.sync call
     |> Effect.bind Effect.from_result
-    |> Effect.catch (fun err ->
+    |> Effect.bind_error (fun err ->
            if remaining > 0 && retryable err then
              Effect.delay (next_delay remaining) (loop (remaining - 1))
            else Effect.fail err)
@@ -348,7 +348,7 @@ let blocking_proposed path =
 let supervisor_current record_failure failure_count =
   Effect.with_background
     (Effect.fail `Refresh_failed
-    |> Effect.catch (fun err -> Effect.sync (fun () -> record_failure err)))
+    |> Effect.bind_error (fun err -> Effect.sync (fun () -> record_failure err)))
     (fun () -> Effect.sync failure_count)
 
 let supervisor_proposed () =
@@ -555,7 +555,7 @@ let race_proposed paths =
 let typed_error_current observe to_boundary raw =
   Effect.from_result (Domain.parse_id raw)
   |> Effect.bind (fun id -> load_user_proposed id)
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
          observe err;
          Effect.fail (to_boundary err))
 
@@ -649,7 +649,7 @@ let pubsub_current hub event closed_reason =
              Eta.Pubsub.recv sub
              |> Effect.bind (fun first ->
                     Eta.Pubsub.recv sub
-                    |> Effect.catch closed_reason
+                    |> Effect.bind_error closed_reason
                     |> Effect.map (fun closed -> (published, first, closed)))))
 
 let pubsub_proposed hub event closed_reason =
@@ -657,7 +657,7 @@ let pubsub_proposed hub event closed_reason =
   let@ sub = Eta.Pubsub.subscribe hub in
   let* published = Eta.Pubsub.publish hub event in
   let* first = Eta.Pubsub.recv sub in
-  let+ closed = Eta.Pubsub.recv sub |> Effect.catch closed_reason in
+  let+ closed = Eta.Pubsub.recv sub |> Effect.bind_error closed_reason in
   (published, first, closed)
 
 let pubsub_poll_current hub sub recover_closed =
@@ -666,7 +666,7 @@ let pubsub_poll_current hub sub recover_closed =
   else
     Eta.Pubsub.recv sub
     |> Effect.map (fun item -> `Item item)
-    |> Effect.catch recover_closed
+    |> Effect.bind_error recover_closed
 
 let pubsub_poll_proposed sub =
   Eta.Pubsub.try_recv sub
@@ -688,7 +688,7 @@ let channel_current ch wait_blocked close_reason render_closed =
                     Eta.Channel.recv ch
                     |> Effect.bind (fun second ->
                            Eta.Channel.recv ch
-                           |> Effect.catch render_closed
+                           |> Effect.bind_error render_closed
                            |> Effect.map (fun closed -> (first, second, closed))))))
 
 let channel_proposed ch wait_blocked close_reason render_closed =
@@ -702,7 +702,7 @@ let channel_proposed ch wait_blocked close_reason render_closed =
       let* () = wait_blocked ch in
       let* first = Eta.Channel.recv ch in
       let* second = Eta.Channel.recv ch in
-      let+ closed = Eta.Channel.recv ch |> Effect.catch render_closed in
+      let+ closed = Eta.Channel.recv ch |> Effect.bind_error render_closed in
       (first, second, closed))
 
 let channel_probe_current capacity ch value =
@@ -721,14 +721,14 @@ let channel_probe_current capacity ch value =
     else
       Eta.Channel.send ch value
       |> Effect.map (fun () -> `Sent)
-      |> Effect.catch recover_send
+      |> Effect.bind_error recover_send
   in
   let recv =
     if (Eta.Channel.stats ch).depth = 0 then Effect.pure `Empty
     else
       Eta.Channel.recv ch
       |> Effect.map (fun item -> `Item item)
-      |> Effect.catch recover_recv
+      |> Effect.bind_error recover_recv
   in
   let open Syntax in
   let* sent = send in
@@ -758,7 +758,7 @@ let queue_current queue close_reason render_closed =
                                             Eta.Queue.take queue
                                             |> Effect.bind (fun third ->
                                                    Eta.Queue.take queue
-                                                   |> Effect.catch render_closed
+                                                   |> Effect.bind_error render_closed
                                                    |> Effect.map (fun closed ->
                                                           ( first,
                                                             second,
@@ -775,7 +775,7 @@ let queue_proposed queue close_reason render_closed =
   let* first = Eta.Queue.take queue in
   let* second = Eta.Queue.take queue in
   let* third = Eta.Queue.take queue in
-  let+ closed = Eta.Queue.take queue |> Effect.catch render_closed in
+  let+ closed = Eta.Queue.take queue |> Effect.bind_error render_closed in
   (first, second, third, closed, depth_after_send)
 
 let handoff_close_current ch queue hub reason =
@@ -823,7 +823,7 @@ let queue_probe_current queue value recover_send recover_recv =
     else
       Eta.Queue.send queue value
       |> Effect.map (fun () -> `Sent)
-      |> Effect.catch recover_send
+      |> Effect.bind_error recover_send
   in
   let recv =
     let stats = Eta.Queue.stats queue in
@@ -832,7 +832,7 @@ let queue_probe_current queue value recover_send recover_recv =
     else
       Eta.Queue.take queue
       |> Effect.map (fun item -> `Item item)
-      |> Effect.catch recover_recv
+      |> Effect.bind_error recover_recv
   in
   let open Syntax in
   let* sent = send in
@@ -1095,7 +1095,7 @@ let cached_resource_current load schedule observe =
   let refresh =
     load
     |> Effect.bind publish
-    |> Effect.catch (fun err -> Effect.sync (fun () -> observe err))
+    |> Effect.bind_error (fun err -> Effect.sync (fun () -> observe err))
   in
   load
   |> Effect.bind (fun initial ->
@@ -1136,7 +1136,7 @@ let manual_resource_current load =
                     publish value |> Effect.map (fun () -> value)))
   in
   let refresh = load |> Effect.bind publish in
-  refresh |> Effect.catch (fun _ -> Effect.unit) |> Effect.bind (fun () -> get)
+  refresh |> Effect.bind_error (fun _ -> Effect.unit) |> Effect.bind (fun () -> get)
 
 let manual_resource_proposed load =
   let open Syntax in
@@ -1191,7 +1191,7 @@ let success_map_proposed project body =
 
 let finally_cleanup_current cleanup body =
   body
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
          cleanup |> Effect.bind (fun () -> Effect.fail err))
   |> Effect.bind (fun value -> cleanup |> Effect.map (fun () -> value))
 
@@ -1234,7 +1234,7 @@ let publish value = Effect.sync (fun () -> cache := Some value) in
 let refresh =
   load
   |> Effect.bind publish
-  |> Effect.catch (fun err -> Effect.sync (fun () -> observe err))
+  |> Effect.bind_error (fun err -> Effect.sync (fun () -> observe err))
 in
 load
 |> Effect.bind (fun initial ->
@@ -1286,7 +1286,7 @@ let get =
              publish value |> Effect.map (fun () -> value)))
 in
 let refresh = load |> Effect.bind publish in
-refresh |> Effect.catch (fun _ -> Effect.unit) |> Effect.bind (fun () -> get)|};
+refresh |> Effect.bind_error (fun _ -> Effect.unit) |> Effect.bind (fun () -> get)|};
     };
     {
       area = "manual_resource";
@@ -1350,7 +1350,7 @@ Effect.scoped
       variant = "proposed";
       code =
         {|body
-|> Effect.catch (function
+|> Effect.bind_error (function
      | `Cache_miss -> fallback)|};
     };
     {
@@ -1358,17 +1358,17 @@ Effect.scoped
       variant = "current";
       code =
         {|load_user id
-|> Effect.catch (fun err -> Effect.pure (render_error err))|};
+|> Effect.bind_error (fun err -> Effect.pure (render_error err))|};
     };
     {
       area = "pure_recovery";
       variant = "proposed";
-      code = {|load_user id |> Effect.recover render_error|};
+      code = {|load_user id |> Effect.fold ~ok:Fun.id ~error:render_error|};
     };
     {
       area = "best_effort";
       variant = "current";
-      code = {|cleanup |> Effect.catch (fun _ -> Effect.unit)|};
+      code = {|cleanup |> Effect.bind_error (fun _ -> Effect.unit)|};
     };
     {
       area = "best_effort";
@@ -1381,12 +1381,12 @@ Effect.scoped
       code =
         {|operation
 |> Effect.map (fun value -> Ok value)
-|> Effect.recover (fun err -> Error err)|};
+|> Effect.fold ~ok:Fun.id ~error:(fun err -> Error err)|};
     };
     {
       area = "typed_failure_result";
       variant = "proposed";
-      code = {|operation |> Effect.result|};
+      code = {|operation |> Effect.to_result|};
     };
     {
       area = "validation_boundary";
@@ -1490,7 +1490,7 @@ render_user user|};
       variant = "current";
       code =
         {|body
-|> Effect.catch (fun err ->
+|> Effect.bind_error (fun err ->
      cleanup |> Effect.bind (fun () -> Effect.fail err))
 |> Effect.bind (fun value ->
      cleanup |> Effect.map (fun () -> value))|};
@@ -1557,7 +1557,7 @@ render_user user|};
         {|let rec loop remaining =
   Effect.sync call
   |> Effect.bind Effect.from_result
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
        if remaining > 0 && retryable err then
          Effect.delay (next_delay remaining) (loop (remaining - 1))
        else Effect.fail err)
@@ -1688,7 +1688,7 @@ Effect.with_background producer (fun () ->
             Channel.recv ch
             |> Effect.bind (fun second ->
                  Channel.recv ch
-                 |> Effect.catch render_closed
+                 |> Effect.bind_error render_closed
                  |> Effect.map (fun closed -> (first, second, closed))))))|};
     };
     {
@@ -1705,7 +1705,7 @@ Effect.with_background producer (fun () ->
   let* () = wait_blocked ch in
   let* first = Channel.recv ch in
   let* second = Channel.recv ch in
-  let+ closed = Channel.recv ch |> Effect.catch render_closed in
+  let+ closed = Channel.recv ch |> Effect.bind_error render_closed in
   (first, second, closed))|};
     };
     {
@@ -1719,14 +1719,14 @@ let send =
   else
     Channel.send ch value
     |> Effect.map (fun () -> `Sent)
-    |> Effect.catch recover_send
+    |> Effect.bind_error recover_send
 in
 let recv =
   if (Channel.stats ch).depth = 0 then Effect.pure `Empty
   else
     Channel.recv ch
     |> Effect.map (fun item -> `Item item)
-    |> Effect.catch recover_recv
+    |> Effect.bind_error recover_recv
 in
 let* sent = send in
 let+ received = recv in
@@ -1760,7 +1760,7 @@ let+ received = Channel.try_recv ch in
                               Queue.take q
                               |> Effect.bind (fun third ->
                                    Queue.take q
-                                   |> Effect.catch render_closed
+                                   |> Effect.bind_error render_closed
                                    |> Effect.map (fun closed ->
                                         (first, second, third, closed))))))))|};
     };
@@ -1777,7 +1777,7 @@ let* () = Queue.close_with_error_effect q reason in
 let* first = Queue.take q in
 let* second = Queue.take q in
 let* third = Queue.take q in
-let+ closed = Queue.take q |> Effect.catch render_closed in
+let+ closed = Queue.take q |> Effect.bind_error render_closed in
 (first, second, third, closed, depth_after_send)|};
     };
     {
@@ -1832,7 +1832,7 @@ Effect.pure
   else
     Queue.send q value
     |> Effect.map (fun () -> `Sent)
-    |> Effect.catch recover_send
+    |> Effect.bind_error recover_send
 in
 let recv =
   let stats = Queue.stats q in
@@ -1841,7 +1841,7 @@ let recv =
   else
     Queue.take q
     |> Effect.map (fun item -> `Item item)
-    |> Effect.catch recover_recv
+    |> Effect.bind_error recover_recv
 in
 let* sent = send in
 let+ received = recv in
@@ -2155,7 +2155,7 @@ match current with
       code =
         {|Effect.from_result (parse raw)
 |> Effect.bind (fun id -> load_user id)
-|> Effect.catch (fun err ->
+|> Effect.bind_error (fun err ->
      observe err;
      Effect.fail (to_boundary err))|};
     };
@@ -2251,7 +2251,7 @@ Effect.pure (first, second, before_shutdown)|};
        Pubsub.recv sub
        |> Effect.bind (fun first ->
             Pubsub.recv sub
-            |> Effect.catch closed_reason
+            |> Effect.bind_error closed_reason
             |> Effect.map (fun closed -> (published, first, closed)))))|};
     };
     {
@@ -2262,7 +2262,7 @@ Effect.pure (first, second, before_shutdown)|};
 let@ sub = Pubsub.subscribe hub in
 let* published = Pubsub.publish hub event in
 let* first = Pubsub.recv sub in
-let+ closed = Pubsub.recv sub |> Effect.catch closed_reason in
+let+ closed = Pubsub.recv sub |> Effect.bind_error closed_reason in
 (published, first, closed)|};
     };
     {
@@ -2274,7 +2274,7 @@ if stats.depth = 0 || stats.subscribers = 0 then Effect.pure `Empty
 else
   Pubsub.recv sub
   |> Effect.map (fun item -> `Item item)
-  |> Effect.catch recover_closed|};
+  |> Effect.bind_error recover_closed|};
     };
     {
       area = "pubsub_poll";
@@ -2355,7 +2355,7 @@ let* id = Effect.from_result (parse_id raw) in
         {|let failures = ref [] in
 Effect.with_background
   (refresh
-   |> Effect.catch (fun err ->
+   |> Effect.bind_error (fun err ->
         Effect.sync (fun () -> failures := Cause.Fail err :: !failures)))
   (fun () -> Effect.sync (fun () -> List.length !failures))|};
     };
@@ -2532,6 +2532,23 @@ let count_sub haystack needle =
   in
   loop 0 0
 
+let count_token haystack needle =
+  let hay_len = String.length haystack in
+  let needle_len = String.length needle in
+  let is_ident_char = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true
+    | _ -> false
+  in
+  let rec loop index acc =
+    if needle_len = 0 || index + needle_len > hay_len then acc
+    else if String.sub haystack index needle_len = needle then
+      let next = index + needle_len in
+      let extends = next < hay_len && is_ident_char haystack.[next] in
+      if extends then loop (index + 1) acc else loop next (acc + 1)
+    else loop (index + 1) acc
+  in
+  loop 0 0
+
 let line_count s =
   if String.equal s "" then 0 else 1 + count_sub s "\n"
 
@@ -2539,13 +2556,13 @@ let metric snippet =
   ( snippet.area,
     snippet.variant,
     line_count snippet.code,
-    count_sub snippet.code "Effect.bind",
+    count_token snippet.code "Effect.bind",
     count_sub snippet.code "let*",
     count_sub snippet.code "let@",
     count_sub snippet.code "Effect.from_result" )
 
 let assert_no_explicit_bind snippet =
-  let bind = count_sub snippet.code "Effect.bind" in
+  let bind = count_token snippet.code "Effect.bind" in
   let infix_bind = count_sub snippet.code ">>=" in
   if bind + infix_bind > 0 then
     failwith
@@ -2596,7 +2613,7 @@ let assert_expected_shape snippet =
         || count_sub snippet.code "Resource.refresh" <> 1
         || count_sub snippet.code "Resource.get" <> 1
         || count_sub snippet.code "Effect.ignore_errors" <> 1
-        || count_sub snippet.code "Effect.catch" <> 0
+        || count_sub snippet.code "Effect.bind_error" <> 0
         || count_sub snippet.code "ref None" <> 0
       then
         failwith
@@ -2630,25 +2647,25 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "catch_recovery proposed example should be direct typed recovery";
       if
-        count_sub snippet.code "Effect.catch" <> 1
-        || count_sub snippet.code "Effect.bind" <> 0
+        count_sub snippet.code "Effect.bind_error" <> 1
+        || count_token snippet.code "Effect.bind" <> 0
         || count_sub snippet.code "Ok " <> 0
         || count_sub snippet.code "Error " <> 0
       then
         failwith
-          "catch_recovery proposed example should use Effect.catch instead of moving typed errors into result values"
+          "catch_recovery proposed example should use Effect.bind_error instead of moving typed errors into result values"
   | ( "pure_recovery",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "pure_recovery proposed example should be direct recovery";
       if
-        count_sub snippet.code "Effect.recover" <> 1
-        || count_sub snippet.code "Effect.catch" <> 0
+        count_sub snippet.code "Effect.fold ~ok:Fun.id ~error:" <> 1
+        || count_sub snippet.code "Effect.bind_error" <> 0
         || count_sub snippet.code "Effect.pure" <> 0
       then
         failwith
-          "pure_recovery proposed example should use Effect.recover instead of catch plus pure"
+          "pure_recovery proposed example should use Effect.fold instead of bind_error plus pure"
   | ( "best_effort",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
@@ -2656,23 +2673,23 @@ let assert_expected_shape snippet =
         failwith "best_effort proposed example should be one helper call";
       if
         count_sub snippet.code "Effect.ignore_errors" <> 1
-        || count_sub snippet.code "Effect.catch" <> 0
+        || count_sub snippet.code "Effect.bind_error" <> 0
         || count_sub snippet.code "Effect.unit" <> 0
       then
         failwith
-          "best_effort proposed example should use Effect.ignore_errors instead of catch plus unit"
+          "best_effort proposed example should use Effect.ignore_errors instead of bind_error plus unit"
   | ( "typed_failure_result",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "typed_failure_result proposed example should be one helper call";
       if
-        count_sub snippet.code "Effect.result" <> 1
-        || count_sub snippet.code "Effect.recover" <> 0
+        count_sub snippet.code "Effect.to_result" <> 1
+        || count_sub snippet.code "Effect.fold ~ok:Fun.id ~error:" <> 0
         || count_sub snippet.code "Effect.map" <> 0
       then
         failwith
-          "typed_failure_result proposed example should use Effect.result instead of map plus recover"
+          "typed_failure_result proposed example should use Effect.to_result instead of map plus fold"
   | ( "validation_boundary",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
@@ -2729,7 +2746,7 @@ let assert_expected_shape snippet =
         failwith "tap_success proposed example should be one success observer";
       if
         count_sub snippet.code "Effect.tap" <> 1
-        || count_sub snippet.code "Effect.bind" <> 0
+        || count_token snippet.code "Effect.bind" <> 0
         || count_sub snippet.code "Effect.map" <> 0
       then
         failwith
@@ -2743,7 +2760,7 @@ let assert_expected_shape snippet =
       if
         count_sub snippet.code "Effect.tap " <> 1
         || count_sub snippet.code "Effect.sync" <> 1
-        || count_sub snippet.code "Effect.bind" <> 0
+        || count_token snippet.code "Effect.bind" <> 0
       then
         failwith
           "sync_observer proposed example should use Effect.tap with explicit sync observer"
@@ -2753,7 +2770,7 @@ let assert_expected_shape snippet =
         failwith "success_map proposed example should be one value projection";
       if
         count_sub snippet.code "let+" <> 1
-        || count_sub snippet.code "Effect.bind" <> 0
+        || count_token snippet.code "Effect.bind" <> 0
         || count_sub snippet.code "Effect.pure" <> 0
       then
         failwith
@@ -2765,7 +2782,7 @@ let assert_expected_shape snippet =
         failwith "finally_cleanup proposed example should be one cleanup wrapper";
       if
         count_sub snippet.code "Effect.finally" <> 1
-        || count_sub snippet.code "Effect.catch" <> 0
+        || count_sub snippet.code "Effect.bind_error" <> 0
       then
         failwith
           "finally_cleanup proposed example should use Effect.finally instead of hand-written catch cleanup"
@@ -2863,7 +2880,7 @@ let assert_expected_shape snippet =
         failwith "all_collect proposed example should be direct all";
       if
         count_sub snippet.code "Effect.all" <> 1
-        || count_sub snippet.code "Effect.bind" <> 0
+        || count_token snippet.code "Effect.bind" <> 0
         || count_sub snippet.code "Effect.map" <> 0
       then
         failwith
