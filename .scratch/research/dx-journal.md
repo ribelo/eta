@@ -303,3 +303,34 @@ scored at E24 completion.
 **Protocol note.** The executor did exactly what the method asks: stopped
 at the contract boundary, reproduced with a runnable probe, recommended,
 changed nothing. This is the evidence-based-coding loop working as designed.
+
+---
+
+## V-DX-E24-002a — 2026-07-18 — correction to V-DX-E24-002
+
+The signature block in V-DX-E24-002 shows `retry` with
+`schedule:('err, 'out) Schedule.t` — the 2-param type. That contradicts the
+same entry's Finding 2 (slimming held). Correct amended contract for the
+resumed, rescoped E24:
+
+```ocaml
+val map_par :
+  ?max_concurrent:int -> 'a list -> f:('a -> ('b, 'err) t) -> ('b list, 'err) t
+
+val retry :
+  schedule:('err, 'out, (unit, 'err) t) Schedule.t ->
+  while_:('err -> bool) ->
+  ?or_else:('err -> 'out option -> ('a, 'err) t) ->
+  ('a, 'err) t -> ('a, 'err) t
+
+val repeat :
+  schedule:('a, 'out, (unit, 'err) t) Schedule.t ->
+  ('a, 'err) t -> ('out, 'err) t
+```
+
+`Schedule.t` stays 3-param; `tap_input`/`tap_output` stay; no `?on_retry`/
+`?on_repeat` this round. Migration wrinkle the executor must document: the
+unified `retry` has a single `'err`; old `retry_or_else` could remap the
+error channel (`'err1 -> 'err2`) — affected call sites need an explicit
+`map_error` composition, listed one by one in the executor journal. If any
+call site cannot be expressed this way, that is a fresh BLOCKED signal.
