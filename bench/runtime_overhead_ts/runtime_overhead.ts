@@ -291,7 +291,7 @@ function effectFailCatchLoop(n: number): Effect.Effect<number> {
   // Same recursion shape as eta_fail_catch_loop in OCaml.
   function go(i: number, acc: number): Effect.Effect<number> {
     if (i === 0) return Effect.succeed(acc)
-    return Effect.bind_error(Effect.fail("Boom" as const), () => go(i - 1, acc + 1))
+    return Effect.catch(Effect.fail("Boom" as const), () => go(i - 1, acc + 1))
   }
   return go(n, 0)
 }
@@ -388,7 +388,7 @@ function realusePipelineBindCatch1k(): Effect.Effect<number> {
     prefix = Effect.flatMap(prefix, (x: number) => Effect.succeed(x + 1))
   }
   const recovered: Effect.Effect<number> = Effect.flatMap(prefix, (acc: number) =>
-    Effect.bind_error(
+    Effect.catch(
       Effect.fail("Boom" as const) as Effect.Effect<number, "Boom">,
       () => Effect.succeed(acc),
     ),
