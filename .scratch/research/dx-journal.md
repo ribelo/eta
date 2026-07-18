@@ -17,8 +17,8 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E1 | sync_result / sync_option | B | S | low | **promoted** (sync_result); sync_option killed (no usage) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..002 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
 | E3 | race_either | B | S | low | **killed** (named variants win) | SC | research/dx-e1e2e3-hygiene | V-DX-E3-001..002 |
-| E4 | Cause rendering corpus | B | M | low | proposed | | | |
-| E5 | Type-error translations | B | S | low | proposed | | | |
+| E4 | Cause rendering corpus | B | M | low | **promoted** 2026-07-19 (kill gate fired; rework passed) | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E4-001..002 |
+| E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | proposed | | | |
 | E7 | Error-pp deriver | C | M | low | proposed | | | |
 | E8 | [%eta.result] sugar | C | S | low | proposed | | | |
@@ -938,3 +938,84 @@ a count change.
 **Outcome (predicted).** Promote (one-pager: unconditional once the corpus
 lands). By-product: a list of messages needing compiler-side work —
 predicted 2–3 entries, mostly the skolem-escape texts.
+
+---
+
+## V-DX-E4-002 — 2026-07-19 — research/dx-e4e5-cause-corpus-type-errors — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio + mainline `test/cache_jsoo`
+`test/js_jsoo` green in worktree; native trio green on master post-merge
+(`f7395b0f`). 515 core tests incl. 12 new; 30 otel incl. 5 new.
+
+**The kill gate fired — and the rework protocol worked.** Board review
+`[agent-sim]` (oracle, P-OCaml): cases 1/3/4/5 PASS-WITH-COMMENT, **cases 2
+& 6 FAIL** — `p | suppressed: f` never says the right side ran in a
+*finalizer*. Executor's sealed prediction ("gate does not fire") and
+red-team claim ("parens preserve the distinction") were both wrong the same
+way: they covered structure, not role naming. One bounded rework round:
+`p | suppressed: finalizer(f)` (existing vocabulary, self-delimiting;
+composite sides drop redundant parens; dead paren row deleted). Re-review:
+**continuity board** passed 2 (PASS) and 6 (PASS-WITH-COMMENT, density);
+**cold reviewer** on the full revised corpus read both correctly from the
+line alone. Kill gate answered "no" twice; no line judged worse than an
+honest two-line render.
+
+**Decision: PROMOTE all three pieces.** `pp_compact` (the gate's purpose
+served — the shipped one-liner preserves the distinction, proven twice);
+snapshot corpus (10 cases both forms + ~380-cause newline-freedom
+property); `Eta_otel.Cause_json` (5 locked snapshots, core JSON-free).
+
+**Prediction scoring (orchestrator).** Miss: "kill gate does not fire" —
+it did; second under-prediction of a gate firing (E24 slimming was the
+first; pattern recorded). Miss: predicted formatter-based shape — actual
+string-based `('err -> string)`, consistent with neighbor `pretty`
+(executor's call, defensible). Miss: census +1 → actual +2
+(`interrupt_id_to_int` forced by the encoder; executor missed identically).
+Hit: promote-all-three (post-rework); board engagement with the hard
+cases; core stays JSON-free.
+
+**Noted for later:** cold reviewer flagged compact `die(...)` as possibly
+reading as process-termination to outsiders (tree says `defect:`) —
+terminology watch, not omission.
+
+---
+
+## V-DX-E5-002 — 2026-07-19 — research/dx-e4e5-cause-corpus-type-errors — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio + `@type-errors-runtime`
+(opt-in) green; **drift gate broken and healed by the orchestrator**
+(injected line → exit 1 → restore → exit 0). 10 compile cases (3
+supervisor rank-2 escapes, 7 PPX rejections), fenced to 5.2.0+ox.
+
+**Archaeology findings (all with real captured output):**
+1. Supervisor escapes (5 routes) are compile-time but the message is
+   never "would escape its scope" — always `less general than "'s. …"`;
+   the ref-leak message names neither the child nor the ref. Page entry 1
+   exists exactly for this.
+2. **Resource/Pool handle escape COMPILES — no fence exists** (empty
+   stderr verified). Page entry 8 documents the trap.
+3. **Cross-domain Channel: blocking pair HANGS silently (exit 124)**;
+   `try_send` silently works; Queue contrast clean. Top by-product item:
+   a same-domain runtime fence turning the hang into a named error.
+4. Two PPX rejections (`requires at least one field`, `table type name is
+   empty`) are unreachable from source — dead-code follow-up.
+5. Cram evaluated and rejected experimentally (no `%{…}` expansion in cram
+   scripts) — script harness instead.
+
+**Review** `[agent-sim]` (two-phase protocol): phase 1 without page —
+solved at 92% (fix matched canonical Fix 1); phase 2 with page — rated
+9/10 ("solvable without the mli"); pass-bar teach-back: rank-2 rationale
+explained in own words ("unforgeable type-level brand… typed
+use-after-lifetime"). Honest caveat: the reviewer's type-system strength
+made the without-page leg easy; the page's value is the with-page
+explainability bar, which passed decisively.
+
+**Decision: PROMOTE** (one-pager gate: unconditional once corpus lands).
+`docs/type-errors.md`: 8 entries, verbatim-quotes mechanically verified,
+linked from README footguns. By-product list (4 items) → backlog.
+
+**Prediction scoring (orchestrator).** Hits: 5–8 messages (8); ≥1
+category runtime-not-compile (cross-domain + the no-fence compile finding);
+page pass bar; 2–3 compiler-side-work items (4); promote. Executor scored
+its own message-shape miss ("would escape its scope" → `less general than
+'s.`) raw. Clean.

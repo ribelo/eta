@@ -1569,8 +1569,8 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18 (sync_result only) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..002 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
 | E3 | race_either | B | S | low | **killed** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E3-001..002 |
-| E4 | Cause rendering corpus | B | M | low | proposed | | | |
-| E5 | Type-error translations | B | S | low | proposed | | | |
+| E4 | Cause rendering corpus | B | M | low | **promoted** 2026-07-19 (kill gate fired; rework passed) | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E4-001..002 |
+| E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | proposed | | | |
 | E7 | Error-pp deriver | C | M | low | proposed | | | |
 | E8 | [%eta.result] sugar | C | S | low | proposed | | | |

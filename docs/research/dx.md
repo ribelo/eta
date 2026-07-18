@@ -49,6 +49,43 @@ times repo-wide, the sync+option leaf pattern 0 — symmetry furniture, not a
 real boundary. The two-combinator recipe remains documented for
 hand-rolled cases via `flatten_result`.
 
+## E4 — Cause rendering (promoted 2026-07-19)
+
+`Cause.pp_compact` renders any cause as **one truthful line** for span
+statuses and log fields: `fail(A) + die(Failure("boom")) | suppressed:
+finalizer(fail("cleanup failed") ; interrupt)`. A 10-case snapshot corpus
+locks both `pretty` and `pp_compact` forms (rendering drift now fails CI),
+backed by a ~380-cause newline-freedom property. `Eta_otel.Cause_json`
+gives sinks structured encoding over `Cause.Portable.t`; core stays
+JSON-free.
+
+The notable event: the review board **fired the pre-registered kill gate**
+— the first compact notation (`p | suppressed: f`) never said the right
+side ran in a *finalizer*. One rework round wrapped the suppressed segment
+in the existing `finalizer(...)` vocabulary; the double re-review
+(continuity board + cold reviewer) then passed it twice. The gate did its
+job: the shipped one-liner preserves the primary/finalizer distinction
+provably, not by assertion.
+
+## E5 — Type errors, translated (promoted 2026-07-19)
+
+`test/type_errors/` is the repo's first negative-compile snapshot corpus
+(10 cases: rank-2 supervisor escapes, PPX rejections), drift-gated by
+`dune runtest` (orchestrator-verified by breaking it). `docs/type-errors.md`
+translates the 8 most common messages — each quoted **verbatim** from its
+snapshot — into what-you-tried / why-Eta-forbids / two canonical fixes.
+
+Archaeology findings that outlive the experiment: supervisor escape
+messages never say "escape" (always `less general than 's.`); **resource
+and pool handles compile when escaped** (no fence exists — documented
+trap); **cross-domain Channel blocking ops hang silently** (exit 124;
+same-domain runtime fence is now the top backlog item); two PPX rejection
+paths are unreachable dead code.
+
+Provenance: `.scratch/research/dx/e4/`, `.scratch/research/dx/e5/`,
+V-DX-E4-001..002, V-DX-E5-001..002, branch
+`research/dx-e4e5-cause-corpus-type-errors`.
+
 ## E3 — `race_either` (killed 2026-07-18)
 
 The programme's first full kill. Heterogeneous races do not need a new
