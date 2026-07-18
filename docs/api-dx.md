@@ -329,8 +329,8 @@ property of one shape. The fallback receives no schedule output when the first
 failure is rejected before a step, and the latest or terminal output after
 steps have run.
 
-`Effect.repeat ~schedule:policy effect` is not replaced by hand-written recursion over `Schedule.start`
-and `Schedule.next`. The manual shape is useful for interpreters, but
+`Effect.repeat ~schedule:policy effect` is not replaced by hand-written recursion over
+`Schedule.start` and `Schedule.next`. The manual shape is useful for interpreters, but
 `Schedule.next` applies only to hook-free schedules; application code should
 describe a scheduled unit effect and let Eta drive the policy, taps, sleeps,
 cancellation, and iteration failure behavior.

@@ -111,7 +111,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let n_messages = 100 in
     let received = Atomic.make 0 in
     let sender =
-      Effect.map_par ~max_concurrent:4 (fun i -> Channel.send ch i) (List.init n_messages (fun i -> i))
+      Effect.map_par ~max_concurrent:4
+        (fun i -> Channel.send ch i)
+        (List.init n_messages (fun i -> i))
     in
     let receiver =
       let rec loop () =
@@ -161,7 +163,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       in
       let eff =
         Effect.scoped
-          (Effect.retry ~schedule:(Schedule.recurs (n + 1)) ~while_:(fun (`Retry _) -> true) attempt)
+          (Effect.retry
+             ~schedule:(Schedule.recurs (n + 1))
+             ~while_:(fun (`Retry _) -> true)
+             attempt)
       in
       ignore (run_ok rt eff : int);
       if !max_active > 1 then
@@ -193,7 +198,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Effect.acquire_release ~acquire:(acquire "outer")
            ~release:(release "outer")
         |> Effect.bind (fun () ->
-               Effect.retry ~schedule:(Schedule.recurs 3) ~while_:(fun (`Inner_retry _) -> true) (Effect.scoped
+               Effect.retry
+                 ~schedule:(Schedule.recurs 3)
+                 ~while_:(fun (`Inner_retry _) -> true)
+                 (Effect.scoped
                     (Effect.acquire_release ~acquire:(acquire "inner")
                        ~release:(release "inner")
                     |> Effect.bind (fun () ->
@@ -220,7 +228,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let release () = Effect.sync (fun () -> decr active) in
     let retry_branch =
-      Effect.retry ~schedule:(Schedule.both (Schedule.recurs 10) (Schedule.spaced (Duration.ms 5))) ~while_:(fun (`Again _) -> true) (Effect.acquire_release ~acquire ~release
+      Effect.retry
+        ~schedule:
+          (Schedule.both (Schedule.recurs 10)
+             (Schedule.spaced (Duration.ms 5)))
+        ~while_:(fun (`Again _) -> true)
+        (Effect.acquire_release ~acquire ~release
         |> Effect.bind (fun () -> Effect.fail (`Again 0)))
     in
     let fast_branch = Effect.delay (Duration.ms 20) (Effect.pure "fast") in

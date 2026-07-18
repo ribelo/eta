@@ -24,7 +24,9 @@ let with_reader flow use =
 ~~~ocaml
 let with_heartbeat session use =
   let heartbeat =
-    Effect.repeat ~schedule:(Schedule.spaced (Duration.seconds 5)) (Effect.sync (fun () -> Session.ping session))
+    Effect.repeat
+      ~schedule:(Schedule.spaced (Duration.seconds 5))
+      (Effect.sync (fun () -> Session.ping session))
   in
   Effect.with_background ~name:"session.heartbeat" heartbeat (fun () -> use session)
 ~~~

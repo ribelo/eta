@@ -1,7 +1,8 @@
 open Eta
 
 let heartbeat ticks =
-  Effect.repeat ~schedule:(Schedule.recurs 3) (Effect.sync (fun () -> ticks := !ticks + 1))
+  Effect.repeat ~schedule:(Schedule.recurs 3)
+    (Effect.sync (fun () -> ticks := !ticks + 1))
 
 let pp_never fmt = function _ -> Format.pp_print_string fmt "<never>"
 

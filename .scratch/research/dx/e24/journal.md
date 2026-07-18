@@ -283,3 +283,113 @@ green. `Schedule.t` slimming remains **held for E24b**, not failed or partially
 implemented here. The original proposal to absorb `retry_or_else` is superseded
 by the amended evidence that its two-error and composite-cause behavior is a
 distinct public capability.
+
+---
+
+## Resumed execution log
+
+### Step 2 — amended docs-first contracts
+
+Committed the amended `effect.mli` before implementation. `map_par` documents
+function-first order, the default cap of eight, input-order collection,
+fail-fast cancellation, and construction rejection. Retry contracts are labeled
+and data-last. The mli calls bare-`Cause.Fail` retry a current limitation and
+contrasts it with `retry_or_else`'s catchable-composite first-failure behavior.
+`schedule.mli` was intentionally untouched.
+
+### Step 3 — implementation and migration
+
+- Replaced both parallel-map entry points with one `map_par` worker path.
+- Default `max_concurrent` is 8; explicit nonpositive values raise before
+  building an effect; mapper evaluation remains inside runtime workers.
+- Changed retry/retry_or_else/repeat arguments only; their loop bodies and hook
+  driver remain unchanged.
+- Migrated libraries, tests, examples, benchmarks, docs, and known jsoo sources.
+- Independent scan: no old parallel API occurrences outside the historical
+  AGENTS commit-subject example, assignment text, and old-side review fixture.
+
+### Step 4 — parity evidence
+
+Added/promoted tests for optional erasure, mapper construction laziness, delayed
+input order, sibling cancellation/finalizers, explicit caps, default cap eight
+with nine inputs, nonpositive construction rejection, all fallback output cases,
+and unchanged tapped schedule behavior. Focused result:
+
+```text
+nix develop -c dune runtest test/core_eio --force
+Test Successful — 499 tests run
+```
+
+### Step 5 — census and footguns
+
+Actual census: iterate vals 5 → 4, concepts 5 → 4, `Schedule.t` parameters 3 →
+3, tap vals 2 → 2. Amendment prediction hit. Actual footgun delta: −1/+0;
+amendment prediction hit. `docs/api-dx.md` now states function-first iteration,
+the default cap, omission semantics, labeled retry spellings, fallback outputs,
+and the current cause-semantics difference.
+
+### Step 6 — red-team
+
+Artifacts under `redteam/`. Zero and `-3` fail at construction. Nine delayed
+inputs without an explicit bound peak at eight concurrent mapper effects. The
+call can be misread alone, but the mli and DX guide explicitly say omission is
+not unbounded. Both verdicts PASS.
+
+### Step 7 — review packet and independent review
+
+Created the required bounded-fetch and retry-fallback A/B pairs plus manifest
+and blinded questions under `review/`. Independent standards/requirements review
+found no implementation defect. Generic test-location and untracked-assignment
+findings are overridden by explicit E24 protocol; long migrated call sites were
+rewrapped. The stale blocker report was replaced by the final report.
+
+### Step 8 — gates
+
+```text
+nix develop -c dune build @install
+PASS
+
+nix develop -c dune runtest --force
+PASS
+
+nix develop -c eta-oxcaml-test-shipped
+PASS
+
+nix develop .#mainline -c dune build test/cache_jsoo test/js_jsoo
+PASS (existing integer-overflow warnings only)
+```
+
+#### `test/signal_jsoo` comparison
+
+Current branch (`nix develop .#mainline -c dune build test/signal_jsoo`):
+
+```text
+exit 1
+eta_signal_observer.ml:35: Syntax error at locally abstract 'error.
+eta_signal_graph.ml:493: Syntax error at locally abstract 'a.
+eta_signal_timer.ml:27: Syntax error at locally abstract 'a.
+eta_signal_graph.mli:116: Syntax error at locally abstract 'a.
+eta_signal_timer.mli:21: Syntax error at locally abstract 'err.
+eta_signal_observer.mli:186: Syntax error at locally abstract 'a 'error.
+test_eta_signal_jsoo.ml:314: Signal.Time.monotonic_time; expected int
+```
+
+Master `42e7f17a` archive (same Nix shell and target):
+
+```text
+exit 1
+eta_signal_observer.ml:35: Syntax error at locally abstract 'error.
+eta_signal_timer.ml:27: Syntax error at locally abstract 'a.
+eta_signal_graph.ml:493: Syntax error at locally abstract 'a.
+eta_signal_graph.mli:116: Syntax error at locally abstract 'a.
+eta_signal_observer.mli:186: Syntax error at locally abstract 'a 'error.
+eta_signal_timer.mli:21: Syntax error at locally abstract 'err.
+test_eta_signal_jsoo.ml:314: Signal.Time.monotonic_time; expected int
+```
+
+The seven file/line/messages are identical. Only parallel build emission order
+differs. No signal source was changed.
+
+### Final recommendation
+
+Promote amended E24. Hold Schedule slimming for E24b. See `report.md`.

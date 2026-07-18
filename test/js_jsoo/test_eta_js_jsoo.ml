@@ -207,7 +207,10 @@ let test_retry_schedule done_ =
            else Eta_js.Effect.pure !attempts)
   in
   run
-    (Eta_js.Effect.retry ~schedule:(Eta_js.Schedule.recurs 3) ~while_:(function `Retry -> true) attempt)
+    (Eta_js.Effect.retry
+       ~schedule:(Eta_js.Schedule.recurs 3)
+       ~while_:(function `Retry -> true)
+       attempt)
     ~on_result:(finish done_ (expect_ok_int "retry schedule" 3))
 
 let test_repeat_schedule done_ =
