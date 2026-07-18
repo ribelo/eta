@@ -112,12 +112,10 @@ let usage ?(raw_prompt_names = false) json =
       @ optional_raw "reasoning_tokens"
           (nested_scalar "output_tokens_details" "reasoning_tokens")
       @ optional_raw "cost" (Json.scalar_string_member "cost" json)
+      @ optional_raw "prompt_cost"
+          (nested_scalar "cost_details" "upstream_inference_prompt_cost")
       @ optional_raw "input_cost"
-          (nested_scalar_first "cost_details"
-             [
-               "upstream_inference_prompt_cost";
-               "upstream_inference_input_cost";
-             ])
+          (nested_scalar "cost_details" "upstream_inference_input_cost")
       @ optional_raw "output_cost"
           (nested_scalar_first "cost_details"
              [
