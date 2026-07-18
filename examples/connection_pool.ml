@@ -22,10 +22,9 @@ let release closed conn =
         incr closed))
 
 let query conn label =
-  Effect.sync (fun () ->
+  Effect.sync_result (fun () ->
       if conn.closed then Error (`Query_failed "closed connection")
       else Ok (Printf.sprintf "conn:%d:%s" conn.id label))
-  |> Effect.flatten_result
 
 let program opened closed =
   let open Syntax in

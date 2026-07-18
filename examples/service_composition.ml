@@ -13,18 +13,16 @@ module User_db = struct
   }
 
   let open_ clock released =
-    Effect.sync (fun () -> Ok { clock; released })
-    |> Effect.flatten_result
+    Effect.sync_result (fun () -> Ok { clock; released })
 
   let close db =
     Effect.sync (fun () -> db.released := true)
 
   let lookup db user_id =
-    Effect.sync (fun () ->
+    Effect.sync_result (fun () ->
         if !(db.released) then Error `Closed
         else if String.equal user_id "" then Error (`Invalid_user "empty")
         else Ok (Printf.sprintf "%s@%d" user_id (db.clock.now_ms ())))
-    |> Effect.flatten_result
 end
 
 let with_user_db clock released =

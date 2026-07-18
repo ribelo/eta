@@ -49,8 +49,7 @@ open Eta
 let program () =
   let open Syntax in
   (let* n =
-     Effect.sync (fun () -> Ok (1 + 1))
-     |> Effect.flatten_result
+     Effect.sync_result (fun () -> Ok (1 + 1))
    in
    if n < 3 then Effect.fail `Too_small else Effect.pure n)
   |> Effect.fold ~ok:Fun.id ~error:(fun `Too_small -> 3)
@@ -110,7 +109,7 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 
 - `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
   failures. Catch expected errors by returning `result` from the synchronous
-  leaf, then use `Effect.sync f |> Effect.flatten_result`.
+  leaf, then use `Effect.sync_result f`.
 - `Effect.bind_error` handles typed failures only; it does not catch defects,
   interruption, or finalizer failures. Use `Effect.catch_some` when only some
   typed failures should recover and non-matches must preserve the original
@@ -245,8 +244,7 @@ Use `let@` from `Eta.Syntax` to keep callback-shaped lifecycle code flat:
 let load_user id =
   let open Eta.Syntax in
   let@ db = with_db in
-  Effect.sync (fun () -> Db.load_user db id)
-  |> Effect.flatten_result
+  Effect.sync_result (fun () -> Db.load_user db id)
 ```
 
 Use `Effect.acquire_release` directly when a resource should live until an
@@ -370,7 +368,7 @@ subscribers.
 
 Wrap Eio operations in `Effect.sync` at the leaf when they need Eta tracing
 names or defect diagnostics. If a synchronous leaf has expected failures, return
-an ordinary OCaml `result`, then flatten it with `Effect.flatten_result`;
+an ordinary OCaml `result` and lift it with `Effect.sync_result`;
 exceptions remain unchecked defects. If a protocol is reusable and owns
 lifecycle semantics, prefer a focused module such as `Resource` or `Pubsub`
 rather than a generic concurrency-data wrapper.

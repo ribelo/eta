@@ -49,13 +49,10 @@ val from_option : if_none:'err -> 'a option -> ('a, 'err) t
 val flatten_result : (('a, 'err) result, 'err) t -> ('a, 'err) t
 (** Flatten an effect that succeeds with an OCaml [result].
 
-    This is the pipe-friendly companion to {!from_result}. Use it after
-    {!sync} when a synchronous leaf returns expected typed failures as
-    [result]:
-
-    {[
-      Effect.sync f |> Effect.flatten_result
-    ]} *)
+    This is the pipe-friendly companion to {!from_result}. Prefer
+    {!sync_result} for the ordinary synchronous leaf that returns [result];
+    keep [flatten_result] for hand-rolled pipelines after any effect that
+    succeeds with a [result]. *)
 
 val sync : (unit -> 'a) -> ('a, 'err) t
 (** [sync f] lifts an OCaml function into an eff. Use {!Effect.named} to
@@ -64,9 +61,24 @@ val sync : (unit -> 'a) -> ('a, 'err) t
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
     as {!Cause.Die}. They are not converted into the typed error channel and
     are not handled by {!bind_error}. If a synchronous leaf operation has an
-    expected typed failure, return an explicit [result] and use
-    {!flatten_result} after this boundary.
+    expected typed failure, prefer {!sync_result} (or return an explicit
+    [result] and use {!flatten_result} after this boundary).
     Runtime cancellation exceptions remain interruption. *)
+
+val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
+(** Synchronous leaf that returns an OCaml [result].
+
+    [sync_result f] is [sync f |> flatten_result]: [Ok x] succeeds, [Error e]
+    is a typed failure, and ordinary exceptions raised by [f] remain unchecked
+    defects ({!Cause.Die}). This is the recommended typed sync leaf; it does
+    not catch exceptions into the typed channel. *)
+
+val sync_option : if_none:'err -> (unit -> 'a option) -> ('a, 'err) t
+(** Synchronous leaf that returns an OCaml [option].
+
+    [sync_option ~if_none f] runs [f] under {!sync}, then applies the same
+    [if_none] rule as {!from_option}: [Some x] succeeds and [None] fails with
+    [if_none]. Raised exceptions remain unchecked defects. *)
 
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.

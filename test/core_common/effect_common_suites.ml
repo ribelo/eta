@@ -988,6 +988,47 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect"
 
+  let test_effect_sync_result_parity () =
+    B.with_runtime @@ fun _ctx rt ->
+    let composed f = Effect.sync f |> Effect.flatten_result in
+    let named f = Effect.sync_result f in
+    Alcotest.(check int) "ok" 7 (run_ok rt (named (fun () -> Ok 7)));
+    Alcotest.(check int)
+      "ok parity" (run_ok rt (composed (fun () -> Ok 7)))
+      (run_ok rt (named (fun () -> Ok 7)));
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (named (fun () -> Error "bad")))
+      "bad";
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (composed (fun () -> Error "bad")))
+      "bad";
+    (match B.run rt (named (fun () -> failwith "boom")) with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "sync_result swallowed defect");
+    match B.run rt (composed (fun () -> failwith "boom")) with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "composed path expected defect"
+
+  let test_effect_sync_option_parity () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check int)
+      "some" 7
+      (run_ok rt (Effect.sync_option ~if_none:"missing" (fun () -> Some 7)));
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (Effect.sync_option ~if_none:"missing" (fun () -> None)))
+      "missing";
+    match
+      B.run rt (Effect.sync_option ~if_none:"missing" (fun () -> failwith "boom"))
+    with
+    | Exit.Error (Cause.Die _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "sync_option swallowed defect"
+
   let test_exit_to_result_only_converts_success_and_single_typed_failure () =
     Alcotest.(check (option (result int string)))
       "success" (Some (Ok 1)) (Exit.to_result (Exit.Ok 1));
@@ -3163,6 +3204,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "from_option" `Quick test_effect_from_option;
           Alcotest.test_case "flatten_result" `Quick
             test_effect_flatten_result;
+          Alcotest.test_case "sync_result parity" `Quick
+            test_effect_sync_result_parity;
+          Alcotest.test_case "sync_option parity" `Quick
+            test_effect_sync_option_parity;
           Alcotest.test_case "exit to_result faithful subset" `Quick
             test_exit_to_result_only_converts_success_and_single_typed_failure;
           Alcotest.test_case "map_error maps full cause" `Quick

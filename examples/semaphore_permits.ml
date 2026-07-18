@@ -4,13 +4,12 @@ type error = [ `Rejected of string ]
 
 let inside sem label =
   Semaphore.with_permits sem 1 (fun () ->
-      Effect.sync (fun () ->
+      Effect.sync_result (fun () ->
           if String.equal label "" then Error (`Rejected "empty label")
           else
             Ok
               (Printf.sprintf "%s:available=%d" label
-                 (Semaphore.available sem)))
-      |> Effect.flatten_result)
+                 (Semaphore.available sem))))
 
 let rejected sem =
   Semaphore.with_permits sem 1 (fun () -> Effect.fail (`Rejected "boom"))

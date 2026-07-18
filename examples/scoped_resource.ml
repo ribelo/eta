@@ -15,21 +15,18 @@ let close_session session =
   Ok ()
 
 let load session key =
-  Effect.sync (fun () ->
+  Effect.sync_result (fun () ->
       if session.closed then Error `Session_closed
       else Ok (session.name ^ ":" ^ key))
-  |> Effect.flatten_result
 
 let session_scope released =
   Effect.acquire_release
     ~acquire:
-      (Effect.sync open_session
-       |> Effect.flatten_result)
+      (Effect.sync_result open_session)
     ~release:(fun session ->
-      Effect.sync (fun () ->
+      Effect.sync_result (fun () ->
           released := true;
-          close_session session)
-      |> Effect.flatten_result)
+          close_session session))
 
 let program released =
   let open Syntax in
