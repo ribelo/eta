@@ -12,7 +12,7 @@ let test_effect_retry_preserves_structured_exception_causes () =
   in
   match
     Runtime.run rt
-      (Effect.retry (Schedule.recurs 0) (fun (_ : string) -> false) attempt)
+      (Effect.retry ~schedule:(Schedule.recurs 0) ~while_:(fun (_ : string) -> false) attempt)
   with
   | Exit.Error (Cause.Concurrent [ Cause.Die left_die; Cause.Die right_die ]) ->
       Alcotest.(check bool) "left exception" true (left_die.exn == left);

@@ -56,24 +56,24 @@ let workloads =
     item "all.heavy.2" (fun () -> run_effect (all_heavy 2));
     item "all.heavy.8" (fun () -> run_effect (all_heavy 8));
     item "all.heavy.64" (fun () -> run_effect (all_heavy 64));
-    item "for_each_par.8" (fun () ->
-        run_effect (Effect.for_each_par (List.init 8 Fun.id) (fun _ -> work 100)));
-    item "for_each_par.64" (fun () ->
-        run_effect (Effect.for_each_par (List.init 64 Fun.id) (fun _ -> work 100)));
-    item "for_each_par.512" (fun () ->
-        run_effect (Effect.for_each_par (List.init 512 Fun.id) (fun _ -> work 100)));
-    item "for_each_par_bounded.512.1" (fun () ->
+    item "map_par.8" (fun () ->
+        run_effect (Effect.map_par (fun _ -> work 100) (List.init 8 Fun.id)));
+    item "map_par.64" (fun () ->
+        run_effect (Effect.map_par (fun _ -> work 100) (List.init 64 Fun.id)));
+    item "map_par.512" (fun () ->
+        run_effect (Effect.map_par (fun _ -> work 100) (List.init 512 Fun.id)));
+    item "map_par.512.1" (fun () ->
         run_effect
-          (Effect.for_each_par_bounded ~max:1 (List.init 512 Fun.id) (fun _ -> work 100)));
-    item "for_each_par_bounded.512.2" (fun () ->
+          (Effect.map_par ~max_concurrent:1 (fun _ -> work 100) (List.init 512 Fun.id)));
+    item "map_par.512.2" (fun () ->
         run_effect
-          (Effect.for_each_par_bounded ~max:2 (List.init 512 Fun.id) (fun _ -> work 100)));
-    item "for_each_par_bounded.512.4" (fun () ->
+          (Effect.map_par ~max_concurrent:2 (fun _ -> work 100) (List.init 512 Fun.id)));
+    item "map_par.512.4" (fun () ->
         run_effect
-          (Effect.for_each_par_bounded ~max:4 (List.init 512 Fun.id) (fun _ -> work 100)));
-    item "for_each_par_bounded.512.8" (fun () ->
+          (Effect.map_par ~max_concurrent:4 (fun _ -> work 100) (List.init 512 Fun.id)));
+    item "map_par.512.8" (fun () ->
         run_effect
-          (Effect.for_each_par_bounded ~max:8 (List.init 512 Fun.id) (fun _ -> work 100)));
+          (Effect.map_par ~max_concurrent:8 (fun _ -> work 100) (List.init 512 Fun.id)));
     item "race.success" (fun () ->
         run_effect
           (Effect.race

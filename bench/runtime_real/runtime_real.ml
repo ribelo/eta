@@ -38,7 +38,7 @@ let bind_chain n =
 let fanout_par_64x50 () =
   let task _ = Effect.map (fun _ -> 1) (bind_chain 50) in
   Effect.map (List.fold_left ( + ) 0)
-    (Effect.for_each_par (List.init 64 Fun.id) task)
+    (Effect.map_par task (List.init 64 Fun.id))
 
 (* ---- realuse.fanout.bounded.512x50.k=8 ----
    512 concurrent tasks bounded to 8 in flight, each a 50-step bind
@@ -46,7 +46,7 @@ let fanout_par_64x50 () =
 let fanout_bounded_512x50_k8 () =
   let task _ = Effect.map (fun _ -> 1) (bind_chain 50) in
   Effect.map (List.fold_left ( + ) 0)
-    (Effect.for_each_par_bounded ~max:8 (List.init 512 Fun.id) task)
+    (Effect.map_par ~max_concurrent:8 task (List.init 512 Fun.id))
 
 (* ---- realuse.retry.flaky.fail4_then_ok ----
    Operation fails 4 times before succeeding. Schedule.recurs 10
@@ -68,7 +68,7 @@ let retry_flaky () =
   in
   let one_run =
     counter := 0;
-    Effect.retry (Schedule.recurs 10) (fun (_ : [ `Boom ]) -> true) flaky
+    Effect.retry ~schedule:(Schedule.recurs 10) ~while_:(fun (_ : [ `Boom ]) -> true) flaky
   in
   let rec loop n acc =
     if n = 0 then Effect.pure acc

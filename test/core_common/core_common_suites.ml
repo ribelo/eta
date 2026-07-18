@@ -1181,8 +1181,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Pubsub.subscribe hub @@ fun a ->
       Pubsub.subscribe hub @@ fun b ->
       let publish_many publisher =
-        E.for_each_par [ 1; 2; 3 ] (fun n ->
-            Pubsub.publish hub (publisher, n) |> E.map (fun _ -> ()))
+        E.map_par (fun n ->
+            Pubsub.publish hub (publisher, n) |> E.map (fun _ -> ())) [ 1; 2; 3 ]
         |> E.map (fun _ -> ())
       in
       let* (), () = E.par (publish_many "left") (publish_many "right") in

@@ -1,6 +1,5 @@
 (** Concurrent combinators: [par], [par_pair], [par_collect], [race], [all],
-    [all_settled], [for_each_par], [for_each_par_bounded]. Internal: see Effect
-    for the public surface. *)
+    [all_settled], [map_par]. Internal: see Effect for the public surface. *)
 
 open Effect_core
 
@@ -282,7 +281,7 @@ let all_settled effects =
 (** Worker-pool variant: [workers] forks share an atomic counter, each pulling
     the next task off [tasks] until the index reaches [n]. The parent frame is
     passed explicitly into each task evaluation. *)
-let for_each_par_workers frame ~name ~workers ~inputs ~f ~n =
+let map_par_workers frame ~workers ~inputs ~f ~n =
   let results = Array.make n None in
   let next = P_atomic.make 0 in
   let worker internal_cancel sw =
@@ -298,19 +297,13 @@ let for_each_par_workers frame ~name ~workers ~inputs ~f ~n =
     loop ()
   in
   let forks = List.init workers (fun _ -> worker) in
-  par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
+  par_run_forks frame ~forks
+    ~assemble:(fun () -> collect_results "Effect.map_par" results)
 
-let for_each_par xs (f) =
+let map_par ?(max_concurrent = 8) f xs =
+  if max_concurrent <= 0 then
+    invalid_arg "Effect.map_par: max_concurrent must be > 0";
   let inputs = Array.of_list xs in
   let n = Array.length inputs in
   make @@ fun frame ->
-  for_each_par_workers frame ~name:"Effect.for_each_par" ~workers:(min n 8)
-    ~inputs ~f ~n
-
-let for_each_par_bounded ~max xs (f) =
-  if max <= 0 then invalid_arg "Effect.for_each_par_bounded: max must be > 0";
-  let inputs = Array.of_list xs in
-  let n = Array.length inputs in
-  make @@ fun frame ->
-  for_each_par_workers frame ~name:"Effect.for_each_par_bounded"
-    ~workers:(min max n) ~inputs ~f ~n
+  map_par_workers frame ~workers:(min max_concurrent n) ~inputs ~f ~n

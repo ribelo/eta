@@ -22,7 +22,7 @@ let program args =
   let* id = Effect.from_result (parse_id raw) in
   let* user =
     user_request id
-    |> Effect.retry (Schedule.recurs 2) (function
+    |> Effect.retry ~schedule:(Schedule.recurs 2) ~while_:(function
          | `Network -> true
          | `Bad_args _ -> false)
   in

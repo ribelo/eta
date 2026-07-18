@@ -435,12 +435,12 @@ module Make (B : Runtime_backend.S) = struct
     let retry_eff =
       E.sync (fun () -> incr attempts; !attempts)
       |> E.bind (fun n -> if n < 3 then E.fail `Again else E.pure n)
-      |> E.retry (Schedule.recurs 5) (function `Again -> true)
+      |> E.retry ~schedule:(Schedule.recurs 5) ~while_:(function `Again -> true)
     in
     check_ok Alcotest.int "retry result" 3 (B.run rt retry_eff);
     let ticks = ref 0 in
     let repeat_eff =
-      E.repeat (Schedule.recurs 2) (E.sync (fun () -> incr ticks))
+      E.repeat ~schedule:(Schedule.recurs 2) (E.sync (fun () -> incr ticks))
       |> E.bind (fun (_repeat_count : int) -> E.sync (fun () -> !ticks))
     in
     check_ok Alcotest.int "repeat result" 3 (B.run rt repeat_eff)
@@ -493,8 +493,8 @@ module Make (B : Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     check_ok (Alcotest.list Alcotest.int) "all empty" []
       (B.run rt (E.all []));
-    check_ok (Alcotest.list Alcotest.int) "for_each_par empty" []
-      (B.run rt (E.for_each_par [] E.pure));
+    check_ok (Alcotest.list Alcotest.int) "map_par empty" []
+      (B.run rt (E.map_par E.pure []));
     Alcotest.(check int) "all_settled empty" 0
       (List.length (run_ok rt (E.all_settled [])));
 
@@ -532,7 +532,7 @@ module Make (B : Runtime_backend.S) = struct
     check_ok Alcotest.int "winner" 2 (B.await promise);
     Alcotest.(check bool) "loser released" true !released
 
-  let test_for_each_par_bounded_caps_concurrency () =
+  let test_map_par_caps_concurrency () =
     B.with_test_clock @@ fun ctx clock rt ->
     let current = ref 0 in
     let max_seen = ref 0 in
@@ -546,7 +546,7 @@ module Make (B : Runtime_backend.S) = struct
     in
     let promise =
       B.fork_run ctx rt
-        (E.for_each_par_bounded ~max:2 [ 1; 2; 3; 4 ] worker)
+        (E.map_par ~max_concurrent:2 worker [ 1; 2; 3; 4 ])
     in
     wait_for_sleepers clock 2;
     Alcotest.(check int) "max first wave" 2 !max_seen;
@@ -557,10 +557,10 @@ module Make (B : Runtime_backend.S) = struct
       (B.await promise);
     Alcotest.(check int) "max concurrency" 2 !max_seen
 
-  let test_for_each_par_bounded_rejects_nonpositive_max () =
+  let test_map_par_rejects_nonpositive_max () =
     Alcotest.check_raises "max zero"
-      (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
-      (fun () -> ignore (E.for_each_par_bounded ~max:0 [ 1 ] E.pure))
+      (Invalid_argument "Effect.map_par: max_concurrent must be > 0")
+      (fun () -> ignore (E.map_par ~max_concurrent:0 E.pure [ 1 ]))
 
   let test_queue_channel_semaphore_pubsub () =
     B.with_runtime @@ fun _ctx rt ->
@@ -1192,10 +1192,10 @@ module Make (B : Runtime_backend.S) = struct
             test_all_empty_and_fail_fast_finalizer;
           Alcotest.test_case "race cancels loser finalizer" `Quick
             test_race_cancels_loser_finalizer;
-          Alcotest.test_case "for_each_par_bounded caps concurrency" `Quick
-            test_for_each_par_bounded_caps_concurrency;
-          Alcotest.test_case "for_each_par_bounded rejects nonpositive max"
-            `Quick test_for_each_par_bounded_rejects_nonpositive_max;
+          Alcotest.test_case "map_par caps concurrency" `Quick
+            test_map_par_caps_concurrency;
+          Alcotest.test_case "map_par rejects nonpositive max"
+            `Quick test_map_par_rejects_nonpositive_max;
         ] );
       ( "Primitives",
         [

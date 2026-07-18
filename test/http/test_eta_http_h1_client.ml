@@ -1781,8 +1781,7 @@ let test_h1_client_streaming_concurrent_load () =
   let fiber_exit =
     try
       Eio.Time.with_timeout_exn clock 5.0 (fun () ->
-        Eta.Effect.for_each_par
-          (List.init parallelism (fun _ -> ()))
+        Eta.Effect.map_par
           (fun () ->
             let rec loop n acc =
               if n = 0 then Eta.Effect.pure (List.rev acc)
@@ -1797,6 +1796,7 @@ let test_h1_client_streaming_concurrent_load () =
                                 :: acc)))
             in
             loop ops_per_fiber [])
+          (List.init parallelism (fun _ -> ()))
         |> Eta.Runtime.run rt)
     with Eio.Time.Timeout -> Alcotest.fail "streaming concurrent load timed out"
   in

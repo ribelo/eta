@@ -9,7 +9,7 @@ let run_schedule_hook frame hook =
 let[@inline always] step_schedule frame run_hook input driver =
   Sch.step_with_hooks ~run_hook ~now_ms:(frame.runtime.now_ms ()) ~input !driver
 
-let repeat schedule eff =
+let repeat ~schedule eff =
   preserve eff @@ fun frame ->
   try
     let run_iteration () = run_scope frame eff in
@@ -30,9 +30,10 @@ let repeat schedule eff =
     | Exit.Error _ as error -> error
   with exn -> exit_of_exn frame exn
 
-let forever eff = repeat Sch.forever eff |> map (fun (_ : int) -> assert false)
+let forever eff =
+  repeat ~schedule:Sch.forever eff |> map (fun (_ : int) -> assert false)
 
-let retry schedule (predicate) eff =
+let retry ~schedule ~while_ eff =
   preserve eff @@ fun frame ->
   try
     let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
@@ -41,7 +42,7 @@ let retry schedule (predicate) eff =
     let rec loop () =
       match run_attempt () with
       | Exit.Ok _ as ok -> ok
-      | Exit.Error (Cause.Fail err) when predicate err -> (
+      | Exit.Error (Cause.Fail err) when while_ err -> (
           match step_schedule frame run_hook err driver with
           | Sch.Continue metadata, next_driver ->
               driver := next_driver;
@@ -53,7 +54,7 @@ let retry schedule (predicate) eff =
     loop ()
   with exn -> exit_of_exn frame exn
 
-let retry_or_else schedule (predicate) ~or_else eff =
+let retry_or_else ~schedule ~while_ ~or_else eff =
   preserve eff @@ fun frame ->
   try
     let driver = ref (Sch.start ~random:frame.runtime.random schedule) in
@@ -69,7 +70,7 @@ let retry_or_else schedule (predicate) ~or_else eff =
           | None -> (
               match first_typed_failure cause with
               | Some err ->
-                  if predicate err then
+                  if while_ err then
                     match step_schedule frame run_hook err driver with
                     | Sch.Continue metadata, next_driver ->
                         driver := next_driver;

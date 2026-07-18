@@ -48,7 +48,7 @@ counterpart:
 
 | TS row | OCaml counterpart | Workload |
 | --- | --- | --- |
-| `realuse.ts.fanout.par.success.64x50` | `realuse.fanout.par.success.64x50` | 64 concurrent tasks, each a 50-step bind chain. `Effect.all([…], { concurrency: "unbounded" })` ↔ `Effect.for_each_par`. |
+| `realuse.ts.fanout.par.success.64x50` | `realuse.fanout.par.success.64x50` | 64 concurrent tasks, each a 50-step bind chain. `Effect.all([…], { concurrency: "unbounded" })` ↔ `Effect.map_par`. |
 | `realuse.ts.fanout.bounded.512x50.k=8` | `realuse.fanout.bounded.512x50.k=8` | 512 tasks bounded to 8 in flight. |
 | `realuse.ts.retry.flaky.fail4_then_ok` | `realuse.retry.flaky.fail4_then_ok` | Operation fails 4 times before succeeding; retried with `Schedule.recurs(10)`; loop ×100 to escape the timer floor. |
 | `realuse.ts.pipeline.bind_catch.1k` | `realuse.pipeline.bind_catch.1k` | 500 binds → fail-and-catch boundary → 500 binds. |

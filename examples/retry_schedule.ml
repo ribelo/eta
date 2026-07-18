@@ -20,7 +20,7 @@ let call attempts =
   |> Effect.flatten_result
 
 let program attempts =
-  call attempts |> Effect.retry (retry_policy ()) retryable
+  call attempts |> Effect.retry ~schedule:(retry_policy ()) ~while_:retryable
 
 let preview_delays ~seed count =
   let random = Capabilities.random_of_seed seed in
