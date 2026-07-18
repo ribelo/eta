@@ -334,3 +334,73 @@ unified `retry` has a single `'err`; old `retry_or_else` could remap the
 error channel (`'err1 -> 'err2`) — affected call sites need an explicit
 `map_error` composition, listed one by one in the executor journal. If any
 call site cannot be expressed this way, that is a fresh BLOCKED signal.
+
+---
+
+## V-DX-E24-003 — 2026-07-18 — research/dx-e24-iteration-mirrors-list — phase: orchestrator decision (final contract after oracle consultation)
+
+Two-round adversarial consultation with the oracle; consensus reached. This
+entry SUPERSEDES the E24 contract parts of V-DX-E24-002/002a where they
+conflict (single-`'err` unification, list-first `~f` map_par, E24b framed as
+a `Resource.auto` callback design). Oracle factual claims verified in code
+before concession: `for_each_par` = `min n 8` workers; `retry` matches bare
+`Cause.Fail` only while `retry_or_else` handles composite causes;
+`Schedule.step_plan` public; `Effect.map` function-first unlabeled;
+`Eta_stream` ×4 public hook-schedule operations.
+
+**Final E24 contract (consensus).**
+
+```ocaml
+val map_par :
+  ?max_concurrent:int -> ('a -> ('b, 'err) t) -> 'a list -> ('b list, 'err) t
+  (* absorbs for_each_par + for_each_par_bounded, both deleted;
+     absent max_concurrent = 8, documented (today's silent min n 8);
+     Invalid_argument on max_concurrent <= 0 at construction *)
+
+val retry :
+  schedule:('err, 'out, (unit, 'err) t) Schedule.t ->
+  while_:('err -> bool) -> ('a, 'err) t -> ('a, 'err) t
+
+val retry_or_else :
+  schedule:('err1, 'out, (unit, 'err2) t) Schedule.t ->
+  while_:('err1 -> bool) ->
+  or_else:('err1 -> 'out option -> ('a, 'err2) t) ->
+  ('a, 'err1) t -> ('a, 'err2) t
+
+val repeat :
+  schedule:('a, 'out, (unit, 'err) t) Schedule.t ->
+  ('a, 'err) t -> ('out, 'err) t
+```
+
+Key decisions:
+
+1. **`retry_or_else` KEPT.** The two-error form is genuine typed-error
+   expressiveness; `map_error` cannot recover it (schedule would see the
+   wrong type; fallback would lose the schedule output; no
+   information-preserving map need exist). The "duplication" the one-pager
+   diagnosed was misdiagnosed — the two operations also differ in cause
+   semantics today.
+2. **The cause-semantics divergence is documented as a current limitation,
+   not canonized.** mli states the difference explicitly; a separate
+   semantic decision is registered: should `retry` adopt
+   `retry_or_else`'s catchable typed-cause semantics? (backlog)
+3. **`map_par` is function-first** — Stdlib `List.map` and Eta's own
+   `Effect.map`, not Base/Core's `~f`-labeled list-first. Optional
+   prepended; erasure probe required.
+4. **Default 8 is honest and tested** (test with >8 inputs proves the
+   cap), turning hidden behavior into an intentional contract.
+5. **`Schedule.t` untouched** — 3 params, taps, `no_hook` stay; no
+   `?on_retry`/`?on_repeat` anywhere.
+6. **E24b reframed:** "Schedule-hook ownership: policy vs. driver".
+   Inventory must cover `Effect.retry`, `retry_or_else`, `repeat`,
+   `Resource.auto`, `Eta_stream` ×4, and the full public driver protocol —
+   `start`, `driver`, `step`, `step_plan`, `step_with_hooks`, `next`,
+   `no_hook` — evaluating the existing `step_with_hooks` seam before
+   inventing per-driver callbacks. Semantics matrix: pre/post-step,
+   terminal `Done`, hook failure, state advancement. "Retain hooks and
+   close the slimming permanently" is a live outcome.
+
+Rescoped predictions: iterate cluster 5 → 4 vals / 5 → 4 concepts;
+footguns −1/+0; migration ~265 call lines (for_each_par×2 ~135 + labeled
+retry/repeat call-site updates ~130), mechanical. Executor resumes on the
+same branch with follow-up objective `followup-1.md`.
