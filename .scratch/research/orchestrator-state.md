@@ -9,7 +9,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - In flight: **E24 — Iteration mirrors `List`; slimmer `Schedule.t`**
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e24`
   - Branch: `research/dx-e24-iteration-mirrors-list`
-  - Stage: predictions sealed (V-DX-E24-001); objective.md written; awaiting executor
+  - Stage: contract amended after oracle consensus (V-DX-E24-003); followup-1.md written; awaiting executor rework
 - Done: **E23 — promoted** (merged `66bad437`, master gates green, pushed)
 - Queue: E24 → E25 (Phase A, strictly sequential) → Phase B batching per plan
 - Open follow-ups: F1 signal_jsoo JS-track bit-rot (pre-existing on
