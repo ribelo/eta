@@ -185,3 +185,62 @@ objective archived at `.scratch/research/objectives/dx-e23-result-error-channel.
   `recover` by taste.
 - F3: `examples/catch_recovery.ml` filename keeps the old noun (id is
   referenced by `test/api_dx`). Cosmetic; revisit with E5's docs work.
+
+---
+
+## V-DX-E24-001 — 2026-07-18 — research/dx-e24-iteration-mirrors-list — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E24-002.
+
+**Current shapes (measured pre-change).** Iterate cluster in `effect.mli`:
+`for_each_par` (44 call-site lines), `for_each_par_bounded` (91),
+`retry` (90, schedule-first positional, 3-param Schedule), `retry_or_else`
+(23), `repeat` (17). `Schedule.t` is `('input, 'output, 'hook) t`; `driver`
+and `step` types also carry the third param; `no_hook = |` exists solely to
+plug it. Tap usage outside `schedule.ml`: 16 lines, all in 3 test files —
+no lib/examples/bench uses. JS-track call sites exist in
+`test/cache_jsoo`, `test/js_jsoo`, `test/signal_jsoo` (checked lib AND
+test dirs this time — E23 lesson).
+
+**Census (predicted).** Iterate cluster 5 vals → 3 (`map_par`, `retry`,
+`repeat`); concepts 5 → 2 (parallel map; schedule-driven repetition).
+`Schedule.t` 3 params → 2 across `t`, `driver`, `step` and every
+combinator; `no_hook` deleted; `tap_input`/`tap_output` deleted from the
+public API (16 test lines migrate to `?on_retry`/`?on_repeat` observers).
+Footguns: **−2/+0** ("`for_each` collects results" name/type mismatch;
+`retry`/`retry_or_else` duplication).
+
+**Migration size (predicted).** ~265 iterate call-site lines + ~30
+`Schedule.t` type mentions; 60–90 files including 3 jsoo test files.
+
+**Teach-back / guess-the-semantics (P-OCaml, predicted).**
+- `?max_concurrent` → "at most N running at once, rest queue" — correct.
+- `map_par` result order → "input order, like `List.map`" — correct.
+- sibling fate on failure → "fail-fast, others cancelled" — correct.
+- `~while_` → "predicate deciding whether to retry a typed failure" —
+  correct from name+type; one possible misread as a success-loop.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) expects `?max_concurrent` default to be finite (CPU count),
+  not unbounded; (2) first reads `while_` as "repeat while this holds on
+  success" (loop intuition) before the type corrects them.
+- P-ZIO: (1) expects `retry` to retry all failures without a required
+  `~while_` (ZIO defaults) — friction; (2) expects observers to be able to
+  alter the schedule decision (ZIO schedules are effectful values);
+  surprised they are observe-only.
+- P-Maint: (1) expects observer failures to be swallowed rather than
+  failing the typed channel (mli must state it); (2) suspects `?or_else`
+  receiving `None` on first-rejection is a behavior change vs.
+  `retry_or_else` (it is not — preserved).
+
+**Review (predicted).** Blind A/B (bounded-parallel fetch;
+retry-with-fallback): new median ≥ 4 with no rating ≤ 2; old
+(`for_each_par_bounded`; positional `retry_or_else`) median ≤ 3. Risk
+point: the `while_` underscore label — predicted accepted as OCaml
+keyword-avoidance idiom, possibly one grumble, no rating drop below 4.
+
+**Outcome (predicted).** Promote. The Schedule-slimming hold trigger
+("uses observers cannot express") does NOT fire — taps are test-only and
+all 16 uses map to observers. Gates green within three fix attempts;
+mainline jsoo compile check on `cache_jsoo`/`js_jsoo` (`signal_jsoo`
+pre-broken per F1 — verify unchanged, do not fix).
