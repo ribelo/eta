@@ -284,12 +284,41 @@ does not mean unbounded concurrency.
 `Effect.with_resource`. They are needed for resources that intentionally live
 until a surrounding runtime, supervisor, daemon, or scope boundary exits.
 
+For two or three independent resources, use `Effect.Scoped.with_2` or
+`Effect.Scoped.with_3`: acquisition is concurrent and fail-fast, and the local
+scope releases every successfully registered resource when the body exits. For
+arity greater than three, keep the same composition visible: open one
+`Effect.with_scope`, register each resource with `Effect.acquire_release`, and
+acquire the independent descriptions with `Effect.map_par` (or `Effect.all`
+when the descriptions are already a homogeneous list).
+
+For example, four database shards can share one explicit scope:
+
+```ocaml
+let with_shards configs body =
+  let open Eta.Syntax in
+  Effect.with_scope
+    (let* shards =
+       Effect.map_par
+         (fun config ->
+           Effect.acquire_release
+             ~acquire:(Db.connect config)
+             ~release:Db.close)
+         configs
+     in
+     body shards)
+```
+
+The shard acquisitions run concurrently. A failed shard cancels acquisitions
+still in progress; connections already registered are closed once in reverse
+successful acquisition order as the scope exits.
+
 `Effect.finally` is not replaced by hand-written `bind_error` cleanup. Manual
 cleanup around typed success/failure paths misses defects and cancellation, and
 does not preserve cleanup failures with Eta's finalizer/suppressed-cause
 semantics. Use `finally cleanup body` for one-shot cleanup around an existing
 effect. Use `with_resource` when cleanup depends on a newly acquired resource,
-and `acquire_release` / `scoped` when a resource should live until a wider
+and `acquire_release` / `with_scope` when a resource should live until a wider
 scope boundary.
 
 `Effect.sync` is the synchronous defect boundary. Use it when exceptions should

@@ -538,6 +538,32 @@ val with_scope : ('a, 'err) t -> ('a, 'err) t
     before the outer scope continues. Use this for resource lifetimes that
     should not extend to the runtime boundary. *)
 
+module Scoped : sig
+  val with_2 :
+    acquire1:('a, 'err) t ->
+    release1:('a -> (unit, 'r1) t) ->
+    acquire2:('b, 'err) t ->
+    release2:('b -> (unit, 'r2) t) ->
+    ('a -> 'b -> ('c, 'err) t) ->
+    ('c, 'err) t
+  (** Acquire two independent resources concurrently and fail fast.
+
+      If one acquire fails, already registered releases run as the scope exits.
+      Releases run once in reverse successful acquisition order, including on
+      typed failure, defect, and cancellation. *)
+
+  val with_3 :
+    acquire1:('a, 'err) t ->
+    release1:('a -> (unit, 'r1) t) ->
+    acquire2:('b, 'err) t ->
+    release2:('b -> (unit, 'r2) t) ->
+    acquire3:('c, 'err) t ->
+    release3:('c -> (unit, 'r3) t) ->
+    ('a -> 'b -> 'c -> ('d, 'err) t) ->
+    ('d, 'err) t
+  (** Three-resource form of {!with_2}. *)
+end
+
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
 (** Run [background] while [use] executes, then cancel the background child when
