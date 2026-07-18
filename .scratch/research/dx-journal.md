@@ -55,3 +55,59 @@ Protocol notes for future readers: agent-run persona evidence is labelled
 `spot-check`. Blind-review packets are assembled and randomized by the
 orchestrator from executor-labeled material; the oracle never sees labels,
 goals, or implementations.
+
+---
+
+## V-DX-E23-001 — 2026-07-18 — research/dx-e23-result-error-channel — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E23-002 against the
+executor's own branch-journal predictions and the measured results.
+
+**Walkthrough expectations (W1 is the channel task).** Post-change W1 path:
+`Effect.sync (fun () -> Db.find id) |> Effect.flatten_result |>
+Effect.bind_error (fun `Not_found -> Effect.pure default)`. A reviewer
+reading the call site names the channels correctly: `Error` → typed failure
+channel, exception → defect, `bind_error` touches only the typed channel.
+
+**Teach-back (plan-mandated prediction).** "What does `bind_error` do to
+defects?" answered correctly by 3/3 persona passes without a doc lookup
+("nothing — they propagate; it binds the typed error channel like
+`Result.bind_error`"). Baseline with `catch`: at least one persona guesses
+"catches exceptions".
+
+**Blind A/B (W1 snippet, old vs. new naming).** Old (`catch`) median 3,
+with ≥1 reviewer misreading the defect behavior; new (`bind_error`) median
+≥4, zero defect misreadings. `fold ~ok ~error` reads as `Result.fold` —
+one reviewer may ask whether handlers are pure (they are); predicted as a
+question, not a rating drop below 4.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) reaches for `to_result` + `Result` pattern-match instead of
+  `bind_error` out of Stdlib habit; (2) briefly expects `fold` to see
+  defects, reads "both channels" as "all causes".
+- P-ZIO: (1) hunts for `catchAll`/`catchAllCause`, misjudges their absence;
+  (2) tries to return effects from `fold` handlers (`foldZIO` habit) and
+  hits the pure-handler type error.
+- P-Maint: (1) assumes `to_result` and `to_exit` reify the same things —
+  predicts confusion about which one captures defects (`to_exit` does,
+  `to_result` doesn't); (2) expects `catch_some` to have been renamed too
+  and searches for a nonexistent new name.
+
+**Census (measured pre-change).** Handle cluster in `effect.mli`: 11 public
+vals (`catch`, `catch_some`, `recover`, `or_else`, `or_else_succeed`,
+`ignore_errors`, `ignore`, `result`, `option`, `exit`, `map_error`), 10
+concepts. Post-change: 10 vals, 8 concepts (`recover` + `or_else_succeed`
+merge into `fold`). All other clusters flat.
+
+**Migration size (measured).** ~51 source files, ~220 call-site lines
+(`catch` 149, `exit` 26, `recover` 18, `result` 10, `catch_some` 5,
+`option` 4, `or_else` 4, `or_else_succeed` 3, `ignore` 7), plus `README.md`
+and 3 docs pages. No JS-track call sites; jsoo gates not required.
+
+**Footguns.** −1: the top trap "`catch` catches exceptions" is removed by
+construction. +0 expected.
+
+**Outcome.** Promote. Gates green within three fix attempts. Risk points:
+(1) `fold`'s `('b, 'outer) t` return type draws one reviewer question;
+(2) `docs/api-dx.md` consistency is the easiest migration step to forget —
+flagged as an explicit verification item.
