@@ -12,4 +12,4 @@ suppressed:
       interrupt
 
 == pp_compact (one line) ==
-fail(A) + die(Failure("boom")) | suppressed: (fail("cleanup failed") ; interrupt)
+fail(A) + die(Failure("boom")) | suppressed: finalizer(fail("cleanup failed") ; interrupt)

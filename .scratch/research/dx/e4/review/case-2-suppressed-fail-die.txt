@@ -8,4 +8,4 @@ suppressed:
     defect: Invalid_argument("cleanup")
 
 == pp_compact (one line) ==
-fail(B) | suppressed: die(Invalid_argument("cleanup"))
+fail(B) | suppressed: finalizer(die(Invalid_argument("cleanup")))

@@ -225,3 +225,76 @@ See `report.md`.
 - `interrupt_id` arithmetic is now technically possible via
   `interrupt_id_to_int`; accepted as the price of structured encoding
   (the alternative — string scraping of `Cause.pp` — is worse).
+
+---
+
+## Rework round 1 — board fired the kill gate on cases 2 & 6
+
+### Board evidence (verbatim)
+
+The error review board rated the corpus: cases 1, 3, 4, 5
+PASS-WITH-COMMENT; **cases 2 and 6 FAIL**. The failure is specific:
+
+> The one-line form `p | suppressed: f` never says the right-hand cause ran
+> in a **finalizer**. For a reader, "suppressed" can mean an arbitrary
+> secondary error. The tree form labels `finalizer:`; the compact form
+> loses that role.
+
+The pre-registered kill gate ("compactness destroys the primary/finalizer
+distinction") fired on this evidence. The orchestrator authorized **one
+rework round**; if the fixed line reads worse than two lines, `pp_compact`
+dies and "two-line logs" ships as the finding.
+
+Board verdict vs my sealed prediction: I predicted the kill gate would not
+fire, and argued in the red-team verdict that `| suppressed:` preserves
+the primary/finalizer distinction. The board's reading is subtler and
+correct: the *distinction* (which side is primary) survived, but the
+*role* of the right-hand side (it ran in a finalizer) did not. Structural
+paren-truth was not enough; the label itself was lossy. Recorded as a
+prediction miss — my red-team checked parseability, not role naming.
+
+### Fix
+
+Spelling: `p | suppressed: finalizer(f)` — the suppressed segment now
+wraps its right-hand side in the notation's existing `finalizer(...)`
+vocabulary, so the reader names "this ran in a finalizer" from the line
+alone. Implementation detail: the wrapper self-delimits, so composite
+finalizer sides lose the parens the old form needed
+(`... | suppressed: (a ; b)` → `... | suppressed: finalizer(a ; b)`); the
+`` `Sup `` parenthesization row for the finalizer side was deleted (dead
+rule), `` `Sup_primary `` is unchanged. mli legend updated.
+
+Re-locked renders:
+
+| Case | Fixed compact |
+|---|---|
+| corpus 2 | `fail(B) \| suppressed: finalizer(die(Invalid_argument("cleanup")))` |
+| corpus 6 | `fail(A) + die(Failure("boom")) \| suppressed: finalizer(fail("cleanup failed") ; interrupt)` |
+| corpus 8 | `(fail(A) \| suppressed: finalizer(fail("f1"))) \| suppressed: finalizer(fail("f2"))` |
+| red-team monster1 | three suppression points, each `\| suppressed: finalizer(...)`, still one line, all 11 leaf checks pass |
+
+### Gates (rework)
+
+```
+nix develop -c dune build @install          # OK
+nix develop -c dune runtest --force         # OK (515 core incl. re-locked corpus)
+nix develop -c eta-oxcaml-test-shipped      # OK
+nix develop .#mainline -c dune build test/cache_jsoo test/js_jsoo   # OK
+```
+
+### Housekeeping
+
+The review-packet generator's compile artifacts (`gen_renders.cmi/.cmx/.o`)
+had been committed accidentally — `git rm`'d, `.gitignore` extended
+(`_gen/`, `*.cmi`, `*.cmx`, `*.o`), and `gen.sh` now deletes them after
+each run. Review-packet case files regenerated with the fixed notation.
+
+### Self-assessment against the rework criterion
+
+Does the fixed line read worse than two lines? For corpus cases 2 and 6
+the fixed lines are 68 and 82 characters — longer than before but the role
+is now explicit at the exact point the board asked for. Monster1's line
+grows to ~330 characters with three `finalizer(...)` wrappers; it stays
+parseable because each wrapper self-delimits. My verdict: better, not
+worse — the notation earned its keep. Final call belongs to the
+continuity board and the cold reviewer.

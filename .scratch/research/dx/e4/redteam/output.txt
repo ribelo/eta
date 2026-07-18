@@ -1,5 +1,5 @@
 === monster1: everything at once ===
-compact: (fail(timeout) ; die(Failure("shard exploded"))) + (fail(auth) ; interrupt#1 | suppressed: (fail("span export failed") ; finalizer(die(Invalid_argument("closed twice"))))) + interrupt + finalizer(fail("flush failed") | suppressed: interrupt#2) | suppressed: (fail("metrics flush failed\nwith detail") + die(Failure("finalizer exploded\nover lines")))
+compact: (fail(timeout) ; die(Failure("shard exploded"))) + (fail(auth) ; interrupt#1 | suppressed: finalizer(fail("span export failed") ; finalizer(die(Invalid_argument("closed twice"))))) + interrupt + finalizer(fail("flush failed") | suppressed: finalizer(interrupt#2)) | suppressed: finalizer(fail("metrics flush failed\nwith detail") + die(Failure("finalizer exploded\nover lines")))
 pretty:
 suppressed:
   primary:

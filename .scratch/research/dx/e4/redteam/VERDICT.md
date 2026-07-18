@@ -61,3 +61,24 @@ follow-up candidate, not changed here.
 `pp_compact` stays one line and stays truthful on the ugliest causes I could
 construct. No omission beyond the contracted defect-metadata summary. I would
 not kill the one-liner; the corpus is ready for board rating.
+
+---
+
+## Rework round 1 — board kill-gate fix (suppressed notation)
+
+The board failed corpus cases 2 and 6 on the *role* question: the old
+`p | suppressed: f` line never said the right-hand side ran in a finalizer.
+That verdict supersedes my claim above that the paren rule alone "saves the
+primary/finalizer distinction" — the distinction survived, the role label
+did not.
+
+Fix: `p | suppressed: finalizer(f)`. `output.txt` regenerated:
+
+- monster1 now has three `| suppressed: finalizer(...)` points, each
+  self-delimited (composite finalizer sides no longer need parens); all 11
+  leaf checks still pass, still one line.
+- monster3/monster4 unaffected; monster2 unaffected.
+
+Line-length cost on monster1: ~260 → ~330 characters. Readability cost on
+the corpus cases that matter (≤ 82 chars): negligible, and the role is
+explicit. The red-team verdict stands with the fixed notation.

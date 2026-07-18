@@ -101,3 +101,65 @@ one-liner. Final call belongs to the board (QUESTIONS.md item 6).
    failure semantics.
 2. Census sealed +1 core val; shipped +2. Recorded as a prediction miss
    with the forcing evidence (encoder needs interrupt identity).
+
+---
+
+## Rework round 1 — board kill gate fired on cases 2 & 6
+
+### Board evidence (verbatim)
+
+The error review board rated the corpus: cases 1, 3, 4, 5
+PASS-WITH-COMMENT; **cases 2 and 6 FAIL**:
+
+> The one-line form `p | suppressed: f` never says the right-hand cause ran
+> in a **finalizer**. For a reader, "suppressed" can mean an arbitrary
+> secondary error. The tree form labels `finalizer:`; the compact form
+> loses that role.
+
+The pre-registered kill gate fired; the orchestrator authorized one rework
+round. My sealed prediction ("kill gate does not fire") and my red-team
+claim ("the paren rule is what preserves the primary/finalizer
+distinction") were both wrong in the same way: they covered *structural*
+distinction, not *role naming*. Recorded as a prediction miss.
+
+### Fix and re-locked corpus
+
+Notation: `p | suppressed: finalizer(f)` — the finalizer role is explicit
+in the suppressed segment, reusing the existing `finalizer(...)`
+vocabulary; the wrapper self-delimits, so composite finalizer sides drop
+their old parens. Updated in `cause.ml` (dead `` `Sup `` paren row removed)
+and the `cause.mli` legend.
+
+Re-locked snapshots (pretty forms unchanged):
+
+- corpus 2: `fail(B) | suppressed: finalizer(die(Invalid_argument("cleanup")))`
+- corpus 6: `fail(A) + die(Failure("boom")) | suppressed: finalizer(fail("cleanup failed") ; interrupt)`
+- corpus 8: `(fail(A) | suppressed: finalizer(fail("f1"))) | suppressed: finalizer(fail("f2"))`
+- red-team `output.txt` regenerated; all programmatic checks still pass;
+  review-packet case files regenerated.
+
+### Gates (rework) — all green
+
+`dune build @install`, `dune runtest --force`, `eta-oxcaml-test-shipped`,
+mainline `dune build test/cache_jsoo test/js_jsoo`.
+
+### Housekeeping
+
+Committed generator artifacts (`gen_renders.cmi/.cmx/.o`) removed from
+git; `.gitignore` extended; `gen.sh` cleans them after each run.
+
+### Worse than two lines?
+
+No. Fixed corpus lines are 68–82 characters with the role explicit at the
+point of suppression; the monster line grows but stays parseable because
+each `finalizer(...)` self-delimits. I hold the rework verdict: the
+one-liner earned its keep. The kill/power decision now belongs to the
+continuity board plus a cold reviewer on the revised packet.
+
+### Updated recommendation
+
+| Piece | Recommendation | Basis |
+|---|---|---|
+| `Cause.pp_compact` (reworked) | **Promote, pending continuity review** | kill-gate failure was actionable and is fixed in the notation; gates green; red-team re-run clean |
+| Snapshot corpus (re-locked) | **Promote** | same machine checks; board re-rates the fixed renders |
+| `Eta_otel.Cause_json` | **Promote** (unaffected) | board failure was notation-only |

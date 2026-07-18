@@ -29,6 +29,9 @@ Branch: `research/dx-e4e5-cause-corpus-type-errors`.
 
 ## Notes for the board
 
+- **Revision 2 (rework round 1):** cases 2 and 6 re-rendered with the fixed
+  suppressed notation (`p | suppressed: finalizer(f)`) after the board's
+  kill-gate verdict on the finalizer role. All other cases unchanged.
 - `pp_compact`'s contract: single line, total, newline-free; defect span
   names, annotations, and backtraces are omitted by design (see
   `lib/eta/cause.mli`). Question 7 asks you to judge that omission.

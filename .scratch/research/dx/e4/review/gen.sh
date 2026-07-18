@@ -13,3 +13,4 @@ ocamlfind ocamlopt \
   "$ROOT/_build/default/lib/eta/eta.cmxa" \
   gen_renders.ml -o _gen/gen
 ./_gen/gen
+rm -f gen_renders.cmi gen_renders.cmx gen_renders.o
