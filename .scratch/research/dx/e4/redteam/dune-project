@@ -1,0 +1,6 @@
+(lang dune 3.0)
+
+(package
+ (name dx_e4_redteam)
+ (allow_empty)
+ (depends eta))

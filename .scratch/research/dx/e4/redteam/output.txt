@@ -1,0 +1,57 @@
+=== monster1: everything at once ===
+compact: (fail(timeout) ; die(Failure("shard exploded"))) + (fail(auth) ; interrupt#1 | suppressed: (fail("span export failed") ; finalizer(die(Invalid_argument("closed twice"))))) + interrupt + finalizer(fail("flush failed") | suppressed: interrupt#2) | suppressed: (fail("metrics flush failed\nwith detail") + die(Failure("finalizer exploded\nover lines")))
+pretty:
+suppressed:
+  primary:
+    concurrent:
+      sequential:
+        fail: timeout
+        defect: Failure("shard exploded")
+      suppressed:
+        primary:
+          sequential:
+            fail: auth
+            interrupt: 1
+        finalizer:
+          sequential:
+            finalizer fail: span export failed
+            finalizer:
+              defect: Invalid_argument("closed twice")
+      interrupt
+      finalizer:
+        suppressed:
+          primary:
+            finalizer fail: flush failed
+          finalizer:
+            interrupt: 2
+  finalizer:
+    concurrent:
+      finalizer fail: metrics flush failed
+with detail
+      defect: Failure("finalizer exploded\nover lines")
+
+=== monster2: degenerate composites ===
+compact: sequential() ; (fail(lone)) ; finalizer(sequential())
+pretty:
+sequential:
+  sequential:
+  concurrent:
+    fail: lone
+  finalizer:
+    sequential:
+
+=== monster3: metadata omission ===
+compact: die(Failure("export boom"))
+pretty:
+defect: Failure("export boom")
+  span: span.export
+  annotation batch=42
+
+=== monster4: parens in payloads ===
+compact: fail(unbalanced ) paren) + fail(another ()
+pretty:
+concurrent:
+  fail: unbalanced ) paren
+  fail: another (
+
+verdict: all red-team checks passed

@@ -1,0 +1,9 @@
+Concurrent [ Die (Failure "a"); Die (Failure "b") ]
+
+== pretty (multi-line tree) ==
+concurrent:
+  defect: Failure("a")
+  defect: Failure("b")
+
+== pp_compact (one line) ==
+die(Failure("a")) + die(Failure("b"))

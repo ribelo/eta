@@ -118,3 +118,110 @@ independently regardless.
 
 Committed this section before any code change
 (`docs(dx-e4): seal predictions`).
+
+### Step 2 — docs-first `.mli`
+
+Wrote the `Cause.pp_compact` contract in `lib/eta/cause.mli` (9 doc lines:
+segment shapes, parenthesization, suppressed separator, totality +
+newline-freedom, the defect-metadata omission and where full diagnostics
+live) before touching `cause.ml`.
+
+### Step 3 — implement
+
+- `lib/eta/cause.ml`: `pp_compact` as sealed. Two rec walkers (main tree +
+  `Finalizer.t`) sharing `add_die` / `add_interrupt` / `add_join` helpers;
+  parenthesization via a flavor context (`Seq`/`Conc`/`Sup`/`Sup_primary`/
+  `Fin`/`Top`). Embedded renderer output and `Printexc.to_string` are
+  sanitized (`\n`, `\r` → two-character escapes); `Finalizer.Fail` strings go
+  through `%S`. Degenerate raw composites render as `sequential()` /
+  `concurrent()`.
+- OxCaml notes: `let add = Buffer.add_string buffer` (partial application)
+  is local-moded and rejected inside closures passed to `List.iter`;
+  eta-expanded to `let add text = ...`. A shared helper inside a `let rec
+  ... and` group monomorphized on first use; lifted out as a plain
+  polymorphic `let`.
+- **Prediction miss (recorded as data):** the sealed census said +1 core
+  val. `Eta_otel.Cause_json` needs interrupt identity for the `id` field,
+  and `interrupt_id` had no accessor — encoding every id as `null` would
+  merge distinct interruptors (a lie by omission), and scraping `Cause.pp`
+  output is fragile. Added `Cause.interrupt_id_to_int`. **Actual core
+  delta: +2 vals** (`pp_compact`, `interrupt_id_to_int`).
+- `lib/otel/cause_json.ml` (private module, re-exported as
+  `Eta_otel.Cause_json`): `to_yojson` / `to_string` over `Cause.Portable.t`
+  with a caller `'err` encoder. Node kinds exactly as sealed; optional
+  defect fields (`backtrace`, `span`, `annotations`) appear only when
+  present; annotations encode as a list of `[key,value]` pairs (lossless
+  under duplicate keys). Core stays JSON-free (verified: `lib/eta/dune` has
+  no `libraries`).
+- Corpus: `test/core_common/cause_render_common_suites.ml` — the five
+  one-pager cases + four extra (suppressed × concurrent × finalizer, mixed
+  nesting parens, suppressed-primary-suppressed, newline sanitization,
+  degenerate raw composites), each locked both ways (`pretty` +
+  `pp_compact`) as exact strings, registered in
+  `core_common_suites.ml`. Interrupt-id expectations are assembled from
+  single-node fragments through the function under test (ids are abstract,
+  no literal can be written).
+- Encoder snapshots: `test/otel_common/cause_json_common_suites.ml` — five
+  exact-JSON cases, registered in `otel_common_suites.ml`.
+
+### Step 4 — gates
+
+```
+nix develop -c dune build @install          # OK
+nix develop -c dune runtest --force         # OK (515 core tests incl. 12 new; 30 otel incl. 5 new)
+nix develop -c eta-oxcaml-test-shipped      # OK
+nix develop .#mainline -c dune build test/cache_jsoo test/js_jsoo   # OK
+```
+
+jsoo build emits two pre-existing integer-overflow warnings in unrelated
+js stubs; `cause.ml` compiles clean on the 5.4.1 mainline track.
+
+### Step 5 — mechanical extras
+
+- **Newline-freedom property:** exhaustive enumeration over ~380 generated
+  causes (depth ≤ 2 composites over 8 main leaves + 6 finalizer leaves,
+  payloads containing `'\n'`, quotes, tabs, empty strings; raw empty and
+  singleton composites included) asserts no `'\n'` and no `'\r'` and
+  non-empty output. In `cause_render_common_suites.ml` as
+  `compact newline-freedom property`. No qcheck dependency added.
+- **Census actual:** rendering/observability cluster **+2 vals**
+  (`Cause.pp_compact`, `Cause.interrupt_id_to_int`) vs sealed +1 — the
+  second val is the encoder-forced accessor described in step 3. `eta_otel`
+  **+1 public module** (`Cause_json`), as sealed.
+- **Footgun actual:** **+0/−0**, as sealed. The compact-is-a-summary
+  omission is stated in the contract; monster4 in the red-team records that
+  compact is not machine-parseable (the encoder is).
+
+### Step 6 — red-team
+
+`.scratch/research/dx/e4/redteam/` — `probe_compact_monster.ml` attacks the
+renderer with: (1) suppressed × concurrent × sequential × finalizer ×
+nested-suppressed with multi-line payloads; (2) raw empty/singleton
+composites; (3) defect-metadata omission (compact must omit, `pretty` must
+keep); (4) parens in payloads. Programmatic checks: one-line holds, all 11
+monster-1 leaves present, no metadata leak, `pretty` retains metadata.
+**All checks passed.** Key finding: the parenthesization rule is what
+preserves the primary/finalizer distinction — `| suppressed:` binds loosest
+and suppressed children under seq/conc are always parenthesized, so an
+unparenthesized trailing `| suppressed:` is unambiguously the top node.
+Kill gate does not fire. Full analysis in `redteam/VERDICT.md`.
+
+### Step 7 — review packet
+
+Files under `.scratch/research/dx/e4/review/` as required.
+
+### Step 8 — report
+
+See `report.md`.
+
+### Follow-up notes (out of scope)
+
+- `pretty` writes multi-line payloads raw, so a `Finalizer.Fail
+  "line1\nline2"` breaks indentation (red-team monster1 `pretty:` block).
+  Pre-existing; candidate for a future hygiene batch.
+- `Cause.Portable.pp_compact` deliberately not added (sealed scope); the
+  JSON encoder is the portable-side story. Revisit if a cross-domain sink
+  asks for one-line text.
+- `interrupt_id` arithmetic is now technically possible via
+  `interrupt_id_to_int`; accepted as the price of structured encoding
+  (the alternative — string scraping of `Cause.pp` — is worse).

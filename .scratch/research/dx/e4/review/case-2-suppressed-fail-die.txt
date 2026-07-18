@@ -1,0 +1,11 @@
+Suppressed { primary = Fail `B; finalizer = Die (Invalid_argument "cleanup") }
+
+== pretty (multi-line tree) ==
+suppressed:
+  primary:
+    fail: B
+  finalizer:
+    defect: Invalid_argument("cleanup")
+
+== pp_compact (one line) ==
+fail(B) | suppressed: die(Invalid_argument("cleanup"))
