@@ -597,3 +597,95 @@ untracked).
 **Decision: PROMOTE all four renames.** Merged `--no-ff` (`eac6d482`),
 master gates green, master + branch pushed, worktree removed, objective
 archived. Phase A complete — synthesis at V-DX-PHASE-A.
+
+---
+
+## V-DX-PHASE-A — 2026-07-18 — Phase A synthesis (idiom pass)
+
+**What the evidence says.** Three experiments promoted (E23 `66bad437`,
+E24 `29bd23e9`, E25 `eac6d482`); master gates green after every merge and
+now. Cumulative census: handle cluster 11→10 vals / 10→8 concepts
+(V-DX-E23-002); iterate cluster 5→4 / 5→4 (V-DX-E24-004); observability −1
+val; lifecycle family uniform `with_*` (V-DX-E25-002). Cumulative footguns:
+**−3/+0**. Independent reviews (fixed P-OCaml persona, blinded randomized
+pairs): new shapes rated 4,4,4 / 5,4 / 4,4 vs old 3,3,1 / 3,3 / 3,4 — every
+pair preferred new; the two most-cited old-side failures (`catch` →
+try/with misreading, rated 1; `for_each` not promising a collected ordered
+result) are gone by construction. The north-star sentence — *`Effect` is
+`Result` with concurrency and spans* — is now literally true in the mli for
+the error channel and iteration. `CHANGELOG.md` created with the single
+"idiom pass" entry as the migration guide (extends with E2/E9).
+
+**Wrong predictions and their lessons.**
+- Orchestrator: E23 migration size (~51 → actual 84 files — census your
+  blast radius with the same rg patterns you predict against). E24
+  slimming-trigger ("taps are test-only" — tests encode public behavior;
+  the driver census must include hand-rolled drivers, `Resource.auto`,
+  `Eta_stream`, and the public `step_plan`). E24 census targets (superseded
+  by rescope — predict against the one-pager's gates, not its optimism).
+  E24 omission-misreading direction (predicted "expects finite default";
+  actual "unbounded" — the red-team's honest caveat beat my guess; F4
+  registered). E25 `now_ms` "read correctly" (partial — units helped,
+  wall-vs-monotonic still needs the mli sentence).
+- Executor corps: E23 "no JS call sites" (false; orchestrator made the same
+  wrong pre-flight claim — both now guarded by explicit JS-dir checks in
+  every objective). E24 original census (missed with the rescope; scored
+  honestly).
+- Plan itself: E24's signatures were unwritable in OCaml (optional-last
+  erasure) and its `retry_or_else` absorption was a misdiagnosis —
+  two-error fallback is irreplaceable by `map_error` (V-DX-E24-003). The
+  one-pager template now carries an erasure-check expectation.
+
+**Not rubber-stamping (§4.5.3 argument).** Zero experiment kills, but: (1)
+E24 was blocked pre-production with a reproducible probe and the contract
+was amended — the process stopped work, it did not wave it through; (2) a
+core plan objective (retry_or_else absorption) was killed by evidence
+mid-flight, and another (Schedule.t slimming) hit its pre-registered hold
+trigger — both recorded with evidence, both changed the merged shape; (3)
+prediction misses are on record on all three sides (orchestrator, executor,
+plan) and scored publicly; (4) two factual errors in executor reports were
+caught in orchestrator verification (E23 JS claim; E24 none — it improved);
+(5) review scores show real variance (old sides 3,3,1/3,3/3,4; new sides
+not ceiling: fold-noise and cap-visibility caveats accepted as tradeoffs
+F2/F4, not explained away).
+
+**Plan adjustments adopted.** Oracle consultation is now a standing step
+for contract amendments (E24 model: adversarial, fact-checked in code
+before concession, consensus recorded). Erasure probes are mandatory for
+any new optional-argument surface. Census concept-counting follows the
+disclosed cluster definitions used in E23–E25 (map_error lives in the
+transform cluster). Objectives require JS-track pre-checks in both lib and
+test dirs.
+
+**Backlog (registered).** E24b — schedule-hook ownership: policy vs.
+driver (entry gate: full driver inventory incl. `step_with_hooks`; "retain
+hooks permanently" is live). Retry cause-alignment decision (should
+`retry` adopt composite-cause handling?). F1 `signal_jsoo` JS bit-rot
+(pre-existing). F2 `fold ~ok:Fun.id` noise (watch). F3
+`examples/catch_recovery.ml` filename. F4 `map_par` omission-vs-unbounded
+misreading (mitigated by mli + docs + test; watch). F5 `Supervisor.scoped`
+vs. `with_*` family vocabulary. Candidate (unregistered): `map_par`
+default-8 measurement experiment on `bench/`.
+
+**Spot-check list (§4.5.4 — all promotes rest partly on `[agent-sim]`
+review evidence).** Priority order for a human eye: (1) E23 — highest-
+traffic surface (`bind_error`/`fold`/`to_*`); (2) E24 — `map_par`
+default-8 contract + retained `retry_or_else`; (3) E25 — `error_pp`
+defect contract (raising printer now defects where a silent fallback
+string existed).
+
+**Protocol-compliance self-audit.** Predictions: dual-sealed on all three
+experiments, commit-order verified (executor seals pre-code; orchestrator
+seals pre-branch). Reviewer context: fresh oracle session per review;
+packets randomized+blinded by orchestrator, keys sealed outside packet
+dirs; advocating prose stripped (E25). Gates: orchestrator re-ran every
+gate claimed by executors, plus mainline JS checks; master re-gated after
+every merge. Kill criteria: pre-registered triggers honored (E24 slimming
+hold). Stop conditions: none hit. Deviations: E23 step-batching of
+protocol commits (accepted); E25 objective file gitignored instead of
+plain-untracked (noted; harmless). No sealed prediction was ever edited.
+
+**Phase B readiness.** Master green; dashboard refreshed; next: E1+E2+E3
+batched per plan §4.8 preparation rules (single worktree, per-experiment
+sections) unless the human directs otherwise; E2's `Effect.ignore` split
+extends the CHANGELOG idiom-pass entry.
