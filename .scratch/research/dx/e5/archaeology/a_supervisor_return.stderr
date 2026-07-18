@@ -1,0 +1,10 @@
+File "a_supervisor_return.ml", lines 7-10, characters 6-19:
+ 7 | ......fun sup ->
+ 8 |         let open Supervisor.Scope in
+ 9 |         let* child = start sup (lift (Effect.pure 42)) in
+10 |         pure child;
+Error: This field value has type
+         "('a, 'b) Eta.Supervisor.t ->
+         ('a, ('a, 'b, int) Eta.Supervisor.child, 'b) Eta.Supervisor.Scope.t"
+       which is less general than
+         "'s. ('s, 'c) Eta.Supervisor.t -> ('s, 'd, 'c) Eta.Supervisor.Scope.t"

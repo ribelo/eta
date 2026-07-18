@@ -1,0 +1,12 @@
+File "c_supervisor_escape_type_s.ml", lines 10-13, characters 6-19:
+10 | ......fun (type s) (sup : (s, error) Supervisor.t) ->
+11 |         let open Supervisor.Scope in
+12 |         let* child = start sup (lift (Effect.pure 42)) in
+13 |         pure child;
+Error: This field value has type
+         "('s, error) Eta.Supervisor.t ->
+         ('s, ('s, error, int) Eta.Supervisor.child, error)
+         Eta.Supervisor.Scope.t"
+       which is less general than
+         "'s0.
+           ('s0, 'a) Eta.Supervisor.t -> ('s0, 'b, 'a) Eta.Supervisor.Scope.t"

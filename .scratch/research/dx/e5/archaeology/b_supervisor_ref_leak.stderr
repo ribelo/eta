@@ -1,0 +1,10 @@
+File "b_supervisor_ref_leak.ml", lines 9-13, characters 6-16:
+ 9 | ......fun sup ->
+10 |         let open Supervisor.Scope in
+11 |         let* child = start sup (lift (Effect.pure 42)) in
+12 |         stolen := Some child;
+13 |         pure ();
+Error: This field value has type
+         "('a, 'b) Eta.Supervisor.t -> ('a, unit, 'b) Eta.Supervisor.Scope.t"
+       which is less general than
+         "'s. ('s, 'c) Eta.Supervisor.t -> ('s, 'd, 'c) Eta.Supervisor.Scope.t"

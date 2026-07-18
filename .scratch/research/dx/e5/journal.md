@@ -82,3 +82,124 @@ The by-product is the list of messages needing compiler-side work.
 
 Committed this section before constructing any repro
 (`docs(dx-e5): seal predictions`).
+
+### Step 2 — archaeology
+
+Lab: `.scratch/research/dx/e5/archaeology/` (`capture.sh` compiles probes
+against the main workspace build — the switch-installed `eta` is stale,
+verified: it lacks e23's `bind_error`). All outputs below are ACTUAL
+compiler/runtime output, not typed from memory.
+
+**Verdicts vs sealed:**
+
+| # | Category | Sealed | Actual | Score |
+|---|---|---|---|---|
+| 1 | Supervisor escape (return child) | compile, "would escape its scope" | compile, **`This field value has type … which is less general than 's. …`** | verdict hit, **message-shape miss** |
+| 2 | Supervisor escape (ref leak) | compile, same class | compile, same class — and the message does not contain the word `child` or name `stolen` at all | hit |
+| 3 | Resource-handle escape | not compile-time | **compiles** (exit 0), both `with_resource` and `Pool.with_resource` | hit |
+| 4 | Channel across eta_par domains | runtime-only | runtime-only, and worse than predicted: non-blocking `try_send` **silently works**; the first blocking pair **hangs forever with no message** (timeout exit 124). `Queue` contrast completes cleanly | hit, stronger than sealed |
+| 5 | Pubsub/Pool across domains | runtime-only | same-family as Channel (same Sync_lock waiter design); not separately probed — recorded as extrapolation, not evidence | partial (scoped) |
+| 6 | PPX rejections | compile-time | compile-time; 7 rejection texts captured with exact locations | hit |
+
+**Surprises recorded raw:**
+
+- **S1 (message shape).** No variant of the supervisor escape produces the
+  words "would escape its scope" — not the plain return, not the ref leak,
+  not the explicit `(type s)` style, not closure/tuple smuggling (red-team
+  r1/r2). OCaml reports the rank-2 record-field generalization failure as
+  `less general than 's.` uniformly. The page's entry 1 quotes the real
+  text and tells the reader the escape route is never named.
+- **S2 (probe artifact).** My first resource probe failed to compile — but
+  on the *value restriction* (`contains the non-generalizable type
+  variable(s): '_weak1`), not on any scope fence. Eta-expanding the probe
+  removed the artifact. Finding: it genuinely compiles; but repros must be
+  built carefully or the measurement captures a different error class.
+- **S3 (unreachable rejections).** `eta.sql.table requires at least one
+  field` is unreachable from hand-written source — `type t = { }` is a
+  syntax error before the ppx runs (captured: `Error: Syntax error`).
+  `table type name is empty` is likewise unreachable from source. Both are
+  defensive dead code from the user's perspective → journal follow-up.
+- **S4 (first-contact error).** `Supervisor.Scope.start` takes a `Scope.t`,
+  not an `Effect.t`; writing `start sup (Effect.pure 42)` gives
+  `This expression has type (int, 'a) Eta.Effect.t but an expression was
+  expected of type ('b, 'c, 'd) Eta.Supervisor.Scope.t`. Not in the
+  one-pager's categories; captured as a follow-up page-entry candidate.
+
+### Step 3 — snapshot harness
+
+`test/type_errors/` — script + committed expected outputs (the lightest
+thing that works). Findings that shaped it:
+
+- **dune cram rejected**: verified experimentally that cram scripts do not
+  expand `%{...}` variables (dune 3.22), so a cram test cannot address the
+  built cmi/ppx driver without fragile relative paths. Rule actions DO
+  expand them, and `DUNE_SOURCEROOT`/`INSIDE_DUNE` env vars give absolute
+  roots — the script+rule design uses those.
+- `snapshot_compile.sh` compiles each `cases/*.ml` (supervisor cases
+  against the workspace cmi, ppx cases through the workspace driver) and
+  concatenates output; `(diff expected_compile.txt actual_compile.txt)`
+  under `runtest` fails on drift; `dune promote` re-records. Negative
+  fixture: broke a case, gate fired, restored.
+- Compiler fence: `(enabled_if (= %{ocaml_version} "5.2.0+ox"))` — snapshot
+  text is pinned to the gate compiler; other compilers word errors
+  differently. Re-record on compiler upgrade.
+- Runtime outcomes live in a separate **opt-in** alias
+  `@type-errors-runtime` (try-send / queue-contrast / blocking-pair):
+  gating a hang in `dune runtest` would cost a 12 s timeout on every run
+  and invites load-dependent flakes. The hang is documented in the page and
+  the runtime snapshot instead.
+
+### Step 4 — `docs/type-errors.md`
+
+8 entries (sealed predicted 5–8, expected 7 — the resource no-error entry
+splits the count to 8): (1) supervisor `less general than 's.`, (2)
+`[%eta.sync]` shape, (3) sql.table non-record, (4) sql.table field types,
+(5) sql.table attribute discipline, (6) sql.table 8-field limit, (7)
+cross-domain hang (runtime, quotes the real probe output), (8) resource
+handle escape (no error exists). Every quoted message verified
+character-identical to `expected_compile.txt` by a mechanical check
+(journal step: `ALL VERBATIM`).
+
+### Step 5 — gates
+
+```
+nix develop -c dune build @install          # OK
+nix develop -c dune runtest --force         # OK (includes the snapshot gate)
+nix develop -c eta-oxcaml-test-shipped      # OK
+nix develop -c dune build @type-errors-runtime   # OK (opt-in)
+```
+
+### Step 6 — red-team
+
+`.scratch/research/dx/e5/archaeology/r1_closure_leak.ml` and
+`r2_tuple_leak.ml`: defer-via-closure and bundle-via-tuple escapes. Both
+produce the identical `less general than 's.` class (S1 holds across every
+route tried). The ref-leak remains the most opaque: its message contains
+neither `child` nor the ref's name — that nuance is now in page entry 1.
+
+### Step 7 — review packet
+
+Files under `.scratch/research/dx/e5/review/` as required.
+
+### Step 8 — report
+
+See `report.md`.
+
+### Census / footgun actuals
+
+- Census: **+0 API vals** (docs page + test harness only) — as sealed.
+- Footgun: **−4 / +0** vs sealed −3 / +0 — favorable miss: the
+  no-error resource escape (entry 8) is a fourth defused trap the sealed
+  list didn't count.
+
+### Follow-up notes (out of scope)
+
+- **Dead ppx rejections** (S3): `eta.sql.table requires at least one field`
+  and `table type name is empty` are unreachable from source. Engineering
+  rules favor deletion; left in place because E5's fence is docs/tests
+  only. Candidate for a future hygiene batch.
+- **`start` argument confusion** (S4): a page entry for
+  `Scope.t vs Effect.t` at `Supervisor.Scope.start` would serve
+  first-contact users; deferred — not in the one-pager's four categories.
+- Pubsub/Pool cross-domain probes (category 5) extrapolated from Channel,
+  not measured; the extrapolation is marked as such in the page and report.

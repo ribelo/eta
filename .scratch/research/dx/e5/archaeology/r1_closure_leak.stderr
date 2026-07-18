@@ -1,0 +1,11 @@
+File "r1_closure_leak.ml", lines 8-11, characters 6-31:
+ 8 | ......fun sup ->
+ 9 |         let open Supervisor.Scope in
+10 |         let* child = start sup (lift (Effect.pure 42)) in
+11 |         pure (fun () -> child);
+Error: This field value has type
+         "('a, 'b) Eta.Supervisor.t ->
+         ('a, unit -> ('a, 'b, int) Eta.Supervisor.child, 'b)
+         Eta.Supervisor.Scope.t"
+       which is less general than
+         "'s. ('s, 'c) Eta.Supervisor.t -> ('s, 'd, 'c) Eta.Supervisor.Scope.t"
