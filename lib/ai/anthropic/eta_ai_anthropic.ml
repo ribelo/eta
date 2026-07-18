@@ -316,15 +316,19 @@ let raw_int_field name json =
 let usage json =
   let input_tokens = Json.int_member "input_tokens" json in
   let output_tokens = Json.int_member "output_tokens" json in
-  let total_tokens =
-    match (input_tokens, output_tokens) with
-    | Some input, Some output -> Some (input + output)
-    | _ -> None
+  let cache_read = Json.int_member "cache_read_input_tokens" json in
+  let cache_write = Json.int_member "cache_creation_input_tokens" json in
+  let input_total =
+    Option.map
+      (fun input ->
+        input + Option.value ~default:0 cache_read
+        + Option.value ~default:0 cache_write)
+      input_tokens
   in
   {
-    A.input_tokens;
-    output_tokens;
-    total_tokens;
+    A.input_tokens =
+      { uncached = input_tokens; total = input_total; cache_read; cache_write };
+    output_tokens = { total = output_tokens; text = None; reasoning = None };
     raw =
       [
         raw_int_field "input_tokens" json;

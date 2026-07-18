@@ -56,7 +56,9 @@ another provider runner. Provider packages are documented under
 - `eta_ai` does not make HTTP requests. It describes them.
 - Raw tool and structured-output schemas are plain JSON strings until
   `eta_schema` exposes JSON Schema generation.
-- Token counting is intentionally absent; use provider usage fields.
+- Local tokenization is intentionally absent; provider usage is normalized into
+  uncached/total/cache-read/cache-write input counts and total/text/reasoning
+  output counts.
 - Live provider reach is tested only with an API key, never in the default
   `dune runtest` gate.
 

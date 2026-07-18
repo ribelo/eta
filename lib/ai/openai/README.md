@@ -73,7 +73,7 @@ base-path behavior.
 
 - Tool schemas and structured-output schemas are raw JSON text until eta_schema
   exposes JSON Eta_schema export.
-- Token counting is intentionally absent. Use provider usage fields from
+- Local tokenization is intentionally absent. Use normalized provider usage from
   responses.
 - The default provider uses the Responses endpoint. The legacy Chat
   Completions encoder uses max_tokens when called explicitly.

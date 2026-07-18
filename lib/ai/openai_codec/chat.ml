@@ -82,7 +82,7 @@ let finish_reasons choices =
   in
   loop [] choices
 
-let decode_chat ?(usage_raw_prompt_names = false) ~provider raw =
+let decode_chat ?(usage_raw_prompt_names = true) ~provider raw =
   let* json = parse_json ~provider raw in
   match Json.array_member "choices" json with
   | Some (choice :: _ as choices) -> (

@@ -96,10 +96,22 @@ type finish_reason =
   | Error
   | Other of string
 
+type input_token_usage = {
+  uncached : int option;
+  total : int option;
+  cache_read : int option;
+  cache_write : int option;
+}
+
+type output_token_usage = {
+  total : int option;
+  text : int option;
+  reasoning : int option;
+}
+
 type usage = {
-  input_tokens : int option;
-  output_tokens : int option;
-  total_tokens : int option;
+  input_tokens : input_token_usage;
+  output_tokens : output_token_usage;
   raw : (string * string) list;
 }
 

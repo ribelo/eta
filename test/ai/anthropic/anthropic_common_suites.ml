@@ -283,7 +283,16 @@ let test_decode_message_fixture () =
     (List.exists (function A.Stop -> true | _ -> false) response.finish_reasons);
   Alcotest.(check (option int))
     "input tokens" (Some 13)
-    (Option.bind response.usage (fun usage -> usage.A.input_tokens));
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.uncached));
+  Alcotest.(check (option int))
+    "total input tokens" (Some 23)
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.total));
+  Alcotest.(check (option int))
+    "cache read tokens" (Some 6)
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_read));
+  Alcotest.(check (option int))
+    "cache write tokens" (Some 4)
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_write));
   Alcotest.(check bool)
     "cache token preserved" true
     (Option.value ~default:[]

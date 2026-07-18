@@ -223,7 +223,7 @@ let test_decode_chat_fixture () =
     (List.exists (function A.Stop -> true | _ -> false) response.finish_reasons);
   Alcotest.(check (option int))
     "input tokens" (Some 11)
-    (Option.bind response.usage (fun usage -> usage.A.input_tokens))
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.total))
 
 let test_decode_chat_rejects_fractional_usage_integer () =
   let raw =
@@ -231,9 +231,28 @@ let test_decode_chat_rejects_fractional_usage_integer () =
   in
   let response = O.decode_chat raw |> expect_ok "fractional usage" in
   Alcotest.(check (option int)) "fractional prompt tokens rejected" None
-    (Option.bind response.usage (fun usage -> usage.A.input_tokens));
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.total));
   Alcotest.(check (option int)) "integral completion tokens kept" (Some 2)
-    (Option.bind response.usage (fun usage -> usage.A.output_tokens))
+    (Option.bind response.usage (fun usage -> usage.A.output_tokens.total))
+
+let test_decode_chat_usage_details () =
+  let raw =
+    {|{"id":"chatcmpl_usage","model":"gpt-fixture","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":8,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":3}}}|}
+  in
+  let response = O.decode_chat raw |> expect_ok "chat usage details" in
+  let usage = Option.get response.usage in
+  Alcotest.(check (option int)) "uncached input" (Some 6)
+    usage.A.input_tokens.uncached;
+  Alcotest.(check (option int)) "total input" (Some 10)
+    usage.A.input_tokens.total;
+  Alcotest.(check (option int)) "cache read" (Some 4)
+    usage.A.input_tokens.cache_read;
+  Alcotest.(check (option int)) "total output" (Some 8)
+    usage.A.output_tokens.total;
+  Alcotest.(check (option int)) "text output" (Some 5)
+    usage.A.output_tokens.text;
+  Alcotest.(check (option int)) "reasoning output" (Some 3)
+    usage.A.output_tokens.reasoning
 
 let test_decode_tool_fixture () =
   let response =
@@ -867,6 +886,8 @@ let tests =
           Alcotest.test_case "chat fixture" `Quick test_decode_chat_fixture;
           Alcotest.test_case "fractional usage integer rejected" `Quick
             test_decode_chat_rejects_fractional_usage_integer;
+          Alcotest.test_case "chat usage details" `Quick
+            test_decode_chat_usage_details;
           Alcotest.test_case "tool fixture" `Quick test_decode_tool_fixture;
           Alcotest.test_case "responses fixture" `Quick
             test_decode_responses_fixture;

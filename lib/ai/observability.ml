@@ -24,8 +24,8 @@ let finish_reasons_to_string reasons =
   reasons |> List.map finish_reason_to_string |> String.concat ","
 
 let usage_attrs (usage : usage) =
-  option_int_attr "gen_ai.usage.input_tokens" usage.input_tokens
-  @ option_int_attr "gen_ai.usage.output_tokens" usage.output_tokens
+  option_int_attr "gen_ai.usage.input_tokens" usage.input_tokens.total
+  @ option_int_attr "gen_ai.usage.output_tokens" usage.output_tokens.total
 
 let response_attrs (response : response) =
   option_attr "gen_ai.response.id" response.id
@@ -150,4 +150,3 @@ let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name eff =
 
 let suppress_provider_transport_observability =
   Eta.Effect.suppress_observability
-
