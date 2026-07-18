@@ -1,0 +1,48 @@
+; Negative compile-test corpus (DX-E5). Each cases/*.ml MUST fail to compile;
+; the exact compiler output is snapshotted into expected_compile.txt.
+; `dune runtest` fails when a captured message drifts; accept intentional
+; message changes with `dune runtest test/type_errors && dune promote`.
+; Snapshot text is pinned to the OxCaml gate compiler — other compilers may
+; word errors differently, so the whole corpus is fenced to 5.2.0+ox.
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (target actual_compile.txt)
+ (deps
+  (source_tree cases)
+  snapshot_compile.sh
+  (package eta)
+  (package ppx_eta))
+ (action
+  (with-outputs-to actual_compile.txt
+   (system "bash ./snapshot_compile.sh %{project_root}"))))
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (alias runtest)
+ (action
+  (diff expected_compile.txt actual_compile.txt)))
+
+; Runtime-misuse counterparts (DX-E5): cross-domain Channel vs Queue behavior.
+; Opt-in (`dune build @type-errors-runtime`) because the blocking-pair case
+; proves a hang and therefore costs its `timeout` budget on every run.
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (target actual_runtime.txt)
+ (deps
+  (source_tree cases_runtime)
+  snapshot_runtime.sh
+  (package eta)
+  (package eta_eio)
+  (package eta_par))
+ (action
+  (with-outputs-to actual_runtime.txt
+   (system "bash ./snapshot_runtime.sh %{project_root}"))))
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (alias type-errors-runtime)
+ (action
+  (diff expected_runtime.txt actual_runtime.txt)))
+
