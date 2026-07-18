@@ -138,6 +138,20 @@ val race : ('a, 'err) t list -> ('a, 'err) t
     {!Semaphore.with_permits_or_abort} when racing permit acquisition against an
     abort signal. *)
 
+val race_either :
+  ('a, 'err) t -> ('b, 'err) t -> ([ `Left of 'a | `Right of 'b ], 'err) t
+(** Heterogeneous race: first success wins as [`Left] or [`Right].
+
+    [race_either left right] has the same loser-cancellation and resource
+    semantics as {!race}. The first argument wins as [`Left of 'a]; the second
+    as [`Right of 'b], independent of finish order. Losers' values are discarded
+    by design. Resource lifetime is owned by scopes, not by race: a loser that
+    holds its resource under {!acquire_release} / {!Semaphore.with_permits} has
+    it released when it is cancelled, even if it ran to completion before
+    losing. An acquisition whose ownership is carried through a value can be
+    discarded by race; use {!Semaphore.with_permits_or_abort} when racing permit
+    acquisition against an abort signal. *)
+
 val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
 (** Run two effects concurrently; collect both successes as a pair.
     Fail-fast: the first child failure cancels the sibling and the

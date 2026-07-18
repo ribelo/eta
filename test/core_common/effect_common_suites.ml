@@ -2672,6 +2672,82 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.yield ();
     Alcotest.(check bool) "loser cancelled" false !loser_completed
 
+
+  let either_tag_testable =
+    Alcotest.testable
+      (fun ppf -> function
+        | `Left s -> Format.fprintf ppf "`Left %S" s
+        | `Right s -> Format.fprintf ppf "`Right %S" s)
+      ( = )
+
+  let test_effect_race_either_left_winner_and_loser_cancel () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let loser_completed = ref false in
+    let left = Effect.pure "L" |> Effect.delay (Duration.ms 10) in
+    let right =
+      Effect.sync (fun () -> loser_completed := true)
+      |> Effect.delay (Duration.ms 100)
+      |> Effect.map (fun () -> "R")
+    in
+    let promise = B.fork_run ctx rt (Effect.race_either left right) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    check_exit_ok either_tag_testable "left wins" (`Left "L") (B.await promise);
+    B.adjust_clock clock (Duration.ms 100);
+    B.yield ();
+    Alcotest.(check bool) "right cancelled" false !loser_completed
+
+  let test_effect_race_either_right_winner () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let left = Effect.pure "L" |> Effect.delay (Duration.ms 100) in
+    let right = Effect.pure "R" |> Effect.delay (Duration.ms 10) in
+    let promise = B.fork_run ctx rt (Effect.race_either left right) in
+    wait_for_sleepers clock 2;
+    B.adjust_clock clock (Duration.ms 10);
+    check_exit_ok either_tag_testable "right wins" (`Right "R") (B.await promise)
+
+  let test_effect_race_either_releases_scoped_loser_resource () =
+    B.with_runtime @@ fun _ctx rt ->
+    let sem = Semaphore.make ~permits:1 in
+    let left = Effect.pure 1 in
+    let right = Semaphore.with_permits sem 1 (fun () -> Effect.pure "x") in
+    let result = run_ok rt (Effect.race_either left right) in
+    Alcotest.(check bool) "left wins" true (result = `Left 1);
+    Alcotest.(check int) "scoped loser permit released" 1
+      (Semaphore.available sem)
+
+  let test_effect_race_either_finalizer_parity () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let acquired, acquired_u = B.create_promise () in
+    let release_started = ref false in
+    let slow =
+      Effect.with_scope
+        (Effect.acquire_release
+           ~acquire:(Effect.sync (fun () -> B.resolve acquired_u ()))
+           ~release:(fun () ->
+             release_started := true;
+             Effect.fail "release")
+        |> Effect.bind (fun () ->
+               Effect.delay (Duration.ms 1_000) (Effect.pure "slow")))
+    in
+    let winner = B.await_effect acquired |> Effect.map (fun () -> "winner") in
+    let promise = B.fork_run ctx rt (Effect.race_either slow winner) in
+    wait_for_sleepers clock 1;
+    match B.await promise with
+    | Exit.Ok value ->
+        Alcotest.failf
+          "expected loser finalizer failure after winner, got Ok %a"
+          (fun ppf -> function
+            | `Left s | `Right s -> Format.pp_print_string ppf s)
+          value
+    | Exit.Error cause ->
+        check_suppressed_finalizer
+          "loser release failure is reported after race_either winner"
+          "<typed failure>" cause;
+        Alcotest.(check bool)
+          "loser finalizer ran before race_either returned" true
+          !release_started
+
   let test_effect_race_all_failures_returns_concurrent_causes () =
     B.with_test_clock @@ fun ctx clock rt ->
     let delayed_failure ms error =
@@ -3407,6 +3483,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race cancels losers after first success" `Quick
             test_effect_race_cancels_losers_after_first_success;
+          Alcotest.test_case "race_either left winner cancels loser" `Quick
+            test_effect_race_either_left_winner_and_loser_cancel;
+          Alcotest.test_case "race_either right winner" `Quick
+            test_effect_race_either_right_winner;
+          Alcotest.test_case "race_either releases scoped loser resource" `Quick
+            test_effect_race_either_releases_scoped_loser_resource;
+          Alcotest.test_case "race_either finalizer parity" `Quick
+            test_effect_race_either_finalizer_parity;
           Alcotest.test_case
             "race simultaneous success/failure returns winner" `Quick
             test_effect_race_simultaneous_success_and_failure_returns_winner;

@@ -216,6 +216,13 @@ let race_eval effects frame =
 
 let race effects = make ~names:(concat_names effects) (race_eval effects)
 
+let race_either left right =
+  race
+    [
+      map (fun value -> `Left value) left;
+      map (fun value -> `Right value) right;
+    ]
+
 type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
 let par_pair frame left right =
