@@ -263,21 +263,20 @@ val filter_or_fail :
     normally. If [predicate] or [if_false] raises, the exception is an
     unchecked defect. *)
 
-val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
-(** Suppress typed failures from a best-effort unit effect.
+val discard : ('a, 'err) t -> (unit, 'err) t
+(** Discard a successful value; every cause propagates unchanged.
 
-    [ignore_errors eff] is shorthand for [bind_error (fun _ -> unit) eff]. It
-    only recovers typed failures; defects, interruption, and finalizer
-    diagnostics remain visible. Use it for best-effort cleanup, refresh, or
-    notification effects whose success value is already [unit]. *)
+    [discard eff] is [map (fun _ -> ()) eff]. Typed failures, defects,
+    interruption, and finalizer diagnostics are not recovered. Prefer this
+    when only the success payload is unwanted. *)
 
-val ignore : ('a, 'err1) t -> (unit, 'err2) t
-(** Run an effect for its effects, discard a successful value, and suppress
-    typed failures.
+val ignore_errors : ('a, 'err1) t -> (unit, 'err2) t
+(** Discard a successful value and suppress typed failures.
 
-    [ignore eff] succeeds with [()] when [eff] succeeds or fails only with
-    typed failures. Defects, interruption, and finalizer diagnostics remain
-    visible. Use {!ignore_errors} for the older unit-specialized spelling. *)
+    [ignore_errors eff] succeeds with [()] when [eff] succeeds or fails only
+    with typed failures. Defects, interruption, and finalizer diagnostics
+    remain visible. Use it for best-effort cleanup, refresh, or notification
+    effects; use {!discard} when typed failures must still fail the workflow. *)
 
 val to_result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
 (** Materialize the typed failure channel into an ordinary OCaml [result].

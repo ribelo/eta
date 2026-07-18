@@ -47,5 +47,18 @@ composite-cause handling).
 A raising `error_pp` becomes a defect through the ordinary capture path;
 the old silent `"<error renderer raised>"` fallback is removed.
 
-*This entry extends with E2 (`Effect.ignore` split) and E9
-(`Syntax.Parallel`/`Syntax.Applicative`) when they land.*
+### Handle honesty: `discard` / `ignore_errors` (E2)
+
+| Before | After |
+|---|---|
+| `Effect.ignore` (discard value **and** suppress typed failures) | deleted |
+| — | `Effect.discard` — discard success value; all causes propagate |
+| `Effect.ignore_errors` on `(unit, _) t` only | `Effect.ignore_errors` on any success type (value discarded, typed failures suppressed) |
+
+`Effect.ignore` was the most misleading name in the surface: it read like
+`Stdlib.ignore` while swallowing typed failures. Call sites split into the two
+honest meanings. Defects, interruption, and finalizer diagnostics remain
+visible under both `discard` and `ignore_errors`.
+
+*This entry extends with E9 (`Syntax.Parallel`/`Syntax.Applicative`) when it
+lands.*

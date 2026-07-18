@@ -311,8 +311,8 @@ let unless_effect condition eff =
 let filter_or_fail predicate ~if_false eff =
   bind (fun value -> if predicate value then pure value else fail (if_false value)) eff
 
-let ignore_errors eff = bind_error (fun _ -> unit) eff
-let ignore eff = bind_error (fun _ -> unit) (map (fun _ -> ()) eff)
+let discard eff = map (fun _ -> ()) eff
+let ignore_errors eff = bind_error (fun _ -> unit) (discard eff)
 let to_result eff =
   bind_error (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
 let to_option eff = bind_error (fun _ -> pure None) (map (fun value -> Some value) eff)

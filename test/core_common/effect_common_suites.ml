@@ -731,67 +731,90 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
     | Exit.Ok _ -> Alcotest.fail "expected finalizer diagnostic"
 
-  let test_effect_ignore_errors () =
+  let test_effect_discard () =
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check unit)
-      "success preserved as unit" () (run_ok rt (Effect.unit |> Effect.ignore_errors));
-    Alcotest.(check unit)
-      "typed failure suppressed" ()
-      (run_ok rt (Effect.fail `Bad |> Effect.ignore_errors));
-    match
-      B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.ignore_errors)
-    with
+      "success value discarded" ()
+      (run_ok rt (Effect.pure 7 |> Effect.discard));
+    expect_typed_failure_eq Alcotest.string
+      (B.run rt (Effect.fail "bad" |> Effect.discard))
+      "bad";
+    (match B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.discard) with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
-    | Exit.Ok _ -> Alcotest.fail "expected defect"
+    | Exit.Ok _ -> Alcotest.fail "discard swallowed defect");
+    (match
+       B.run rt
+         (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.discard)
+     with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "discard swallowed interrupt");
+    match
+      B.run rt
+        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.discard)
+    with
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected finalizer diagnostic, got %a"
+          (Cause.pp Format.pp_print_string) cause
+    | Exit.Ok _ -> Alcotest.fail "discard swallowed finalizer diagnostic"
 
-  let test_effect_ignore () =
+  let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     let typed_cause cause =
       Effect.Expert.make ~leaf_name:"test.typed-cause" @@ fun _context ->
       Exit.Error cause
     in
     Alcotest.(check unit)
-      "success value discarded" ()
-      (run_ok rt (Effect.pure 7 |> Effect.ignore));
+      "unit success preserved" ()
+      (run_ok rt (Effect.unit |> Effect.ignore_errors));
+    Alcotest.(check unit)
+      "non-unit success discarded" ()
+      (run_ok rt (Effect.pure 7 |> Effect.ignore_errors));
     Alcotest.(check unit)
       "typed failure suppressed" ()
-      (run_ok rt (Effect.fail "bad" |> Effect.ignore));
+      (run_ok rt (Effect.fail `Bad |> Effect.ignore_errors));
     Alcotest.(check unit)
       "sequential typed failures suppressed" ()
       (run_ok rt
          (typed_cause
             (Cause.sequential [ Cause.Fail "left"; Cause.Fail "right" ])
-         |> Effect.ignore));
+         |> Effect.ignore_errors));
     Alcotest.(check unit)
       "concurrent typed failures suppressed" ()
       (run_ok rt
          (typed_cause
             (Cause.concurrent [ Cause.Fail "left"; Cause.Fail "right" ])
-         |> Effect.ignore));
-    (match B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.ignore) with
+         |> Effect.ignore_errors));
+    (match
+       B.run rt (Effect.sync (fun () -> failwith "boom") |> Effect.ignore_errors)
+     with
     | Exit.Error (Cause.Die _) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected defect, got %a" (Cause.pp pp_hidden) cause
-    | Exit.Ok _ -> Alcotest.fail "ignore swallowed defect");
+    | Exit.Ok _ -> Alcotest.fail "ignore_errors swallowed defect");
     (match
        B.run rt
-         (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.ignore)
+         (Effect.named "interrupt" (runtime_interrupt_effect ())
+         |> Effect.ignore_errors)
      with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
-    | Exit.Ok _ -> Alcotest.fail "ignore swallowed interrupt");
+    | Exit.Ok _ -> Alcotest.fail "ignore_errors swallowed interrupt");
     match
       B.run rt
-        (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.ignore)
+        (Effect.finally (Effect.fail "cleanup") Effect.unit
+        |> Effect.ignore_errors)
     with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
           (Cause.pp Format.pp_print_string) cause
-    | Exit.Ok _ -> Alcotest.fail "ignore swallowed finalizer diagnostic"
+    | Exit.Ok _ -> Alcotest.fail "ignore_errors swallowed finalizer diagnostic"
 
   let test_effect_to_result () =
     B.with_runtime @@ fun _ctx rt ->
@@ -3188,8 +3211,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_filter_or_fail_source_defect;
           Alcotest.test_case "filter_or_fail finalizer diagnostic" `Quick
             test_effect_filter_or_fail_finalizer_diagnostic;
+          Alcotest.test_case "discard" `Quick test_effect_discard;
           Alcotest.test_case "ignore_errors" `Quick test_effect_ignore_errors;
-          Alcotest.test_case "ignore" `Quick test_effect_ignore;
           Alcotest.test_case "to_result" `Quick test_effect_to_result;
           Alcotest.test_case "to_option" `Quick test_effect_to_option;
           Alcotest.test_case "to_exit" `Quick test_effect_to_exit;

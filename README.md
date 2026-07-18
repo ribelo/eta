@@ -114,9 +114,10 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
   interruption, or finalizer failures. Use `Effect.catch_some` when only some
   typed failures should recover and non-matches must preserve the original
   cause.
-- `Effect.ignore_errors` is only for best-effort unit effects. It suppresses
-  typed failures, but defects, interruption, and finalizer failures still
-  surface.
+- `Effect.discard` drops a success value without recovering any cause.
+- `Effect.ignore_errors` is only for best-effort effects. It discards the
+  success value and suppresses typed failures, but defects, interruption, and
+  finalizer failures still surface.
 - `Effect.to_result` turns the typed failure channel into an ordinary OCaml
   `result` value inside the workflow. It does not catch defects, interruption,
   or finalizer failures.
