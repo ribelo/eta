@@ -654,7 +654,10 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
       Alcotest.(check (option (float 1e-12)))
         "total cost" (Some 0.0010628898) (raw_float "cost");
       Alcotest.(check (option (float 1e-12)))
-        "input cost" (Some 0.0009941106) (raw_float "input_cost");
+        "aggregate prompt cost" (Some 0.0009941106)
+        (raw_float "prompt_cost");
+      Alcotest.(check (option (float 1e-12)))
+        "no decomposed input cost" None (raw_float "input_cost");
       Alcotest.(check (option (float 1e-12)))
         "output cost" (Some 0.0000687792) (raw_float "output_cost");
       require_contains "reasoning replay type" ~needle:"\"type\":\"reasoning\""
