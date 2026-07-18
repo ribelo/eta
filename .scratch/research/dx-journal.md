@@ -244,3 +244,62 @@ keyword-avoidance idiom, possibly one grumble, no rating drop below 4.
 all 16 uses map to observers. Gates green within three fix attempts;
 mainline jsoo compile check on `cache_jsoo`/`js_jsoo` (`signal_jsoo`
 pre-broken per F1 — verify unchanged, do not fix).
+
+---
+
+## V-DX-E24-002 — 2026-07-18 — research/dx-e24-iteration-mirrors-list — phase: orchestrator decision (contract amendment + scope reduction)
+
+Executor reported `E24 BLOCKED` with reproducible evidence
+(`.scratch/research/dx/e24/report.md`, `contract-blocker/probe.sh`) before
+any production edit. Both claims verified independently by the orchestrator.
+
+**Finding 1 — the one-pager's signatures are unwritable in OCaml.**
+Optional arguments cannot be erased when they are the last arrows in the
+type (Warning 16): `map_par ids ~f` against the proposed type returns
+`?max_concurrent:int -> ('b list, 'err) t`, a partial application, not an
+effect. The plan's sketch treated OCaml optionals like named parameters.
+Amendment (orchestrator authority, taste): optionals move before a trailing
+mandatory argument —
+
+```ocaml
+val map_par :
+  ?max_concurrent:int -> 'a list -> f:('a -> ('b, 'err) t) -> ('b list, 'err) t
+val retry :
+  schedule:('err, 'out) Schedule.t -> while_:('err -> bool) ->
+  ?or_else:('err -> 'out option -> ('a, 'err) t) ->
+  ('a, 'err) t -> ('a, 'err) t
+val repeat :
+  schedule:('a, 'out) Schedule.t ->
+  ('a, 'err) t -> ('out, 'err) t
+```
+
+`map_par` mirrors `List.map : 'a list -> f:` with the optional prepended;
+`retry`/`repeat` become data-last (pipeline-native, matching today's
+positional use). Erasure verified by the same probe discipline.
+
+**Finding 2 — the `Schedule.t` slimming hold trigger fired.** `Resource.auto`
+(`lib/eta/resource.mli:12-29`, `resource.ml:90-110`) publicly accepts and
+drives hook-bearing schedules in its refresh daemon; the behavior is encoded
+in `test/core_common/resource_common_suites.ml`. E24's observers live on
+`retry`/`repeat` and cannot cover a hand-rolled driver. Per the one-pager's
+pre-registered gate: **the slimming holds; the renames promote.**
+Consequences: `Schedule.t` stays 3-param with `tap_input`/`tap_output`;
+`retry` keeps the effect-instantiated hook parameter as today; `?on_retry`/
+`?on_repeat` observers are NOT added this round (T1 — taps remain the single
+observation mechanism while they exist).
+
+**Follow-up registered: E24b** — "Resource.auto observer contract +
+Schedule.t slimming". Entry gate: a decided observer contract for
+`Resource.auto` (e.g. `?on_step`), after which slimming is reconsidered.
+Added to the programme backlog; phase assignment at the Phase A synthesis.
+
+**Prediction scoring (orchestrator, V-DX-E24-001).** Miss: "the slimming
+hold trigger does NOT fire — taps are test-only" — wrong; the tests encode
+`Resource.auto`'s public behavior. Executor's own sealed prediction (that
+slimming should hold if a non-expressible tap use appears) was the sharper
+read. Runtime/census/footgun predictions rescoped by this amendment and
+scored at E24 completion.
+
+**Protocol note.** The executor did exactly what the method asks: stopped
+at the contract boundary, reproduced with a runnable probe, recommended,
+changed nothing. This is the evidence-based-coding loop working as designed.
