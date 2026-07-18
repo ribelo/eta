@@ -73,13 +73,6 @@ val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
     defects ({!Cause.Die}). This is the recommended typed sync leaf; it does
     not catch exceptions into the typed channel. *)
 
-val sync_option : if_none:'err -> (unit -> 'a option) -> ('a, 'err) t
-(** Synchronous leaf that returns an OCaml [option].
-
-    [sync_option ~if_none f] runs [f] under {!sync}, then applies the same
-    [if_none] rule as {!from_option}: [Some x] succeeds and [None] fails with
-    [if_none]. Raised exceptions remain unchecked defects. *)
-
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.
 
