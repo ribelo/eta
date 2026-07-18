@@ -2352,7 +2352,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Invalid_argument "Effect.map_par: max_concurrent must be > 0")
       (fun () ->
         ignore
-          (Effect.map_par ~max_concurrent:(-1) (fun x ->
+          (Effect.map_par ~max_concurrent:(-3) (fun x ->
                Effect.pure x) [ 1 ]
             : (int list, _) Effect.t))
 
