@@ -74,6 +74,7 @@ type response = {
   message : message;
   finish_reasons : finish_reason list;
   usage : usage option;
+  replay_items : raw_json list;
   raw : raw_json option;
 }
 
@@ -90,6 +91,7 @@ type chat_request = {
   tools : tool list;
   temperature : float option;
   max_output_tokens : int option;
+  replay_items : raw_json list;
   stream : bool;
 }
 

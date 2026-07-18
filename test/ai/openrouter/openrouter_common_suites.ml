@@ -45,6 +45,7 @@ let chat_request ?(stream = false) () : A.chat_request =
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream;
   }
 
@@ -228,6 +229,7 @@ let test_encode_audio_prompt_input () =
       tools = [];
       temperature = Some 0.0;
       max_output_tokens = Some 32;
+      replay_items = [];
       stream = false;
     }
   in
@@ -575,10 +577,10 @@ let test_stream_runner () =
   require_contains "routing body" ~needle:"\"provider\":{"
     (request_body_string request)
 
-let test_stream_ignores_comment_records () =
+let test_stream_ignores_non_data_records () =
   with_runtime @@ fun rt ->
   let body =
-    ": \n\n"
+    ": \n\ndata:\n\ndata:  \t\n\n"
     ^ "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
     ^ "data: [DONE]\n\n"
   in
@@ -621,7 +623,7 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
     {
       event = None;
       data =
-        {|{"type":"response.completed","response":{"id":"gen-1","model":"deepseek/deepseek-v4-flash","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":11,"input_tokens_details":{"cached_tokens":3},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":5},"total_tokens":18,"cost":0.25,"cost_details":{"upstream_inference_input_cost":0.1,"upstream_inference_output_cost":0.15}}}}|};
+        {|{"type":"response.completed","response":{"id":"gen-1784333041-redacted","model":"deepseek/deepseek-v4-flash","status":"completed","output":[{"type":"reasoning","id":"rs_redacted","encrypted_content":"redacted","summary":[]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":10291,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":2},"output_tokens":356,"output_tokens_details":{"reasoning_tokens":28},"total_tokens":10647,"cost":0.0010628898,"cost_details":{"upstream_inference_prompt_cost":0.0009941106,"upstream_inference_completions_cost":0.0000687792}}}}|};
     }
   in
   match O.decode_stream_event completed with
@@ -629,9 +631,10 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
       [
         A.Stream_response
           {
-            id = Some "gen-1";
+            id = Some "gen-1784333041-redacted";
             model = Some "deepseek/deepseek-v4-flash";
             usage = Some usage;
+            replay_items = [ replay ];
             _;
           };
         A.Stream_finish [ A.Stop ];
@@ -640,18 +643,87 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
       Alcotest.(check (option string))
         "cached tokens" (Some "3") (List.assoc_opt "cached_tokens" usage.raw);
       Alcotest.(check (option string))
-        "reasoning tokens" (Some "5")
+        "cache write tokens" (Some "2")
+        (List.assoc_opt "cache_write_tokens" usage.raw);
+      Alcotest.(check (option string))
+        "reasoning tokens" (Some "28")
         (List.assoc_opt "reasoning_tokens" usage.raw);
-      Alcotest.(check (option string))
-        "total cost" (Some "0.25") (List.assoc_opt "cost" usage.raw);
-      Alcotest.(check (option string))
-        "input cost" (Some "0.10000000000000001")
-        (List.assoc_opt "input_cost" usage.raw);
-      Alcotest.(check (option string))
-        "output cost" (Some "0.14999999999999999")
-        (List.assoc_opt "output_cost" usage.raw)
+      let raw_float name =
+        Option.bind (List.assoc_opt name usage.raw) float_of_string_opt
+      in
+      Alcotest.(check (option (float 1e-12)))
+        "total cost" (Some 0.0010628898) (raw_float "cost");
+      Alcotest.(check (option (float 1e-12)))
+        "input cost" (Some 0.0009941106) (raw_float "input_cost");
+      Alcotest.(check (option (float 1e-12)))
+        "output cost" (Some 0.0000687792) (raw_float "output_cost");
+      require_contains "reasoning replay type" ~needle:"\"type\":\"reasoning\""
+        replay;
+      require_contains "reasoning replay payload"
+        ~needle:"\"encrypted_content\":\"redacted\"" replay
   | Stdlib.Ok _ -> Alcotest.fail "expected completed response metadata"
   | Stdlib.Error _ -> Alcotest.fail "completed event decode failed"
+
+let test_incomplete_response_and_reasoning_replay () =
+  let incomplete : A.sse_event =
+    {
+      event = None;
+      data =
+        {|{"type":"response.incomplete","response":{"id":"gen-cut","model":"openai/gpt-5","status":"incomplete","output":[{"type":"reasoning","id":"rs-cut","encrypted_content":"opaque","summary":[]},{"type":"function_call","call_id":"call-cut","name":"weather","arguments":"{\"location\":\"War\"}"}],"usage":{"input_tokens":20,"input_tokens_details":{"cached_tokens":5},"output_tokens":4,"total_tokens":24}}}|};
+    }
+  in
+  let replay =
+    match O.decode_stream_event incomplete with
+    | Stdlib.Ok
+        [
+          A.Stream_response
+            {
+              finish_reasons = [ A.Length ];
+              replay_items = [ replay ];
+              usage = Some _;
+              _;
+            };
+          A.Stream_finish [ A.Length ];
+          A.Stream_done;
+        ] ->
+        replay
+    | Stdlib.Ok _ -> Alcotest.fail "expected incomplete terminal response"
+    | Stdlib.Error _ -> Alcotest.fail "incomplete event decode failed"
+  in
+  let tool_call : A.tool_call =
+    { id = "call-cut"; name = "weather"; arguments_json = "{\"location\":\"War\"}" }
+  in
+  let request =
+    {
+      (chat_request ()) with
+      prompt =
+        [
+          A.User [ A.Text "weather" ];
+          A.Assistant { content = []; tool_calls = [ tool_call ] };
+          A.Tool { tool_call_id = "call-cut"; content = [ A.Text "retry" ] };
+        ];
+      replay_items = [ replay ];
+    }
+  in
+  let encoded = O.encode_responses request |> expect_ok "reasoning replay" in
+  let position needle =
+    match String.index_from_opt encoded 0 needle.[0] with
+    | None -> Alcotest.fail ("missing replay fragment: " ^ needle)
+    | Some _ ->
+        let rec find index =
+          if index + String.length needle > String.length encoded then
+            Alcotest.fail ("missing replay fragment: " ^ needle)
+          else if String.sub encoded index (String.length needle) = needle then
+            index
+          else find (index + 1)
+        in
+        find 0
+  in
+  let reasoning_at = position "\"type\":\"reasoning\"" in
+  let call_at = position "\"type\":\"function_call\"" in
+  let output_at = position "\"type\":\"function_call_output\"" in
+  Alcotest.(check bool) "replay precedes call" true (reasoning_at < call_at);
+  Alcotest.(check bool) "call precedes output" true (call_at < output_at)
 
 let transcription_request () : A.Transcription.request =
   {
@@ -837,10 +909,12 @@ let tests =
           Alcotest.test_case "task request endpoints and binary runners" `Quick
             test_task_request_endpoints_and_binary_runners;
           Alcotest.test_case "stream runner" `Quick test_stream_runner;
-          Alcotest.test_case "stream ignores comment records" `Quick
-            test_stream_ignores_comment_records;
+          Alcotest.test_case "stream ignores non-data records" `Quick
+            test_stream_ignores_non_data_records;
           Alcotest.test_case "stream metadata and reasoning" `Quick
             test_responses_stream_preserves_metadata_and_reasoning;
+          Alcotest.test_case "incomplete and reasoning replay" `Quick
+            test_incomplete_response_and_reasoning_replay;
         ] );
   ]
 end

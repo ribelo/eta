@@ -249,6 +249,16 @@ let tool_json (tool : A.tool) =
        ])
 
 let encode_messages ?prompt_cache (request : A.chat_request) =
+  let* () =
+    if request.replay_items = [] then Stdlib.Ok ()
+    else
+      Stdlib.Error
+        (A.Unsupported
+           {
+             provider = "anthropic";
+             feature = "provider replay items with Messages";
+           })
+  in
   let max_tokens =
     match request.max_output_tokens with
     | Some value -> Stdlib.Ok value
@@ -369,6 +379,7 @@ let decode_message raw =
       message = assistant_message content;
       finish_reasons;
       usage = Option.map usage (Json.object_member "usage" json);
+      replay_items = [];
       raw = Some raw;
     }
 

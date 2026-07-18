@@ -30,6 +30,7 @@ let chat_request : Eta_ai.chat_request =
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream = false;
   }
 

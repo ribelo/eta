@@ -238,6 +238,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
               message = Assistant { content = [ Text "done" ]; tool_calls = [] };
               finish_reasons = [ Stop ];
               usage = Some base_usage;
+              replay_items = [];
               raw = Some raw;
             });
       encode_embeddings =
@@ -302,6 +303,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
       tools = [];
       temperature = Some 0.2;
       max_output_tokens = Some 64;
+      replay_items = [];
       stream = true;
     }
   in
@@ -365,6 +367,7 @@ let test_provider_encoder_can_reject_unsupported_features () =
               message = Assistant { content = []; tool_calls = [] };
               finish_reasons = [];
               usage = None;
+              replay_items = [];
               raw = None;
             });
       encode_embeddings =
@@ -402,6 +405,7 @@ let test_provider_encoder_can_reject_unsupported_features () =
         ];
       temperature = None;
       max_output_tokens = None;
+      replay_items = [];
       stream = false;
     }
   in
@@ -608,6 +612,7 @@ let stream_provider =
             message = Assistant { content = []; tool_calls = [] };
             finish_reasons = [];
             usage = None;
+            replay_items = [];
             raw = None;
           });
     encode_embeddings =
@@ -927,6 +932,7 @@ let telemetry_request ?(stream = false) () =
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream;
   }
 
@@ -937,6 +943,7 @@ let telemetry_response ?(finish_reasons = [ Stop ]) () =
     message = Assistant { content = [ Text "done" ]; tool_calls = [] };
     finish_reasons;
     usage = Some base_usage;
+    replay_items = [];
     raw = None;
   }
 
