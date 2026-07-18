@@ -200,3 +200,86 @@ The production gates, requested parity suite, E24 runtime red-team probes, and
 blinded A/B review packet were not run/generated: all require a compilable public
 contract first. Running the unchanged baseline gates would not prove E24. The
 contract reproducer is the highest-value failing gate at this point.
+
+---
+
+## Amendment predictions (sealed)
+
+Sealed after `followup-1.md` made the reduced contract final and before the
+first production code or signature edit. Wrong predictions remain as data; this
+section will never be edited after its commit.
+
+### Updated teach-back expected answers
+
+1. Omitting `?max_concurrent` does **not** request unbounded work. `map_par`
+   starts at most eight mapper fibers by default and fewer when the input is
+   shorter. An explicit positive value replaces that cap; zero or a negative
+   value raises `Invalid_argument` while constructing the blueprint.
+2. `map_par` is function-first like Stdlib `List.map` and Eta `Effect.map`:
+   `Effect.map_par f inputs`. Its collected values remain in input order, not
+   completion order. The first observed child failure cancels running siblings
+   and waits for their finalization as before.
+3. `retry ~schedule ~while_ effect` keeps the narrow current behavior: only a
+   bare `Cause.Fail err` reaches `while_` and the schedule. It does not adopt
+   `retry_or_else`'s composite-cause handling merely because the call shape is
+   now labeled and data-last.
+4. `retry_or_else ~schedule ~while_ ~or_else effect` remains the two-error
+   combinator. For catchable composites it selects the first typed failure.
+   The fallback receives `None` when the first failure is rejected before any
+   schedule step, the latest `Some out` after continuing steps, and the terminal
+   `Some out` when the schedule is exhausted.
+5. Schedule hooks, the third `Schedule.t` parameter, `no_hook`, driver stepping,
+   and repeat/retry hook-failure behavior are unchanged in E24.
+
+### Expected census / footgun deltas
+
+| Metric | Before | Predicted after | Delta |
+|---|---:|---:|---:|
+| Iterate-cluster public vals | 5 | 4 | −1 |
+| Iterate-cluster concepts | 5 | 4 | −1 |
+| `Schedule.t` parameters | 3 | 3 | 0 |
+| Schedule tap vals | 2 | 2 | 0 |
+
+Before vals: `for_each_par`, `for_each_par_bounded`, `retry`,
+`retry_or_else`, `repeat`. After vals: `map_par`, `retry`, `retry_or_else`,
+`repeat`. Only the duplicate parallel-map family collapses.
+
+**Footgun delta:** expect **−1 / +0**.
+
+- Removed trap: `for_each` can be read as side-effect iteration even though the
+  combinator collects results; `map_par` states collection and mirrors familiar
+  function-first map shape.
+- No new trap predicted if the default cap of eight and construction-time bound
+  rejection are explicit in the mli. The optional name alone would otherwise
+  invite the false “omission means unbounded” reading.
+
+### Two likeliest reviewer misreadings
+
+1. **“Omitting `?max_concurrent` means unbounded parallelism.”** The optional
+   shape commonly suggests “no limit.” The contract sentence must state the
+   default eight, and the >8 peak-concurrency probe must make it executable.
+2. **“The two retry functions now differ only by fallback.”** Their labeled,
+   data-last shapes look deliberately parallel, which may hide the existing
+   cause-semantics difference and the genuine `'err1` → `'err2` fallback
+   expressiveness. The mli must call the difference a current limitation, and
+   composite-cause parity tests must remain green.
+
+### Updated parity / migration prediction
+
+- Predict both old parallel names disappear completely outside historical E24
+  evidence and the blinded old-side review fixture.
+- Predict mapper laziness at blueprint construction, result ordering,
+  fail-fast/finalizer behavior, explicit caps, and default cap eight survive as
+  byte-identical behavior because one worker implementation remains underneath.
+- Predict retry/repeat migration is argument-shape-only: taps run at the same
+  points and fallback output cases remain unchanged.
+- Predict all native gates and the cache/js jsoo compile gate pass; the known
+  signal_jsoo diagnostic remains substantively identical to master.
+
+### Updated promote prior
+
+Predict **promote the reduced E24 contract** if migration and parity gates are
+green. `Schedule.t` slimming remains **held for E24b**, not failed or partially
+implemented here. The original proposal to absorb `retry_or_else` is superseded
+by the amended evidence that its two-error and composite-cause behavior is a
+distinct public capability.
