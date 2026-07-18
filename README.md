@@ -133,6 +133,10 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 - `Runtime.run_exn` raises `Failure` for typed failures and interruption. Use
   `Runtime.run` when you need to inspect the cause.
 
+When the compiler or the runtime pushes back, see
+[Eta type errors, translated](docs/type-errors.md) for the common messages,
+what they mean, and the canonical fixes.
+
 ## Native Parallelism
 
 The optional `eta_par` package contains Eta's native worker-domain scheduler.
