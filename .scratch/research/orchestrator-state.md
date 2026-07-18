@@ -5,19 +5,16 @@ session: read this file, the tail of `.scratch/research/dx-journal.md`, and
 the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: A (idiom pass)
-- In flight: **E25 — Family consistency** (`with_scope`, `named ?kind`,
-  `now_ms`, `error_pp`)
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e25`
-  - Branch: `research/dx-e25-family-consistency`
-  - Stage: predictions sealed (V-DX-E25-001); objective.md written; awaiting executor
-- Done: **E23 promoted** (`66bad437`) · **E24 promoted** (`29bd23e9`,
-  amended contract; Schedule slimming held → E24b)
-- Queue: **E25** (family consistency: `with_scope`, `named ?kind`, `now_ms`,
-  `error_pp`) → Phase A synthesis (V-DX-PHASE-A, incl. E24b + retry
-  cause-alignment backlog) → Phase B
-- Open follow-ups: F1 signal_jsoo JS bit-rot; F2 `fold ~ok:Fun.id` noise;
-  F3 `catch_recovery.ml` filename; F4 omission-vs-unbounded misreading
-  (mitigated; watch); E24b hook-ownership; retry cause-alignment decision
-- Pending decisions: none
-- Last update: 2026-07-18 — E25 launched
+- Current phase: **A complete** (synthesis V-DX-PHASE-A, CHANGELOG.md
+  created) — Phase B next
+- In flight: nothing
+- Done: **E23** `66bad437` · **E24** `29bd23e9` (amended; slimming held →
+  E24b) · **E25** `eac6d482` — all promoted
+- Queue: Phase B — E1+E2+E3 batched (one worktree, per-experiment
+  sections) → E4+E5 → E6; E2 extends the CHANGELOG idiom-pass entry
+- Backlog: E24b hook-ownership; retry cause-alignment; F1 signal_jsoo;
+  F2 fold ~ok:Fun.id noise; F3 catch_recovery.ml; F4 map_par omission
+  misreading; F5 Supervisor.scoped vocabulary; candidate: map_par
+  default-8 bench experiment
+- Pending decisions: Phase B batching confirmation by human
+- Last update: 2026-07-18 — Phase A synthesis complete
