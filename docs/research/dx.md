@@ -12,7 +12,31 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** programme started 2026-07-18. Two experiments promoted.
+**Status:** programme started 2026-07-18. Phase A complete (3 promoted).
+
+## E25 — Family consistency (promoted 2026-07-18)
+
+The last three naming inconsistencies of the idiom pass are gone:
+`scoped` → `with_scope` (the lifecycle family is uniformly `with_*`),
+`named_kind` absorbed into `named ?kind ?error_pp` (one span verb; optional
+erasure compile-proven), `now` → `now_ms` (units in the name), and
+`with_error_renderer` / `?error_renderer` → `with_error_pp` / `?error_pp`
+— telemetry now eats OCaml's `Format` culture (`pp` functions,
+`[@@deriving show]`) instead of demanding `Format.asprintf "%a" pp_err`
+adapters per module.
+
+Two contract points worth remembering: `error_pp` renders **at most once**
+per span status/exception event (memoized), and a raising printer becomes
+a **defect** through the ordinary capture path — the silent
+`"<error renderer raised>"` fallback is deleted. Telemetry degrades loudly,
+or not at all. The `"<typed failure>"` default is unchanged by design; E7's
+deriver is what will make it rare.
+
+Evidence: golden tests (domain string in span status, render-once counter,
+raising→defect, omission erasure); independent review 4,4 vs 3,4 with the
+new side preferred on the Format-composition argument. Provenance:
+`.scratch/research/dx/e25/`, V-DX-E25-001..002, branch
+`research/dx-e25-family-consistency`.
 
 ## E24 — Iteration mirrors `List` (promoted 2026-07-18)
 

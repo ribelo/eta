@@ -13,7 +13,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
-| E25 | Family consistency renames | A | S-M | low | proposed | | | |
+| E25 | Family consistency renames | A | S-M | low | **promoted** | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | proposed | | | |
 | E2 | discard / ignore_errors | B | S | low | proposed | | | |
 | E3 | race_either | B | S | low | proposed | | | |
@@ -536,3 +536,64 @@ about jargon, no rating below 4.
 **Outcome (predicted).** Promote wholesale; no per-rename revert. One
 golden span-status test rendering via `error_pp` (T6 socket for E7).
 Gates green within three fix attempts.
+
+---
+
+## V-DX-E25-002 — 2026-07-18 — research/dx-e25-family-consistency — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`eac6d482`); mainline `test/js_jsoo` + `lib/jsoo`
+compile clean; `signal_jsoo` untouched per F1.
+
+**Contract.** Verified: `scoped` → `with_scope`; `named_kind` absorbed into
+`named ?kind ?error_pp` (erasure-safe — omission probe proves all four
+omission shapes yield `Effect.t`); `now` → `now_ms`; `with_error_renderer`/
+`?error_renderer` → `with_error_pp`/`?error_pp` (`Format.formatter -> 'err
+-> unit`). Render-once via memoization by physical identity; a raising pp
+becomes a defect through the ordinary capture path — the silent
+`"<error renderer raised>"` fallback is deleted (per one-pager contract and
+the break-loudly rule; disclosed in the executor's deviations). Internal
+frame field keeps the `error_renderer` name — private representation,
+disclosed, accepted. `Supervisor.scoped` intentionally unchanged; logged as
+adjacent follow-up F5.
+
+**Golden tests** (green in orchestrator re-run): domain string in span
+status; render-once (counter == 1); raising pp → defect; optional-omission
+erasure.
+
+**Red-team:** raising-pp defect path proven (exit is `Die`, span closes
+honestly); `named`/`named_kind` dual-verb bug unwriteable post-merge.
+
+**Independent review** `[agent-sim, spot-check]` (oracle, fixed P-OCaml
+persona, blinded pairs, advocating prose stripped): pair A — `with_scope` +
+merged `named` **4** vs old **3** ("reads as opening a delimited region";
+`scoped` "less explicit"); pair B — `error_pp` **4** vs `error_renderer`
+**4**, preference to new on the decisive argument (composes with existing
+`pp` printers vs. needing `Format.asprintf`). Teach-back: scope combinator
+identified correctly both sides, faster and more confident on `with_scope`;
+`now_ms` "at least establishes milliseconds… better, though still
+insufficient" (wall-vs-monotonic carried by the mli sentence). Caveats
+logged: "scope" could read as structured-concurrency (family context
+disambiguates); `pp` abbreviation "less discoverable" (Format culture
+accepted).
+
+**Census/footguns:** observability cluster −1 val (`named_kind`); lifecycle
+family uniform `with_*`; zero stale public refs; footguns −1/+0 (verified
+independently).
+
+**Prediction scoring.** Orchestrator V-DX-E25-001: hits — census, footguns,
+review medians, `error_pp` Format-culture read, `pp`-grumble-without-drop,
+promote outcome; partial — `now_ms` read (monotonic honesty needed the mli
+sentence, as expected, but "read correctly" was optimistic: reviewer still
+guessed wall-clock first); untested — P-ZIO/P-Maint specifics (single-
+persona review). Executor: 7 hits, 1 partial (their report).
+
+**Protocol compliance:** predictions sealed pre-code (commit order
+verified); gates green; scope discipline; assignment file handled.
+Deviation: executor `.gitignore`d the objective file rather than leaving it
+plainly untracked — harmless; noted for future objectives (prefer plain
+untracked).
+
+**Decision: PROMOTE all four renames.** Merged `--no-ff` (`eac6d482`),
+master gates green, master + branch pushed, worktree removed, objective
+archived. Phase A complete — synthesis at V-DX-PHASE-A.
