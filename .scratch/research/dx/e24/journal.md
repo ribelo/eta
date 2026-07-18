@@ -110,3 +110,93 @@ cancellation semantics.
 ### Step 1 — seal predictions
 
 This section was committed before API or implementation edits.
+
+### Step 2 — docs-first contract blocked before edits
+
+The fixed signatures put every optional argument after all required arguments.
+That shape is not erasable in OCaml 5.2.0+ox. Three Nix/OxCaml probes were run
+before changing any `.mli`:
+
+1. Defining the signatures literally produces Warning 16 for
+   `?max_concurrent`, `?on_retry`, `?or_else`, and `?on_repeat`:
+   `unerasable-optional-argument`.
+2. Moving the optionals before the leading positional argument makes omission
+   work, but the implementation does not match an interface containing the
+   sealed exact arrow order.
+3. Suppressing Warning 16 allows the literal library definition to compile,
+   but the intended ordinary call is partial:
+
+   ```text
+   Error: This expression has type
+            "?max_concurrent:int -> int list X.effect"
+          but an expression was expected of type "int list X.effect"
+   Hint: This function application is partial,
+         maybe some arguments are missing.
+   ```
+
+Runnable reproducer: `contract-blocker/probe.sh`. The smallest technically
+working correction is to put each optional before a following positional
+argument, for example:
+
+```ocaml
+val map_par :
+  ?max_concurrent:int ->
+  'a list ->
+  f:('a -> ('b, 'err) t) ->
+  ('b list, 'err) t
+```
+
+Labeled-argument commutation preserves the desired full call spelling
+`Effect.map_par values ~f ~max_concurrent:8`, but this changes the public arrow
+order and partial-application contract. The objective says the displayed
+signatures are the contract, so making that correction silently would not
+follow the assignment exactly. A trailing `unit` would also erase the options
+but would change the required call spelling. Requiring every omission to be
+written `?max_concurrent:None` / `?on_retry:None` is the rejected silent-default
+workaround, not the requested API.
+
+**Status:** genuine blocker requiring the objective owner to authorize an OCaml-
+erasable arrow order (or a different call shape). No production API, test, doc,
+or implementation file was edited.
+
+### Independent `Schedule.t` slimming hold trigger
+
+The tap census exposed one existing use that the fixed E24 observers cannot
+express: `Resource.auto` drives hook-bearing schedules in a background daemon.
+The current public contract in `lib/eta/resource.mli` is, verbatim:
+
+```ocaml
+val auto :
+  ?on_error:('err -> unit) ->
+  load:('a, 'err) Effect.t ->
+  ?random:Capabilities.random ->
+  schedule:(unit, 'schedule_out, (unit, 'err) Effect.t) Schedule.t ->
+  unit ->
+  (('a, 'err) t, 'err) Effect.t
+```
+
+Its documented behavior is also explicit: “Effectful schedule taps run in the
+refresh daemon; tap failures fail that schedule-driving effect normally rather
+than being recorded as refresh failures.” The parity test is
+`test/core_common/resource_common_suites.ml` lines 217–243. It observes the
+runtime clock before the first schedule delay. `Resource.auto` has no refresh
+observer argument; `?on_error` only observes loader failures. Neither
+`Effect.retry.?on_retry` nor `Effect.repeat.?on_repeat` is a call site here.
+
+Per the objective's hold rule, this was recorded without moving the tap into the
+loader, weakening the test, or inventing a new `Resource.auto` argument. Such a
+move would observe the initial load or a different lifecycle point and would not
+preserve the contract. **Separate verdict: hold `Schedule.t` slimming pending an
+authorized observer contract for this driver.**
+
+`Eta_stream` also publicly drives hook-bearing schedules (`from_schedule`,
+`schedule`, `repeat`, and `retry`). Some `Stream.schedule` input taps can be
+expressed with upstream `Stream.tap`, but that does not resolve the independent
+`Resource.auto` trigger and was not used as a workaround.
+
+### Gates and later protocol steps
+
+The production gates, requested parity suite, E24 runtime red-team probes, and
+blinded A/B review packet were not run/generated: all require a compilable public
+contract first. Running the unchanged baseline gates would not prove E24. The
+contract reproducer is the highest-value failing gate at this point.
