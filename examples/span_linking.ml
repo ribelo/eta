@@ -13,14 +13,14 @@ let current_span_or_fail label =
   | None -> Effect.fail (`Missing_span label)
 
 let producer =
-  Effect.named_kind ~kind:Tracer.Producer "events.publish"
+  Effect.named ~kind:Tracer.Producer "events.publish"
     (current_span_or_fail "producer")
 
 let consumer (published : Capabilities.span_info) =
   let open Syntax in
   Effect.link_span ~trace_id:published.Capabilities.trace_id
     ~span_id:published.span_id
-    (Effect.named_kind ~kind:Tracer.Consumer "events.consume"
+    (Effect.named ~kind:Tracer.Consumer "events.consume"
        (let* active = current_span_or_fail "consumer" in
         let* () =
           Effect.event ~attrs:[ ("linked.span_id", published.span_id) ]

@@ -10,11 +10,11 @@ include Effect_supervisor_scope
 include Effect_schedule
 
 let metric_timer ?description ?(unit_ = "ms") ?attrs ~name ~boundaries eff =
-  now
+  now_ms
   |> bind (fun started ->
          on_exit
            (fun _exit ->
-             now
+             now_ms
              |> bind (fun ended ->
                     let elapsed_ms = max 0 (ended - started) in
                     metric_histogram ?description ~unit_ ?attrs ~name

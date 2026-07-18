@@ -420,7 +420,7 @@ function realuseScopeAcquireRelease64(): Effect.Effect<number> {
       Effect.map(build(depth - 1), (x: number) => x + v),
     )
   }
-  return Effect.scoped(build(64))
+  return Effect.with_scope(build(64))
 }
 
 function runEffectIgnore<A>(p: Effect.Effect<A>): void {

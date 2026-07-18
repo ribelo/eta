@@ -101,7 +101,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise =
       B.fork_run ctx rt
-        (E.scoped (E.concat [ resource "a"; resource "b"; resource "c" ]))
+        (E.with_scope (E.concat [ resource "a"; resource "b"; resource "c" ]))
     in
     B.yield ();
     wait_for_sleepers clock 1;
@@ -227,7 +227,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let schedule =
       refresh_schedule 1 (Duration.ms 5)
       |> Schedule.tap_input (fun () ->
-             E.now
+             E.now_ms
              |> E.bind (fun now_ms ->
                     E.sync (fun () -> taps := now_ms :: !taps)))
     in

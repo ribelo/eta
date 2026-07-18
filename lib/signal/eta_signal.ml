@@ -2739,7 +2739,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
-                    Effect.now
+                    Effect.now_ms
                     |> Effect.bind (fun initial_ms ->
                            construct_timer_signal (fun () ->
                                let now_ms_signal =
@@ -2749,7 +2749,7 @@ module Make (Observer_error : Observer_error) () = struct
                                    {
                                      source_timer_update =
                                        (fun timer generation ~missed:_ source ->
-                                         Effect.now
+                                         Effect.now_ms
                                          |> Effect.bind (fun now_ms ->
                                                 timer_set_source timer generation
                                                   source now_ms
@@ -2767,7 +2767,7 @@ module Make (Observer_error : Observer_error) () = struct
             {
               source_timer_update =
                 (fun timer generation ~missed:_ source ->
-                  Effect.now
+                  Effect.now_ms
                   |> Effect.bind (fun now_ms ->
                          if now_ms >= deadline_ms then
                            timer_set_source timer generation source true
@@ -2791,7 +2791,7 @@ module Make (Observer_error : Observer_error) () = struct
                     Effect.from_result
                       (validate_timestamp_runtime runtime_contract deadline)
                     |> Effect.bind (fun () ->
-                           Effect.now
+                           Effect.now_ms
                            |> Effect.bind (fun now_ms ->
                                   Effect.from_result
                                     (validate_future now_ms deadline_ms)
@@ -2808,7 +2808,7 @@ module Make (Observer_error : Observer_error) () = struct
       |> Effect.bind (fun () ->
              current_runtime_contract ()
              |> Effect.bind (fun runtime_contract ->
-                    Effect.now
+                    Effect.now_ms
                     |> Effect.bind (fun now_ms ->
                            Effect.from_result
                              (add_relative_deadline now_ms

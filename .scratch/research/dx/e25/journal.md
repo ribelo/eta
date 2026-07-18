@@ -122,3 +122,29 @@ one name.
 ### Step 1 — seal predictions
 
 This section was committed before API or implementation edits.
+
+### Step 2 — docs-first contracts
+
+Rewrote `effect.mli` for `now_ms`, `with_scope`, `with_error_pp`, merged
+`named ?kind ?error_pp`, and `fn ?error_pp`. Deleted `scoped`, `named_kind`,
+`now`, `with_error_renderer`, `?error_renderer`. Documented render-once and
+raising-pp → defect.
+
+### Step 3 — implementation and migration
+
+- Renamed implementations; merged `named`/`named_kind`.
+- `error_pp` adapted through memoized `Format.asprintf` into the internal
+  string renderer; raising printers propagate as defects.
+- Migrated call sites (Effect.scoped, E.scoped, named_kind, with_error_renderer,
+  error_renderer labels, Effect.now / E.now), docs (`docs/api-dx.md`,
+  `docs/services.md`, examples), and `lib/jsoo/eta_jsoo.mli` cross-ref.
+
+### Step 4 — gates
+
+All four required gates PASS. Core eio suite 502 tests PASS including golden
+error_pp cases and erasure probe.
+
+### Step 5–8 — extras, red-team, review, report
+
+Completed under `.scratch/research/dx/e25/` (`redteam/`, `review/`, `report.md`).
+Census actual −1 val; footgun −1/+0. Promote all four renames/merges.

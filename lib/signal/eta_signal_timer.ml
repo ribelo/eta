@@ -275,14 +275,14 @@ module Adapter = struct
     match next_due with
     | None -> Effect.unit
     | Some next_due_ms ->
-        let* now_ms = Effect.now in
+        let* now_ms = Effect.now_ms in
         let delay_ms = Timer_policy.sleep_delay_ms ~now_ms ~next_due_ms in
         let* () = Effect.sleep (Duration.ms delay_ms) in
         let* next_due = due.read_next_due ~generation ~fallback:next_due_ms in
         (match next_due with
         | None -> Effect.unit
         | Some due_ms ->
-            let* now_ms = Effect.now in
+            let* now_ms = Effect.now_ms in
             let wake =
               Timer_policy.daemon_wake_plan ~catch_up_policy ~interval_ms
                 ~next_due_ms:due_ms ~now_ms
@@ -325,7 +325,7 @@ module Adapter = struct
     let update = plan.start_update_plan in
     let daemon = plan.start_daemon_plan in
     let start_loop () =
-      let* now_ms = Effect.now in
+      let* now_ms = Effect.now_ms in
       let next_due_ms =
         Timer_policy.initial_next_due_ms ~now_ms ~interval_ms
       in

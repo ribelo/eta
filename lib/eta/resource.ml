@@ -88,7 +88,7 @@ let auto ?(on_error) ~load ?random ~schedule () =
              | _ -> Effect.unit))
   in
   let rec refresh_loop resource driver =
-    Effect.now
+    Effect.now_ms
     |> Effect.bind (fun now_ms ->
            drive_schedule_step (Schedule.step_plan ~now_ms ~input:() driver)
            |> Effect.bind (function

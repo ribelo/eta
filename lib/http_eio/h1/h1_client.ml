@@ -288,7 +288,7 @@ let request_with_pool pool request =
                |> Effect.bind (fun () -> close_channel release_ch)
                |> Effect.bind (fun () -> close_channel cancel_ch))
     in
-    Effect.scoped
+    Effect.with_scope
       (Effect.acquire_release ~acquire:Effect.unit ~release:close_if_pending
       |> Effect.bind (fun () ->
              Effect.daemon

@@ -348,7 +348,7 @@ let release_subscription sub =
   resolve_wakeups !wakeups
 
 let subscribe t f =
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release ~acquire:(add_subscription t)
        ~release:(fun sub -> Effect.sync (fun () -> release_subscription sub))
     |> Effect.bind f)

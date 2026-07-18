@@ -94,7 +94,7 @@ let test_effect_scoped_creates_switch_in_fiberless_host_run () =
   let before = Atomic.get Counting_host_eio.switch_runs in
   let exit =
     run_in_system_thread (fun () ->
-        Runtime.run rt (Effect.scoped Effect.unit))
+        Runtime.run rt (Effect.with_scope Effect.unit))
   in
   check_exit_ok Alcotest.unit "scoped result" () exit;
   Alcotest.(check int)

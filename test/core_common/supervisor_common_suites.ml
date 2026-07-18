@@ -51,7 +51,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_supervisor_child_finalizer_uses_parent_error_renderer () =
     B.with_runtime @@ fun _ctx rt ->
-    let render = function `Cleanup_failed -> "rendered cleanup" in
+    let render fmt = function
+      | `Cleanup_failed -> Format.pp_print_string fmt "rendered cleanup"
+    in
     let child =
       E.acquire_release ~acquire:E.unit
         ~release:(fun () -> E.fail `Cleanup_failed)
@@ -67,7 +69,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             let* () = yield in
             failures sup;
       }
-      |> E.with_error_renderer render
+      |> E.with_error_pp render
     in
     match B.run rt program with
     | Exit.Ok [ Cause.Finalizer finalizer ] ->

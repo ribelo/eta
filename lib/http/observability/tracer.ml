@@ -24,7 +24,7 @@ let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
          Eta.Effect.fail error
          |> Eta.Effect.annotate_all (Semconv.error_attrs error))
   |> Eta.Effect.annotate_all request_attrs
-  |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Client (span_name request)
+  |> Eta.Effect.named ~kind:Eta.Capabilities.Client (span_name request)
 
 let request ?(enabled = true) ?(emit_url_full = false) ?protocol client request =
   let eff = Client.request client request in
@@ -49,5 +49,5 @@ let request_with_retry ?(enabled = true) ?(emit_url_full = false) ?policy
     in
     Retry.run ?policy request_once request
     |> with_span ~emit_url_full ~protocol request
-    |> Eta.Effect.named_kind ~kind:Eta.Capabilities.Client
+    |> Eta.Effect.named ~kind:Eta.Capabilities.Client
          (span_name request ^ " retry")

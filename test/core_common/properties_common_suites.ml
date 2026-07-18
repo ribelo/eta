@@ -223,7 +223,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       in
       ignore
         (B.run rt
-           (Effect.scoped
+           (Effect.with_scope
               (Effect.concat [ resource "a"; resource "b"; body ])));
       List.sort String.compare !releases
     in
@@ -247,7 +247,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             (Effect.sync (fun () -> incr releases)))
     in
     let slow =
-      Effect.scoped
+      Effect.with_scope
         (resource
         |> Effect.bind (fun () ->
                Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))

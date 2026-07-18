@@ -52,7 +52,7 @@ counterpart:
 | `realuse.ts.fanout.bounded.512x50.k=8` | `realuse.fanout.bounded.512x50.k=8` | 512 tasks bounded to 8 in flight. |
 | `realuse.ts.retry.flaky.fail4_then_ok` | `realuse.retry.flaky.fail4_then_ok` | Operation fails 4 times before succeeding; retried with `Schedule.recurs(10)`; loop ×100 to escape the timer floor. |
 | `realuse.ts.pipeline.bind_catch.1k` | `realuse.pipeline.bind_catch.1k` | 500 binds → fail-and-catch boundary → 500 binds. |
-| `realuse.ts.scope.acquire_release.64` | `realuse.scope.acquire_release.64` | 64 nested `Effect.acquireRelease` inside one `Effect.scoped`. |
+| `realuse.ts.scope.acquire_release.64` | `realuse.scope.acquire_release.64` | 64 nested `Effect.acquireRelease` inside one `Effect.with_scope`. |
 
 All workloads are synchronous (no real I/O, no real timers) so wall
 time is dominated by the runtime/interpreter, not by the kernel.

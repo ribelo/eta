@@ -47,13 +47,13 @@ let with_owned_stream t (f) =
   | Empty | Fixed _ -> f None
   | Stream stream ->
       let owned = { length = None; stream } in
-      Eta.Effect.scoped
+      Eta.Effect.with_scope
         (Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure owned)
            ~release:(fun owned -> Stream.discard owned.stream)
         |> Eta.Effect.bind (fun owned -> f (Some owned)))
   | Rewindable_stream { length; make } ->
       let owned = { length; stream = make () } in
-      Eta.Effect.scoped
+      Eta.Effect.with_scope
         (Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure owned)
            ~release:(fun owned -> Stream.discard owned.stream)
         |> Eta.Effect.bind (fun owned -> f (Some owned)))

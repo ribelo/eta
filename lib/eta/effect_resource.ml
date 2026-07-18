@@ -1,4 +1,4 @@
-(** Effect lifecycle: finalizers, [acquire_release], [scoped]. Internal: see
+(** Effect lifecycle: finalizers, [acquire_release], [with_scope]. Internal: see
     Effect for the public surface. *)
 
 open Effect_core
@@ -76,7 +76,7 @@ let acquire_release ~acquire ~(release) =
         :: !(frame.finalizers);
       ok value
 
-let scoped eff =
+let with_scope eff =
   preserve eff @@ fun frame ->
   try
     ok
@@ -87,16 +87,16 @@ let scoped eff =
   with exn -> exit_of_exn frame exn
 
 let acquire_use_release ~acquire ~(release) (body) =
-  scoped (acquire_release ~acquire ~release |> bind body)
+  with_scope (acquire_release ~acquire ~release |> bind body)
 
 let with_resource ~acquire ~release body =
   acquire_use_release ~acquire ~release body
 
 let acquire_use_release_exit ~acquire ~(release) (body) =
-  scoped
+  with_scope
     (bind
        (fun resource ->
-         scoped (body resource)
+         with_scope (body resource)
          |> on_exit (fun exit -> release resource exit))
        acquire)
 

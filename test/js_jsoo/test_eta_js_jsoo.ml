@@ -88,7 +88,7 @@ let test_timeout_releases_resource done_ =
   let acquire = Eta_js.Effect.unit in
   let release () = Eta_js.Effect.sync (fun () -> released := true) in
   let body =
-    Eta_js.Effect.scoped
+    Eta_js.Effect.with_scope
       (Eta_js.Effect.acquire_release ~acquire ~release
        |> Eta_js.Effect.bind (fun () ->
               Eta_js.Effect.delay (Eta_js.Duration.seconds 1)
@@ -140,7 +140,7 @@ let test_all_settled done_ =
 let test_acquire_release_failure done_ =
   let released = ref false in
   let eff =
-    Eta_js.Effect.scoped
+    Eta_js.Effect.with_scope
       (Eta_js.Effect.acquire_release
          ~acquire:(Eta_js.Effect.pure 7)
          ~release:(fun _ -> Eta_js.Effect.sync (fun () -> released := true))
@@ -155,7 +155,7 @@ let test_acquire_release_failure done_ =
 
 let test_release_failure_after_success done_ =
   let eff =
-    Eta_js.Effect.scoped
+    Eta_js.Effect.with_scope
       (Eta_js.Effect.acquire_release
          ~acquire:(Eta_js.Effect.pure ())
          ~release:(fun () -> Eta_js.Effect.fail `Cleanup))
@@ -174,7 +174,7 @@ let test_release_failure_after_success done_ =
 
 let test_suppressed_release_failure done_ =
   let eff =
-    Eta_js.Effect.scoped
+    Eta_js.Effect.with_scope
       (Eta_js.Effect.acquire_release
          ~acquire:(Eta_js.Effect.pure ())
          ~release:(fun () -> Eta_js.Effect.fail `Cleanup)

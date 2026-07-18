@@ -112,11 +112,11 @@ let test_runtime_sleep_and_now_share_monotonic_timebase () =
   Direct_runtime.now := 10;
   let rt = Direct.create () in
   let eff =
-    Effect.now
+    Effect.now_ms
     |> Effect.bind (fun before ->
            Effect.sleep (Duration.ms 5)
            |> Effect.bind (fun () ->
-                  Effect.now |> Effect.map (fun after -> (before, after))))
+                  Effect.now_ms |> Effect.map (fun after -> (before, after))))
   in
   Direct.run rt eff
   |> check_exit_ok

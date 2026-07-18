@@ -28,7 +28,7 @@ module Runtime : sig
       The default runtime clock is [performance.now()] and sleeps use
       [setTimeout], so Eta time is monotonic elapsed runtime time rather than
       wall/civil time. Any [?sleep] override must preserve that same time-base
-      relationship with {!Eta.Effect.now}; use [?now_ms] with [?sleep] for
+      relationship with {!Eta.Effect.now_ms}; use [?now_ms] with [?sleep] for
       deterministic clocks in tests. *)
 
   val run :

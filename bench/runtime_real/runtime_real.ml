@@ -123,7 +123,7 @@ let scope_acquire_release_64 () =
     if depth = 0 then Effect.pure 0
     else Effect.bind (fun v -> Effect.map (( + ) v) (build (depth - 1))) acquire_one
   in
-  Effect.scoped (build 64)
+  Effect.with_scope (build 64)
 
 (* ---- workload registration ---- *)
 

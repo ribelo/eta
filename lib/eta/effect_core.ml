@@ -390,7 +390,7 @@ let delay duration eff =
   eval frame eff
 
 let sleep duration = sync_frame (fun frame -> frame.runtime.sleep duration)
-let now = sync_frame (fun frame -> frame.runtime.now_ms ())
+let now_ms = sync_frame (fun frame -> frame.runtime.now_ms ())
 
 let timed eff =
   preserve eff @@ fun frame ->

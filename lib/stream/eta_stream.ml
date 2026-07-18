@@ -275,7 +275,7 @@ let schedule_step ~input driver =
   Eta.Effect.bind
     (fun now_ms ->
       Eta.Schedule.step_plan ~now_ms ~input driver |> drive_schedule_step)
-    Eta.Effect.now
+    Eta.Effect.now_ms
 
 let make_file_error ~operation ~path cause =
   Eta_stream_file.make_error ~operation ~path cause

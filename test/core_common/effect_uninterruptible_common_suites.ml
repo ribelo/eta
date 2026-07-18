@@ -66,7 +66,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let released = ref false in
     let protected =
-      Effect.scoped
+      Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
              Effect.named "release.done"
                (Effect.sync (fun () -> released := true))

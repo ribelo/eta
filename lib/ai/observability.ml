@@ -64,13 +64,15 @@ let ai_error_type = function
   | Invalid_tool _ -> "invalid_tool"
   | Unsupported _ -> "unsupported"
 
-let ai_error_message = function
-  | Eta_http_error error -> Eta_http.Error.to_string error
+let ai_error_message fmt = function
+  | Eta_http_error error ->
+      Format.pp_print_string fmt (Eta_http.Error.to_string error)
   | Provider_error { message; _ }
   | Decode_error { message; _ }
   | Invalid_tool { message; _ } ->
-      message
-  | Unsupported { provider; feature } -> provider ^ " unsupported " ^ feature
+      Format.pp_print_string fmt message
+  | Unsupported { provider; feature } ->
+      Format.fprintf fmt "%s unsupported %s" provider feature
 
 let with_error_type eff =
   eff
@@ -80,7 +82,7 @@ let with_error_type eff =
 
 let with_span ~kind ~name ~attrs eff =
   eff |> with_error_type |> Eta.Effect.annotate_all attrs
-  |> Eta.Effect.named_kind ~error_renderer:ai_error_message ~kind name
+  |> Eta.Effect.named ~error_pp:ai_error_message ~kind name
 
 let[@inline always] with_response_attrs response_attrs eff =
   eff

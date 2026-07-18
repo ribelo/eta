@@ -42,7 +42,7 @@ eta-ai exposes effect wrappers:
       ('a, ai_error) Eta.Effect.t ->
       ('a, ai_error) Eta.Effect.t
 
-The wrappers use Eta.Effect.named_kind and Eta.Effect.annotate. They emit
+The wrappers use Eta.Effect.named and Eta.Effect.annotate. They emit
 string attributes from the A5 set:
 
 - gen_ai.operation.name;

@@ -154,13 +154,13 @@ let request_on_connection connection request url =
           match request.body with
           | Fixed _ -> response_or_writer
           | Empty | Stream _ | Rewindable_stream _ ->
-              Eta.Effect.scoped
+              Eta.Effect.with_scope
                 (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
                    ~release:(fun () ->
                      Request_writer.close_request_body opened.request_body)
                 |> Eta.Effect.bind (fun () -> response_or_writer)))
       |> fun request_effect ->
-      Eta.Effect.scoped
+      Eta.Effect.with_scope
         (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
            ~release:release_unreturned_request
         |> Eta.Effect.bind (fun () -> request_effect)))

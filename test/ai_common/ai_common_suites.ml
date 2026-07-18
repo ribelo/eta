@@ -921,7 +921,7 @@ let test_telemetry_streaming_and_embeddings_spans () =
 let test_telemetry_tool_span_parent_and_transport_suppression () =
   with_traced_runtime @@ fun rt tracer ->
   let hidden_http =
-    Eta.Effect.named_kind ~kind:Eta.Capabilities.Client "HTTP POST"
+    Eta.Effect.named ~kind:Eta.Capabilities.Client "HTTP POST"
       Eta.Effect.unit
     |> suppress_provider_transport_observability
   in

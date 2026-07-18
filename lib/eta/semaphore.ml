@@ -195,7 +195,7 @@ let with_permits_or_abort t n ~abort (f) =
   Effect.finally release_claimed body
 
 let with_permits t n (f) =
-  Effect.scoped
+  Effect.with_scope
     (Effect.acquire_release
        ~acquire:(acquire t n)
        ~release:(fun () -> Effect.sync (fun () -> release t n))

@@ -70,7 +70,7 @@ let create ?blocking_pool ?name ?(max_size = 10) ?max_idle ?idle_lifetime
     ?max_lifetime config =
   Eta.Effect.sync (fun () -> ref true)
   |> Eta.Effect.bind (fun release_on_create_failure ->
-         Eta.Effect.scoped
+         Eta.Effect.with_scope
            (Eta.Effect.acquire_release
               ~acquire:
                 (blocking_result ?blocking_pool ~name:"duckdb.open" (fun () ->

@@ -114,7 +114,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_observability_span_kind () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    run_ok rt (Effect.named_kind ~kind:Capabilities.Server "server" Effect.unit);
+    run_ok rt (Effect.named ~kind:Capabilities.Server "server" Effect.unit);
     let span = only_span tracer in
     Alcotest.(check bool) "server kind" true (span.kind = Tracer.Server)
 
@@ -210,21 +210,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.named "fail" (Effect.fail `Boom)
     in
     ignore (B.run rt fail_eff : (unit, observability_err) Exit.t);
-    let render_db : observability_err -> string = function
-      | `Db code -> "db:" ^ string_of_int code
-      | _ -> "<unexpected>"
+    let render_db : Format.formatter -> observability_err -> unit =
+     fun fmt -> function
+      | `Db code -> Format.fprintf fmt "db:%d" code
+      | _ -> Format.pp_print_string fmt "<unexpected>"
     in
     let custom_eff : (unit, observability_err) Effect.t =
-      Effect.named ~error_renderer:render_db "custom" (Effect.fail (`Db 42))
+      Effect.named ~error_pp:render_db "custom" (Effect.fail (`Db 42))
     in
     ignore (B.run rt custom_eff : (unit, observability_err) Exit.t);
     let inner = Effect.named "inner" (Effect.fail `Inner) in
-    let render_outer : observability_err -> string = function
-      | `Outer -> "outer"
-      | _ -> "<unexpected>"
+    let render_outer : Format.formatter -> observability_err -> unit =
+     fun fmt -> function
+      | `Outer -> Format.pp_print_string fmt "outer"
+      | _ -> Format.pp_print_string fmt "<unexpected>"
     in
     let outer : (unit, observability_err) Effect.t =
-      Effect.named ~error_renderer:render_outer "outer"
+      Effect.named ~error_pp:render_outer "outer"
         (Effect.bind_error (function `Inner -> Effect.fail `Outer) inner)
     in
     ignore (B.run rt outer : (unit, observability_err) Exit.t);
@@ -275,28 +277,84 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           b.parent_id
     | spans -> Alcotest.failf "expected three spans, got %d" (List.length spans)
 
-  let test_observability_renderer_exception_preserves_failure () =
+  let test_observability_error_pp_raise_becomes_defect () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let render _ = failwith "renderer exploded" in
+    let render _fmt _ = failwith "renderer exploded" in
     let eff =
-      Effect.named ~error_renderer:render "renderer-fails"
+      Effect.named ~error_pp:render "renderer-fails"
         (Effect.fail "original")
     in
     (match B.run rt eff with
-    | Exit.Error (Cause.Fail msg) ->
-        Alcotest.(check string) "original failure" "original" msg
-    | Exit.Error _ -> Alcotest.fail "expected original typed failure"
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "defect message" "Failure(\"renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error (Cause.Fail _) ->
+        Alcotest.fail "expected defect from raising error_pp, not typed failure"
+    | Exit.Error _ -> Alcotest.fail "expected die defect from raising error_pp"
     | Exit.Ok _ -> Alcotest.fail "expected failure");
     let span = only_span tracer in
-    check_error_message "fallback status" "<error renderer raised>" span.status;
+    (* Span still closes; status comes from the defect, not a swallowed fallback. *)
+    check_status "defect status" (Tracer.Error "") span.status
+
+  let test_observability_named_error_pp_domain_string () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    let pp_err fmt = function
+      | `Db_down -> Format.pp_print_string fmt "db.save: connection refused"
+    in
+    let eff =
+      Effect.named ~error_pp:pp_err "db.save" (Effect.fail `Db_down)
+    in
+    ignore (B.run rt eff : (unit, [ `Db_down ]) Exit.t);
+    let span = only_span tracer in
+    check_error_message "domain status" "db.save: connection refused" span.status;
     match span.events with
     | [ event ] ->
         Alcotest.(check (option string))
-          "fallback exception message" (Some "<error renderer raised>")
+          "domain exception message"
+          (Some "db.save: connection refused")
           (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
     | events ->
-        Alcotest.failf "expected one exception event, got %d"
-          (List.length events)
+        Alcotest.failf "expected one exception event, got %d" (List.length events)
+
+  let test_observability_error_pp_render_once () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    let calls = ref 0 in
+    let pp_err fmt err =
+      incr calls;
+      Format.pp_print_string fmt err
+    in
+    let eff =
+      Effect.named ~error_pp:pp_err "once" (Effect.fail "boom-once")
+    in
+    ignore (B.run rt eff : (unit, string) Exit.t);
+    let span = only_span tracer in
+    check_error_message "status" "boom-once" span.status;
+    (match span.events with
+    | [ event ] ->
+        Alcotest.(check (option string))
+          "exception message" (Some "boom-once")
+          (List.assoc_opt "exception.message" event.Tracer.ev_attrs)
+    | events ->
+        Alcotest.failf "expected one exception event, got %d" (List.length events));
+    Alcotest.(check int) "render once" 1 !calls
+
+  let test_observability_named_optional_omission_yields_effects () =
+    (* Compile-time erasure probe: optional omission still yields Effect.t. *)
+    let _omit : (unit, string) Effect.t =
+      Effect.named "x" (Effect.fail "e")
+    in
+    let _kind_only : (unit, string) Effect.t =
+      Effect.named ~kind:Capabilities.Client "x" (Effect.fail "e")
+    in
+    let pp fmt s = Format.pp_print_string fmt s in
+    let _pp_only : (unit, string) Effect.t =
+      Effect.named ~error_pp:pp "x" (Effect.fail "e")
+    in
+    let _both : (unit, string) Effect.t =
+      Effect.named ~kind:Capabilities.Client ~error_pp:pp "x" (Effect.fail "e")
+    in
+    ()
 
   let test_observability_concurrent_status () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
@@ -1031,8 +1089,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_annotation_order;
           Alcotest.test_case "statuses" `Quick test_observability_statuses;
           Alcotest.test_case "nested spans" `Quick test_observability_nested_spans;
-          Alcotest.test_case "renderer exception preserves failure" `Quick
-            test_observability_renderer_exception_preserves_failure;
+          Alcotest.test_case "error_pp raise becomes defect" `Quick
+            test_observability_error_pp_raise_becomes_defect;
+          Alcotest.test_case "named error_pp domain string" `Quick
+            test_observability_named_error_pp_domain_string;
+          Alcotest.test_case "error_pp render once" `Quick
+            test_observability_error_pp_render_once;
+          Alcotest.test_case "named optional omission yields effects" `Quick
+            test_observability_named_optional_omission_yields_effects;
           Alcotest.test_case "concurrent status" `Quick
             test_observability_concurrent_status;
           Alcotest.test_case "par children inherit parent" `Quick
