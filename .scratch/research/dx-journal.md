@@ -689,3 +689,96 @@ plain-untracked (noted; harmless). No sealed prediction was ever edited.
 batched per plan §4.8 preparation rules (single worktree, per-experiment
 sections) unless the human directs otherwise; E2's `Effect.ignore` split
 extends the CHANGELOG idiom-pass entry.
+
+---
+
+## V-DX-E1-001 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: predict (orchestrator-sealed, batch 1 of 3)
+
+**Measured.** Construct cluster: `from_result`, `from_option` (labeled
+`if_none:` — `sync_option` mirrors it), `flatten_result`, `sync`. The
+two-combinator leaf pattern (`sync … |> flatten_result` and equivalents):
+81 `flatten_result` call lines — the hottest boundary in the library.
+`Eta_blocking.run_result` exists and docs prefer it (symmetry argument
+holds). JS-track call sites: `test/cache_jsoo`, `test/js_jsoo` ×2,
+`lib/http_js/eta_http_js.ml`.
+
+**Census (predicted).** Construct cluster +2 vals (`sync_result`,
+`sync_option`), +1 concept (thunk-with-boundary-type constructors, two
+spellings — same accounting as `ignore*` in E23). Footguns: −1/+0
+(hand-assembly of the leaf boundary is a forgettable two-step; becomes one
+word).
+
+**Teach-back (predicted).** "What does `sync_result` do to exceptions?" —
+"surface as defects, like `sync`" answered 2/2 passes (oracle P-OCaml +
+orchestrator). Kill gate (>1/3 passes expect exception-catching → rename to
+`attempt_result`): predicted NOT fired.
+
+**Review (predicted).** A/B of three leaf call sites (two-combinator vs
+`sync_result`): new median ≥ 4; W1 solved without doc lookup in ≥ 2/3
+persona passes (P-OCaml + orchestrator = 2/2 here).
+
+**Persona mistakes.** P-OCaml: (1) expects `sync_result` to catch
+exceptions (the kill-gate misreading — minority predicted); (2) tries
+`sync_option` without `~if_none` first (label required, compiler-guided).
+P-ZIO: (1) expects exception→typed conversion (ZIO `attempt` habit) —
+docs must state exceptions stay defects; (2) expects `if_none` lazy (it is
+an eager value — same as `from_option`).
+
+## V-DX-E2-001 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: predict (orchestrator-sealed, batch 2 of 3)
+
+**Measured.** `Effect.ignore` has ZERO production call sites — all 7 uses
+are its own behavior tests in `effect_common_suites.ml` (success-discard,
+fail-suppression, defect propagation, interrupt, finalizer). Migration =
+splitting those tests + docs. Hold gate ("`ignore` was mostly
+value-discard"): predicted NOT fired (tests cover both meanings; no
+production bias either way).
+
+**Census (predicted).** Handle cluster −1 val (`ignore` deleted;
+`ignore_errors` generalized `(unit,..) -> ('a,..)` stays), concepts flat
+(`ignore*` → `ignore_errors`); transform cluster +1 val (`discard` = the
+`map (fun () -> ())` spelling). Footguns: −1/+0 (the most misleading name
+in the surface per the one-pager). CHANGELOG idiom-pass entry extends.
+
+**Teach-back (predicted).** "What does `ignore_errors` do to defects?" —
+"nothing, they propagate" instant, 2/2. "What does `discard` do to typed
+failures?" — "they propagate" (Stdlib `ignore` intuition transfers) 2/2.
+
+**Red-team (predicted).** The swallowed-error bug now requires writing
+`ignore_errors` explicitly — visible in a diff.
+
+**Persona mistakes.** P-OCaml: (1) reaches for `Effect.ignore` out of
+Stdlib habit, finds it deleted, reads CHANGELOG (predicted: smooth);
+(2) momentarily expects `discard` to suppress (Stdlib `ignore` suppresses
+exceptions... but Eta failures are values, not exceptions — predicted quick
+self-correction). P-ZIO: (1) expects `ignore` to exist (ZIO `ignore`
+discards value AND keeps errors — interesting: ZIO's `ignore` ≈ new
+`discard` + error-keeping... predicted: looks it up, rates the split
+honest).
+
+## V-DX-E3-001 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: predict (orchestrator-sealed, batch 3 of 3)
+
+**Measured.** `race : ('a,'err) t list -> ('a,'err) t` — homogeneous
+success type. Heterogeneous races currently map-wrap both branches into a
+common variant. `race_either` additive; mli must reference `race`'s
+permit-acquisition caveat verbatim.
+
+**Census (predicted).** Concurrency cluster +1 val / +1 concept
+(heterogeneous race) — justified addition (T4 boilerplate around an
+unambiguous boundary). Footguns: +0.
+
+**Review (predicted).** A/B vs. the map-wrapped version on two snippets:
+new median ≥ 4. Kill gate (`` `Left/`` `Right `` harder than named
+variants): predicted NOT fired.
+
+**Persona mistakes.** P-OCaml: (1) **`` `Left `` misread as the
+error/failure case** (Haskell Either culture: Left = error) — the payload
+types at the call site should correct it, predicted one hesitation, no
+rating below 4; (2) expects the loser to keep running in background
+(predicted: guesses cancellation correctly from `race` vocabulary).
+P-ZIO: (1) expects `raceEither` semantics (first success, not first
+settled — Eta's `race` fails fast on typed failure; predicted: one doc
+lookup, correctly understood).
+
+**Batch outcome (predicted).** All three promote. Gates green ≤3 fix
+attempts per experiment; mainline compile checks on `test/cache_jsoo`,
+`test/js_jsoo`, `lib/http_js`.
