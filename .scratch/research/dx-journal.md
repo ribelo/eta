@@ -1019,3 +1019,59 @@ category runtime-not-compile (cross-domain + the no-fence compile finding);
 page pass bar; 2–3 compiler-side-work items (4); promote. Executor scored
 its own message-shape miss ("would escape its scope" → `less general than
 's.`) raw. Clean.
+
+---
+
+## V-DX-E6-001 — 2026-07-19 — research/dx-e6-scoped-with-helpers — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E6-002.
+
+**Current surface (measured).** Lifecycle cluster in `effect.mli`: 6 vals —
+`acquire_release`, `acquire_use_release`, `acquire_use_release_exit`,
+`with_resource`, `with_resource_exit`, `with_scope`. No `Effect.Scoped`
+module exists. 88 `with_resource` call-site lines repo-wide; true nested
+`let@` ladders (2+ resources) are rare in-repo — this experiment serves
+user code, not internal debt. JS track uses the lifecycle API in
+`test/js_jsoo` ×2 — E6 only ADDS a module; no existing call sites migrate;
+mainline compile check of `test/js_jsoo` covers the new code under OCaml 5.4.
+
+**The shape.** `Effect.Scoped.with_2` / `with_3`: acquisition concurrent and
+fail-fast (via the scope's own registration + `par`); a failed acquire
+leaves the scope to release whatever was already registered; reverse-order
+release inherited from `with_scope`. Arity > 3 = hand-rolled recipe. No
+optionals anywhere (E24 erasure lesson — not applicable here).
+
+**Teach-back (predicted).** "Second acquire fails — what happens?" answered
+correctly from the mli alone: "the first resource's release still runs at
+scope exit; releases run in reverse acquisition order."
+
+**Review (predicted).** Blind A/B — 3-resource `let@` ladder vs
+`Scoped.with_3`: ladder 3, with_3 4, with_3 preferred. THE risk point is
+the pre-registered kill gate — `with_3`'s six labelled arguments
+(`acquire1`/`release1`/…) reading worse than the ladder. Predicted NOT to
+fire, but this is the experiment's live question. Screenshot test: nesting
+depth 3 → 1.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) expects `with_2` to serialize acquisition (`Fun.protect`
+  intuition is sequential); (2) expects a failed second acquire to leak the
+  first resource (no scope model yet).
+- P-ZIO: (1) looks for `Scope` as a passable value/capability, not a
+  bracket; (2) reaches for the exit-aware release form out of
+  `acquireRelease` habit.
+- P-Maint: (1) asks whether release error rows `'r1`/`'r2` leak into the
+  result (they don't — finalizer channel); (2) probes
+  interrupt-during-acquire semantics per branch.
+
+**Census (predicted).** Lifecycle cluster 6 → 8 vals; concepts +1
+(parallel acquisition, two arities as one concept). Justification required
+(R1 API-creep watch): replaces the proposed `and@` operator — syntax
+machinery — with composition of decided semantics; the parking lot's
+"and@ killed by E6" entry gains its evidence.
+
+**Footguns (predicted).** −1/+0: the "nested `let@` ladder serializes
+acquisitions that could be parallel" trap gets one obvious spelling.
+
+**Outcome (predicted).** Promote helpers + recipe. Kill risk concentrated
+in the `with_3` boilerplate rating; if it fires, recipe-only promotion.
+Gates green within three fix attempts.
