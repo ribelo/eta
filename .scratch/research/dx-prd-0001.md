@@ -1566,9 +1566,9 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E23 | Error channel mirrors Result | A | M | low | **promoted** 2026-07-18 | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** 2026-07-18 (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** 2026-07-18 | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
-| E1 | sync_result / sync_option | B | S | low | proposed | | | |
-| E2 | discard / ignore_errors | B | S | low | proposed | | | |
-| E3 | race_either | B | S | low | proposed | | | |
+| E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18 (sync_result only) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..002 |
+| E2 | discard / ignore_errors | B | S | low | **promoted** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
+| E3 | race_either | B | S | low | **killed** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E3-001..002 |
 | E4 | Cause rendering corpus | B | M | low | proposed | | | |
 | E5 | Type-error translations | B | S | low | proposed | | | |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | proposed | | | |

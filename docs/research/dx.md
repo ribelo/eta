@@ -12,7 +12,51 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** programme started 2026-07-18. Phase A complete (3 promoted).
+**Status:** Phase A complete (3 promoted). Phase B in progress: batch 1 landed (E1 partial, E2, E3 killed).
+
+## E2 — `discard` / `ignore_errors` (promoted 2026-07-18)
+
+`Effect.ignore` — the most misleading name in the surface, reading as
+`Stdlib.ignore` while silently suppressing typed failures — is deleted.
+Its two crushed-together meanings are now honest: `discard` (drop the
+success value; *all* causes propagate) and `ignore_errors` (suppress typed
+failures, named exactly for what it does, generalized beyond unit). The
+swallowed-error bug now requires writing `ignore_errors` in plain sight.
+Evidence: blind review rated the old name **1** and the split **5**.
+Provenance: `.scratch/research/dx/e2/`, V-DX-E2-001..002.
+
+## E1 — `sync_result` (promoted 2026-07-18); `sync_option` (killed)
+
+The library's hottest leaf — a synchronous call returning `result`, written
+81 times as `sync f |> flatten_result` — is now one word: `sync_result`.
+The mli states the contract in one sentence: "`Ok x` succeeds, `Error e` is
+a typed failure, and ordinary exceptions remain unchecked defects; it does
+not catch exceptions into the typed channel."
+
+The path here matters more than the name. A first review pass flagged the
+name as misread-inviting and the pre-registered kill gate fired; the
+fallback `attempt_result` tested decisively *worse* (it actively teaches
+exception-catching, rated 2). An oracle consultation ruled the review
+cohort incomplete and the endpoint mis-measured; the completed three-pass
+cohort produced **0/3 wrong exception-routings**, median 4, and a 5 for the
+final pass, whose reviewer used the signature's polymorphism as *proof*
+that exceptions cannot enter `'err`. Lesson recorded: finish the cohort
+before evaluating a gate, and "flagged ambiguity" is not "wrong
+expectation".
+
+`sync_option` died on utility evidence instead: `from_option` appears 7
+times repo-wide, the sync+option leaf pattern 0 — symmetry furniture, not a
+real boundary. The two-combinator recipe remains documented for
+hand-rolled cases via `flatten_result`.
+
+## E3 — `race_either` (killed 2026-07-18)
+
+The programme's first full kill. Heterogeneous races do not need a new
+combinator: map-wrapping branches into **domain-tagged variants**
+(`` `Timeout ``/`` `Done ``) beat `` `Left``/`` `Right `` tags in blind
+review (5 vs 4 — "explicit tags eliminate positional reasoning"). The
+recipe is the recommendation; the library stays one val smaller. Evidence:
+`.scratch/research/dx/e3/`, V-DX-E3-001..002, branch provenance.
 
 ## E25 — Family consistency (promoted 2026-07-18)
 

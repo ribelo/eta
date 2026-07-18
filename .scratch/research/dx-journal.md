@@ -14,9 +14,9 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E23 | Error channel mirrors Result | A | M | low | **promoted** | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
-| E1 | sync_result / sync_option | B | S | low | proposed | | | |
-| E2 | discard / ignore_errors | B | S | low | proposed | | | |
-| E3 | race_either | B | S | low | proposed | | | |
+| E1 | sync_result / sync_option | B | S | low | **promoted** (sync_result); sync_option killed (no usage) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..002 |
+| E2 | discard / ignore_errors | B | S | low | **promoted** | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
+| E3 | race_either | B | S | low | **killed** (named variants win) | SC | research/dx-e1e2e3-hygiene | V-DX-E3-001..002 |
 | E4 | Cause rendering corpus | B | M | low | proposed | | | |
 | E5 | Type-error translations | B | S | low | proposed | | | |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | proposed | | | |
@@ -782,3 +782,86 @@ lookup, correctly understood).
 **Batch outcome (predicted).** All three promote. Gates green ≤3 fix
 attempts per experiment; mainline compile checks on `test/cache_jsoo`,
 `test/js_jsoo`, `lib/http_js`.
+
+---
+
+## V-DX-E1-002 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: results + decision (split verdict)
+
+**Gates** (orchestrator re-run): native trio pass on master post-merge
+(`b56af349`); mainline `test/cache_jsoo`/`test/js_jsoo`/`lib/http_js`
+compile clean. `sync_result` parity tests green (Ok/Error/Die); mli doc
+states the defect contract explicitly ("does not catch exceptions into the
+typed channel").
+
+**Review** `[agent-sim, spot-check]` — a three-pass saga. Round 1 (comments
+present): two-combinator 5, `sync_result` 3 with a name-level caution
+("plausibly misread"). The pre-registered kill gate fired provisionally
+(1/1); fallback `attempt_result` retested and found decisively WORSE (2,
+"attempt strongly suggests catching exceptions", high confidence — as the
+orchestrator suspected from `Or_error` culture). Oracle consultation
+(V-DX consultation 2) ruled the cohort incomplete and the endpoint
+mis-measured: "count it as a failure only if the reviewer's own teach-back
+was wrong". Completed cohort (name-only, signatures shown, no decoy):
+teach-back wrong-routing **0/3**; `sync_result` ratings 3, 4, 5 → median
+4 ✓; final pass used the signature's polymorphism as proof exceptions
+cannot enter `'err` and preferred `sync_result` for the 80× case.
+
+**Decision: PROMOTE `sync_result`; KILL `sync_option`.** The kill gate did
+not fire on the completed cohort (0/3 wrong-routing). `sync_option` died on
+*utility* evidence instead: `from_option` ×7 repo-wide, sync+option leaf
+pattern ×0 — symmetry furniture (oracle: "consistency fetishism in the
+opposite direction"). Removed surgically on master (`8c031422`); full E1
+implementation remains on the branch as provenance.
+
+**Prediction scoring (orchestrator).** Hits: kill gate "not fired" (right
+outcome, wrong process — it provisionally fired first); `attempt_result`
+worse (confirmed decisively); footguns −1/+0. Partial: census predicted
++2 vals/+1 concept → +1 val (sync_option's death halved the addition).
+Executor: predictions consistent with outcome.
+
+**Lesson for future gates:** review cohorts must be completed before gate
+evaluation (≥3 comparable passes, uniform administration); "reviewer flags
+possible ambiguity" ≠ "reviewer expects wrong semantics".
+
+## V-DX-E2-002 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: results + decision
+
+**Gates:** as E1 (shared merge). `Effect.ignore` fully deleted (0 public
+refs); `discard` + generalized `ignore_errors` behavior tests green
+(success discarded; typed failure/defect/interruption/finalizer
+diagnostics propagate or are suppressed exactly per contract).
+
+**Review** `[agent-sim, spot-check]`: old `ignore` rated **1** ("invites
+exactly the bug where a developer intends only to discard a value but
+silently suppresses failure"); the split rated **5** ("makes the failure
+policy explicit and reviewable"). Strongest verdict in the programme so
+far. Teach-back: `discard`/`ignore_errors` channel semantics read
+correctly cold.
+
+**Census/footguns:** handle −1 val, transform +1 val (verified);
+footguns −1/+0. Hold gate (mostly value-discard) not fired — zero
+production call sites existed; all 7 uses were behavior tests, split.
+
+**Decision: PROMOTE.** Merged in `b56af349`; CHANGELOG idiom-pass entry
+extended by the executor. Predictions (orchestrator + executor): all hit.
+
+## V-DX-E3-002 — 2026-07-18 — research/dx-e1e2e3-hygiene — phase: results + decision (KILL)
+
+**Review** `[agent-sim, spot-check]`: map-wrapped race with domain tags
+(`` `Timeout``/`` `Done ``) rated **5** vs `race_either`'s
+`` `Left``/`` `Right `` rated **4** — "explicit tags eliminate positional
+Left/Right reasoning". The pre-registered kill gate ("reviewers find
+`` `Left/`` `Right `` payloads harder to follow than named variants")
+fired cleanly.
+
+**Decision: KILL.** The map-wrapped recipe (domain-tagged variants)
+remains the recommendation; `race_either` code stays on the branch as
+provenance; the kill evidence bundle is committed at
+`.scratch/research/dx/e3/` (+ shared review packet). Census stays flat —
+the library is one val smaller than the one-pager assumed.
+
+**Prediction scoring (orchestrator).** MISS: predicted the kill gate
+would NOT fire and `` `Left `` would only cause "one hesitation, no
+rating below 4". The reviewer read the tags correctly *and still*
+preferred named variants — a cleaner loss than I imagined, and the
+pre-registered gate did its job without sentiment. First full kill of the
+programme; recorded as evidence that the gates have teeth.
