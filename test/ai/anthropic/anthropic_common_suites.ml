@@ -46,6 +46,7 @@ let chat_request ?(stream = false) ?(max_output_tokens = Some 64) () :
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens;
+    replay_items = [];
     stream;
   }
 
@@ -210,6 +211,7 @@ let test_encode_user_image_does_not_reject () =
       tools = [];
       temperature = None;
       max_output_tokens = Some 100;
+      replay_items = [];
       stream = false;
     }
   in
@@ -253,6 +255,7 @@ let test_encode_tool_result_with_image_does_not_crash () =
       tools = [];
       temperature = None;
       max_output_tokens = Some 100;
+      replay_items = [];
       stream = false;
     }
   in

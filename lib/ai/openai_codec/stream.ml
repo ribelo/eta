@@ -123,7 +123,7 @@ let responses_message_start raw json =
           };
       ]
 
-let responses_completed ~provider json =
+let responses_terminal ~provider json =
   match Json.object_member "response" json with
   | None -> [ A.Stream_finish [ A.Stop ]; A.Stream_done ]
   | Some response -> (
@@ -151,8 +151,8 @@ let responses_stream_events ?(nested_response_error = false) ~provider raw
   | Some "response.output_item.added" -> responses_stream_tool_added json
   | Some "response.function_call_arguments.delta" ->
       [ responses_stream_tool_delta json ]
-  | Some "response.completed" -> responses_completed ~provider json
-  | Some "response.incomplete" -> [ A.Stream_finish [ A.Length ] ]
+  | Some "response.completed" -> responses_terminal ~provider json
+  | Some "response.incomplete" -> responses_terminal ~provider json
   | Some "response.failed" ->
       [
         A.Stream_error

@@ -7,6 +7,10 @@ open Tools
 
 let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
+  let* () =
+    if request.replay_items = [] then Stdlib.Ok ()
+    else unsupported ~provider "provider replay items with Chat Completions"
+  in
   let* temperature = temperature_json ~provider request.temperature in
   let* tools =
     result_map_all (tool_json ~schema_value ~shape:Chat_tool) request.tools
@@ -94,6 +98,7 @@ let decode_chat ?(usage_raw_prompt_names = false) ~provider raw =
                 Option.map
                   (usage ~raw_prompt_names:usage_raw_prompt_names)
                   (Json.object_member "usage" json);
+              replay_items = [];
               raw = Some raw;
             }
       | None ->

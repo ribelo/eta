@@ -109,6 +109,10 @@ type response = {
   message : message;
   finish_reasons : finish_reason list;
   usage : usage option;
+  replay_items : raw_json list;
+  (** Provider-issued output items needed to continue the immediately following
+      request. Applications must keep these transient and return them only to
+      the same provider; they are not display or persistence content. *)
   raw : raw_json option;
 }
 
@@ -125,6 +129,9 @@ type chat_request = {
   tools : tool list;
   temperature : float option;
   max_output_tokens : int option;
+  replay_items : raw_json list;
+  (** Transient provider-issued items from the preceding response. Provider
+      codecs reject items they cannot safely validate and replay. *)
   stream : bool;
 }
 

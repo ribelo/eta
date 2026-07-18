@@ -50,6 +50,7 @@ let chat_request ?(stream = false) () : A.chat_request =
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream;
   }
 
@@ -736,6 +737,7 @@ let test_openai_image_content_wire_shape () =
       tools = [];
       temperature = None;
       max_output_tokens = Some 100;
+      replay_items = [];
       stream = false;
     }
   in
@@ -819,6 +821,7 @@ let test_openai_tool_result_with_image_does_not_crash () =
       tools = [];
       temperature = None;
       max_output_tokens = Some 100;
+      replay_items = [];
       stream = false;
     }
   in

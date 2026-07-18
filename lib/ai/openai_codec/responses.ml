@@ -5,15 +5,36 @@ open Core
 open Content
 open Tools
 
-let response_input_items ~provider prompt =
-  let rec loop acc = function
-    | [] -> Stdlib.Ok (List.rev acc)
-    | message :: rest -> (
-        match input_items ~provider message with
-        | Stdlib.Error _ as error -> error
-        | Stdlib.Ok items -> loop (List.rev_append items acc) rest)
+let replay_item ~provider raw =
+  let* json = parse_json ~provider raw in
+  match Json.string_member "type" json with
+  | Some "reasoning" -> Stdlib.Ok json
+  | Some _ | None ->
+      unsupported ~provider "provider replay item must be a reasoning item"
+
+let response_input_items ~provider ~replay_items prompt =
+  let* replay_items = result_map_all (replay_item ~provider) replay_items in
+  let rec loop replay_used = function
+    | [] -> Stdlib.Ok ([], replay_used)
+    | message :: rest ->
+        let* rest_items, replay_used = loop replay_used rest in
+        let* items = input_items ~provider message in
+        let should_replay =
+          (not replay_used)
+          && replay_items <> []
+          &&
+          match message with
+          | A.Assistant { tool_calls = _ :: _; _ } -> true
+          | A.System _ | A.User _ | A.Assistant _ | A.Tool _ -> false
+        in
+        let items = if should_replay then replay_items @ items else items in
+        Stdlib.Ok (items @ rest_items, replay_used || should_replay)
   in
-  loop [] prompt
+  let* items, replay_used = loop false prompt in
+  if replay_items <> [] && not replay_used then
+    unsupported ~provider
+      "provider replay items require a preceding assistant tool call"
+  else Stdlib.Ok items
 
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
@@ -21,7 +42,10 @@ let encode_responses_json ~provider ~schema_value ?structured_output
   let* tools =
     result_map_all (tool_json ~schema_value ~shape:Responses_tool) request.tools
   in
-  let* input = response_input_items ~provider request.prompt in
+  let* input =
+    response_input_items ~provider ~replay_items:request.replay_items
+      request.prompt
+  in
   let text_format =
     structured_output
     |> Option.map (fun output ->
@@ -78,6 +102,11 @@ let responses_tool_call item =
       | _ -> None)
   | _ -> None
 
+let responses_replay_item item =
+  match Json.string_member "type" item with
+  | Some "reasoning" -> Some (Json.compact item)
+  | Some _ | None -> None
+
 let status_finish ~has_tool_calls json =
   match Json.string_member "status" json with
   | Some "completed" -> if has_tool_calls then [ A.Tool_calls ] else [ A.Stop ]
@@ -94,6 +123,7 @@ let decode_responses ~provider raw =
       let output = Json.array_member "output" json |> Option.value ~default:[] in
       let text = output |> List.concat_map output_text |> String.concat "" in
       let tool_calls = output |> List.filter_map responses_tool_call in
+      let replay_items = output |> List.filter_map responses_replay_item in
       Stdlib.Ok
         {
           A.id = Json.string_member "id" json;
@@ -107,5 +137,6 @@ let decode_responses ~provider raw =
               };
           finish_reasons = status_finish ~has_tool_calls:(tool_calls <> []) json;
           usage = Option.map usage (Json.object_member "usage" json);
+          replay_items;
           raw = Some raw;
         }

@@ -34,6 +34,7 @@ let transport_provider =
             message = Assistant { content = []; tool_calls = [] };
             finish_reasons = [];
             usage = None;
+            replay_items = [];
             raw = None;
           });
     encode_embeddings =

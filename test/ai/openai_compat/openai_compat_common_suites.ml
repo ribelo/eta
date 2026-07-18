@@ -46,6 +46,7 @@ let chat_request ?(stream = false) ?(model = "mistral-large-latest") () :
     tools = [ weather_tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream;
   }
 

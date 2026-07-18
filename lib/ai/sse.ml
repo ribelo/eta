@@ -95,7 +95,15 @@ let parse_sse_record_slice record record_start record_finish =
     else loop line_start (index + 1)
   in
   loop record_start record_start;
-  if !has_data then Some { event = !event; data = Buffer.contents data }
+  let data = Buffer.contents data in
+  let rec whitespace_only index =
+    index >= String.length data
+    ||
+    match data.[index] with
+    | ' ' | '\t' | '\r' | '\n' -> whitespace_only (index + 1)
+    | _ -> false
+  in
+  if !has_data && not (whitespace_only 0) then Some { event = !event; data }
   else None
 
 let blank_record record start finish =

@@ -30,6 +30,7 @@ let request () : Eta_ai.chat_request =
     tools = [ tool () ];
     temperature = Some 0.2;
     max_output_tokens = Some 64;
+    replay_items = [];
     stream = false;
   }
 
@@ -79,6 +80,7 @@ let provider () =
             message = Assistant { content = [ Text raw ]; tool_calls = [] };
             finish_reasons = [ Stop ];
             usage = None;
+            replay_items = [];
             raw = Some raw;
           });
     encode_embeddings =

@@ -83,6 +83,16 @@ let usage ?(raw_prompt_names = false) json =
     Option.bind (Json.object_member object_name json)
       (Json.scalar_string_member field_name)
   in
+  let nested_scalar_first object_name names =
+    let rec loop = function
+      | [] -> None
+      | name :: rest -> (
+          match nested_scalar object_name name with
+          | Some _ as value -> value
+          | None -> loop rest)
+    in
+    loop names
+  in
   let optional_raw name = function None -> [] | Some value -> [ (name, value) ] in
   {
     A.input_tokens;
@@ -97,13 +107,23 @@ let usage ?(raw_prompt_names = false) json =
       ]
       @ optional_raw "cached_tokens"
           (nested_scalar "input_tokens_details" "cached_tokens")
+      @ optional_raw "cache_write_tokens"
+          (nested_scalar "input_tokens_details" "cache_write_tokens")
       @ optional_raw "reasoning_tokens"
           (nested_scalar "output_tokens_details" "reasoning_tokens")
       @ optional_raw "cost" (Json.scalar_string_member "cost" json)
       @ optional_raw "input_cost"
-          (nested_scalar "cost_details" "upstream_inference_input_cost")
+          (nested_scalar_first "cost_details"
+             [
+               "upstream_inference_prompt_cost";
+               "upstream_inference_input_cost";
+             ])
       @ optional_raw "output_cost"
-          (nested_scalar "cost_details" "upstream_inference_output_cost");
+          (nested_scalar_first "cost_details"
+             [
+               "upstream_inference_completions_cost";
+               "upstream_inference_output_cost";
+             ]);
   }
 
 let raw_json = function
