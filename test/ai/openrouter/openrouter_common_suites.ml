@@ -648,6 +648,16 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
       Alcotest.(check (option string))
         "reasoning tokens" (Some "28")
         (List.assoc_opt "reasoning_tokens" usage.raw);
+      Alcotest.(check (option int))
+        "typed uncached input tokens" (Some 10288) usage.input_tokens.uncached;
+      Alcotest.(check (option int))
+        "typed cache read tokens" (Some 3) usage.input_tokens.cache_read;
+      Alcotest.(check (option int))
+        "typed cache write tokens" (Some 2) usage.input_tokens.cache_write;
+      Alcotest.(check (option int))
+        "typed text output tokens" (Some 328) usage.output_tokens.text;
+      Alcotest.(check (option int))
+        "typed reasoning tokens" (Some 28) usage.output_tokens.reasoning;
       let raw_float name =
         Option.bind (List.assoc_opt name usage.raw) float_of_string_opt
       in

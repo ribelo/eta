@@ -75,6 +75,23 @@ let usage ?(raw_prompt_names = false) json =
   let input_tokens = int_member "prompt_tokens" "input_tokens" json in
   let output_tokens = int_member "completion_tokens" "output_tokens" json in
   let total_tokens = Json.int_member "total_tokens" json in
+  let nested_int object_name field_name =
+    Option.bind (Json.object_member object_name json) (Json.int_member field_name)
+  in
+  let input_details_name, output_details_name =
+    if raw_prompt_names then
+      ("prompt_tokens_details", "completion_tokens_details")
+    else ("input_tokens_details", "output_tokens_details")
+  in
+  let cache_read_tokens =
+    nested_int input_details_name "cached_tokens"
+  in
+  let cache_write_tokens =
+    nested_int input_details_name "cache_write_tokens"
+  in
+  let reasoning_tokens =
+    nested_int output_details_name "reasoning_tokens"
+  in
   let input_name, output_name =
     if raw_prompt_names then ("prompt_tokens", "completion_tokens")
     else ("input_tokens", "output_tokens")
@@ -94,10 +111,25 @@ let usage ?(raw_prompt_names = false) json =
     loop names
   in
   let optional_raw name = function None -> [] | Some value -> [ (name, value) ] in
+  let subtract left right =
+    Option.map
+      (fun total -> Int.max 0 (total - Option.value ~default:0 right))
+      left
+  in
   {
-    A.input_tokens;
-    output_tokens;
-    total_tokens;
+    A.input_tokens =
+      {
+        uncached = subtract input_tokens cache_read_tokens;
+        total = input_tokens;
+        cache_read = cache_read_tokens;
+        cache_write = cache_write_tokens;
+      };
+    output_tokens =
+      {
+        total = output_tokens;
+        text = subtract output_tokens reasoning_tokens;
+        reasoning = reasoning_tokens;
+      };
     raw =
       [
         (input_name, Option.value ~default:"" (Option.map string_of_int input_tokens));
@@ -106,11 +138,11 @@ let usage ?(raw_prompt_names = false) json =
         ("total_tokens", Option.value ~default:"" (Option.map string_of_int total_tokens));
       ]
       @ optional_raw "cached_tokens"
-          (nested_scalar "input_tokens_details" "cached_tokens")
+          (nested_scalar input_details_name "cached_tokens")
       @ optional_raw "cache_write_tokens"
-          (nested_scalar "input_tokens_details" "cache_write_tokens")
+          (nested_scalar input_details_name "cache_write_tokens")
       @ optional_raw "reasoning_tokens"
-          (nested_scalar "output_tokens_details" "reasoning_tokens")
+          (nested_scalar output_details_name "reasoning_tokens")
       @ optional_raw "cost" (Json.scalar_string_member "cost" json)
       @ optional_raw "prompt_cost"
           (nested_scalar "cost_details" "upstream_inference_prompt_cost")

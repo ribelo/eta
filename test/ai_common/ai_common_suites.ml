@@ -181,9 +181,9 @@ let test_api_key_prints_redacted () =
 
 let base_usage =
   {
-    input_tokens = Some 3;
-    output_tokens = Some 5;
-    total_tokens = Some 8;
+    input_tokens =
+      { uncached = Some 3; total = Some 3; cache_read = None; cache_write = None };
+    output_tokens = { total = Some 5; text = Some 5; reasoning = None };
     raw = [ ("provider", "fixture") ];
   }
 
@@ -315,7 +315,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
           Alcotest.(check (option string)) "response id"
             (Some "chatcmpl_fixture") response.id;
           Alcotest.(check (option int)) "input tokens" (Some 3)
-            (Option.bind response.usage (fun usage -> usage.input_tokens))
+            (Option.bind response.usage (fun usage -> usage.input_tokens.total))
       | Error _ -> Alcotest.fail "expected decoded response")
   | Error _ -> Alcotest.fail "expected encoded request");
   (match provider.decode_stream_event { event = None; data = "[DONE]" } with

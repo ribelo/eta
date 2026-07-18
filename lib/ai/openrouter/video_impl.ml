@@ -25,9 +25,9 @@ let usage_of_json json =
     Json.scalar_string_member name json |> Option.value ~default:""
   in
   {
-    A.input_tokens = None;
-    output_tokens = None;
-    total_tokens = None;
+    A.input_tokens =
+      { uncached = None; total = None; cache_read = None; cache_write = None };
+    output_tokens = { total = None; text = None; reasoning = None };
     raw = [ ("cost", raw_value "cost"); ("is_byok", raw_value "is_byok") ];
   }
 
