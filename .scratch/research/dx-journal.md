@@ -481,3 +481,58 @@ handling?) — both land in the programme backlog at the Phase A synthesis.
 F3 `catch_recovery.ml` filename. New: F4 omission-vs-unbounded misreading —
 mitigated by mli sentence + api-dx note + default-cap test; watch whether
 users read it (candidate input for E5's translation page).
+
+---
+
+## V-DX-E25-001 — 2026-07-18 — research/dx-e25-family-consistency — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E25-002.
+
+**Current shapes (measured).** `scoped` (114 call lines) is the only
+non-`with_*` member of an 8-strong lifecycle family (`with_resource`,
+`with_resource_exit`, `with_background`, `with_error_renderer`,
+`with_result_attrs`, `with_external_parent`, `with_context`,
+`with_minimum_log_level`). `named` (271) + `named_kind` (23) duplicate one
+concept; `named_kind`'s `kind:` is required, which is why the pair exists.
+`now` (21) returns raw int ms. `with_error_renderer` (10) + `?error_renderer`
+params on `fn`/`named` (50 mentions) demand `('err -> string)`, forcing
+`Format.asprintf "%a" pp_err` per module. Proposed `named ?kind ?error_pp
+string eff` is erasure-safe (optionals followed by two mandatory args —
+E24 lesson applied). JS track: call sites in `test/js_jsoo` ×2 and a doc
+xref in `lib/jsoo/eta_jsoo.mli`.
+
+**Census (predicted).** Observability cluster −1 val (`named_kind`
+absorbed); lifecycle cluster flat (`scoped` → `with_scope`, family becomes
+uniform); clock rename `now` → `now_ms`; `?error_renderer` → `?error_pp`
+on `fn`/`named`; `with_error_renderer` → `with_error_pp`. Deletions:
+`scoped`, `named_kind`, `now`, `with_error_renderer`. Footguns: −1/+0
+(two-`named` guess-which-one removed; `now`'s unit-free int is a minor
+trap also removed — call it −1 to −2, seal **−1** conservatively).
+
+**Migration size (predicted).** ~490 call-site lines across ~60–100 files,
+overwhelmingly mechanical; JS compile check required on `test/js_jsoo`.
+
+**Teach-back (predicted).** "Which combinator opens a resource scope?" —
+`with_scope` answered instantly (baseline `scoped`: hesitation). 3/3.
+
+**Review (predicted).** A/B of the four call sites: new median ≥ 4, no
+rating ≤ 2. Risk points: (1) `error_pp`'s `Format.formatter -> 'err -> unit`
+shape — predicted read correctly by Format culture (`pp` convention);
+(2) `with_error_pp` shortening "renderer" to "pp" — one possible grumble
+about jargon, no rating below 4.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) reads `error_pp` output as user-facing text rather than
+  telemetry; (2) expects `with_scope` to hand a scope handle
+  (`Eio.Switch.run (fun sw -> ...)` shape) rather than wrap an effect.
+- P-ZIO: (1) looks for where the `Scope` value comes from (ZIO's
+  environment `Scope`); (2) expects `now_ms` to return a time type, not
+  raw int — actually the rename makes the raw-ness honest; predicted read
+  correctly.
+- P-Maint: (1) expects a raising `error_pp` to be a defect via the ordinary
+  capture path (it is — documented); (2) worries about double-rendering
+  (contract: at most once per span status/exception event).
+
+**Outcome (predicted).** Promote wholesale; no per-rename revert. One
+golden span-status test rendering via `error_pp` (T6 socket for E7).
+Gates green within three fix attempts.
