@@ -215,14 +215,14 @@ let sync_defect_proposed read_config =
 
 let retrying_call_current path =
   effect_of_result_thunk (fun () -> Domain.external_call path)
-  |> Effect.retry (Eta.Schedule.recurs 3) (function
+  |> Effect.retry ~schedule:(Eta.Schedule.recurs 3) ~while_:(function
        | `Network -> true
        | _ -> false)
 
 let retrying_call_proposed path =
   Effect.sync (fun () -> Domain.external_call path)
   |> Effect.flatten_result
-  |> Effect.retry (Eta.Schedule.recurs 3) (function
+  |> Effect.retry ~schedule:(Eta.Schedule.recurs 3) ~while_:(function
        | `Network -> true
        | _ -> false)
 
@@ -258,7 +258,7 @@ let schedule_retry_current next_delay retryable call =
 let schedule_retry_proposed policy retryable call =
   Effect.sync call
   |> Effect.flatten_result
-  |> Effect.retry policy retryable
+  |> Effect.retry ~schedule:policy ~while_:retryable
 
 let repeat_heartbeat_current policy tick =
   let rec loop driver =
@@ -271,7 +271,7 @@ let repeat_heartbeat_current policy tick =
   loop (Eta.Schedule.start policy)
 
 let repeat_heartbeat_proposed policy tick =
-  Effect.repeat policy tick
+  Effect.repeat ~schedule:policy tick
 
 let stream_current chunks =
   chunks
@@ -512,7 +512,7 @@ let batch_current ids =
 
 let batch_proposed ids probes =
   let open Syntax in
-  let* users = Effect.for_each_par_bounded ~max:2 ids load_user_proposed in
+  let* users = Effect.map_par ~max_concurrent:2 load_user_proposed ids in
   let+ outcomes =
     probes |> List.map load_user_proposed |> Effect.all_settled
   in
@@ -1101,7 +1101,7 @@ let cached_resource_current load schedule observe =
   |> Effect.bind (fun initial ->
          publish initial
          |> Effect.bind (fun () ->
-                Effect.with_background (Effect.repeat schedule refresh) (fun () ->
+                Effect.with_background (Effect.repeat ~schedule:schedule refresh) (fun () ->
                     Effect.pure initial)))
 
 let cached_resource_proposed load schedule observe =
@@ -1240,7 +1240,7 @@ load
 |> Effect.bind (fun initial ->
      publish initial
      |> Effect.bind (fun () ->
-          Effect.with_background (Effect.repeat schedule refresh) (fun () ->
+          Effect.with_background (Effect.repeat ~schedule:schedule refresh) (fun () ->
             Effect.pure initial)))|};
     };
     {
@@ -1540,7 +1540,7 @@ render_user user|};
       code =
         {|Effect.sync (fun () -> external_call path)
 |> Effect.bind Effect.from_result
-|> Effect.retry policy retryable|};
+|> Effect.retry ~schedule:policy ~while_:retryable|};
     };
     {
       area = "retry";
@@ -1548,7 +1548,7 @@ render_user user|};
       code =
         {|Effect.sync (fun () -> external_call path)
 |> Effect.flatten_result
-|> Effect.retry policy retryable|};
+|> Effect.retry ~schedule:policy ~while_:retryable|};
     };
     {
       area = "schedule_retry";
@@ -1575,7 +1575,7 @@ loop 3|};
 in
 Effect.sync call
 |> Effect.flatten_result
-|> Effect.retry policy retryable|};
+|> Effect.retry ~schedule:policy ~while_:retryable|};
     };
     {
       area = "repeat_heartbeat";
@@ -1593,7 +1593,7 @@ loop (Schedule.start policy)|};
     {
       area = "repeat_heartbeat";
       variant = "proposed";
-      code = {|Effect.repeat policy tick|};
+      code = {|Effect.repeat ~schedule:policy tick|};
     };
     {
       area = "stream";
@@ -1629,7 +1629,7 @@ loop (Schedule.start policy)|};
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* users = Effect.for_each_par_bounded ~max:2 ids load_user in
+let* users = Effect.map_par ~max_concurrent:2 load_user ids in
 let+ outcomes =
   probes |> List.map load_user |> Effect.all_settled
 in
@@ -2848,7 +2848,7 @@ let assert_expected_shape snippet =
         || count_sub snippet.code "recurs" <> 1
         || count_sub snippet.code "exponential" <> 1
         || count_sub snippet.code "jittered" <> 1
-        || count_sub snippet.code "Effect.retry" <> 1
+        || count_sub snippet.code "Effect.retry ~schedule:" <> 1
         || count_sub snippet.code "Effect.sync" <> 1
         || count_sub snippet.code "Effect.flatten_result" <> 1
       then
@@ -2870,7 +2870,7 @@ let assert_expected_shape snippet =
       if let_star <> 1 || let_at <> 0 || from_result <> 0 then
         failwith "batch proposed example should use one workflow let*";
       if
-        count_sub snippet.code "Effect.for_each_par_bounded" <> 1
+        count_sub snippet.code "Effect.map_par" <> 1
         || count_sub snippet.code "Effect.all_settled" <> 1
       then
         failwith

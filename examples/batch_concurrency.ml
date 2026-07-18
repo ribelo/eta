@@ -25,8 +25,7 @@ let settled_counts outcomes =
 let program =
   let open Syntax in
   let* loaded =
-    Effect.for_each_par_bounded ~max:2 [ "alpha"; "beta"; "gamma" ]
-      load_user
+    Effect.map_par ~max_concurrent:2 load_user [ "alpha"; "beta"; "gamma" ]
   in
   let+ outcomes =
     [ "ok"; ""; "still-ok" ] |> List.map load_user |> Effect.all_settled

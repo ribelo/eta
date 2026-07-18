@@ -475,7 +475,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           max_active := max !max_active !active)
     in
     let release () = E.sync (fun () -> decr active) in
-    let eff = E.repeat (Schedule.recurs 2) (E.acquire_release ~acquire ~release) in
+    let eff =
+      E.repeat ~schedule:(Schedule.recurs 2)
+        (E.acquire_release ~acquire ~release)
+    in
     ignore (run_ok rt eff : int);
     Alcotest.(check int) "released at end" 0 !active;
     Alcotest.(check int) "one live resource per iteration" 1 !max_active

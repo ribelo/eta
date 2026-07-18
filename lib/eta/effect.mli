@@ -146,20 +146,20 @@ val all_settled :
     Child failures are returned as [Error cause] values instead of failing the
     outer eff. *)
 
-val for_each_par : 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
-(** Map over [xs] concurrently with [f]; collect results in input order.
-    Fail-fast like {!all}.
+val map_par :
+  ?max_concurrent:int ->
+  ('a -> ('b, 'err) t) ->
+  'a list ->
+  ('b list, 'err) t
+(** Map over the input concurrently; collect results in input order.
+    Fail-fast like {!all}: the first child failure cancels its siblings.
 
-    This runs child effects as concurrent fibers on the current runtime
-    substrate. It does not move arbitrary effects to worker domains; use the
-    optional [eta_par] package for CPU-bound batch work. *)
-
-val for_each_par_bounded :
-  max:int -> 'x list -> ('x -> ('a, 'err) t) -> ('a list, 'err) t
-(** Map over [xs] with at most [max] child effects running at once. Results
-    are returned in input order and failures are fail-fast like {!for_each_par}.
-    The bound limits concurrent fibers, not domain workers.
-    @raise Invalid_argument if [max <= 0]. *)
+    Runs at most [max_concurrent] child effects concurrently; the default is 8.
+    Fewer fibers are started when the input is shorter. The bound limits
+    concurrent fibers, not domain workers. This does not move arbitrary effects
+    to worker domains; use the optional [eta_par] package for CPU-bound batch
+    work.
+    @raise Invalid_argument if [max_concurrent <= 0]. *)
 
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
 (** Defer parent cancellation while running the wrapped eff.
@@ -332,35 +332,39 @@ val tap_defect :
     fails normally from the observer path. *)
 
 val retry :
-  ('err, 'schedule_out, (unit, 'err) t) Schedule.t ->
-  ('err -> bool) ->
+  schedule:('err, 'schedule_out, (unit, 'err) t) Schedule.t ->
+  while_:('err -> bool) ->
   ('a, 'err) t ->
   ('a, 'err) t
-(** Retry an effect while the schedule continues and [predicate] accepts the
+(** Retry an effect while the schedule continues and [while_] accepts the
     typed failure. The typed failure is passed to the schedule as input.
     Schedule taps run in the current Eta runtime; tap failures fail the retry
-    normally through the same typed channel. Defects, interruption, and
-    finalizer diagnostics are not retried. *)
+    normally through the same typed channel.
+
+    Current limitation: unlike {!retry_or_else}, [retry] only retries a bare
+    [Cause.Fail err]. Composite typed causes are not retried. Defects,
+    interruption, and finalizer diagnostics are not retried. *)
 
 val retry_or_else :
-  ('err1, 'schedule_out, (unit, 'err2) t) Schedule.t ->
-  ('err1 -> bool) ->
+  schedule:('err1, 'schedule_out, (unit, 'err2) t) Schedule.t ->
+  while_:('err1 -> bool) ->
   or_else:('err1 -> 'schedule_out option -> ('a, 'err2) t) ->
   ('a, 'err1) t ->
   ('a, 'err2) t
-(** Retry an effect while the schedule continues and [predicate] accepts the
+(** Retry an effect while the schedule continues and [while_] accepts the
     typed failure, then run [or_else] with the final typed failure when the
     predicate rejects it or the schedule is exhausted.
 
     The typed failure is passed to the schedule as input. [or_else] receives
     the latest schedule output when at least one schedule step has run,
     including the terminal [Done] output when the schedule is exhausted. It
-    receives [None] when [predicate] rejects the first typed failure before any
+    receives [None] when [while_] rejects the first typed failure before any
     schedule step. For composite causes, [retry_or_else] follows {!bind_error}:
     it handles only causes whose primary tree contains typed failures and no
     uncatchable defects, interruption, or finalizer diagnostics, and it uses the
-    first typed failure in cause order. Uncatchable diagnostics are not retried
-    and do not run [or_else].
+    first typed failure in cause order. This composite-cause behavior currently
+    differs from the bare-[Cause.Fail] limitation of {!retry}. Uncatchable
+    diagnostics are not retried and do not run [or_else].
 
     Schedule taps run in the current Eta runtime. Tap failures and [or_else]
     failures become the result normally; the original typed failure is not
@@ -390,7 +394,7 @@ val timeout_as :
 (** Like {!timeout}, but fails with [on_timeout] instead of widening the error
     row with raw Timeout. *)
 val repeat :
-  ('a, 'output, (unit, 'err) t) Schedule.t ->
+  schedule:('a, 'output, (unit, 'err) t) Schedule.t ->
   ('a, 'err) t ->
   ('output, 'err) t
 (** Repeat a successful effect according to [schedule].
@@ -932,6 +936,6 @@ val collect_names : ('a, 'err) t -> string list
     [eff]'s current description.
 
     This is a preflight/documentation helper, not a complete runtime inventory.
-    Continuation-producing nodes such as [bind], [bind_error], [for_each_par],
-    [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
+    Continuation-producing nodes such as [bind], [bind_error], [map_par], and
+    [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)

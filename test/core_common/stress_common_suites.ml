@@ -111,9 +111,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let n_messages = 100 in
     let received = Atomic.make 0 in
     let sender =
-      Effect.for_each_par_bounded ~max:4
-        (List.init n_messages (fun i -> i))
+      Effect.map_par ~max_concurrent:4
         (fun i -> Channel.send ch i)
+        (List.init n_messages (fun i -> i))
     in
     let receiver =
       let rec loop () =
@@ -163,8 +163,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       in
       let eff =
         Effect.scoped
-          (Effect.retry (Schedule.recurs (n + 1))
-             (fun (`Retry _) -> true)
+          (Effect.retry
+             ~schedule:(Schedule.recurs (n + 1))
+             ~while_:(fun (`Retry _) -> true)
              attempt)
       in
       ignore (run_ok rt eff : int);
@@ -197,8 +198,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Effect.acquire_release ~acquire:(acquire "outer")
            ~release:(release "outer")
         |> Effect.bind (fun () ->
-               Effect.retry (Schedule.recurs 3)
-                 (fun (`Inner_retry _) -> true)
+               Effect.retry
+                 ~schedule:(Schedule.recurs 3)
+                 ~while_:(fun (`Inner_retry _) -> true)
                  (Effect.scoped
                     (Effect.acquire_release ~acquire:(acquire "inner")
                        ~release:(release "inner")
@@ -227,8 +229,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let release () = Effect.sync (fun () -> decr active) in
     let retry_branch =
       Effect.retry
-        (Schedule.both (Schedule.recurs 10) (Schedule.spaced (Duration.ms 5)))
-        (fun (`Again _) -> true)
+        ~schedule:
+          (Schedule.both (Schedule.recurs 10)
+             (Schedule.spaced (Duration.ms 5)))
+        ~while_:(fun (`Again _) -> true)
         (Effect.acquire_release ~acquire ~release
         |> Effect.bind (fun () -> Effect.fail (`Again 0)))
     in
@@ -437,7 +441,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected failure");
     Alcotest.(check bool) "scoped resource released" true (Atomic.get released)
 
-  let test_for_each_par_cancelled_workers_release_resources () =
+  let test_map_par_cancelled_workers_release_resources () =
     B.with_test_clock @@ fun ctx clock rt ->
     let released = Atomic.make 0 in
     let started = Atomic.make 0 in
@@ -450,7 +454,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                if i = 2 then Effect.fail (`Worker_fail i)
                else Effect.delay (Duration.ms 100) (Effect.pure i)))
     in
-    let eff = Effect.for_each_par_bounded ~max:4 [ 0; 1; 2; 3; 4 ] worker in
+    let eff = Effect.map_par ~max_concurrent:4 worker [ 0; 1; 2; 3; 4 ] in
     let promise = B.fork_run ctx rt eff in
     advance_clock clock (Duration.ms 5);
     B.yield ();
@@ -507,8 +511,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             `Quick test_all_without_scoped_releases_at_scope_exit;
           Alcotest.test_case "par scoped resource released on failure" `Quick
             test_par_scoped_resource_released_on_failure;
-          Alcotest.test_case "for_each_par cancelled workers release" `Quick
-            test_for_each_par_cancelled_workers_release_resources;
+          Alcotest.test_case "map_par cancelled workers release" `Quick
+            test_map_par_cancelled_workers_release_resources;
         ] );
     ]
 end

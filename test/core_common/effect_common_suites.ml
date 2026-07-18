@@ -3,6 +3,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let pp_hidden ppf _ = Format.pp_print_string ppf "<effect>"
 
+  let test_iteration_optional_omission_yields_effects () =
+    let (_ : (int list, string) Effect.t) =
+      Effect.map_par (fun value -> Effect.pure value) [ 1 ]
+    in
+    let schedule = Schedule.recurs 1 in
+    let (_ : (int, string) Effect.t) =
+      Effect.pure 1
+      |> Effect.retry ~schedule ~while_:(fun (_ : string) -> true)
+    in
+    ()
+
   let runtime_interrupt_effect () =
     Effect.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
     let contract = Effect.Expert.contract context in
@@ -2298,24 +2309,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "empty" 0
       (List.length (run_ok rt (Effect.all_settled [])))
 
-  let test_for_each_par_success () =
+  let test_map_par_success () =
     B.with_runtime @@ fun _ctx rt ->
     let result =
       run_ok rt
-        (Effect.for_each_par [ 10; 20; 30 ] (fun x -> Effect.pure (x + 1)))
+        (Effect.map_par (fun x -> Effect.pure (x + 1)) [ 10; 20; 30 ])
     in
-    Alcotest.(check (list int)) "for_each_par results" [ 11; 21; 31 ] result
+    Alcotest.(check (list int)) "map_par results" [ 11; 21; 31 ] result
 
-  let test_for_each_par_one_fails () =
+  let test_map_par_one_fails () =
     B.with_runtime @@ fun _ctx rt ->
     let exit =
       B.run rt
-        (Effect.for_each_par [ 1; 2; 3 ] (fun x ->
-             if x = 2 then Effect.fail "bad" else Effect.pure x))
+        (Effect.map_par (fun x ->
+             if x = 2 then Effect.fail "bad" else Effect.pure x) [ 1; 2; 3 ])
     in
-    check_exit_error string_cause "for_each_par cause" (Cause.Fail "bad") exit
+    check_exit_error string_cause "map_par cause" (Cause.Fail "bad") exit
 
-  let test_for_each_par_bounded_max_one_is_sequential () =
+  let test_map_par_max_one_is_sequential () =
     B.with_runtime @@ fun _ctx rt ->
     let active = ref 0 in
     let max_seen = ref 0 in
@@ -2327,39 +2338,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           x))
     in
     Alcotest.(check (list int)) "results" [ 1; 2; 3 ]
-      (run_ok rt (Effect.for_each_par_bounded ~max:1 [ 1; 2; 3 ] worker));
+      (run_ok rt (Effect.map_par ~max_concurrent:1 worker [ 1; 2; 3 ]));
     Alcotest.(check int) "max concurrency" 1 !max_seen
 
-  let test_for_each_par_bounded_rejects_nonpositive_max () =
+  let test_map_par_rejects_nonpositive_max () =
     Alcotest.check_raises "zero max"
-      (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
+      (Invalid_argument "Effect.map_par: max_concurrent must be > 0")
       (fun () ->
         ignore
-          (Effect.for_each_par_bounded ~max:0 [ 1 ] (fun x -> Effect.pure x)
+          (Effect.map_par ~max_concurrent:0 (fun x -> Effect.pure x) [ 1 ]
             : (int list, _) Effect.t));
     Alcotest.check_raises "negative max"
-      (Invalid_argument "Effect.for_each_par_bounded: max must be > 0")
+      (Invalid_argument "Effect.map_par: max_concurrent must be > 0")
       (fun () ->
         ignore
-          (Effect.for_each_par_bounded ~max:(-1) [ 1 ] (fun x ->
-               Effect.pure x)
+          (Effect.map_par ~max_concurrent:(-3) (fun x ->
+               Effect.pure x) [ 1 ]
             : (int list, _) Effect.t))
 
-  let test_for_each_par_mapper_defect_is_runtime_die () =
+  let test_map_par_mapper_defect_is_runtime_die () =
     B.with_runtime @@ fun _ctx rt ->
     let mapper_called = ref false in
     let eff =
       try
         Some
-          (Effect.for_each_par [ 1 ] (fun _ ->
+          (Effect.map_par (fun _ ->
                mapper_called := true;
-               raise (Failure "mapper boom")))
+               raise (Failure "mapper boom")) [ 1 ])
       with Failure msg when String.equal msg "mapper boom" -> None
     in
     Alcotest.(check bool)
       "mapper not called during construction" false !mapper_called;
     match eff with
-    | None -> Alcotest.fail "for_each_par forced mapper during construction"
+    | None -> Alcotest.fail "map_par forced mapper during construction"
     | Some eff -> (
         match B.run rt eff with
         | Exit.Error (Cause.Die die) ->
@@ -2370,22 +2381,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | Exit.Error cause ->
             Alcotest.failf "expected Die, got %a" (Cause.pp pp_hidden) cause)
 
-  let test_for_each_par_bounded_mapper_defect_is_runtime_die () =
+  let test_map_par_capped_mapper_defect_is_runtime_die () =
     B.with_runtime @@ fun _ctx rt ->
     let mapper_called = ref false in
     let eff =
       try
         Some
-          (Effect.for_each_par_bounded ~max:2 [ 1 ] (fun _ ->
+          (Effect.map_par ~max_concurrent:2 (fun _ ->
                mapper_called := true;
-               raise (Failure "bounded mapper boom")))
+               raise (Failure "bounded mapper boom")) [ 1 ])
       with Failure msg when String.equal msg "bounded mapper boom" -> None
     in
     Alcotest.(check bool)
       "mapper not called during construction" false !mapper_called;
     match eff with
     | None ->
-        Alcotest.fail "for_each_par_bounded forced mapper during construction"
+        Alcotest.fail "map_par forced mapper during construction"
     | Some eff -> (
         match B.run rt eff with
         | Exit.Error (Cause.Die die) ->
@@ -2476,7 +2487,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected all_settled success, got %a"
           (Cause.pp pp_hidden) cause
 
-  let test_for_each_par_preserves_input_order_with_out_of_order_completion () =
+  let test_map_par_preserves_input_order_with_out_of_order_completion () =
     B.with_test_clock @@ fun ctx clock rt ->
     let worker x =
       let delay =
@@ -2484,13 +2495,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       in
       Effect.pure (x * 10) |> Effect.delay (Duration.ms delay)
     in
-    let promise = B.fork_run ctx rt (Effect.for_each_par [ 1; 2; 3 ] worker) in
+    let promise = B.fork_run ctx rt (Effect.map_par worker [ 1; 2; 3 ]) in
     wait_for_sleepers clock 3;
     B.adjust_clock clock (Duration.ms 30);
     check_exit_ok (Alcotest.list Alcotest.int) "input order" [ 10; 20; 30 ]
       (B.await promise)
 
-  let test_for_each_par_bounded_caps_concurrency () =
+  let test_map_par_caps_concurrency () =
     B.with_test_clock @@ fun ctx clock rt ->
     let active = ref 0 in
     let max_seen = ref 0 in
@@ -2506,7 +2517,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise =
       B.fork_run ctx rt
-        (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3; 4; 5 ] worker)
+        (Effect.map_par ~max_concurrent:2 worker [ 1; 2; 3; 4; 5 ])
     in
     for _ = 1 to 3 do
       wait_for_sleepers clock 1;
@@ -2517,7 +2528,32 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.await promise);
     Alcotest.(check int) "max concurrency" 2 !max_seen
 
-  let test_for_each_par_bounded_fail_fast () =
+  let test_map_par_default_caps_concurrency_at_eight () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let active = ref 0 in
+    let max_seen = ref 0 in
+    let worker value =
+      Effect.sync (fun () ->
+          incr active;
+          max_seen := max !max_seen !active)
+      |> Effect.bind (fun () ->
+             Effect.pure value
+             |> Effect.delay (Duration.ms 10)
+             |> Effect.tap (fun _ -> Effect.sync (fun () -> decr active)))
+    in
+    let inputs = List.init 9 (fun index -> index + 1) in
+    let promise = B.fork_run ctx rt (Effect.map_par worker inputs) in
+    wait_for_sleepers clock 8;
+    Alcotest.(check int) "eight children started" 8 (B.sleeper_count clock);
+    Alcotest.(check int) "default peak concurrency" 8 !max_seen;
+    B.adjust_clock clock (Duration.ms 10);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 10);
+    check_exit_ok (Alcotest.list Alcotest.int) "results" inputs
+      (B.await promise);
+    Alcotest.(check int) "default remained capped" 8 !max_seen
+
+  let test_map_par_fail_fast () =
     B.with_test_clock @@ fun ctx clock rt ->
     let slow_done = ref false in
     let worker = function
@@ -2528,7 +2564,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise =
       B.fork_run ctx rt
-        (Effect.for_each_par_bounded ~max:2 [ 1; 2; 3 ] worker)
+        (Effect.map_par ~max_concurrent:2 worker [ 1; 2; 3 ])
     in
     B.yield ();
     check_exit_error string_cause "cause" (Cause.Fail "boom") (B.await promise);
@@ -2848,7 +2884,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.(check bool)
           "cancelled sibling finalizer ran before all returned" true !release_started
 
-  let test_for_each_par_simultaneous_failures_baseline () =
+  let test_map_par_simultaneous_failures_baseline () =
     B.with_runtime @@ fun ctx rt ->
     let go, release = B.create_promise () in
     let ready = B.create_stream 2 in
@@ -2862,15 +2898,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                else B.await_effect go |> Effect.bind (fun () -> Effect.fail name)))
     in
     let promise =
-      B.fork_run ctx rt (Effect.for_each_par [ "left"; "right"; "ok" ] worker)
+      B.fork_run ctx rt (Effect.map_par worker [ "left"; "right"; "ok" ])
     in
     let first = B.stream_take ready in
     let second = B.stream_take ready in
     B.resolve release ();
     match B.await promise with
-    | Exit.Ok _ -> Alcotest.fail "expected for_each_par failure"
+    | Exit.Ok _ -> Alcotest.fail "expected map_par failure"
     | Exit.Error cause ->
-        check_concurrent_cause "for_each_par simultaneous baseline" cause;
+        check_concurrent_cause "map_par simultaneous baseline" cause;
         Alcotest.(check bool)
           "first item observed" true
           (string_cause_contains first cause);
@@ -2878,7 +2914,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           "second item observed" true
           (string_cause_contains second cause)
 
-  let test_for_each_par_finalizer_failure_during_sibling_cancellation () =
+  let test_map_par_finalizer_failure_during_sibling_cancellation () =
     B.with_test_clock @@ fun ctx clock rt ->
     let acquired, acquired_u = B.create_promise () in
     let release_started = ref false in
@@ -2900,13 +2936,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | _ -> Effect.unit
     in
     let promise =
-      B.fork_run ctx rt (Effect.for_each_par [ "body"; "slow" ] worker)
+      B.fork_run ctx rt (Effect.map_par worker [ "body"; "slow" ])
     in
     wait_for_sleepers clock 1;
     match B.await promise with
     | Exit.Ok _ -> Alcotest.fail "expected body/finalizer failure"
     | Exit.Error cause ->
-        check_concurrent_cause "for_each_par cancellation/finalizer failure" cause;
+        check_concurrent_cause "map_par cancellation/finalizer failure" cause;
         Alcotest.(check bool)
           "body failure observed" true
           (string_cause_contains "body" cause);
@@ -2914,7 +2950,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           "cancelled sibling release failure is suppressed under interrupt"
           "<typed failure>" cause;
         Alcotest.(check bool)
-          "cancelled sibling finalizer ran before for_each_par returned" true
+          "cancelled sibling finalizer ran before map_par returned" true
           !release_started
 
   let test_effect_race_simultaneous_success_and_failure_returns_winner () =
@@ -3016,7 +3052,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_child_finalizer_catch_runs_after_release "all" caught released
       handler_observed_release (B.await promise)
 
-  let test_for_each_par_catch_runs_after_child_finalizer () =
+  let test_map_par_catch_runs_after_child_finalizer () =
     B.with_test_clock @@ fun ctx clock rt ->
     let acquired, acquired_u = B.create_promise () in
     let caught = Atomic.make false in
@@ -3036,7 +3072,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       | _ -> Effect.unit
     in
     let eff =
-      Effect.for_each_par [ "body"; "slow" ] worker
+      Effect.map_par worker [ "body"; "slow" ]
       |> Effect.bind_error (fun _ ->
              Atomic.set handler_observed_release (Atomic.get released);
              Atomic.set caught true;
@@ -3044,7 +3080,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let promise = B.fork_run ctx rt eff in
     wait_for_sleepers clock 1;
-    check_child_finalizer_catch_runs_after_release "for_each_par" caught
+    check_child_finalizer_catch_runs_after_release "map_par" caught
       released handler_observed_release (B.await promise)
 
   let tests =
@@ -3252,19 +3288,21 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_all_settled_collects_successes_and_failures;
           Alcotest.test_case "all_settled empty" `Quick
             test_all_settled_empty;
-          Alcotest.test_case "for_each_par success" `Quick
-            test_for_each_par_success;
-          Alcotest.test_case "for_each_par one fails" `Quick
-            test_for_each_par_one_fails;
-          Alcotest.test_case "for_each_par_bounded max one is sequential"
-            `Quick test_for_each_par_bounded_max_one_is_sequential;
-          Alcotest.test_case "for_each_par_bounded rejects nonpositive max"
-            `Quick test_for_each_par_bounded_rejects_nonpositive_max;
-          Alcotest.test_case "for_each_par mapper defect is runtime die"
-            `Quick test_for_each_par_mapper_defect_is_runtime_die;
+          Alcotest.test_case "map_par success" `Quick
+            test_map_par_success;
+          Alcotest.test_case "iteration optional omission yields effects" `Quick
+            test_iteration_optional_omission_yields_effects;
+          Alcotest.test_case "map_par one fails" `Quick
+            test_map_par_one_fails;
+          Alcotest.test_case "map_par max one is sequential"
+            `Quick test_map_par_max_one_is_sequential;
+          Alcotest.test_case "map_par rejects nonpositive max"
+            `Quick test_map_par_rejects_nonpositive_max;
+          Alcotest.test_case "map_par mapper defect is runtime die"
+            `Quick test_map_par_mapper_defect_is_runtime_die;
           Alcotest.test_case
-            "for_each_par_bounded mapper defect is runtime die" `Quick
-            test_for_each_par_bounded_mapper_defect_is_runtime_die;
+            "map_par capped mapper defect is runtime die" `Quick
+            test_map_par_capped_mapper_defect_is_runtime_die;
           Alcotest.test_case "par fail-fast cancels sibling" `Quick
             test_par_fail_fast_cancels_sibling;
           Alcotest.test_case "par simultaneous failures baseline" `Quick
@@ -3285,16 +3323,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_all_settled_runs_all_children;
           Alcotest.test_case "all_settled timeout scoped resource typed" `Quick
             test_all_settled_timeout_scoped_resource_is_typed;
-          Alcotest.test_case "for_each_par preserves delayed input order" `Quick
-            test_for_each_par_preserves_input_order_with_out_of_order_completion;
-          Alcotest.test_case "for_each_par_bounded caps concurrency" `Quick
-            test_for_each_par_bounded_caps_concurrency;
-          Alcotest.test_case "for_each_par_bounded fail-fast" `Quick
-            test_for_each_par_bounded_fail_fast;
-          Alcotest.test_case "for_each_par simultaneous failures baseline" `Quick
-            test_for_each_par_simultaneous_failures_baseline;
-          Alcotest.test_case "for_each_par finalizer cancellation baseline"
-            `Quick test_for_each_par_finalizer_failure_during_sibling_cancellation;
+          Alcotest.test_case "map_par preserves delayed input order" `Quick
+            test_map_par_preserves_input_order_with_out_of_order_completion;
+          Alcotest.test_case "map_par caps concurrency" `Quick
+            test_map_par_caps_concurrency;
+          Alcotest.test_case "map_par default cap is eight" `Quick
+            test_map_par_default_caps_concurrency_at_eight;
+          Alcotest.test_case "map_par fail-fast" `Quick
+            test_map_par_fail_fast;
+          Alcotest.test_case "map_par simultaneous failures baseline" `Quick
+            test_map_par_simultaneous_failures_baseline;
+          Alcotest.test_case "map_par finalizer cancellation baseline"
+            `Quick test_map_par_finalizer_failure_during_sibling_cancellation;
           Alcotest.test_case "race ignores early failure until success" `Quick
             test_effect_race_ignores_early_failure_until_success;
           Alcotest.test_case "race cancels losers after first success" `Quick
@@ -3316,8 +3356,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "all bind_error waits for child finalizer" `Quick
             test_all_catch_runs_after_child_finalizer;
           Alcotest.test_case
-            "for_each_par catch waits for child finalizer" `Quick
-            test_for_each_par_catch_runs_after_child_finalizer;
+            "map_par catch waits for child finalizer" `Quick
+            test_map_par_catch_runs_after_child_finalizer;
           Alcotest.test_case "par nested race failures baseline" `Quick
             test_par_nested_race_all_failures_baseline;
         ] );

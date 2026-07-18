@@ -141,10 +141,10 @@ let test_blocking_wait_policy_caps_active_and_queue () =
   let p99, values =
     heartbeat_p99_us (fun () ->
         run_ok rt
-          (Effect.for_each_par (List.init 30 Fun.id) (fun _ ->
+          (Effect.map_par (fun _ ->
                Eta_blocking.run ~pool ~name:"wait-cap.job" (fun () ->
                    Unix.sleepf 0.010;
-                   1))))
+                   1)) (List.init 30 Fun.id)))
   in
   sampling := false;
   Alcotest.(check int) "completed list" 30 (List.length values);
@@ -269,9 +269,9 @@ let test_blocking_named_pools_prevent_starvation () =
   let fs =
     Eio.Fiber.fork_promise ~sw (fun () ->
         Runtime.run rt
-          (Effect.for_each_par (List.init 40 Fun.id) (fun _ ->
+          (Effect.map_par (fun _ ->
                Eta_blocking.run ~pool:fs_pool ~name:"fs.scan" (fun () ->
-                   Unix.sleepf 0.050))))
+                   Unix.sleepf 0.050)) (List.init 40 Fun.id)))
   in
   Eio_unix.sleep 0.010;
   let elapsed, result =

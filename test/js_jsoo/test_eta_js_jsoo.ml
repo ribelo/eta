@@ -207,8 +207,9 @@ let test_retry_schedule done_ =
            else Eta_js.Effect.pure !attempts)
   in
   run
-    (Eta_js.Effect.retry (Eta_js.Schedule.recurs 3)
-       (function `Retry -> true)
+    (Eta_js.Effect.retry
+       ~schedule:(Eta_js.Schedule.recurs 3)
+       ~while_:(function `Retry -> true)
        attempt)
     ~on_result:(finish done_ (expect_ok_int "retry schedule" 3))
 
@@ -216,7 +217,7 @@ let test_repeat_schedule done_ =
   let ticks = ref 0 in
   let tick = Eta_js.Effect.sync (fun () -> incr ticks) in
   let eff =
-    Eta_js.Effect.repeat (Eta_js.Schedule.recurs 2) tick
+    Eta_js.Effect.repeat ~schedule:(Eta_js.Schedule.recurs 2) tick
     |> Eta_js.Effect.bind (fun (_repeat_count : int) ->
            Eta_js.Effect.sync (fun () -> !ticks))
   in

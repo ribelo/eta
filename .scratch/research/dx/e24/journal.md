@@ -1,0 +1,395 @@
+# DX-E24 Journal — Iteration mirrors `List`
+
+Branch: `research/dx-e24-iteration-mirrors-list`
+Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e24`
+Phase: A (idiom pass)
+
+## Predictions (sealed)
+
+Sealed before any code or signature edits. Wrong predictions stay as data; this
+section will never be edited after the predictions commit.
+
+### Teach-back expected answers
+
+1. **What does `?max_concurrent` do?**
+   When present, it limits the number of mapper effects running concurrently;
+   values at or below zero raise `Invalid_argument` immediately. When absent,
+   `map_par` has the old `for_each_par` behavior: no caller-selected bound (the
+   runtime implementation may still use its existing worker strategy). The
+   option does not change result ordering or failure semantics.
+
+2. **What does `~while_` do?**
+   It decides whether a typed failure is eligible for a schedule step and retry.
+   A false result rejects that failure before another schedule step. If this is
+   the first failure, `?or_else` therefore receives `None`; after prior accepted
+   steps it receives the latest schedule output as `Some out`.
+
+3. **What order does `map_par` return?**
+   Input order, regardless of child start or completion order. It maps like
+   `List.map` in collection shape, not completion order.
+
+4. **What happens to siblings when one mapper fails?**
+   Fail-fast cancellation is unchanged: the observed failure stops the parallel
+   group, running siblings are cancelled, and their scoped cleanup completes
+   before the parent result settles.
+
+5. **What do retry/repeat observers control?**
+   They observe loop values and schedule outputs but cannot change schedule or
+   predicate control flow. Their successful value is ignored. A typed observer
+   failure replaces the loop result through ordinary typed sequencing; defects
+   and interruption likewise propagate normally.
+
+### Expected census / footgun deltas
+
+Independent pre-census of the fixed iterate cluster contract:
+
+| Metric | Before | Predicted after | Delta |
+|---|---:|---:|---:|
+| Public vals | 5 | 3 | −2 |
+| User-facing concepts | 5 | 2 | −3 |
+| `Schedule.t` parameters | 3 | 2 | −1 |
+| Schedule tap vals | 2 | 0 | −2 |
+
+Before vals: `for_each_par`, `for_each_par_bounded`, `retry`,
+`retry_or_else`, and `repeat`. After vals: `map_par`, `retry`, and `repeat`.
+The orchestrator's concept count treats optional bounded/unbounded mapping as
+one iteration concept and retry/repeat policy-driving as the second, hence
+5 → 2 even though three vals remain.
+
+**Footgun delta:** expect **−2 / +0**.
+
+- Removed trap 1: choosing between two parallel-map names and remembering that
+  the bound label was `~max` rather than a single optional `?max_concurrent`.
+- Removed trap 2: choosing `retry` versus `retry_or_else` and remembering their
+  positional schedule/predicate/effect order rather than one labeled contract.
+- No new trap predicted: `map_par` mirrors `List.map ~f`, labels make schedule
+  and predicate roles explicit, and the mli will state observer failure and
+  fallback-output semantics.
+
+### Two likeliest reviewer misreadings
+
+1. **“No `?max_concurrent` means sequential or an undocumented public cap.”**
+   The intended reading is old `for_each_par`: concurrent mapping without a
+   caller-selected bound. The optional argument is only the public bound knob;
+   tests must separately prove order, fail-fast cancellation, and the supplied
+   bound.
+
+2. **“`?on_retry` can veto a retry, or observer failure is swallowed.”**
+   The observer returns an effect only to observe in Eta's typed/runtime context;
+   it does not return a control decision. Successful observation cannot stop a
+   loop. Failed observation fails the typed channel normally and prevents later
+   loop work.
+
+### Migration / parity prediction
+
+- Expect the compiler-guided migration to remove every public occurrence of
+  `for_each_par`, `for_each_par_bounded`, `retry_or_else`, `Schedule.tap_input`,
+  and `Schedule.tap_output`, including docs and the known jsoo files.
+- Expect all existing schedule behavior to survive after deleting hook-bearing
+  constructors, suspended hook steps, and the third type parameter.
+- Expect parity tests to show input order under forced interleavings, sibling
+  cancellation, peak bound enforcement, loud invalid bounds, all three fallback
+  output cases (`None`, prior `Some`, terminal `Some`), observer failure, and
+  observer event order.
+- Predict the known `test/signal_jsoo` failure remains byte-for-byte equivalent
+  in its substantive compiler diagnostic on master and this branch.
+
+### Promote/hold/kill prior
+
+Predict **promote**, including `Schedule.t` slimming, if native and JS gates are
+green (apart from the unchanged known signal failure), the parity suite closes
+every obligation, and no real tap use requires schedule-local composition that
+the call-site observers cannot express. Hold the slimming only if such a tap use
+is found; kill only if the fixed signatures cannot preserve the required loop or
+cancellation semantics.
+
+---
+
+## Execution log
+
+### Step 1 — seal predictions
+
+This section was committed before API or implementation edits.
+
+### Step 2 — docs-first contract blocked before edits
+
+The fixed signatures put every optional argument after all required arguments.
+That shape is not erasable in OCaml 5.2.0+ox. Three Nix/OxCaml probes were run
+before changing any `.mli`:
+
+1. Defining the signatures literally produces Warning 16 for
+   `?max_concurrent`, `?on_retry`, `?or_else`, and `?on_repeat`:
+   `unerasable-optional-argument`.
+2. Moving the optionals before the leading positional argument makes omission
+   work, but the implementation does not match an interface containing the
+   sealed exact arrow order.
+3. Suppressing Warning 16 allows the literal library definition to compile,
+   but the intended ordinary call is partial:
+
+   ```text
+   Error: This expression has type
+            "?max_concurrent:int -> int list X.effect"
+          but an expression was expected of type "int list X.effect"
+   Hint: This function application is partial,
+         maybe some arguments are missing.
+   ```
+
+Runnable reproducer: `contract-blocker/probe.sh`. The smallest technically
+working correction is to put each optional before a following positional
+argument, for example:
+
+```ocaml
+val map_par :
+  ?max_concurrent:int ->
+  'a list ->
+  f:('a -> ('b, 'err) t) ->
+  ('b list, 'err) t
+```
+
+Labeled-argument commutation preserves the desired full call spelling
+`Effect.map_par values ~f ~max_concurrent:8`, but this changes the public arrow
+order and partial-application contract. The objective says the displayed
+signatures are the contract, so making that correction silently would not
+follow the assignment exactly. A trailing `unit` would also erase the options
+but would change the required call spelling. Requiring every omission to be
+written `?max_concurrent:None` / `?on_retry:None` is the rejected silent-default
+workaround, not the requested API.
+
+**Status:** genuine blocker requiring the objective owner to authorize an OCaml-
+erasable arrow order (or a different call shape). No production API, test, doc,
+or implementation file was edited.
+
+### Independent `Schedule.t` slimming hold trigger
+
+The tap census exposed one existing use that the fixed E24 observers cannot
+express: `Resource.auto` drives hook-bearing schedules in a background daemon.
+The current public contract in `lib/eta/resource.mli` is, verbatim:
+
+```ocaml
+val auto :
+  ?on_error:('err -> unit) ->
+  load:('a, 'err) Effect.t ->
+  ?random:Capabilities.random ->
+  schedule:(unit, 'schedule_out, (unit, 'err) Effect.t) Schedule.t ->
+  unit ->
+  (('a, 'err) t, 'err) Effect.t
+```
+
+Its documented behavior is also explicit: “Effectful schedule taps run in the
+refresh daemon; tap failures fail that schedule-driving effect normally rather
+than being recorded as refresh failures.” The parity test is
+`test/core_common/resource_common_suites.ml` lines 217–243. It observes the
+runtime clock before the first schedule delay. `Resource.auto` has no refresh
+observer argument; `?on_error` only observes loader failures. Neither
+`Effect.retry.?on_retry` nor `Effect.repeat.?on_repeat` is a call site here.
+
+Per the objective's hold rule, this was recorded without moving the tap into the
+loader, weakening the test, or inventing a new `Resource.auto` argument. Such a
+move would observe the initial load or a different lifecycle point and would not
+preserve the contract. **Separate verdict: hold `Schedule.t` slimming pending an
+authorized observer contract for this driver.**
+
+`Eta_stream` also publicly drives hook-bearing schedules (`from_schedule`,
+`schedule`, `repeat`, and `retry`). Some `Stream.schedule` input taps can be
+expressed with upstream `Stream.tap`, but that does not resolve the independent
+`Resource.auto` trigger and was not used as a workaround.
+
+### Gates and later protocol steps
+
+The production gates, requested parity suite, E24 runtime red-team probes, and
+blinded A/B review packet were not run/generated: all require a compilable public
+contract first. Running the unchanged baseline gates would not prove E24. The
+contract reproducer is the highest-value failing gate at this point.
+
+---
+
+## Amendment predictions (sealed)
+
+Sealed after `followup-1.md` made the reduced contract final and before the
+first production code or signature edit. Wrong predictions remain as data; this
+section will never be edited after its commit.
+
+### Updated teach-back expected answers
+
+1. Omitting `?max_concurrent` does **not** request unbounded work. `map_par`
+   starts at most eight mapper fibers by default and fewer when the input is
+   shorter. An explicit positive value replaces that cap; zero or a negative
+   value raises `Invalid_argument` while constructing the blueprint.
+2. `map_par` is function-first like Stdlib `List.map` and Eta `Effect.map`:
+   `Effect.map_par f inputs`. Its collected values remain in input order, not
+   completion order. The first observed child failure cancels running siblings
+   and waits for their finalization as before.
+3. `retry ~schedule ~while_ effect` keeps the narrow current behavior: only a
+   bare `Cause.Fail err` reaches `while_` and the schedule. It does not adopt
+   `retry_or_else`'s composite-cause handling merely because the call shape is
+   now labeled and data-last.
+4. `retry_or_else ~schedule ~while_ ~or_else effect` remains the two-error
+   combinator. For catchable composites it selects the first typed failure.
+   The fallback receives `None` when the first failure is rejected before any
+   schedule step, the latest `Some out` after continuing steps, and the terminal
+   `Some out` when the schedule is exhausted.
+5. Schedule hooks, the third `Schedule.t` parameter, `no_hook`, driver stepping,
+   and repeat/retry hook-failure behavior are unchanged in E24.
+
+### Expected census / footgun deltas
+
+| Metric | Before | Predicted after | Delta |
+|---|---:|---:|---:|
+| Iterate-cluster public vals | 5 | 4 | −1 |
+| Iterate-cluster concepts | 5 | 4 | −1 |
+| `Schedule.t` parameters | 3 | 3 | 0 |
+| Schedule tap vals | 2 | 2 | 0 |
+
+Before vals: `for_each_par`, `for_each_par_bounded`, `retry`,
+`retry_or_else`, `repeat`. After vals: `map_par`, `retry`, `retry_or_else`,
+`repeat`. Only the duplicate parallel-map family collapses.
+
+**Footgun delta:** expect **−1 / +0**.
+
+- Removed trap: `for_each` can be read as side-effect iteration even though the
+  combinator collects results; `map_par` states collection and mirrors familiar
+  function-first map shape.
+- No new trap predicted if the default cap of eight and construction-time bound
+  rejection are explicit in the mli. The optional name alone would otherwise
+  invite the false “omission means unbounded” reading.
+
+### Two likeliest reviewer misreadings
+
+1. **“Omitting `?max_concurrent` means unbounded parallelism.”** The optional
+   shape commonly suggests “no limit.” The contract sentence must state the
+   default eight, and the >8 peak-concurrency probe must make it executable.
+2. **“The two retry functions now differ only by fallback.”** Their labeled,
+   data-last shapes look deliberately parallel, which may hide the existing
+   cause-semantics difference and the genuine `'err1` → `'err2` fallback
+   expressiveness. The mli must call the difference a current limitation, and
+   composite-cause parity tests must remain green.
+
+### Updated parity / migration prediction
+
+- Predict both old parallel names disappear completely outside historical E24
+  evidence and the blinded old-side review fixture.
+- Predict mapper laziness at blueprint construction, result ordering,
+  fail-fast/finalizer behavior, explicit caps, and default cap eight survive as
+  byte-identical behavior because one worker implementation remains underneath.
+- Predict retry/repeat migration is argument-shape-only: taps run at the same
+  points and fallback output cases remain unchanged.
+- Predict all native gates and the cache/js jsoo compile gate pass; the known
+  signal_jsoo diagnostic remains substantively identical to master.
+
+### Updated promote prior
+
+Predict **promote the reduced E24 contract** if migration and parity gates are
+green. `Schedule.t` slimming remains **held for E24b**, not failed or partially
+implemented here. The original proposal to absorb `retry_or_else` is superseded
+by the amended evidence that its two-error and composite-cause behavior is a
+distinct public capability.
+
+---
+
+## Resumed execution log
+
+### Step 2 — amended docs-first contracts
+
+Committed the amended `effect.mli` before implementation. `map_par` documents
+function-first order, the default cap of eight, input-order collection,
+fail-fast cancellation, and construction rejection. Retry contracts are labeled
+and data-last. The mli calls bare-`Cause.Fail` retry a current limitation and
+contrasts it with `retry_or_else`'s catchable-composite first-failure behavior.
+`schedule.mli` was intentionally untouched.
+
+### Step 3 — implementation and migration
+
+- Replaced both parallel-map entry points with one `map_par` worker path.
+- Default `max_concurrent` is 8; explicit nonpositive values raise before
+  building an effect; mapper evaluation remains inside runtime workers.
+- Changed retry/retry_or_else/repeat arguments only; their loop bodies and hook
+  driver remain unchanged.
+- Migrated libraries, tests, examples, benchmarks, docs, and known jsoo sources.
+- Independent scan: no old parallel API occurrences outside the historical
+  AGENTS commit-subject example, assignment text, and old-side review fixture.
+
+### Step 4 — parity evidence
+
+Added/promoted tests for optional erasure, mapper construction laziness, delayed
+input order, sibling cancellation/finalizers, explicit caps, default cap eight
+with nine inputs, nonpositive construction rejection, all fallback output cases,
+and unchanged tapped schedule behavior. Focused result:
+
+```text
+nix develop -c dune runtest test/core_eio --force
+Test Successful — 499 tests run
+```
+
+### Step 5 — census and footguns
+
+Actual census: iterate vals 5 → 4, concepts 5 → 4, `Schedule.t` parameters 3 →
+3, tap vals 2 → 2. Amendment prediction hit. Actual footgun delta: −1/+0;
+amendment prediction hit. `docs/api-dx.md` now states function-first iteration,
+the default cap, omission semantics, labeled retry spellings, fallback outputs,
+and the current cause-semantics difference.
+
+### Step 6 — red-team
+
+Artifacts under `redteam/`. Zero and `-3` fail at construction. Nine delayed
+inputs without an explicit bound peak at eight concurrent mapper effects. The
+call can be misread alone, but the mli and DX guide explicitly say omission is
+not unbounded. Both verdicts PASS.
+
+### Step 7 — review packet and independent review
+
+Created the required bounded-fetch and retry-fallback A/B pairs plus manifest
+and blinded questions under `review/`. Independent standards/requirements review
+found no implementation defect. Generic test-location and untracked-assignment
+findings are overridden by explicit E24 protocol; long migrated call sites were
+rewrapped. The stale blocker report was replaced by the final report.
+
+### Step 8 — gates
+
+```text
+nix develop -c dune build @install
+PASS
+
+nix develop -c dune runtest --force
+PASS
+
+nix develop -c eta-oxcaml-test-shipped
+PASS
+
+nix develop .#mainline -c dune build test/cache_jsoo test/js_jsoo
+PASS (existing integer-overflow warnings only)
+```
+
+#### `test/signal_jsoo` comparison
+
+Current branch (`nix develop .#mainline -c dune build test/signal_jsoo`):
+
+```text
+exit 1
+eta_signal_observer.ml:35: Syntax error at locally abstract 'error.
+eta_signal_graph.ml:493: Syntax error at locally abstract 'a.
+eta_signal_timer.ml:27: Syntax error at locally abstract 'a.
+eta_signal_graph.mli:116: Syntax error at locally abstract 'a.
+eta_signal_timer.mli:21: Syntax error at locally abstract 'err.
+eta_signal_observer.mli:186: Syntax error at locally abstract 'a 'error.
+test_eta_signal_jsoo.ml:314: Signal.Time.monotonic_time; expected int
+```
+
+Master `42e7f17a` archive (same Nix shell and target):
+
+```text
+exit 1
+eta_signal_observer.ml:35: Syntax error at locally abstract 'error.
+eta_signal_timer.ml:27: Syntax error at locally abstract 'a.
+eta_signal_graph.ml:493: Syntax error at locally abstract 'a.
+eta_signal_graph.mli:116: Syntax error at locally abstract 'a.
+eta_signal_observer.mli:186: Syntax error at locally abstract 'a 'error.
+eta_signal_timer.mli:21: Syntax error at locally abstract 'err.
+test_eta_signal_jsoo.ml:314: Signal.Time.monotonic_time; expected int
+```
+
+The seven file/line/messages are identical. Only parallel build emission order
+differs. No signal source was changed.
+
+### Final recommendation
+
+Promote amended E24. Hold Schedule slimming for E24b. See `report.md`.

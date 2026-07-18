@@ -64,7 +64,7 @@ let retry_flaky_program () =
   in
   let one_run =
     counter := 0;
-    Effect.retry (Schedule.recurs 10) (fun (_ : [ `Boom ]) -> true) flaky
+    Effect.retry ~schedule:(Schedule.recurs 10) ~while_:(fun (_ : [ `Boom ]) -> true) flaky
   in
   let rec loop n acc =
     if n = 0 then Effect.pure acc

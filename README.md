@@ -121,7 +121,7 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 - `Effect.to_result` turns the typed failure channel into an ordinary OCaml
   `result` value inside the workflow. It does not catch defects, interruption,
   or finalizer failures.
-- `Effect.par`, `all`, `race`, and `for_each_par` run child effects as fibers on
+- `Effect.par`, `all`, `race`, and `map_par` run child effects as fibers on
   the current runtime substrate, not on CPU worker domains. Use `eta_par` for
   CPU parallelism.
 - `Effect.uninterruptible` defers cancellation; it does not turn interruption

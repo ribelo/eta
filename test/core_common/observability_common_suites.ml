@@ -998,7 +998,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.named "parent"
         (Effect.all [ child "all-a"; child "all-b" ]
         |> Effect.bind (fun _ ->
-               Effect.for_each_par [ "each-a"; "each-b" ] child)
+               Effect.map_par child [ "each-a"; "each-b" ])
         |> Effect.bind (fun _ -> supervised))
     in
     run_ok rt eff;
@@ -1113,7 +1113,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_auto_instrument_leaves_nest_under_named;
           Alcotest.test_case "auto instrument failure status" `Quick
             test_observability_auto_instrument_failure_status;
-          Alcotest.test_case "all for_each_par supervisor inherit parent" `Quick
+          Alcotest.test_case "all map_par supervisor inherit parent" `Quick
             test_observability_all_for_each_supervisor_inherit_parent;
         ] );
     ]

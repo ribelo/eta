@@ -31,7 +31,7 @@ let with_logger_and_tracer f =
 (* ------------------------------------------------------------------ *)
 let test_emits_log_records () =
   with_logger @@ fun rt logger ->
-  let _ = B.run rt (Effect.repeat (Schedule.recurs 9) (Effect.log "test")) in
+  let _ = B.run rt (Effect.repeat ~schedule:(Schedule.recurs 9) (Effect.log "test")) in
   Alcotest.(check int) "ten log records" 10
     (List.length (Logger.dump logger))
 

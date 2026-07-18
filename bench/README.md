@@ -12,8 +12,8 @@ Package-level optimization status is tracked separately in
 | --- | --- | --- |
 | Core interpreter | `effect.core.*` | Per-bind, sync leaf, catch, and typed-failure boundary cost. |
 | Overhead controls | `overhead.*` | Paired Eta-vs-minimal-interpreter controls for bind, fail/catch, and setup ratios. |
-| Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `for_each_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
-| Concurrency | `effect.concurrency.*` | `par`, `all`, `for_each_par`, `race`, and supervisor costs. |
+| Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `map_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
+| Concurrency | `effect.concurrency.*` | `par`, `all`, `map_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
 | Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
 | Streams | `eta_stream.*` | Representative `eta_stream` pipelines and file reads. |

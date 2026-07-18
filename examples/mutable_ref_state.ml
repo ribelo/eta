@@ -21,7 +21,7 @@ let program () =
   let open Syntax in
   let stats = Mutable_ref.make empty in
   let batches = [ 128; 64; 256; 32 ] in
-  let* snapshots = Effect.for_each_par_bounded ~max:2 batches (record stats) in
+  let* snapshots = Effect.map_par ~max_concurrent:2 (record stats) batches in
   let final = Mutable_ref.get stats in
   let previous = Mutable_ref.get_and_set stats empty in
   let after_reset = Mutable_ref.get stats in

@@ -57,7 +57,7 @@ observability.
 Eta does not expose escaping ZIO-style fiber handles as the default concurrency
 model. Public child work is lexical:
 
-- `Effect.par`, `Effect.all`, `Effect.race`, and `Effect.for_each_par` for
+- `Effect.par`, `Effect.all`, `Effect.race`, and `Effect.map_par` for
   concurrent effect composition.
 - `Supervisor.scoped` when a parent needs child handles inside a nursery.
 - `Effect.with_background` when background work should live only while a body

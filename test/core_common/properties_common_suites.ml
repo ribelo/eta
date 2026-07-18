@@ -191,7 +191,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.(check int)
           (Printf.sprintf "retry success result %d" i)
           i
-          (run_ok rt (Effect.retry schedule (fun (_ : law_err) -> true) attempt));
+          (run_ok rt (Effect.retry ~schedule:schedule ~while_:(fun (_ : law_err) -> true) attempt));
         Alcotest.(check int)
           (Printf.sprintf "retry success attempts %d" i)
           1 !attempts)
@@ -201,9 +201,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         let ticks = ref 0 in
         ignore
           (run_ok rt
-             (Effect.repeat (Schedule.recurs n)
-                (Effect.named "repeat.tick" (Effect.sync (fun () ->
-                     incr ticks))))
+             (Effect.repeat ~schedule:(Schedule.recurs n)
+                (Effect.named "repeat.tick"
+                   (Effect.sync (fun () -> incr ticks))))
             : int);
         Alcotest.(check int)
           (Printf.sprintf "repeat recurs %d runs initial+n" n)

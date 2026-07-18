@@ -96,7 +96,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Schedule.(jittered ~min:0.5 ~max:1.5 (spaced (Duration.ms 100)))
     in
     let promise =
-      B.fork_run ctx rt (Effect.retry schedule (String.equal "again") attempt)
+      B.fork_run ctx rt (Effect.retry ~schedule:schedule ~while_:(String.equal "again") attempt)
     in
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.seconds 1);
