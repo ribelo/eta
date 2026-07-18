@@ -561,7 +561,7 @@ let test_cause_integration () =
     |> Eta.Effect.tap_error (function
          | `Decode issues ->
              Eta.Effect.sync (fun () -> seen := List.length issues))
-    |> Eta.Effect.catch (function
+    |> Eta.Effect.bind_error (function
          | `Decode issues -> Eta.Effect.pure (List.length issues))
   in
   let recovered = run_effect program |> expect_ok ~name:"catch decode" in

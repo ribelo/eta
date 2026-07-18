@@ -61,7 +61,7 @@ let eta_fail_catch_loop n =
   let rec go i acc =
     if i = 0 then Effect.pure acc
     else
-      Effect.catch
+      Effect.bind_error
         (fun (`Boom : [ `Boom ]) -> go (i - 1) (acc + 1))
         (Effect.fail `Boom)
   in

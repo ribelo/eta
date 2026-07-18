@@ -88,7 +88,7 @@ let read_response client request =
                   response.H.Response.headers,
                   Bytes.to_string body )))
 
-let capture eff = E.result eff
+let capture eff = E.to_result eff
 
 let run_eta ?services ?(finally = fun () -> ()) eff done_ check_result =
   let runtime = Eta_jsoo.Runtime.create ?services () in

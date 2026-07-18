@@ -10,7 +10,7 @@ let program () =
      |> Effect.flatten_result
    in
    if n < 3 then Effect.fail `Too_small else Effect.pure n)
-  |> Effect.recover (function `Too_small -> 3)
+  |> Effect.fold ~ok:Fun.id ~error:(function `Too_small -> 3)
 
 let () =
   Eio_main.run @@ fun stdenv ->

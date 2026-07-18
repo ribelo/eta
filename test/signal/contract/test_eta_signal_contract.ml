@@ -1307,7 +1307,7 @@ let test_reentrant_stabilization_is_typed_failure () =
   let observer =
     run_ok runtime
       (S.Observer.observe (S.Var.watch source) (fun _ ->
-           E.exit S.stabilize
+           E.to_exit S.stabilize
            |> E.bind (fun exit -> E.sync (fun () -> nested := Some exit))))
   in
   run_ok runtime S.stabilize;
@@ -1328,7 +1328,7 @@ let test_reentrant_stabilization_preserves_outer_delivery_phase () =
   let observed = S.Var.watch source in
   let nested = ref [] in
   let record_nested () =
-    E.exit S.stabilize
+    E.to_exit S.stabilize
     |> E.bind (fun exit -> E.sync (fun () -> nested := exit :: !nested))
   in
   let first_observer =

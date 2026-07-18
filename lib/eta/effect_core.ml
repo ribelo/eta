@@ -1,6 +1,6 @@
 (** Core Effect machinery: frame infrastructure, the [('a, 'err) t] type, and
     basic combinators
-    (pure/fail/from_option/bind/map/catch/catch_some/timeout/retry). Internal:
+    (pure/fail/from_option/bind/map/bind_error/catch_some/timeout/retry). Internal:
     see Effect for the public surface. *)
 
 open Runtime_core
@@ -236,7 +236,7 @@ let rec stripped_uncatchable : type err mapped. err Cause.t -> mapped Cause.t op
      defects, interruption, and finalizer diagnostics are not caught. If any of
      those uncatchable leaves remain, return them without invoking the handler:
      handler side effects must not run when the operation is still going to
-     fail, and old typed failures cannot be preserved across [catch]'s new
+     fail, and old typed failures cannot be preserved across [bind_error]'s new
      error type without running the handler. *)
   function
   | Cause.Fail _ -> None
@@ -259,7 +259,7 @@ let rec first_typed_failure : type err. err Cause.t -> err option = function
   | Cause.Suppressed { primary; _ } -> first_typed_failure primary
   | Cause.Die _ | Cause.Interrupt _ | Cause.Finalizer _ -> None
 
-let catch :
+let bind_error :
     type a err1 err2. (err1 -> (a, err2) t) -> (a, err1) t -> (a, err2) t =
  fun (handler) eff ->
  match eff with
@@ -274,7 +274,7 @@ let catch :
           | None -> (
               match first_typed_failure cause with
               | Some err -> eval frame (handler err)
-              | None -> invalid_arg "Effect.catch: empty composite cause"))
+              | None -> invalid_arg "Effect.bind_error: empty composite cause"))
 
 let catch_some (handler) eff =
   match eff with
@@ -294,9 +294,10 @@ let catch_some (handler) eff =
                   | None -> error cause)
               | None -> invalid_arg "Effect.catch_some: empty composite cause"))
 
-let recover (handler) eff = catch (fun err -> pure (handler err)) eff
-let or_else fallback eff = catch (fun _ -> fallback ()) eff
-let or_else_succeed fallback eff = catch (fun _ -> pure (fallback ())) eff
+let fold ~ok ~error eff =
+  bind_error (fun err -> pure (error err)) (map ok eff)
+
+let or_else fallback eff = bind_error (fun _ -> fallback ()) eff
 let when_ condition eff =
   if condition then map (fun value -> Some value) eff else pure None
 
@@ -308,12 +309,13 @@ let unless_effect condition eff =
 let filter_or_fail predicate ~if_false eff =
   bind (fun value -> if predicate value then pure value else fail (if_false value)) eff
 
-let ignore_errors eff = catch (fun _ -> unit) eff
-let ignore eff = catch (fun _ -> unit) (map (fun _ -> ()) eff)
-let result eff = catch (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
-let option eff = catch (fun _ -> pure None) (map (fun value -> Some value) eff)
+let ignore_errors eff = bind_error (fun _ -> unit) eff
+let ignore eff = bind_error (fun _ -> unit) (map (fun _ -> ()) eff)
+let to_result eff =
+  bind_error (fun err -> pure (Error err)) (map (fun value -> Ok value) eff)
+let to_option eff = bind_error (fun _ -> pure None) (map (fun value -> Some value) eff)
 
-let exit eff =
+let to_exit eff =
   preserve eff @@ fun frame ->
   ok
     (try eval frame eff with

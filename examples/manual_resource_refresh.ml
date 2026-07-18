@@ -25,7 +25,7 @@ let load source =
 
 let refresh_catching resource =
   Resource.refresh resource
-  |> Effect.result
+  |> Effect.to_result
   |> Effect.map (function Ok () -> None | Error err -> Some err)
 
 let program source =

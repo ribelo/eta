@@ -424,7 +424,7 @@ let test_from_file_error_is_recoverable () =
   (try Eio.Path.unlink path with _ -> ());
   let eff =
     Eta_stream.Stream.from_file path |> run_drain
-    |> Effect.catch (function
+    |> Effect.bind_error (function
          | `File_error { Eta_stream.Stream.kind = `Not_found; _ } -> Effect.unit
          | error -> Effect.fail error)
   in

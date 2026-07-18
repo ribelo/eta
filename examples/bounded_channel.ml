@@ -35,7 +35,7 @@ let program () =
       let* closed =
         Channel.recv ch
         |> Effect.map (fun msg -> "unexpected:" ^ msg)
-        |> Effect.recover render_close
+        |> Effect.fold ~ok:Fun.id ~error:render_close
       in
       let final_stats = Channel.stats ch in
       Effect.pure (first, second, closed, stats_while_blocked, final_stats))

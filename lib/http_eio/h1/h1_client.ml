@@ -53,13 +53,13 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     |> Effect.bind (fun () -> Effect.fail error)
   in
   H1_client_request_writer.write_request ?host_eio flow request
-  |> Effect.catch cleanup_after_error
+  |> Effect.bind_error cleanup_after_error
   |> Effect.bind (fun () ->
          let rec read_final_response initial =
            Effect.sync (fun () ->
                H1_client_response_reader.read_response_head ?host_eio ~initial
                  flow request)
-           |> Effect.catch cleanup_after_error
+           |> Effect.bind_error cleanup_after_error
            |> Effect.bind (function
                 | Error error -> cleanup_after_error error
                 | Ok (head : H1_client_response_reader.response_head)
@@ -103,7 +103,7 @@ let release_body release_ch =
   |> Effect.bind (function
        | `Sent ->
            Channel.recv ack
-           |> Effect.catch (function
+           |> Effect.bind_error (function
                 | `Closed | `Closed_with_error _ -> Effect.unit)
        | `Full | `Closed | `Closed_with_error _ -> Effect.unit)
 
@@ -151,7 +151,7 @@ let default_health_check (target : Connect.target) conn =
                (`Http (health_error target "idle connection had unread bytes")))
   in
   Effect.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Health_probe_timeout probe
-  |> Effect.catch (function
+  |> Effect.bind_error (function
        | `Health_probe_timeout -> Effect.unit
        | `Http error -> Effect.fail (`Http error))
 
@@ -193,7 +193,7 @@ let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
   Eta.Pool.create ~name:"eta-http.h1.pool" ~kind:"http.client" ~max_size
     ?max_idle ~acquire:(open_conn ?ca_file ~sw ~net target)
     ~release:H1_client_errors.close_conn ~health_check ()
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
          Effect.fail
            (H1_client_errors.pool_context_error ~method_:"*"
               ~uri:(Url.to_string url) err))
@@ -215,12 +215,12 @@ let request_owner pool request response_ch release_ch cancel_ch =
             ~max_response_body_bytes:pool.max_response_body_bytes
             ~flow:conn.flow request
           |> Effect.map (fun response -> `Response response)
-          |> Effect.catch (fun error -> Effect.pure (`Request_error error))
+          |> Effect.bind_error (fun error -> Effect.pure (`Request_error error))
         in
         let cancel_wait =
           Channel.recv cancel_ch
           |> Effect.map (fun Cancel -> `Cancelled)
-          |> Effect.catch (function
+          |> Effect.bind_error (function
                | `Closed | `Closed_with_error _ -> Effect.pure `Cancelled)
         in
         Effect.race [ request_attempt; cancel_wait ]
@@ -255,7 +255,7 @@ let request_owner pool request response_ch release_ch cancel_ch =
                           Channel.recv release_ch
                           |> Effect.map (fun release_ack ->
                                ack := Some release_ack)
-                          |> Effect.catch (function
+                          |> Effect.bind_error (function
                                | `Closed | `Closed_with_error _ ->
                                    abandon_response ())
                       | `Full | `Closed | `Closed_with_error _ ->
@@ -266,7 +266,7 @@ let request_owner pool request response_ch release_ch cancel_ch =
          match !ack with
          | None -> Effect.unit
          | Some release_ack -> send_best_effort release_ack ())
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
          report_error
            (H1_client_errors.pool_context_error ~method_:request.method_
               ~uri:(H1_client_errors.uri request) err))
@@ -295,7 +295,7 @@ let request_with_pool pool request =
                (request_owner pool request response_ch release_ch cancel_ch)
              |> Effect.bind (fun () ->
                     Channel.recv response_ch
-                    |> Effect.catch (function
+                    |> Effect.bind_error (function
                          | `Closed | `Closed_with_error _ ->
                              Effect.pure
                                (Error
@@ -312,7 +312,7 @@ let pool_origin pool = pool.origin
 
 let shutdown_pool pool =
   Eta.Pool.shutdown pool.pool
-  |> Effect.catch (fun err ->
+  |> Effect.bind_error (fun err ->
          Effect.fail
            (H1_client_errors.pool_context_error ~method_:"*"
               ~uri:(Url.to_string pool.target.url) err))

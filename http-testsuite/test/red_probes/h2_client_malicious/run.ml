@@ -200,7 +200,7 @@ let run_client_probe ~env ~name ~deadline_sec ~expected ~server_logic =
                 in
                 let effect =
                   Eta_http_eio.Client.request_h2_on_connection conn request url
-                  |> Eta.Effect.catch (fun error -> Eta.Effect.fail error)
+                  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail error)
                   |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
                          Eta_http.Body.Stream.read_all response.body
                          |> Eta.Effect.map (fun _ -> `Ok))

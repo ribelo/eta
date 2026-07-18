@@ -17,7 +17,7 @@ let run_hooks hooks =
         | [] -> Eta.Effect.unit
         | causes -> fail_hooks causes)
     | hook :: rest ->
-        Eta.Effect.exit (Eta.Effect.sync hook)
+        Eta.Effect.to_exit (Eta.Effect.sync hook)
         |> Eta.Effect.bind (function
              | Eta.Exit.Ok () -> loop failures rest
              | Eta.Exit.Error cause -> loop (cause :: failures) rest)

@@ -369,7 +369,7 @@ module Middleware = struct
 
   let access_log ~log inner request =
     let open Eta.Syntax in
-    let* result = Eta.Effect.result (inner request) in
+    let* result = Eta.Effect.to_result (inner request) in
     let entry =
       match result with
       | Ok response ->

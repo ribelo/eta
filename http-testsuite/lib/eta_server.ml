@@ -111,7 +111,7 @@ let echo_response request =
               request_id request.connection_id stream_id started_us
               body_available_us body_us body_len response_len (body_len * 2));
          fixed ~headers:[ ("content-type", "text/plain") ] response)
-  |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (empty 500))
+  |> Eta.Effect.bind_error (fun _error -> Eta.Effect.pure (empty 500))
 
 let echo_once_response request =
   let started_us = now_us () in
@@ -140,7 +140,7 @@ let echo_once_response request =
               request_id request.connection_id stream_id started_us
               body_available_us body_us body_len response_len (body_len * 2));
          fixed ~headers:[ ("content-type", "text/plain") ] response)
-  |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (empty 500))
+  |> Eta.Effect.bind_error (fun _error -> Eta.Effect.pure (empty 500))
 
 let empty_after_body request =
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body

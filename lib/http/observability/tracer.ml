@@ -20,7 +20,7 @@ let with_span ?(attrs = []) ?(emit_url_full = false) ~protocol request eff =
   |> Eta.Effect.bind (fun response ->
          Eta.Effect.pure response
          |> Eta.Effect.annotate_all (Semconv.response_attrs response))
-  |> Eta.Effect.catch (fun error ->
+  |> Eta.Effect.bind_error (fun error ->
          Eta.Effect.fail error
          |> Eta.Effect.annotate_all (Semconv.error_attrs error))
   |> Eta.Effect.annotate_all request_attrs

@@ -88,20 +88,20 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let eff =
       E.fail `Bad
-      |> E.catch (function `Bad -> E.pure 40)
+      |> E.bind_error (function `Bad -> E.pure 40)
       |> E.bind (fun value -> E.pure (value + 2))
     in
     check_ok Alcotest.int "value" 42 (B.run rt eff)
 
   let test_recover () =
     B.with_runtime @@ fun _ctx rt ->
-    B.run rt (E.fail `Bad |> E.recover (function `Bad -> 42))
+    B.run rt (E.fail `Bad |> E.fold ~ok:Fun.id ~error:(function `Bad -> 42))
     |> check_ok Alcotest.int "typed failure recovered" 42;
-    B.run rt (E.sync (fun () -> failwith "boom") |> E.recover (fun _ -> 0))
+    B.run rt (E.sync (fun () -> failwith "boom") |> E.fold ~ok:Fun.id ~error:(fun _ -> 0))
     |> expect_die;
     B.run rt
       (E.fail `Bad
-      |> E.recover (function `Bad -> failwith "recover handler crash"))
+      |> E.fold ~ok:Fun.id ~error:(function `Bad -> failwith "recover handler crash"))
     |> expect_die
 
   let test_ignore_errors () =
@@ -115,12 +115,12 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_result () =
     B.with_runtime @@ fun _ctx rt ->
-    B.run rt (E.pure 7 |> E.result)
+    B.run rt (E.pure 7 |> E.to_result)
     |> check_ok Alcotest.(result int string) "success" (Ok 7);
-    B.run rt (E.fail "bad" |> E.result)
+    B.run rt (E.fail "bad" |> E.to_result)
     |> check_ok Alcotest.(result int string) "typed failure" (Error "bad");
-    B.run rt (E.sync (fun () -> failwith "boom") |> E.result) |> expect_die;
-    match B.run rt (E.finally (E.fail "cleanup") E.unit |> E.result) with
+    B.run rt (E.sync (fun () -> failwith "boom") |> E.to_result) |> expect_die;
+    match B.run rt (E.finally (E.fail "cleanup") E.unit |> E.to_result) with
     | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail _)) -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer failure, got %a"
@@ -1129,9 +1129,9 @@ module Make (B : Runtime_backend.S) = struct
       ( "Effect core",
         [
           Alcotest.test_case "pure bind catch" `Quick test_pure_bind_catch;
-          Alcotest.test_case "recover" `Quick test_recover;
+          Alcotest.test_case "fold recover shape" `Quick test_recover;
           Alcotest.test_case "ignore_errors" `Quick test_ignore_errors;
-          Alcotest.test_case "result" `Quick test_result;
+          Alcotest.test_case "to_result" `Quick test_result;
           Alcotest.test_case "yield" `Quick test_yield;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "from_result and exit to_result" `Quick

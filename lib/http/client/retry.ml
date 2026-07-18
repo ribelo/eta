@@ -251,7 +251,7 @@ let now_s_effect = function
 
 let run ?(policy = default) ?now_s request_once request =
   let rec loop attempt =
-    Eta.Effect.catch
+    Eta.Effect.bind_error
       (fun error ->
         now_s_effect now_s
         |> Eta.Effect.bind (fun now_s ->

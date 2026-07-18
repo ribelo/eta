@@ -78,7 +78,7 @@ let embeddings_request_with provider ~api_key encode request =
 
 let read_response_body ?max_bytes body =
   Eta_http.Body.Stream.read_all ?max_bytes body
-  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 
 let read_response_text ?max_bytes body =
   read_response_body ?max_bytes body |> Eta.Effect.map Bytes.unsafe_to_string
@@ -95,7 +95,7 @@ let run_request request perform =
 let submit_request client request =
   Eta_http.request client request
   |> Eta.Effect.suppress_observability
-  |> Eta.Effect.catch (fun error -> Eta.Effect.fail (Eta_http_error error))
+  |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 
 let[@inline always] successful response =
   response.Eta_http.Response.status >= 200 && response.status < 300

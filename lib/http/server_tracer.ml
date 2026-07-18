@@ -13,7 +13,7 @@ let with_span ?(emit_url_full = false) request eff =
            Eta.Effect.pure response
            |> Eta.Effect.annotate_all_lazy (fun () ->
                   Semconv.response_attrs response))
-    |> Eta.Effect.catch (fun error ->
+    |> Eta.Effect.bind_error (fun error ->
            Eta.Effect.fail error
            |> Eta.Effect.annotate_all_lazy (fun () -> Semconv.error_attrs error))
     |> Eta.Effect.annotate_all_lazy (fun () ->

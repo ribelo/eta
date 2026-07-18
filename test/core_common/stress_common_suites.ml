@@ -90,7 +90,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           | Some ms ->
               acquire_use_release
               |> Effect.timeout (Duration.ms ms)
-              |> Effect.catch (fun (`Timeout : [ `Timeout ]) ->
+              |> Effect.bind_error (fun (`Timeout : [ `Timeout ]) ->
                      Effect.unit))
     in
     let promise = B.fork_run ctx rt (Effect.all workers) in
@@ -121,7 +121,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         |> Effect.bind (fun _value ->
                Effect.sync (fun () -> Atomic.incr received)
                |> Effect.bind (fun () -> loop ()))
-        |> Effect.catch (function
+        |> Effect.bind_error (function
              | `Closed -> Effect.unit
              | `Closed_with_error _ -> Effect.unit)
       in
@@ -207,7 +207,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                            if !attempts < 3 then
                              Effect.fail (`Inner_retry !attempts)
                            else Effect.pure !attempts)))
-               |> Effect.catch (fun (`Inner_retry n) -> Effect.pure n)))
+               |> Effect.bind_error (fun (`Inner_retry n) -> Effect.pure n)))
     in
     let result = run_ok rt eff in
     Alcotest.(check int) "result" 3 result;
@@ -335,7 +335,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                  ~release:(fun () -> Effect.sync (fun () -> decr active))
               |> Effect.bind (fun () -> gen (depth + 1)))
         | 4 ->
-            gen (depth + 1) |> Effect.catch (fun (`Fail n) -> Effect.pure (-n))
+            gen (depth + 1) |> Effect.bind_error (fun (`Fail n) -> Effect.pure (-n))
         | 5 -> gen (depth + 1) |> Effect.finally (Effect.sync (fun () -> ()))
         | _ -> Effect.pure 0
     in

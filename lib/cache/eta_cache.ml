@@ -173,7 +173,7 @@ module Make (Key : Key) = struct
   let expiry_for_exit t key exit =
     if cacheable_exit exit then
       Effect.sync (fun () -> retention t (t.time_to_live exit key))
-      |> Effect.exit
+      |> Effect.to_exit
     else Effect.pure (Exit.Ok None)
 
   let replay exit = Effect.Expert.make ~leaf_name:"eta_cache.replay" (fun _ -> exit)
@@ -243,7 +243,7 @@ module Make (Key : Key) = struct
 
   let run_pending_lookup t entry pending =
     call_lookup t entry.key
-    |> Effect.exit
+    |> Effect.to_exit
     |> Effect.bind (fun lookup_exit ->
            expiry_for_exit t entry.key lookup_exit
            |> Effect.bind (fun expiry_exit ->
@@ -312,7 +312,7 @@ module Make (Key : Key) = struct
         Sync_lock.use t.lock @@ fun () -> t.loads <- t.loads + 1)
     |> Effect.bind (fun () ->
            call_lookup t key
-           |> Effect.exit
+           |> Effect.to_exit
            |> Effect.bind (fun lookup_exit ->
                   expiry_for_exit t key lookup_exit
                   |> Effect.bind (fun expiry_exit ->

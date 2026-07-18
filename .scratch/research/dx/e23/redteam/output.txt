@@ -1,0 +1,4 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e23' is dirty
+typed:recovered
+defect:surfaces Die exn=Failure("secret-boom") span=- annotations=0
+verdict:bind_error did not catch the exception

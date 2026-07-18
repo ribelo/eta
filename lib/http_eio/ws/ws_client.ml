@@ -37,7 +37,7 @@ let http_error_to_connect error =
   `Connect (Format.asprintf "%a" Error.pp error)
 
 let map_http_error eff =
-  Effect.catch (fun error -> Effect.fail (http_error_to_connect error)) eff
+  Effect.bind_error (fun error -> Effect.fail (http_error_to_connect error)) eff
 
 let http_url_of_ws_url raw =
   let rewrite prefix replacement =
@@ -428,7 +428,7 @@ let queue_close_error t error = Queue.close_with_error t.incoming error
 
 let enqueue t message =
   Queue.send t.incoming message
-  |> Effect.catch (function
+  |> Effect.bind_error (function
        | `Closed | `Closed_with_error _ -> Effect.unit
        | `Dropped ->
            Effect.sync (fun () ->
@@ -575,7 +575,7 @@ let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
            | Error error -> fail error)
   in
   connect
-  |> catch (fun error ->
+  |> bind_error (fun error ->
          sync (fun () -> close_flow flow) |> bind (fun () -> fail error))
 
 let connect ?ca_file ?key ?max_frame_size ?headers ?protocols

@@ -134,8 +134,8 @@ let test_typed_failure_caching done_ =
     |> Eta.Effect.bind (fun cache ->
            Eta.Effect.all
              [
-               Eta.Effect.exit (Int_cache.get cache 9);
-               Eta.Effect.exit (Int_cache.get cache 9);
+               Eta.Effect.to_exit (Int_cache.get cache 9);
+               Eta.Effect.to_exit (Int_cache.get cache 9);
              ]
            |> Eta.Effect.map (fun exits -> (exits, !calls)))
   in
@@ -254,7 +254,7 @@ let test_stats done_ =
                   |> Eta.Effect.bind (fun _ ->
                          Eta.Effect.delay (Eta.Duration.ms 5) (Int_cache.get cache 1)
                          |> Eta.Effect.bind (fun _ ->
-                                Eta.Effect.exit (Int_cache.get cache 9)
+                                Eta.Effect.to_exit (Int_cache.get cache 9)
                                 |> Eta.Effect.bind (fun failure ->
                                        Int_cache.stats cache
                                        |> Eta.Effect.map (fun stats ->
@@ -278,9 +278,9 @@ let test_defect_not_cached done_ =
   let program =
     make_cache lookup
     |> Eta.Effect.bind (fun cache ->
-           Eta.Effect.exit (Int_cache.get cache 1)
+           Eta.Effect.to_exit (Int_cache.get cache 1)
            |> Eta.Effect.bind (fun first ->
-                  Eta.Effect.exit (Int_cache.get cache 1)
+                  Eta.Effect.to_exit (Int_cache.get cache 1)
                   |> Eta.Effect.map (fun second -> (first, second, !calls))))
   in
   run_test done_ program @@ fun (first, second, calls) ->
@@ -303,11 +303,11 @@ let test_interruption_retry done_ =
     |> Eta.Effect.bind (fun cache ->
            Eta.Effect.all
              [
-               Eta.Effect.exit (Int_cache.get cache 1);
-               Eta.Effect.exit (Int_cache.get cache 1);
+               Eta.Effect.to_exit (Int_cache.get cache 1);
+               Eta.Effect.to_exit (Int_cache.get cache 1);
              ]
            |> Eta.Effect.bind (fun interrupted ->
-                  Eta.Effect.exit (Int_cache.get cache 1)
+                  Eta.Effect.to_exit (Int_cache.get cache 1)
                   |> Eta.Effect.map (fun retried -> (interrupted, retried, !calls))))
   in
   run_test done_ program @@ fun (interrupted, retried, calls) ->
@@ -326,9 +326,9 @@ let test_mixed_interruption_failure_retry done_ =
   let program =
     make_cache lookup
     |> Eta.Effect.bind (fun cache ->
-           Eta.Effect.exit (Int_cache.get cache 1)
+           Eta.Effect.to_exit (Int_cache.get cache 1)
            |> Eta.Effect.bind (fun mixed ->
-                  Eta.Effect.exit (Int_cache.get cache 1)
+                  Eta.Effect.to_exit (Int_cache.get cache 1)
                   |> Eta.Effect.map (fun retried -> (mixed, retried, !calls))))
   in
   run_test done_ program @@ fun (mixed, retried, calls) ->

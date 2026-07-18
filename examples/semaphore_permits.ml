@@ -14,7 +14,7 @@ let inside sem label =
 
 let rejected sem =
   Semaphore.with_permits sem 1 (fun () -> Effect.fail (`Rejected "boom"))
-  |> Effect.recover (fun (`Rejected reason) -> "failed:" ^ reason)
+  |> Effect.fold ~ok:Fun.id ~error:(fun (`Rejected reason) -> "failed:" ^ reason)
 
 let program sem =
   let open Syntax in

@@ -27,6 +27,6 @@ let default_error_response error =
   Response.text ~status (default_reason status)
 
 let with_default_error_response ?(renderer = default_error_response) handler request =
-  handler request |> Eta.Effect.recover renderer
+  handler request |> Eta.Effect.fold ~ok:Fun.id ~error:renderer
 
 let route_not_found _request = Eta.Effect.pure (Response.text ~status:404 "not found\n")

@@ -1,0 +1,5 @@
+(lang dune 3.0)
+(package
+ (name dx_e23_redteam)
+ (allow_empty)
+ (depends eta eta_eio eio_main))

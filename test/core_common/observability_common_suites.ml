@@ -225,7 +225,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let outer : (unit, observability_err) Effect.t =
       Effect.named ~error_renderer:render_outer "outer"
-        (Effect.catch (function `Inner -> Effect.fail `Outer) inner)
+        (Effect.bind_error (function `Inner -> Effect.fail `Outer) inner)
     in
     ignore (B.run rt outer : (unit, observability_err) Exit.t);
     ignore

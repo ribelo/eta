@@ -928,7 +928,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 1);
     let close_failure =
       Pool.with_resource pool (fun _ -> E.unit)
-      |> E.catch (function
+      |> E.bind_error (function
            | `Close_failed -> E.unit
            | #pool_test_error as err -> E.fail err)
     in

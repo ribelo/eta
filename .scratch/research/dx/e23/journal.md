@@ -123,3 +123,95 @@ census drift; kill only if fold semantics force a design reopen (not expected).
 ### Step 1 — seal predictions
 
 Committed this section before any code change.
+
+### Step 2 — docs-first `.mli`
+
+Rewrote handle-cluster contracts in `lib/eta/effect.mli` before `effect_core.ml`:
+`bind_error`, `catch_some` (cross-ref), `fold`, `or_else`, `to_result`,
+`to_option`, `to_exit`. Cross-refs on `sync`, `retry_or_else`, `collect_names`
+updated. Contracts stay ≤ ~10 lines each.
+
+### Step 3 — implement + migrate
+
+- `effect_core.ml`: rename `catch`→`bind_error`, delete `recover` /
+  `or_else_succeed`, rename `result`/`option`/`exit`→`to_*`, add
+  `fold ~ok ~error = bind_error (fun e -> pure (error e)) (map ok eff)`.
+- Full-repo call-site migration (lib/test/examples/bench/docs/README).
+- Pure recovery sites use `fold ~ok:Fun.id ~error:`.
+- `or_else_succeed` tests rewritten as fold pure-error-fallback.
+- DX surface scanners updated so `Effect.bind` token count does not match
+  `Effect.bind_error` (identifier-boundary `count_token`).
+
+### Step 4 — gates
+
+```
+nix develop -c dune build @install          # OK
+nix develop -c dune runtest --force         # OK (final)
+nix develop -c eta-oxcaml-test-shipped      # OK (final)
+```
+
+No JS-track call sites found for the deleted spellings.
+
+### Step 5 — mechanical extras
+
+**fold unit tests** (in `test/core_common/effect_common_suites.ml`, run via
+`eta-core-eio`, 496 tests):
+
+- coherence with `map`/`bind_error` composition
+- defects and interruption pass through untouched
+- pure error fallback (old `or_else_succeed` shape)
+
+**Census table (independent after migration)**
+
+Handle cluster vals from `bind_error` through `map_error` inclusive:
+
+| | vals | concepts |
+|---|---:|---:|
+| Before (sealed / orchestrator) | 11 | 10 |
+| After (actual) | 10 | 8 |
+| Delta | −1 | −2 |
+
+After vals (10): `bind_error`, `catch_some`, `fold`, `or_else`,
+`ignore_errors`, `ignore`, `to_result`, `to_option`, `to_exit`, `map_error`.
+
+After concepts (8): bind_error, catch_some, fold, or_else, ignore*,
+to_result, to_option, to_exit — with `map_error` counted in the transform
+neighbor cluster for the orchestrator’s 8-concept target. Matches sealed
+prediction (−1 val / −2 concepts).
+
+**Footgun delta:** −1 / +0.
+Removed: “`catch` catches exceptions”. No new trap observed; red-team confirms
+`bind_error` still refuses exception swallowing.
+
+**docs/api-dx.md** error-handling guidance rewritten to new spellings.
+
+### Step 6 — red-team
+
+Probe: `.scratch/research/dx/e23/redteam/probe_bind_error_exception.ml`
+
+Output:
+
+```
+typed:recovered
+defect:surfaces Die exn=Failure("secret-boom") span=- annotations=0
+verdict:bind_error did not catch the exception
+```
+
+Verdict: defect surfaces via `Cause.Die`; handler not invoked. New name no
+longer collides with Stdlib exception vocabulary. See `redteam/VERDICT.md`.
+
+### Step 7 — review packet
+
+Files under `.scratch/research/dx/e23/review/` as required.
+
+### Step 8 — report
+
+See `report.md`.
+
+### Follow-up notes (out of scope)
+
+- Filename `examples/catch_recovery.ml` still uses the old noun; API surface is
+  migrated, name is historical example id used by `api_dx_surface`.
+- `Effect.fold ~ok:Fun.id ~error:` is slightly noisier than old `recover` for
+  pure recovery-only call sites; north star accepts this as Result-mirroring
+  both-channel fold rather than a dedicated pure-error combinator.

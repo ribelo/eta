@@ -106,7 +106,7 @@ let with_connection_timeout : type kind a.
                  timed_blocking_result ?blocking_pool:state.blocking_pool ~timeout
                    ~conn ~name:"sqlite.ensure_autocommit" (fun () ->
                      Connection.ensure_autocommit conn)
-                 |> Eta.Effect.catch (fun err ->
+                 |> Eta.Effect.bind_error (fun err ->
                         blocking_result ?blocking_pool:state.blocking_pool
                           ~name:"sqlite.close_dirty" (fun () ->
                             Connection.close conn)
@@ -351,7 +351,7 @@ let with_transaction ?timeout (Pool_runner state as runner) body =
                       timed_blocking_result ?blocking_pool ~timeout ~conn
                         ~name:"sqlite.rollback" (fun () ->
                           Connection.rollback conn)
-                      |> Eta.Effect.catch (fun err ->
+                      |> Eta.Effect.bind_error (fun err ->
                              blocking_result ?blocking_pool
                                ~name:"sqlite.close_dirty" (fun () ->
                                  Connection.close conn)

@@ -63,9 +63,9 @@ val sync : (unit -> 'a) -> ('a, 'err) t
 
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
     as {!Cause.Die}. They are not converted into the typed error channel and
-    are not caught by {!catch}. If a synchronous leaf operation has an expected
-    typed failure, return an explicit [result] and use {!flatten_result} after
-    this boundary.
+    are not handled by {!bind_error}. If a synchronous leaf operation has an
+    expected typed failure, return an explicit [result] and use
+    {!flatten_result} after this boundary.
     Runtime cancellation exceptions remain interruption. *)
 
 val yield : (unit, 'err) t
@@ -167,66 +167,48 @@ val uninterruptible : ('a, 'err) t -> ('a, 'err) t
     This maps to backend cancellation protection. It does not turn
     interruption into a typed failure, and it does not catch defects. *)
 
-val catch :
+val bind_error :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
-(** Handle typed failures in an eff's cause tree.
+(** Bind over the typed error channel (data-last, pipeline-friendly).
 
-    [catch handler eff] does not catch unchecked defects, interruption, or
-    cleanup/finalizer failures. This matches the ordinary typed-error recovery
-    shape in ZIO [catchAll]/[foldZIO] and eff-ts [catch]/[findError]: one
-    recovery decision is made from the cause, rather than traversing every
-    [Fail] leaf and running one handler per branch.
+    [bind_error handler eff] does not handle unchecked defects, interruption, or
+    cleanup/finalizer failures. One recovery decision is made from the cause:
+    the handler is not run per [Fail] leaf.
 
-    If any uncatchable defect, interruption, or finalizer diagnostic remains in
-    the cause tree, the handler is not invoked and the eff stays failed with
-    those uncatchable diagnostics. This avoids running recovery side effects for
-    an operation that still fails, and avoids preserving old typed [Fail]
-    payloads after [catch] changes the error type.
-
-    If only typed failures remain, [catch] invokes the handler once with the
-    first typed failure in cause order. Other concurrent/sequential typed
-    failures are not recoverable values; use [all_settled] or explicit result
-    values when every branch outcome matters. Recover or ignore cleanup failure
-    inside the cleanup eff itself. *)
+    If any uncatchable defect, interruption, or finalizer diagnostic remains,
+    the handler is not invoked and the eff stays failed with those diagnostics.
+    If only typed failures remain, the handler runs once with the first typed
+    failure in cause order. Use [all_settled] when every branch outcome matters. *)
 
 val catch_some :
   ('err -> ('a, 'err) t option) -> ('a, 'err) t -> ('a, 'err) t
 (** Selectively handle a typed failure without changing the error row.
 
-    [catch_some handler eff] has the same catchability boundary as {!catch}:
-    it only considers failed exits whose cause tree contains recoverable typed
-    failures and no defects, interruption, or finalizer diagnostics.
+    [catch_some handler eff] has the same catchability boundary as
+    {!bind_error}: only failed exits whose cause tree contains recoverable
+    typed failures and no defects, interruption, or finalizer diagnostics.
 
     When only typed failures remain, [catch_some] inspects the first typed
     failure in cause order. [Some recovery] runs that recovery effect. [None]
-    preserves the original cause exactly, including composite typed failures,
-    rather than rebuilding a single [Cause.Fail]. *)
+    preserves the original cause exactly, including composite typed failures. *)
 
-val recover : ('err1 -> 'a) -> ('a, 'err1) t -> ('a, 'err2) t
-(** Pure typed-failure recovery.
+val fold :
+  ok:('a -> 'b) -> error:('err -> 'b) -> ('a, 'err) t -> ('b, 'outer) t
+(** Pure both-channel fold; mirrors [Result.fold].
 
-    [recover f eff] is shorthand for [catch (fun err -> pure (f err)) eff].
-    Use {!catch} when recovery itself is effectful. Defects, interruption, and
-    finalizer diagnostics are not recovered, matching {!catch}. If [f] raises,
-    the exception is an unchecked defect. *)
+    [fold ~ok ~error eff] maps success with [ok] and catchable typed failure
+    with [error], succeeding with the pure result. Defects, interruption, and
+    finalizer diagnostics are not folded. If [ok] or [error] raises, the
+    exception is an unchecked defect. *)
 
 val or_else : (unit -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Recover from any typed failure with a lazy fallback effect.
 
-    [or_else fallback eff] is shorthand for [catch (fun _ -> fallback ()) eff].
-    Successful values pass through without evaluating [fallback]. The fallback
-    runs only for catchable typed failures. Defects, interruption, and
-    finalizer diagnostics are not caught, matching {!catch}. *)
-
-val or_else_succeed : (unit -> 'a) -> ('a, 'err) t -> ('a, 'outer) t
-(** Recover from any typed failure with a lazy pure value.
-
-    [or_else_succeed fallback eff] is shorthand for
-    [catch (fun _ -> pure (fallback ())) eff]. Successful values pass through
+    [or_else fallback eff] is shorthand for
+    [bind_error (fun _ -> fallback ()) eff]. Successful values pass through
     without evaluating [fallback]. The fallback runs only for catchable typed
-    failures. Defects, interruption, and finalizer diagnostics are not caught,
-    matching {!catch}. If [fallback] raises, the exception is an unchecked
-    defect. *)
+    failures. Defects, interruption, and finalizer diagnostics are not handled,
+    matching {!bind_error}. *)
 
 val when_ : bool -> ('a, 'err) t -> ('a option, 'err) t
 (** Conditionally run an effect.
@@ -272,10 +254,10 @@ val filter_or_fail :
 val ignore_errors : (unit, 'err1) t -> (unit, 'err2) t
 (** Suppress typed failures from a best-effort unit effect.
 
-    [ignore_errors eff] is shorthand for [catch (fun _ -> unit) eff]. It only
-    recovers typed failures; defects, interruption, and finalizer diagnostics
-    remain visible. Use it for best-effort cleanup, refresh, or notification
-    effects whose success value is already [unit]. *)
+    [ignore_errors eff] is shorthand for [bind_error (fun _ -> unit) eff]. It
+    only recovers typed failures; defects, interruption, and finalizer
+    diagnostics remain visible. Use it for best-effort cleanup, refresh, or
+    notification effects whose success value is already [unit]. *)
 
 val ignore : ('a, 'err1) t -> (unit, 'err2) t
 (** Run an effect for its effects, discard a successful value, and suppress
@@ -285,26 +267,26 @@ val ignore : ('a, 'err1) t -> (unit, 'err2) t
     typed failures. Defects, interruption, and finalizer diagnostics remain
     visible. Use {!ignore_errors} for the older unit-specialized spelling. *)
 
-val result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
+val to_result : ('a, 'err1) t -> (('a, 'err1) result, 'err2) t
 (** Materialize the typed failure channel into an ordinary OCaml [result].
 
-    [result eff] succeeds with [Ok value] when [eff] succeeds and with
+    [to_result eff] succeeds with [Ok value] when [eff] succeeds and with
     [Error err] when [eff] fails with a typed failure. Defects, interruption,
     and finalizer diagnostics are not captured; they remain failed Eta causes.
     Use this when a workflow should keep going and handle success/failure as
     data without leaving Eta's runtime boundary. *)
 
-val option : ('a, 'err1) t -> ('a option, 'err2) t
+val to_option : ('a, 'err1) t -> ('a option, 'err2) t
 (** Materialize success as [Some value] and typed failure as [None].
 
-    [option] discards typed failure payloads. Defects, interruption, and
+    [to_option] discards typed failure payloads. Defects, interruption, and
     finalizer diagnostics are not captured; they remain failed Eta causes.
-    Use {!result} when the typed failure value matters. *)
+    Use {!to_result} when the typed failure value matters. *)
 
-val exit : ('a, 'err1) t -> (('a, 'err1) Exit.t, 'err2) t
+val to_exit : ('a, 'err1) t -> (('a, 'err1) Exit.t, 'err2) t
 (** Materialize the full Eta exit as a success value.
 
-    [exit eff] succeeds with [Exit.Ok value] when [eff] succeeds and with
+    [to_exit eff] succeeds with [Exit.Ok value] when [eff] succeeds and with
     [Exit.Error cause] when [eff] fails with a typed failure, defect,
     interruption, or finalizer diagnostic. *)
 
@@ -374,8 +356,8 @@ val retry_or_else :
     the latest schedule output when at least one schedule step has run,
     including the terminal [Done] output when the schedule is exhausted. It
     receives [None] when [predicate] rejects the first typed failure before any
-    schedule step. For composite causes, [retry_or_else] follows {!catch}: it
-    handles only causes whose primary tree contains typed failures and no
+    schedule step. For composite causes, [retry_or_else] follows {!bind_error}:
+    it handles only causes whose primary tree contains typed failures and no
     uncatchable defects, interruption, or finalizer diagnostics, and it uses the
     first typed failure in cause order. Uncatchable diagnostics are not retried
     and do not run [or_else].
@@ -950,6 +932,6 @@ val collect_names : ('a, 'err) t -> string list
     [eff]'s current description.
 
     This is a preflight/documentation helper, not a complete runtime inventory.
-    Continuation-producing nodes such as [bind], [catch], [for_each_par],
+    Continuation-producing nodes such as [bind], [bind_error], [for_each_par],
     [for_each_par_bounded], and [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)

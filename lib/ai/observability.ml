@@ -74,7 +74,7 @@ let ai_error_message = function
 
 let with_error_type eff =
   eff
-  |> Eta.Effect.catch (fun error ->
+  |> Eta.Effect.bind_error (fun error ->
          Eta.Effect.fail error
          |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
 

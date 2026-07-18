@@ -50,7 +50,7 @@ let conformance_config =
 let handler request =
   Eta_http.Server.Body.read_all request.Eta_http.Server.Request.body
   |> Eta.Effect.map (fun _body -> Eta_server.text "eta-h2spec\n")
-  |> Eta.Effect.catch (fun _error -> Eta.Effect.pure (Eta_server.empty 500))
+  |> Eta.Effect.bind_error (fun _error -> Eta.Effect.pure (Eta_server.empty 500))
 
 let tls_config cert_dir =
   Eta_http.Tls.Config.default_server

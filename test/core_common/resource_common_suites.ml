@@ -146,7 +146,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.named "source.fail"
                (E.sync (fun () -> source := Error "Uh oh!"))
              |> E.bind (fun () -> Resource.refresh resource)
-             |> E.catch
+             |> E.bind_error
                   (fun (`Refresh_failed _ : [ `Refresh_failed of string ]) ->
                     E.unit)
              |> E.bind (fun () -> Resource.get resource))

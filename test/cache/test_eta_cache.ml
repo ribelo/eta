@@ -133,7 +133,7 @@ let test_typed_failure_is_cached_and_replayed () =
   let results =
     run_ok rt
       (Effect.all
-         [ Effect.exit (Int_cache.get cache 9); Effect.exit (Int_cache.get cache 9) ])
+         [ Effect.to_exit (Int_cache.get cache 9); Effect.to_exit (Int_cache.get cache 9) ])
   in
   List.iter (expect_fail "cached failure" (( = ) (`Missing 1))) results;
   Alcotest.(check int) "failing lookup ran once" 1 !calls
@@ -238,7 +238,7 @@ let test_stats_update () =
   now := 10;
   ignore (run_ok rt (Int_cache.get cache 1));
   expect_fail "stats failure" (( = ) `Bad)
-    (run_ok rt (Effect.exit (Int_cache.get cache 9)));
+    (run_ok rt (Effect.to_exit (Int_cache.get cache 9)));
   let stats = run_ok rt (Int_cache.stats cache) in
   Alcotest.(check int) "hits" 1 stats.Int_cache.hits;
   Alcotest.(check int) "misses" 3 stats.misses;
@@ -260,9 +260,9 @@ let test_lookup_defect_propagates_and_is_not_cached () =
   in
   let cache = make_cache rt ~lookup in
   expect_die "first defect" defect
-    (run_ok rt (Effect.exit (Int_cache.get cache 1)));
+    (run_ok rt (Effect.to_exit (Int_cache.get cache 1)));
   expect_die "second defect" defect
-    (run_ok rt (Effect.exit (Int_cache.get cache 1)));
+    (run_ok rt (Effect.to_exit (Int_cache.get cache 1)));
   Alcotest.(check int) "defect was not cached" 2 !calls
 
 let test_interrupted_lookup_removes_pending_and_retries () =
@@ -280,7 +280,7 @@ let test_interrupted_lookup_removes_pending_and_retries () =
   let first_waiters =
     run_ok rt
       (Effect.all
-         [ Effect.exit (Int_cache.get cache 1); Effect.exit (Int_cache.get cache 1) ])
+         [ Effect.to_exit (Int_cache.get cache 1); Effect.to_exit (Int_cache.get cache 1) ])
   in
   List.iter (expect_interrupt "cancelled waiter") first_waiters;
   check_ok_int "later get retried" 42 (run_exit rt (Int_cache.get cache 1));
@@ -297,7 +297,7 @@ let test_mixed_interrupt_failure_is_not_cached () =
   in
   let cache = make_cache rt ~lookup in
   expect_mixed_interrupt_failure "first lookup"
-    (run_ok rt (Effect.exit (Int_cache.get cache 1)));
+    (run_ok rt (Effect.to_exit (Int_cache.get cache 1)));
   check_ok_int "later get retried" 42 (run_exit rt (Int_cache.get cache 1));
   Alcotest.(check int) "mixed interruption was not cached" 2 !calls
 
