@@ -593,11 +593,7 @@ let pp_compact render_error cause =
   in
   let needs_parens ctx flavor =
     match (ctx, flavor) with
-    | `Seq, (`Conc | `Sup)
-    | `Conc, (`Seq | `Sup)
-    | `Sup, (`Seq | `Conc | `Sup)
-    | `Sup_primary, `Sup ->
-        true
+    | `Seq, (`Conc | `Sup) | `Conc, (`Seq | `Sup) | `Sup_primary, `Sup -> true
     | _ -> false
   in
   let add_join sep add_node ctx = function
@@ -636,8 +632,9 @@ let pp_compact render_error cause =
         add ")"
     | Finalizer.Suppressed { primary; finalizer } ->
         add_finalizer_node `Sup_primary primary;
-        add " | suppressed: ";
-        add_finalizer_node `Sup finalizer);
+        add " | suppressed: finalizer(";
+        add_finalizer_node `Fin finalizer;
+        add ")");
     if parens then add ")"
   in
   let rec add_cause_node ctx node =
@@ -668,8 +665,9 @@ let pp_compact render_error cause =
         add ")"
     | Suppressed { primary; finalizer } ->
         add_cause_node `Sup_primary primary;
-        add " | suppressed: ";
-        add_finalizer_node `Sup finalizer);
+        add " | suppressed: finalizer(";
+        add_finalizer_node `Fin finalizer;
+        add ")");
     if parens then add ")"
   in
   add_cause_node `Top cause;

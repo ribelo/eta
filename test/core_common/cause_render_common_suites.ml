@@ -37,7 +37,7 @@ let test_corpus_suppressed_fail_die () =
     ~pretty:
       "suppressed:\n  primary:\n    fail: B\n  finalizer:\n    defect: \
        Invalid_argument(\"cleanup\")"
-    ~compact:"fail(B) | suppressed: die(Invalid_argument(\"cleanup\"))"
+    ~compact:"fail(B) | suppressed: finalizer(die(Invalid_argument(\"cleanup\")))"
 
 let test_corpus_nested_finalizer_sequential () =
   let id = Cause.fresh_interrupt_id () in
@@ -93,7 +93,7 @@ let test_corpus_suppressed_concurrent_finalizer () =
        Failure(\"boom\")\n  finalizer:\n    sequential:\n      finalizer fail: \
        cleanup failed\n      interrupt"
     ~compact:
-      "fail(A) + die(Failure(\"boom\")) | suppressed: (fail(\"cleanup \
+      "fail(A) + die(Failure(\"boom\")) | suppressed: finalizer(fail(\"cleanup \
        failed\") ; interrupt)"
 
 let test_corpus_mixed_nesting_parens () =
@@ -114,7 +114,7 @@ let test_corpus_suppressed_primary_suppressed () =
       "suppressed:\n  primary:\n    suppressed:\n      primary:\n        fail: \
        A\n      finalizer:\n        finalizer fail: f1\n  finalizer:\n    \
        finalizer fail: f2"
-    ~compact:"(fail(A) | suppressed: fail(\"f1\")) | suppressed: fail(\"f2\")"
+    ~compact:"(fail(A) | suppressed: finalizer(fail(\"f1\"))) | suppressed: finalizer(fail(\"f2\"))"
 
 let test_corpus_newline_sanitization () =
   check_case "newline sanitization"
