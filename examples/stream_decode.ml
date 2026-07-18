@@ -10,8 +10,7 @@ let pp_error fmt = function
 let program =
   Eta_stream.Stream.from_iterable [ "alpha"; "beta"; "gamma" ]
   |> Eta_stream.Stream.map_effect (fun raw ->
-         Effect.sync (fun () -> decode raw)
-         |> Effect.flatten_result)
+         Effect.sync_result (fun () -> decode raw))
   |> Eta_stream.run_collect
 
 let () =

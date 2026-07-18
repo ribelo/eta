@@ -6,13 +6,12 @@ let admit ?(abort = Effect.delay (Duration.ms 10) Effect.unit) sem label =
   let open Syntax in
   let+ result =
     Semaphore.with_permits_or_abort sem 1 ~abort (fun () ->
-        Effect.sync (fun () ->
+        Effect.sync_result (fun () ->
             if String.equal label "" then Error (`Rejected "empty label")
             else
               Ok
                 (Printf.sprintf "accepted:%s:available=%d" label
-                   (Semaphore.available sem)))
-        |> Effect.flatten_result)
+                   (Semaphore.available sem))))
   in
   match result with
   | Some accepted -> accepted
