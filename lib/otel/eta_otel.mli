@@ -66,6 +66,21 @@ val meter : t -> Eta.Capabilities.meter
     histogram, and summary observations are aggregated by metric identity and
     attribute set within each batch. *)
 
+module Cause_json : sig
+  (** Structured JSON encoding of portable causes for sinks. *)
+
+  val to_yojson :
+    ('err -> Yojson.Safe.t) -> 'err Eta.Cause.Portable.t -> Yojson.Safe.t
+  (** Encode a portable cause as a JSON tree. Node kinds: [fail], [die],
+      [interrupt], [sequential], [concurrent], [finalizer], [suppressed].
+      Anonymous interrupt [id] is [null]; defect [backtrace], [span], and
+      [annotations] fields appear only when present. *)
+
+  val to_string :
+    ('err -> Yojson.Safe.t) -> 'err Eta.Cause.Portable.t -> string
+  (** Compact single-line JSON rendering of {!to_yojson}. *)
+end
+
 module Terminal : sig
   (** Human-readable terminal/debug telemetry exporter.
 

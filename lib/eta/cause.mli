@@ -114,6 +114,9 @@ val die_with_diagnostics :
     need it. *)
 val fresh_interrupt_id : unit -> interrupt_id
 val equal_interrupt_id : interrupt_id -> interrupt_id -> bool
+val interrupt_id_to_int : interrupt_id -> int
+(** Render the runtime-owned interruption identity as its integer value, for
+    structured encoders and log correlation. *)
 val interrupt : 'err t
 val interrupt_with_id : interrupt_id -> 'err t
 val sequential : 'err t list -> 'err t
@@ -156,5 +159,17 @@ val pp :
   (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit
 val pretty : ('err -> string) -> 'err t -> string
 (** Render a multi-line cause tree for terminal diagnostics. *)
+
+val pp_compact : ('err -> string) -> 'err t -> string
+(** Render a cause as one line for span statuses and log fields.
+
+    Leaves: [fail(err)], [die(exn)], [interrupt], [interrupt#id].
+    [Concurrent] joins with [ + ], [Sequential] with [ ; ]; a differently
+    flavored child is parenthesized. [finalizer(f)] wraps finalizer
+    diagnostics; [p | suppressed: f] keeps the primary left of the labeled
+    separator. Total and newline-free: embedded renderings and exception
+    messages are sanitized, so the result is always a single line. Defect
+    span names, annotations, and backtraces are omitted; use {!pretty} for
+    full multi-line diagnostics. *)
 
 val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t

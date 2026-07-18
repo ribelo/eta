@@ -299,6 +299,7 @@ let die_with_backtrace exn bt = die_with_diagnostics ~backtrace:bt exn
 let interrupt_id_counter = Atomic.make 0
 let fresh_interrupt_id () = Atomic.fetch_and_add interrupt_id_counter 1 + 1
 let equal_interrupt_id a b = Int.equal a b
+let interrupt_id_to_int id = id
 let interrupt = Interrupt None
 let interrupt_with_id id = Interrupt (Some id)
 
@@ -568,3 +569,108 @@ let pretty render_error cause =
   if len > 0 && Char.equal rendered.[len - 1] '\n' then
     String.sub rendered 0 (len - 1)
   else rendered
+
+let pp_compact render_error cause =
+  let sanitize text =
+    text
+    |> String.split_on_char '\r'
+    |> String.concat "\\r"
+    |> String.split_on_char '\n'
+    |> String.concat "\\n"
+  in
+  let buffer = Buffer.create 64 in
+  let add text = Buffer.add_string buffer text in
+  let add_die die =
+    add "die(";
+    add (sanitize (Printexc.to_string die.exn));
+    add ")"
+  in
+  let add_interrupt = function
+    | None -> add "interrupt"
+    | Some id ->
+        add "interrupt#";
+        add (string_of_int id)
+  in
+  let needs_parens ctx flavor =
+    match (ctx, flavor) with
+    | `Seq, (`Conc | `Sup)
+    | `Conc, (`Seq | `Sup)
+    | `Sup, (`Seq | `Conc | `Sup)
+    | `Sup_primary, `Sup ->
+        true
+    | _ -> false
+  in
+  let add_join sep add_node ctx = function
+    | [] -> ()
+    | first :: rest ->
+        add_node ctx first;
+        List.iter (fun node -> add sep; add_node ctx node) rest
+  in
+  let rec add_finalizer_node ctx node =
+    let flavor =
+      match node with
+      | Finalizer.Fail _ | Finalizer.Die _ | Finalizer.Interrupt _ -> `Leaf
+      | Finalizer.Sequential _ -> `Seq
+      | Finalizer.Concurrent _ -> `Conc
+      | Finalizer.Finalizer _ -> `Fin
+      | Finalizer.Suppressed _ -> `Sup
+    in
+    let parens = needs_parens ctx flavor in
+    if parens then add "(";
+    (match node with
+    | Finalizer.Fail msg ->
+        add "fail(";
+        add (Printf.sprintf "%S" msg);
+        add ")"
+    | Finalizer.Die die -> add_die die
+    | Finalizer.Interrupt id -> add_interrupt id
+    | Finalizer.Sequential [] -> add "sequential()"
+    | Finalizer.Concurrent [] -> add "concurrent()"
+    | Finalizer.Sequential nodes ->
+        add_join " ; " add_finalizer_node `Seq nodes
+    | Finalizer.Concurrent nodes ->
+        add_join " + " add_finalizer_node `Conc nodes
+    | Finalizer.Finalizer inner ->
+        add "finalizer(";
+        add_finalizer_node `Fin inner;
+        add ")"
+    | Finalizer.Suppressed { primary; finalizer } ->
+        add_finalizer_node `Sup_primary primary;
+        add " | suppressed: ";
+        add_finalizer_node `Sup finalizer);
+    if parens then add ")"
+  in
+  let rec add_cause_node ctx node =
+    let flavor =
+      match node with
+      | Fail _ | Die _ | Interrupt _ -> `Leaf
+      | Sequential _ -> `Seq
+      | Concurrent _ -> `Conc
+      | Finalizer _ -> `Fin
+      | Suppressed _ -> `Sup
+    in
+    let parens = needs_parens ctx flavor in
+    if parens then add "(";
+    (match node with
+    | Fail err ->
+        add "fail(";
+        add (sanitize (render_error err));
+        add ")"
+    | Die die -> add_die die
+    | Interrupt id -> add_interrupt id
+    | Sequential [] -> add "sequential()"
+    | Concurrent [] -> add "concurrent()"
+    | Sequential nodes -> add_join " ; " add_cause_node `Seq nodes
+    | Concurrent nodes -> add_join " + " add_cause_node `Conc nodes
+    | Finalizer inner ->
+        add "finalizer(";
+        add_finalizer_node `Fin inner;
+        add ")"
+    | Suppressed { primary; finalizer } ->
+        add_cause_node `Sup_primary primary;
+        add " | suppressed: ";
+        add_finalizer_node `Sup finalizer);
+    if parens then add ")"
+  in
+  add_cause_node `Top cause;
+  Buffer.contents buffer
