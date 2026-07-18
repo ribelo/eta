@@ -111,15 +111,20 @@ let usage ?(raw_prompt_names = false) json =
     loop names
   in
   let optional_raw name = function None -> [] | Some value -> [ (name, value) ] in
-  let subtract left right =
+  let subtract left rights =
     Option.map
-      (fun total -> Int.max 0 (total - Option.value ~default:0 right))
+      (fun total ->
+        Int.max 0
+          (List.fold_left
+             (fun total value -> total - Option.value ~default:0 value)
+             total rights))
       left
   in
   {
     A.input_tokens =
       {
-        uncached = subtract input_tokens cache_read_tokens;
+        uncached =
+          subtract input_tokens [ cache_read_tokens; cache_write_tokens ];
         total = input_tokens;
         cache_read = cache_read_tokens;
         cache_write = cache_write_tokens;
@@ -127,7 +132,7 @@ let usage ?(raw_prompt_names = false) json =
     output_tokens =
       {
         total = output_tokens;
-        text = subtract output_tokens reasoning_tokens;
+        text = subtract output_tokens [ reasoning_tokens ];
         reasoning = reasoning_tokens;
       };
     raw =

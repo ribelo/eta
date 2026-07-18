@@ -649,7 +649,7 @@ let test_responses_stream_preserves_metadata_and_reasoning () =
         "reasoning tokens" (Some "28")
         (List.assoc_opt "reasoning_tokens" usage.raw);
       Alcotest.(check (option int))
-        "typed uncached input tokens" (Some 10288) usage.input_tokens.uncached;
+        "typed uncached input tokens" (Some 10286) usage.input_tokens.uncached;
       Alcotest.(check (option int))
         "typed cache read tokens" (Some 3) usage.input_tokens.cache_read;
       Alcotest.(check (option int))
