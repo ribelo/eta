@@ -865,3 +865,76 @@ rating below 4". The reviewer read the tags correctly *and still*
 preferred named variants — a cleaner loss than I imagined, and the
 pre-registered gate did its job without sentiment. First full kill of the
 programme; recorded as evidence that the gates have teeth.
+
+---
+
+## V-DX-E4-001 — 2026-07-18 — research/dx-e4e5-cause-corpus-type-errors — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Batched with E5 per the programme's
+batching rule (docs/tests-heavy, disjoint surfaces). Scored at -002.
+
+**Current state (measured).** `Cause.pretty : ('err -> string) -> 'err t ->
+string` exists (multi-line tree). No `pp_compact` anywhere. `Cause.Portable`
+exists with `to_portable`; no `Cause_json` in `eta_otel`. Cause constructors
+for the corpus: `fail`, `die`, `interrupt`, `interrupt_with_id`,
+`sequential`, `concurrent`, `finalizer`, `suppressed`.
+
+**Predicted shape.** `pp_compact` follows post-E25 `pp` culture:
+`(Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit`.
+One line, no newlines ever (property test). Primary/finalizer distinction
+survives via an explicit segment (e.g. `| suppressed: finalizer(...)`).
+
+**Census (predicted).** Observability cluster +1 (`pp_compact`);
+`eta_otel` +1 module (`Cause_json` over `Cause.Portable.t`); core stays
+JSON-free. Footguns +0/−0 (additive).
+
+**Review (predicted).** Error review board (oracle, P-OCaml): corpus
+entries answer what/where/what-next without mli reading for the simple
+cases; the hard cases (`Suppressed` × `Concurrent` × `Finalizer`, anonymous
+vs identified interrupts) rate ≥ 3 with the primary/finalizer distinction
+preserved. The pre-registered kill (compactness destroys primary/finalizer
+distinction) does NOT fire — provided the suppressed segment stays
+explicit. Predicted median ≥ 4 across corpus entries.
+
+**Outcome (predicted).** Promote all three pieces (pp_compact, corpus,
+encoder). Risk: the encoder's field naming gets one board comment, no
+blocker.
+
+---
+
+## V-DX-E5-001 — 2026-07-18 — research/dx-e4e5-cause-corpus-type-errors — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at -002.
+
+**Current state (measured).** Rank-2 surface: `Supervisor.child`
+`('s, 'err, 'a)`, `Scope.t ('s, 'a, 'err)`, `body` record with `'s.`
+quantification — skolem-escape errors exist to be captured. PPX: single
+`Location.raise_errorf` funnel in `lib/ppx/ppx_eta.ml`, multiple call
+sites. No cram-test convention in the repo (the experiment introduces one
+or a script harness). No `docs/type-errors.md`.
+
+**Predicted corpus.** 5–8 messages: Supervisor child escape (skolem),
+`Scope.t` escape, 2–4 distinct PPX rejections, and at least one item from
+the one-pager's list that turns out to be a RUNTIME error, not compile-time
+(cross-domain primitive misuse — predicted; the page must say so
+explicitly rather than force it into the compile corpus).
+
+**Predicted page.** `docs/type-errors.md`: each entry = verbatim quoted
+message (from the snapshot, so drift fails CI) + what-you-tried +
+why-Eta-forbids + two canonical fixes. Snapshot drift gate: the cram/snapshot
+test fails when compiler messages change.
+
+**Review (predicted).** W5 rigged to trigger the escape: oracle solves
+without the page slowly/wrongly, with the page explains the rank-2
+rationale in its own words (one-pager's pass bar). Predicted pass; the
+likely weak spot is OCaml's actual escape message being terse — the
+page's value is highest exactly there.
+
+**Census (predicted).** API +0 vals; docs +1 page; test infra +1 harness.
+Footguns unchanged in count but the biggest one (rank-2 escape
+unreadability) gets a documented mitigation — noted qualitatively, not as
+a count change.
+
+**Outcome (predicted).** Promote (one-pager: unconditional once the corpus
+lands). By-product: a list of messages needing compiler-side work —
+predicted 2–3 entries, mostly the skolem-escape texts.
