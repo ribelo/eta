@@ -1738,6 +1738,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ]
      @ Duration_schedule_common_suites.tests
      @ Cause_exit_common_suites.tests
+     @ Cause_render_common_suites.tests
      @ Logger_common_suites.tests
      @ Effect_retry_repeat_suites.tests
      @ Effect_resource_timeout_suites.tests

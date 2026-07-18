@@ -1,0 +1,11 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+build exit=0
+===== try-send =====
+worker try_send: Ok(Sent)
+main try_recv: Ok(Item "from-worker")
+exit=0
+===== queue-contrast =====
+queue blocking pair: Ok(take got "from-worker") / Ok(send completed)
+exit=0
+===== blocking-pair =====
+exit=124

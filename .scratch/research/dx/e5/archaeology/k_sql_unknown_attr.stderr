@@ -1,0 +1,4 @@
+File "k_sql_unknown_attr.ml", line 2, characters 37-45:
+2 | [%%eta.sql.table type t = { id : int [@bogus] }]
+                                         ^^^^^^^^
+Error: unsupported eta.sql.table column attribute: bogus

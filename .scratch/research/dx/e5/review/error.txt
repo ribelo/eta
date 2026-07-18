@@ -1,0 +1,16 @@
+File "w5-rigged.ml", line 1:
+Warning 24 [bad-module-name]: bad source file name: "W5-rigged" is not a valid module name.
+
+File "w5-rigged.ml", lines 20-26, characters 6-16:
+20 | ......fun sup ->
+21 |         let open Supervisor.Scope in
+22 |         let* child =
+23 |           start sup (lift (Effect.fail `Refresh_failed))
+24 |         in
+25 |         pending_refresh := Some child;
+26 |         pure ();
+Error: This field value has type
+         "('a, [> `Refresh_failed ] as 'b) Eta.Supervisor.t ->
+         ('a, unit, 'b) Eta.Supervisor.Scope.t"
+       which is less general than
+         "'s. ('s, 'c) Eta.Supervisor.t -> ('s, 'd, 'c) Eta.Supervisor.Scope.t"

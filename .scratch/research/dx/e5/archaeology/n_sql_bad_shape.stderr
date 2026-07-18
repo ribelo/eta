@@ -1,0 +1,4 @@
+File "n_sql_bad_shape.ml", line 2, characters 0-27:
+2 | [%%eta.sql.table let x = 1]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: expected [%%eta.sql.table type users = { id : int; name : string }]

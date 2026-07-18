@@ -1,0 +1,9 @@
+Concurrent [ Interrupt (anonymous); Interrupt (identified) ]
+
+== pretty (multi-line tree) ==
+concurrent:
+  interrupt
+  interrupt: 2
+
+== pp_compact (one line) ==
+interrupt + interrupt#2

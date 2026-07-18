@@ -1,0 +1,5 @@
+File "i_sql_badfield.ml", line 2, characters 35-46:
+2 | [%%eta.sql.table type t = { tags : string list }]
+                                       ^^^^^^^^^^^
+Error: eta.sql.table supports int, int64, string, bool, float, bytes, and
+       option fields

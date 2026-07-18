@@ -1,0 +1,4 @@
+(executable
+ (name probe_compact_monster)
+ (modules probe_compact_monster)
+ (libraries eta))

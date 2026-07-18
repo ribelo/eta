@@ -1,0 +1,15 @@
+Suppressed { primary = Concurrent [ Fail `A; Die (Failure "boom") ]; finalizer = Sequential [ Fail "cleanup failed"; Interrupt ] }
+
+== pretty (multi-line tree) ==
+suppressed:
+  primary:
+    concurrent:
+      fail: A
+      defect: Failure("boom")
+  finalizer:
+    sequential:
+      finalizer fail: cleanup failed
+      interrupt
+
+== pp_compact (one line) ==
+fail(A) + die(Failure("boom")) | suppressed: finalizer(fail("cleanup failed") ; interrupt)

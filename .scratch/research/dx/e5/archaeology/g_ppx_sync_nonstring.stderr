@@ -1,0 +1,4 @@
+File "g_ppx_sync_nonstring.ml", line 2, characters 19-22:
+2 | let x = [%eta.sync 123]
+                       ^^^
+Error: expected [%eta.sync "name" body]

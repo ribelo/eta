@@ -10,5 +10,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Logger_suites.suite;
       Metrics_suites.suite;
       Terminal_suites.suite;
+      Cause_json_common_suites.suite;
     ]
 end

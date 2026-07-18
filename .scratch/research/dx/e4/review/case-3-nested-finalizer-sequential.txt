@@ -1,0 +1,11 @@
+Finalizer (Sequential [ Fail "cleanup failed"; Die (Invalid_argument "cleanup defect"); Interrupt (identified) ])
+
+== pretty (multi-line tree) ==
+finalizer:
+  sequential:
+    finalizer fail: cleanup failed
+    defect: Invalid_argument("cleanup defect")
+    interrupt: 1
+
+== pp_compact (one line) ==
+finalizer(fail("cleanup failed") ; die(Invalid_argument("cleanup defect")) ; interrupt#1)

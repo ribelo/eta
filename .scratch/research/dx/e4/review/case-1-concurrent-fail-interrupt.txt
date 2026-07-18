@@ -1,0 +1,9 @@
+Concurrent [ Fail `A; Interrupt (anonymous) ]
+
+== pretty (multi-line tree) ==
+concurrent:
+  fail: A
+  interrupt
+
+== pp_compact (one line) ==
+fail(A) + interrupt

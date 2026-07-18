@@ -1,0 +1,4 @@
+File "h_sql_nonrecord.ml", line 2, characters 22-23:
+2 | [%%eta.sql.table type t = int]
+                          ^
+Error: eta.sql.table expects a record type declaration

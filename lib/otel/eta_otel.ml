@@ -35,6 +35,7 @@ let random_bytes rng n =
   b
 
 module Otlp_json = Otlp_json
+module Cause_json = Cause_json
 
 type span = Otlp_json.span = {
   trace_id : string; (* 32 hex chars *)

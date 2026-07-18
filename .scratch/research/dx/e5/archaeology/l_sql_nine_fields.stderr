@@ -1,0 +1,4 @@
+File "l_sql_nine_fields.ml", line 2, characters 0-110:
+2 | [%%eta.sql.table type t = { a : int; b : int; c : int; d : int; e : int; f : int; g : int; h : int; i : int }]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: eta.sql.table all projection supports at most 8 fields

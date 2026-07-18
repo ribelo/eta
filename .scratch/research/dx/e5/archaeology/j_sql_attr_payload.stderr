@@ -1,0 +1,4 @@
+File "j_sql_attr_payload.ml", line 2, characters 37-56:
+2 | [%%eta.sql.table type t = { id : int [@primary_key true] }]
+                                         ^^^^^^^^^^^^^^^^^^^
+Error: attribute primary_key does not take a payload
