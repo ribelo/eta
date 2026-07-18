@@ -16,6 +16,7 @@ backlog/
 .scratch/research/**/_opam/
 .scratch/research/**/*.install
 docs/big-picture/
+docs/gpt-pro/
 /journal.md
 /OBJECTIVE.md
 /objective.md
