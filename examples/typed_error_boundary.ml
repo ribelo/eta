@@ -3,8 +3,9 @@ open Eta
 type domain_error =
   [ `Invalid_id of string
   | `Not_found of string ]
+[@@deriving eta_error]
 
-type api_error = [ `Request_rejected of string ]
+type api_error = [ `Request_rejected of string ] [@@deriving eta_error]
 
 let parse_id = function
   | "" -> Error (`Invalid_id "empty")
@@ -32,9 +33,6 @@ let program observed raw =
          Effect.sync (fun () ->
              observed := render_domain_error err :: !observed))
   |> Effect.map_error to_api_error
-
-let pp_api_error fmt = function
-  | `Request_rejected reason -> Format.fprintf fmt "request-rejected:%s" reason
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Missing_user of string ]
+[@@deriving eta_error]
 
 let background started stopped =
   let open Syntax in
@@ -32,12 +33,9 @@ let program started stopped =
   Effect.with_background ~name:"cache.refresh" (background started stopped)
     (fun () ->
       let* () = wait_started started in
-      let* left = Effect.named "load.left" (load_user "left")
-      and* right = Effect.named "load.right" (load_user "right") in
+      let* left = Effect.named ~error_pp:pp_error "load.left" (load_user "left")
+      and* right = Effect.named ~error_pp:pp_error "load.right" (load_user "right") in
       Effect.pure (left, right))
-
-let pp_error fmt = function
-  | `Missing_user id -> Format.fprintf fmt "missing-user:%s" id
 
 let () =
   Eio_main.run @@ fun stdenv ->

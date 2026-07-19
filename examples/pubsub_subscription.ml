@@ -1,6 +1,11 @@
 open Eta
 
-type error = [ `Bus_failed of string ]
+type bus_failed = [ `Bus_failed of string ] [@@deriving eta_error]
+
+type error =
+  [ `Closed
+  | `Closed_with_error of bus_failed [@eta.render pp_bus_failed] ]
+[@@deriving eta_error]
 
 let render_close = function
   | `Closed -> "closed"
@@ -21,11 +26,6 @@ let program () =
   let stats = Pubsub.stats hub in
   Effect.pure
     (published, first, closed, stats)
-
-let pp_error fmt = function
-  | `Closed -> Format.pp_print_string fmt "closed"
-  | `Closed_with_error (`Bus_failed reason) ->
-      Format.fprintf fmt "closed:%s" reason
 
 let () =
   Eio_main.run @@ fun stdenv ->

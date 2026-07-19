@@ -3,10 +3,7 @@ open Eta
 type error =
   [ `Invalid_id of string
   | `Request_timeout ]
-
-let pp_error fmt = function
-  | `Invalid_id id -> Format.fprintf fmt "invalid-id:%s" id
-  | `Request_timeout -> Format.pp_print_string fmt "request-timeout"
+[@@deriving eta_error]
 
 let fast =
   Effect.pure "cache-hit"

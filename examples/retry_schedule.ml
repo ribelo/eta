@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Transient of int | `Fatal ]
+[@@deriving eta_error]
 
 let retry_policy () =
   Schedule.(
@@ -35,10 +36,6 @@ let preview_delays ~seed count =
 
 let format_ints values =
   values |> List.map string_of_int |> String.concat ","
-
-let pp_error fmt = function
-  | `Transient attempt -> Format.fprintf fmt "transient:%d" attempt
-  | `Fatal -> Format.pp_print_string fmt "fatal"
 
 let () =
   Eio_main.run @@ fun stdenv ->

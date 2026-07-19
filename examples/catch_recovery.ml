@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Cache_miss ]
+[@@deriving eta_error]
 
 let cache_lookup =
   Effect.fail `Cache_miss
@@ -11,9 +12,6 @@ let recovered =
 let defect =
   Effect.sync (fun () -> failwith "boom")
   |> Effect.fold ~ok:Fun.id ~error:(function `Cache_miss -> "fallback")
-
-let pp_error fmt = function
-  | `Cache_miss -> Format.pp_print_string fmt "cache-miss"
 
 let ok_or_exit = function
   | Exit.Ok value -> value

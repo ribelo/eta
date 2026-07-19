@@ -6,6 +6,8 @@ type stats = {
   max_batch : int;
 }
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let empty = { processed = 0; bytes = 0; max_batch = 0 }
 
 let record stats batch =
@@ -26,9 +28,6 @@ let program () =
   let previous = Mutable_ref.get_and_set stats empty in
   let after_reset = Mutable_ref.get stats in
   Effect.pure (snapshots, final, previous, after_reset)
-
-let pp_error fmt _ =
-  Format.pp_print_string fmt "unexpected"
 
 let () =
   Eio_main.run @@ fun stdenv ->

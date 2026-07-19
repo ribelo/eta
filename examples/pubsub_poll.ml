@@ -1,6 +1,11 @@
 open Eta
 
-type error = [ `Bus_failed of string ]
+type bus_failed = [ `Bus_failed of string ] [@@deriving eta_error]
+
+type error =
+  [ `Closed
+  | `Closed_with_error of bus_failed [@eta.render pp_bus_failed] ]
+[@@deriving eta_error]
 
 let render_recv = function
   | `Item value -> "item:" ^ value
@@ -20,9 +25,6 @@ let program () =
   let stats = Pubsub.stats hub in
   Effect.pure
     (empty, published, first, closed, stats)
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_recv err)
 
 let () =
   Eio_main.run @@ fun stdenv ->

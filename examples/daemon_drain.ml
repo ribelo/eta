@@ -1,5 +1,7 @@
 open Eta
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let require label condition =
   if not condition then failwith ("daemon drain check failed: " ^ label)
 
@@ -15,12 +17,10 @@ let wait_until label f =
 
 let daemon release started completed =
   let open Syntax in
-  Effect.named "daemon.flush"
+  Effect.named ~error_pp:pp_error "daemon.flush"
     (let* () = Effect.sync (fun () -> started := true) in
      let* () = Effect.sync (fun () -> Eio.Promise.await release) in
      Effect.sync (fun () -> completed := true))
-
-let pp_error fmt = function _ -> Format.pp_print_string fmt "<error>"
 
 let run_ok rt eff =
   match Eta_eio.Runtime.run rt eff with

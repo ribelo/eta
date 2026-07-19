@@ -3,6 +3,7 @@ open Eta
 type error =
   [ `Bad_args of string
   | `Network ]
+[@@deriving eta_error]
 
 let parse_id = function
   | "" -> Error (`Bad_args "empty id")
@@ -26,10 +27,6 @@ let program args =
          | `Bad_args _ -> false)
   in
   Effect.pure ("cli:" ^ user)
-
-let pp_error fmt = function
-  | `Bad_args reason -> Format.fprintf fmt "bad-args:%s" reason
-  | `Network -> Format.pp_print_string fmt "network"
 
 let () =
   Eio_main.run @@ fun stdenv ->

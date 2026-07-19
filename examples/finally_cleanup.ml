@@ -3,13 +3,7 @@ open Eta
 type error =
   [ `Body_failed
   | `Cleanup_failed ]
-
-let render_error = function
-  | `Body_failed -> "body-failed"
-  | `Cleanup_failed -> "cleanup-failed"
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_error err)
+[@@deriving eta_error]
 
 let require label condition =
   if not condition then failwith ("finally cleanup check failed: " ^ label)
@@ -60,7 +54,7 @@ let verify success_exit failure_exit suppressed_exit cancel_exit seen =
         (Cause.Suppressed
           {
             primary = Cause.Fail `Body_failed;
-            finalizer = Cause.Finalizer.Fail "cleanup-failed";
+            finalizer = Cause.Finalizer.Fail "cleanup_failed";
           }) ->
         "suppressed"
     | Exit.Error cause ->

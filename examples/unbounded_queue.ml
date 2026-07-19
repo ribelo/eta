@@ -1,7 +1,12 @@
 open Eta
 
-type upstream_error = [ `Upstream_failed of string ]
-type error = [ `Closed | `Closed_with_error of upstream_error | `Dropped ]
+type upstream_error = [ `Upstream_failed of string ] [@@deriving eta_error]
+
+type error =
+  [ `Closed
+  | `Closed_with_error of upstream_error [@eta.render pp_upstream_error]
+  | `Dropped ]
+[@@deriving eta_error]
 
 let render_close = function
   | `Closed -> "closed"
@@ -31,9 +36,6 @@ let program () =
   let final_stats = Queue.stats queue in
   Effect.pure
     (first, second, third, closed, stats_after_send, final_stats)
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_close err)
 
 let () =
   Eio_main.run @@ fun stdenv ->

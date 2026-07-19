@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Missing_user of string ]
+[@@deriving eta_error]
 
 let load_user id =
   Effect.sync_result (fun () ->
@@ -9,7 +10,7 @@ let load_user id =
 
 let program id =
   let open Syntax in
-  Effect.named "example.request"
+  Effect.named ~error_pp:pp_error "example.request"
     (let* () =
        Effect.log ~level:Logger.Info
          ~attrs:[ ("route", "/users/:id") ]
@@ -31,9 +32,6 @@ let program id =
      in
      let* () = Effect.event ~attrs:[ ("user", user) ] "request.user_loaded" in
      Effect.pure user)
-
-let pp_error fmt = function
-  | `Missing_user id -> Format.fprintf fmt "missing-user:%s" id
 
 let require label condition =
   if not condition then failwith ("missing observability signal: " ^ label)

@@ -3,19 +3,13 @@ open Eta
 type error =
   [ `Close_failed
   | `Rejected of string ]
-
-let render_error = function
-  | `Close_failed -> "close-failed"
-  | `Rejected reason -> "rejected:" ^ reason
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_error err)
+[@@deriving eta_error]
 
 let typed_program : (string, error) Effect.t =
   Effect.fail (`Rejected "bad input")
 
 let defect_program : (string, error) Effect.t =
-  Effect.named "decode"
+  Effect.named ~error_pp:pp_error "decode"
     (Effect.sync (fun () -> failwith "decoder exploded"))
 
 let cleanup_program : (string, error) Effect.t =
