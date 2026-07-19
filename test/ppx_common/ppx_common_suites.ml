@@ -26,6 +26,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   module Q = Eta_sql
 
+  type err =
+    [ `Db of int
+    | `Unavailable ]
+  [@@deriving eta_error]
+
   [%%eta.sql.table
   type users = {
     id : int [@primary_key];
@@ -84,6 +89,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check (option int)) "leaf parent" (Some fn.span_id) leaf.parent_id
 
+  let test_eta_error_span_status () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    let program =
+      Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+    in
+    (match B.run rt program with
+    | Exit.Error (Cause.Fail (`Db 7)) -> ()
+    | _ -> Alcotest.fail "expected Db 7 typed failure");
+    let span = only_span tracer in
+    Alcotest.(check string) "span name" "db.save" span.name;
+    match span.status with
+    | Tracer.Error message -> Alcotest.(check string) "rendered status" "db:7" message
+    | _ -> Alcotest.fail "expected error span status"
+
   let test_sql_table_projection () =
     let select =
       Q.Select.(
@@ -115,6 +134,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Alcotest.test_case "fn" `Quick test_ppx_fn;
           Alcotest.test_case "sync leaf" `Quick test_ppx_thunk_leaf;
+          Alcotest.test_case "eta_error span status" `Quick
+            test_eta_error_span_status;
         ] );
       ( "sql_table",
         [

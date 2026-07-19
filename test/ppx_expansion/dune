@@ -1,0 +1,20 @@
+; Printed eta_error expansions are public code-shape snapshots. Keep this corpus
+; pinned to the OxCaml gate compiler because Pprintast output is versioned with
+; the compiler AST.
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (target actual_expansions.txt)
+ (deps
+  (source_tree cases)
+  snapshot_expansions.sh
+  (package ppx_eta))
+ (action
+  (with-outputs-to actual_expansions.txt
+   (system "bash ./snapshot_expansions.sh %{project_root}"))))
+
+(rule
+ (enabled_if (= %{ocaml_version} "5.2.0+ox"))
+ (alias runtest)
+ (action
+  (diff expected_expansions.txt actual_expansions.txt)))

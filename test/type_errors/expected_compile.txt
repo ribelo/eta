@@ -1,3 +1,19 @@
+===== ppx_eta_error_nominal.ml =====
+File "cases/ppx_eta_error_nominal.ml", line 1, characters 5-8:
+1 | type err = Unavailable [@@deriving eta_error]
+         ^^^
+Error: eta_error: type err is not a closed polymorphic-variant alias;
+       [@@deriving eta_error] supports type err = [ `Tag ... ]; rewrite the
+       type as a closed polymorphic variant or write pp_err manually
+exit=2
+===== ppx_eta_error_unsupported_payload.ml =====
+File "cases/ppx_eta_error_unsupported_payload.ml", line 3, characters 24-31:
+3 | type err = [ `Custom of payload ] [@@deriving eta_error]
+                            ^^^^^^^
+Error: eta_error: payload of tag `Custom in type err is unsupported;
+       supported built-ins are string, int, int64, float, and bool; add
+       [@eta.render My_type.pp] to this tag or write pp_err manually
+exit=2
 ===== ppx_sync_nonstring.ml =====
 File "cases/ppx_sync_nonstring.ml", line 1, characters 19-22:
 1 | let x = [%eta.sync 123]

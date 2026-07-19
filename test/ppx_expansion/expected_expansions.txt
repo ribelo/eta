@@ -1,0 +1,89 @@
+===== a_nullary.ml =====
+type err = [ `Unavailable ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function | `Unavailable -> Format.pp_print_string fmt "unavailable"
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== b_string.ml =====
+type err = [ `Not_found of string ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function
+        | `Not_found value -> Format.fprintf fmt "not_found:%s" value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== c_int.ml =====
+type err = [ `Db of int ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt -> function | `Db value -> Format.fprintf fmt "db:%d" value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== d_int64.ml =====
+type err = [ `Offset of int64 ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function | `Offset value -> Format.fprintf fmt "offset:%Ld" value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== e_float.ml =====
+type err = [ `Ratio of float ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function | `Ratio value -> Format.fprintf fmt "ratio:%g" value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== f_bool.ml =====
+type err = [ `Enabled of bool ][@@deriving eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function | `Enabled value -> Format.fprintf fmt "enabled:%b" value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== g_mixed.ml =====
+type err = [ `Not_found of string  | `Db of int  | `Unavailable ][@@deriving
+                                                                   eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function
+        | `Not_found value -> Format.fprintf fmt "not_found:%s" value
+        | `Db value -> Format.fprintf fmt "db:%d" value
+        | `Unavailable -> Format.pp_print_string fmt "unavailable"
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== h_override.ml =====
+type payload = {
+  id: string }
+let pp_payload fmt payload = Format.pp_print_string fmt payload.id
+type err = [ `Custom of payload [@eta.render pp_payload]][@@deriving
+                                                           eta_error]
+include
+  struct
+    let _ = fun (_ : err) -> ()
+    let pp_err : Format.formatter -> err -> unit =
+      fun fmt ->
+        function
+        | `Custom value -> Format.fprintf fmt "custom:%a" pp_payload value
+    let _ = pp_err
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
