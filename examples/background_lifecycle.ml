@@ -30,6 +30,7 @@ let load_user id =
 
 let program started stopped =
   let open Syntax in
+  let open Syntax.Parallel in
   Effect.with_background ~name:"cache.refresh" (background started stopped)
     (fun () ->
       let* () = wait_started started in

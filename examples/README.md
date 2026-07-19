@@ -118,7 +118,7 @@ The current examples cover:
 - `supervisor_scope.ml` - supervised child handles that cannot escape their
   nursery.
 - `background_lifecycle.ml` - a body-owned background child, backend-neutral
-  `Effect.yield`, and independent foreground work with `and*`.
+  `Effect.yield`, and independent foreground work with `Syntax.Parallel` `and*`.
 - `daemon_drain.ml` - runtime-owned finite daemon work and explicit shutdown
   draining.
 - `observability.ml` - named workflow spans, logs, events, result attributes,

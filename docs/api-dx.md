@@ -45,8 +45,15 @@ Use syntax operators rather than explicit bind in application code:
 
 - `let*` for dependent effect sequencing.
 - `let+` for mapping a successful value.
-- `and*` / `and+` for independent concurrent effects.
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
+- `and*` / `and+` only after opening exactly one product module:
+  - `Eta.Syntax.Parallel` for independent concurrent effects (`Effect.par`:
+    both sides fork; first failure cancels the sibling).
+  - `Eta.Syntax.Applicative` for sequential product binding (left settles,
+    then right; nothing is forked; fail-fast by sequencing).
+- Open `Syntax` plus exactly one of `Parallel` or `Applicative`. Opening both
+  shadows `and*`/`and+` so only the last open's semantics remain — that is
+  almost always a mistake.
 - `Effect.all` for dynamic homogeneous lists of independent effects where
   fail-fast collection is wanted.
 
@@ -159,8 +166,10 @@ daemon draining, supervised nurseries, runtime-owned resource failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
-observability signals; `and*` remains where independent foreground effects run
-concurrently; `let@` remains where code marks lexical resource lifetime.
+observability signals; `and*` under `open Syntax.Parallel` remains where
+independent foreground effects run concurrently; `and*` under
+`open Syntax.Applicative` remains where product binding must stay sequential;
+`let@` remains where code marks lexical resource lifetime.
 `Supervisor.Scope.(let*)` remains inside the supervisor example because child
 handles live only inside the nursery scope.
 
@@ -279,12 +288,14 @@ ordinary data for the next workflow step. It does not capture defects,
 interruption, or finalizer diagnostics.
 
 `Effect.all` is not replaced by recursive `bind` / `map` loops over a list of
-effects. Use `and*` for a small fixed set of differently typed effects,
-`Effect.map_par f inputs` when the workflow maps over inputs concurrently, and
-`all_settled` when every child outcome is needed instead of fail-fast
-collection. `map_par` collects in input order and starts at most eight mapper
-fibers by default; pass `~max_concurrent` for a different positive cap. Omission
-does not mean unbounded concurrency.
+effects. Use `open Syntax.Parallel` and `and*` for a small fixed set of
+differently typed concurrent effects, `open Syntax.Applicative` and `and*` when
+the product must stay left-to-right with nothing forked, `Effect.map_par f
+inputs` when the workflow maps over inputs concurrently, and `all_settled` when
+every child outcome is needed instead of fail-fast collection. `map_par`
+collects in input order and starts at most eight mapper fibers by default; pass
+`~max_concurrent` for a different positive cap. Omission does not mean unbounded
+concurrency.
 
 `Effect.acquire_release` and `Effect.with_scope` are not replaced by
 `Effect.with_resource`. They are needed for resources that intentionally live

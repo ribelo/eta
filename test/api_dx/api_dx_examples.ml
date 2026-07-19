@@ -140,6 +140,7 @@ let scoped_resource_current left right =
 
 let scoped_resource_proposed left right =
   let open Syntax in
+  let open Syntax.Parallel in
   Effect.with_scope
     (let* db =
        Effect.acquire_release ~acquire:acquire_current
@@ -327,6 +328,7 @@ let cli_proposed args =
 
 let parallel_business_proposed left right =
   let open Syntax in
+  let open Syntax.Parallel in
   let* left_id = Effect.from_result (Domain.parse_id left)
   and* right_id = Effect.from_result (Domain.parse_id right) in
   Effect.pure (left_id, right_id)
@@ -487,6 +489,7 @@ let background_current heartbeat wait_started left right =
 
 let background_proposed heartbeat wait_started left right =
   let open Syntax in
+  let open Syntax.Parallel in
   Effect.with_background heartbeat (fun () ->
       let* () = wait_started in
       let* left = load_user_proposed left
@@ -1303,6 +1306,7 @@ Resource.get resource|};
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
+let open Eta.Syntax.Parallel in
 Effect.with_scope
   (let* session = Effect.acquire_release ~acquire ~release in
    let* config = load session "config"
@@ -2483,6 +2487,7 @@ Tracer.retain_recent tracer ~max:1;
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
+let open Eta.Syntax.Parallel in
 Effect.with_background heartbeat (fun () ->
   let* () = wait_started in
   let* left = load_user left

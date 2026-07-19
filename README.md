@@ -74,7 +74,7 @@ Core effect model and runtime boundaries:
 | Module | Purpose |
 | --- | --- |
 | `Effect` | Abstract description for pure values, typed failure, sync leaves, mapping/sequencing primitives, catch, timeout, race, repeat, retry, uninterruptible regions, scopes. |
-| `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `let@`, `and*`, and `and+`. |
+| `Syntax` | Binding operators for `Effect.t`: `let*`, `let+`, `let@`; concurrent `and*`/`and+` in `Syntax.Parallel`, sequential product in `Syntax.Applicative`. |
 | `Supervisor` | Scope-bound nursery for child effects with observable failures, typed await, and cancellation. |
 | `Cause` | Slim failure tree: typed failure, unchecked exception, interruption, and parallel failures. |
 | `Exit` | Runtime boundary result: success or failure cause. |

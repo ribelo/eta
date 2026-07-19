@@ -81,3 +81,38 @@ prove the comprehension gate.
 **HOLD pending independent review numbers.** Implementation should complete and
 be reviewable either way. Self-recommendation after gates will stay provisional:
 promote only if the blinded review shows a real delta; kill if baseline ≥ 80%.
+
+## Implementation follow-up (post-seal; predictions untouched)
+
+### What shipped
+
+- Docs-first `syntax.mli` / `syntax.ml`: `Parallel` = `Effect.par`; `Applicative`
+  = `let* a = left in let+ b = right in (a, b)`; top-level `and*`/`and+` removed.
+- Migrated concurrent call sites to `open Syntax.Parallel`.
+- Law tests in `test/core_common/effect_common_suites.ml` (Effect 55–61).
+- Red-team + review packet under this directory.
+- All four objective gates PASS.
+
+### Census actuals
+
+Matches seal: vals 5→7, modules +2, concurrency footgun −1 with documented
+double-open shadowing.
+
+### Sealed prediction scorecard (comprehension still pending review)
+
+| Sealed item | Actual |
+| --- | --- |
+| Baseline accuracy 55% | Pending independent review |
+| Explicit Parallel 85% | Pending independent review |
+| Explicit Applicative 80% | Pending independent review |
+| Law tests pass | Yes |
+| Red-team pass | Yes |
+| Pre-evidence HOLD | Still HOLD on promote/kill |
+
+### Follow-ups (out of E9 surface)
+
+- Broader repo examples/docs that narrate `and*` without `Parallel` open
+  (only README surfaces updated here).
+- Whether `Applicative` is the right name vs `Sequential` (comprehension risk
+  sealed as misreading #1 for that module) — only reopen if review shows name
+  cost dominates.

@@ -1264,6 +1264,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_syntax_operators () =
     B.with_runtime @@ fun _ctx rt ->
     let open Eta.Syntax in
+    let open Eta.Syntax.Parallel in
     let eff =
       let* a = Effect.pure 2 in
       let@ d = (fun k -> k 5) in
@@ -1272,6 +1273,142 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       a + b + c + d
     in
     Alcotest.(check int) "syntax result" 14 (run_ok rt eff)
+
+  (* Parallel and*/and+ are Effect.par. Pair order + fail-fast sibling cancel
+     are covered by test_par_returns_both_successes and
+     test_par_fail_fast_cancels_sibling; this is the Syntax.Parallel smoke. *)
+  let test_syntax_parallel_and_is_par () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Parallel in
+    let result =
+      run_ok rt
+        (let* a = Effect.pure 1
+         and* b = Effect.pure 2 in
+         Effect.pure (a, b))
+    in
+    Alcotest.(check (pair int int)) "parallel and* pair order" (1, 2) result;
+    let mapped =
+      run_ok rt
+        (let+ a = Effect.pure 3
+         and+ b = Effect.pure 4 in
+         (a, b))
+    in
+    Alcotest.(check (pair int int)) "parallel and+ pair order" (3, 4) mapped
+
+  let test_syntax_parallel_fail_fast_cancels_sibling () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Parallel in
+    let other_done = ref false in
+    let slow_other =
+      B.yield_effect ()
+      |> Effect.bind (fun () ->
+             Effect.named "slow"
+               (Effect.sync (fun () ->
+                    other_done := true;
+                    99)))
+    in
+    let exit =
+      B.run rt
+        (let* _ = Effect.fail "boom"
+         and* _ = slow_other in
+         Effect.pure ())
+    in
+    check_exit_error string_cause "parallel and* cause" (Cause.Fail "boom") exit;
+    Alcotest.(check bool) "sibling cancelled before completion" false !other_done
+
+  let test_syntax_applicative_strict_left_to_right () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Applicative in
+    let log = ref [] in
+    let mark name =
+      Effect.sync (fun () -> log := name :: !log)
+    in
+    let result =
+      run_ok rt
+        (let* () = mark "left"
+         and* () = mark "right" in
+         Effect.pure ())
+    in
+    ignore (result : unit);
+    Alcotest.(check (list string))
+      "applicative and* order" [ "right"; "left" ] !log
+
+  let test_syntax_applicative_right_waits_for_left () =
+    B.with_runtime @@ fun ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Applicative in
+    let go, release = B.create_promise () in
+    let ready = B.create_stream 1 in
+    let right_started = ref false in
+    let left =
+      Effect.sync (fun () -> B.stream_add ready "left-ready")
+      |> Effect.bind (fun () -> B.await_effect go)
+      |> Effect.map (fun () -> "L")
+    in
+    let right =
+      Effect.sync (fun () ->
+          right_started := true;
+          "R")
+    in
+    let promise =
+      B.fork_run ctx rt
+        (let* a = left
+         and* b = right in
+         Effect.pure (a, b))
+    in
+    Alcotest.(check string) "left reached await" "left-ready" (B.stream_take ready);
+    Alcotest.(check bool) "right not started before left settles" false !right_started;
+    B.resolve release ();
+    match B.await promise with
+    | Exit.Ok value ->
+        Alcotest.(check (pair string string)) "applicative pair" ("L", "R") value
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let test_syntax_applicative_fail_fast_skips_right () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Applicative in
+    let right_ran = ref false in
+    let exit =
+      B.run rt
+        (let* _ = Effect.fail "left-boom"
+         and* _ =
+           Effect.sync (fun () ->
+               right_ran := true;
+               1)
+         in
+         Effect.pure ())
+    in
+    check_exit_error string_cause "applicative left fail" (Cause.Fail "left-boom")
+      exit;
+    Alcotest.(check bool) "right never started" false !right_ran
+
+  let test_syntax_applicative_interrupt_left_skips_right () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let open Eta.Syntax.Applicative in
+    let right_ran = ref false in
+    let exit =
+      B.run rt
+        (let* _ = effect_error_cause Cause.interrupt
+         and* _ =
+           Effect.sync (fun () ->
+               right_ran := true;
+               1)
+         in
+         Effect.pure ())
+    in
+    (match exit with
+    | Exit.Error (Cause.Interrupt _) -> ()
+    | Exit.Error cause when Cause.is_interrupt_only cause -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected interrupt, got %a" (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected interrupt");
+    Alcotest.(check bool) "right never started after left interrupt" false !right_ran
 
   let test_effect_tap_error_observes_and_rethrows () =
     B.with_runtime @@ fun _ctx rt ->
@@ -3235,6 +3372,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_or_die_preserves_interruption;
           Alcotest.test_case "syntax operators" `Quick
             test_effect_syntax_operators;
+          Alcotest.test_case "syntax Parallel and is par" `Quick
+            test_syntax_parallel_and_is_par;
+          Alcotest.test_case "syntax Parallel fail-fast cancels sibling" `Quick
+            test_syntax_parallel_fail_fast_cancels_sibling;
+          Alcotest.test_case "syntax Applicative strict left-to-right" `Quick
+            test_syntax_applicative_strict_left_to_right;
+          Alcotest.test_case "syntax Applicative right waits for left" `Quick
+            test_syntax_applicative_right_waits_for_left;
+          Alcotest.test_case "syntax Applicative fail-fast skips right" `Quick
+            test_syntax_applicative_fail_fast_skips_right;
+          Alcotest.test_case "syntax Applicative interrupt left skips right"
+            `Quick test_syntax_applicative_interrupt_left_skips_right;
           Alcotest.test_case "tap_error observes and rethrows" `Quick
             test_effect_tap_error_observes_and_rethrows;
           Alcotest.test_case "tap_error observer failure replaces original"
