@@ -1,5 +1,7 @@
 open Eta
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let require label condition =
   if not condition then failwith ("observability controls check failed: " ^ label)
 
@@ -9,7 +11,7 @@ let expensive_attrs builds () =
 
 let hidden_export =
   let open Syntax in
-  Effect.named "hidden.export"
+  Effect.named ~error_pp:pp_error "hidden.export"
     (let* () = Effect.log "hidden.log" in
      let* () =
        Effect.metric_counter ~name:"hidden.metric" ~monotonic:false
@@ -20,7 +22,7 @@ let hidden_export =
 
 let program attr_builds =
   let open Syntax in
-  Effect.named "visible.request"
+  Effect.named ~error_pp:pp_error "visible.request"
     (let* tracing = Effect.is_tracing_enabled in
      let* () =
        Effect.annotate_all_lazy (expensive_attrs attr_builds)
@@ -28,8 +30,6 @@ let program attr_builds =
      in
      let* () = hidden_export in
      Effect.pure tracing)
-
-let pp_error fmt = function _ -> Format.pp_print_string fmt "<error>"
 
 let run_bool rt eff =
   match Eta_eio.Runtime.run rt eff with

@@ -5,7 +5,7 @@ type config = {
   endpoint : string;
 }
 
-type error = [ `Refresh_failed of string ]
+type error = [ `Refresh_failed of string ] [@@deriving eta_error]
 
 let render_config config =
   Printf.sprintf "v%d:%s" config.version config.endpoint
@@ -14,7 +14,7 @@ let render_error = function
   | `Refresh_failed reason -> "refresh-failed:" ^ reason
 
 let load source =
-  Effect.named "config.load"
+  Effect.named ~error_pp:pp_error "config.load"
     (Effect.sync_result (fun () ->
          match !source with
          | [] -> Ok { version = 999; endpoint = "fallback" }
@@ -39,9 +39,6 @@ let program observed source =
   let* () = Effect.delay (Duration.ms 30) Effect.unit in
   let+ final = Resource.get resource in
   (initial, after_failed_refresh, final, failures)
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_error err)
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -3,6 +3,7 @@ open Eta
 type error =
   [ `Closed
   | `Invalid_user of string ]
+[@@deriving eta_error]
 
 type clock = { now_ms : unit -> int }
 
@@ -35,10 +36,6 @@ let program clock released =
   let* alice = User_db.lookup db "alice" in
   let+ bob = User_db.lookup db "bob" in
   (alice, bob)
-
-let pp_error fmt = function
-  | `Closed -> Format.pp_print_string fmt "closed"
-  | `Invalid_user reason -> Format.fprintf fmt "invalid-user:%s" reason
 
 let () =
   Eio_main.run @@ fun stdenv ->

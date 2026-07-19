@@ -1,7 +1,6 @@
 open Eta
 
-let pp_error fmt = function
-  | `Too_small -> Format.pp_print_string fmt "too-small"
+type error = [ `Too_small ] [@@deriving eta_error]
 
 let program () =
   let open Syntax in

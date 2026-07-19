@@ -1,11 +1,10 @@
 open Eta
 
+type error = [ `Decode_failed of string ] [@@deriving eta_error]
+
 let decode = function
   | "" -> Error (`Decode_failed "empty chunk")
   | value -> Ok (String.uppercase_ascii value)
-
-let pp_error fmt = function
-  | `Decode_failed reason -> Format.fprintf fmt "decode-failed:%s" reason
 
 let program =
   Eta_stream.Stream.from_iterable [ "alpha"; "beta"; "gamma" ]

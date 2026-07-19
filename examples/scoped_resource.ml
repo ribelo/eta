@@ -6,6 +6,7 @@ type session = {
 }
 
 type error = [ `Session_closed ]
+[@@deriving eta_error]
 
 let open_session () =
   Ok { name = "main"; closed = false }
@@ -32,13 +33,10 @@ let program released =
   let open Syntax in
   Effect.with_scope
     (let* session = session_scope released in
-     let* config = Effect.named "load.config" (load session "config") in
-     let* profile = Effect.named "load.profile" (load session "profile") in
+     let* config = Effect.named ~error_pp:pp_error "load.config" (load session "config") in
+     let* profile = Effect.named ~error_pp:pp_error "load.profile" (load session "profile") in
      let+ still_open = Effect.sync (fun () -> not session.closed) in
      (config, profile, still_open))
-
-let pp_error fmt = function
-  | `Session_closed -> Format.pp_print_string fmt "session-closed"
 
 let () =
   Eio_main.run @@ fun stdenv ->

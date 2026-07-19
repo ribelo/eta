@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Invalid_id of string ]
+[@@deriving eta_error]
 
 let parse_id = function
   | "" -> Error (`Invalid_id "empty")
@@ -13,9 +14,6 @@ let program raw =
   let open Syntax in
   let* id = Effect.from_result (parse_id raw) in
   load_user id
-
-let pp_error fmt = function
-  | `Invalid_id id -> Format.fprintf fmt "invalid-id:%s" id
 
 let ok_or_exit = function
   | Exit.Ok value -> value

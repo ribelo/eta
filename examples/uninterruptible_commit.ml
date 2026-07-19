@@ -1,5 +1,7 @@
 open Eta
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let critical_commit committed =
   Effect.delay (Duration.ms 20)
     (Effect.sync (fun () ->
@@ -9,8 +11,6 @@ let critical_commit committed =
 
 let program committed =
   Effect.race [ critical_commit committed; Effect.pure "fast" ]
-
-let pp_never fmt = function _ -> Format.pp_print_string fmt "<never>"
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -23,6 +23,6 @@ let () =
       Format.printf "uninterruptible-commit:winner=%s committed=%b@." winner
         !committed
   | Exit.Error cause ->
-      Format.eprintf "uninterruptible commit failed: %a@." (Cause.pp pp_never)
+      Format.eprintf "uninterruptible commit failed: %a@." (Cause.pp pp_error)
         cause;
       exit 1

@@ -6,6 +6,8 @@ type db = {
   mutable closed : bool;
 }
 
+type error = [ `Db_closed | `Db_unavailable ] [@@deriving eta_error]
+
 let acquire_db () =
   Ok { name = "primary"; attempts = ref 0; closed = false }
 
@@ -19,10 +21,6 @@ let load_user db id =
     incr db.attempts;
     if !(db.attempts) < 2 then Error `Db_unavailable
     else Ok (Printf.sprintf "%s:user:%s" db.name id))
-
-let pp_error fmt = function
-  | `Db_closed -> Format.pp_print_string fmt "db-closed"
-  | `Db_unavailable -> Format.pp_print_string fmt "db-unavailable"
 
 let program id =
   let open Syntax in

@@ -1,10 +1,10 @@
 open Eta
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let heartbeat ticks =
   Effect.repeat ~schedule:(Schedule.recurs 3)
     (Effect.sync (fun () -> ticks := !ticks + 1))
-
-let pp_never fmt = function _ -> Format.pp_print_string fmt "<never>"
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -18,5 +18,5 @@ let () =
           (Printf.sprintf "repeat heartbeat expected 4 ticks, got %d" !ticks);
       Format.printf "repeat-heartbeat:ticks=%d policy=recurs:3@." !ticks
   | Exit.Error cause ->
-      Format.eprintf "repeat heartbeat failed: %a@." (Cause.pp pp_never) cause;
+      Format.eprintf "repeat heartbeat failed: %a@." (Cause.pp pp_error) cause;
       exit 1

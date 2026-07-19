@@ -1,6 +1,6 @@
 open Eta
 
-type upstream_error = [ `Upstream_failed of string ]
+type error = [ `Impossible ] [@@deriving eta_error]
 
 let render_send = function
   | `Sent -> "sent"
@@ -26,8 +26,6 @@ let program () =
   let* closed_send = Queue.try_offer queue "beta" in
   let+ closed_recv = Queue.poll queue in
   (empty, sent, first, stats_after_drain, closed_send, closed_recv)
-
-let pp_error fmt = function _ -> Format.pp_print_string fmt "impossible"
 
 let () =
   Eio_main.run @@ fun stdenv ->

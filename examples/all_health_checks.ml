@@ -1,19 +1,17 @@
 open Eta
 
 type error = [ `Check_failed of string ]
+[@@deriving eta_error]
 
 let check = function
   | "search" -> Effect.fail (`Check_failed "search")
-  | name -> Effect.named ("health." ^ name) (Effect.pure name)
+  | name -> Effect.named ~error_pp:pp_error ("health." ^ name) (Effect.pure name)
 
 let all_ok =
   [ "db"; "cache"; "queue" ] |> List.map check |> Effect.all
 
 let one_failed =
   [ "db"; "search"; "cache" ] |> List.map check |> Effect.all
-
-let pp_error fmt = function
-  | `Check_failed name -> Format.fprintf fmt "check-failed:%s" name
 
 let ok_or_exit = function
   | Exit.Ok values -> String.concat "," values

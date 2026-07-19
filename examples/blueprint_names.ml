@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Bad_id of string | `Not_found of string ]
+[@@deriving eta_error]
 
 let require label condition =
   if not condition then failwith ("blueprint names check failed: " ^ label)
@@ -9,26 +10,22 @@ let parse_id raw =
   if String.equal raw "" then Error (`Bad_id "empty id") else Ok raw
 
 let load_config : (string, error) Effect.t =
-  Effect.named "config.load"
+  Effect.named ~error_pp:pp_error "config.load"
     (Effect.sync_result (fun () -> Ok "primary"))
 
 let load_user id : (string, error) Effect.t =
-  Effect.named "user.load"
+  Effect.named ~error_pp:pp_error "user.load"
     (Effect.sync_result (fun () ->
          if String.equal id "missing" then Error (`Not_found id)
          else Ok ("user:" ^ id)))
 
 let program raw =
   let open Syntax in
-  Effect.named "request.handle"
+  Effect.named ~error_pp:pp_error "request.handle"
     (let* config = load_config in
      let* id = Effect.from_result (parse_id raw) in
      let+ user = load_user id in
      config ^ ":" ^ user)
-
-let pp_error fmt = function
-  | `Bad_id message -> Format.fprintf fmt "bad-id:%s" message
-  | `Not_found id -> Format.fprintf fmt "not-found:%s" id
 
 let has_name expected names =
   List.exists (String.equal expected) names

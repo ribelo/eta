@@ -1,6 +1,6 @@
 open Eta
 
-type error = [ `Rejected of string ]
+type error = [ `Rejected of string ] [@@deriving eta_error]
 
 let ok_program : (string, error) Effect.t =
   Effect.pure "ready"
@@ -13,8 +13,7 @@ let run_preserving_exit rt =
   | Exit.Error (Cause.Fail (`Rejected reason)) -> "exit:" ^ reason
   | exit ->
       Format.eprintf "runtime boundary produced unexpected exit: %a@."
-        (Exit.pp Format.pp_print_string (fun fmt (`Rejected reason) ->
-             Format.fprintf fmt "rejected:%s" reason))
+        (Exit.pp Format.pp_print_string pp_error)
         exit;
       Stdlib.exit 1
 

@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Missing_key of string ]
+[@@deriving eta_error]
 
 let read_config key =
   if String.equal key "db.url" then Ok "sqlite://app.db"
@@ -8,9 +9,6 @@ let read_config key =
 
 let program key =
   Eta_blocking.run_result ~name:"config.read" (fun () -> read_config key)
-
-let pp_error fmt = function
-  | `Missing_key key -> Format.fprintf fmt "missing-key:%s" key
 
 let () =
   Eio_main.run @@ fun stdenv ->

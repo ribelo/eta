@@ -7,6 +7,8 @@ type stats = {
   max_size : int;
 }
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let require label condition =
   if not condition then failwith ("metric batching check failed: " ^ label)
 
@@ -29,8 +31,6 @@ let emit_pool_gauges ~snapshot ~builds =
   Effect.metric_updates_lazy (fun () ->
       incr builds;
       snapshot () |> metrics_of_stats)
-
-let pp_error fmt = function _ -> Format.pp_print_string fmt "<error>"
 
 let run_ok rt eff =
   match Eta_eio.Runtime.run rt eff with

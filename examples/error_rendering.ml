@@ -3,10 +3,7 @@ open Eta
 type error =
   [ `Declined of string
   | `Ledger_close_failed of string ]
-
-let render_error fmt = function
-  | `Declined reason -> Format.fprintf fmt "declined:%s" reason
-  | `Ledger_close_failed ledger -> Format.fprintf fmt "ledger-close:%s" ledger
+[@@deriving eta_error]
 
 let require label condition =
   if not condition then failwith ("error rendering check failed: " ^ label)
@@ -15,12 +12,13 @@ let attr key attrs =
   List.assoc_opt key attrs
 
 let charge_payment =
-  Effect.with_error_pp render_error
-    (Effect.named "payment.charge" (Effect.fail (`Declined "card")))
+  Effect.with_error_pp pp_error
+    (Effect.named ~error_pp:pp_error "payment.charge"
+       (Effect.fail (`Declined "card")))
 
 let ledger_use =
-  Effect.with_error_pp render_error
-    (Effect.named "payment.ledger"
+  Effect.with_error_pp pp_error
+    (Effect.named ~error_pp:pp_error "payment.ledger"
        (Effect.with_resource ~acquire:(Effect.pure "payments")
           ~release:(fun ledger -> Effect.fail (`Ledger_close_failed ledger))
           (fun ledger -> Effect.pure ledger)))
@@ -63,9 +61,10 @@ let verify charge_exit ledger_exit tracer =
   require "typed failure preserved" (String.equal charge "card");
   require "charge status" (String.equal charge_status "declined:card");
   require "charge event" (event_message charge_span = Some "declined:card");
-  require "finalizer rendered" (String.equal finalizer "ledger-close:payments");
+  require "finalizer rendered"
+    (String.equal finalizer "ledger_close_failed:payments");
   require "ledger status"
-    (String.equal ledger_status "finalizer: ledger-close:payments");
+    (String.equal ledger_status "finalizer: ledger_close_failed:payments");
   Format.printf
     "error-rendering:typed=%s status=%s finalizer=%s ledger_status=%s spans=%d@."
     charge charge_status finalizer ledger_status (List.length spans)

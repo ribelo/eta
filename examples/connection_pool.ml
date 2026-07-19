@@ -9,6 +9,7 @@ type error =
   [ `Pool_shutdown
   | `Pool_shutdown_timeout
   | `Query_failed of string ]
+[@@deriving eta_error]
 
 let acquire opened =
   Effect.sync (fun () ->
@@ -38,11 +39,6 @@ let program opened closed =
   let* () = Pool.shutdown pool in
   let after_shutdown = Pool.stats pool in
   Effect.pure (first, second, before_shutdown, after_shutdown)
-
-let pp_error fmt = function
-  | `Pool_shutdown -> Format.pp_print_string fmt "pool-shutdown"
-  | `Pool_shutdown_timeout -> Format.pp_print_string fmt "pool-shutdown-timeout"
-  | `Query_failed reason -> Format.fprintf fmt "query-failed:%s" reason
 
 let () =
   Eio_main.run @@ fun stdenv ->

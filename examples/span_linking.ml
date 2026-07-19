@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Missing_span of string ]
+[@@deriving eta_error]
 
 let require label condition =
   if not condition then failwith ("span linking check failed: " ^ label)
@@ -13,14 +14,14 @@ let current_span_or_fail label =
   | None -> Effect.fail (`Missing_span label)
 
 let producer =
-  Effect.named ~kind:Tracer.Producer "events.publish"
+  Effect.named ~error_pp:pp_error ~kind:Tracer.Producer "events.publish"
     (current_span_or_fail "producer")
 
 let consumer (published : Capabilities.span_info) =
   let open Syntax in
   Effect.link_span ~trace_id:published.Capabilities.trace_id
     ~span_id:published.span_id
-    (Effect.named ~kind:Tracer.Consumer "events.consume"
+    (Effect.named ~error_pp:pp_error ~kind:Tracer.Consumer "events.consume"
        (let* active = current_span_or_fail "consumer" in
         let* () =
           Effect.event ~attrs:[ ("linked.span_id", published.span_id) ]
@@ -33,9 +34,6 @@ let program =
   let* published = producer in
   let+ consumed = consumer published in
   (published, consumed)
-
-let pp_error fmt = function
-  | `Missing_span label -> Format.fprintf fmt "missing-span:%s" label
 
 let span_named name span =
   String.equal span.Tracer.name name

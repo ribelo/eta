@@ -2,16 +2,34 @@ open Eta
 
 module Signal = Eta_signal.Make_no_error ()
 
+let absurd_observer_error : Signal.observer_error -> 'a = function
+  | (_ : Signal.observer_error) -> .
+
+(* Enumerate public tags from Eta_signal signatures rather than inheriting rows. *)
+
 type error =
-  [ Signal.graph_error
-  | Signal.observer_read_error
-  | Signal.stabilize_error
-  | Signal.stream_error ]
+  [ `Ambiguous_scope
+  | `Counter_overflow of string
+  | `Cycle
+  | `Invalid_scope
+  | `Reentrant_stabilization
+  | `Runtime_mismatch
+  | `Reentrant_update
+  | `Disposed_observer
+  | `No_current_value
+  | `Uninitialized_observer
+  | `Invalid_capacity ]
+[@@deriving eta_error]
 
-let pp_error fmt _ = Format.pp_print_string fmt "signal-error"
-
-let widen (eff : ('a, [< error ]) Effect.t) : ('a, error) Effect.t =
-  Effect.map_error (fun error -> (error :> error)) eff
+let widen
+    (eff :
+      ('a, [< error | `Observer_error of Signal.observer_error ]) Effect.t) :
+    ('a, error) Effect.t =
+  Effect.map_error
+    (function
+      | `Observer_error error -> absurd_observer_error error
+      | #error as error -> error)
+    eff
 
 let program =
   let open Syntax in

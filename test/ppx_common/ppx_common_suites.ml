@@ -26,6 +26,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   module Q = Eta_sql
 
+  type err =
+    [ `Db of int
+    | `Unavailable ]
+  [@@deriving eta_error]
+
+  let raising_payload_pp _fmt _payload = failwith "derived renderer exploded"
+
+  type raising_err =
+    [ `Custom of string [@eta.render raising_payload_pp] ]
+  [@@deriving eta_error]
+
   [%%eta.sql.table
   type users = {
     id : int [@primary_key];
@@ -84,6 +95,48 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check (option int)) "leaf parent" (Some fn.span_id) leaf.parent_id
 
+  let test_eta_error_span_status () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    let before = Effect.named "db.save.before" (Effect.fail (`Db 7)) in
+    let after =
+      Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+    in
+    let run label program =
+      match B.run rt program with
+      | Exit.Error (Cause.Fail (`Db 7)) -> ()
+      | _ -> Alcotest.failf "expected Db 7 typed failure from %s" label
+    in
+    run "default" before;
+    run "derived" after;
+    let spans = Tracer.dump tracer in
+    let find name =
+      List.find (fun span -> String.equal span.Tracer.name name) spans
+    in
+    let status name =
+      match (find name).status with
+      | Tracer.Error message -> message
+      | _ -> Alcotest.failf "expected error span status for %s" name
+    in
+    Alcotest.(check string)
+      "default status" "<typed failure>" (status "db.save.before");
+    Alcotest.(check string) "derived status" "db:7" (status "db.save")
+
+  let test_eta_error_raising_renderer_becomes_defect () =
+    B.with_traced_runtime @@ fun _ctx rt _tracer ->
+    let program =
+      Effect.named ~error_pp:pp_raising_err "db.save"
+        (Effect.fail (`Custom "payload"))
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "defect message" "Failure(\"derived renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error (Cause.Fail _) ->
+        Alcotest.fail "expected defect from raising derived renderer"
+    | Exit.Error _ -> Alcotest.fail "expected die defect"
+    | Exit.Ok _ -> Alcotest.fail "expected failure"
+
   let test_sql_table_projection () =
     let select =
       Q.Select.(
@@ -115,6 +168,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Alcotest.test_case "fn" `Quick test_ppx_fn;
           Alcotest.test_case "sync leaf" `Quick test_ppx_thunk_leaf;
+          Alcotest.test_case "eta_error span status" `Quick
+            test_eta_error_span_status;
+          Alcotest.test_case "eta_error raising renderer" `Quick
+            test_eta_error_raising_renderer_becomes_defect;
         ] );
       ( "sql_table",
         [

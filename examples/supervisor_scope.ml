@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Refresh_failed ]
+[@@deriving eta_error]
 
 let program =
   Supervisor.scoped {
@@ -12,9 +13,6 @@ let program =
         let* failures = failures sup in
         pure (List.length failures);
   }
-
-let pp_error fmt = function
-  | `Refresh_failed -> Format.pp_print_string fmt "refresh-failed"
 
 let () =
   Eio_main.run @@ fun stdenv ->

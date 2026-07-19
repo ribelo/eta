@@ -2,6 +2,7 @@ open Eta
 
 type user = { id : string; name : string }
 type error = [ `Missing_user of string ]
+[@@deriving eta_error]
 
 let lookup_user id =
   if String.equal id "" then Error (`Missing_user id)
@@ -30,9 +31,6 @@ let program =
     [ "ok"; ""; "still-ok" ] |> List.map load_user |> Effect.all_settled
   in
   (List.map render_user loaded, settled_counts outcomes)
-
-let pp_error fmt = function
-  | `Missing_user id -> Format.fprintf fmt "missing-user:%s" id
 
 let () =
   Eio_main.run @@ fun stdenv ->

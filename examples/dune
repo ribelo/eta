@@ -1,272 +1,380 @@
 (executable
  (name quickstart)
  (modules quickstart)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name catch_recovery)
  (modules catch_recovery)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name validation_boundary)
  (modules validation_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name sync_defect_boundary)
  (modules sync_defect_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name resource_retry)
  (modules resource_retry)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name retry_schedule)
  (modules retry_schedule)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name repeat_heartbeat)
  (modules repeat_heartbeat)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name cached_resource)
  (modules cached_resource)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name manual_resource_refresh)
  (modules manual_resource_refresh)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name scoped_resource)
  (modules scoped_resource)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name service_composition)
  (modules service_composition)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name source_locations)
  (modules source_locations)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name tap_success)
  (modules tap_success)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name map_projection)
  (modules map_projection)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name stream_decode)
  (modules stream_decode)
- (libraries eta eta_eio eta_stream eio_main))
+ (libraries eta eta_eio eta_stream eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name signal_stabilization)
  (modules signal_stabilization)
- (libraries eta eta_eio eta_signal eta_stream eio_main))
+ (libraries eta eta_eio eta_signal eta_stream eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name batch_concurrency)
  (modules batch_concurrency)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name all_health_checks)
  (modules all_health_checks)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name blueprint_names)
  (modules blueprint_names)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name bounded_channel)
  (modules bounded_channel)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name channel_probe)
  (modules channel_probe)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name unbounded_queue)
  (modules unbounded_queue)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name queue_probe)
  (modules queue_probe)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name mutable_ref_state)
  (modules mutable_ref_state)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name deterministic_random)
  (modules deterministic_random)
- (libraries eta))
+ (libraries eta)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name duration_budget)
  (modules duration_budget)
- (libraries eta))
+ (libraries eta)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name timeout_policy)
  (modules timeout_policy)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name uninterruptible_commit)
  (modules uninterruptible_commit)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name error_rendering)
  (modules error_rendering)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name log_level_policy)
  (modules log_level_policy)
- (libraries eta))
+ (libraries eta)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name trace_sampling)
  (modules trace_sampling)
- (libraries eta))
+ (libraries eta)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name trace_context_boundary)
  (modules trace_context_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name span_linking)
  (modules span_linking)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name exit_cause_boundary)
  (modules exit_cause_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name finally_cleanup)
  (modules finally_cleanup)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name runtime_boundary)
  (modules runtime_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name race_mirror)
  (modules race_mirror)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name typed_error_boundary)
  (modules typed_error_boundary)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name admission_control)
  (modules admission_control)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name semaphore_permits)
  (modules semaphore_permits)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name connection_pool)
  (modules connection_pool)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name pubsub_subscription)
  (modules pubsub_subscription)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name pubsub_poll)
  (modules pubsub_poll)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name http_handlers)
  (modules http_handlers)
- (libraries eta eta_eio eta_http eio_main))
+ (libraries eta eta_eio eta_http eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name cli_business)
  (modules cli_business)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name blocking_result)
  (modules blocking_result)
- (libraries eta eta_blocking eta_eio eio_main))
+ (libraries eta eta_blocking eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name supervisor_scope)
  (modules supervisor_scope)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name background_lifecycle)
  (modules background_lifecycle)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name daemon_drain)
  (modules daemon_drain)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name observability)
  (modules observability)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name observability_controls)
  (modules observability_controls)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name observability_sinks)
  (modules observability_sinks)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (executable
  (name metric_batching)
  (modules metric_batching)
- (libraries eta eta_eio eio_main))
+ (libraries eta eta_eio eio_main)
+ (preprocess
+  (pps ppx_eta)))
 
 (test
  (name workflow_test)
  (modules workflow_test)
- (libraries eta eta_test alcotest))
+ (libraries eta eta_test alcotest)
+ (preprocess
+  (pps ppx_eta)))
 
 (alias
  (name examples)

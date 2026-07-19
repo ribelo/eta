@@ -208,6 +208,57 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
  (pps ppx_eta))
 ```
 
+### Derived typed-error printers
+
+`[@@deriving eta_error]` generates an ordinary `Format` printer for a closed
+polymorphic variant:
+
+```ocaml
+type err =
+  [ `Not_found of string
+  | `Db of int
+  | `Unavailable ]
+[@@deriving eta_error]
+
+let save =
+  Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+```
+
+The generated value is named `pp_<type-name>` and is a plain typed match:
+
+```ocaml
+let pp_err : Format.formatter -> err -> unit = fun fmt -> function
+  | `Not_found id -> Format.fprintf fmt "not_found:%s" id
+  | `Db code -> Format.fprintf fmt "db:%d" code
+  | `Unavailable -> Format.pp_print_string fmt "unavailable"
+```
+
+Constructor text is lowercase with underscores preserved: `Not_found` becomes
+`not_found`. These strings are stable telemetry, not display-only prose;
+renaming a constructor changes span statuses and may require dashboard changes.
+
+Version 1 supports nullary tags and one payload of type `string`, `int`,
+`int64`, `float`, or `bool`. Name a printer for any other single payload with
+`[@eta.render f]`:
+
+```ocaml
+type err =
+  [ `Decode of payload [@eta.render Payload.pp] ]
+[@@deriving eta_error]
+```
+
+The attribute must name a `Format.formatter -> payload -> unit` printer.
+Unsupported payloads without this attribute fail during PPX expansion;
+the error identifies the constructor and tells you to use a built-in payload or
+add `[@eta.render f]`. Nominal variants, private aliases, open or inherited
+rows, and multi-value/tuple payloads are outside version 1 and are rejected at
+PPX time rather than rendered as placeholders.
+
+Derivation does not install ambient policy. Pass the generated function through
+`?error_pp` on `Effect.named` / `Effect.fn`, or explicitly scope it with
+`Effect.with_error_pp`. As with every Eta error printer, it must be total: a
+raising printer becomes a defect through the ordinary runtime capture path.
+
 For Eta SQL (`eta_sql`), the same PPX also provides optional table declaration sugar:
 
 ```ocaml

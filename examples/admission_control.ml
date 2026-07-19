@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Rejected of string ]
+[@@deriving eta_error]
 
 let admit ?(abort = Effect.delay (Duration.ms 10) Effect.unit) sem label =
   let open Syntax in
@@ -28,9 +29,6 @@ let program sem =
   let waiting = Semaphore.waiting sem in
   (first, second, available, waiting)
   |> Effect.pure
-
-let pp_error fmt = function
-  | `Rejected reason -> Format.fprintf fmt "rejected:%s" reason
 
 let () =
   Eio_main.run @@ fun stdenv ->

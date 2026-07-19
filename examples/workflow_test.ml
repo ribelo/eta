@@ -3,6 +3,7 @@ open Eta
 type error =
   [ `Invalid_id of string
   | `Timeout ]
+[@@deriving eta_error]
 
 let parse_id = function
   | "" -> Error (`Invalid_id "empty")

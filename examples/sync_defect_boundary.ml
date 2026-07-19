@@ -1,24 +1,24 @@
 open Eta
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let load_ok =
   Effect.sync (fun () -> "config:ok")
 
 let load_defect =
   Effect.sync (fun () -> failwith "config parser bug")
 
-let pp_never fmt = function _ -> Format.pp_print_string fmt "<never>"
-
 let ok_or_exit = function
   | Exit.Ok value -> value
   | Exit.Error cause ->
-      Format.eprintf "unexpected sync success exit: %a@." (Cause.pp pp_never)
+      Format.eprintf "unexpected sync success exit: %a@." (Cause.pp pp_error)
         cause;
       exit 1
 
 let defect_or_exit = function
   | Exit.Error (Cause.Die _) -> "die"
   | Exit.Error cause ->
-      Format.eprintf "unexpected sync defect exit: %a@." (Cause.pp pp_never)
+      Format.eprintf "unexpected sync defect exit: %a@." (Cause.pp pp_error)
         cause;
       exit 1
   | Exit.Ok _ -> failwith "sync defect boundary expected a defect"

@@ -84,6 +84,8 @@ Use named helpers at common boundaries:
   locations and ordinary span attributes.
 - `Effect.with_error_pp` when typed failures need useful span statuses,
   exception-event messages, or rendered finalizer diagnostics.
+- `[@@deriving eta_error]` from `ppx_eta` for a plain `pp_<type>` over a closed
+  polymorphic error row, then explicit `?error_pp` / `with_error_pp` wiring.
 - `Effect.name` and `Effect.collect_names` for preflight documentation of
   statically present blueprint names. This is not a runtime inventory.
 - `Eta.Exit.to_result` at boundaries that intentionally accept only successful
@@ -463,6 +465,19 @@ through the ordinary capture path. Use the `?error_pp` argument on `named` or
 `fn` when one span owns the printer; use `with_error_pp` when a subtree,
 resource, or finalizer path should share it. Omission keeps the default
 `"<typed failure>"` status text.
+
+`[@@deriving eta_error]` makes meaningful typed-failure telemetry the short
+path without changing that explicit policy boundary. For a closed polymorphic
+variant it generates a plain `pp_<type>` match. Nullary tags and
+`string`, `int`, `int64`, `float`, or `bool` payloads are built in; another
+single payload must name its formatter with `[@eta.render f]`. Unsupported
+payloads, nominal variants, private aliases, open/inherited rows, and tuple
+payloads fail at PPX time—there is no generated `<payload>` fallback. Tag text
+is lowercase with underscores preserved, so renaming a constructor changes
+stable span-status strings and may require dashboard changes. The deriver does
+not wire itself into spans: pass `pp_error` to `named` / `fn` with `~error_pp`,
+or use `with_error_pp pp_error` for one explicit subtree. A raising derived or
+custom payload printer follows the same contract and becomes a defect.
 
 `Effect.name` and `Effect.collect_names` are not replaced by a parallel manual
 registry of expected workflow names. They inspect the existing effect

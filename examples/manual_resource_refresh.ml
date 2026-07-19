@@ -5,7 +5,7 @@ type config = {
   endpoint : string;
 }
 
-type error = [ `Reload_failed of string ]
+type error = [ `Reload_failed of string ] [@@deriving eta_error]
 
 let render_config config =
   Printf.sprintf "v%d:%s" config.version config.endpoint
@@ -14,7 +14,7 @@ let render_error = function
   | `Reload_failed reason -> "reload-failed:" ^ reason
 
 let load source =
-  Effect.named "manual.config.load"
+  Effect.named ~error_pp:pp_error "manual.config.load"
     (Effect.sync_result (fun () ->
          match !source with
          | [] -> Error (`Reload_failed "empty source")
@@ -37,9 +37,6 @@ let program source =
   let* after_failed = Resource.get resource in
   let+ recorded = Resource.failures resource in
   (initial, refreshed, failed, after_failed, recorded)
-
-let pp_error fmt err =
-  Format.pp_print_string fmt (render_error err)
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Invalid_user of string ]
+[@@deriving eta_error]
 
 let require label condition =
   if not condition then failwith ("source locations check failed: " ^ label)
@@ -21,7 +22,7 @@ let attr key attrs =
 
 let load_user id =
   let span_name = __FUNCTION__ in
-  Effect.fn ~kind:Tracer.Client
+  Effect.fn ~error_pp:pp_error ~kind:Tracer.Client
     ~attrs:[ ("component", "accounts"); ("operation", span_name) ]
     __POS__ span_name
     (Effect.sync_result (fun () ->
@@ -32,9 +33,6 @@ let program =
   let open Syntax in
   let+ span_name, user = load_user "42" in
   (span_name, String.uppercase_ascii user)
-
-let pp_error fmt = function
-  | `Invalid_user message -> Format.fprintf fmt "invalid-user:%s" message
 
 let only_span tracer =
   match Tracer.dump tracer with

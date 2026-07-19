@@ -5,6 +5,8 @@ type user = {
   name : string;
 }
 
+type error = [ `Unexpected ] [@@deriving eta_error]
+
 let load_user =
   Effect.pure { id = "42"; name = "Ada" }
 
@@ -16,8 +18,6 @@ let program seen =
          Effect.event ~attrs:[ ("user.id", user.id) ] "user.loaded")
   |> Effect.map (fun user -> user.name)
 
-let pp_never fmt = function _ -> Format.pp_print_string fmt "<never>"
-
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
@@ -28,5 +28,5 @@ let () =
       Format.printf "tap-success:user=%s audit=%s@." name
         (String.concat "," (List.rev !seen))
   | Exit.Error cause ->
-      Format.eprintf "tap success failed: %a@." (Cause.pp pp_never) cause;
+      Format.eprintf "tap success failed: %a@." (Cause.pp pp_error) cause;
       exit 1

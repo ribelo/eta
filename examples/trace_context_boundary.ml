@@ -1,6 +1,7 @@
 open Eta
 
 type error = [ `Bad_trace_context | `Missing_context ]
+[@@deriving eta_error]
 
 let headers =
   [
@@ -13,7 +14,7 @@ let headers =
 let program ctx =
   let open Syntax in
   Effect.with_context ctx
-    (Effect.named "boundary.request"
+    (Effect.named ~error_pp:pp_error "boundary.request"
        (let* current = Effect.current_context in
         match current with
         | None -> Effect.fail `Missing_context
@@ -23,10 +24,6 @@ let has_assoc key value xs =
   match List.assoc_opt key xs with
   | Some actual -> String.equal actual value
   | None -> false
-
-let pp_error fmt = function
-  | `Bad_trace_context -> Format.pp_print_string fmt "bad-trace-context"
-  | `Missing_context -> Format.pp_print_string fmt "missing-context"
 
 let () =
   Eio_main.run @@ fun stdenv ->

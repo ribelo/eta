@@ -1,0 +1,10 @@
+LABEL: telemetry-before
+PROGRAM: Effect.named "db.save.before" (Effect.fail (`Db 7))
+RUNTIME: Eio-backed Eta runtime with Tracer.in_memory
+
+span.name=db.save.before
+span.status=Error "<typed failure>"
+
+Provenance: test_eta_error_span_status in
+test/ppx_common/ppx_common_suites.ml. The test runs this and the derived case
+against the same real tracer and asserts this exact status string.
