@@ -182,3 +182,61 @@ with evidence (follow-up F2 in the journal).
 Provenance: `.scratch/research/dx/e23/` (executor journal, report, red-team,
 review packet), journal entries V-DX-E23-001/002, branch
 `research/dx-e23-result-error-channel`.
+
+## E6 — Parallel resource acquisition: recipe yes, helpers no (2026-07-19)
+
+The nested `with_resource` ladder stays the default for bootstrapping a few
+resources — its lifecycle semantics are *structurally visible*: nesting is
+sequencing, scope exit is cleanup. For acquisition concurrency, the docs now
+carry a recipe (`with_scope` + `acquire_release` + a bridge that registers
+each completed acquisition in the owner scope), backed by regression tests.
+
+The proposed `Effect.Scoped.with_2`/`with_3` helpers were **killed by their
+pre-registered gate**: three independent reviewers rated them 3/3/3 against
+the ladder's 5/5/4. The diagnosis was identical each time and is the
+experiment's durable finding:
+
+> **Helper names must carry execution strategy, not just cardinality.**
+> From `with_3`'s call site you cannot tell acquisition is concurrent, and
+> release order hangs on interpreting ordinal labels. A combinator's
+> semantics live in its docs; a ladder's semantics live in its structure.
+
+Also settled: `and@` remains killed (CPS composition demonstrably
+serializes; syntax machinery would not fix semantic invisibility). And a
+runtime fact worth knowing: `par` children own local finalizer scopes, so
+naive `map_par (acquire_release …)` drains releases early — the recipe's
+bridge is *necessary*, not ceremony. It is documented and tested.
+
+Provenance: `.scratch/research/dx/e6/`, V-DX-E6-001/002, branch
+`research/dx-e6-scoped-with-helpers` (helpers' `feat` + `revert` both
+preserved in branch history).
+
+---
+
+## Phase B synthesis (2026-07-19)
+
+Phase B is complete: E1 (`sync_result` promoted; `sync_option` killed on
+zero-usage evidence), E2 (`discard`/`ignore_errors` promoted; `ignore`
+rated 1 and deleted), E3 (`race_either` killed — named domain tags beat
+positional either-tags), E4 (`Cause.pp_compact` + rendering corpus +
+`Eta_otel.Cause_json` promoted after a kill-gate fire and one rework round),
+E5 (negative compile tests + "Eta type errors, translated" promoted), E6
+(above). One CHANGELOG entry ("idiom pass") covers the breaking renames.
+
+The phase's record against rubber-stamping: two clean kills, one helper
+kill, one gate-fire-then-rework, and one provisional gate *overturned* by
+completing the review cohort (E1). Pre-registered gates overruled both
+executor and orchestrator priors — E6's gate fired against both predictions.
+
+Laws the phase produced:
+
+1. **Complete the cohort before evaluating a gate** (≥3 comparable
+   passes). Born from E1's near-miss.
+2. **Named domain tags beat positional either-tags** (E3).
+3. **Helper names must carry execution strategy, not just cardinality**
+   (E6). Now a standing review criterion.
+4. **Telemetry text is user-facing API** — `pp_compact` lost the finalizer
+   role label in exactly the composite cases where it matters most;
+   notation is semantics (E4).
+5. **Symmetry is not a usage argument** — `sync_option` died because the
+   sync+option leaf pattern does not exist in the wild (E1).

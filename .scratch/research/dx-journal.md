@@ -19,7 +19,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E3 | race_either | B | S | low | **killed** (named variants win) | SC | research/dx-e1e2e3-hygiene | V-DX-E3-001..002 |
 | E4 | Cause rendering corpus | B | M | low | **promoted** 2026-07-19 (kill gate fired; rework passed) | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E4-001..002 |
 | E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
-| E6 | Scoped.with_2/3 (kills and@) | B | M | low | proposed | | | |
+| E6 | Scoped.with_2/3 (kills and@) | B | M | low | **killed** (helpers) · recipe promoted 2026-07-19 | SC | research/dx-e6-scoped-with-helpers | V-DX-E6-001..002 |
 | E7 | Error-pp deriver | C | M | low | proposed | | | |
 | E8 | [%eta.result] sugar | C | S | low | proposed | | | |
 | E9 | Syntax.Parallel/Applicative | C | M | med | proposed | | | |
@@ -1075,3 +1075,135 @@ acquisitions that could be parallel" trap gets one obvious spelling.
 **Outcome (predicted).** Promote helpers + recipe. Kill risk concentrated
 in the `with_3` boilerplate rating; if it fires, recipe-only promotion.
 Gates green within three fix attempts.
+
+---
+
+## V-DX-E6-002 — 2026-07-19 — research/dx-e6-scoped-with-helpers — phase: results + decision
+
+**Outcome: helpers KILLED (pre-registered gate); recipe PROMOTED.**
+Merged `--no-ff` (`123872bc`): ladder-first `docs/api-dx.md` section +
+Expert-bridge recipe with worked example + 3 recipe regression tests + full
+evidence bundle. Master gates green (orchestrator re-run); mainline
+`test/js_jsoo` clean. No `lib/` changes survive — the branch's `feat` and
+`revert` commits cancel out in the merge tree while preserving the full
+experiment arc in branch history.
+
+**Kill-gate evidence (cohort, ≥3 comparable passes per protocol).**
+Blinded packet, fixed P-OCaml persona: ladder **5/5/4** (median 5) vs
+`with_3` **3/3/3** (median 3); preference ladder 2/3. Consistent diagnosis
+across all three reviewers: the name carries *cardinality, not execution
+strategy* — concurrency invisible at the call site, release order dependent
+on ordinal-label interpretation — while the ladder's lifecycle is
+structurally visible. Flat-grouping scan advantage acknowledged by all
+three; insufficient.
+
+**Prediction scoring (orchestrator, V-DX-E6-001).** Hits: census 6→8 vals /
++1 concept (verified before excision), teach-back semantics (partial-
+acquire release, reverse order — proven in tests), persona misreading
+#1 (sequential reading of left-to-right labels — exactly what reviewers
+did), promote-path gates green. **Miss: "kill gate predicted NOT to fire"**
+— it fired, 3/3 passes. Executor: 65%-better prior miss; label-boilerplate
+counterprediction hit. The sealed-prediction discipline caught both of us
+anchoring on "less noise = better" and undervaluing structural visibility.
+
+**What survives and why.** (a) Docs recipe — ladder default, Expert-bridge
+for concurrent acquisition; progressive disclosure. (b) Three regression
+tests proving partial-acquire release-once, reverse release order on
+success + typed failure, ladder parity — the evidence outlives the API.
+(c) The implementation finding: `par` children own local finalizer scopes,
+so naive `map_par (acquire_release …)` drains releases early — the bridge
+is *necessary*, now documented and tested. (d) `and@` stays killed on the
+independent red-team (CPS composition serializes; syntax machinery would
+not fix semantic invisibility either).
+
+**Generalizable finding (the experiment's most valuable output):** helper
+names must carry execution strategy, not just cardinality. Registered as a
+naming-review criterion for all future experiments; a strategy-carrying
+parallel-acquire name is backlog, not a rename rescue.
+
+**Follow-ups carried:** F1–F4, E24b, retry cause-alignment, batch-2 backlog.
+New: F5 strategy-named parallel-acquire helper (backlog, demand-gated).
+
+**Phase B complete.** Synthesis: V-DX-PHASE-B.
+
+---
+
+## V-DX-PHASE-B — 2026-07-19 — phase synthesis: Phase B (hygiene)
+
+**Evidence summary.** Six experiments, five outcomes on master, three kills:
+- E1 (V-DX-E1-001/002): `sync_result` promoted — cohort 3/4/5, median 4,
+  0/3 wrong exception-routings; mli states exceptions stay defects.
+  `sync_option` KILLED — zero usage evidence (`from_option` ×7, sync+option
+  leaf ×0); `attempt_result` fallback rejected (rated 2 — teaches
+  exception-catching). Protocol upgrade born here: gates are not evaluated
+  until the cohort (≥3 comparable passes) completes; E1's kill gate fired
+  at 1/1 and was overturned at 3/3.
+- E2 (V-DX-E2-002): `discard`/`ignore_errors` promoted — old `ignore`
+  rated 1, split rated 5; CHANGELOG idiom-pass entry extended.
+- E3 (V-DX-E3-002): `race_either` KILLED — domain-tagged variants rated 5
+  vs positional `Left`/`Right` 4; map-wrapped recipe remains the
+  recommendation; library stays one val smaller.
+- E4 (V-DX-E4-002): `Cause.pp_compact` + snapshot corpus +
+  `Eta_otel.Cause_json` promoted — board fired the kill gate on two
+  composite cases (finalizer role label lost); one bounded rework
+  (`finalizer(f)` notation); double re-review (continuity + cold) passed.
+  Side findings: cram rejected experimentally for negative-compile tests
+  (no `%{...}` expansion); `('err -> string)` chosen over formatter for
+  `Cause.pretty` consistency.
+- E5 (V-DX-E5-002): type-error translation page + negative compile corpus
+  promoted — reviewer solved at 92% without the page, rated it 9/10,
+  passed the rank-2 teach-back bar.
+- E6 (V-DX-E6-002): helpers killed (cohort 3,3,3 vs 5,5,4), recipe
+  promoted. Finding: names must carry execution strategy, not cardinality.
+
+**Wrong predictions and lessons.**
+- Orchestrator: E6 kill-gate-not-fired (miss — fired 3/3); E24 omission-
+  misreading direction; E24 file-count. Pattern: I over-trust "less noise =
+  better" and under-weight structural visibility of plain OCaml.
+- Executors: E6 65%-better prior (miss); E24 original census targets
+  (superseded). Executors consistently score their misses honestly —
+  the dual-sealed format is doing its job.
+- Plan itself: E24 optional-last signatures (unwritable); E24
+  `retry_or_else` absorption (misdiagnosis); E6 helper value proposition
+  (killed). The plan is holding up as a *process*, not as a *prophet* —
+  exactly what it was designed to be.
+
+**Rubber-stamp audit (§4.5.3).** Phase B does not need the zero-kill
+defense: two clean kills (sync_option, race_either), one helper kill
+(Scoped), one gate-fire-then-rework (pp_compact), one provisional gate
+overturned by cohort completion (E1). Pre-registered gates overruled both
+agent priors at least once (E6).
+
+**Protocol-compliance self-audit.** Predictions: dual-sealed throughout,
+commit-verified before code. Reviews: fresh-context oracle every time;
+packets randomized/blinded by orchestrator; `[agent-sim]` + `SC` flags on
+every review-backed decision. Journal: append-only; the one correction
+(V-DX-E24-002a) done as a new entry. Gates: orchestrator re-runs native
+trio on every merge; mainline JS checks per-experiment. Ops note: review
+packets moved from /tmp to repo `.scratch` after sandbox variance (E6).
+Batching (E1+E2+E3, E4+E5) worked cleanly with per-experiment sections and
+mixed outcomes; no cross-contamination observed.
+
+**Plan adjustments adopted.** (1) Cohort rule (E1). (2) Double re-review
+after gate-firing reworks: continuity + cold (E4). (3) Review framing =
+association-alignment probe, not "blindness" theater (post-E23 critique).
+(4) Strategy-vs-cardinality as a standing review criterion (E6).
+
+**Spot-check list (promote decisions resting on [agent-sim] evidence).**
+E1 `sync_result`, E2 split, E4 `pp_compact`, E5 translation page, E6 recipe
+— all `SC`. Recommended first reads for a human: the E5 translation page
+and the E6 recipe docs — user-facing prose with the longest shelf life.
+
+**Backlog triage (carried into Phase C+).** E24b hook-ownership; retry
+cause-alignment; same-domain runtime fence (Channel/Pubsub/Pool silent hang
+→ named error); dead PPX rejections ×2; resource/pool escape fence;
+`Supervisor.Scope.start` first-contact error; `die` terminology watch;
+F1 signal_jsoo; F2 `fold ~ok:Fun.id`; F3 `catch_recovery.ml`; F4 `map_par`
+omission misreading; F5 strategy-named parallel-acquire helper (demand-
+gated); candidate: `map_par` default-8 bench; strategy-named helper naming
+criterion now applies to E7–E10 review packets.
+
+**Phase C next:** E7 (error-pp deriver) → E8 (`[%eta.result]`) → E9
+(Syntax.Parallel/Applicative) → E10 (hold default). E7/E8/E10 share
+`ppx_eta.ml` — strictly sequential per plan. Master gates green at
+`123872bc` + bookkeeping.

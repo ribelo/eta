@@ -5,17 +5,15 @@ session: read this file, the tail of `.scratch/research/dx-journal.md`, and
 the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **B** (hygiene) — final experiment
-- In flight: **E6 — `Effect.Scoped.with_2`/`with_3` (kills `and@`)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e6`
-  - Branch: `research/dx-e6-scoped-with-helpers`
-  - Stage: kill gate fired (cohort 3,3,3 vs 5,5,4 — helpers die, recipe stays); followup-1.md written; awaiting executor rework
-- Done: Phase A complete (E23/E24/E25 promoted) · Phase B — **E1**
+- Current phase: **B complete** — synthesis V-DX-PHASE-B written
+- In flight: nothing
+- Done: Phase A complete (E23/E24/E25) · Phase B complete — **E1**
   `sync_result` promoted (`sync_option` killed) · **E2** promoted · **E3**
-  killed (named variants) · **E4** promoted (kill gate fired, rework
-  passed) · **E5** promoted — master `f7395b0f`
-- Queue: E6 → **Phase B synthesis** →
-  Phase C (E7–E10)
+  killed · **E4** promoted (gate fire + rework) · **E5** promoted · **E6**
+  helpers killed, recipe promoted — master `123872bc` + bookkeeping
+- Queue: **Phase C** — E7 (error-pp deriver) → E8 (`[%eta.result]`) → E9
+  (Syntax.Parallel/Applicative) → E10 (hold default); E7/E8/E10 share
+  `ppx_eta.ml`, strictly sequential
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
@@ -24,4 +22,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   `catch_recovery.ml`; F4 `map_par` omission misreading; F5
   `Supervisor.scoped` vocabulary; candidate: `map_par` default-8 bench
 - Pending decisions: none
-- Last update: 2026-07-19 — E6 kill gate fired, rework in flight
+- Last update: 2026-07-19 — E6 closed; Phase B synthesis written
