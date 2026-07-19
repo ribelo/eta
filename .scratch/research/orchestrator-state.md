@@ -6,7 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **C** (syntax & PPX) — E7 promoted
-- In flight: nothing
+- In flight: **E9b — honest and* (sequential; Effect.par for concurrency)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b`
+  - Branch: `research/dx-e9b-honest-and-star`
+  - Stage: predictions sealed (V-DX-E9B-001); objective.md written; awaiting executor
 - Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (`0644da2e`)
   · **E9 held** (branch kept/pushed; baseline 2/6, explicit 2/6 — visibility
   measured zero; E9b hypothesis in backlog)
@@ -15,7 +18,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
   **E7 promoted** (`df55d1df`) — `[@@deriving eta_error]`, zero hand-written
   telemetry printers in examples
-- Queue: E10 (hold default) → Phase C synthesis; then Phase D
+- Queue: E10 (hold default) → Phase C synthesis (covers E7/E8/E9-hold/E9b/E10); then Phase D
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
