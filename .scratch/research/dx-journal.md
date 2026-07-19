@@ -1534,3 +1534,26 @@ Distinctness probe: the two `and*`s observably differ.
 **Outcome (predicted).** Promote at ~70% confidence; kill at ~30%
 (baseline too good). If killed, the recorded evidence is the answer to
 "is `and*` obvious?" and the split idea goes to the parking lot.
+
+---
+
+## V-DX-E9-002-pre — 2026-07-19 — review scoring rule (pre-registered before any answers seen)
+
+The one-pager's gates are evaluated strictly on two independent review runs
+(separate fresh contexts; baseline run cannot contaminate explicit run).
+
+**Runs.** Run 1 (baseline): `implicit.ml` (loads) + `implicit-race.ml`
+(transfer), revealing comments stripped. Run 2 (explicit): `explicit-par.ml`
++ `explicit-app.ml`, same treatment. 6 factual questions per run + 2
+unscored meta questions. Reviewers must guess even when uncertain and mark
+confidence (certain/inferred/guess); confidence does not affect scoring.
+
+**Scoring.** Per factual question: correct = 1; incorrect, "not determined",
+unanswerable, or hedged-both-ways = 0. Correct answer key (committed
+blind): old-shape/`Parallel` product — 2 fibers fork; left's typed failure
+cancels the right; effect order NOT guaranteed. `Applicative` product —
+0 fibers fork; order IS guaranteed; left failure means right never runs.
+
+**Decision rule.** promote: explicit ≥ 5/6 AND (explicit − baseline) ≥ 2/6.
+kill: baseline ≥ 5/6 (≈83%). Otherwise: hold, with the numbers published.
+Granularity caveat recorded: 6 questions/run = 16.7-point steps.
