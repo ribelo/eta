@@ -1257,3 +1257,50 @@ exception-recovery readings).
 **Decision (human, 2026-07-19): (a) accept.** `fold ~ok:Fun.id ~error:` is
 the idiom; no shorthand experiment (E23b not scheduled). The north-star
 sentence stands as written: `fold` on both channels.
+
+---
+
+## V-DX-E7-001 — 2026-07-18 — research/dx-e7-error-pp-deriver — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E7-002.
+
+**Current shape (measured pre-change).** `lib/ppx/ppx_eta.ml`: 424 lines,
+extension points only (`expand_sync_like` family) — **zero derivers**; E7
+adds the first (`str_type_decl` infrastructure). `?error_pp` socket from
+E25 in place: `with_error_pp`, `named ?error_pp`, `fn ?error_pp`. The
+`"<typed failure>"` placeholder lives in `effect_core.ml`,
+`runtime_observability.ml`, `runtime.ml`, `eta_jsoo.ml`. Error-type census
+in `examples/`: ~14 declared error types across 35 polyvariant-using files;
+**every visible payload is nullary or single `string`** — no int64/float/
+multi-payload/inline-record cases. `docs/` similar.
+
+**Census (predicted).** PPX forms cluster +1 (first deriver). Renderer
+coverage in `examples/`+`docs/` error types: 0% → 100% — all derivable
+within v1 scope (nullary + built-in payload types). Expansion snapshot
+corpus: 6–8 shapes (nullary; each built-in payload; `[@eta.render]`
+override; rejections for unsupported payload / nominal variant if out of
+v1).
+
+**Footguns (predicted).** −1/+0: the `"<typed failure>"` telemetry trap —
+meaningful defaults become the path of least resistance.
+
+**Review (predicted).** Error review board (fresh oracle, fixed persona)
+rates before/after telemetry excerpts: before median ≤ 2 (`<typed failure>`
+is information-free), after median ≥ 4 (domain-meaningful strings: tag +
+payload). Expansion snippets rated as "code you would approve in a PR"
+(plain match, T4). Kill gate ("payload long tail forces the deriver past
+plain-match shape") predicted NOT to fire — examples/docs payloads fit v1.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) expects `[@@deriving eta_error]` to also derive `show`-style
+  debugging output (scope confusion with ppx_deriving.show); (2) unsure
+  whether the derived `pp_err` is wired automatically into spans or must be
+  passed explicitly (answer: explicitly, via `?error_pp`/`with_error_pp` —
+  T9 no ambient magic).
+- P-Maint: (1) expects tuple/multi-arg constructors to render as tuples
+  (v1: PPX-time error); (2) worries a raising `pp_err` poisons telemetry —
+  E25 contract: becomes a defect, documented.
+
+**Outcome (predicted).** Promote. Gates green within three fix attempts.
+Risk point: PPX-time rejection message quality (T7 — messages are API);
+the rejection snapshots will be reviewed on the error rubric.
