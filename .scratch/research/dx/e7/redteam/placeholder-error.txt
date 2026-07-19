@@ -1,0 +1,7 @@
+File "test/type_errors/cases/ppx_eta_error_unsupported_payload.ml", line 3, characters 24-31:
+3 | type err = [ `Custom of payload ] [@@deriving eta_error]
+                            ^^^^^^^
+Error: eta_error: payload of tag `Custom in type err is unsupported;
+       supported built-ins are string, int, int64, float, and bool; add
+       [@eta.render My_type.pp] to this tag or write pp_err manually
+exit=2

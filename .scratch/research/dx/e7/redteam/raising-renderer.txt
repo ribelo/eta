@@ -1,0 +1,8 @@
+Command: nix develop -c dune runtest test/ppx_eio --force
+
+[OK] ppx 3 eta_error raising renderer.
+
+The test derives pp_raising_err with [@eta.render raising_payload_pp]. The
+selected payload printer raises Failure("derived renderer exploded"). The real
+runtime exit is Cause.Die with that exception; Cause.Fail is explicitly rejected
+by the assertion.

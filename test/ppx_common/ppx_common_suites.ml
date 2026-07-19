@@ -31,6 +31,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | `Unavailable ]
   [@@deriving eta_error]
 
+  let raising_payload_pp _fmt _payload = failwith "derived renderer exploded"
+
+  type raising_err =
+    [ `Custom of string [@eta.render raising_payload_pp] ]
+  [@@deriving eta_error]
+
   [%%eta.sql.table
   type users = {
     id : int [@primary_key];
@@ -103,6 +109,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Tracer.Error message -> Alcotest.(check string) "rendered status" "db:7" message
     | _ -> Alcotest.fail "expected error span status"
 
+  let test_eta_error_raising_renderer_becomes_defect () =
+    B.with_traced_runtime @@ fun _ctx rt _tracer ->
+    let program =
+      Effect.named ~error_pp:pp_raising_err "db.save"
+        (Effect.fail (`Custom "payload"))
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "defect message" "Failure(\"derived renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error (Cause.Fail _) ->
+        Alcotest.fail "expected defect from raising derived renderer"
+    | Exit.Error _ -> Alcotest.fail "expected die defect"
+    | Exit.Ok _ -> Alcotest.fail "expected failure"
+
   let test_sql_table_projection () =
     let select =
       Q.Select.(
@@ -136,6 +158,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "sync leaf" `Quick test_ppx_thunk_leaf;
           Alcotest.test_case "eta_error span status" `Quick
             test_eta_error_span_status;
+          Alcotest.test_case "eta_error raising renderer" `Quick
+            test_eta_error_raising_renderer_becomes_defect;
         ] );
       ( "sql_table",
         [
