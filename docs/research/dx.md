@@ -155,6 +155,26 @@ new shapes 5 and 4 against 3 and 3 for the old. Provenance:
 `.scratch/research/dx/e24/`, V-DX-E24-001..004, branch
 `research/dx-e24-iteration-mirrors-list`.
 
+## E8 — `[%eta.result "name" body]` leaf sugar (promoted 2026-07-19)
+
+The named-leaf pattern — `Effect.fn __POS__ __FUNCTION__ (Effect.named "x"
+(Effect.sync_result (fun () -> body)))`, four concepts for one intent — is
+now one form: `[%eta.result "x" body]`. The expansion is exactly the
+hand-written pattern (an independent reviewer confirmed they'd accept it as
+a verbatim PR rewrite — the T4 bar for sugar). `[%eta.option]` was NOT
+added: E1 killed `sync_option` for lack of usage, and sugar follows
+demonstrated frequency, not symmetry.
+
+Adoption followed a stated rule (IO/trust-boundary leaves with static
+names; no special kwargs): 12 example sites converted, 14 deliberately not
+(each with a recorded reason — `~error_pp`, dynamic names, lifecycle
+plumbing, pedagogy). Converted sites gained spans they didn't have — a
+deliberate telemetry upgrade. Red-team: raising bodies still surface as
+`Cause.Die` with spans; nested naming is noisy-but-harmless and documented.
+
+Provenance: `.scratch/research/dx/e8/`, V-DX-E8-001..002, branch
+`research/dx-e8-eta-result-sugar`.
+
 ## E23 — Error channel mirrors `Result` (promoted 2026-07-18)
 
 The handle cluster now mirrors `Stdlib.Result`: `bind_error` (was `catch`),

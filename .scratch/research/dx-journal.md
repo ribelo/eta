@@ -21,7 +21,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | **killed** (helpers) · recipe promoted 2026-07-19 | SC | research/dx-e6-scoped-with-helpers | V-DX-E6-001..002 |
 | E7 | Error-pp deriver | C | M | low | **promoted** 2026-07-19 | SC | research/dx-e7-error-pp-deriver | V-DX-E7-001..002 |
-| E8 | [%eta.result] sugar | C | S | low | proposed | | | |
+| E8 | [%eta.result] sugar | C | S | low | **promoted** 2026-07-19 | SC | research/dx-e8-eta-result-sugar | V-DX-E8-001..002 |
 | E9 | Syntax.Parallel/Applicative | C | M | med | proposed | | | |
 | E10 | let%eta function sugar | C | M | med | proposed (hold default) | | | |
 | E26 | Effect.fresh | D | S | low | proposed | | | |
@@ -1415,3 +1415,55 @@ explicit `Effect.named` → nested spans, noisy-but-harmless, documented;
 conservative mainline compile check (`test/cache_jsoo`, `test/js_jsoo`)
 despite zero JS ppx use. Outcome: promote. Risk points: per-site adoption
 judgment calls; rejection-message generalization wording (T7 rubric).
+
+---
+
+## V-DX-E8-002 — 2026-07-19 — research/dx-e8-eta-result-sugar — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge; mainline `test/cache_jsoo` + `test/js_jsoo`
+compile clean (executor claim confirmed).
+
+**Contract.** `expand_sync_like` generalized with `~form`; `[%eta.result]`
+registered with `kind:"sync_result"`. Expansion snapshot is the sealed
+contract verbatim: `Effect.fn __POS__ __FUNCTION__ (Effect.named "db.find"
+(Effect.sync_result (fun () -> body)))`. Rejections form-named
+(`expected [%eta.result "name" body]`) with correct locations (T7).
+Parity test: sugar ≡ hand-written for Ok / typed Error / raising body +
+span name + outer-`fn` loc placement (matches existing `Effect.fn`
+semantics — noted as deviation, correctly).
+
+**Adoption.** Rule stated before conversion (IO/trust leaves with static
+names, no special kwargs). 12 converted, 14 not — every non-conversion has
+a concrete reason (`~error_pp`, dynamic names, lifecycle plumbing,
+pedagogy). Note: converted sites *gain* spans they didn't have — deliberate
+telemetry upgrade per the rule, not just sugar-for-boilerplate; recorded as
+a semantic side effect. Operators per converted leaf boundary 4 → 1.
+
+**Red-team 3/3:** raising body → `Cause.Die` with leaf + outer spans;
+nested `Effect.named` → three spans, noisy-but-harmless, documented; T9
+audit — every identifier traces to use site or `__POS__`/`__FUNCTION__`.
+
+**Independent review** `[agent-sim, spot-check]` (oracle, fixed P-OCaml
+persona, randomized pairs): leaf — sugar **4** vs hand **3** ("would accept
+the long form as its exact hand-written expansion" — T4 pass; cost noted:
+PPX hides generated metadata/defect behavior); heavy — sugar **4** vs hand
+**4**, preference sugar; reviewer independently validated the adoption
+rule (acquire/release correctly stay `Effect.sync` — converting would
+"manufacture an inappropriate typed-failure shape merely for consistency").
+Defect semantics read correctly cold in both forms. Median 4, no ≤2.
+
+**Prediction scoring (V-DX-E8-001).** Hits: expansion exact; census 1→2
+forms / +0 rejections / +0 vals; adoption in band (executor sealed 10,
+actual 12); review median ≥4 no ≤2; "what you'd write by hand" remark;
+kill gate unfired; red-team 3/3; gates green; promote. Miss: none scored
+this round — first clean sweep; noted without celebration (single-sample
+reviews remain the protocol's weak leg, flagged spot-check).
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objective archived
+(`.scratch/research/objectives/dx-e8-eta-result-sugar.md`).
+
+**Follow-ups carried:** F1–F4, E24b, retry cause-alignment. New: none.
+Queue: E9 (Syntax.Parallel/Applicative split) → E10 (hold default) →
+Phase C synthesis.

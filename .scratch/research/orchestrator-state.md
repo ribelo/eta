@@ -6,16 +6,14 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **C** (syntax & PPX) — E7 promoted
-- In flight: **E8 — `[%eta.result "name" body]` leaf sugar**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e8`
-  - Branch: `research/dx-e8-eta-result-sugar`
-  - Stage: predictions sealed (V-DX-E8-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (merged
+  `--no-ff`, master gates green, pushed; worktree removed)
 - Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
   **E7 promoted** (`df55d1df`) — `[@@deriving eta_error]`, zero hand-written
   telemetry printers in examples
-- Queue: **E8** (`[%eta.result]` leaf sugar) → E9
-  (Syntax.Parallel/Applicative) → E10 (hold default); share `ppx_eta.ml`,
-  strictly sequential
+- Queue: **E9** (Syntax.Parallel/Applicative split) → E10 (hold default)
+  → Phase C synthesis; share `ppx_eta.ml`, strictly sequential
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
