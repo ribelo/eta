@@ -424,7 +424,14 @@ let eta_render row ~type_name ~tag_name =
   | Ok None -> None
   | Ok (Some (attr_loc, payload)) -> (
       match payload with
-      | PStr [ { pstr_desc = Pstr_eval (expr, _); _ } ] -> Some expr
+      | PStr
+          [
+            {
+              pstr_desc = Pstr_eval (({ pexp_desc = Pexp_ident _; _ } as expr), _);
+              _;
+            };
+          ] ->
+          Some expr
       | _ ->
           fail attr_loc
             (Printf.sprintf
@@ -448,7 +455,7 @@ let eta_error_builtin typ =
   | Ptyp_constr ({ txt = Longident.Lident "bool"; _ }, []) -> Some "%b"
   | _ -> None
 
-let eta_error_case ~type_name row =
+let eta_error_case ~fmt ~type_name row =
   let loc = row.prf_loc in
   let open Ast_builder.Default in
   match row.prf_desc with
@@ -475,7 +482,7 @@ let eta_error_case ~type_name row =
             ~rhs:
               (pexp_apply ~loc (sql_ident ~loc "Format.pp_print_string")
                  [
-                   (Nolabel, evar ~loc "fmt");
+                   (Nolabel, evar ~loc fmt);
                    (Nolabel, estring ~loc (String.lowercase_ascii tag.txt));
                  ]))
   | Rtag (tag, false, [ typ ]) ->
@@ -493,10 +500,10 @@ let eta_error_case ~type_name row =
                   manually"
                  tag.txt type_name type_name)
       in
-      let value = "value" in
+      let value = gen_symbol ~prefix:"__eta_value" () in
       let args =
         [
-          (Nolabel, evar ~loc "fmt");
+          (Nolabel, evar ~loc fmt);
           ( Nolabel,
             estring ~loc
               (String.lowercase_ascii tag.txt ^ ":" ^ format) );
@@ -524,19 +531,13 @@ let eta_error_type declaration =
   let loc = declaration.ptype_loc in
   let type_name = declaration.ptype_name.txt in
   let open Ast_builder.Default in
-  if declaration.ptype_params <> [] then
-    fail declaration.ptype_name.loc
-      (Printf.sprintf
-         "eta_error: type %s has type parameters; eta_error version 1 supports \
-          monomorphic error types; remove the parameters or write pp_%s manually"
-         type_name type_name);
   if declaration.ptype_private = Private then
     fail declaration.ptype_name.loc
       (Printf.sprintf
-         "eta_error: type %s is private; eta_error version 1 supports public \
-          closed polymorphic-variant aliases; make it public or write pp_%s \
-          manually"
-         type_name type_name);
+         "eta_error: type %s is private, so generated pp_%s cannot pattern-match \
+          its tags; make the alias public or write pp_%s manually inside the \
+          defining module"
+         type_name type_name type_name);
   let rows =
     match (declaration.ptype_kind, declaration.ptype_manifest) with
     | Ptype_abstract,
@@ -574,9 +575,11 @@ let eta_error_type declaration =
   in
   let printer_type =
     ptyp_arrow ~loc Nolabel formatter_type
-      (ptyp_arrow ~loc Nolabel (type_ident ~loc type_name)
+      (ptyp_arrow ~loc Nolabel
+         (core_type_of_type_declaration declaration)
          (ptyp_constr ~loc (Located.mk ~loc (Longident.Lident "unit")) []))
   in
+  let fmt = gen_symbol ~prefix:"__eta_fmt" () in
   pstr_value ~loc Nonrecursive
     [
       value_binding ~loc
@@ -586,8 +589,9 @@ let eta_error_type declaration =
              printer_type)
         ~expr:
           (pexp_fun ~loc Nolabel None
-             (ppat_var ~loc (Located.mk ~loc "fmt"))
-             (pexp_function ~loc (List.map (eta_error_case ~type_name) rows)));
+             (ppat_var ~loc (Located.mk ~loc fmt))
+             (pexp_function ~loc
+                (List.map (eta_error_case ~fmt ~type_name) rows)));
     ]
 
 let eta_error_generator =

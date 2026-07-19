@@ -210,8 +210,8 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
 
 ### Derived typed-error printers
 
-`[@@deriving eta_error]` generates an ordinary `Format` printer for a closed,
-monomorphic polymorphic variant:
+`[@@deriving eta_error]` generates an ordinary `Format` printer for a closed
+polymorphic variant:
 
 ```ocaml
 type err =
@@ -247,12 +247,12 @@ type err =
 [@@deriving eta_error]
 ```
 
-The attribute expression must be a `Format.formatter -> payload -> unit`
-printer. Unsupported payloads without this attribute fail during PPX expansion;
+The attribute must name a `Format.formatter -> payload -> unit` printer.
+Unsupported payloads without this attribute fail during PPX expansion;
 the error identifies the constructor and tells you to use a built-in payload or
-add `[@eta.render f]`. Nominal variants, open or inherited rows, type parameters,
-and multi-value/tuple payloads are outside version 1 and are rejected at PPX
-time rather than rendered as placeholders.
+add `[@eta.render f]`. Nominal variants, private aliases, open or inherited
+rows, and multi-value/tuple payloads are outside version 1 and are rejected at
+PPX time rather than rendered as placeholders.
 
 Derivation does not install ambient policy. Pass the generated function through
 `?error_pp` on `Effect.named` / `Effect.fn`, or explicitly scope it with

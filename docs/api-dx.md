@@ -467,11 +467,11 @@ resource, or finalizer path should share it. Omission keeps the default
 `"<typed failure>"` status text.
 
 `[@@deriving eta_error]` makes meaningful typed-failure telemetry the short
-path without changing that explicit policy boundary. For a closed monomorphic
-polymorphic variant it generates a plain `pp_<type>` match. Nullary tags and
+path without changing that explicit policy boundary. For a closed polymorphic
+variant it generates a plain `pp_<type>` match. Nullary tags and
 `string`, `int`, `int64`, `float`, or `bool` payloads are built in; another
 single payload must name its formatter with `[@eta.render f]`. Unsupported
-payloads, nominal variants, open/inherited rows, type parameters, and tuple
+payloads, nominal variants, private aliases, open/inherited rows, and tuple
 payloads fail at PPX time—there is no generated `<payload>` fallback. Tag text
 is lowercase with underscores preserved, so renaming a constructor changes
 stable span-status strings and may require dashboard changes. The deriver does

@@ -1,7 +1,5 @@
-type payload = { id : string }
-
-let pp_payload fmt payload = Format.pp_print_string fmt payload.id
+let pp_string fmt value = Format.fprintf fmt "quoted(%s)" value
 
 type err =
-  [ `Custom of payload [@eta.render pp_payload] ]
+  [ `Custom of string [@eta.render pp_string] ]
 [@@deriving eta_error]

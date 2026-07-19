@@ -4,8 +4,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
-        function | `Unavailable -> Format.pp_print_string fmt "unavailable"
+      fun __eta_fmt__001_ ->
+        function
+        | `Unavailable ->
+            Format.pp_print_string __eta_fmt__001_ "unavailable"
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== b_string.ml =====
@@ -14,9 +16,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
+      fun __eta_fmt__001_ ->
         function
-        | `Not_found value -> Format.fprintf fmt "not_found:%s" value
+        | `Not_found __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "not_found:%s" __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== c_int.ml =====
@@ -25,7 +28,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt -> function | `Db value -> Format.fprintf fmt "db:%d" value
+      fun __eta_fmt__001_ ->
+        function
+        | `Db __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "db:%d" __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== d_int64.ml =====
@@ -34,8 +40,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
-        function | `Offset value -> Format.fprintf fmt "offset:%Ld" value
+      fun __eta_fmt__001_ ->
+        function
+        | `Offset __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "offset:%Ld" __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== e_float.ml =====
@@ -44,8 +52,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
-        function | `Ratio value -> Format.fprintf fmt "ratio:%g" value
+      fun __eta_fmt__001_ ->
+        function
+        | `Ratio __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "ratio:%g" __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== f_bool.ml =====
@@ -54,8 +64,10 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
-        function | `Enabled value -> Format.fprintf fmt "enabled:%b" value
+      fun __eta_fmt__001_ ->
+        function
+        | `Enabled __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "enabled:%b" __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== g_mixed.ml =====
@@ -65,25 +77,27 @@ include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
+      fun __eta_fmt__001_ ->
         function
-        | `Not_found value -> Format.fprintf fmt "not_found:%s" value
-        | `Db value -> Format.fprintf fmt "db:%d" value
-        | `Unavailable -> Format.pp_print_string fmt "unavailable"
+        | `Not_found __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "not_found:%s" __eta_value__002_
+        | `Db __eta_value__003_ ->
+            Format.fprintf __eta_fmt__001_ "db:%d" __eta_value__003_
+        | `Unavailable ->
+            Format.pp_print_string __eta_fmt__001_ "unavailable"
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== h_override.ml =====
-type payload = {
-  id: string }
-let pp_payload fmt payload = Format.pp_print_string fmt payload.id
-type err = [ `Custom of payload [@eta.render pp_payload]][@@deriving
-                                                           eta_error]
+let pp_string fmt value = Format.fprintf fmt "quoted(%s)" value
+type err = [ `Custom of string [@eta.render pp_string]][@@deriving eta_error]
 include
   struct
     let _ = fun (_ : err) -> ()
     let pp_err : Format.formatter -> err -> unit =
-      fun fmt ->
+      fun __eta_fmt__001_ ->
         function
-        | `Custom value -> Format.fprintf fmt "custom:%a" pp_payload value
+        | `Custom __eta_value__002_ ->
+            Format.fprintf __eta_fmt__001_ "custom:%a" pp_string
+              __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
