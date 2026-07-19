@@ -10,7 +10,7 @@ let parse_id = function
   | id -> Ok id
 
 let lookup_user id =
-  Effect.sync_result (fun () -> Ok ("user:" ^ id))
+  [%eta.result "user.lookup" (Ok ("user:" ^ id))]
 
 let program raw =
   let open Syntax in

@@ -23,9 +23,9 @@ let release closed conn =
         incr closed))
 
 let query conn label =
-  Effect.sync_result (fun () ->
-      if conn.closed then Error (`Query_failed "closed connection")
-      else Ok (Printf.sprintf "conn:%d:%s" conn.id label))
+  [%eta.result "pool.query"
+    (if conn.closed then Error (`Query_failed "closed connection")
+     else Ok (Printf.sprintf "conn:%d:%s" conn.id label))]
 
 let program opened closed =
   let open Syntax in
