@@ -1467,3 +1467,17 @@ branch pushed; worktree removed; objective archived
 **Follow-ups carried:** F1–F4, E24b, retry cause-alignment. New: none.
 Queue: E9 (Syntax.Parallel/Applicative split) → E10 (hold default) →
 Phase C synthesis.
+
+---
+
+## V-DX-E8-002a — 2026-07-19 — protocol note (branch discipline)
+
+The E8 bookkeeping commit initially landed on `nema/ladybug-ro-classifier`:
+the main checkout had been switched to that branch by concurrent
+non-programme work between the merge and the bookkeeping commit. Repaired
+by cherry-pick to master (`ef6e6a79`) and restoring their branch pointer to
+`1bb62b8d` exactly; no non-programme work was touched. Rule going forward:
+the orchestrator verifies `git branch --show-current` before every master
+commit, and restores a foreign checked-out branch after master work rather
+than assuming the checkout is on master. (Longer-term, concurrent
+non-programme work belongs in its own worktree — raised with the human.)
