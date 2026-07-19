@@ -131,7 +131,7 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | --- | --- | --- | --- |
 | `eta_linux_input` | `Eta_linux_input` | Linux evdev and uinput helpers | `eta_blocking` |
 | `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_eio`, `eio`, `eio_main`, `alcotest` |
-| `ppx_eta` | `Ppx_eta` | syntax helpers and SQL table declaration sugar | `ppxlib` |
+| `ppx_eta` | `Ppx_eta` | syntax helpers, typed-error printers, and SQL table declaration sugar | `ppxlib` |
 
 ### js_of_ocaml
 
