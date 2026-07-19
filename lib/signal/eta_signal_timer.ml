@@ -21,12 +21,13 @@ module Adapter = struct
       'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Effect.t;
   }
 
-  let access :
-      type capability error.
-      with_access:
-        ('a. (capability -> ('a, error) result) -> ('a, error) Effect.t) ->
-      (capability, error) access =
-   fun ~with_access -> { with_access }
+  type ('capability, 'error) access_runner = {
+    run_access :
+      'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t;
+  }
+
+  let access ~(with_access : ('capability, 'error) access_runner) =
+    { with_access = with_access.run_access }
 
   type 'error loop_due_plan = {
     read_next_due :
@@ -384,13 +385,15 @@ type 'operation node = {
   timer_start : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
 }
 
+type 'operation node_runner = {
+  run_node : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
+}
+
 type 'operation start = {
   run : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
 }
 
-let start (type operation)
-    ~(run : 'err. operation node -> (unit, 'err) Eta.Effect.t) =
-  { run }
+let start ~(run : 'operation node_runner) = { run = run.run_node }
 
 let create_node ~runtime_contract ~refresh_when_inactive
     ~refresh_operation ~start =
@@ -461,9 +464,9 @@ let refresh_node_on_demand ~runtime_mismatch ~current_snapshot
             Ok ())
       else Ok ())
 
-type ('timer, 'effect) start_attempt = {
+type ('timer, 'eff) start_attempt = {
   attempt_timer : 'timer;
-  attempt_effect : 'effect;
+  attempt_effect : 'eff;
 }
 
 type 'timer state_port = {
@@ -479,15 +482,22 @@ let state_port ~effective ~current ~set_current =
     state_set_current = set_current;
   }
 
+type state_runner = {
+  run_state : 'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+
 type daemon_state_access = {
   daemon_with_state :
     'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
-let daemon_state_access
-    ~(with_state :
-       'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t) =
-  { daemon_with_state = with_state }
+let daemon_state_access ~(with_state : state_runner) =
+  { daemon_with_state = with_state.run_state }
+
+type 'timer update_runner = {
+  run_update :
+    'error. 'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
+}
 
 type 'timer daemon_update = {
   daemon_update :
@@ -495,12 +505,12 @@ type 'timer daemon_update = {
     'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
 }
 
-let daemon_update (type timer)
-    ~(update :
-       'error.
-       timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t)
-    =
-  { daemon_update = update }
+let daemon_update ~(update : 'timer update_runner) =
+  { daemon_update = update.run_update }
+
+type hook_runner = {
+  run_hook : 'error. unit -> (unit, 'error) Eta.Effect.t;
+}
 
 type daemon_hooks = {
   daemon_after_due_read_before_commit :
@@ -509,15 +519,13 @@ type daemon_hooks = {
     'error. unit -> (unit, 'error) Eta.Effect.t;
 }
 
-let daemon_hooks
-    ~(after_due_read_before_commit :
-       'error. unit -> (unit, 'error) Eta.Effect.t)
-    ~(after_update_constructed_before_run :
-       'error. unit -> (unit, 'error) Eta.Effect.t) =
+let daemon_hooks ~(after_due_read_before_commit : hook_runner)
+    ~(after_update_constructed_before_run : hook_runner) =
   {
-    daemon_after_due_read_before_commit = after_due_read_before_commit;
+    daemon_after_due_read_before_commit =
+      after_due_read_before_commit.run_hook;
     daemon_after_update_constructed_before_run =
-      after_update_constructed_before_run;
+      after_update_constructed_before_run.run_hook;
   }
 
 type 'timer daemon_context = {
@@ -537,13 +545,13 @@ let daemon_context ~advance_generation ~state_access ~state ~update ~hooks =
     daemon_hooks = hooks;
   }
 
-type ('id, 'necessary, 'runtime, 'timer, 'effect, 'error) demand_port = {
+type ('id, 'necessary, 'runtime, 'timer, 'eff, 'error) demand_port = {
   demand_collect_necessary : unit -> 'necessary;
   demand_collect_timers : unit -> ('id * 'timer) list;
   demand_is_necessary : 'necessary -> 'id -> bool;
   demand_validate_runtime : 'runtime -> 'timer -> (unit, 'error) result;
   demand_state : 'timer state_port;
-  demand_start_effect : 'timer -> 'effect;
+  demand_start_effect : 'timer -> 'eff;
 }
 
 let demand_port ~collect_necessary ~collect_timers ~is_necessary
@@ -573,6 +581,11 @@ let node_demand_plan ~timers ~is_necessary ~runtime_mismatch ~state =
     node_demand_state = state;
   }
 
+type ('capability, 'error) access_runner = {
+  run_access :
+    'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t;
+}
+
 type ('capability, 'error) demand_effect_access = {
   demand_with_access :
     'a.
@@ -580,11 +593,9 @@ type ('capability, 'error) demand_effect_access = {
     ('a, 'error) Eta.Effect.t;
 }
 
-let demand_effect_access (type capability error)
-    ~(with_access :
-       'a.
-       (capability -> ('a, error) result) -> ('a, error) Eta.Effect.t) =
-  { demand_with_access = with_access }
+let demand_effect_access
+    ~(with_access : ('capability, 'error) access_runner) =
+  { demand_with_access = with_access.run_access }
 
 type ('capability, 'start, 'error) demand_effect_port = {
   demand_acquire :
@@ -632,8 +643,8 @@ let node_demand_refresh ~advance_generation ~access ~demand =
     refresh_demand = demand;
   }
 
-let start_attempt ~timer ~effect =
-  { attempt_timer = timer; attempt_effect = effect }
+let start_attempt ~timer ~eff =
+  { attempt_timer = timer; attempt_effect = eff }
 
 let start_attempt_effect attempt =
   attempt.attempt_effect
@@ -645,7 +656,7 @@ let apply_start_plan ~set_current_state ~start_effect timer plan =
   Eta_signal_timer_policy.start_plan_result plan
     ~plan:(fun ~state ~generation:_ ~cancel_hooks ->
       set_current_state timer state;
-      (start_attempt ~timer ~effect:(start_effect timer), cancel_hooks))
+      (start_attempt ~timer ~eff:(start_effect timer), cancel_hooks))
 
 let apply_stop_plan port timer plan =
   Eta_signal_timer_policy.stop_plan_result plan
@@ -745,8 +756,8 @@ let refresh_demand_effect access port =
       ~run_start_attempts:port.demand_run_start_attempts
   in
   Adapter.refresh_demand
-    (Adapter.access ~with_access:(fun f ->
-         access.demand_with_access f))
+    (Adapter.access
+       ~with_access:{ run_access = (fun f -> access.demand_with_access f) })
     (Adapter.demand_plan ~claim ~effects)
 
 let run_node_demand_refresh refresh =
@@ -954,10 +965,14 @@ let create_daemon_node ~runtime_contract ~refresh_when_inactive
     ~catch_up_policy =
   create_node ~runtime_contract ~refresh_when_inactive ~refresh_operation
     ~start:
-      (start ~run:(fun timer ->
-           let generation =
-             Eta_signal_timer_policy.state_generation
-               (context.daemon_state.state_current timer)
-           in
-           start_daemon context timer ~generation ~interval_ms
-             ~update_on_start ~catch_up_policy))
+      (start
+         ~run:
+           { run_node =
+             (fun timer ->
+               let generation =
+                 Eta_signal_timer_policy.state_generation
+                   (context.daemon_state.state_current timer)
+               in
+               start_daemon context timer ~generation ~interval_ms
+                 ~update_on_start ~catch_up_policy)
+           })

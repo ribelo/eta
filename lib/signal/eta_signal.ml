@@ -626,7 +626,7 @@ module Make (Observer_error : Observer_error) () = struct
   let scope_ops =
     Graph.scope_ops ~current:Scope.current
       ~require_valid_current:Scope.require_valid_current
-      ~with_current:Scope.with_current
+      ~with_current:{ run_current = Scope.with_current }
 
   let pack_weak_signal signal = P signal
   let weak_packed_signal (P signal) = Graph_algorithms.Weak_cell.create signal
@@ -1663,10 +1663,14 @@ module Make (Observer_error : Observer_error) () = struct
       (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
 
   let timer_demand_access =
-    Timer.demand_effect_access ~with_access:(fun f ->
-        with_graph_lane_access (fun lane ->
-            try f lane with Graph_error err -> Error err)
-        |> Effect.flatten_result)
+    Timer.demand_effect_access
+      ~with_access:
+        { run_access =
+          (fun f ->
+            with_graph_lane_access (fun lane ->
+                try f lane with Graph_error err -> Error err)
+            |> Effect.flatten_result)
+        }
 
   let refresh_timer_demand () =
     Timer.node_demand_refresh
@@ -1934,8 +1938,10 @@ module Make (Observer_error : Observer_error) () = struct
 
   let observer_delivery_event_access =
     Observer_core.delivery_event_access
-      ~with_delivery_access:(fun f ->
-        with_graph_lane_access (fun lane -> f lane))
+      ~with_delivery_access:
+        { run_delivery =
+          (fun f -> with_graph_lane_access (fun lane -> f lane))
+        }
 
   let observer_update_collection_port staging invalidations =
     Observer_core.update_collection_port
@@ -2683,18 +2689,20 @@ module Make (Observer_error : Observer_error) () = struct
           (Timer.daemon_context
              ~advance_generation:(checked_succ "timer generation")
              ~state_access:
-               (Timer.daemon_state_access ~with_state:(fun f ->
-                    with_graph_lane_sync f))
+               (Timer.daemon_state_access
+                  ~with_state:{ run_state = (fun f -> with_graph_lane_sync f) })
              ~state:timer_state_port
              ~update:
-               (Timer.daemon_update ~update:(fun timer ~generation ~missed ->
-                    update.timer_update timer generation ~missed))
+               (Timer.daemon_update
+                  ~update:
+                    { run_update =
+                      (fun timer ~generation ~missed ->
+                        update.timer_update timer generation ~missed)
+                    })
              ~hooks:
                (Timer.daemon_hooks
-                 ~after_due_read_before_commit:(fun () ->
-                   Effect.unit)
-                 ~after_update_constructed_before_run:(fun () ->
-                   Effect.unit)))
+                  ~after_due_read_before_commit:{ run_hook = (fun () -> Effect.unit) }
+                  ~after_update_constructed_before_run:{ run_hook = (fun () -> Effect.unit) }))
           ~interval_ms:(Duration.to_ms interval) ~update_on_start
           ~catch_up_policy:update.timer_catch_up_policy
       in

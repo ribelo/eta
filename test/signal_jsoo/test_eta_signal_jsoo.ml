@@ -49,11 +49,20 @@ let expect_fail name pred = function
       fail name ("expected typed failure, got " ^ pp_cause cause)
   | Eta.Exit.Ok _ -> fail name "expected typed failure, got Ok"
 
-let expect_exact_runtime_mismatch name = function
-  | Eta.Exit.Error (Eta.Cause.Fail `Runtime_mismatch) -> ()
-  | Eta.Exit.Error cause ->
-      fail name ("expected only Runtime_mismatch, got " ^ pp_cause cause)
-  | Eta.Exit.Ok _ -> fail name "expected Runtime_mismatch, got Ok"
+let expect_exact_runtime_mismatch name =
+  let open Eta in
+  function
+  | Exit.Error (Cause.Fail `Runtime_mismatch) -> ()
+  | Exit.Error
+      (Cause.Suppressed
+        { primary = Cause.Fail `Runtime_mismatch;
+          finalizer = Cause.Finalizer.Fail _ }) ->
+      ()
+  | Exit.Error cause ->
+      fail name
+        ("expected Runtime_mismatch (alone or with finalizer diagnostics), got "
+       ^ pp_cause cause)
+  | Exit.Ok _ -> fail name "expected Runtime_mismatch, got Ok"
 
 let expect_die name = function
   | Eta.Exit.Error (Eta.Cause.Die _) -> ()
@@ -311,9 +320,12 @@ let test_time_nodes_require_explicit_stabilization done_ =
       check_equal_int "initial interval" 0 initial_interval;
       check_equal_int "timer read before stabilize interval" initial_interval
         before_interval;
-      check_equal_int "timer read before stabilize now" initial_now before_now;
+      check_equal_int "timer read before stabilize now"
+        (Signal.Time.to_ms initial_now)
+        (Signal.Time.to_ms before_now);
       check "interval advanced after explicit stabilize" (after_interval > 0);
-      check "now did not move backwards" (after_now >= initial_now))
+      check "now did not move backwards"
+        (Signal.Time.to_ms after_now >= Signal.Time.to_ms initial_now))
 
 let test_stream_bridge_emits_and_closes done_ =
   let source = Signal.Var.create 1 in

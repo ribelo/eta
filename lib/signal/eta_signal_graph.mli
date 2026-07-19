@@ -107,13 +107,20 @@ val reachable_ops :
   children:('node -> 'node list) ->
   ('id, 'node) reachable_ops
 
+type ('scope_context, 'scope) current_runner = {
+  run_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
+}
+(** Polymorphic scope runner for {!scope_ops}. The record form is the
+    standard-OCaml spelling of a rank-2 argument; it keeps this interface
+    buildable on both OxCaml and mainline OCaml. *)
+
 type ('scope_context, 'scope) scope_ops
 
 val scope_ops :
   current:('scope_context -> 'scope option) ->
   require_valid_current:
     ('scope_context -> ('scope, [ `Ambiguous_scope ]) result) ->
-  with_current:('a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a) ->
+  with_current:('scope_context, 'scope) current_runner ->
   ('scope_context, 'scope) scope_ops
 
 type ('scope, 'dependency, 'node, 'packed_node, 'weak_node) node_lifecycle

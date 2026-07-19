@@ -12,6 +12,23 @@ module Update = struct
 end
 
 module Delivery_handle = struct
+  type 'token current_token_runner = {
+    run_current_token : 'error. unit -> ('token option, 'error) Eta.Effect.t;
+  }
+
+  type ('token, 'update) ack_sent_runner = {
+    run_ack_sent : 'error. 'token -> 'update -> (unit, 'error) Eta.Effect.t;
+  }
+
+  type ('token, 'update, 'after_ack) ack_drop_runner = {
+    run_ack_drop :
+      'error.
+      after_ack:'after_ack list ->
+      'token ->
+      'update ->
+      (unit, 'error) Eta.Effect.t;
+  }
+
   type ('token, 'update, 'after_ack) t = {
     token : 'token;
     update : 'update;
@@ -27,23 +44,17 @@ module Delivery_handle = struct
       (unit, 'error) Eta.Effect.t;
   }
 
-  let create :
-      type token update after_ack.
-      token:token ->
-      update:update ->
-      current_token:
-        ('error. unit -> (token option, 'error) Eta.Effect.t) ->
-      acknowledge_sent:
-        ('error. token -> update -> (unit, 'error) Eta.Effect.t) ->
-      acknowledge_drop:
-        ('error.
-         after_ack:after_ack list ->
-         token ->
-         update ->
-         (unit, 'error) Eta.Effect.t) ->
-      (token, update, after_ack) t =
-   fun ~token ~update ~current_token ~acknowledge_sent ~acknowledge_drop ->
-    { token; update; current_token; acknowledge_sent; acknowledge_drop }
+  let create ~token ~update
+      ~(current_token : 'token current_token_runner)
+      ~(acknowledge_sent : ('token, 'update) ack_sent_runner)
+      ~(acknowledge_drop : ('token, 'update, 'after_ack) ack_drop_runner) =
+    {
+      token;
+      update;
+      current_token = current_token.run_current_token;
+      acknowledge_sent = acknowledge_sent.run_ack_sent;
+      acknowledge_drop = acknowledge_drop.run_ack_drop;
+    }
 
   let current handle () =
     handle.current_token ()
@@ -619,36 +630,45 @@ type ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port = {
 let delivery_event_port ~activation ~callback =
   { event_activation = activation; event_callback = callback }
 
+type 'capability delivery_runner = {
+  run_delivery : 'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+
 type 'capability delivery_event_access = {
   event_with_delivery_access :
     'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
 }
 
-let delivery_event_access :
-    type capability.
-    with_delivery_access:
-      ('a 'error. (capability -> 'a) -> ('a, 'error) Eta.Effect.t) ->
-    capability delivery_event_access =
- fun ~with_delivery_access ->
-  { event_with_delivery_access = with_delivery_access }
+let delivery_event_access
+    ~(with_delivery_access : 'capability delivery_runner) =
+  { event_with_delivery_access = with_delivery_access.run_delivery }
 
 let make_delivery_handle ~access delivery_port ~observer ~token update =
   Delivery_handle.create ~token ~update
-    ~current_token:(fun () ->
-      access.event_with_delivery_access (fun capability ->
-          if
-            running_delivery_token_matches delivery_port capability observer
-              token
-          then Some token
-          else None))
-    ~acknowledge_sent:(fun token update ->
-      access.event_with_delivery_access (fun capability ->
-          acknowledge_delivery delivery_port capability observer token update
-            ~after_ack:[]))
-    ~acknowledge_drop:(fun ~after_ack token update ->
-      access.event_with_delivery_access (fun capability ->
-          acknowledge_delivery delivery_port capability observer token update
-            ~after_ack))
+    ~current_token:
+      { run_current_token =
+        (fun () ->
+          access.event_with_delivery_access (fun capability ->
+              if
+                running_delivery_token_matches delivery_port capability
+                  observer token
+              then Some token
+              else None))
+      }
+    ~acknowledge_sent:
+      { run_ack_sent =
+        (fun token update ->
+          access.event_with_delivery_access (fun capability ->
+              acknowledge_delivery delivery_port capability observer token
+                update ~after_ack:[]))
+      }
+    ~acknowledge_drop:
+      { run_ack_drop =
+        (fun ~after_ack token update ->
+          access.event_with_delivery_access (fun capability ->
+              acknowledge_delivery delivery_port capability observer token
+                update ~after_ack))
+      }
 
 let make_delivery_event ~access delivery_port event_port ~observer ~token update =
   Delivery_event.create

@@ -135,12 +135,16 @@ let test_refresh_node_demand_owns_node_start_wiring () =
         Timer.create_node ~runtime_contract
           ~refresh_when_inactive:true ~refresh_operation:None
           ~start:
-            (Timer.start ~run:(fun _timer ->
-                 record
-                   ("start:" ^ case.case_name ^ ":"
-                  ^ state_label case.case_current);
-                 Eta.Effect.sync (fun () ->
-                     record ("run:" ^ case.case_name))))
+            (Timer.start
+               ~run:
+                 { run_node =
+                     (fun _timer ->
+                       record
+                         ("start:" ^ case.case_name ^ ":"
+                        ^ state_label case.case_current);
+                       Eta.Effect.sync (fun () ->
+                         record ("run:" ^ case.case_name)))
+                 })
       in
       case.case_node <- Some node;
       node
@@ -244,12 +248,16 @@ let test_node_demand_refresh_owns_node_bracketing () =
       Timer.create_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
         ~start:
-          (Timer.start ~run:(fun _timer ->
-               record
-                 ("start:" ^ case.case_name ^ ":"
-                ^ state_label case.case_current);
-               Eta.Effect.sync (fun () ->
-                   record ("run:" ^ case.case_name))))
+          (Timer.start
+             ~run:
+               { run_node =
+                   (fun _timer ->
+                     record
+                       ("start:" ^ case.case_name ^ ":"
+                      ^ state_label case.case_current);
+                     Eta.Effect.sync (fun () ->
+                       record ("run:" ^ case.case_name)))
+               })
     in
     case.case_node <- Some node;
     node
@@ -265,11 +273,15 @@ let test_node_demand_refresh_owns_node_bracketing () =
   let refresh =
     Timer.node_demand_refresh ~advance_generation:succ
       ~access:
-        (Timer.demand_effect_access ~with_access:(fun f ->
-             Eta.Effect.sync (fun () ->
-                 record "access";
-                 f ())
-             |> Eta.Effect.flatten_result))
+        (Timer.demand_effect_access
+           ~with_access:
+             { run_access =
+               (fun f ->
+                 Eta.Effect.sync (fun () ->
+                     record "access";
+                     f ())
+                 |> Eta.Effect.flatten_result)
+             })
       ~demand:
         (Timer.node_demand_effect_port
            ~plan:(fun runtime_contract () ->
@@ -375,7 +387,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
             let node =
               Timer.create_node ~runtime_contract:node_runtime_contract
                 ~refresh_when_inactive ~refresh_operation:operation
-                ~start:(Timer.start ~run:(fun _timer -> Eta.Effect.unit))
+                ~start:(Timer.start ~run:{ run_node = (fun _timer -> Eta.Effect.unit) })
             in
             Timer.set_staged_refresh_token node staged_token;
             let refresh_context =
@@ -441,9 +453,13 @@ let test_refresh_node_demand_runtime_mismatch_short_circuits () =
         Timer.create_node ~runtime_contract
           ~refresh_when_inactive:true ~refresh_operation:None
           ~start:
-            (Timer.start ~run:(fun _timer ->
-                 started := true;
-                 Eta.Effect.unit))
+            (Timer.start
+               ~run:
+                 { run_node =
+                     (fun _timer ->
+                       started := true;
+                       Eta.Effect.unit)
+                 })
       in
       case.case_node <- Some node;
       node
@@ -511,7 +527,7 @@ let test_mark_node_unneeded_marks_starting_inactive () =
            let node =
              Timer.create_node ~runtime_contract
                ~refresh_when_inactive:true ~refresh_operation:None
-               ~start:(Timer.start ~run:(fun _timer -> Eta.Effect.unit))
+               ~start:(Timer.start ~run:{ run_node = (fun _timer -> Eta.Effect.unit) })
            in
            case.case_node <- Some node;
            node
@@ -782,17 +798,27 @@ let test_preflight_and_finish_node_own_state_port () =
 let daemon_context events port update =
   Timer.daemon_context ~advance_generation:succ
     ~state_access:
-      (Timer.daemon_state_access ~with_state:(fun f ->
-           Eta.Effect.sync (fun () ->
-               append_event events "access";
-               f ())))
+      (Timer.daemon_state_access
+         ~with_state:
+           { run_state =
+             (fun f ->
+               Eta.Effect.sync (fun () ->
+                   append_event events "access";
+                   f ()))
+           })
     ~state:port ~update
     ~hooks:
       (Timer.daemon_hooks
-         ~after_due_read_before_commit:(fun () ->
-           Eta.Effect.sync (fun () -> append_event events "due_hook"))
-         ~after_update_constructed_before_run:(fun () ->
-           Eta.Effect.sync (fun () -> append_event events "after_update")))
+         ~after_due_read_before_commit:
+           { run_hook =
+             (fun () ->
+               Eta.Effect.sync (fun () -> append_event events "due_hook"))
+           }
+         ~after_update_constructed_before_run:
+           { run_hook =
+             (fun () ->
+               Eta.Effect.sync (fun () -> append_event events "after_update"))
+           })
 
 let test_start_daemon_wires_start_update_through_timer_port () =
   with_runtime @@ fun runtime ->
@@ -813,11 +839,15 @@ let test_start_daemon_wires_start_update_through_timer_port () =
   run_ok runtime
     (Timer.start_daemon
        (daemon_context events port
-          (Timer.daemon_update ~update:(fun _timer ~generation ~missed ->
-               Eta.Effect.sync (fun () ->
-                   append_event events
-                     ("update:" ^ string_of_int generation ^ ":"
-                    ^ string_of_int missed)))))
+          (Timer.daemon_update
+             ~update:
+               { run_update =
+                   (fun _timer ~generation ~missed ->
+                     Eta.Effect.sync (fun () ->
+                       append_event events
+                         ("update:" ^ string_of_int generation ^ ":"
+                        ^ string_of_int missed)))
+               }))
        timer
        ~generation:3 ~interval_ms:10 ~update_on_start:true
        ~catch_up_policy:Timer_policy.Catch_up_coalesced);
@@ -855,11 +885,15 @@ let test_create_daemon_node_owns_start_effect_generation () =
       Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
         (daemon_context events port
-           (Timer.daemon_update ~update:(fun _timer ~generation ~missed ->
-                Eta.Effect.sync (fun () ->
-                    append_event events
-                      ("update:" ^ string_of_int generation ^ ":"
-                     ^ string_of_int missed)))))
+           (Timer.daemon_update
+              ~update:
+                { run_update =
+                    (fun _timer ~generation ~missed ->
+                      Eta.Effect.sync (fun () ->
+                        append_event events
+                          ("update:" ^ string_of_int generation ^ ":"
+                         ^ string_of_int missed)))
+                }))
         ~interval_ms:10 ~update_on_start:true
         ~catch_up_policy:Timer_policy.Catch_up_coalesced
     in

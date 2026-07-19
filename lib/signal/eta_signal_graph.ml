@@ -478,6 +478,10 @@ type ('id, 'node) reachable_ops = {
   reachable_children : 'node -> 'node list;
 }
 
+type ('scope_context, 'scope) current_runner = {
+  run_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
+}
+
 type ('scope_context, 'scope) scope_ops = {
   scope_current : 'scope_context -> 'scope option;
   scope_require_valid_current :
@@ -485,16 +489,14 @@ type ('scope_context, 'scope) scope_ops = {
   scope_with_current : 'a. 'scope_context -> 'scope -> (unit -> 'a) -> 'a;
 }
 
-let scope_ops (type scope_context scope)
-    ~(current : scope_context -> scope option)
+let scope_ops ~(current : 'scope_context -> 'scope option)
     ~(require_valid_current :
-       scope_context -> (scope, [ `Ambiguous_scope ]) result)
-    ~(with_current :
-       'a. scope_context -> scope -> (unit -> 'a) -> 'a) =
+       'scope_context -> ('scope, [ `Ambiguous_scope ]) result)
+    ~(with_current : ('scope_context, 'scope) current_runner) =
   {
     scope_current = current;
     scope_require_valid_current = require_valid_current;
-    scope_with_current = with_current;
+    scope_with_current = with_current.run_current;
   }
 
 let edge_ops ~identity ~dependencies ~set_dependencies ~dependents

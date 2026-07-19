@@ -15,11 +15,16 @@ val demand_effects_plan :
 
 type 'operation node
 
+type 'operation node_runner = {
+  run_node : 'err. 'operation node -> (unit, 'err) Eta.Effect.t;
+}
+(** Polymorphic node runner for {!start}. The record form is the
+    standard-OCaml spelling of a rank-2 argument; it keeps this interface
+    buildable on both OxCaml and mainline OCaml. *)
+
 type 'operation start
 
-val start :
-  run:('err. 'operation node -> (unit, 'err) Eta.Effect.t) ->
-  'operation start
+val start : run:'operation node_runner -> 'operation start
 
 val create_node :
   runtime_contract:Eta.Runtime_contract.t ->
@@ -54,7 +59,7 @@ val refresh_node_on_demand :
   'operation node ->
   (unit, 'error) result
 
-type ('timer, 'effect) start_attempt
+type ('timer, 'eff) start_attempt
 
 type 'timer state_port
 
@@ -64,27 +69,40 @@ val state_port :
   set_current:('timer -> Eta_signal_timer_policy.state -> unit) ->
   'timer state_port
 
+type state_runner = {
+  run_state : 'a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+(** Polymorphic state runner for {!daemon_state_access}. Record form of the
+    rank-2 argument, like {!node_runner}. *)
+
 type daemon_state_access
 
 val daemon_state_access :
-  with_state:('a 'error. (unit -> 'a) -> ('a, 'error) Eta.Effect.t) ->
+  with_state:state_runner ->
   daemon_state_access
+
+type 'timer update_runner = {
+  run_update :
+    'error. 'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t;
+}
+(** Polymorphic update runner for {!daemon_update}. Record form of the
+    rank-2 argument, like {!node_runner}. *)
 
 type 'timer daemon_update
 
-val daemon_update :
-  update:
-    ('error.
-     'timer -> generation:int -> missed:int -> (unit, 'error) Eta.Effect.t) ->
-  'timer daemon_update
+val daemon_update : update:'timer update_runner -> 'timer daemon_update
+
+type hook_runner = {
+  run_hook : 'error. unit -> (unit, 'error) Eta.Effect.t;
+}
+(** Polymorphic daemon hook. Record form of the rank-2 argument, like
+    {!node_runner}. *)
 
 type daemon_hooks
 
 val daemon_hooks :
-  after_due_read_before_commit:
-    ('error. unit -> (unit, 'error) Eta.Effect.t) ->
-  after_update_constructed_before_run:
-    ('error. unit -> (unit, 'error) Eta.Effect.t) ->
+  after_due_read_before_commit:hook_runner ->
+  after_update_constructed_before_run:hook_runner ->
   daemon_hooks
 
 type 'timer daemon_context
@@ -107,13 +125,16 @@ val node_demand_plan :
   state:'operation node state_port ->
   ('id, 'operation, 'error) node_demand_plan
 
+type ('capability, 'error) access_runner = {
+  run_access : 'a. ('capability -> ('a, 'error) result) -> ('a, 'error) Eta.Effect.t;
+}
+(** Polymorphic access runner for {!demand_effect_access}. Record form of
+    the rank-2 argument, like {!node_runner}. *)
+
 type ('capability, 'error) demand_effect_access
 
 val demand_effect_access :
-  with_access:
-    ('a.
-     ('capability -> ('a, 'error) result) ->
-     ('a, 'error) Eta.Effect.t) ->
+  with_access:('capability, 'error) access_runner ->
   ('capability, 'error) demand_effect_access
 
 type ('capability, 'id, 'operation, 'error) node_demand_effect_port
@@ -147,7 +168,7 @@ val preflight_stop :
   advance_generation:(int -> int) -> 'timer state_port -> 'timer -> unit
 
 val start_attempt_effects :
-  ('timer, 'effect) start_attempt list -> 'effect list
+  ('timer, 'eff) start_attempt list -> 'eff list
 
 val refresh_node_demand_plan :
   advance_generation:(int -> int) ->

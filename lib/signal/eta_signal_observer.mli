@@ -179,11 +179,17 @@ val delivery_event_port :
     delivery_event_callback_plan ->
   ('capability, 'observer, 'a, 'callback, 'error) delivery_event_port
 
+type 'capability delivery_runner = {
+  run_delivery : 'a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t;
+}
+(** Polymorphic delivery runner for {!delivery_event_access}. The record
+    form is the standard-OCaml spelling of a rank-2 argument; it keeps this
+    interface buildable on both OxCaml and mainline OCaml. *)
+
 type 'capability delivery_event_access
 
 val delivery_event_access :
-  with_delivery_access:
-    ('a 'error. ('capability -> 'a) -> ('a, 'error) Eta.Effect.t) ->
+  with_delivery_access:'capability delivery_runner ->
   'capability delivery_event_access
 
 val make_delivery_handle :
