@@ -148,9 +148,7 @@ let scoped_resource_proposed left right =
      let load id =
        Effect.sync_result (fun () -> Domain.load_user db id)
      in
-     let* left = load left
-     and* right = load right in
-     Effect.pure (left, right))
+     Effect.par (load left) (load right))
 
 type service_value =
   | Clock of Domain.clock
@@ -326,10 +324,9 @@ let cli_proposed args =
   Effect.pure ("ok " ^ payload)
 
 let parallel_business_proposed left right =
-  let open Syntax in
-  let* left_id = Effect.from_result (Domain.parse_id left)
-  and* right_id = Effect.from_result (Domain.parse_id right) in
-  Effect.pure (left_id, right_id)
+  Effect.par
+    (Effect.from_result (Domain.parse_id left))
+    (Effect.from_result (Domain.parse_id right))
 
 let blocking_current path =
   Eta_blocking.run ~name:"fs.read" (fun () -> Domain.external_call path)
@@ -489,9 +486,9 @@ let background_proposed heartbeat wait_started left right =
   let open Syntax in
   Effect.with_background heartbeat (fun () ->
       let* () = wait_started in
-      let* left = load_user_proposed left
-      and* right = load_user_proposed right in
-      Effect.pure (Domain.render_user left ^ "," ^ Domain.render_user right))
+      Effect.par (load_user_proposed left) (load_user_proposed right)
+      |> Effect.map (fun (left, right) ->
+             Domain.render_user left ^ "," ^ Domain.render_user right))
 
 let batch_current ids =
   let rec loop = function
@@ -1305,9 +1302,7 @@ Resource.get resource|};
         {|let open Eta.Syntax in
 Effect.with_scope
   (let* session = Effect.acquire_release ~acquire ~release in
-   let* config = load session "config"
-   and* profile = load session "profile" in
-   Effect.pure (config, profile))|};
+   Effect.par (load session "config") (load session "profile"))|};
     };
     {
       area = "service";
@@ -2485,9 +2480,8 @@ Tracer.retain_recent tracer ~max:1;
         {|let open Eta.Syntax in
 Effect.with_background heartbeat (fun () ->
   let* () = wait_started in
-  let* left = load_user left
-  and* right = load_user right in
-  Effect.pure (format_pair left right))|};
+  Effect.par (load_user left) (load_user right)
+  |> Effect.map format_pair)|};
     };
     {
       area = "daemon_drain";
@@ -2607,15 +2601,16 @@ let assert_expected_shape snippet =
         failwith
           "manual_resource proposed example should prove caller-driven Resource refresh without a manual ref cache or raw catch"
   | "scoped_resource", "proposed", (_, _, _, _, let_star, let_at, from_result) ->
-      if let_star <> 2 || let_at <> 0 || from_result <> 0 then
+      if let_star <> 1 || let_at <> 0 || from_result <> 0 then
         failwith
-          "scoped_resource proposed example should use scoped let* workflow";
+          "scoped_resource proposed example should use scoped let* plus Effect.par";
       if
         count_sub snippet.code "Effect.with_scope" <> 1
         || count_sub snippet.code "Effect.acquire_release" <> 1
+        || count_sub snippet.code "Effect.par" <> 1
       then
         failwith
-          "scoped_resource proposed example should prove acquire_release plus scoped"
+          "scoped_resource proposed example should prove acquire_release plus scoped Effect.par"
   | "service", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith
@@ -3249,9 +3244,12 @@ let assert_expected_shape snippet =
         failwith
           "observability_sinks proposed example should use built-in in-memory sinks instead of custom collectors"
   | "background", "proposed", (_, _, _, _, let_star, let_at, from_result) ->
-      if let_star <> 2 || let_at <> 0 || from_result <> 0 then
+      if let_star <> 1 || let_at <> 0 || from_result <> 0 then
         failwith
-          "background proposed example should use let* and and* for body work"
+          "background proposed example should use let* wait then Effect.par body work";
+      if count_sub snippet.code "Effect.par" <> 1 then
+        failwith
+          "background proposed example should spell concurrent loads with Effect.par"
   | "daemon_drain", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then

@@ -1,0 +1,10 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b' is dirty
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b/.scratch/research/dx/e9b/redteam'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b/.scratch/research/dx/e9b/redteam'
+transfer ok; log=debit:start → debit:10 → debit:done → credit:start → credit:10 → credit:done
+VERDICT (a): observably sequential, correct by construction
+---
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b/.scratch/research/dx/e9b/redteam'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b/.scratch/research/dx/e9b/redteam'
+loads ok; log=user:start → user:done → perms:start → perms:done
+VERDICT (b): correct-but-serialized; both effects run in order; residual cost is latency only
