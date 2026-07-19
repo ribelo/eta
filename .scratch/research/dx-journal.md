@@ -1242,3 +1242,18 @@ to avoid the two compilers poisoning each other's `_build` — the
 intermittent "RPC server not running" errors were track contamination.
 
 Master `077f763e`.
+
+---
+
+## V-DX-F2 — 2026-07-19 — follow-up closed: `fold ~ok:Fun.id` noise — ACCEPTED (human decision)
+
+Measured usage: 25 sites across examples, lib, tests — the pattern is hot,
+which triggered the E23 revisit clause. Options: (a) accept as the Stdlib
+idiom (`Result.fold ~ok:Fun.id` is exactly how OCaml writes pure
+both-channel recovery today); (b) naming mini-experiment for a shorthand;
+(c) restore `recover` (rejected on E23 review evidence — invites
+exception-recovery readings).
+
+**Decision (human, 2026-07-19): (a) accept.** `fold ~ok:Fun.id ~error:` is
+the idiom; no shorthand experiment (E23b not scheduled). The north-star
+sentence stands as written: `fold` on both channels.
