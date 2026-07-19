@@ -21,8 +21,14 @@ val ( let@ ) : (('a -> 'b) -> 'c) -> ('a -> 'b) -> 'c
 
 val ( and* ) :
   ('a, 'err) Effect.t -> ('b, 'err) Effect.t -> ('a * 'b, 'err) Effect.t
-(** Run two effects concurrently and bind both successful values. *)
+(** Strict left-to-right product; nothing is forked.
+
+    Left settles fully, then right runs. Left failure skips right. Rule of
+    thumb: [and*] sequences; for concurrency use {!Effect.par}. *)
 
 val ( and+ ) :
   ('a, 'err) Effect.t -> ('b, 'err) Effect.t -> ('a * 'b, 'err) Effect.t
-(** Run two effects concurrently and map both successful values. *)
+(** Strict left-to-right product under [let+]; nothing is forked.
+
+    Same sequential product as {!val-and*}. Rule of thumb: [and+] sequences;
+    for concurrency use {!Effect.par}. *)

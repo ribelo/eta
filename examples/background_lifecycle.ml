@@ -33,9 +33,9 @@ let program started stopped =
   Effect.with_background ~name:"cache.refresh" (background started stopped)
     (fun () ->
       let* () = wait_started started in
-      let* left = Effect.named ~error_pp:pp_error "load.left" (load_user "left")
-      and* right = Effect.named ~error_pp:pp_error "load.right" (load_user "right") in
-      Effect.pure (left, right))
+      Effect.par
+        (Effect.named ~error_pp:pp_error "load.left" (load_user "left"))
+        (Effect.named ~error_pp:pp_error "load.right" (load_user "right")))
 
 let () =
   Eio_main.run @@ fun stdenv ->

@@ -122,4 +122,77 @@ documented latency surprise, not silent wrongness for order-sensitive code.
 
 ## Implementation follow-up (post-seal; predictions section untouched)
 
-_Pending — filled after the sealed predictions commit._
+### What shipped
+
+- Docs-first `syntax.mli`: `and*`/`and+` = strict left-to-right; nothing forked;
+  rule of thumb `and*` sequences / `Effect.par` races.
+- `syntax.ml`: sequential product via `bind`+`map` (E9 `Applicative` ported to
+  top-level; no submodules).
+- Migrated both usage files to `Effect.par` at every concurrent site (zero residual
+  `and*` there).
+- Law tests in `test/core_common/effect_common_suites.ml` (Effect 56–59):
+  strict L→R, right-waits, fail-fast skips right, interrupt-left skips right.
+  `Effect.par` laws cited: `test_par_returns_both_successes`,
+  `test_par_fail_fast_cancels_sibling`.
+- `docs/api-dx.md` + `examples/README.md` guidance updated.
+- Red-team + review packet under this directory.
+- All four objective gates PASS.
+
+### Migration justifications (actual; matches seal)
+
+| Site | Spelling | Justification |
+| --- | --- | --- |
+| `examples/background_lifecycle.ml` left/right loads | `Effect.par` | Independent named loads; old `and*` was concurrent product; no order dependence. |
+| `scoped_resource_proposed` left/right | `Effect.par` | Independent DB loads; concurrency was the proposed DX. |
+| `parallel_business_proposed` | `Effect.par` | Independent parses; name + product intent are concurrent. |
+| `background_proposed` left/right | `Effect.par` | Independent user loads after wait; same as lifecycle example. |
+| scoped_resource proposed snippet | `Effect.par` | Snippet matches runnable proposed shape. |
+| background proposed snippet | `Effect.par` | Snippet matches runnable proposed shape. |
+
+No sequential-`and*` residual sites in the two files (as sealed).
+
+### Census actuals
+
+| Measure | Sealed | Actual |
+| --- | ---: | ---: |
+| Syntax operator vals | 5 → 5 | **5** (`let*`, `let+`, `let@`, `and*`, `and+`) |
+| Syntax modules | 1 → 1 | **1** |
+| Footguns | −1 concurrency-misread / +0 perf-surprise | **−1** concurrent-`and*` misread removed; residual **perf-only** surprise documented in mli + red-team (b) |
+
+### Law evidence
+
+| Obligation | Evidence | Status |
+| --- | --- | --- |
+| Strict L→R | `test_syntax_and_strict_left_to_right` (ordered side-effect log) | Proven |
+| Right waits for left | `test_syntax_and_right_waits_for_left` (promise gate) | Proven |
+| Fail-fast by sequencing | `test_syntax_and_fail_fast_skips_right` | Proven |
+| Interrupt-left skips right | `test_syntax_and_interrupt_left_skips_right` | Proven |
+| `Effect.par` concurrent laws | cited existing par suite | Proven (pre-existing) |
+
+Focused core_eio run: Effect 55–59 OK (syntax operators + four sequential laws).
+
+### Red-team actuals
+
+See `redteam/VERDICT.md` + `redteam/output.txt`.
+
+- (a) transfer under `and*`: ordered debit→credit log — **PASS**.
+- (b) wanted concurrency under `and*`: both run serialized — **PASS (perf-only)**.
+- (c) mli grep: no `concurrent` claim; only “nothing is forked” + `Effect.par` redirect — **PASS**.
+
+### Sealed prediction scorecard
+
+| Sealed item | Actual |
+| --- | --- |
+| All 2-file sites → `Effect.par` | Yes |
+| Laws green | Yes |
+| Red-team pass (a/b/c) | Yes |
+| Census 5 vals / 1 module | Yes |
+| Footgun −1 / +0 perf | Yes |
+| Pre-evidence PROMOTE if gates+laws+red-team | Gates green; recommendation in report |
+
+### Follow-ups (out of E9b surface)
+
+- Broader docs/examples outside the two usage files that still narrate concurrent
+  `and*` in historical research notes (`docs/research/` is out of fence).
+- Whether any non-example application code in sibling repos relied on par-`and*`
+  (migration is call-site `Effect.par`; no shim by design).

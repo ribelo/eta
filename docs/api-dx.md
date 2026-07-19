@@ -45,7 +45,8 @@ Use syntax operators rather than explicit bind in application code:
 
 - `let*` for dependent effect sequencing.
 - `let+` for mapping a successful value.
-- `and*` / `and+` for independent concurrent effects.
+- `and*` / `and+` for sequential product (strict left-to-right; nothing forked).
+- `Effect.par` for independent concurrent effects (explicit at the call site).
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
 - `Effect.all` for dynamic homogeneous lists of independent effects where
   fail-fast collection is wanted.
@@ -159,8 +160,9 @@ daemon draining, supervised nurseries, runtime-owned resource failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
-observability signals; `and*` remains where independent foreground effects run
-concurrently; `let@` remains where code marks lexical resource lifetime.
+observability signals; `and*` remains where a fixed product must stay sequential;
+`Effect.par` remains where independent foreground effects run concurrently;
+`let@` remains where code marks lexical resource lifetime.
 `Supervisor.Scope.(let*)` remains inside the supervisor example because child
 handles live only inside the nursery scope.
 
@@ -279,8 +281,9 @@ ordinary data for the next workflow step. It does not capture defects,
 interruption, or finalizer diagnostics.
 
 `Effect.all` is not replaced by recursive `bind` / `map` loops over a list of
-effects. Use `and*` for a small fixed set of differently typed effects,
-`Effect.map_par f inputs` when the workflow maps over inputs concurrently, and
+effects. Use `and*` for a small fixed set of differently typed effects that must
+sequence left-to-right; use `Effect.par` for a fixed concurrent product;
+`Effect.map_par f inputs` when the workflow maps over inputs concurrently; and
 `all_settled` when every child outcome is needed instead of fail-fast
 collection. `map_par` collects in input order and starts at most eight mapper
 fibers by default; pass `~max_concurrent` for a different positive cap. Omission

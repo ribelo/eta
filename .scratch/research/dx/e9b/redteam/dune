@@ -1,0 +1,9 @@
+(executable
+ (name transfer_and_star)
+ (modules transfer_and_star)
+ (libraries eta eta_eio eio_main))
+
+(executable
+ (name wanted_concurrency_serialized)
+ (modules wanted_concurrency_serialized)
+ (libraries eta eta_eio eio_main))
