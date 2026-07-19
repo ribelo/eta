@@ -9,7 +9,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - In flight: **E6 — `Effect.Scoped.with_2`/`with_3` (kills `and@`)**
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e6`
   - Branch: `research/dx-e6-scoped-with-helpers`
-  - Stage: predictions sealed (V-DX-E6-001); objective.md written; awaiting executor
+  - Stage: kill gate fired (cohort 3,3,3 vs 5,5,4 — helpers die, recipe stays); followup-1.md written; awaiting executor rework
 - Done: Phase A complete (E23/E24/E25 promoted) · Phase B — **E1**
   `sync_result` promoted (`sync_option` killed) · **E2** promoted · **E3**
   killed (named variants) · **E4** promoted (kill gate fired, rework
@@ -24,4 +24,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   `catch_recovery.ml`; F4 `map_par` omission misreading; F5
   `Supervisor.scoped` vocabulary; candidate: `map_par` default-8 bench
 - Pending decisions: none
-- Last update: 2026-07-19 — E6 launched
+- Last update: 2026-07-19 — E6 kill gate fired, rework in flight
