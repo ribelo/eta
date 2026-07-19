@@ -1610,3 +1610,52 @@ rename hypothesis (`Concurrent`/`Sequential` vs `Parallel`/`Applicative`)
 and the deeper alternative — semantics via *distinct operator names*
 rather than module-switched `open`s (the explicit reviewer's critique).
 Any E9b gets a fresh sealed prediction; no post-hoc retest of E9 shapes.
+
+---
+
+## V-DX-E9B-001 — 2026-07-19 — research/dx-e9b-honest-and-star — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E9B-002. Human design
+decision (2026-07-19): option **B** — least astonishment — after the E9
+hold showed module-switched `open`s carry no semantics (V-DX-E9-002).
+
+**The contract.** `Syntax.( and* )` and `( and+ )` become the SEQUENTIAL
+product (implementation = the E9 branch's `Applicative`: `Effect.bind
+(fun a -> Effect.map (fun b -> (a, b)) right) left`). No submodules;
+`Syntax` stays one module. Concurrency is spelled explicitly:
+`Effect.par` (unchanged). The E9 split is abandoned as a design (branch
+kept as provenance; its Applicative implementation + law tests are reused).
+
+**Why this can promote on safety, not just comprehension.** Under the old
+shape, misunderstanding `and*` wrote a *correctness* bug (silent race).
+Under B, the order-sensitive transfer written with `and*` is correct by
+construction; the only residual surprise is someone *wanting* concurrency
+and getting sequencing — a latency surprise, observable and harmless, not
+corruption. The red-team inverts: the invited bug is now unwriteable.
+
+**Census (predicted).** Syntax operators 5 vals (unchanged — `and*`/`and+`
+stay, semantics change); modules 1 (unchanged; E9's +2/+2 rejected).
+Footguns: −1/+0 — invisible concurrency removed; the perf-surprise
+("`and*` does not fork") documented in mli + `docs/api-dx.md`.
+
+**Migration (predicted).** The 2 current `and*` files
+(`examples/background_lifecycle.ml`, `test/api_dx/api_dx_examples.ml`):
+sites with concurrent intent migrate to `Effect.par`; incidental sites
+become sequential `and*`. Docs + law tests (ported from the E9 branch).
+~10–15 files touched.
+
+**Review (predicted).** Cold readers on the order-sensitive transfer
+written with `and*`: zero correctness-risk misreadings (nobody's code
+races); predicted ≥ 2/3 read sequencing correctly, rest "not determined"
+(harmless under B). `Effect.par` read as forking: 3/3 (the name says it).
+Pre-registered decision rule: **promote** iff (a) law tests green,
+(b) red-team shows the transfer-with-`and*` is observably sequential and
+a would-be-concurrent `and*` program is correct-but-serialized,
+(c) review has ≤ 1/6 answers asserting `and*` forks/cancels (the old
+dangerous misreading) and no other material misreading ≥ 2/6. **Kill/hold**
+if a NEW dangerous misreading appears at ≥ 2/6 (e.g. readers believe
+`Effect.par` is sequential).
+
+**Outcome (predicted).** Promote at ~85% confidence. Residual risk:
+Lwt-culture readers asserting `and*` = concurrent — safe under B (perf
+misreading, not correctness), but counts in the review.
