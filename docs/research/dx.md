@@ -240,3 +240,29 @@ Laws the phase produced:
    notation is semantics (E4).
 5. **Symmetry is not a usage argument** — `sync_option` died because the
    sync+option leaf pattern does not exist in the wild (E1).
+
+## E7 — Error-renderer deriver (promoted 2026-07-19)
+
+`[@@deriving eta_error]` (in `ppx_eta`) generates `pp_err` for closed
+polymorphic-variant error types — a plain match you would approve in
+review, nothing more. Built-in payloads (`string`/`int`/`int64`/`float`/
+`bool`); anything else is a **PPX-time error with a what/where/what-next
+message** unless the tag carries `[@eta.render f]`. No placeholders —
+placeholders are how `"<typed failure>"` reproduced.
+
+Wiring stays explicit (T9): `Effect.named ~error_pp:pp_err "db.save"` or
+one `Effect.with_error_pp pp_err` per module subtree. Nothing is inferred
+or automatic.
+
+Why it matters: the default telemetry for typed failures was the literal
+string `"<typed failure>"` — a DX bug (T6). After E25's `?error_pp` socket,
+the remaining gap was that nobody hand-writes `pp` functions. Now the
+meaningful default is the path of least resistance: golden test shows the
+same failure rendering `<typed failure>` → `db:7` through the real tracer.
+Renaming a tag changes telemetry — documented as honest, not hidden.
+
+Evidence: error board rated before 2 / after 4, expansions 5,5
+("approve verbatim"), comprehension 4/4 cold. 54 example declarations
+migrated; zero hand-written telemetry printers remain. Provenance:
+`.scratch/research/dx/e7/`, V-DX-E7-001..002, branch
+`research/dx-e7-error-pp-deriver`.

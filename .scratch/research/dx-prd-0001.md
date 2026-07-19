@@ -1572,7 +1572,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E4 | Cause rendering corpus | B | M | low | **promoted** 2026-07-19 (kill gate fired; rework passed) | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E4-001..002 |
 | E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | **killed** (helpers) · recipe promoted 2026-07-19 | SC | research/dx-e6-scoped-with-helpers | V-DX-E6-001..002 |
-| E7 | Error-pp deriver | C | M | low | proposed | | | |
+| E7 | Error-pp deriver | C | M | low | **promoted** 2026-07-19 | SC | research/dx-e7-error-pp-deriver | V-DX-E7-001..002 |
 | E8 | [%eta.result] sugar | C | S | low | proposed | | | |
 | E9 | Syntax.Parallel/Applicative | C | M | med | proposed | | | |
 | E10 | let%eta function sugar | C | M | med | proposed (hold default) | | | |

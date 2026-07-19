@@ -20,7 +20,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E4 | Cause rendering corpus | B | M | low | **promoted** 2026-07-19 (kill gate fired; rework passed) | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E4-001..002 |
 | E5 | Type-error translations | B | S | low | **promoted** 2026-07-19 | SC | research/dx-e4e5-cause-corpus-type-errors | V-DX-E5-001..002 |
 | E6 | Scoped.with_2/3 (kills and@) | B | M | low | **killed** (helpers) · recipe promoted 2026-07-19 | SC | research/dx-e6-scoped-with-helpers | V-DX-E6-001..002 |
-| E7 | Error-pp deriver | C | M | low | proposed | | | |
+| E7 | Error-pp deriver | C | M | low | **promoted** 2026-07-19 | SC | research/dx-e7-error-pp-deriver | V-DX-E7-001..002 |
 | E8 | [%eta.result] sugar | C | S | low | proposed | | | |
 | E9 | Syntax.Parallel/Applicative | C | M | med | proposed | | | |
 | E10 | let%eta function sugar | C | M | med | proposed (hold default) | | | |
@@ -1304,3 +1304,58 @@ plain-match shape") predicted NOT to fire — examples/docs payloads fit v1.
 **Outcome (predicted).** Promote. Gates green within three fix attempts.
 Risk point: PPX-time rejection message quality (T7 — messages are API);
 the rejection snapshots will be reviewed on the error rubric.
+
+---
+
+## V-DX-E7-002 — 2026-07-19 — research/dx-e7-error-pp-deriver — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`df55d1df`). No JS-track package carries
+generated code (verified); no mainline target required.
+
+**Contract.** Deriver verified line-by-line: closed polymorphic variants;
+built-ins `string`/`int`/`int64`/`float`/`bool` (`%s %d %Ld %g %b`);
+`[@eta.render f]` identifier escape hatch incl. built-in override; hygienic
+binders (`gen_symbol`, prevents capture through the attribute); tag rule
+`Not_found` → `not_found`; every rejection via `Location.raise_errorf`
+with what/where/what-next (nullary+attribute misuse, inherited rows,
+multi-payload, unsupported payload, non-polyvariant). Expansion snapshots:
+8 positive + 2 rejection — the generated binding is exactly the one-pager's
+plain match (inside ppxlib's standard include wrapper; disclosed).
+
+**Golden test** (real Eio runtime + `Tracer.in_memory`): same
+`Effect.fail (`Db 7)` → `Error "<typed failure>"` without printer,
+`Error "db:7"` with derived `pp_err`. Raising derived printer → `Cause.Die`
+(E25 totality contract held, tested).
+
+**Coverage.** 54 derived declarations across 49 example files; 23/23
+named/fn sites wired with `~error_pp`; zero hand-written *telemetry*
+printers remain (two `render_*` helpers verified as business-output
+mapping, not telemetry — disclosed). Census: PPX forms +1. Footguns: −1/+0.
+
+**Red-team 3/3:** placeholder attack rejected at PPX time (snapshot);
+raising printer → defect; tag rename changes telemetry (honest, documented).
+
+**Error board** `[agent-sim, spot-check]` (fresh oracle, fixed persona):
+telemetry before **2** / after **4** ("database save failed with database
+error code 7" — domain-meaningful); expansions **5,5** ("approve
+verbatim"); cold comprehension 4/4 (explicit wiring, compile-time
+rejection, raising→defect, rename→telemetry-incompatible). Closer:
+hand-write when telemetry needs constructor-independent stable names,
+cross-field formatting, or redaction — matches documented escape hatches.
+Board observation → **F5**: a span-status string (`Error "db:7"`) does not
+by itself distinguish typed failure from defect; that is the tracer's
+status encoding, out of E7 scope — logged for the otel/E4-adjacent
+follow-up list.
+
+**Prediction scoring (V-DX-E7-001).** Hits: census +1; coverage 0%→100%;
+footguns −1/+0; review before ≤2 (2) / after ≥4 (4); expansions
+PR-approvable; kill gate unfired; promote. Miss: example declaration count
+(predicted ~14, actual 54 across 49 files — same undercount direction as
+E23; quick census keeps underestimating). Executor scored its observable
+predictions 5/5 and declined to self-award review predictions — protocol
+credit.
+
+**Decision: PROMOTE.** Merged `--no-ff` (`df55d1df`); master gates green;
+master + branch pushed; worktree removed; objective archived at
+`.scratch/research/objectives/dx-e7-error-pp-deriver.md`.

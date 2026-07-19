@@ -5,19 +5,14 @@ session: read this file, the tail of `.scratch/research/dx-journal.md`, and
 the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **C started** (syntax & PPX)
-- In flight: **E7 — error-pp deriver**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e7`
-  - Branch: `research/dx-e7-error-pp-deriver`
-  - Stage: predictions sealed (V-DX-E7-001); objective.md written; awaiting executor
-  - Spot-check packet delivered: `.scratch/research/spot-check/0001-phase-a-b.md`
-    (9 SC-flagged decisions, phases A & B)
-- Done: Phase A complete (E23/E24/E25) · Phase B complete — **E1**
-  `sync_result` promoted (`sync_option` killed) · **E2** promoted · **E3**
-  killed · **E4** promoted (gate fire + rework) · **E5** promoted · **E6**
-  helpers killed, recipe promoted — master `123872bc` + bookkeeping
-- Queue: E7 → E8 (`[%eta.result]`) → E9 (Syntax.Parallel/Applicative) →
-  E10 (hold default); E7/E8/E10 share `ppx_eta.ml`, strictly sequential
+- Current phase: **C** (syntax & PPX) — E7 promoted
+- In flight: nothing
+- Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
+  **E7 promoted** (`df55d1df`) — `[@@deriving eta_error]`, zero hand-written
+  telemetry printers in examples
+- Queue: **E8** (`[%eta.result]` leaf sugar) → E9
+  (Syntax.Parallel/Applicative) → E10 (hold default); share `ppx_eta.ml`,
+  strictly sequential
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
