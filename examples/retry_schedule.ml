@@ -14,10 +14,10 @@ let retryable = function
   | `Fatal -> false
 
 let call attempts =
-  Effect.sync_result (fun () ->
-      incr attempts;
-      if !attempts < 3 then Error (`Transient !attempts)
-      else Ok (Printf.sprintf "ok:%d" !attempts))
+  [%eta.result "api.call"
+    (incr attempts;
+     if !attempts < 3 then Error (`Transient !attempts)
+     else Ok (Printf.sprintf "ok:%d" !attempts))]
 
 let program attempts =
   call attempts |> Effect.retry ~schedule:(retry_policy ()) ~while_:retryable

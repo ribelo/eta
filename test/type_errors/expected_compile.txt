@@ -14,6 +14,18 @@ Error: eta_error: payload of tag `Custom in type err is unsupported;
        supported built-ins are string, int, int64, float, and bool; add
        [@eta.render My_type.pp] to this tag or write pp_err manually
 exit=2
+===== ppx_result_nonstring.ml =====
+File "cases/ppx_result_nonstring.ml", line 1, characters 21-24:
+1 | let x = [%eta.result 123]
+                         ^^^
+Error: expected [%eta.result "name" body]
+exit=2
+===== ppx_result_wrong_arity.ml =====
+File "cases/ppx_result_wrong_arity.ml", line 1, characters 21-30:
+1 | let x = [%eta.result "db.find"]
+                         ^^^^^^^^^
+Error: expected [%eta.result "name" body]
+exit=2
 ===== ppx_sync_nonstring.ml =====
 File "cases/ppx_sync_nonstring.ml", line 1, characters 19-22:
 1 | let x = [%eta.sync 123]

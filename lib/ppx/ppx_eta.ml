@@ -18,7 +18,7 @@ let expand_fn ~ctxt body =
 
 let fail loc message = Location.raise_errorf ~loc "%s" message
 
-let expand_sync_like ~ctxt ~kind expr =
+let expand_sync_like ~ctxt ~kind ~form expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   let open Ast_builder.Default in
   match expr.pexp_desc with
@@ -37,7 +37,8 @@ let expand_sync_like ~ctxt ~kind expr =
       in
       expand_fn ~ctxt leaf
   | _ ->
-      fail expr.pexp_loc "expected [%eta.sync \"name\" body]"
+      fail expr.pexp_loc
+        (Printf.sprintf "expected [%%eta.%s \"name\" body]" form)
 
 let fn_extension =
   Extension.V3.declare "eta.fn" Extension.Context.expression
@@ -47,7 +48,12 @@ let fn_extension =
 let sync_extension =
   Extension.V3.declare "eta.sync" Extension.Context.expression
     Ast_pattern.(single_expr_payload __)
-    (expand_sync_like ~kind:"sync")
+    (expand_sync_like ~kind:"sync" ~form:"sync")
+
+let result_extension =
+  Extension.V3.declare "eta.result" Extension.Context.expression
+    Ast_pattern.(single_expr_payload __)
+    (expand_sync_like ~kind:"sync_result" ~form:"result")
 
 let longident_of_path path =
   match String.split_on_char '.' path with
@@ -605,5 +611,6 @@ let () =
       [
         Context_free.Rule.extension fn_extension;
         Context_free.Rule.extension sync_extension;
+        Context_free.Rule.extension result_extension;
         Context_free.Rule.extension sql_table_extension;
       ]

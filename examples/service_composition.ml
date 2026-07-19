@@ -20,10 +20,10 @@ module User_db = struct
     Effect.sync (fun () -> db.released := true)
 
   let lookup db user_id =
-    Effect.sync_result (fun () ->
-        if !(db.released) then Error `Closed
-        else if String.equal user_id "" then Error (`Invalid_user "empty")
-        else Ok (Printf.sprintf "%s@%d" user_id (db.clock.now_ms ())))
+    [%eta.result "user.lookup"
+      (if !(db.released) then Error `Closed
+       else if String.equal user_id "" then Error (`Invalid_user "empty")
+       else Ok (Printf.sprintf "%s@%d" user_id (db.clock.now_ms ())))]
 end
 
 let with_user_db clock released =

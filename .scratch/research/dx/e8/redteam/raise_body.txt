@@ -1,0 +1,3 @@
+span name=db.boom status=error:Failure("boom")
+span name=Raise_body.program status=error:Failure("boom")
+die=Failure("boom")

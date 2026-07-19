@@ -31,7 +31,7 @@ let program id =
     Effect.sync_result (fun () -> release_db db)
   in
   let@ db = Effect.with_resource ~acquire ~release in
-  Effect.sync_result (fun () -> load_user db id)
+  [%eta.result "db.load_user" (load_user db id)]
   |> Effect.retry ~schedule:(Schedule.recurs 3) ~while_:(function
        | `Db_unavailable -> true
        | `Db_closed -> false)

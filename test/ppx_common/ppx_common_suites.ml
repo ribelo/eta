@@ -95,6 +95,81 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check (option int)) "leaf parent" (Some fn.span_id) leaf.parent_id
 
+  module Db = struct
+    let find_ok () : (string, err) result = Ok "user:42"
+    let find_err () : (string, err) result = Error (`Db 7)
+    let find_raise () : (string, err) result = failwith "db exploded"
+  end
+
+  let run_result_case rt label (program : (string, err) Effect.t) =
+    match B.run rt program with
+    | Exit.Ok value -> `Ok value
+    | Exit.Error (Cause.Fail err) -> `Fail err
+    | Exit.Error (Cause.Die die) -> `Die (Printexc.to_string die.exn)
+    | Exit.Error _ -> Alcotest.failf "%s: unexpected cause" label
+
+  let test_ppx_result_parity () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    let result_sugar_ok : (string, err) Effect.t =
+      [%eta.result "db.find" (Db.find_ok ())]
+    in
+    let result_hand_ok : (string, err) Effect.t =
+      Effect.fn __POS__ __FUNCTION__
+        (Effect.named "db.find" (Effect.sync_result (fun () -> Db.find_ok ())))
+    in
+    let result_sugar_err : (string, err) Effect.t =
+      [%eta.result "db.find" (Db.find_err ())]
+    in
+    let result_hand_err : (string, err) Effect.t =
+      Effect.fn __POS__ __FUNCTION__
+        (Effect.named "db.find" (Effect.sync_result (fun () -> Db.find_err ())))
+    in
+    let result_sugar_raise : (string, err) Effect.t =
+      [%eta.result "db.find" (Db.find_raise ())]
+    in
+    let result_hand_raise : (string, err) Effect.t =
+      Effect.fn __POS__ __FUNCTION__
+        (Effect.named "db.find"
+           (Effect.sync_result (fun () -> Db.find_raise ())))
+    in
+    let check_ok label program =
+      match run_result_case rt label program with
+      | `Ok value -> Alcotest.(check string) (label ^ " value") "user:42" value
+      | _ -> Alcotest.failf "%s: expected Ok" label
+    in
+    check_ok "sugar ok" result_sugar_ok;
+    check_ok "hand ok" result_hand_ok;
+    let spans = Tracer.dump tracer in
+    let leaf_spans =
+      List.filter (fun span -> String.equal span.Tracer.name "db.find") spans
+    in
+    Alcotest.(check int) "ok leaf spans" 2 (List.length leaf_spans);
+    (* loc is attached by Effect.fn / here_attr on the outer span, not the leaf. *)
+    let loc_spans =
+      List.filter
+        (fun span ->
+          match attr "loc" span with
+          | Some loc -> String.contains loc '/'
+          | None -> false)
+        spans
+    in
+    Alcotest.(check bool) "source loc present" true (List.length loc_spans >= 2);
+    (match
+       ( run_result_case rt "sugar err" result_sugar_err,
+         run_result_case rt "hand err" result_hand_err )
+     with
+     | `Fail (`Db 7), `Fail (`Db 7) -> ()
+     | _ -> Alcotest.fail "expected matching Db 7 typed failures");
+    (match
+       ( run_result_case rt "sugar raise" result_sugar_raise,
+         run_result_case rt "hand raise" result_hand_raise )
+     with
+     | `Die sugar, `Die hand ->
+         Alcotest.(check string)
+           "defect message" "Failure(\"db exploded\")" sugar;
+         Alcotest.(check string) "hand defect message" sugar hand
+     | _ -> Alcotest.fail "expected matching Die defects")
+
   let test_eta_error_span_status () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
     let before = Effect.named "db.save.before" (Effect.fail (`Db 7)) in
@@ -168,6 +243,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Alcotest.test_case "fn" `Quick test_ppx_fn;
           Alcotest.test_case "sync leaf" `Quick test_ppx_thunk_leaf;
+          Alcotest.test_case "result leaf parity" `Quick test_ppx_result_parity;
           Alcotest.test_case "eta_error span status" `Quick
             test_eta_error_span_status;
           Alcotest.test_case "eta_error raising renderer" `Quick

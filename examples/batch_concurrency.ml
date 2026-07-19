@@ -9,7 +9,7 @@ let lookup_user id =
   else Ok { id; name = "user:" ^ id }
 
 let load_user id =
-  Effect.sync_result (fun () -> lookup_user id)
+  [%eta.result "user.lookup" (lookup_user id)]
 
 let render_user user =
   user.id ^ ":" ^ user.name

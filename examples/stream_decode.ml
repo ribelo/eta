@@ -9,7 +9,7 @@ let decode = function
 let program =
   Eta_stream.Stream.from_iterable [ "alpha"; "beta"; "gamma" ]
   |> Eta_stream.Stream.map_effect (fun raw ->
-         Effect.sync_result (fun () -> decode raw))
+         [%eta.result "stream.decode" (decode raw)])
   |> Eta_stream.run_collect
 
 let () =

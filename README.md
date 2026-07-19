@@ -201,6 +201,18 @@ let current_user auth =
 This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named ... (Effect.sync ...))`, with a
 zero-argument callback.
 
+Result-returning leaves use the same shape with `[%eta.result]`:
+
+```ocaml
+let user = [%eta.result "db.find" (Db.find db id)]
+```
+
+It expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named "db.find"
+(Effect.sync_result (fun () -> Db.find db id)))`. The string is the span name;
+`Ok` succeeds, `Error` is typed failure, and raises become `Cause.Die`. Use
+`Effect.from_result` for already-computed results; keep hand-written
+`named`/`fn` when you need `~error_pp`, dynamic names, or other kwargs.
+
 Use it by adding `ppx_eta` to your test or executable preprocessors:
 
 ```lisp
