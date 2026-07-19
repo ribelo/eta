@@ -1,0 +1,10 @@
+LABEL: telemetry-after
+PROGRAM: Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+RUNTIME: Eio-backed Eta runtime with Tracer.in_memory
+
+span.name=db.save
+span.status=Error "db:7"
+
+Provenance: test_eta_error_span_status in
+test/ppx_common/ppx_common_suites.ml. The printer is generated from
+type err = [ `Db of int | `Unavailable ] [@@deriving eta_error].

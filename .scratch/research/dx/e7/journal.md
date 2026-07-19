@@ -114,3 +114,139 @@ The two pre-existing dead rejection paths in `lib/ppx/ppx_eta.ml` remain out of
 scope: the empty result of `String.split_on_char` in `longident_of_path`, and the
 zero-field record branch in `projection_constructor`. E7 will not delete or
 rewrite either path.
+
+---
+
+## Execution log
+
+### V-DX-E7-001 — Predictions sealed
+
+The prediction section above was committed as `b1c5a4de` before documentation,
+implementation, tests, or example edits. It has not been edited since.
+
+### V-DX-E7-002 — Docs-first contract
+
+`README.md` and `docs/api-dx.md` documented supported closed polymorphic rows,
+tag naming, five built-in payloads, `[@eta.render f]`, PPX-time rejection,
+explicit `?error_pp` / `with_error_pp` wiring, totality, and telemetry stability
+before the PPX implementation commit. Package metadata now lists typed-error
+printers as a `ppx_eta` surface.
+
+### V-DX-E7-003 — Generated code and rejection evidence
+
+`eta_error` is the first `Deriving.str_type_decl` generator in `ppx_eta`. It
+emits one constrained `pp_<type>` binding containing only `fun` + `function`
+branches and qualified `Format` calls. Generated binders use ppxlib fresh
+symbols so a named custom printer cannot be captured. Custom render attributes
+accept printer identifiers (`f` / `Module.f`), not arbitrary expressions.
+
+The committed corpus has the sealed **10 fixtures**:
+
+| Evidence | Actual |
+| --- | ---: |
+| Nullary expansion | 1 |
+| Built-in payload expansions | 5 |
+| Mixed expansion | 1 |
+| Built-in custom override expansion | 1 |
+| Full compiler-error snapshots (unsupported payload, nominal variant) | 2 |
+| **Total** | **10** |
+
+Focused command:
+
+```sh
+nix develop -c dune runtest test/ppx_expansion test/ppx_eio test/type_errors --force
+```
+
+Result: PASS. The Eio golden test runs default and derived `Db 7` failures
+through the same in-memory tracer and asserts `"<typed failure>"` before and
+`"db:7"` after. It separately proves that a raising custom printer selected by
+generated code returns `Cause.Die Failure("derived renderer exploded")`.
+
+Manual compile probes also confirmed a parameterized row can derive through
+`[@eta.render]`. A private row cannot be pattern-matched by the generated
+binding, so the deriver rejects it directly with make-public/write-manual
+guidance rather than leaking a generated-code type error.
+
+### V-DX-E7-004 — Examples/docs renderer census
+
+No concrete error declaration exists in `docs/`. Baseline commit `28743456` had
+47 hand-written `pp_error` / `pp_never` / `pp_api_error` / formatter-style
+`render_error` definitions across 47 example files. The final census is:
+
+| Surface | Before | After | Coverage |
+| --- | ---: | ---: | ---: |
+| Hand-written example `Format` error printers | 47 | 0 | 100% removed |
+| Derived error declarations | 0 | 54 across 49 files | 100% of local example error rows |
+| `Effect.named` / `Effect.fn` sites with direct `~error_pp` | 0 | 23 / 23 | 100% |
+| Concrete derivable error declarations in `docs/` | 0 | 0 | n/a |
+
+Four nested payload sites derive the payload row and name that generated
+printer via `[@eta.render pp_<payload>]`. The signal example explicitly lists
+public tags and refutes its impossible observer-error payload during widening;
+the deriver was not broadened to inherited rows. Remaining `render_*` functions
+return domain strings for business mapping/output and are not `Format` error
+printers.
+
+Actual PPX census: extension-point/deriver forms **3 -> 4 (+1)**. Actual footgun
+delta: **-1 / +0**; the effort barrier that preserved placeholders is removed,
+and unsupported payloads still fail at PPX time.
+
+### V-DX-E7-005 — Red-team
+
+Artifacts: `.scratch/research/dx/e7/redteam/`.
+
+1. Unsupported record payload cannot emit a placeholder; the PPX fails with the
+   snapshotted built-ins/`[@eta.render]` guidance.
+2. A raising custom printer selected by derived code becomes `Cause.Die`.
+3. Consecutive commits `0def476c` and `28743456` rename `Db_down` to
+   `Database_down`; real output changes from `db_down` to `database_down`.
+
+All attacks passed. Generated compilation artifacts accidentally created during
+the first manual tag probe were removed in the consecutive rename commit; only
+source and recorded output remain.
+
+### V-DX-E7-006 — Exact gates
+
+All passed on the first attempt:
+
+```sh
+nix develop -c dune build @install          # PASS
+nix develop -c dune runtest --force         # PASS
+nix develop -c eta-oxcaml-test-shipped      # PASS
+```
+
+No generated code landed in a JS-track package, so the conditional mainline JS
+gate was not required.
+
+### Prediction score
+
+| Sealed prediction | Actual | Score |
+| --- | --- | ---: |
+| 10 snapshot fixtures | 10 | 1/1 |
+| Plain typed match, five built-ins, explicit override | Matched; hygienic binder names differ from illustrative names | 1/1 |
+| 100% census and zero hand-written example printers | 54 derived declarations; zero targeted printers | 1/1 |
+| PPX forms +1 | +1 | 1/1 |
+| Footgun -1/+0 | -1/+0 | 1/1 |
+| Review ratings / two likely misreadings | Packet prepared; external review pending | pending |
+
+Observable prediction score: **5/5**. Review-rating predictions remain honestly
+unscored until the randomized packet is reviewed.
+
+### Deviations and remaining uncertainty
+
+- Ppxlib places deriver output in its standard warning/Merlin `include struct`
+  scaffold. The snapshotted generated binding inside is the required plain
+  typed match; review excerpts omit only that standard scaffold.
+- Hygienic fresh binder names replace illustrative `fmt` / `id` names. This is
+  visible in snapshots and prevents capture without adding runtime machinery.
+- Private polymorphic aliases are rejected after a real compile probe proved
+  the generated external binding cannot pattern-match them.
+- No human review rating is claimed. The packet is ready for that evidence.
+
+### Verdict
+
+**PROMOTE.** The one-pager gates are met: complete example coverage, zero
+hand-written example `Format` error printers, exact positive/negative snapshots,
+real `db:7` tracer evidence, explicit wiring, and green repository gates. The
+payload long tail used the designed explicit escape hatch and did not force a
+smarter or less reviewable PPX.
