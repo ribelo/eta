@@ -284,12 +284,60 @@ does not mean unbounded concurrency.
 `Effect.with_resource`. They are needed for resources that intentionally live
 until a surrounding runtime, supervisor, daemon, or scope boundary exits.
 
+For a fixed set of resources, default to a nested `Effect.with_resource` ladder:
+
+```ocaml
+let open Eta.Syntax in
+let@ pool =
+  Effect.with_resource ~acquire:Pool.connect ~release:Pool.close
+in
+let@ cache =
+  Effect.with_resource ~acquire:Cache.connect ~release:Cache.close
+in
+serve pool cache
+```
+
+The structure makes lifecycle semantics visible: acquisition is sequential,
+the inner resource releases before the outer resource, and both releases run
+when their enclosing body exits.
+
+When acquisition concurrency matters, use one `Effect.with_scope`, acquire the
+independent descriptions with `Effect.map_par` (or `Effect.all` for an existing
+homogeneous list), and register each completed resource in the owner scope with
+`Effect.acquire_release`. Parallel combinators give each child its own finalizer
+scope, so the bridge must perform owner registration explicitly. For example,
+four homogeneous database shards can share one owner scope:
+
+```ocaml
+let acquire_into scope ~acquire ~release =
+  Effect.Expert.make @@ fun child ->
+  match Effect.Expert.eval child acquire with
+  | Exit.Error _ as error -> error
+  | Exit.Ok resource ->
+      Effect.Expert.eval scope
+        (Effect.acquire_release ~acquire:(Effect.pure resource) ~release)
+
+let with_shards configs body =
+  Effect.with_scope
+    (Effect.Expert.make @@ fun scope ->
+     Effect.Expert.eval scope
+       (Effect.map_par
+          (fun config ->
+            acquire_into scope ~acquire:(Db.connect config) ~release:Db.close)
+          configs
+        |> Effect.bind body))
+```
+
+The shard acquisitions run concurrently. A failed shard cancels acquisitions
+still in progress; connections already registered are closed once in reverse
+successful acquisition order as the scope exits.
+
 `Effect.finally` is not replaced by hand-written `bind_error` cleanup. Manual
 cleanup around typed success/failure paths misses defects and cancellation, and
 does not preserve cleanup failures with Eta's finalizer/suppressed-cause
 semantics. Use `finally cleanup body` for one-shot cleanup around an existing
 effect. Use `with_resource` when cleanup depends on a newly acquired resource,
-and `acquire_release` / `scoped` when a resource should live until a wider
+and `acquire_release` / `with_scope` when a resource should live until a wider
 scope boundary.
 
 `Effect.sync` is the synchronous defect boundary. Use it when exceptions should
