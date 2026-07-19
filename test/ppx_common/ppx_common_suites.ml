@@ -97,17 +97,29 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_eta_error_span_status () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    let program =
+    let before = Effect.named "db.save.before" (Effect.fail (`Db 7)) in
+    let after =
       Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
     in
-    (match B.run rt program with
-    | Exit.Error (Cause.Fail (`Db 7)) -> ()
-    | _ -> Alcotest.fail "expected Db 7 typed failure");
-    let span = only_span tracer in
-    Alcotest.(check string) "span name" "db.save" span.name;
-    match span.status with
-    | Tracer.Error message -> Alcotest.(check string) "rendered status" "db:7" message
-    | _ -> Alcotest.fail "expected error span status"
+    let run label program =
+      match B.run rt program with
+      | Exit.Error (Cause.Fail (`Db 7)) -> ()
+      | _ -> Alcotest.failf "expected Db 7 typed failure from %s" label
+    in
+    run "default" before;
+    run "derived" after;
+    let spans = Tracer.dump tracer in
+    let find name =
+      List.find (fun span -> String.equal span.Tracer.name name) spans
+    in
+    let status name =
+      match (find name).status with
+      | Tracer.Error message -> message
+      | _ -> Alcotest.failf "expected error span status for %s" name
+    in
+    Alcotest.(check string)
+      "default status" "<typed failure>" (status "db.save.before");
+    Alcotest.(check string) "derived status" "db:7" (status "db.save")
 
   let test_eta_error_raising_renderer_becomes_defect () =
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
