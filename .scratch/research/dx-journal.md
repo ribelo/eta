@@ -1481,3 +1481,56 @@ the orchestrator verifies `git branch --show-current` before every master
 commit, and restores a foreign checked-out branch after master work rather
 than assuming the checkout is on master. (Longer-term, concurrent
 non-programme work belongs in its own worktree — raised with the human.)
+
+---
+
+## V-DX-E9-001 — 2026-07-19 — research/dx-e9-syntax-parallel-applicative — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E9-002. This is the first
+experiment with a genuinely live kill gate; predictions say so honestly.
+
+**Current shapes (measured pre-change).** `lib/eta/syntax.ml`: `( and* ) =
+( and+ ) = Effect.par` — both operators are `par`, in the always-open
+module alongside `let*`/`let+`/`let@`. `Syntax` is opened in ~40 files for
+the let-forms, but `and*`/`and+` are actually USED in only 2 files
+(`examples/background_lifecycle.ml`, `test/api_dx/api_dx_examples.ml`).
+Migration is therefore tiny; the experiment's weight is in the review, not
+the diff.
+
+**The bet (from the one-pager).** `and*` = "fork fibers, cancel sibling on
+failure" is invisible at the call site (T2). Splitting into
+`Syntax.Parallel` (today's semantics) and `Syntax.Applicative` (strict
+left-to-right, nothing forked) makes the `open` a declaration of intent.
+
+**Baseline comprehension (predicted).** On today's implicit form
+(`let open Syntax in let* x = a and* y = b in …`), asked "how many fibers
+fork? what happens when `a` fails?": P-OCaml passes split — Lwt/Async
+culture says `and*` is concurrent; Stdlib intuition says applicative =
+sequential. Predicted 1 of 3 fully correct (both fibers AND sibling
+cancellation), 2 of 3 missing at least the cancellation → baseline
+33–50%, below the 80% kill gate. **Named kill risk:** the reviewer may know
+ppx_let conventions from training data (Lwt's `and*` = `Lwt.both`) and
+score baseline ≥ 2/3 — pushing toward the gate. Estimated kill
+probability: ~30%.
+
+**Explicit form (predicted).** `open Syntax.Parallel` + one doc paragraph:
+3/3 correct on fibers and cancellation. `Syntax.Applicative`: 3/3 correct
+on sequencing. Review target ≥ 80% explicit vs. baseline — predicted met
+(100% vs ≤ 50%).
+
+**Census (predicted).** Syntax operators: 5 vals → 7 (`and*`/`and+`
+duplicated across two modules with different semantics) — growth,
+justified per §3.1: sequential applicative gains a home it does not have;
+concurrency becomes visible at the `open`. Modules +2. Footguns: −1/+0
+(invisible-`and*` removed); new-trap candidate recorded: opening BOTH
+modules shadows — mli must say "open exactly one".
+
+**Mechanical (predicted).** Law tests: `Parallel` = par laws (pair order,
+fail-fast cancels sibling — reuse existing par tests); `Applicative` =
+sequencing laws (left settles before right starts — observable via
+ordered side effects; zero fibers forked; fail-fast by sequencing).
+Distinctness probe: the two `and*`s observably differ.
+
+**Outcome (predicted).** Promote at ~70% confidence; kill at ~30%
+(baseline too good). If killed, the recorded evidence is the answer to
+"is `and*` obvious?" and the split idea goes to the parking lot.
