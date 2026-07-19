@@ -57,8 +57,6 @@ Use ordinary OCaml for application services:
 Use named helpers at common boundaries:
 
 - `Effect.with_resource` for body-bounded acquire/use/release.
-- `Effect.Scoped.with_2` / `Effect.Scoped.with_3` for concurrent, fail-fast
-  acquisition of two or three independent resources under one local scope.
 - `Effect.finally` for one-shot cleanup around an existing effect.
 - `Effect.acquire_release` plus `Effect.with_scope` when a resource should live
   until an enclosing scope exits.
@@ -286,17 +284,29 @@ does not mean unbounded concurrency.
 `Effect.with_resource`. They are needed for resources that intentionally live
 until a surrounding runtime, supervisor, daemon, or scope boundary exits.
 
-For two or three independent resources, use `Effect.Scoped.with_2` or
-`Effect.Scoped.with_3`: acquisition is concurrent and fail-fast, and the local
-scope releases every successfully registered resource when the body exits. For
-arity greater than three, keep the same composition visible: open one
-`Effect.with_scope`, register each resource with `Effect.acquire_release`, and
-acquire the independent descriptions with `Effect.map_par` (or `Effect.all`
-when the descriptions are already a homogeneous list).
+For a fixed set of resources, default to a nested `Effect.with_resource` ladder:
 
-Parallel combinators give each child its own finalizer scope, so a local recipe
-must explicitly register each completed acquisition in the enclosing scope.
-For example, four homogeneous database shards can share one explicit scope:
+```ocaml
+let open Eta.Syntax in
+let@ pool =
+  Effect.with_resource ~acquire:Pool.connect ~release:Pool.close
+in
+let@ cache =
+  Effect.with_resource ~acquire:Cache.connect ~release:Cache.close
+in
+serve pool cache
+```
+
+The structure makes lifecycle semantics visible: acquisition is sequential,
+the inner resource releases before the outer resource, and both releases run
+when their enclosing body exits.
+
+When acquisition concurrency matters, use one `Effect.with_scope`, acquire the
+independent descriptions with `Effect.map_par` (or `Effect.all` for an existing
+homogeneous list), and register each completed resource in the owner scope with
+`Effect.acquire_release`. Parallel combinators give each child its own finalizer
+scope, so the bridge must perform owner registration explicitly. For example,
+four homogeneous database shards can share one owner scope:
 
 ```ocaml
 let acquire_into scope ~acquire ~release =

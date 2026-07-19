@@ -50,3 +50,31 @@ nesting. The strongest counterprediction is that twelve acquire/release labels
 around a three-argument callback will scan as more boilerplate than the ladder;
 if reviewers rate that worse, the helpers should be killed and only the recipe
 kept, exactly as pre-registered.
+
+## Follow-up 1 — kill decision
+
+The pre-registered kill gate fired after three blinded independent cohort
+passes:
+
+| Pass | Ladder rating | `with_3` rating | Preference |
+|---|---:|---:|---|
+| 1 | 5 | 3 | ladder |
+| 2 | 5 | 3 | ladder |
+| 3 | 4 | 3 | `with_3` for scanning, despite the lower rating |
+| **Median** | **5** | **3** | ladder in 2 of 3 |
+
+The 65%-better prior was a **miss**. The counterprediction that twelve labelled
+arguments would scan as worse boilerplate than the ladder was a **hit**. The
+consistent diagnosis was that `with_3` carried cardinality but hid acquisition
+strategy and release order, while the ladder made its serial lifecycle
+structural.
+
+Decision: kill `Effect.Scoped.with_2` and `with_3`; retain the documented
+parallel-acquire recipe and port its partial-failure, release-order, and ladder
+parity evidence into regression tests. `and@` remains killed by the independent
+red-team result. The journal, report, red-team probes, review packet, and
+inferred-signature evidence remain as branch provenance.
+
+General finding: *helper names must carry execution strategy, not just
+cardinality*. A strategy-carrying name is a separate backlog experiment, not a
+rename rescue for E6.

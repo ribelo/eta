@@ -81,15 +81,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let wait_for_sleepers clock expected =
     wait_until (fun () -> B.sleeper_count clock >= expected)
 
-  let expect_interrupted label = function
-    | `Cancelled -> ()
-    | `Returned (Exit.Error (Cause.Interrupt _)) -> ()
-    | `Returned (Exit.Ok _) ->
-        Alcotest.failf "%s: expected interruption, got Ok" label
-    | `Returned (Exit.Error cause) ->
-        Alcotest.failf "%s: expected interruption, got %a" label
-          (Cause.pp pp_hidden) cause
-
   let mark trail name =
     E.named name (E.sync (fun () -> trail := name :: !trail))
 
@@ -406,37 +397,34 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       [ "acquired"; "body:1"; "released:1" ]
       (List.rev !trail)
 
-  let test_scoped_with_2_acquires_concurrently () =
-    B.with_runtime @@ fun _ctx rt ->
-    let started1, started1_u = B.create_promise () in
-    let started2, started2_u = B.create_promise () in
-    let acquire1 =
-      E.sync (fun () -> B.resolve started1_u ())
-      |> E.bind (fun () -> B.await_effect started2)
-      |> E.map (fun () -> 20)
-    in
-    let acquire2 =
-      E.sync (fun () -> B.resolve started2_u ())
-      |> E.bind (fun () -> B.await_effect started1)
-      |> E.map (fun () -> 22)
-    in
-    let eff =
-      E.Scoped.with_2 ~acquire1 ~release1:(fun _ -> E.unit) ~acquire2
-        ~release2:(fun _ -> E.unit) (fun left right -> E.pure (left + right))
-    in
-    Alcotest.(check int) "both acquisitions started" 42 (run_ok rt eff)
+  let acquire_into owner ~acquire ~release =
+    E.Expert.make @@ fun child ->
+    match E.Expert.eval child acquire with
+    | Exit.Error _ as error -> error
+    | Exit.Ok resource ->
+        E.Expert.eval owner
+          (E.acquire_release ~acquire:(E.pure resource) ~release)
 
-  let test_scoped_with_2_partial_acquire_failure_releases_once () =
+  let parallel_acquire_recipe acquisitions ~release body =
+    E.with_scope
+      (E.Expert.make @@ fun owner ->
+       E.Expert.eval owner
+         (E.map_par
+            (fun acquire -> acquire_into owner ~acquire ~release)
+            acquisitions
+          |> E.bind body))
+
+  let test_parallel_acquire_recipe_partial_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let acquired1, acquired1_u = B.create_promise () in
     let trail = ref [] in
-    let releases1 = ref 0 in
-    let releases2 = ref 0 in
+    let releases = ref 0 in
+    let body_ran = ref false in
     let acquire1 =
       E.sync (fun () ->
           trail := "acquire1" :: !trail;
-          B.resolve acquired1_u ())
-      |> E.map (fun () -> "one")
+          B.resolve acquired1_u ();
+          "one")
     in
     let acquire2 =
       B.await_effect acquired1
@@ -444,15 +432,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.sync (fun () -> trail := "acquire2-fail" :: !trail))
       |> E.bind (fun () -> E.fail `Acquire2)
     in
+    let release resource =
+      E.sync (fun () ->
+          incr releases;
+          trail := ("release:" ^ resource) :: !trail)
+    in
     let eff =
-      E.Scoped.with_2 ~acquire1
-        ~release1:(fun _ ->
-          E.sync (fun () ->
-              incr releases1;
-              trail := "release1" :: !trail))
-        ~acquire2
-        ~release2:(fun _ -> E.sync (fun () -> incr releases2)) (fun _ _ ->
-          E.unit)
+      parallel_acquire_recipe [ acquire1; acquire2 ] ~release (fun _ ->
+          E.sync (fun () -> body_ran := true))
     in
     (match B.run rt eff with
     | Exit.Error (Cause.Fail `Acquire2) -> ()
@@ -460,273 +447,104 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected second acquire failure, got %a"
           (Cause.pp pp_hidden) cause
     | Exit.Ok () -> Alcotest.fail "expected second acquire failure");
-    Alcotest.(check int) "first release once" 1 !releases1;
-    Alcotest.(check int) "failed acquire has no release" 0 !releases2;
+    Alcotest.(check bool) "body skipped" false !body_ran;
+    Alcotest.(check int) "registered resource released once" 1 !releases;
     Alcotest.(check (list string))
       "release follows failed acquire"
-      [ "acquire1"; "acquire2-fail"; "release1" ]
+      [ "acquire1"; "acquire2-fail"; "release:one" ]
       (List.rev !trail)
 
-  let test_scoped_with_2_acquire_failure_cancels_sibling () =
+  let test_parallel_acquire_recipe_reverse_release_order () =
     B.with_runtime @@ fun _ctx rt ->
-    let started1, started1_u = B.create_promise () in
-    let interrupted1 = ref false in
-    let acquire1 =
-      E.sync (fun () -> B.resolve started1_u ())
-      |> E.bind (fun () -> B.await_cancel_effect ())
-      |> E.on_interrupt (fun _ ->
-             E.sync (fun () -> interrupted1 := true))
-    in
-    let acquire2 =
-      B.await_effect started1 |> E.bind (fun () -> E.fail `Acquire2)
-    in
-    let eff =
-      E.Scoped.with_2 ~acquire1 ~release1:(fun _ -> E.unit) ~acquire2
-        ~release2:(fun _ -> E.unit) (fun _ _ -> E.unit)
-    in
-    (match B.run rt eff with
-    | Exit.Error (Cause.Fail `Acquire2) -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "expected second acquire failure, got %a"
-          (Cause.pp pp_hidden) cause
-    | Exit.Ok () -> Alcotest.fail "expected second acquire failure");
-    Alcotest.(check bool) "waiting sibling interrupted" true !interrupted1
-
-  let ordered_scoped_with_2 trail body =
-    let acquired1, acquired1_u = B.create_promise () in
-    let acquire1 =
-      E.sync (fun () ->
-          trail := "acquire1" :: !trail;
-          B.resolve acquired1_u ();
-          1)
-    in
-    let acquire2 =
-      B.await_effect acquired1
-      |> E.bind (fun () ->
-             E.sync (fun () ->
-                 trail := "acquire2" :: !trail;
-                 2))
-    in
-    let release name _ = E.sync (fun () -> trail := name :: !trail) in
-    E.Scoped.with_2 ~acquire1 ~release1:(release "release1") ~acquire2
-      ~release2:(release "release2") body
-
-  let test_scoped_with_2_reverse_release_on_typed_failure () =
-    B.with_runtime @@ fun _ctx rt ->
-    let trail = ref [] in
-    let eff =
-      ordered_scoped_with_2 trail (fun _ _ ->
-          E.sync (fun () -> trail := "body" :: !trail)
-          |> E.bind (fun () -> E.fail `Body))
-    in
-    (match B.run rt eff with
-    | Exit.Error (Cause.Fail `Body) -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "expected typed body failure, got %a" (Cause.pp pp_hidden)
-          cause
-    | Exit.Ok _ -> Alcotest.fail "expected typed body failure");
-    Alcotest.(check (list string))
-      "reverse release after typed failure"
-      [ "acquire1"; "acquire2"; "body"; "release2"; "release1" ]
-      (List.rev !trail)
-
-  let test_scoped_with_2_reverse_release_on_defect () =
-    B.with_runtime @@ fun _ctx rt ->
-    let trail = ref [] in
-    let eff =
-      ordered_scoped_with_2 trail (fun _ _ ->
-          E.sync (fun () ->
-              trail := "body" :: !trail;
-              failwith "body defect"))
-    in
-    (match B.run rt eff with
-    | Exit.Error (Cause.Die _) -> ()
-    | Exit.Error cause ->
-        Alcotest.failf "expected body defect, got %a" (Cause.pp pp_hidden) cause
-    | Exit.Ok _ -> Alcotest.fail "expected body defect");
-    Alcotest.(check (list string))
-      "reverse release after defect"
-      [ "acquire1"; "acquire2"; "body"; "release2"; "release1" ]
-      (List.rev !trail)
-
-  let test_scoped_with_2_reverse_release_on_cancellation () =
-    B.with_runtime @@ fun ctx rt ->
-    let trail = ref [] in
-    let entered, entered_u = B.create_promise () in
-    let eff =
-      ordered_scoped_with_2 trail (fun _ _ ->
-          E.sync (fun () ->
-              trail := "body" :: !trail;
-              B.resolve entered_u ())
-          |> E.bind (fun () -> B.await_cancel_effect ()))
-    in
-    let fiber = B.fork_run_cancelable ctx rt eff in
-    ignore (B.await entered : unit);
-    B.cancel_fiber fiber;
-    expect_interrupted "Scoped.with_2 body" (B.await_cancelable fiber);
-    Alcotest.(check (list string))
-      "reverse release after cancellation"
-      [ "acquire1"; "acquire2"; "body"; "release2"; "release1" ]
-      (List.rev !trail)
-
-  let test_scoped_with_2_interrupt_during_acquire () =
-    B.with_runtime @@ fun ctx rt ->
-    let acquired1, acquired1_u = B.create_promise () in
-    let acquiring2, acquiring2_u = B.create_promise () in
-    let releases1 = ref 0 in
-    let releases2 = ref 0 in
-    let acquire1 =
-      E.sync (fun () -> B.resolve acquired1_u ()) |> E.map (fun () -> "one")
-    in
-    let acquire2 =
-      B.await_effect acquired1
-      |> E.bind (fun () ->
-             E.sync (fun () -> B.resolve acquiring2_u ()))
-      |> E.bind (fun () -> B.await_cancel_effect ())
-    in
-    let eff =
-      E.Scoped.with_2 ~acquire1
-        ~release1:(fun _ -> E.sync (fun () -> incr releases1)) ~acquire2
-        ~release2:(fun _ -> E.sync (fun () -> incr releases2)) (fun _ _ ->
-          Alcotest.fail "body ran before both acquisitions completed")
-    in
-    let fiber = B.fork_run_cancelable ctx rt eff in
-    ignore (B.await acquiring2 : unit);
-    B.cancel_fiber fiber;
-    expect_interrupted "Scoped.with_2 acquire" (B.await_cancelable fiber);
-    Alcotest.(check int) "completed acquire released once" 1 !releases1;
-    Alcotest.(check int) "interrupted acquire not released" 0 !releases2
-
-  let test_scoped_with_3_reverse_release_on_success () =
-    B.with_runtime @@ fun _ctx rt ->
-    let trail = ref [] in
-    let acquired1, acquired1_u = B.create_promise () in
-    let acquired2, acquired2_u = B.create_promise () in
-    let acquire1 =
-      E.sync (fun () ->
-          trail := "acquire1" :: !trail;
-          B.resolve acquired1_u ();
-          1)
-    in
-    let acquire2 =
-      B.await_effect acquired1
-      |> E.bind (fun () ->
-             E.sync (fun () ->
-                 trail := "acquire2" :: !trail;
-                 B.resolve acquired2_u ();
-                 2))
-    in
-    let acquire3 =
-      B.await_effect acquired2
-      |> E.bind (fun () ->
-             E.sync (fun () ->
-                 trail := "acquire3" :: !trail;
-                 3))
-    in
-    let release name _ = E.sync (fun () -> trail := name :: !trail) in
-    let eff =
-      E.Scoped.with_3 ~acquire1 ~release1:(release "release1") ~acquire2
-        ~release2:(release "release2") ~acquire3
-        ~release3:(release "release3") (fun one two three ->
-          E.sync (fun () -> trail := "body" :: !trail)
-          |> E.map (fun () -> one + two + three))
-    in
-    Alcotest.(check int) "body result" 6 (run_ok rt eff);
-    Alcotest.(check (list string))
-      "reverse release after success"
-      [
-        "acquire1";
-        "acquire2";
-        "acquire3";
-        "body";
-        "release3";
-        "release2";
-        "release1";
-      ]
-      (List.rev !trail)
-
-  let test_scoped_with_3_acquires_concurrently () =
-    B.with_runtime @@ fun _ctx rt ->
-    let started1, started1_u = B.create_promise () in
-    let started2, started2_u = B.create_promise () in
-    let started3, started3_u = B.create_promise () in
-    let await_two first second value =
-      B.await_effect first
-      |> E.bind (fun () -> B.await_effect second)
-      |> E.map (fun () -> value)
-    in
-    let acquire1 =
-      E.sync (fun () -> B.resolve started1_u ())
-      |> E.bind (fun () -> await_two started2 started3 1)
-    in
-    let acquire2 =
-      E.sync (fun () -> B.resolve started2_u ())
-      |> E.bind (fun () -> await_two started1 started3 2)
-    in
-    let acquire3 =
-      E.sync (fun () -> B.resolve started3_u ())
-      |> E.bind (fun () -> await_two started1 started2 3)
-    in
-    let eff =
-      E.Scoped.with_3 ~acquire1 ~release1:(fun _ -> E.unit) ~acquire2
-        ~release2:(fun _ -> E.unit) ~acquire3 ~release3:(fun _ -> E.unit)
-        (fun one two three -> E.pure (one + two + three))
-    in
-    Alcotest.(check int) "all acquisitions started" 6 (run_ok rt eff)
-
-  let test_scoped_with_2_matches_nested_ladder () =
-    B.with_runtime @@ fun _ctx rt ->
-    let run build =
-      let trail = ref [] in
+    let run fail_body =
       let acquired1, acquired1_u = B.create_promise () in
+      let trail = ref [] in
       let acquire1 =
         E.sync (fun () ->
             trail := "acquire1" :: !trail;
             B.resolve acquired1_u ();
-            1)
+            "one")
       in
       let acquire2 =
         B.await_effect acquired1
         |> E.bind (fun () ->
                E.sync (fun () ->
                    trail := "acquire2" :: !trail;
-                   2))
+                   "two"))
       in
-      let release name _ = E.sync (fun () -> trail := name :: !trail) in
-      let body _ _ =
+      let release resource =
+        E.sync (fun () -> trail := ("release:" ^ resource) :: !trail)
+      in
+      let body _resources =
+        E.sync (fun () -> trail := "body" :: !trail)
+        |> E.bind (fun () -> if fail_body then E.fail `Body else E.unit)
+      in
+      let exit =
+        B.run rt
+          (parallel_acquire_recipe [ acquire1; acquire2 ] ~release body)
+      in
+      (exit, List.rev !trail)
+    in
+    let expected =
+      [ "acquire1"; "acquire2"; "body"; "release:two"; "release:one" ]
+    in
+    let success_exit, success_trail = run false in
+    check_exit_ok Alcotest.unit "success" () success_exit;
+    Alcotest.(check (list string)) "success order" expected success_trail;
+    let failure_exit, failure_trail = run true in
+    (match failure_exit with
+    | Exit.Error (Cause.Fail `Body) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected typed body failure, got %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok () -> Alcotest.fail "expected typed body failure");
+    Alcotest.(check (list string)) "typed failure order" expected failure_trail
+
+  let test_parallel_acquire_recipe_nested_ladder_parity () =
+    B.with_runtime @@ fun _ctx rt ->
+    let run build =
+      let acquired1, acquired1_u = B.create_promise () in
+      let trail = ref [] in
+      let acquire1 =
+        E.sync (fun () ->
+            trail := "acquire1" :: !trail;
+            B.resolve acquired1_u ();
+            "one")
+      in
+      let acquire2 =
+        B.await_effect acquired1
+        |> E.bind (fun () ->
+               E.sync (fun () ->
+                   trail := "acquire2" :: !trail;
+                   "two"))
+      in
+      let release resource =
+        E.sync (fun () -> trail := ("release:" ^ resource) :: !trail)
+      in
+      let body () =
         E.sync (fun () -> trail := "body" :: !trail)
         |> E.bind (fun () -> E.fail `Body)
       in
       let exit = B.run rt (build acquire1 acquire2 release body) in
       (exit, List.rev !trail)
     in
-    let helper =
+    let recipe =
       run (fun acquire1 acquire2 release body ->
-          E.Scoped.with_2 ~acquire1 ~release1:(release "release1") ~acquire2
-            ~release2:(release "release2") body)
+          parallel_acquire_recipe [ acquire1; acquire2 ] ~release (fun _ ->
+              body ()))
     in
     let ladder =
       run (fun acquire1 acquire2 release body ->
-          E.with_resource ~acquire:acquire1 ~release:(release "release1")
-          @@ fun resource1 ->
-          E.with_resource ~acquire:acquire2 ~release:(release "release2")
-          @@ fun resource2 -> body resource1 resource2)
+          E.with_resource ~acquire:acquire1 ~release @@ fun _ ->
+          E.with_resource ~acquire:acquire2 ~release @@ fun _ -> body ())
     in
-    let helper_exit, helper_trail = helper in
+    let recipe_exit, recipe_trail = recipe in
     let ladder_exit, ladder_trail = ladder in
     Alcotest.(check bool)
       "same exit" true
-      (Exit.equal ( = ) ( = ) helper_exit ladder_exit);
+      (Exit.equal ( = ) ( = ) recipe_exit ladder_exit);
     Alcotest.(check (list string))
-      "same release order" ladder_trail helper_trail
-
-  let scoped_release_rows_do_not_leak () : (unit, [ `Body ]) E.t =
-    E.Scoped.with_2 ~acquire1:(E.pure 1)
-      ~release1:(fun _ -> E.fail `Release1) ~acquire2:(E.pure 2)
-      ~release2:(fun _ -> E.fail `Release2) (fun _ _ -> E.fail `Body)
-
-  let test_scoped_release_error_rows_do_not_leak () =
-    ignore (scoped_release_rows_do_not_leak () : (unit, [ `Body ]) E.t)
+      "same release order" ladder_trail recipe_trail
 
   let test_acquire_release_finalizers_run_lifo_sequentially () =
     B.with_runtime @@ fun _ctx rt ->
@@ -1017,28 +835,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_acquire_use_release_release_failure_after_success;
           Alcotest.test_case "with_resource let@ success" `Quick
             test_with_resource_let_at_success;
-          Alcotest.test_case "Scoped.with_2 concurrent acquisition" `Quick
-            test_scoped_with_2_acquires_concurrently;
-          Alcotest.test_case "Scoped.with_2 partial acquire failure" `Quick
-            test_scoped_with_2_partial_acquire_failure_releases_once;
-          Alcotest.test_case "Scoped.with_2 acquire failure cancels sibling"
-            `Quick test_scoped_with_2_acquire_failure_cancels_sibling;
-          Alcotest.test_case "Scoped.with_2 typed failure release order" `Quick
-            test_scoped_with_2_reverse_release_on_typed_failure;
-          Alcotest.test_case "Scoped.with_2 defect release order" `Quick
-            test_scoped_with_2_reverse_release_on_defect;
-          Alcotest.test_case "Scoped.with_2 cancellation release order" `Quick
-            test_scoped_with_2_reverse_release_on_cancellation;
-          Alcotest.test_case "Scoped.with_2 interrupt during acquire" `Quick
-            test_scoped_with_2_interrupt_during_acquire;
-          Alcotest.test_case "Scoped.with_3 success release order" `Quick
-            test_scoped_with_3_reverse_release_on_success;
-          Alcotest.test_case "Scoped.with_3 concurrent acquisition" `Quick
-            test_scoped_with_3_acquires_concurrently;
-          Alcotest.test_case "Scoped.with_2 nested ladder parity" `Quick
-            test_scoped_with_2_matches_nested_ladder;
-          Alcotest.test_case "Scoped release error rows do not leak" `Quick
-            test_scoped_release_error_rows_do_not_leak;
+          Alcotest.test_case "parallel acquire recipe partial failure" `Quick
+            test_parallel_acquire_recipe_partial_failure;
+          Alcotest.test_case "parallel acquire recipe release order" `Quick
+            test_parallel_acquire_recipe_reverse_release_order;
+          Alcotest.test_case "parallel acquire recipe ladder parity" `Quick
+            test_parallel_acquire_recipe_nested_ladder_parity;
           Alcotest.test_case "acquire release finalizers lifo sequential"
             `Quick test_acquire_release_finalizers_run_lifo_sequentially;
           Alcotest.test_case "acquire release finalizer failure keeps running"

@@ -154,3 +154,64 @@ shorter. The labels remain the strongest counterevidence.
 If independent reviewers rate `boot-new.ml` worse, kill `with_2`/`with_3` and
 keep the documented recipe exactly as pre-registered. Regardless of that
 result, `and@` should remain killed.
+
+## Follow-up 1 — final kill outcome
+
+The independent cohort fired the pre-registered kill gate:
+
+| Blinded pass | Ladder rating | `with_3` rating | Preference |
+|---|---:|---:|---|
+| 1 | 5 | 3 | ladder |
+| 2 | 5 | 3 | ladder |
+| 3 | 4 | 3 | `with_3` for scanning, despite the lower rating |
+| **Median** | **5** | **3** | ladder in 2 of 3 |
+
+### Prediction scoring
+
+| Prediction set | Prediction | Cohort result | Score |
+|---|---|---|---|
+| Primary prior | `with_3` rates better, about 65% confidence | median 3 vs ladder median 5 | miss |
+| Counterprediction | labelled boilerplate scans worse than the ladder | consistent cohort diagnosis | hit |
+
+The cohort found that the helper name exposed cardinality while hiding
+acquisition strategy and release order. The ladder's serial acquisition and
+inner-before-outer release semantics remained structural at the call site.
+
+### Final implementation
+
+This supersedes **V-DX-E6-4** and the pre-review recommendation above.
+
+- **V-DX-E6-5 — kill cardinality-named scoped helpers.**
+  Status: ACCEPT.
+  Decision: remove `Effect.Scoped.with_2` and `with_3` with no rename rescue.
+  Evidence: three blinded cohort passes, median 5 vs 3, ladder preferred in two
+  of three.
+  Counterevidence: the third pass preferred `with_3` for scanning, but still
+  rated it lower; all technical semantics tests had passed.
+  Recommendation: keep the ladder as the default and the explicit parallel
+  recipe as progressive disclosure.
+  Confidence: high; this is the pre-registered decision rule.
+
+The public helper implementation and its 11 API-specific tests were excised.
+Three durable recipe regressions now prove:
+
+1. partial-acquire failure releases the registered resource exactly once;
+2. reverse successful-registration release order on success and typed failure;
+3. typed-exit and release-order parity with the nested ladder.
+
+The final focused Eio suite is green with 518 tests. The recipe documentation,
+ported tests, journal, report, red-team probes, blinded review packet, and
+inferred-signature artifact survive. `and@` stays killed by the red-team result.
+All four required gates listed above were rerun after excision and passed.
+
+### Generalizable finding
+
+*Helper names must carry execution strategy, not just cardinality.*
+
+A strategy-carrying name is a different backlog experiment. It is not a rename
+rescue for E6.
+
+### Final recommendation
+
+**Kill the helpers; keep the ladder-first documentation and parallel-acquire
+recipe.**
