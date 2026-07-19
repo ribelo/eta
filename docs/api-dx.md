@@ -57,6 +57,8 @@ Use ordinary OCaml for application services:
 Use named helpers at common boundaries:
 
 - `Effect.with_resource` for body-bounded acquire/use/release.
+- `Effect.Scoped.with_2` / `Effect.Scoped.with_3` for concurrent, fail-fast
+  acquisition of two or three independent resources under one local scope.
 - `Effect.finally` for one-shot cleanup around an existing effect.
 - `Effect.acquire_release` plus `Effect.with_scope` when a resource should live
   until an enclosing scope exits.
@@ -292,21 +294,28 @@ arity greater than three, keep the same composition visible: open one
 acquire the independent descriptions with `Effect.map_par` (or `Effect.all`
 when the descriptions are already a homogeneous list).
 
-For example, four database shards can share one explicit scope:
+Parallel combinators give each child its own finalizer scope, so a local recipe
+must explicitly register each completed acquisition in the enclosing scope.
+For example, four homogeneous database shards can share one explicit scope:
 
 ```ocaml
+let acquire_into scope ~acquire ~release =
+  Effect.Expert.make @@ fun child ->
+  match Effect.Expert.eval child acquire with
+  | Exit.Error _ as error -> error
+  | Exit.Ok resource ->
+      Effect.Expert.eval scope
+        (Effect.acquire_release ~acquire:(Effect.pure resource) ~release)
+
 let with_shards configs body =
-  let open Eta.Syntax in
   Effect.with_scope
-    (let* shards =
-       Effect.map_par
-         (fun config ->
-           Effect.acquire_release
-             ~acquire:(Db.connect config)
-             ~release:Db.close)
-         configs
-     in
-     body shards)
+    (Effect.Expert.make @@ fun scope ->
+     Effect.Expert.eval scope
+       (Effect.map_par
+          (fun config ->
+            acquire_into scope ~acquire:(Db.connect config) ~release:Db.close)
+          configs
+        |> Effect.bind body))
 ```
 
 The shard acquisitions run concurrently. A failed shard cancels acquisitions

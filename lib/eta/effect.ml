@@ -9,6 +9,35 @@ include Effect_observability
 include Effect_supervisor_scope
 include Effect_schedule
 
+module Scoped = struct
+  let acquire_into owner ~acquire ~release =
+    preserve acquire @@ fun child ->
+    match eval child acquire with
+    | Exit.Error _ as err -> err
+    | Exit.Ok value ->
+        eval owner (acquire_release ~acquire:(pure value) ~release)
+
+  let with_owner names f =
+    with_scope (make ~names (fun owner -> eval owner (f owner)))
+
+  let with_2 ~acquire1 ~release1 ~acquire2 ~release2 body =
+    with_owner (names acquire1 @ names acquire2) @@ fun owner ->
+    par
+      (acquire_into owner ~acquire:acquire1 ~release:release1)
+      (acquire_into owner ~acquire:acquire2 ~release:release2)
+    |> bind (fun (resource1, resource2) -> body resource1 resource2)
+
+  let with_3 ~acquire1 ~release1 ~acquire2 ~release2 ~acquire3 ~release3 body =
+    with_owner (names acquire1 @ names acquire2 @ names acquire3) @@ fun owner ->
+    par
+      (acquire_into owner ~acquire:acquire1 ~release:release1)
+      (par
+         (acquire_into owner ~acquire:acquire2 ~release:release2)
+         (acquire_into owner ~acquire:acquire3 ~release:release3))
+    |> bind (fun (resource1, (resource2, resource3)) ->
+           body resource1 resource2 resource3)
+end
+
 let metric_timer ?description ?(unit_ = "ms") ?attrs ~name ~boundaries eff =
   now_ms
   |> bind (fun started ->
