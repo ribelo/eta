@@ -230,6 +230,10 @@ module Connection : sig
   val connect : database -> (t, error) result
   val close : t -> (unit, error) result
   val interrupt : t -> unit
+  (** [classify_read_only conn cypher] prepares [cypher] and reports LadybugDB's
+      read-only classification. [Ok true] means read-only, [Ok false] means
+      mutating, and [Error _] means prepare failed. *)
+  val classify_read_only : t -> string -> (bool, error) result
   val query_string : ?params:Param.t list -> t -> string -> (string, error) result
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
