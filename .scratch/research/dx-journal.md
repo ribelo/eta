@@ -1557,3 +1557,56 @@ cancels the right; effect order NOT guaranteed. `Applicative` product —
 **Decision rule.** promote: explicit ≥ 5/6 AND (explicit − baseline) ≥ 2/6.
 kill: baseline ≥ 5/6 (≈83%). Otherwise: hold, with the numbers published.
 Granularity caveat recorded: 6 questions/run = 16.7-point steps.
+
+---
+
+## V-DX-E9-002 — 2026-07-19 — research/dx-e9-syntax-parallel-applicative — phase: results + decision (HOLD)
+
+**Mechanical** (orchestrator re-run): native trio pass; mainline
+`cache_jsoo`/`js_jsoo` pass. Implementation exactly per contract —
+`Syntax` keeps `let*`/`let+`/`let@`; `Parallel` = `Effect.par`;
+`Applicative` = sequential bind-map; top-level `and*`/`and+` removed, no
+shim; mli within doc budget incl. "open exactly one". Law tests: Parallel
+pair-order + fail-fast (cited par tests), Applicative strict L→R (ordered
+log), right-waits-for-left (promise gate), fail-fast by sequencing,
+interrupt-skips-right. Distinctness probe committed. Red-team: old-shape
+order-sensitive writes race silently; Applicative version sequentially
+correct. All green.
+
+**Review** `[agent-sim, spot-check]` — two independent oracle runs (fresh
+contexts, revealing comments stripped, uncontaminated), scored against
+the pre-registered rule V-DX-E9-002-pre:
+
+- Baseline (`implicit.ml`, `implicit-race.ml`): **2/6 (33%)** — "not
+  determined, *certain*" on fibers, sibling fate, failure behavior;
+  correct on order-not-guaranteed and order-matters.
+- Explicit (`explicit-par.ml`, `explicit-app.ml`): **2/6 (33%)** — correct
+  on second-open's role and order-matters; same "not determined" wall.
+- Delta: 0. **Neither gate fires → HOLD**, numbers published (this entry).
+
+**Readings.** (a) The footgun is real: both reviewers named it unprompted
+("`and*` looks like ordinary product syntax but may conceal fiber
+creation, sibling cancellation, effect ordering"; "the final `open`
+silently determines `and*` semantics"). (b) The proposed names do not
+carry the semantics: "`Parallel` communicates concurrency but not fork
+count or cancellation"; "`Applicative` does not intuitively communicate
+'ordered'". (c) The premise "open as declaration of intent" is contested:
+baseline reviewer would accept it; explicit reviewer rejects it ("an
+easily missed or reordered `open` should not silently determine
+execution and failure semantics").
+
+**Prediction scoring.** Orchestrator: baseline band 33–50% — hit (33%);
+explicit 3/3 (100%) — **miss** (33%); promote ~70% — **miss** (hold).
+Executor sealed baseline 55% — miss (33%). First experiment with a wrong
+orchestrator outcome prediction; recorded without editing.
+
+**Decision: HOLD.** Branch kept (pushed), worktree removed, objective
+archived. Implementation is complete and green on the branch; it is NOT
+merged because the comprehension case is unproven — the split's value was
+its visibility, and the visibility measured zero.
+
+**Follow-up registered: E9b hypothesis** (Phase C synthesis backlog):
+rename hypothesis (`Concurrent`/`Sequential` vs `Parallel`/`Applicative`)
+and the deeper alternative — semantics via *distinct operator names*
+rather than module-switched `open`s (the explicit reviewer's critique).
+Any E9b gets a fresh sealed prediction; no post-hoc retest of E9 shapes.
