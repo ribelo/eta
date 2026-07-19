@@ -109,6 +109,7 @@ typedef struct {
   void (*query_result_destroy)(lbug_query_result *);
   lbug_state (*connection_prepare)(lbug_connection *, const char *, lbug_prepared_statement *);
   bool (*prepared_statement_is_success)(lbug_prepared_statement *);
+  bool (*prepared_statement_is_read_only)(lbug_prepared_statement *);
   char *(*prepared_statement_get_error_message)(lbug_prepared_statement *);
   void (*prepared_statement_destroy)(lbug_prepared_statement *);
   lbug_state (*prepared_statement_bind_string)(lbug_prepared_statement *, const char *, const char *);
@@ -535,6 +536,7 @@ static int load_api_unlocked(void)
       !LOAD(query_result_get_next_arrow_chunk) ||
       !LOAD(query_result_destroy) || !LOAD(connection_prepare) ||
       !LOAD(prepared_statement_is_success) ||
+      !LOAD(prepared_statement_is_read_only) ||
       !LOAD(prepared_statement_get_error_message) ||
       !LOAD(prepared_statement_destroy) ||
       !LOAD(prepared_statement_bind_string) ||
@@ -881,6 +883,46 @@ CAMLprim value eta_ladybug_interrupt(value v_conn)
   pthread_mutex_unlock(&slot->mutex);
   CAMLreturn(Val_unit);
 }
+
+
+CAMLprim value eta_ladybug_classify_read_only(value v_conn, value v_cypher)
+{
+  CAMLparam2(v_conn, v_cypher);
+  lbug_connection conn;
+  lbug_prepared_statement stmt;
+  string_copies copies = { NULL };
+  const char *cypher_copy;
+  bool read_only;
+  stmt.ptr = NULL;
+  stmt.bound_values = NULL;
+  ensure_loaded();
+  if (!string_copies_add(&copies, String_val(v_cypher), &cypher_copy))
+    caml_failwith("LadybugDB allocation failed");
+  if (!conn_acquire(v_conn, &conn)) {
+    string_copies_free(&copies);
+    fail_connection_closed();
+  }
+  if (api.connection_prepare(&conn, cypher_copy, &stmt) != LbugSuccess) {
+    conn_release(v_conn);
+    fail_last_with_copies("prepare", &copies);
+  }
+  if (!api.prepared_statement_is_success(&stmt)) {
+    char *err = api.prepared_statement_get_error_message(&stmt);
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "%s", err == NULL ? "prepare failed" : err);
+    if (err != NULL) api.destroy_string(err);
+    api.prepared_statement_destroy(&stmt);
+    string_copies_free(&copies);
+    conn_release(v_conn);
+    caml_failwith(buffer);
+  }
+  read_only = api.prepared_statement_is_read_only(&stmt);
+  api.prepared_statement_destroy(&stmt);
+  string_copies_free(&copies);
+  conn_release(v_conn);
+  CAMLreturn(Val_bool(read_only));
+}
+
 
 static int bind_owned_value(lbug_prepared_statement *stmt, const char *name,
                             lbug_value *value, bound_lbug_values *bound_values)
@@ -1269,9 +1311,20 @@ static value internal_id_opt(struct ArrowArray *array, int idx, int64_t row)
   id_opt = Val_none;
   if (idx >= 0 && array->children != NULL && array->children[idx] != NULL &&
       array->children[idx]->children != NULL &&
-      array->children[idx]->n_children > 0 &&
-      array->children[idx]->children[0] != NULL) {
-    id_opt = some_int64(arrow_i64(array->children[idx]->children[0], row));
+      array->children[idx]->n_children > 0) {
+    /* Ladybug internal IDs are (table_id, offset). Arrow exposes them as a
+       struct of two int64 children ordered {offset, table_id}. Pack as
+       (table_id << 32) | (offset & 0xffffffff) so relationship endpoints are
+       globally unique across tables. */
+    struct ArrowArray *id_struct = array->children[idx];
+    int64_t offset = 0;
+    int64_t table_id = 0;
+    if (id_struct->n_children >= 1 && id_struct->children[0] != NULL)
+      offset = arrow_i64(id_struct->children[0], row);
+    if (id_struct->n_children >= 2 && id_struct->children[1] != NULL)
+      table_id = arrow_i64(id_struct->children[1], row);
+    int64_t packed = (table_id << 32) | (offset & 0xffffffffLL);
+    id_opt = some_int64(packed);
   }
   CAMLreturn(id_opt);
 }

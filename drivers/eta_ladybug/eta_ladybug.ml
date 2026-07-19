@@ -273,6 +273,7 @@ external raw_close_database : raw_database -> unit = "eta_ladybug_close_database
 external raw_connect : raw_database -> raw_connection = "eta_ladybug_connect"
 external raw_close_connection : raw_connection -> unit = "eta_ladybug_close_connection"
 external raw_interrupt : raw_connection -> unit = "eta_ladybug_interrupt"
+external raw_classify_read_only : raw_connection -> string -> bool = "eta_ladybug_classify_read_only"
 external raw_query_string : raw_connection -> string -> Param.t list -> string = "eta_ladybug_query_string"
 external raw_query_values : raw_connection -> string -> Param.t list -> Row.t list = "eta_ladybug_query_values"
 
@@ -576,6 +577,10 @@ module Connection = struct
     | Result.Error _ as err -> err
 
   let interrupt (conn : connection) = if not conn.closed then raw_interrupt conn.raw
+
+  let classify_read_only (conn : connection) cypher =
+    if_connection_open conn @@ fun () ->
+    wrap "prepare" (fun () -> raw_classify_read_only conn.raw cypher)
 
   let query_string_with_operation operation ?(params = []) (conn : connection)
       cypher =
