@@ -1207,3 +1207,38 @@ criterion now applies to E7–E10 review packets.
 (Syntax.Parallel/Applicative) → E10 (hold default). E7/E8/E10 share
 `ppx_eta.ml` — strictly sequential per plan. Master gates green at
 `123872bc` + bookkeeping.
+
+---
+
+## V-DX-F1 — 2026-07-19 — follow-up closed: signal_jsoo mainline breakage (not an experiment)
+
+Direct fix per programme decision (build health, no experiment ceremony).
+Root causes found by probing mainline OCaml directly:
+
+1. **OxCaml locally-quantified argument types** (`('a 'error. ty)` in
+   argument position) are rejected by mainline OCaml — 9 sites across
+   `eta_signal_timer`, `eta_signal_observer`, `eta_signal_graph` mlis and
+   mls. Fixed with record-wrapped runners (the standard-OCaml rank-2
+   idiom; probe-validated: record-field quantification compiles on both
+   compilers). New public types: `node_runner`, `state_runner`,
+   `update_runner`, `hook_runner`, `access_runner`, `delivery_runner`,
+   `current_runner` + `Delivery_handle` internal runners.
+2. **`'effect` is a reserved keyword** in mainline OCaml 5.x — unusable as
+   a type variable or label (OxCaml accepts). Renamed to `'eff` / `~eff`
+   (timer module).
+3. **Stale jsoo expectations** (the suite hadn't compiled in ages):
+   `monotonic_time` comparisons now via `Signal.Time.to_ms`; the
+   runtime-mismatch assertion now accepts the deliberate
+   `Suppressed{primary; finalizer}` composite — consistent with the native
+   suite's composite-cause culture.
+
+Verified: native gates (`build @install`, `runtest --force`,
+`eta-oxcaml-test-shipped`) green; mainline `dune runtest
+test/signal_jsoo` green (13 tests); `cache_jsoo`/`js_jsoo` still build.
+
+**Ops knowledge (recorded for all future JS gates):** run mainline dune
+with a dedicated build dir (`--build-dir=_build-mainline`, now gitignored)
+to avoid the two compilers poisoning each other's `_build` — the
+intermittent "RPC server not running" errors were track contamination.
+
+Master `077f763e`.
