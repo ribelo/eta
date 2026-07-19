@@ -23,6 +23,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E7 | Error-pp deriver | C | M | low | **promoted** 2026-07-19 | SC | research/dx-e7-error-pp-deriver | V-DX-E7-001..002 |
 | E8 | [%eta.result] sugar | C | S | low | **promoted** 2026-07-19 | SC | research/dx-e8-eta-result-sugar | V-DX-E8-001..002 |
 | E9 | Syntax.Parallel/Applicative | C | M | med | **held** 2026-07-19 (baseline 2/6, explicit 2/6) | SC | research/dx-e9-syntax-parallel-applicative | V-DX-E9-001..002 |
+| E9b | Honest and* (sequential); Effect.par | C | S-M | low-med | in-progress | | research/dx-e9b-honest-and-star | V-DX-E9B-001 |
 | E10 | let%eta function sugar | C | M | med | proposed (hold default) | | | |
 | E26 | Effect.fresh | D | S | low | proposed | | | |
 | E19 | Scoped capability override | D | M | med | proposed | | | |
