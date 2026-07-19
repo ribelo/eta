@@ -15,8 +15,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
   **E7 promoted** (`df55d1df`) — `[@@deriving eta_error]`, zero hand-written
   telemetry printers in examples
-- Queue: **E9** (Syntax.Parallel/Applicative split) → E10 (hold default)
-  → Phase C synthesis; share `ppx_eta.ml`, strictly sequential
+- Queue: E10 (hold default) → Phase C synthesis; then Phase D
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
