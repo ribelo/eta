@@ -6,13 +6,17 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **C** (syntax & PPX) — E7 promoted
-- In flight: **E9b — honest and* (sequential; Effect.par for concurrency)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9b`
-  - Branch: `research/dx-e9b-honest-and-star`
-  - Stage: predictions sealed (V-DX-E9B-001); objective.md written; awaiting executor
+- In flight: nothing
+- **BLOCKED EXTERNAL**: master is red from programme-external merge
+  `9e2e3be1` (ladybug read-only classifier — OCaml binding without the
+  mock symbol `lbug_prepared_statement_is_read_only`; 8 failures in
+  `test/connectors` + `test/ladybug_leak`). Master push withheld; options
+  reported to human 2026-07-19. Isolated verification worktree:
+  `/tmp/eta-master-gate` (at the E9b merge; identical 8 failures, zero
+  from E9b).
 - Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (`0644da2e`)
-  · **E9 held** (branch kept/pushed; baseline 2/6, explicit 2/6 — visibility
-  measured zero; E9b hypothesis in backlog)
+  · **E9 held** (branch kept/pushed) · **E9b promoted** (`006c2572`,
+  push pending master-green)
 - Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (merged
   `--no-ff`, master gates green, pushed; worktree removed)
 - Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·

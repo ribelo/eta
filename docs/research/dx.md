@@ -155,6 +155,26 @@ new shapes 5 and 4 against 3 and 3 for the old. Provenance:
 `.scratch/research/dx/e24/`, V-DX-E24-001..004, branch
 `research/dx-e24-iteration-mirrors-list`.
 
+## E9b — Honest `and*`: sequential everywhere (promoted 2026-07-19)
+
+After E9's hold proved that module-switched `open`s carry no semantics, the
+human picked the least-astonishment design: `and*`/`and+` are now a strict
+left-to-right product — nothing is forked, left failure skips right — and
+concurrency is spelled `Effect.par` at the exact call site.
+
+The safety argument is the point: under the old par-`and*`, misunderstanding
+wrote a silent race (correctness bug); under the sequential `and*`, the
+worst misunderstanding costs latency, never correctness. Red-team proof:
+the order-sensitive transfer written with `and*` is observably sequential
+(correct by construction); a would-be-concurrent `and*` program is
+correct-but-serialized. Review: zero dangerous misreadings (0/6);
+`Effect.par` reads as concurrent from the name alone. Census unchanged:
+5 vals, 1 module — the smallest possible diff.
+
+Provenance: `.scratch/research/dx/e9b/`, V-DX-E9B-001..002, branch
+`research/dx-e9b-honest-and-star`. (Master push of this merge is pending a
+master-green state — see the ladybug incident, V-DX-E9B-002.)
+
 ## E9 — `Syntax.Parallel`/`Applicative` split (held 2026-07-19)
 
 The question: does splitting the always-open `and*` (concurrent,
