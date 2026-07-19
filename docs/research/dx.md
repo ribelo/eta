@@ -155,6 +155,34 @@ new shapes 5 and 4 against 3 and 3 for the old. Provenance:
 `.scratch/research/dx/e24/`, V-DX-E24-001..004, branch
 `research/dx-e24-iteration-mirrors-list`.
 
+## E9 — `Syntax.Parallel`/`Applicative` split (held 2026-07-19)
+
+The question: does splitting the always-open `and*` (concurrent,
+sibling-cancelling) into explicitly-opened `Syntax.Parallel` and
+`Syntax.Applicative` modules make concurrency *visible*? The implementation
+is complete, lawful, and green on the branch — and **unmerged**, because
+the measured answer is that the split's value was its visibility, and the
+visibility measured zero.
+
+Two independent fresh-context reviews (pre-registered scoring): baseline
+form **2/6**, explicit form **2/6**, delta **0** — neither the promote gate
+(explicit ≥ 80% and materially better) nor the kill gate (baseline ≥ 80%)
+fired, so the pre-registered rule says hold. Three durable findings:
+
+1. The footgun is real: cold readers cannot tell what `and*` does — both
+   reviewers named the trap unprompted.
+2. The proposed names carry no semantics either: "`Parallel` communicates
+   concurrency but not cancellation"; "`Applicative` does not intuitively
+   communicate 'ordered'."
+3. The premise is contested: one reviewer would accept an `open` as a
+   declaration of intent; the other argues semantics should not silently
+   travel via re-orderable `open`s at all.
+
+E9b hypothesis registered (naming or distinct-operator shapes) with a
+fresh sealed prediction required; no post-hoc retest of E9 shapes.
+Provenance: `.scratch/research/dx/e9/`, V-DX-E9-001..002, branch
+`research/dx-e9-syntax-parallel-applicative`.
+
 ## E8 — `[%eta.result "name" body]` leaf sugar (promoted 2026-07-19)
 
 The named-leaf pattern — `Effect.fn __POS__ __FUNCTION__ (Effect.named "x"

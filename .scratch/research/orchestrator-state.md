@@ -6,10 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **C** (syntax & PPX) — E7 promoted
-- In flight: **E9 — Syntax.Parallel/Applicative split**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e9`
-  - Branch: `research/dx-e9-syntax-parallel-applicative`
-  - Stage: predictions sealed (V-DX-E9-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (`0644da2e`)
+  · **E9 held** (branch kept/pushed; baseline 2/6, explicit 2/6 — visibility
+  measured zero; E9b hypothesis in backlog)
 - Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (merged
   `--no-ff`, master gates green, pushed; worktree removed)
 - Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
