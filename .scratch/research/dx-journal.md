@@ -1660,3 +1660,62 @@ if a NEW dangerous misreading appears at ≥ 2/6 (e.g. readers believe
 **Outcome (predicted).** Promote at ~85% confidence. Residual risk:
 Lwt-culture readers asserting `and*` = concurrent — safe under B (perf
 misreading, not correctness), but counts in the review.
+
+---
+
+## V-DX-E9B-002 — 2026-07-19 — research/dx-e9b-honest-and-star — phase: results + decision
+
+**Gates** (orchestrator re-run): worktree native trio pass; mainline
+`cache_jsoo`/`js_jsoo` pass. Post-merge master gates: **red — but not
+E9b's** (see incident below); isolated-worktree reproduction shows the
+identical 8 failures, all ladybug, zero from E9b.
+
+**Contract** (verified verbatim): `and*`/`and+` = sequential bind+map,
+top-level in `Syntax`, no submodules, no shim; mli "strict left-to-right;
+nothing is forked … for concurrency use {!Effect.par}"; `Effect.par`
+untouched. Law tests Effect 56–59 green (strict L→R, right-waits,
+fail-fast-by-sequencing, interrupt-skips-right). Migration: both `and*`
+files moved concurrent intent to `Effect.par` (per-site justifications in
+executor journal).
+
+**Red-team 3/3** (output committed): (a) transfer-with-`and*` observably
+sequential — correct by construction; (b) would-be-concurrent `and*`
+program correct-but-serialized (latency only); (c) no concurrent `and*`
+claims left in mli.
+
+**Review** `[agent-sim, spot-check]` (oracle, fixed P-OCaml persona,
+comments stripped): assertions that `and*` forks/cancels: **0/6**
+(rule allows ≤ 1). `Effect.par` read correctly as "requests parallel
+execution". No other material misreading. Reviewer's bonus finding, now
+the strongest articulation of the design: "ordinary left-to-right
+intuition is misleading because `Effect.t` values are lazy blueprints" —
+a rigorous reader won't commit to ANY combinator reading; under B,
+not-knowing is *safe* (latency, never corruption).
+
+**Decision rule (sealed, V-DX-E9B-001): all three clauses pass.**
+**Decision: PROMOTE.**
+
+**Prediction scoring.** Hits: contract; census 5 vals/1 module; footguns
+−1/+0; red-team both outcomes; review zero dangerous misreadings;
+promote. Misses: (1) predicted ≥ 2/3 would read sequencing correctly —
+actual 0/3 correct, all "not determined" (rigorous non-commitment; safe
+under B, but a miss on my comprehension guess); (2) migration split —
+predicted some incidental sites stay sequential-`and*`; actual all 2
+files' sites wanted concurrency and moved to `Effect.par`.
+
+**Incident (recorded fully).** Post-merge master gates red: 8 ladybug
+failures, `missing symbol lbug_prepared_statement_is_read_only` in the
+mock (`test/ladybug_leak/ladybug_mock_lib.c`) and on the fallback-soname
+path. Root cause: unpushed merge `9e2e3be1` (2026-07-19 17:01,
+`nema/ladybug-ro-classifier` → master, created outside the DX programme)
+brought the read-only classifier's OCaml binding to master without the
+mock symbol. Evidence: `git reflog master`; isolated worktree at the E9b
+merge reproduces the identical 8 failures; `git show` proves master
+pre-ladybug had 0 occurrences. E9b's merge (`006c2572`) is clean ort and
+contributes zero failures. **Push of master withheld** (would publish a
+red suite + the programme-external ladybug work). Options reported to the
+human: (a) ladybug workstream adds the mock symbol; (b) orchestrator adds
+a conservative mock symbol with the human's blessing; (c) revert
+`9e2e3be1` to keep master green, ladybug continues on its branch. Rule
+proposed: master stays green — whoever merges to master runs the full
+gate first.
