@@ -1359,3 +1359,59 @@ credit.
 **Decision: PROMOTE.** Merged `--no-ff` (`df55d1df`); master gates green;
 master + branch pushed; worktree removed; objective archived at
 `.scratch/research/objectives/dx-e7-error-pp-deriver.md`.
+
+---
+
+## V-DX-E8-001 — 2026-07-19 — research/dx-e8-eta-result-sugar — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E8-002.
+
+**Current shapes (measured pre-change).** `expand_sync_like ~ctxt ~kind expr`
+(`lib/ppx/ppx_eta.ml:21`) already parameterizes the leaf kind;
+`[%eta.sync "name" body]` expands to `Effect.fn __POS__ __FUNCTION__
+(Effect.named name (Effect.sync (fun () -> body)))`. E8 = a `"result"` kind
++ `Extension.V3.declare "eta.result"` + generalized rejection message.
+Usage: `[%eta.sync]` appears only in tests (0 example sites);
+`Effect.sync_result` has ~56 call lines across examples/bench/lib — the
+hand-written leaf is common, the sugar is not yet adopted. No JS-track ppx
+usage anywhere.
+
+**Scope note (evidence over symmetry).** The one-pager's conditional
+`[%eta.option]` is OUT: E1 killed `sync_option` (zero usage evidence,
+V-DX-E1-002), so the substrate does not exist. This is the
+sugar-follows-frequency rule working, not an omission.
+
+**Census (predicted).** PPX forms 1 → 2 (`[%eta.sync]`, `[%eta.result]`);
+rejection paths +0 (same malformed-payload path, message generalized);
+core vals +0. Footguns: +0/+0.
+
+**Expansion contract (predicted exact).**
+`Effect.fn __POS__ __FUNCTION__ (Effect.named name (Effect.sync_result
+(fun () -> body)))` — the E23/E25-settled spellings. Snapshots: positive
+expansion, malformed-payload rejection (non-string name; wrong arity —
+message now names the actual form), behavioral parity with the
+hand-written form through a real runtime + in-memory tracer (span name +
+location present, `Error e` → typed, exception → `Die`).
+
+**Adoption (predicted).** ~10–25 example sites convert (of ~56
+`sync_result` lines — only leaves that want span naming; executor states
+its conversion rule in the journal, predicted rule: leaves crossing an
+IO/trust boundary get names, pure glue does not). `[%eta.sync]` adoption
+side-effect: 0–3 sites. Operators per converted leaf boundary: 4 → 1.
+
+**Review (predicted).** Screenshot test on the heaviest converted module:
+median ≥ 4, no rating ≤ 2. Predicted reviewer remark: expansion is exactly
+what you'd write by hand (T4 pass); one grumble that `[%eta.*]` is another
+form to learn, accepted because the expansion is transparent. Kill gate
+("the day the expansion needs explaining") does NOT fire.
+
+**Red-team (predicted).** (a) Body that raises → defect preserved as `Die`
+(E1 channel semantics survive the sugar); (b) sugar nested inside an
+explicit `Effect.named` → nested spans, noisy-but-harmless, documented;
+(c) T9 audit: every expansion identifier traces to the use site or
+`__POS__`/`__FUNCTION__`.
+
+**Gates (predicted).** Native trio green; `test/ppx_expansion/` snapshots;
+conservative mainline compile check (`test/cache_jsoo`, `test/js_jsoo`)
+despite zero JS ppx use. Outcome: promote. Risk points: per-site adoption
+judgment calls; rejection-message generalization wording (T7 rubric).
