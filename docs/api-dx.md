@@ -17,7 +17,11 @@ Use ordinary OCaml at the boundary and lift into Eta deliberately:
   defects and the success value is not already a `result`/`option`.
 - `Effect.sync_result` for the recommended synchronous leaf that returns an
   OCaml `result` (`Ok` succeeds, `Error` is typed failure, raises stay
-  defects).
+  defects). Prefer `[%eta.result "name" body]` when that leaf also needs a
+  static span name and source location; it expands to
+  `fn __POS__ __FUNCTION__ (named "name" (sync_result (fun () -> body)))`.
+  Keep hand-written `named`/`fn` for `~error_pp`, dynamic names, or other
+  kwargs; use `from_result` for already-computed results.
 - `Effect.flatten_result` for hand-rolled pipelines after any effect that
   succeeds with a `result` (not only the sync leaf).
 - `Effect.yield` when an Eta workflow should cooperatively yield to the active
@@ -348,6 +352,10 @@ When the leaf operation returns expected typed failures as `result`, prefer
 `Effect.sync_result f`. It is exactly `sync f |> flatten_result`: `Ok` succeeds,
 `Error` is typed failure, and raised exceptions remain `Cause.Die`. The
 sync-defect example keeps unexpected exceptions in `Cause.Die`.
+
+Named result leaves: `[%eta.result "name" body]` is the leaf-boundary sugar for
+`fn` + `named` + `sync_result`. Convert only IO/trust leaves with a static span
+name; pure glue and sites needing `~error_pp` stay explicit.
 
 `Effect.yield` is not replaced by `Effect.sync Eio.Fiber.yield`. Use `yield`
 when a blueprint needs a cooperative scheduling point; it delegates to the

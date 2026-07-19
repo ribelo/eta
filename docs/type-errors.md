@@ -37,22 +37,24 @@ handle never leaves the nursery either way.
 
 ---
 
-## 2. `expected [%eta.sync "name" body]`
+## 2. `expected [%eta.sync "name" body]` / `[%eta.result "name" body]`
 
 ```
 Error: expected [%eta.sync "name" body]
+Error: expected [%eta.result "name" body]
 ```
 
-**What you tried.** `[%eta.sync 123]`, `[%eta.sync "name"]`, or any payload
-that isn't a string literal applied to a body.
+**What you tried.** `[%eta.sync 123]`, `[%eta.result 123]`, a bare name, or any
+payload that isn't a string literal applied to a body.
 
 **Why Eta forbids it.** The extension exists to name a synchronous step for
-tracing; without a literal name there is nothing to put on the span.
+tracing; without a literal name there is nothing to put on the span. The
+message names the form you wrote (`sync` vs `result`).
 
-**Fix 1.** `[%eta.sync "deserialize" (decode buf)]` — string literal first,
-body second.
+**Fix 1.** `[%eta.sync "deserialize" (decode buf)]` or
+`[%eta.result "db.find" (Db.find db id)]` — string literal first, body second.
 **Fix 2.** If you don't want a name, drop the extension:
-`Effect.sync (fun () -> decode buf)`.
+`Effect.sync (fun () -> decode buf)` or `Effect.sync_result (fun () -> ...)`.
 
 ---
 
