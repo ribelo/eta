@@ -18,10 +18,11 @@ not replace the error with a silent fallback. See `raising-renderer.txt`.
 
 ## Renamed tag
 
-Baseline commit: `Db_down` renders as `db_down` in `tag_rename.ml` and
-`tag-rename-output.txt`. The next red-team commit will rename the source tag and
-record the changed output, preserving the telemetry-breaking change in branch
-history.
+Baseline commit `0def476c`: `Db_down` renders as `db_down`. This commit renames
+the source tag to `Database_down`, which renders as `database_down`.
+`tag-rename-output.txt` preserves both real outputs and the two source versions
+remain visible in consecutive branch commits. The telemetry-breaking change is
+honest rather than hidden behind a stable fallback.
 
 ## Verdict
 
