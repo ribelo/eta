@@ -101,3 +101,20 @@ include
               __eta_value__002_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
+===== i_result.ml =====
+module Eta =
+  struct
+    module Effect =
+      struct
+        let fn _pos _name body = body
+        let named _name body = body
+        let sync_result f = f ()
+      end
+  end
+module Db = struct let find _db _id = Ok 1 end
+let db = ()
+let id = 1
+let _ =
+  Eta.Effect.fn __POS__ __FUNCTION__
+    (Eta.Effect.named "db.find"
+       (Eta.Effect.sync_result (fun () -> Db.find db id)))
