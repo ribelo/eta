@@ -1311,9 +1311,20 @@ static value internal_id_opt(struct ArrowArray *array, int idx, int64_t row)
   id_opt = Val_none;
   if (idx >= 0 && array->children != NULL && array->children[idx] != NULL &&
       array->children[idx]->children != NULL &&
-      array->children[idx]->n_children > 0 &&
-      array->children[idx]->children[0] != NULL) {
-    id_opt = some_int64(arrow_i64(array->children[idx]->children[0], row));
+      array->children[idx]->n_children > 0) {
+    /* Ladybug internal IDs are (table_id, offset). Arrow exposes them as a
+       struct of two int64 children ordered {offset, table_id}. Pack as
+       (table_id << 32) | (offset & 0xffffffff) so relationship endpoints are
+       globally unique across tables. */
+    struct ArrowArray *id_struct = array->children[idx];
+    int64_t offset = 0;
+    int64_t table_id = 0;
+    if (id_struct->n_children >= 1 && id_struct->children[0] != NULL)
+      offset = arrow_i64(id_struct->children[0], row);
+    if (id_struct->n_children >= 2 && id_struct->children[1] != NULL)
+      table_id = arrow_i64(id_struct->children[1], row);
+    int64_t packed = (table_id << 32) | (offset & 0xffffffffLL);
+    id_opt = some_int64(packed);
   }
   CAMLreturn(id_opt);
 }
