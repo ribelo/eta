@@ -125,3 +125,83 @@ expansion needs explaining beyond the one-liner contract.
 ### V-DX-E8-001 — Predictions sealed
 
 This section committed before docs, PPX, tests, or example edits.
+
+### V-DX-E8-002 — Docs-first contract
+
+`README.md` documents `[%eta.result]` next to `[%eta.sync]` with the exact
+expansion, channel semantics, and the keep-hand-written rule for `~error_pp` /
+dynamic names / already-computed results. `docs/api-dx.md` leaf-boundary
+guidance and `docs/type-errors.md` form-named rejection text were written before
+the PPX implementation commit. Contract prose stayed within the ≤8-line budget
+at the primary README call site.
+
+### V-DX-E8-003 — Implementation
+
+`expand_sync_like` now takes `~form` so rejection messages name the actual
+extension. `eta.result` registers with `~kind:"sync_result"`. Generated
+identifiers remain `__POS__`, `__FUNCTION__`, the use-site string, and the body.
+
+### V-DX-E8-004 — Snapshots and parity
+
+- Positive expansion: `test/ppx_expansion/cases/i_result.ml` → exact contract.
+- Negatives: `ppx_result_nonstring.ml`, `ppx_result_wrong_arity.ml` with
+  `expected [%eta.result "name" body]`.
+- Behavioral parity: `test_ppx_result_parity` — sugar ≡ hand-written for Ok,
+  `Error (`Db 7)`, and `Cause.Die`; leaf span name `db.find`; source `loc` on
+  outer `fn` spans (same as existing `fn`/`here_attr` placement).
+
+### V-DX-E8-005 — Adoption (scored vs prediction)
+
+| | Predicted | Actual |
+| --- | ---: | ---: |
+| Example sites converted | 10 | **12** |
+| Example `sync_result` remaining | 16 | **14** |
+
+Rule applied: convert IO/trust leaves with static names and no special kwargs.
+
+**Converted (12):** `batch_concurrency`, `connection_pool`, `retry_schedule`,
+`resource_retry` (load only), `stream_decode`, `service_composition` (lookup),
+`semaphore_permits`, `admission_control`, `observability` (load_user),
+`typed_error_boundary`, `workflow_test`, `cli_business`.
+
+**Not converted (reasons):**
+
+| Site | Why |
+| --- | --- |
+| `blueprint_names` named+sync_result (2) | needs `~error_pp` |
+| `cached_resource` / `manual_resource_refresh` | needs `~error_pp` |
+| `race_mirror` | dynamic span name |
+| `source_locations` | `~error_pp`, `~kind`, custom attrs |
+| `resource_retry` acquire/release | lifecycle plumbing |
+| `scoped_resource` open/close + load | lifecycle / outer named+error_pp |
+| `service_composition` open_ | acquire plumbing |
+| `background_lifecycle` load_user | outer named+error_pp owns naming |
+| `quickstart` | pedagogical primitive demo |
+
+Operator count on converted bare leaves: 1 primitive → 1 sugar form that adds
+`fn`+`named` (net 2→1 concepts for the named leaf pattern when starting from
+the full hand-written form).
+
+### V-DX-E8-006 — Census / footguns
+
+| Measure | Sealed | Actual |
+| --- | ---: | ---: |
+| Leaf sugar forms | 1 → 2 | 1 → 2 |
+| Rejection paths | +0 (shared, form-named) | +0 |
+| Core vals | +0 | +0 |
+| Footguns | +0 / +0 | +0 / +0 |
+
+Nested-span candidate footgun documented in red-team as noisy-but-harmless.
+
+### V-DX-E8-007 — Red-team
+
+3 / 3 passed. See `.scratch/research/dx/e8/redteam/VERDICT.md`.
+
+### V-DX-E8-008 — Gates
+
+| Command | Result |
+| --- | --- |
+| `nix develop -c dune build @install` | PASS |
+| `nix develop -c dune runtest --force` | PASS |
+| `nix develop -c eta-oxcaml-test-shipped` | PASS |
+| `nix develop .#mainline -c dune build test/cache_jsoo test/js_jsoo` | PASS |
