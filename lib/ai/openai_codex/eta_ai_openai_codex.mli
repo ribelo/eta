@@ -2,9 +2,10 @@
 
     Wire defaults follow the Codex CLI: Responses at
     [https://chatgpt.com/backend-api/codex/responses] with ChatGPT OAuth PKCE
-    against [https://auth.openai.com]. Callers own credential storage and
-    selection; this package owns credential types, codecs, header planning, and
-    exchange/request builders. *)
+    against [https://auth.openai.com]. Callers own credential storage,
+    selection, and cryptographically secure entropy. This package owns
+    credential types/codecs, OAuth planning/parsing, provider headers, and
+    request builders. *)
 
 val provider_name : string
 val default_base_url : string
@@ -15,22 +16,22 @@ val default_originator : string
 
 (** {1 Subscription OAuth credentials} *)
 
-type oauth_credential = {
+type oauth_credential = private {
   access_token : string Eta_redacted.t;
   refresh_token : string Eta_redacted.t;
   expires_at_ms : int64 option;
-  account_id : string option;
+  account_id : string;
 }
-(** Durable ChatGPT OAuth credential. Secrets are redacted; [expires_at_ms] is
-    Unix epoch milliseconds when known. *)
+(** Durable ChatGPT OAuth credential. [account_id] is required for Codex wire
+    headers. Secrets are redacted. *)
 
 val oauth_credential :
   access_token:string ->
   refresh_token:string ->
   ?expires_at_ms:int64 ->
-  ?account_id:string ->
+  account_id:string ->
   unit ->
-  oauth_credential
+  (oauth_credential, Eta_ai.ai_error) result
 
 val credential_to_json : oauth_credential -> Eta_ai.Json.t
 
@@ -46,7 +47,6 @@ val pp_credential : Format.formatter -> oauth_credential -> unit
 (** Prints a diagnostic that never includes secret token values. *)
 
 val access_api_key : oauth_credential -> Eta_ai.api_key
-(** Project the access token as an [Eta_ai.api_key] for shared transport. *)
 
 (** {1 PKCE authorization} *)
 
@@ -56,11 +56,16 @@ type pkce = {
   code_challenge_method : string;
 }
 
-val pkce_s256 : code_verifier:string -> pkce
-(** RFC 7636 S256 challenge from a verifier. *)
+val pkce_s256 : code_verifier:string -> (pkce, Eta_ai.ai_error) result
+(** RFC 7636 S256 challenge from a caller-supplied verifier. *)
 
-val generate_code_verifier : ?nbytes:int -> (unit -> int) -> string
-(** Build a URL-safe verifier using [rng ()] bytes in \[0, 255\]. *)
+val code_verifier_of_entropy : string -> (string, Eta_ai.ai_error) result
+(** Encode caller-supplied CSPRNG bytes as a URL-safe verifier. Requires at
+    least 32 entropy bytes. *)
+
+val state_of_entropy : string -> (string, Eta_ai.ai_error) result
+(** Encode caller-supplied CSPRNG bytes as OAuth [state]. Requires at least 16
+    entropy bytes. *)
 
 type authorize_plan = {
   authorize_url : string;
@@ -76,25 +81,35 @@ val plan_authorize :
   ?client_id:string ->
   ?redirect_uri:string ->
   ?originator:string ->
-  ?state:string ->
-  ?code_verifier:string ->
-  ?rng:(unit -> int) ->
+  state:string ->
+  code_verifier:string ->
   unit ->
-  authorize_plan
-(** Plan a browser PKCE authorize URL. Does not open a browser or listen. *)
+  (authorize_plan, Eta_ai.ai_error) result
+(** Plan a browser PKCE authorize URL. Entropy must be supplied by the caller
+    via [state] and [code_verifier]. *)
+
+type callback_input =
+  | Callback_url of string
+  | Callback_query of string
+  | Callback_code of { code : string; state : string option }
+
+type authorization_code = { code : string; state : string }
+
+val parse_authorization_callback :
+  expected_state:string ->
+  callback_input ->
+  (authorization_code, Eta_ai.ai_error) result
+(** Parse a browser callback URL/query/code and validate OAuth [state]. *)
 
 (** {1 Token exchange and refresh} *)
 
-type token_set = {
-  access_token : string;
-  refresh_token : string;
-  expires_in : int option;
-  id_token : string option;
+type token_set = private {
+  access_token : string Eta_redacted.t;
+  refresh_token : string Eta_redacted.t;
+  expires_in : int;
+  id_token : string Eta_redacted.t option;
+  account_id : string;
 }
-
-val account_id_of_jwt : string -> string option
-(** Read [chatgpt_account_id] from a JWT payload claim under
-    [https://api.openai.com/auth]. *)
 
 val credential_of_token_set : ?now_ms:int64 -> token_set -> oauth_credential
 
@@ -106,15 +121,9 @@ val exchange_code_request :
   code_verifier:string ->
   unit ->
   Eta_http.Request.t
-(** POST [application/x-www-form-urlencoded] authorization_code exchange. *)
 
 val refresh_request :
-  ?issuer:string ->
-  ?client_id:string ->
-  refresh_token:string ->
-  unit ->
-  Eta_http.Request.t
-(** POST form-urlencoded refresh_token grant (Codex/Pi wire). *)
+  ?issuer:string -> ?client_id:string -> oauth_credential -> Eta_http.Request.t
 
 val decode_token_response :
   Eta_ai.raw_json -> (token_set, Eta_ai.ai_error) result
@@ -132,7 +141,7 @@ val refresh :
   ?issuer:string ->
   ?client_id:string ->
   Eta_http.Client.t ->
-  refresh_token:string ->
+  oauth_credential ->
   (token_set, Eta_ai.ai_error) Eta.Effect.t
 
 (** {1 Provider and Responses} *)
@@ -150,41 +159,42 @@ val structured_output :
   unit ->
   (structured_output, Eta_ai.ai_error) result
 
+type client_identity = { originator : string; user_agent : string }
+
+val client_identity :
+  ?originator:string -> user_agent:string -> unit -> client_identity
+
 val provider :
   ?base_url:string ->
-  ?account_id:string ->
-  ?originator:string ->
+  account_id:string ->
+  identity:client_identity ->
   ?session_id:string ->
   ?extra_headers:Eta_ai.headers ->
   unit ->
   Eta_ai.provider
-(** Responses provider. Default base URL is
-    [https://chatgpt.com/backend-api/codex] and path [/responses].
-    [auth_headers] expects the ChatGPT access token as [api_key] and attaches
-    Codex headers including optional [ChatGPT-Account-ID]. *)
 
 val provider_for_credential :
   ?base_url:string ->
-  ?originator:string ->
+  identity:client_identity ->
   ?session_id:string ->
   ?extra_headers:Eta_ai.headers ->
   oauth_credential ->
   Eta_ai.provider
 
 val auth_headers :
-  ?originator:string ->
+  identity:client_identity ->
   ?session_id:string ->
-  ?account_id:string ->
+  ?stream:bool ->
   ?extra_headers:Eta_ai.headers ->
+  account_id:string ->
   access_token:Eta_ai.api_key ->
   unit ->
   Eta_ai.headers
-(** Provider-owned Codex authorization headers. Callers pass the resolved access
-    token; they do not construct [Authorization] themselves. *)
 
 val auth_headers_of_credential :
-  ?originator:string ->
+  identity:client_identity ->
   ?session_id:string ->
+  ?stream:bool ->
   ?extra_headers:Eta_ai.headers ->
   oauth_credential ->
   Eta_ai.headers
@@ -203,17 +213,41 @@ val decode_stream_event :
 val decode_error :
   status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
 
+(** {1 Native model catalog} *)
+
+type model_info = {
+  slug : string;
+  display_name : string option;
+  description : string option;
+  supported_in_api : bool;
+  priority : int option;
+  default_reasoning_level : string option;
+  supported_reasoning_levels : string list;
+}
+
 val models_request :
   ?provider:Eta_ai.provider ->
   ?client_version:string ->
+  identity:client_identity ->
   credential:oauth_credential ->
   unit ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
-(** GET [/models] against the Codex base URL. *)
+
+val decode_models : Eta_ai.raw_json -> (model_info list, Eta_ai.ai_error) result
+
+val list_models :
+  ?provider:Eta_ai.provider ->
+  ?client_version:string ->
+  identity:client_identity ->
+  Eta_http.Client.t ->
+  credential:oauth_credential ->
+  (model_info list, Eta_ai.ai_error) Eta.Effect.t
 
 val responses_request :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
+  identity:client_identity ->
+  ?session_id:string ->
   credential:oauth_credential ->
   Eta_ai.chat_request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -221,6 +255,8 @@ val responses_request :
 val responses :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
+  identity:client_identity ->
+  ?session_id:string ->
   Eta_http.Client.t ->
   credential:oauth_credential ->
   Eta_ai.chat_request ->
@@ -229,6 +265,8 @@ val responses :
 val stream_responses :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
+  identity:client_identity ->
+  ?session_id:string ->
   Eta_http.Client.t ->
   credential:oauth_credential ->
   Eta_ai.chat_request ->
@@ -238,6 +276,8 @@ module Chat : sig
   val request :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
+    identity:client_identity ->
+    ?session_id:string ->
     credential:oauth_credential ->
     Eta_ai.chat_request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -245,6 +285,8 @@ module Chat : sig
   val run :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
+    identity:client_identity ->
+    ?session_id:string ->
     Eta_http.Client.t ->
     credential:oauth_credential ->
     Eta_ai.chat_request ->
@@ -253,6 +295,8 @@ module Chat : sig
   val stream :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
+    identity:client_identity ->
+    ?session_id:string ->
     Eta_http.Client.t ->
     credential:oauth_credential ->
     Eta_ai.chat_request ->

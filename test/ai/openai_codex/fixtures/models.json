@@ -1,0 +1,17 @@
+{
+  "models": [
+    {
+      "slug": "gpt-test",
+      "display_name": "gpt-test",
+      "description": "desc",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "supported_in_api": true,
+      "priority": 1
+    }
+  ]
+}

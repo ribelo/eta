@@ -3,40 +3,41 @@
     Chat defaults to Kimi-native Chat Completions at
     [https://api.kimi.com/coding/v1/chat/completions]. When catalog metadata
     declares [protocol = "anthropic"], use {!messages_provider} /
-    {!messages_request} for Anthropic-compatible Messages with the same Kimi
-    credentials and identity headers. Device-code OAuth targets
-    [https://auth.kimi.com]. *)
+    {!messages_request} for Anthropic-compatible Messages with Kimi credentials,
+    identity headers, and required [anthropic-version]. Device-code OAuth
+    targets [https://auth.kimi.com]. *)
 
 val provider_name : string
 val default_base_url : string
 val default_oauth_host : string
 val client_id : string
 val default_platform : string
+val default_anthropic_version : string
 
 (** {1 Credentials} *)
 
-type api_key_credential = Eta_ai.api_key
+type api_key_credential = private Eta_ai.api_key
 
-type oauth_credential = {
+type oauth_credential = private {
   access_token : string Eta_redacted.t;
   refresh_token : string Eta_redacted.t;
-  expires_at : int64 option;
+  expires_at : int64;
   scope : string option;
   token_type : string option;
 }
 
 type credential = Api_key of api_key_credential | OAuth of oauth_credential
 
-val api_key : string -> api_key_credential
+val api_key : string -> (api_key_credential, Eta_ai.ai_error) result
 
 val oauth_credential :
   access_token:string ->
   refresh_token:string ->
-  ?expires_at:int64 ->
+  expires_at:int64 ->
   ?scope:string ->
   ?token_type:string ->
   unit ->
-  oauth_credential
+  (oauth_credential, Eta_ai.ai_error) result
 
 val credential_to_json : credential -> Eta_ai.Json.t
 val credential_of_json : Eta_ai.Json.t -> (credential, Eta_ai.ai_error) result
@@ -75,11 +76,18 @@ val auth_headers :
   credential ->
   Eta_ai.headers
 
+val messages_auth_headers :
+  ?identity:device_identity ->
+  ?anthropic_version:string ->
+  ?extra_headers:Eta_ai.headers ->
+  credential ->
+  Eta_ai.headers
+
 (** {1 Device-code OAuth} *)
 
 type device_authorization = {
   user_code : string;
-  device_code : string;
+  device_code : string Eta_redacted.t;
   verification_uri : string;
   verification_uri_complete : string option;
   expires_in : int option;
@@ -88,8 +96,8 @@ type device_authorization = {
 
 type device_poll_result =
   | Authorized of oauth_credential
-  | Pending of { error_code : string; description : string option }
-  | Slow_down of { description : string option }
+  | Authorization_pending of { description : string option }
+  | Slow_down of { interval : int; description : string option }
   | Expired of { description : string option }
   | Denied of { description : string option }
 
@@ -114,38 +122,44 @@ val device_token_poll_request :
   ?oauth_host:string ->
   ?client_id:string ->
   ?identity:device_identity ->
-  device_code:string ->
+  device_code:string Eta_redacted.t ->
   unit ->
   Eta_http.Request.t
 
 val decode_device_poll :
-  status:int -> Eta_ai.raw_json -> (device_poll_result, Eta_ai.ai_error) result
+  status:int ->
+  ?now_s:int64 ->
+  ?current_interval:int ->
+  Eta_ai.raw_json ->
+  (device_poll_result, Eta_ai.ai_error) result
 
 val poll_device_token :
   ?oauth_host:string ->
   ?client_id:string ->
   ?identity:device_identity ->
+  ?now_s:int64 ->
+  ?current_interval:int ->
   Eta_http.Client.t ->
-  device_code:string ->
+  device_code:string Eta_redacted.t ->
   (device_poll_result, Eta_ai.ai_error) Eta.Effect.t
 
 val refresh_request :
   ?oauth_host:string ->
   ?client_id:string ->
   ?identity:device_identity ->
-  refresh_token:string ->
-  unit ->
+  oauth_credential ->
   Eta_http.Request.t
 
 val decode_token_response :
-  Eta_ai.raw_json -> (oauth_credential, Eta_ai.ai_error) result
+  ?now_s:int64 -> Eta_ai.raw_json -> (oauth_credential, Eta_ai.ai_error) result
 
 val refresh :
   ?oauth_host:string ->
   ?client_id:string ->
   ?identity:device_identity ->
+  ?now_s:int64 ->
   Eta_http.Client.t ->
-  refresh_token:string ->
+  oauth_credential ->
   (oauth_credential, Eta_ai.ai_error) Eta.Effect.t
 
 (** {1 Native catalog} *)
@@ -155,6 +169,14 @@ type protocol = Kimi | Anthropic
 val protocol_to_string : protocol -> string
 val protocol_of_string : string -> protocol option
 
+type supports_thinking_type = Only | No | Both
+
+type think_efforts = {
+  support : bool option;
+  valid_efforts : string list;
+  default_effort : string option;
+}
+
 type model_info = {
   id : string;
   display_name : string option;
@@ -163,8 +185,9 @@ type model_info = {
   supports_image_in : bool option;
   supports_video_in : bool option;
   supports_tool_use : bool option;
+  supports_thinking_type : supports_thinking_type option;
+  think_efforts : think_efforts option;
   protocol : protocol option;
-  raw : Eta_ai.Json.t option;
 }
 
 val models_request :
@@ -244,78 +267,6 @@ val stream_chat_completions :
   Eta_ai.chat_request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 
-(** {1 Anthropic-compatible Messages}
-
-    For catalog models with [protocol = anthropic]. Reuses [Eta_ai_anthropic]
-    codecs against the Kimi Coding base URL and attaches Kimi provider-owned
-    Bearer + [X-Msh-*] headers. Path defaults to [/messages?beta=true]. *)
-
-val default_messages_path : string
-
-val messages_provider :
-  ?base_url:string ->
-  ?identity:device_identity ->
-  ?extra_headers:Eta_ai.headers ->
-  unit ->
-  Eta_ai.provider
-
-val encode_messages :
-  Eta_ai.chat_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
-
-val decode_message :
-  Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
-
-val decode_messages_stream_event :
-  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
-
-val messages_request :
-  ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
-  credential:credential ->
-  Eta_ai.chat_request ->
-  (Eta_http.Request.t, Eta_ai.ai_error) result
-
-val messages :
-  ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
-  Eta_http.Client.t ->
-  credential:credential ->
-  Eta_ai.chat_request ->
-  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-
-val stream_messages :
-  ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
-  Eta_http.Client.t ->
-  credential:credential ->
-  Eta_ai.chat_request ->
-  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-
-module Messages : sig
-  val request :
-    ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
-    credential:credential ->
-    Eta_ai.chat_request ->
-    (Eta_http.Request.t, Eta_ai.ai_error) result
-
-  val run :
-    ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
-    Eta_http.Client.t ->
-    credential:credential ->
-    Eta_ai.chat_request ->
-    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
-
-  val stream :
-    ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
-    Eta_http.Client.t ->
-    credential:credential ->
-    Eta_ai.chat_request ->
-    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
-end
-
 module Chat : sig
   val request :
     ?structured_output:structured_output ->
@@ -338,6 +289,81 @@ module Chat : sig
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
     ?identity:device_identity ->
+    Eta_http.Client.t ->
+    credential:credential ->
+    Eta_ai.chat_request ->
+    (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+end
+
+(** {1 Anthropic-compatible Messages} *)
+
+val default_messages_path : string
+
+val messages_provider :
+  ?base_url:string ->
+  ?identity:device_identity ->
+  ?anthropic_version:string ->
+  ?extra_headers:Eta_ai.headers ->
+  unit ->
+  Eta_ai.provider
+
+val encode_messages :
+  Eta_ai.chat_request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
+val decode_message :
+  Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+
+val decode_messages_stream_event :
+  Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
+
+val messages_request :
+  ?provider:Eta_ai.provider ->
+  ?identity:device_identity ->
+  ?anthropic_version:string ->
+  credential:credential ->
+  Eta_ai.chat_request ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val messages :
+  ?provider:Eta_ai.provider ->
+  ?identity:device_identity ->
+  ?anthropic_version:string ->
+  Eta_http.Client.t ->
+  credential:credential ->
+  Eta_ai.chat_request ->
+  (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+val stream_messages :
+  ?provider:Eta_ai.provider ->
+  ?identity:device_identity ->
+  ?anthropic_version:string ->
+  Eta_http.Client.t ->
+  credential:credential ->
+  Eta_ai.chat_request ->
+  (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+
+module Messages : sig
+  val request :
+    ?provider:Eta_ai.provider ->
+    ?identity:device_identity ->
+    ?anthropic_version:string ->
+    credential:credential ->
+    Eta_ai.chat_request ->
+    (Eta_http.Request.t, Eta_ai.ai_error) result
+
+  val run :
+    ?provider:Eta_ai.provider ->
+    ?identity:device_identity ->
+    ?anthropic_version:string ->
+    Eta_http.Client.t ->
+    credential:credential ->
+    Eta_ai.chat_request ->
+    (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
+
+  val stream :
+    ?provider:Eta_ai.provider ->
+    ?identity:device_identity ->
+    ?anthropic_version:string ->
     Eta_http.Client.t ->
     credential:credential ->
     Eta_ai.chat_request ->

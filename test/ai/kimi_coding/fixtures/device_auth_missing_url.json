@@ -1,0 +1,6 @@
+{
+  "user_code": "ABCD-EFGH",
+  "device_code": "device-secret-code",
+  "expires_in": 900,
+  "interval": 5
+}
