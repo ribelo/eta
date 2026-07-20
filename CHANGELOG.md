@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `Effect.sync_option ~if_none` — thunk counterpart of `from_option`, completing
+  the `from_result`/`from_option` × `sync_result`/`sync_option` construct family.
+  `Some` succeeds, `None` is the typed `if_none` failure, raised exceptions stay
+  defects (`Cause.Die`) and are not handled by `bind_error`.
+
 ## Idiom pass (2026-07-18) — breaking
 
 One batched breaking pass over the public surface, aligning Eta with OCaml

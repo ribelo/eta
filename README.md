@@ -109,7 +109,8 @@ Sensitive-value redaction lives in the optional `eta_redacted` package, not in
 
 - `Effect.sync` exceptions are unchecked defects (`Cause.Die`), not typed
   failures. Catch expected errors by returning `result` from the synchronous
-  leaf, then use `Effect.sync_result f`.
+  leaf, then use `Effect.sync_result f`; for an `option` leaf, use
+  `Effect.sync_option ~if_none` (`None` is typed failure, raises stay defects).
 - `Effect.bind_error` handles typed failures only; it does not catch defects,
   interruption, or finalizer failures. Use `Effect.catch_some` when only some
   typed failures should recover and non-matches must preserve the original

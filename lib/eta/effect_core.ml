@@ -218,6 +218,7 @@ let bind (k) eff =
 let ( >>= ) eff (k) = bind k eff
 let flatten_result eff = bind from_result eff
 let sync_result f = flatten_result (sync f)
+let sync_option ~if_none f = bind (from_option ~if_none) (sync f)
 let tap (k) eff = bind (fun value -> map (fun _ -> value) (k value)) eff
 let seq next self = bind (fun () -> next) self
 
