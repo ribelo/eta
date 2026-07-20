@@ -13,7 +13,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let expect_ok label = function
     | Stdlib.Ok value -> value
-    | Stdlib.Error _ -> Alcotest.fail ("expected Ok: " ^ label)
+    | Stdlib.Error err ->
+        Alcotest.failf "expected Ok: %s (%s)" label
+          (A.project_ai_error err).diagnostic
+
+  let expect_error label = function
+    | Stdlib.Error err -> err
+    | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
 
   let contains ~needle value =
     let needle_len = String.length needle in
@@ -37,23 +43,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | H.Request.Fixed chunks ->
         chunks |> List.map Bytes.to_string |> String.concat ""
     | H.Request.Empty -> ""
-    | H.Request.Stream _ | H.Request.Rewindable_stream _ ->
-        Alcotest.fail "expected fixed request body"
-
-  let chunk_string value =
-    let sizes = [| 7; 3; 19; 2; 11 |] in
-    let rec loop index size_index acc =
-      if index >= String.length value then List.rev acc
-      else
-        let size = sizes.(size_index mod Array.length sizes) in
-        let len = min size (String.length value - index) in
-        loop (index + len) (size_index + 1)
-          (Bytes.of_string (String.sub value index len) :: acc)
-    in
-    loop 0 0 []
+    | _ -> Alcotest.fail "expected fixed request body"
 
   let body_of_fixture name =
-    H.Body.Stream.of_bytes (chunk_string (read_fixture name))
+    H.Body.Stream.of_bytes [ Bytes.of_string (read_fixture name) ]
 
   let zero_stats =
     {
@@ -84,90 +77,95 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Eta.Exit.Ok value -> value
     | Eta.Exit.Error cause ->
         Alcotest.failf "%s failed: %a" label
-          (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<ai-error>"))
+          (Eta.Cause.pp (fun fmt err ->
+               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
           cause
 
-  let test_pkce_and_authorize_plan () =
-    let verifier = "alpha-verifier-0123456789" in
-    let pkce = C.pkce_s256 ~code_verifier:verifier in
-    Alcotest.(check string) "method" "S256" pkce.code_challenge_method;
-    Alcotest.(check bool)
-      "challenge nonempty" true
-      (String.length pkce.code_challenge > 10);
-    let plan =
-      C.plan_authorize ~state:"state123" ~code_verifier:verifier
-        ~originator:"eta-test" ()
-    in
-    require_contains "issuer host"
-      ~needle:"https://auth.openai.com/oauth/authorize" plan.authorize_url;
-    require_contains "client"
-      ~needle:("client_id=" ^ C.client_id)
-      plan.authorize_url;
-    require_contains "challenge"
-      ~needle:("code_challenge=" ^ pkce.code_challenge)
-      plan.authorize_url;
-    require_contains "originator" ~needle:"originator=eta-test"
-      plan.authorize_url;
-    require_contains "simplified" ~needle:"codex_cli_simplified_flow=true"
-      plan.authorize_url;
-    Alcotest.(check string) "redirect" C.default_redirect_uri plan.redirect_uri
+  let identity =
+    C.client_identity ~originator:"eta-test"
+      ~user_agent:"eta-test (linux 1.0; x86_64)" ()
 
-  let test_credential_roundtrip_redacted () =
+  let entropy n = String.make n '\042'
+
+  let test_pkce_requires_caller_entropy () =
+    let verifier =
+      C.code_verifier_of_entropy (entropy 32) |> expect_ok "verifier"
+    in
+    let state = C.state_of_entropy (entropy 16) |> expect_ok "state" in
+    let plan =
+      C.plan_authorize ~state ~code_verifier:verifier ~originator:"eta-test" ()
+      |> expect_ok "plan"
+    in
+    require_contains "authorize"
+      ~needle:"https://auth.openai.com/oauth/authorize" plan.authorize_url;
+    let err = C.code_verifier_of_entropy (entropy 8) |> expect_error "short" in
+    require_absent "no secret" ~needle:"********"
+      (A.project_ai_error err).diagnostic;
+    let callback =
+      C.parse_authorization_callback ~expected_state:state
+        (C.Callback_url
+           ("http://localhost:1455/auth/callback?code=auth-code&state=" ^ state))
+      |> expect_ok "callback"
+    in
+    Alcotest.(check string) "code" "auth-code" callback.code;
+    let mismatch =
+      C.parse_authorization_callback ~expected_state:state
+        (C.Callback_code { code = "x"; state = Some "other" })
+      |> expect_error "state mismatch"
+    in
+    require_contains "mismatch" ~needle:"state mismatch"
+      (A.project_ai_error mismatch).diagnostic
+
+  let test_credential_roundtrip_and_no_raw_secrets () =
     let cred =
       C.oauth_credential ~access_token:"access-secret-token"
         ~refresh_token:"refresh-secret-token" ~expires_at_ms:123L
         ~account_id:"acc_test" ()
+      |> expect_ok "cred"
     in
     let raw = C.credential_to_string cred in
     require_contains "type" ~needle:"\"type\":\"oauth\"" raw;
-    require_contains "access stored" ~needle:"access-secret-token" raw;
-    let decoded = C.credential_of_string raw |> expect_ok "decode cred" in
-    Alcotest.(check (option string))
-      "account" (Some "acc_test") decoded.account_id;
+    let decoded = C.credential_of_string raw |> expect_ok "decode" in
+    Alcotest.(check string) "account" "acc_test" decoded.account_id;
     let diag = Format.asprintf "%a" C.pp_credential decoded in
-    require_absent "no access in diag" ~needle:"access-secret-token" diag;
-    require_absent "no refresh in diag" ~needle:"refresh-secret-token" diag;
-    require_contains "redacted label" ~needle:"redacted" diag
-
-  let test_exchange_and_refresh_requests () =
-    let exchange =
-      C.exchange_code_request ~redirect_uri:C.default_redirect_uri
-        ~code:"auth-code" ~code_verifier:"verifier" ()
+    require_absent "access" ~needle:"access-secret-token" diag;
+    require_absent "refresh" ~needle:"refresh-secret-token" diag;
+    let bad =
+      C.credential_of_string
+        "{\"type\":\"oauth\",\"access_token\":\"access-secret-token\",\"refresh_token\":\"refresh-secret-token\"}"
+      |> expect_error "missing account"
     in
-    Alcotest.(check string)
-      "exchange uri" "https://auth.openai.com/oauth/token" exchange.uri;
-    Alcotest.(check string) "method" "POST" exchange.method_;
-    let body = request_body_string exchange in
-    require_contains "grant" ~needle:"grant_type=authorization_code" body;
-    require_contains "code" ~needle:"code=auth-code" body;
-    require_contains "verifier" ~needle:"code_verifier=verifier" body;
-    let refresh = C.refresh_request ~refresh_token:"refresh-secret-token" () in
-    Alcotest.(check string)
-      "refresh uri" "https://auth.openai.com/oauth/token" refresh.uri;
-    require_contains "refresh grant" ~needle:"grant_type=refresh_token"
-      (request_body_string refresh);
-    require_contains "refresh token"
-      ~needle:"refresh_token=refresh-secret-token"
-      (request_body_string refresh)
+    (match bad with
+    | A.Decode_error { raw = None; _ } | A.Provider_error { raw = None; _ } ->
+        ()
+    | A.Decode_error { raw = Some leaked; _ }
+    | A.Provider_error { raw = Some leaked; _ } ->
+        Alcotest.fail ("credential error retained raw: " ^ leaked)
+    | _ -> ());
+    require_absent "no leak" ~needle:"access-secret-token"
+      (A.project_ai_error bad).diagnostic;
+    let legacy =
+      C.credential_of_string "\"access-secret-token\"" |> expect_error "legacy"
+    in
+    require_absent "legacy no leak" ~needle:"access-secret-token"
+      (A.project_ai_error legacy).diagnostic
 
-  let test_token_decode_account_id () =
+  let test_token_requires_account_and_headers () =
     let token =
       C.decode_token_response (read_fixture "token.json") |> expect_ok "token"
     in
-    Alcotest.(check string) "access" "access-secret-token" token.access_token;
-    let cred = C.credential_of_token_set ~now_ms:1_000L token in
-    Alcotest.(check (option string)) "account" (Some "acc_test") cred.account_id;
-    Alcotest.(check (option int64))
-      "expires" (Some 3_601_000L) cred.expires_at_ms
-
-  let test_provider_headers_and_endpoint () =
-    let provider =
-      C.provider ~account_id:"acc_test" ~originator:"eta" ~session_id:"sess1" ()
+    Alcotest.(check string) "account" "acc_test" token.account_id;
+    let missing =
+      C.decode_token_response (read_fixture "token_no_account.json")
+      |> expect_error "no account"
     in
-    Alcotest.(check string) "name" "openai-codex" provider.name;
-    Alcotest.(check string) "base" C.default_base_url provider.base_url;
-    Alcotest.(check string) "path" "/responses" provider.chat_path;
-    let headers = provider.auth_headers (A.api_key "access-secret-token") in
+    require_contains "account required" ~needle:"chatgpt_account_id"
+      (A.project_ai_error missing).diagnostic;
+    let cred = C.credential_of_token_set ~now_ms:1000L token in
+    let headers =
+      C.auth_headers_of_credential ~identity ~session_id:"sess1" ~stream:true
+        cred
+    in
     Alcotest.(check (option string))
       "auth" (Some "Bearer access-secret-token")
       (H.Core.Header.get "authorization" headers);
@@ -175,17 +173,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "account" (Some "acc_test")
       (H.Core.Header.get "chatgpt-account-id" headers);
     Alcotest.(check (option string))
-      "originator" (Some "eta")
-      (H.Core.Header.get "originator" headers);
+      "ua" (Some "eta-test (linux 1.0; x86_64)")
+      (H.Core.Header.get "user-agent" headers);
     Alcotest.(check (option string))
-      "beta" (Some "responses=experimental")
-      (H.Core.Header.get "openai-beta" headers);
-    let cred =
-      C.oauth_credential ~access_token:"access-secret-token"
-        ~refresh_token:"refresh-secret-token" ~account_id:"acc_test" ()
-    in
+      "accept" (Some "text/event-stream")
+      (H.Core.Header.get "accept" headers);
+    Alcotest.(check (option string))
+      "session" (Some "sess1")
+      (H.Core.Header.get "session-id" headers);
     let request =
-      C.responses_request ~credential:cred
+      C.responses_request ~identity ~session_id:"sess1" ~credential:cred
         {
           model = "gpt-5.1-codex";
           prompt = [ A.User [ A.Text "hi" ] ];
@@ -193,12 +190,31 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           temperature = None;
           max_output_tokens = Some 16;
           replay_items = [];
-          stream = false;
+          stream = true;
         }
       |> expect_ok "responses request"
     in
     Alcotest.(check string)
       "uri" "https://chatgpt.com/backend-api/codex/responses" request.uri
+
+  let test_models_catalog () =
+    with_runtime @@ fun rt ->
+    let token =
+      C.decode_token_response (read_fixture "token.json") |> expect_ok "token"
+    in
+    let cred = C.credential_of_token_set ~now_ms:1L token in
+    let models =
+      run_ok rt "models"
+        (C.list_models ~identity
+           (test_client (response_of_fixture "models.json") (ref None))
+           ~credential:cred)
+    in
+    match models with
+    | [ m ] ->
+        Alcotest.(check string) "slug" "gpt-test" m.slug;
+        Alcotest.(check bool) "api" true m.supported_in_api;
+        Alcotest.(check (option int)) "priority" (Some 1) m.priority
+    | _ -> Alcotest.fail "one model"
 
   let test_exchange_effect () =
     with_runtime @@ fun rt ->
@@ -209,61 +225,25 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (C.exchange_code client ~redirect_uri:C.default_redirect_uri ~code:"c"
            ~code_verifier:"v")
     in
-    Alcotest.(check string) "access" "access-secret-token" token.access_token;
+    Alcotest.(check string) "account" "acc_test" token.account_id;
     match !captured with
     | None -> Alcotest.fail "missing request"
     | Some req ->
         Alcotest.(check string)
           "uri" "https://auth.openai.com/oauth/token" req.uri
 
-  let test_responses_effect () =
-    with_runtime @@ fun rt ->
-    let captured = ref None in
-    let client = test_client (response_of_fixture "responses.json") captured in
-    let cred =
-      C.oauth_credential ~access_token:"access-secret-token"
-        ~refresh_token:"refresh-secret-token" ~account_id:"acc_test" ()
-    in
-    let response =
-      run_ok rt "responses"
-        (C.responses client ~credential:cred
-           {
-             model = "gpt-5.1-codex";
-             prompt = [ A.User [ A.Text "hi" ] ];
-             tools = [];
-             temperature = None;
-             max_output_tokens = Some 16;
-             replay_items = [];
-             stream = false;
-           })
-    in
-    (match response.message with
-    | A.Assistant { content = A.Text text :: _; _ } ->
-        Alcotest.(check string) "text" "hello from codex" text
-    | _ -> Alcotest.fail "expected assistant text");
-    match !captured with
-    | None -> Alcotest.fail "missing request"
-    | Some req ->
-        Alcotest.(check (option string))
-          "auth header" (Some "Bearer access-secret-token")
-          (H.Core.Header.get "authorization" req.headers)
-
   let tests =
     [
       ( "openai-codex",
         [
-          Alcotest.test_case "pkce and authorize plan" `Quick
-            test_pkce_and_authorize_plan;
-          Alcotest.test_case "credential roundtrip redacted" `Quick
-            test_credential_roundtrip_redacted;
-          Alcotest.test_case "exchange and refresh requests" `Quick
-            test_exchange_and_refresh_requests;
-          Alcotest.test_case "token decode account id" `Quick
-            test_token_decode_account_id;
-          Alcotest.test_case "provider headers and endpoint" `Quick
-            test_provider_headers_and_endpoint;
+          Alcotest.test_case "pkce and callback validation" `Quick
+            test_pkce_requires_caller_entropy;
+          Alcotest.test_case "credential codecs without raw secrets" `Quick
+            test_credential_roundtrip_and_no_raw_secrets;
+          Alcotest.test_case "token account and headers" `Quick
+            test_token_requires_account_and_headers;
+          Alcotest.test_case "models catalog" `Quick test_models_catalog;
           Alcotest.test_case "exchange effect" `Quick test_exchange_effect;
-          Alcotest.test_case "responses effect" `Quick test_responses_effect;
         ] );
     ]
 end

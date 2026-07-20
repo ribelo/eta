@@ -8,9 +8,9 @@ val provider_name : string
 val default_base_url : string
 val china_base_url : string
 
-type credential = Eta_ai.api_key
+type credential = private Eta_ai.api_key
 
-val credential : string -> credential
+val credential : string -> (credential, Eta_ai.ai_error) result
 val credential_to_json : credential -> Eta_ai.Json.t
 val credential_of_json : Eta_ai.Json.t -> (credential, Eta_ai.ai_error) result
 val credential_to_string : credential -> Eta_ai.raw_json
@@ -19,6 +19,7 @@ val credential_of_string :
   Eta_ai.raw_json -> (credential, Eta_ai.ai_error) result
 
 val pp_credential : Format.formatter -> credential -> unit
+val api_key : credential -> Eta_ai.api_key
 val auth_headers : ?extra_headers:Eta_ai.headers -> credential -> Eta_ai.headers
 
 type structured_output = Eta_ai_openai_codec.structured_output = {
@@ -37,7 +38,13 @@ val structured_output :
 val provider :
   ?base_url:string -> ?extra_headers:Eta_ai.headers -> unit -> Eta_ai.provider
 
-(** {1 Native model catalog} *)
+type supports_thinking_type = Only | No | Both
+
+type think_efforts = {
+  support : bool option;
+  valid_efforts : string list;
+  default_effort : string option;
+}
 
 type model_info = {
   id : string;
@@ -46,7 +53,8 @@ type model_info = {
   supports_reasoning : bool option;
   supports_image_in : bool option;
   supports_tool_use : bool option;
-  raw : Eta_ai.Json.t option;
+  supports_thinking_type : supports_thinking_type option;
+  think_efforts : think_efforts option;
 }
 
 val models_request :

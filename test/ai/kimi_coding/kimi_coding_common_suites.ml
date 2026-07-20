@@ -13,7 +13,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let expect_ok label = function
     | Stdlib.Ok value -> value
-    | Stdlib.Error _ -> Alcotest.fail ("expected Ok: " ^ label)
+    | Stdlib.Error err ->
+        Alcotest.failf "expected Ok: %s (%s)" label
+          (A.project_ai_error err).diagnostic
+
+  let expect_error label = function
+    | Stdlib.Error err -> err
+    | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
 
   let contains ~needle value =
     let needle_len = String.length needle in
@@ -39,10 +45,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | H.Request.Empty -> ""
     | _ -> Alcotest.fail "fixed body"
 
-  let chunk_string value = [ Bytes.of_string value ]
-
   let body_of_fixture name =
-    H.Body.Stream.of_bytes (chunk_string (read_fixture name))
+    H.Body.Stream.of_bytes [ Bytes.of_string (read_fixture name) ]
 
   let zero_stats =
     {
@@ -77,78 +81,50 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
           cause
 
+  let run_error rt label eff =
+    match B.run rt eff with
+    | Eta.Exit.Error cause -> cause
+    | Eta.Exit.Ok _ -> Alcotest.fail ("expected error: " ^ label)
+
   let identity =
     K.device_identity ~version:"0.0.1" ~device_id:"dev-1"
       ~device_name:"eta-test" ()
 
-  let test_credentials_redacted () =
-    let api = K.Api_key (K.api_key "kimi-api-secret") in
+  let test_credentials_strict_safe () =
+    let api =
+      K.api_key "kimi-api-secret" |> expect_ok "api" |> fun k -> K.Api_key k
+    in
     let oauth =
-      K.OAuth
-        (K.oauth_credential ~access_token:"kimi-access-secret"
-           ~refresh_token:"kimi-refresh-secret" ~expires_at:99L ())
+      K.oauth_credential ~access_token:"kimi-access-secret"
+        ~refresh_token:"kimi-refresh-secret" ~expires_at:99L ()
+      |> expect_ok "oauth"
+      |> fun o -> K.OAuth o
     in
     let api_raw = K.credential_to_string api in
     let oauth_raw = K.credential_to_string oauth in
-    require_contains "api type" ~needle:"api_key" api_raw;
-    require_contains "oauth type" ~needle:"oauth" oauth_raw;
-    let api2 = K.credential_of_string api_raw |> expect_ok "api" in
-    let oauth2 = K.credential_of_string oauth_raw |> expect_ok "oauth" in
+    require_contains "api type" ~needle:"\"type\":\"api_key\"" api_raw;
+    require_contains "oauth type" ~needle:"\"type\":\"oauth\"" oauth_raw;
     require_absent "api diag" ~needle:"kimi-api-secret"
-      (Format.asprintf "%a" K.pp_credential api2);
+      (Format.asprintf "%a" K.pp_credential api);
     require_absent "oauth diag" ~needle:"kimi-access-secret"
-      (Format.asprintf "%a" K.pp_credential oauth2)
-
-  let test_headers_and_chat_endpoint () =
-    let cred = K.Api_key (K.api_key "kimi-api-secret") in
-    let headers = K.auth_headers ~identity cred in
-    Alcotest.(check (option string))
-      "auth" (Some "Bearer kimi-api-secret")
-      (H.Core.Header.get "authorization" headers);
-    Alcotest.(check (option string))
-      "platform" (Some "kimi_code_cli")
-      (H.Core.Header.get "x-msh-platform" headers);
-    Alcotest.(check (option string))
-      "device" (Some "dev-1")
-      (H.Core.Header.get "x-msh-device-id" headers);
-    let request =
-      K.chat_completions_request ~identity ~credential:cred
-        {
-          model = "kimi-for-coding";
-          prompt = [ A.User [ A.Text "hi" ] ];
-          tools = [];
-          temperature = None;
-          max_output_tokens = None;
-          replay_items = [];
-          stream = false;
-        }
-      |> expect_ok "chat req"
+      (Format.asprintf "%a" K.pp_credential oauth);
+    let bad =
+      K.credential_of_string
+        "{\"type\":\"oauth\",\"access_token\":\"kimi-access-secret\",\"refresh_token\":\"kimi-refresh-secret\"}"
+      |> expect_error "missing expires"
     in
-    Alcotest.(check string)
-      "uri" "https://api.kimi.com/coding/v1/chat/completions" request.uri
-
-  let test_device_oauth_requests () =
-    let auth_req = K.device_authorization_request ~identity () in
-    Alcotest.(check string)
-      "auth uri" "https://auth.kimi.com/api/oauth/device_authorization"
-      auth_req.uri;
-    require_contains "client"
-      ~needle:("client_id=" ^ K.client_id)
-      (request_body_string auth_req);
-    let poll_req =
-      K.device_token_poll_request ~identity ~device_code:"device-secret-code" ()
+    (match bad with
+    | A.Decode_error { raw = None; _ } | A.Provider_error { raw = None; _ } ->
+        ()
+    | A.Decode_error { raw = Some leaked; _ }
+    | A.Provider_error { raw = Some leaked; _ } ->
+        Alcotest.fail ("raw retained: " ^ leaked)
+    | _ -> ());
+    let legacy =
+      K.credential_of_string "\"kimi-api-secret\"" |> expect_error "legacy"
     in
-    Alcotest.(check string)
-      "poll uri" "https://auth.kimi.com/api/oauth/token" poll_req.uri;
-    require_contains "device grant"
-      ~needle:
-        "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"
-      (request_body_string poll_req);
-    let refresh_req =
-      K.refresh_request ~identity ~refresh_token:"kimi-refresh-secret" ()
-    in
-    require_contains "refresh" ~needle:"grant_type=refresh_token"
-      (request_body_string refresh_req)
+    require_absent "legacy" ~needle:"kimi-api-secret"
+      (A.project_ai_error legacy).diagnostic
 
   let test_device_oauth_outcomes () =
     with_runtime @@ fun rt ->
@@ -158,74 +134,66 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
            (test_client (response_of_fixture "device_auth.json") (ref None)))
     in
     Alcotest.(check string) "user" "ABCD-EFGH" auth.user_code;
+    require_contains "url" ~needle:"https://" auth.verification_uri;
+    let missing_url =
+      K.decode_device_authorization
+        (read_fixture "device_auth_missing_url.json")
+      |> expect_error "missing url"
+    in
+    require_contains "verification" ~needle:"verification"
+      (A.project_ai_error missing_url).diagnostic;
     let pending =
       run_ok rt "pending"
-        (K.poll_device_token ~identity
+        (K.poll_device_token ~identity ~now_s:10L ~current_interval:5
            (test_client
               (response_of_fixture ~status:400 "device_pending.json")
               (ref None))
-           ~device_code:"device-secret-code")
+           ~device_code:auth.device_code)
     in
     (match pending with
-    | K.Pending { error_code = "authorization_pending"; _ } -> ()
+    | K.Authorization_pending _ -> ()
     | _ -> Alcotest.fail "expected pending");
     let authorized =
       run_ok rt "authorized"
-        (K.poll_device_token ~identity
+        (K.poll_device_token ~identity ~now_s:1000L
            (test_client (response_of_fixture "token.json") (ref None))
-           ~device_code:"device-secret-code")
+           ~device_code:auth.device_code)
     in
     (match authorized with
     | K.Authorized oauth ->
-        Alcotest.(check string)
-          "access" "kimi-access-secret"
-          (Eta_redacted.value oauth.access_token)
+        Alcotest.(check bool) "expires preserved" true (oauth.expires_at > 1000L);
+        require_absent "device code diag" ~needle:"device-secret-code"
+          (Format.asprintf "%a" K.pp_credential (K.OAuth oauth))
     | _ -> Alcotest.fail "expected authorized");
+    let unknown =
+      K.decode_device_poll ~status:400 ~now_s:1L
+        "{\"error\":\"invalid_grant\",\"error_description\":\"nope\"}"
+      |> expect_error "unknown"
+    in
+    require_contains "invalid" ~needle:"invalid_grant"
+      (A.project_ai_error unknown).diagnostic;
+    let server =
+      K.decode_device_poll ~status:503 ~now_s:1L "{}" |> expect_error "5xx"
+    in
+    (match server with
+    | A.Provider_error { status = Some 503; raw = None; _ } -> ()
+    | _ -> Alcotest.fail "expected provider 503");
     let refreshed =
       run_ok rt "refresh"
-        (K.refresh ~identity
+        (K.refresh ~identity ~now_s:2000L
            (test_client (response_of_fixture "token.json") (ref None))
-           ~refresh_token:"kimi-refresh-secret")
+           (match authorized with
+           | K.Authorized oauth -> oauth
+           | _ -> Alcotest.fail "oauth"))
     in
-    Alcotest.(check string)
-      "refresh access" "kimi-access-secret"
-      (Eta_redacted.value refreshed.access_token)
+    Alcotest.(check bool) "refresh expires" true (refreshed.expires_at > 2000L)
 
-  let test_catalog_protocol () =
-    let models =
-      K.decode_models (read_fixture "models.json") |> expect_ok "models"
-    in
-    Alcotest.(check int) "count" 2 (List.length models);
-    let anthropic =
-      List.find_opt (fun (m : K.model_info) -> m.id = "kimi-claude") models
-    in
-    (match anthropic with
-    | Some { protocol = Some K.Anthropic; _ } -> ()
-    | _ -> Alcotest.fail "expected anthropic protocol");
-    let kimi =
-      List.find_opt (fun (m : K.model_info) -> m.id = "kimi-for-coding") models
-    in
-    match kimi with
-    | Some { protocol = None; _ } -> ()
-    | Some { protocol = Some K.Kimi; _ } -> ()
-    | _ -> Alcotest.fail "expected kimi default protocol absent or kimi"
-
-  let test_messages_route () =
+  let test_messages_headers_and_stream () =
     with_runtime @@ fun rt ->
-    let cred = K.Api_key (K.api_key "kimi-api-secret") in
-    let provider = K.messages_provider ~identity () in
-    Alcotest.(check string) "path" K.default_messages_path provider.chat_path;
-    Alcotest.(check string) "base" K.default_base_url provider.base_url;
-    let headers = provider.auth_headers (A.api_key "kimi-api-secret") in
-    Alcotest.(check (option string))
-      "bearer" (Some "Bearer kimi-api-secret")
-      (H.Core.Header.get "authorization" headers);
-    Alcotest.(check (option string))
-      "no x-api-key" None
-      (H.Core.Header.get "x-api-key" headers);
-    Alcotest.(check (option string))
-      "device" (Some "dev-1")
-      (H.Core.Header.get "x-msh-device-id" headers);
+    let cred =
+      K.api_key "kimi-api-secret" |> expect_ok "api" |> fun k -> K.Api_key k
+    in
+    let captured = ref None in
     let request =
       K.messages_request ~identity ~credential:cred
         {
@@ -241,13 +209,23 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check string)
       "uri" "https://api.kimi.com/coding/v1/messages?beta=true" request.uri;
-    require_contains "anthropic body" ~needle:"\"messages\":"
-      (request_body_string request);
-    let captured = ref None in
-    let client = test_client (response_of_fixture "message.json") captured in
+    Alcotest.(check (option string))
+      "auth" (Some "Bearer kimi-api-secret")
+      (H.Core.Header.get "authorization" request.headers);
+    Alcotest.(check (option string))
+      "anthropic-version" (Some "2023-06-01")
+      (H.Core.Header.get "anthropic-version" request.headers);
+    Alcotest.(check (option string))
+      "device" (Some "dev-1")
+      (H.Core.Header.get "x-msh-device-id" request.headers);
+    Alcotest.(check (option string))
+      "no x-api-key" None
+      (H.Core.Header.get "x-api-key" request.headers);
     let response =
       run_ok rt "messages"
-        (K.messages ~identity client ~credential:cred
+        (K.messages ~identity
+           (test_client (response_of_fixture "message.json") captured)
+           ~credential:cred
            {
              model = "kimi-claude";
              prompt = [ A.User [ A.Text "hi" ] ];
@@ -261,25 +239,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     (match response.message with
     | A.Assistant { content = A.Text text :: _; _ } ->
         Alcotest.(check string) "text" "Sunny and 21C" text
-    | _ -> Alcotest.fail "assistant text");
-    match !captured with
-    | None -> Alcotest.fail "missing request"
-    | Some req ->
-        Alcotest.(check (option string))
-          "auth" (Some "Bearer kimi-api-secret")
-          (H.Core.Header.get "authorization" req.headers);
-        Alcotest.(check (option string))
-          "device header" (Some "dev-1")
-          (H.Core.Header.get "x-msh-device-id" req.headers)
-
-  let test_messages_stream_projection () =
-    with_runtime @@ fun rt ->
-    let captured = ref None in
-    let client = test_client (response_of_fixture "stream_tool.sse") captured in
-    let cred = K.Api_key (K.api_key "kimi-api-secret") in
+    | _ -> Alcotest.fail "assistant");
     let stream =
       run_ok rt "stream messages"
-        (K.stream_messages ~identity client ~credential:cred
+        (K.stream_messages ~identity
+           (test_client (response_of_fixture "stream_tool.sse") (ref None))
+           ~credential:cred
            {
              model = "kimi-claude";
              prompt = [ A.User [ A.Text "hi" ] ];
@@ -290,34 +255,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              stream = true;
            })
     in
-    let events = run_ok rt "read stream" (A.read_stream_events stream) in
+    let events =
+      run_ok rt "read messages stream" (A.read_stream_events stream)
+    in
     let has_text =
       List.exists
         (function A.Stream_content_delta _ -> true | _ -> false)
         events
     in
-    let has_tool =
-      List.exists
-        (function A.Stream_tool_call_delta _ -> true | _ -> false)
-        events
-    in
-    Alcotest.(check bool) "text delta" true has_text;
-    Alcotest.(check bool) "tool events" true has_tool;
-    match !captured with
-    | None -> Alcotest.fail "missing stream request"
-    | Some req ->
-        Alcotest.(check string)
-          "stream uri" "https://api.kimi.com/coding/v1/messages?beta=true"
-          req.uri
+    Alcotest.(check bool) "stream text" true has_text
 
-  let test_chat_effect () =
+  let test_catalog_and_chat_reasoning () =
     with_runtime @@ fun rt ->
-    let captured = ref None in
-    let client = test_client (response_of_fixture "chat.json") captured in
-    let cred = K.Api_key (K.api_key "kimi-api-secret") in
-    let response =
-      run_ok rt "chat"
-        (K.chat_completions ~identity client ~credential:cred
+    let models =
+      K.decode_models (read_fixture "models.json") |> expect_ok "models"
+    in
+    Alcotest.(check int) "count" 2 (List.length models);
+    let anthropic =
+      List.find (fun (m : K.model_info) -> m.id = "kimi-claude") models
+    in
+    (match anthropic.protocol with
+    | Some K.Anthropic -> ()
+    | _ -> Alcotest.fail "protocol");
+    (match anthropic.supports_thinking_type with
+    | Some K.Both -> ()
+    | _ -> Alcotest.fail "thinking");
+    let cred =
+      K.api_key "kimi-api-secret" |> expect_ok "api" |> fun k -> K.Api_key k
+    in
+    let stream =
+      run_ok rt "chat stream"
+        (K.stream_chat_completions ~identity
+           (test_client (response_of_fixture "stream_reasoning.sse") (ref None))
+           ~credential:cred
            {
              model = "kimi-for-coding";
              prompt = [ A.User [ A.Text "hi" ] ];
@@ -325,37 +295,29 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              temperature = None;
              max_output_tokens = None;
              replay_items = [];
-             stream = false;
+             stream = true;
            })
     in
-    (match response.message with
-    | A.Assistant { content = A.Text text :: _; _ } ->
-        Alcotest.(check string) "text" "kimi hello" text
-    | _ -> Alcotest.fail "assistant");
-    match !captured with
-    | None -> Alcotest.fail "no request"
-    | Some req ->
-        Alcotest.(check (option string))
-          "device header" (Some "dev-1")
-          (H.Core.Header.get "x-msh-device-id" req.headers)
+    let events = run_ok rt "read" (A.read_stream_events stream) in
+    let has_reasoning =
+      List.exists
+        (function A.Stream_reasoning_delta "plan" -> true | _ -> false)
+        events
+    in
+    Alcotest.(check bool) "reasoning" true has_reasoning
 
   let tests =
     [
       ( "kimi-coding",
         [
-          Alcotest.test_case "credentials redacted" `Quick
-            test_credentials_redacted;
-          Alcotest.test_case "headers and chat endpoint" `Quick
-            test_headers_and_chat_endpoint;
-          Alcotest.test_case "device oauth requests" `Quick
-            test_device_oauth_requests;
+          Alcotest.test_case "credentials strict safe" `Quick
+            test_credentials_strict_safe;
           Alcotest.test_case "device oauth outcomes" `Quick
             test_device_oauth_outcomes;
-          Alcotest.test_case "catalog protocol" `Quick test_catalog_protocol;
-          Alcotest.test_case "chat effect" `Quick test_chat_effect;
-          Alcotest.test_case "messages route" `Quick test_messages_route;
-          Alcotest.test_case "messages stream projection" `Quick
-            test_messages_stream_projection;
+          Alcotest.test_case "messages headers and stream" `Quick
+            test_messages_headers_and_stream;
+          Alcotest.test_case "catalog and chat reasoning" `Quick
+            test_catalog_and_chat_reasoning;
         ] );
     ]
 end

@@ -36,6 +36,11 @@ let chat_stream_events ~finish_reason raw json =
           | Some text -> A.Stream_content_delta text :: deltas
         in
         let deltas =
+          match Json.string_member "reasoning_content" delta with
+          | None -> deltas
+          | Some text -> A.Stream_reasoning_delta text :: deltas
+        in
+        let deltas =
           match Json.array_member "tool_calls" delta with
           | None -> deltas
           | Some tool_calls ->

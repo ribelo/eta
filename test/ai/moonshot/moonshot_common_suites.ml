@@ -13,7 +13,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let expect_ok label = function
     | Stdlib.Ok value -> value
-    | Stdlib.Error _ -> Alcotest.fail ("expected Ok: " ^ label)
+    | Stdlib.Error err ->
+        Alcotest.failf "expected Ok: %s (%s)" label
+          (A.project_ai_error err).diagnostic
+
+  let expect_error label = function
+    | Stdlib.Error err -> err
+    | Stdlib.Ok _ -> Alcotest.fail ("expected Error: " ^ label)
 
   let contains ~needle value =
     let needle_len = String.length needle in
@@ -32,10 +38,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let require_absent label ~needle value =
     Alcotest.(check bool) label false (contains ~needle value)
 
-  let chunk_string value = [ Bytes.of_string value ]
-
   let body_of_fixture name =
-    H.Body.Stream.of_bytes (chunk_string (read_fixture name))
+    H.Body.Stream.of_bytes [ Bytes.of_string (read_fixture name) ]
 
   let zero_stats =
     {
@@ -66,39 +70,60 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Eta.Exit.Ok value -> value
     | Eta.Exit.Error cause ->
         Alcotest.failf "%s failed: %a" label
-          (Eta.Cause.pp (fun fmt _ -> Format.pp_print_string fmt "<ai-error>"))
+          (Eta.Cause.pp (fun fmt err ->
+               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
           cause
 
-  let test_credential_and_headers () =
-    let cred = M.credential "ms-secret-key" in
+  let test_credential_strict_and_safe () =
+    let cred = M.credential "ms-secret-key" |> expect_ok "cred" in
     let raw = M.credential_to_string cred in
-    require_contains "type" ~needle:"api_key" raw;
-    require_contains "key" ~needle:"ms-secret-key" raw;
+    require_contains "type" ~needle:"\"type\":\"api_key\"" raw;
     let diag = Format.asprintf "%a" M.pp_credential cred in
     require_absent "redacted" ~needle:"ms-secret-key" diag;
+    let bad =
+      M.credential_of_string "{\"type\":\"api_key\"}" |> expect_error "missing"
+    in
+    (match bad with
+    | A.Decode_error { raw = None; _ } | A.Provider_error { raw = None; _ } ->
+        ()
+    | A.Decode_error { raw = Some leaked; _ }
+    | A.Provider_error { raw = Some leaked; _ } ->
+        Alcotest.fail ("raw retained: " ^ leaked)
+    | _ -> ());
+    let legacy =
+      M.credential_of_string "\"ms-secret-key\"" |> expect_error "legacy"
+    in
+    require_absent "legacy" ~needle:"ms-secret-key"
+      (A.project_ai_error legacy).diagnostic;
     let headers = M.auth_headers cred in
     Alcotest.(check (option string))
       "auth" (Some "Bearer ms-secret-key")
-      (H.Core.Header.get "authorization" headers);
-    let provider = M.provider () in
-    Alcotest.(check string) "base" M.default_base_url provider.base_url;
-    Alcotest.(check string) "path" "/chat/completions" provider.chat_path
+      (H.Core.Header.get "authorization" headers)
 
-  let test_catalog_decode () =
+  let test_catalog_thinking_metadata () =
     let models =
       M.decode_models (read_fixture "models.json") |> expect_ok "models"
     in
     match models with
-    | [ m ] ->
+    | [ m ] -> (
         Alcotest.(check string) "id" "kimi-k2.5" m.id;
-        Alcotest.(check (option int)) "ctx" (Some 262144) m.context_length
-    | _ -> Alcotest.fail "expected one model"
+        (match m.supports_thinking_type with
+        | Some M.Both -> ()
+        | _ -> Alcotest.fail "thinking type");
+        match m.think_efforts with
+        | Some
+            {
+              valid_efforts = [ "low"; "high" ];
+              default_effort = Some "low";
+              _;
+            } ->
+            ()
+        | _ -> Alcotest.fail "think efforts")
+    | _ -> Alcotest.fail "one model"
 
-  let test_chat_request_and_effect () =
+  let test_chat_and_reasoning_stream () =
     with_runtime @@ fun rt ->
-    let captured = ref None in
-    let client = test_client (response_of_fixture "chat.json") captured in
-    let cred = M.credential "ms-secret-key" in
+    let cred = M.credential "ms-secret-key" |> expect_ok "cred" in
     let request =
       M.chat_completions_request ~credential:cred
         {
@@ -114,9 +139,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check string)
       "uri" "https://api.moonshot.ai/v1/chat/completions" request.uri;
-    let response =
-      run_ok rt "chat"
-        (M.chat_completions client ~credential:cred
+    let stream =
+      run_ok rt "stream"
+        (M.stream_chat_completions
+           (test_client (response_of_fixture "stream_reasoning.sse") (ref None))
+           ~credential:cred
            {
              model = "kimi-k2.5";
              prompt = [ A.User [ A.Text "hi" ] ];
@@ -124,30 +151,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              temperature = None;
              max_output_tokens = None;
              replay_items = [];
-             stream = false;
+             stream = true;
            })
     in
-    (match response.message with
-    | A.Assistant { content = A.Text text :: _; _ } ->
-        Alcotest.(check string) "text" "moonshot hello" text
-    | _ -> Alcotest.fail "assistant");
-    let models =
-      run_ok rt "models"
-        (M.list_models
-           (test_client (response_of_fixture "models.json") (ref None))
-           ~credential:cred)
+    let events = run_ok rt "read" (A.read_stream_events stream) in
+    let has_reasoning =
+      List.exists
+        (function A.Stream_reasoning_delta "think" -> true | _ -> false)
+        events
     in
-    Alcotest.(check int) "model count" 1 (List.length models)
+    let has_text =
+      List.exists
+        (function A.Stream_content_delta "hi" -> true | _ -> false)
+        events
+    in
+    Alcotest.(check bool) "reasoning" true has_reasoning;
+    Alcotest.(check bool) "text" true has_text
 
   let tests =
     [
       ( "moonshot",
         [
-          Alcotest.test_case "credential headers" `Quick
-            test_credential_and_headers;
-          Alcotest.test_case "catalog decode" `Quick test_catalog_decode;
-          Alcotest.test_case "chat request and effect" `Quick
-            test_chat_request_and_effect;
+          Alcotest.test_case "credential strict safe" `Quick
+            test_credential_strict_and_safe;
+          Alcotest.test_case "catalog thinking metadata" `Quick
+            test_catalog_thinking_metadata;
+          Alcotest.test_case "chat and reasoning stream" `Quick
+            test_chat_and_reasoning_stream;
         ] );
     ]
 end

@@ -11,10 +11,14 @@ let china_base_url = "https://api.moonshot.cn/v1"
 
 type credential = A.api_key
 
-let credential value = A.api_key value
+let safe_error message =
+  Codec.decode_error_result ~provider:provider_name message
 
-let decode_error_result ?raw message =
-  Codec.decode_error_result ?raw ~provider:provider_name message
+let credential value =
+  if String.trim value = "" then safe_error "api_key is empty"
+  else Stdlib.Ok (A.api_key (String.trim value))
+
+let api_key key = key
 
 let credential_to_json key =
   Json.object_
@@ -25,25 +29,20 @@ let credential_to_json key =
 
 let credential_to_string key = Json.to_string (credential_to_json key)
 
-let credential_of_json json =
-  match json with
-  | `Assoc _ -> (
-      match Json.string_member "key" json with
-      | Some key when String.trim key <> "" -> Stdlib.Ok (credential key)
-      | Some _ | None -> (
-          match Json.string_member "api_key" json with
-          | Some key when String.trim key <> "" -> Stdlib.Ok (credential key)
-          | Some _ | None ->
-              decode_error_result ~raw:(Json.to_string json)
-                "api_key credential missing key"))
-  | `String key when String.trim key <> "" -> Stdlib.Ok (credential key)
-  | _ ->
-      decode_error_result ~raw:(Json.to_string json)
-        "api_key credential must be an object or string"
+let credential_of_json = function
+  | `Assoc _ as json -> (
+      match Json.string_member "type" json with
+      | Some "api_key" -> (
+          match Json.string_member "key" json with
+          | Some key -> credential key
+          | None -> safe_error "api_key credential missing key")
+      | Some other -> safe_error ("unsupported credential type " ^ other)
+      | None -> safe_error "api_key credential missing type")
+  | _ -> safe_error "api_key credential must be a JSON object"
 
 let credential_of_string raw =
   match Json.parse raw with
-  | Stdlib.Error message -> decode_error_result ~raw message
+  | Stdlib.Error message -> safe_error message
   | Stdlib.Ok json -> credential_of_json json
 
 let pp_credential fmt key = Format.fprintf fmt "%a" Eta_redacted.pp key
@@ -77,6 +76,14 @@ let provider ?(base_url = default_base_url) ?(extra_headers = []) () =
       { p.capabilities with image_input = true; structured_outputs = true };
   }
 
+type supports_thinking_type = Only | No | Both
+
+type think_efforts = {
+  support : bool option;
+  valid_efforts : string list;
+  default_effort : string option;
+}
+
 type model_info = {
   id : string;
   display_name : string option;
@@ -84,11 +91,34 @@ type model_info = {
   supports_reasoning : bool option;
   supports_image_in : bool option;
   supports_tool_use : bool option;
-  raw : A.Json.t option;
+  supports_thinking_type : supports_thinking_type option;
+  think_efforts : think_efforts option;
 }
 
 let bool_member name json =
   match Json.member name json with Some (`Bool b) -> Some b | _ -> None
+
+let parse_supports_thinking_type = function
+  | Some "only" -> Some Only
+  | Some "no" -> Some No
+  | Some "both" -> Some Both
+  | Some _ | None -> None
+
+let parse_think_efforts = function
+  | None -> None
+  | Some json ->
+      let valid_efforts =
+        match Json.array_member "valid_efforts" json with
+        | None -> []
+        | Some items ->
+            List.filter_map (function `String s -> Some s | _ -> None) items
+      in
+      Some
+        {
+          support = bool_member "support" json;
+          valid_efforts;
+          default_effort = Json.string_member "default_effort" json;
+        }
 
 let model_info_of_json json =
   match Json.string_member "id" json with
@@ -112,12 +142,16 @@ let model_info_of_json json =
           supports_reasoning = bool_member "supports_reasoning" json;
           supports_image_in = bool_member "supports_image_in" json;
           supports_tool_use = bool_member "supports_tool_use" json;
-          raw = Some json;
+          supports_thinking_type =
+            parse_supports_thinking_type
+              (Json.string_member "supports_thinking_type" json);
+          think_efforts =
+            parse_think_efforts (Json.object_member "think_efforts" json);
         }
 
 let decode_models raw =
   match Json.parse raw with
-  | Stdlib.Error message -> decode_error_result ~raw message
+  | Stdlib.Error message -> safe_error message
   | Stdlib.Ok json ->
       let items =
         match Json.array_member "data" json with
@@ -125,7 +159,7 @@ let decode_models raw =
         | None -> ( match json with `List items -> items | _ -> [])
       in
       let models = List.filter_map model_info_of_json items in
-      if models = [] then decode_error_result ~raw "models catalog is empty"
+      if models = [] then safe_error "models catalog is empty"
       else Stdlib.Ok models
 
 let models_request ?provider:custom ~credential () =

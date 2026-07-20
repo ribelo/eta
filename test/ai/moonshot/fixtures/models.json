@@ -6,7 +6,13 @@
       "context_length": 262144,
       "supports_reasoning": true,
       "supports_image_in": true,
-      "supports_tool_use": true
+      "supports_tool_use": true,
+      "supports_thinking_type": "both",
+      "think_efforts": {
+        "support": true,
+        "valid_efforts": ["low", "high"],
+        "default_effort": "low"
+      }
     }
   ]
 }
