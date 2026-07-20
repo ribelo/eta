@@ -66,15 +66,27 @@ type drain_waiter = {
   mutable drain_active : bool;
 }
 
+let clock_override : Capabilities.clock Runtime_contract.local =
+  Runtime_contract.create_local ()
+
+let random_override : Capabilities.random Runtime_contract.local =
+  Runtime_contract.create_local ()
+
+let logger_override : Capabilities.logger Runtime_contract.local =
+  Runtime_contract.create_local ()
+
+let tracer_override : Capabilities.tracer Runtime_contract.local =
+  Runtime_contract.create_local ()
+
 type 'err t = {
-  sleep : Duration.t -> unit;
-  now_ms : unit -> int;
+  clock : Capabilities.clock;
   tracer : Capabilities.tracer;
   tracing_enabled : bool;
   sampler : Sampler.t;
   auto_instrument : bool;
   logger : Capabilities.logger;
   logging_enabled : bool;
+  observability_suppressed : bool;
   meter : Capabilities.meter;
   metrics_enabled : bool;
   random : Capabilities.random;
@@ -100,8 +112,29 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
   let meter = Option.value meter ~default:Meter.noop in
   let sleep = Option.value sleep ~default:contract.Runtime_contract.sleep in
   let now_ms = Option.value now_ms ~default:contract.Runtime_contract.now_ms in
+  let clock : Capabilities.clock =
+    object
+      method now_ms () = now_ms ()
+      method sleep duration = sleep duration
+    end
+  in
+  let current_clock () =
+    Option.value
+      (contract.Runtime_contract.local_get clock_override)
+      ~default:clock
+  in
   let contract =
-    { contract with Runtime_contract.sleep = sleep; now_ms = now_ms }
+    {
+      contract with
+      Runtime_contract.sleep =
+        (fun duration ->
+          let clock = current_clock () in
+          clock#sleep duration);
+      now_ms =
+        (fun () ->
+          let clock = current_clock () in
+          clock#now_ms ());
+    }
   in
   let random =
     match random with
@@ -118,14 +151,14 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
         (Runtime_contract.Service (key, value)))
     services;
   {
-    sleep;
-    now_ms;
+    clock;
     tracer;
     tracing_enabled;
     sampler;
     auto_instrument;
     logger;
     logging_enabled;
+    observability_suppressed = false;
     meter;
     metrics_enabled;
     random;
@@ -139,6 +172,27 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
     active_waiters = [];
     default_fail_key = Typed_fail.fresh ();
   }
+
+let local_override runtime key =
+  runtime.contract.Runtime_contract.local_get key
+
+let current_clock runtime =
+  Option.value (local_override runtime clock_override) ~default:runtime.clock
+
+let current_random runtime =
+  Option.value (local_override runtime random_override) ~default:runtime.random
+
+let current_logger runtime =
+  let override = local_override runtime logger_override in
+  ( (not runtime.observability_suppressed)
+    && (runtime.logging_enabled || Option.is_some override),
+    Option.value override ~default:runtime.logger )
+
+let current_tracer runtime =
+  let override = local_override runtime tracer_override in
+  ( (not runtime.observability_suppressed)
+    && (runtime.tracing_enabled || Option.is_some override),
+    Option.value override ~default:runtime.tracer )
 
 let resolve_drain_waiters runtime waiters =
   List.iter
@@ -193,9 +247,12 @@ let wait_active_zero runtime =
   loop ()
 
 let emit_daemon_failure runtime cause =
-  RObs.emit_daemon_failure ~contract:runtime.contract ~now_ms:runtime.now_ms
-    ~logging_enabled:runtime.logging_enabled ~logger:runtime.logger
-    ~tracing_enabled:runtime.tracing_enabled ~tracer:runtime.tracer cause
+  let clock = current_clock runtime in
+  let logging_enabled, logger = current_logger runtime in
+  let tracing_enabled, tracer = current_tracer runtime in
+  RObs.emit_daemon_failure ~contract:runtime.contract
+    ~now_ms:(fun () -> clock#now_ms ()) ~logging_enabled ~logger
+    ~tracing_enabled ~tracer cause
 
 let cause_of_exn_runtime ?backtrace runtime key exn =
   cause_of_exn ?backtrace ~contract:runtime.contract

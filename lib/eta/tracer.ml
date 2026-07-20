@@ -54,6 +54,11 @@ type fiber_state = {
   mutable pending_links : link list;
 }
 
+type task_context = {
+  fiber_id : int;
+  states : (int, fiber_state) Hashtbl.t;
+}
+
 type in_memory = {
   context_id : int;
   mutex : Sync_lock.t;
@@ -62,7 +67,7 @@ type in_memory = {
   fallback : fiber_state;
 }
 
-let task_context_local : (int, fiber_state) Hashtbl.t Runtime_contract.local =
+let task_context_local : task_context Runtime_contract.local =
   Runtime_contract.create_local ()
 
 let next_context_id = ref 0
@@ -76,11 +81,17 @@ let fresh_context_id () =
 let empty_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
 let with_task_context contract f =
-  contract.Runtime_contract.local_with_binding task_context_local
-    (Hashtbl.create 1) f
+  let fiber_id = contract.Runtime_contract.current_fiber_id () in
+  match contract.Runtime_contract.local_get task_context_local with
+  | Some context when context.fiber_id = fiber_id -> f ()
+  | Some _ | None ->
+      contract.Runtime_contract.local_with_binding task_context_local
+        { fiber_id; states = Hashtbl.create 1 } f
 
 let task_context contract =
-  contract.Runtime_contract.local_get task_context_local
+  Option.map
+    (fun context -> context.states)
+    (contract.Runtime_contract.local_get task_context_local)
 
 let state contract t =
   match task_context contract with

@@ -3,8 +3,12 @@
 
 open Effect_core
 
+let with_task_context frame f =
+  let _, tracer = Runtime_core.current_tracer frame.runtime in
+  tracer#with_task_context frame.runtime.contract f
+
 let run_child ?internal_cancel frame sw eff =
-  frame.runtime.tracer#with_task_context frame.runtime.contract @@ fun () ->
+  with_task_context frame @@ fun () ->
   run_scope ?internal_cancel ~sw frame eff
 
 let atomic_push cell value =
@@ -66,8 +70,6 @@ let par_run_forks frame ~forks ~assemble =
      List.iter
       (fun fork ->
          fiber_fork frame ~sw:par_sw (fun () ->
-             frame.runtime.tracer#with_task_context frame.runtime.contract
-             @@ fun () ->
              try fork internal_cancel par_sw
              with exn ->
                let cause =

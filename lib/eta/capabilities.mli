@@ -80,6 +80,9 @@ type log_record = {
     in-memory collector, OpenTelemetry, or a noop sink. *)
 class type tracer = object
   method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a
+  (** Establish per-fiber tracer state. Calls must be reentrant on the same
+      runtime fiber and must isolate a newly forked fiber from inherited mutable
+      tracer state. *)
   method begin_span :
     Runtime_contract.t ->
     ?parent_id:int ->

@@ -7,19 +7,31 @@ let add_random_hex16 buffer random =
   Buffer.add_char buffer (String_helpers.lower_hex_digit ((value lsr 4) land 0xf));
   Buffer.add_char buffer (String_helpers.lower_hex_digit (value land 0xf))
 
-let random_trace_id runtime =
+let random_trace_id random =
   let rec loop () =
     let buffer = Buffer.create 32 in
     for _ = 1 to 8 do
-      add_random_hex16 buffer runtime.random
+      add_random_hex16 buffer random
     done;
     let trace_id = Buffer.contents buffer in
     if String.exists (( <> ) '0') trace_id then trace_id else loop ()
   in
   loop ()
 
+let trace_context_of_span_info (info : Capabilities.span_info) =
+  {
+    Capabilities.trace_id = info.trace_id;
+    span_id = info.span_id;
+    trace_flags = info.trace_flags;
+    trace_state = info.trace_state;
+    baggage = info.baggage;
+  }
+
 let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
   let contract = runtime.contract in
+  let clock = current_clock runtime in
+  let random = current_random runtime in
+  let tracing_enabled, tracer = current_tracer runtime in
   let local_get key = contract.Runtime_contract.local_get key in
   let local_with_binding key value f =
     contract.Runtime_contract.local_with_binding key value f
@@ -32,9 +44,9 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
     try body () with exn ->
       raise_cause fail_key (cause_of_exn_runtime runtime fail_key exn)
   in
-  if not runtime.tracing_enabled then with_die_context run_body
+  if not tracing_enabled then with_die_context run_body
   else
-    let parent_id = local_get RObs.active_span_key in
+    let parent = local_get RObs.active_span_key in
     let ambient_context = local_get RObs.trace_context_key in
     let parent_sampled =
       Option.value (local_get RObs.sampled_key)
@@ -43,55 +55,74 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
           | None -> true
           | Some ctx -> Trace_context.sampled ctx)
     in
+    let same_tracer =
+      match parent with
+      | Some parent -> parent.RObs.tracer == tracer
+      | None -> false
+    in
+    let parent_id =
+      match parent with
+      | Some parent when same_tracer -> Some parent.RObs.span_id
+      | Some _ | None -> None
+    in
+    let parent_context =
+      match parent with
+      | Some { RObs.info = Some info; _ } ->
+          Some (trace_context_of_span_info info)
+      | Some { info = None; _ } | None -> None
+    in
     let external_parent =
-      match parent_id with
-      | Some _ -> None
-      | None -> ambient_context
+      match (parent, same_tracer, parent_context) with
+      | Some _, true, _ -> None
+      | Some _, false, Some context -> Some context
+      | Some _, false, None | None, _, _ -> ambient_context
     in
     let trace_id, root_trace_id =
-      match (parent_id, ambient_context) with
-      | Some span_id, _ -> (
-          match runtime.tracer#inspect contract ~span_id with
-          | Some info -> (info.trace_id, None)
-          | None ->
-              let trace_id = random_trace_id runtime in
-              (trace_id, None))
+      match (parent_context, ambient_context) with
+      | Some context, _ -> (context.trace_id, Some context.trace_id)
       | None, Some ctx -> (ctx.trace_id, None)
       | None, None ->
-          let trace_id = random_trace_id runtime in
+          let trace_id = random_trace_id random in
           (trace_id, Some trace_id)
     in
     let sampled =
       parent_sampled
       && Sampler.sample runtime.sampler ~trace_id ~name ~attrs:[]
-           ~parent:(Option.is_some parent_id || Option.is_some ambient_context)
+           ~parent:(Option.is_some parent || Option.is_some ambient_context)
     in
     if not sampled then
       with_die_context @@ fun () ->
       local_with_binding RObs.sampled_key false run_body
     else
-      let started_ms = runtime.now_ms () in
+      let started_ms = clock#now_ms () in
       let span_id =
-        runtime.tracer#begin_span contract ?parent_id ?external_parent
+        tracer#begin_span contract ?parent_id ?external_parent
           ?trace_id:root_trace_id ~name ~kind ~started_ms ()
       in
+      let active_span =
+        {
+          RObs.tracer;
+          span_id;
+          info = tracer#inspect contract ~span_id;
+        }
+      in
       let finish status =
-        runtime.tracer#end_span contract ~span_id ~status
-          ~ended_ms:(runtime.now_ms ())
+        tracer#end_span contract ~span_id ~status
+          ~ended_ms:(clock#now_ms ())
       in
       let emit_exception_event cause =
         RObs.exception_event_attrs_tree ~error_renderer cause
         |> List.iter (fun attrs ->
-               runtime.tracer#add_event contract ~span_id ~name:"exception"
-                 ~ts_ms:(runtime.now_ms ()) ~attrs)
+               tracer#add_event contract ~span_id ~name:"exception"
+                 ~ts_ms:(clock#now_ms ()) ~attrs)
       in
       with_die_context @@ fun () ->
-      local_with_binding RObs.active_span_key span_id @@ fun () ->
+      local_with_binding RObs.active_span_key active_span @@ fun () ->
       local_with_binding RObs.sampled_key true @@ fun () ->
       try
         List.iter
           (fun (key, value) ->
-            runtime.tracer#add_attr_to contract ~span_id ~key ~value)
+            tracer#add_attr_to contract ~span_id ~key ~value)
           attrs;
         let value = body () in
         finish Ok;

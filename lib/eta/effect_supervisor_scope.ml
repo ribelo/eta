@@ -115,8 +115,8 @@ let rec interpret_supervisor_scope :
             ~finally:(fun () ->
               Runtime_supervisor.unregister_child supervisor child_id)
             (fun () ->
-              frame.runtime.tracer#with_task_context frame.runtime.contract
-              @@ fun () ->
+              let _, tracer = Runtime_core.current_tracer frame.runtime in
+              tracer#with_task_context frame.runtime.contract @@ fun () ->
               let child_result = ref None in
               let internal_cancel_result () =
                 match !child_result with

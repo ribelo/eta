@@ -25,7 +25,8 @@ let daemon_internal eff =
   preserve eff @@ fun frame ->
   Runtime_core.incr_active frame.runtime;
   fiber_fork_daemon frame ~sw:frame.runtime.outer_scope (fun () ->
-      frame.runtime.tracer#with_task_context frame.runtime.contract @@ fun () ->
+      let _, tracer = Runtime_core.current_tracer frame.runtime in
+      tracer#with_task_context frame.runtime.contract @@ fun () ->
       Fun.protect
         ~finally:(fun () -> Runtime_core.decr_active frame.runtime)
         (fun () ->
@@ -68,19 +69,23 @@ module Expert = struct
 
   let emit_trace_event context ~name ~attrs =
     let runtime = context.runtime in
-    if runtime.Runtime_core.tracing_enabled then
+    let tracing_enabled, _ = Runtime_core.current_tracer runtime in
+    if tracing_enabled then
       match
         runtime.contract.Runtime_contract.local_get
           Runtime_observability.active_span_key
       with
       | None -> ()
-      | Some span_id ->
-          runtime.tracer#add_event runtime.contract ~span_id ~name
-            ~ts_ms:(runtime.now_ms ()) ~attrs
+      | Some active ->
+          let clock = Runtime_core.current_clock runtime in
+          active.Runtime_observability.tracer#add_event runtime.contract
+            ~span_id:active.span_id ~name
+            ~ts_ms:(clock#now_ms ()) ~attrs
 
   let record_metric context ~name ~description ~unit_ ~kind ~attrs ~value =
     let runtime = context.runtime in
     if runtime.Runtime_core.metrics_enabled then
+      let clock = Runtime_core.current_clock runtime in
       runtime.meter#record
         {
           Capabilities.name;
@@ -89,15 +94,15 @@ module Expert = struct
           kind;
           attrs;
           value;
-          ts_ms = runtime.now_ms ();
+          ts_ms = clock#now_ms ();
         }
 
   let fork_daemon context f =
     Runtime_core.incr_active context.runtime;
     context.runtime.contract.Runtime_contract.fork_daemon
       context.runtime.outer_scope (fun () ->
-          context.runtime.tracer#with_task_context context.runtime.contract
-          @@ fun () ->
+          let _, tracer = Runtime_core.current_tracer context.runtime in
+          tracer#with_task_context context.runtime.contract @@ fun () ->
           Fun.protect
             ~finally:(fun () -> Runtime_core.decr_active context.runtime)
             f)

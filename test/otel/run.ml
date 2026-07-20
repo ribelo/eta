@@ -139,6 +139,7 @@ let consume_request flow =
 
 let test_clock_capability clock =
   object
+    method now_ms () = Eta_test.Test_clock.now_ms clock
     method sleep duration = Eta_test.Test_clock.sleep clock duration
   end
 

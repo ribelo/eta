@@ -388,25 +388,35 @@ let tap_defect (observe) eff =
 
 let delay duration eff =
   preserve eff @@ fun frame ->
-  frame.runtime.sleep duration;
+  let clock = Runtime_core.current_clock frame.runtime in
+  clock#sleep duration;
   eval frame eff
 
-let sleep duration = sync_frame (fun frame -> frame.runtime.sleep duration)
-let now_ms = sync_frame (fun frame -> frame.runtime.now_ms ())
+let sleep duration =
+  sync_frame (fun frame ->
+      let clock = Runtime_core.current_clock frame.runtime in
+      clock#sleep duration)
+
+let now_ms =
+  sync_frame (fun frame ->
+      let clock = Runtime_core.current_clock frame.runtime in
+      clock#now_ms ())
 let fresh () = sync_frame (fun frame -> frame.runtime.contract.fresh ())
 let fresh_named prefix = fresh () |> map (Printf.sprintf "%s-%d" prefix)
 
 let timed eff =
   preserve eff @@ fun frame ->
-  let started_ms = frame.runtime.now_ms () in
+  let clock = Runtime_core.current_clock frame.runtime in
+  let started_ms = clock#now_ms () in
   match eval frame eff with
   | Exit.Ok value ->
-      let ended_ms = frame.runtime.now_ms () in
+      let ended_ms = clock#now_ms () in
       ok (Duration.ms (ended_ms - started_ms), value)
   | Exit.Error _ as err -> err
 
 let timeout_as duration ~on_timeout eff =
   preserve eff @@ fun frame ->
+  let clock = Runtime_core.current_clock frame.runtime in
   let body_result = ref None in
   let timeout_fired = ref false in
   let winner = ref None in
@@ -422,12 +432,13 @@ let timeout_as duration ~on_timeout eff =
   (try
      switch_run frame @@ fun timeout_sw ->
      fiber_fork frame ~sw:timeout_sw (fun () ->
-         frame.runtime.sleep duration;
+         clock#sleep duration;
          timeout_fired := true;
          select timeout_sw `Timeout);
      fiber_fork frame ~sw:timeout_sw (fun () ->
+         let _, tracer = Runtime_core.current_tracer frame.runtime in
          let result =
-           frame.runtime.tracer#with_task_context frame.runtime.contract
+           tracer#with_task_context frame.runtime.contract
            @@ fun () ->
            run_scope ~sw:timeout_sw frame eff
          in

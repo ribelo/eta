@@ -1,4 +1,5 @@
 class type clock = object
+  method now_ms : unit -> int
   method sleep : Duration.t -> unit
 end
 
