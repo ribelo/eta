@@ -61,8 +61,8 @@ val sync : (unit -> 'a) -> ('a, 'err) t
     Ordinary OCaml exceptions raised by [f] are unchecked defects and surface
     as {!Cause.Die}. They are not converted into the typed error channel and
     are not handled by {!bind_error}. If a synchronous leaf operation has an
-    expected typed failure, prefer {!sync_result} (or return an explicit
-    [result] and use {!flatten_result} after this boundary).
+    expected typed failure, prefer {!sync_result} or {!sync_option} (or return
+    an explicit [result]/[option] and lift after this boundary).
     Runtime cancellation exceptions remain interruption. *)
 
 val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
@@ -72,6 +72,15 @@ val sync_result : (unit -> ('a, 'err) result) -> ('a, 'err) t
     is a typed failure, and ordinary exceptions raised by [f] remain unchecked
     defects ({!Cause.Die}). This is the recommended typed sync leaf; it does
     not catch exceptions into the typed channel. *)
+
+val sync_option : if_none:'err -> (unit -> 'a option) -> ('a, 'err) t
+(** Synchronous leaf that returns an OCaml [option].
+
+    [sync_option ~if_none f] runs [f] under {!sync}, then applies the same
+    [if_none] rule as {!from_option}: [Some x] succeeds and [None] fails with
+    the typed [if_none] payload. Raised exceptions remain unchecked defects
+    ({!Cause.Die}); they are not converted into the typed channel and are not
+    handled by {!bind_error}. *)
 
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.

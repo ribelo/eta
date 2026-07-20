@@ -47,7 +47,7 @@ swallowed-error bug now requires writing `ignore_errors` in plain sight.
 Evidence: blind review rated the old name **1** and the split **5**.
 Provenance: `.scratch/research/dx/e2/`, V-DX-E2-001..002.
 
-## E1 — `sync_result` (promoted 2026-07-18); `sync_option` (killed)
+## E1 — `sync_result` (promoted 2026-07-18); `sync_option` (promoted 2026-07-20)
 
 The library's hottest leaf — a synchronous call returning `result`, written
 81 times as `sync f |> flatten_result` — is now one word: `sync_result`.
@@ -66,10 +66,13 @@ that exceptions cannot enter `'err`. Lesson recorded: finish the cohort
 before evaluating a gate, and "flagged ambiguity" is not "wrong
 expectation".
 
-`sync_option` died on utility evidence instead: `from_option` appears 7
-times repo-wide, the sync+option leaf pattern 0 — symmetry furniture, not a
-real boundary. The two-combinator recipe remains documented for
-hand-rolled cases via `flatten_result`.
+`sync_option` was first killed on internal-usage evidence (`from_option` ×7,
+sync+option leaf pattern 0), then promoted by human decision authority
+(V-DX-E1-003) under the user-first amendment: the construct family is the
+symmetric 2×2 `from_result`/`from_option` × `sync_result`/`sync_option`, and
+zero internal call sites is weak evidence against a public boundary. The
+thunk counterpart is `sync_option ~if_none`: `Some` succeeds, `None` is the
+typed `if_none` failure, raises stay defects.
 
 ## E4 — Cause rendering (promoted 2026-07-19)
 
@@ -232,8 +235,10 @@ The named-leaf pattern — `Effect.fn __POS__ __FUNCTION__ (Effect.named "x"
 now one form: `[%eta.result "x" body]`. The expansion is exactly the
 hand-written pattern (an independent reviewer confirmed they'd accept it as
 a verbatim PR rewrite — the T4 bar for sugar). `[%eta.option]` was NOT
-added: E1 killed `sync_option` for lack of usage, and sugar follows
-demonstrated frequency, not symmetry.
+added at promotion time: sugar follows demonstrated frequency, not
+symmetry, and the option leaf had no call-site pressure then. E1 later
+promoted `sync_option` itself (V-DX-E1-003); option sugar remains a separate
+adoption question.
 
 Adoption followed a stated rule (IO/trust-boundary leaves with static
 names; no special kwargs): 12 example sites converted, 14 deliberately not
@@ -305,8 +310,9 @@ preserved in branch history).
 
 ## Phase B synthesis (2026-07-19)
 
-Phase B is complete: E1 (`sync_result` promoted; `sync_option` killed on
-zero-usage evidence), E2 (`discard`/`ignore_errors` promoted; `ignore`
+Phase B is complete: E1 (`sync_result` promoted 2026-07-18; `sync_option`
+promoted 2026-07-20 by human decision authority after an earlier
+usage-only kill), E2 (`discard`/`ignore_errors` promoted; `ignore`
 rated 1 and deleted), E3 (`race_either` killed — named domain tags beat
 positional either-tags), E4 (`Cause.pp_compact` + rendering corpus +
 `Eta_otel.Cause_json` promoted after a kill-gate fire and one rework round),
@@ -328,8 +334,9 @@ Laws the phase produced:
 4. **Telemetry text is user-facing API** — `pp_compact` lost the finalizer
    role label in exactly the composite cases where it matters most;
    notation is semantics (E4).
-5. **Symmetry is not a usage argument** — `sync_option` died because the
-   sync+option leaf pattern does not exist in the wild (E1).
+5. **Internal usage is weak public-API evidence** — the first E1 kill of
+   `sync_option` rested on zero internal call sites; V-DX-E1-003 later
+   promoted the family-complete boundary under the user-first amendment.
 
 ## E7 — Error-renderer deriver (promoted 2026-07-19)
 
