@@ -13,6 +13,7 @@ val default_oauth_host : string
 val client_id : string
 val default_platform : string
 val default_anthropic_version : string
+val default_messages_path : string
 
 (** {1 Credentials} *)
 
@@ -51,9 +52,10 @@ val access_api_key : credential -> Eta_ai.api_key
 
 (** {1 Provider-owned headers} *)
 
-type device_identity = {
-  platform : string;
+type device_identity = private {
+  product : string;
   version : string;
+  platform : string;
   device_name : string option;
   device_model : string option;
   os_version : string option;
@@ -62,22 +64,23 @@ type device_identity = {
 
 val device_identity :
   ?platform:string ->
+  product:string ->
   version:string ->
   ?device_name:string ->
   ?device_model:string ->
   ?os_version:string ->
   ?device_id:string ->
   unit ->
-  device_identity
+  (device_identity, Eta_ai.ai_error) result
 
 val auth_headers :
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?extra_headers:Eta_ai.headers ->
   credential ->
   Eta_ai.headers
 
 val messages_auth_headers :
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?anthropic_version:string ->
   ?extra_headers:Eta_ai.headers ->
   credential ->
@@ -104,7 +107,8 @@ type device_poll_result =
 val device_authorization_request :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   unit ->
   Eta_http.Request.t
 
@@ -114,21 +118,23 @@ val decode_device_authorization :
 val request_device_authorization :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   (device_authorization, Eta_ai.ai_error) Eta.Effect.t
 
 val device_token_poll_request :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   device_code:string Eta_redacted.t ->
   unit ->
   Eta_http.Request.t
 
 val decode_device_poll :
   status:int ->
-  ?now_s:int64 ->
+  now_s:int64 ->
   ?current_interval:int ->
   Eta_ai.raw_json ->
   (device_poll_result, Eta_ai.ai_error) result
@@ -136,8 +142,9 @@ val decode_device_poll :
 val poll_device_token :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
-  ?now_s:int64 ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
+  now_s:int64 ->
   ?current_interval:int ->
   Eta_http.Client.t ->
   device_code:string Eta_redacted.t ->
@@ -146,18 +153,20 @@ val poll_device_token :
 val refresh_request :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   oauth_credential ->
   Eta_http.Request.t
 
 val decode_token_response :
-  ?now_s:int64 -> Eta_ai.raw_json -> (oauth_credential, Eta_ai.ai_error) result
+  now_s:int64 -> Eta_ai.raw_json -> (oauth_credential, Eta_ai.ai_error) result
 
 val refresh :
   ?oauth_host:string ->
   ?client_id:string ->
-  ?identity:device_identity ->
-  ?now_s:int64 ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
+  now_s:int64 ->
   Eta_http.Client.t ->
   oauth_credential ->
   (oauth_credential, Eta_ai.ai_error) Eta.Effect.t
@@ -192,7 +201,8 @@ type model_info = {
 
 val models_request :
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   credential:credential ->
   unit ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -201,7 +211,8 @@ val decode_models : Eta_ai.raw_json -> (model_info list, Eta_ai.ai_error) result
 
 val list_models :
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   credential:credential ->
   (model_info list, Eta_ai.ai_error) Eta.Effect.t
@@ -223,7 +234,7 @@ val structured_output :
 
 val provider :
   ?base_url:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?extra_headers:Eta_ai.headers ->
   unit ->
   Eta_ai.provider
@@ -244,7 +255,8 @@ val decode_error :
 val chat_completions_request :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   credential:credential ->
   Eta_ai.chat_request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -252,7 +264,8 @@ val chat_completions_request :
 val chat_completions :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   credential:credential ->
   Eta_ai.chat_request ->
@@ -261,7 +274,8 @@ val chat_completions :
 val stream_chat_completions :
   ?structured_output:structured_output ->
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   credential:credential ->
   Eta_ai.chat_request ->
@@ -271,7 +285,8 @@ module Chat : sig
   val request :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
+    ?extra_headers:Eta_ai.headers ->
     credential:credential ->
     Eta_ai.chat_request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
@@ -279,7 +294,8 @@ module Chat : sig
   val run :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
+    ?extra_headers:Eta_ai.headers ->
     Eta_http.Client.t ->
     credential:credential ->
     Eta_ai.chat_request ->
@@ -288,7 +304,8 @@ module Chat : sig
   val stream :
     ?structured_output:structured_output ->
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
+    ?extra_headers:Eta_ai.headers ->
     Eta_http.Client.t ->
     credential:credential ->
     Eta_ai.chat_request ->
@@ -297,11 +314,9 @@ end
 
 (** {1 Anthropic-compatible Messages} *)
 
-val default_messages_path : string
-
 val messages_provider :
   ?base_url:string ->
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?anthropic_version:string ->
   ?extra_headers:Eta_ai.headers ->
   unit ->
@@ -318,16 +333,18 @@ val decode_messages_stream_event :
 
 val messages_request :
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?anthropic_version:string ->
+  ?extra_headers:Eta_ai.headers ->
   credential:credential ->
   Eta_ai.chat_request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val messages :
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?anthropic_version:string ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   credential:credential ->
   Eta_ai.chat_request ->
@@ -335,8 +352,9 @@ val messages :
 
 val stream_messages :
   ?provider:Eta_ai.provider ->
-  ?identity:device_identity ->
+  identity:device_identity ->
   ?anthropic_version:string ->
+  ?extra_headers:Eta_ai.headers ->
   Eta_http.Client.t ->
   credential:credential ->
   Eta_ai.chat_request ->
@@ -345,16 +363,18 @@ val stream_messages :
 module Messages : sig
   val request :
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
     ?anthropic_version:string ->
+    ?extra_headers:Eta_ai.headers ->
     credential:credential ->
     Eta_ai.chat_request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
 
   val run :
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
     ?anthropic_version:string ->
+    ?extra_headers:Eta_ai.headers ->
     Eta_http.Client.t ->
     credential:credential ->
     Eta_ai.chat_request ->
@@ -362,8 +382,9 @@ module Messages : sig
 
   val stream :
     ?provider:Eta_ai.provider ->
-    ?identity:device_identity ->
+    identity:device_identity ->
     ?anthropic_version:string ->
+    ?extra_headers:Eta_ai.headers ->
     Eta_http.Client.t ->
     credential:credential ->
     Eta_ai.chat_request ->

@@ -146,10 +146,22 @@ let credential_of_json = function
               | Stdlib.Ok refresh_token -> (
                   match require_string_field json "account_id" with
                   | Stdlib.Error _ as error -> error
-                  | Stdlib.Ok account_id ->
-                      oauth_credential ~access_token ~refresh_token
-                        ?expires_at_ms:(int64_member "expires" json)
-                        ~account_id ())))
+                  | Stdlib.Ok account_id -> (
+                      let expires_at_ms =
+                        match Json.member "expires" json with
+                        | None -> Stdlib.Ok None
+                        | Some _ -> (
+                            match int64_member "expires" json with
+                            | Some ms when ms > 0L -> Stdlib.Ok (Some ms)
+                            | Some _ | None ->
+                                safe_decode_error
+                                  "oauth credential has malformed expires")
+                      in
+                      match expires_at_ms with
+                      | Stdlib.Error _ as error -> error
+                      | Stdlib.Ok expires_at_ms ->
+                          oauth_credential ~access_token ~refresh_token
+                            ?expires_at_ms ~account_id ()))))
       | Some other -> safe_decode_error ("unsupported credential type " ^ other)
       | None -> safe_decode_error "oauth credential missing type")
   | _ -> safe_decode_error "oauth credential must be a JSON object"
@@ -458,19 +470,50 @@ let decode_token_response raw =
               | Some _ | None ->
                   safe_decode_error "token response missing expires_in")))
 
-let credential_of_token_set ?now_ms (token : token_set) : oauth_credential =
-  let expires_at_ms =
-    match now_ms with
-    | Some now ->
-        Some (Int64.add now (Int64.mul (Int64.of_int token.expires_in) 1000L))
-    | None -> None
-  in
+let credential_of_token_set ~now_ms (token : token_set) : oauth_credential =
   {
     access_token = token.access_token;
     refresh_token = token.refresh_token;
-    expires_at_ms;
+    expires_at_ms =
+      Some (Int64.add now_ms (Int64.mul (Int64.of_int token.expires_in) 1000L));
     account_id = token.account_id;
   }
+
+let oauth_http_error ~status raw =
+  match Json.parse raw with
+  | Stdlib.Ok json ->
+      let code =
+        match Json.string_member "error" json with
+        | Some c when String.trim c <> "" -> Some (String.trim c)
+        | Some _ | None -> None
+      in
+      let message =
+        match Json.string_member "error_description" json with
+        | Some d when String.trim d <> "" -> String.trim d
+        | Some _ | None -> (
+            match Json.string_member "message" json with
+            | Some m when String.trim m <> "" -> String.trim m
+            | Some _ | None -> "oauth token endpoint error")
+      in
+      A.Provider_error
+        {
+          provider = provider_name;
+          status = Some status;
+          code;
+          message;
+          raw = None;
+          retry_after_s = None;
+        }
+  | Stdlib.Error _ ->
+      A.Provider_error
+        {
+          provider = provider_name;
+          status = Some status;
+          code = None;
+          message = "oauth token endpoint error";
+          raw = None;
+          retry_after_s = None;
+        }
 
 let oauth_provider =
   {
@@ -507,30 +550,36 @@ let oauth_provider =
       (fun _ -> safe_decode_error "oauth provider has no embeddings");
     decode_stream_event =
       (fun _ -> safe_decode_error "oauth provider has no stream");
-    decode_error =
-      (fun ~status ~headers:_ raw ->
-        A.Provider_error
-          {
-            provider = provider_name;
-            status = Some status;
-            code = None;
-            message = "oauth token endpoint error";
-            raw = None;
-            retry_after_s = None;
-          });
+    decode_error = (fun ~status ~headers:_ raw -> oauth_http_error ~status raw);
   }
 
-let run_token_request client request =
-  A.run_raw_decoded oauth_provider client (Stdlib.Ok request)
-    decode_token_response
+let read_body_text body =
+  H.Body.Stream.read_all body
+  |> E.map Bytes.unsafe_to_string
+  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
 
-let exchange_code ?issuer ?client_id client ~redirect_uri ~code ~code_verifier =
+let run_token_request client request =
+  H.request client request
+  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind (fun (response : H.Response.t) ->
+         read_body_text response.body
+         |> E.bind (fun raw ->
+                if response.status >= 200 && response.status < 300 then
+                  match decode_token_response raw with
+                  | Stdlib.Ok token -> E.pure token
+                  | Stdlib.Error error -> E.fail error
+                else E.fail (oauth_http_error ~status:response.status raw)))
+
+let exchange_code ?issuer ?client_id client ~redirect_uri ~code ~code_verifier
+    ~now_ms =
   run_token_request client
     (exchange_code_request ?issuer ?client_id ~redirect_uri ~code ~code_verifier
        ())
+  |> E.map (fun token -> credential_of_token_set ~now_ms token)
 
-let refresh ?issuer ?client_id client credential =
+let refresh ?issuer ?client_id client credential ~now_ms =
   run_token_request client (refresh_request ?issuer ?client_id credential)
+  |> E.map (fun token -> credential_of_token_set ~now_ms token)
 
 let auth_headers ~identity ?session_id ?(stream = false) ?(extra_headers = [])
     ~account_id ~access_token () =
@@ -548,12 +597,20 @@ let auth_headers ~identity ?session_id ?(stream = false) ?(extra_headers = [])
   let with_session =
     match session_id with
     | Some id when String.trim id <> "" ->
-        ("session_id", id) :: ("conversation_id", id) :: ("session-id", id)
-        :: ("x-client-request-id", id)
-        :: base
+        ("session-id", id) :: ("x-client-request-id", id) :: base
     | Some _ | None -> base
   in
-  H.Core.Header.unsafe_of_list (with_session @ extra_headers)
+  (* Auth/security headers win over caller extras with the same name. *)
+  let extras =
+    List.filter
+      (fun (name, _) ->
+        let n = String.lowercase_ascii name in
+        n <> "authorization" && n <> "chatgpt-account-id" && n <> "openai-beta"
+        && n <> "content-type" && n <> "accept" && n <> "user-agent"
+        && n <> "originator" && n <> "session-id" && n <> "x-client-request-id")
+      extra_headers
+  in
+  H.Core.Header.unsafe_of_list (with_session @ extras)
 
 let auth_headers_of_credential ~identity ?session_id ?stream ?extra_headers
     (credential : oauth_credential) =
@@ -623,18 +680,19 @@ let provider_for_credential ?base_url ~identity ?session_id ?extra_headers
   provider ?base_url ~account_id:credential.account_id ~identity ?session_id
     ?extra_headers ()
 
-let string_list_member name json =
+let reasoning_levels_member name json =
   match Json.array_member name json with
   | None -> []
   | Some items ->
       List.filter_map
         (fun item ->
           match item with
-          | `String s -> Some s
-          | _ -> (
-              match Json.string_member "value" item with
-              | Some _ as v -> v
-              | None -> Json.string_member "name" item))
+          | `String s when String.trim s <> "" -> Some (String.trim s)
+          | `Assoc _ -> (
+              match Json.string_member "effort" item with
+              | Some s when String.trim s <> "" -> Some (String.trim s)
+              | Some _ | None -> None)
+          | _ -> None)
         items
 
 let model_info_of_json json =
@@ -652,9 +710,14 @@ let model_info_of_json json =
             | _ -> false);
           priority = Json.int_member "priority" json;
           default_reasoning_level =
-            Json.string_member "default_reasoning_level" json;
+            (match Json.string_member "default_reasoning_level" json with
+            | Some _ as v -> v
+            | None ->
+                Option.bind
+                  (Json.object_member "default_reasoning_level" json)
+                  (Json.string_member "effort"));
           supported_reasoning_levels =
-            string_list_member "supported_reasoning_levels" json;
+            reasoning_levels_member "supported_reasoning_levels" json;
         }
 
 let decode_models raw =
@@ -682,8 +745,7 @@ let models_request ?provider:custom ?(client_version = "0.0.0") ~identity
   let request =
     A.provider_get_request provider ~path (access_api_key credential)
   in
-  Stdlib.Ok
-    { request with headers = auth_headers_of_credential ~identity credential }
+  Stdlib.Ok request
 
 let list_models ?provider:custom ?client_version ~identity client ~credential =
   let provider =
@@ -709,13 +771,15 @@ let responses_request ?structured_output ?provider:custom ~identity ?session_id
       let http_request =
         A.provider_request provider (access_api_key credential) raw
       in
-      Stdlib.Ok
-        {
-          http_request with
-          headers =
-            auth_headers_of_credential ~identity ?session_id
-              ~stream:request.A.stream credential;
-        }
+      let headers = provider.auth_headers (access_api_key credential) in
+      let headers =
+        if request.A.stream then
+          headers
+          |> H.Core.Header.remove "accept"
+          |> H.Core.Header.unsafe_add "Accept" "text/event-stream"
+        else headers
+      in
+      Stdlib.Ok { http_request with headers }
 
 let responses ?structured_output ?provider:custom ~identity ?session_id client
     ~credential request =

@@ -4,11 +4,11 @@
       "slug": "gpt-test",
       "display_name": "gpt-test",
       "description": "desc",
-      "default_reasoning_level": "medium",
+      "default_reasoning_level": {"effort": "medium", "description": "default"},
       "supported_reasoning_levels": [
-        "low",
-        "medium",
-        "high"
+        {"effort": "low", "description": "fast"},
+        {"effort": "medium", "description": "default"},
+        {"effort": "high", "description": "deep"}
       ],
       "supported_in_api": true,
       "priority": 1

@@ -90,6 +90,7 @@ type model_info = {
   context_length : int option;
   supports_reasoning : bool option;
   supports_image_in : bool option;
+  supports_video_in : bool option;
   supports_tool_use : bool option;
   supports_thinking_type : supports_thinking_type option;
   think_efforts : think_efforts option;
@@ -141,7 +142,12 @@ let model_info_of_json json =
           context_length;
           supports_reasoning = bool_member "supports_reasoning" json;
           supports_image_in = bool_member "supports_image_in" json;
-          supports_tool_use = bool_member "supports_tool_use" json;
+          supports_video_in = bool_member "supports_video_in" json;
+          supports_tool_use =
+            (match Json.member "supports_tool_use" json with
+            | None -> Some true
+            | Some (`Bool b) -> Some b
+            | Some _ -> None);
           supports_thinking_type =
             parse_supports_thinking_type
               (Json.string_member "supports_thinking_type" json);

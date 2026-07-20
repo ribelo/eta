@@ -27,8 +27,9 @@ type oauth_credential = {
 type credential = Api_key of api_key_credential | OAuth of oauth_credential
 
 type device_identity = {
-  platform : string;
+  product : string;
   version : string;
+  platform : string;
   device_name : string option;
   device_model : string option;
   os_version : string option;
@@ -200,26 +201,60 @@ let pp_credential fmt = function
         Eta_redacted.pp oauth.access_token Eta_redacted.pp oauth.refresh_token
         oauth.expires_at
 
-let device_identity ?(platform = default_platform) ~version ?device_name
-    ?device_model ?os_version ?device_id () =
-  { platform; version; device_name; device_model; os_version; device_id }
+let device_identity ?(platform = default_platform) ~product ~version
+    ?device_name ?device_model ?os_version ?device_id () =
+  match
+    ( require_nonempty ~label:"product" product,
+      require_nonempty ~label:"version" version )
+  with
+  | Stdlib.Error e, _ | _, Stdlib.Error e -> Stdlib.Error e
+  | Stdlib.Ok product, Stdlib.Ok version ->
+      Stdlib.Ok
+        {
+          product;
+          version;
+          platform =
+            (match String.trim platform with "" -> default_platform | p -> p);
+          device_name;
+          device_model;
+          os_version;
+          device_id;
+        }
 
-let identity_headers = function
-  | None -> []
-  | Some id ->
-      let add name = function
-        | None -> []
-        | Some value when String.trim value <> "" -> [ (name, value) ]
-        | Some _ -> []
-      in
-      ("X-Msh-Platform", id.platform)
-      :: ("X-Msh-Version", id.version)
-      :: add "X-Msh-Device-Name" id.device_name
-      @ add "X-Msh-Device-Model" id.device_model
-      @ add "X-Msh-Os-Version" id.os_version
-      @ add "X-Msh-Device-Id" id.device_id
+let identity_headers id =
+  let add name = function
+    | None -> []
+    | Some value when String.trim value <> "" -> [ (name, value) ]
+    | Some _ -> []
+  in
+  ("User-Agent", id.product ^ "/" ^ id.version)
+  :: ("X-Msh-Platform", id.platform)
+  :: ("X-Msh-Version", id.version)
+  :: add "X-Msh-Device-Name" id.device_name
+  @ add "X-Msh-Device-Model" id.device_model
+  @ add "X-Msh-Os-Version" id.os_version
+  @ add "X-Msh-Device-Id" id.device_id
 
-let auth_headers ?identity ?(extra_headers = []) credential =
+let filter_extras ~reserved extra_headers =
+  List.filter
+    (fun (name, _) -> not (List.mem (String.lowercase_ascii name) reserved))
+    extra_headers
+
+let auth_headers ~identity ?(extra_headers = []) credential =
+  let reserved =
+    [
+      "authorization";
+      "content-type";
+      "accept";
+      "user-agent";
+      "x-msh-platform";
+      "x-msh-version";
+      "x-msh-device-name";
+      "x-msh-device-model";
+      "x-msh-os-version";
+      "x-msh-device-id";
+    ]
+  in
   H.Core.Header.unsafe_of_list
     ([
        ( "Authorization",
@@ -227,11 +262,27 @@ let auth_headers ?identity ?(extra_headers = []) credential =
        ("Content-Type", "application/json");
        ("Accept", "application/json");
      ]
-    @ identity_headers identity @ extra_headers)
+    @ identity_headers identity
+    @ filter_extras ~reserved extra_headers)
 
-let messages_auth_headers ?identity
+let messages_auth_headers ~identity
     ?(anthropic_version = default_anthropic_version) ?(extra_headers = [])
     credential =
+  let reserved =
+    [
+      "authorization";
+      "content-type";
+      "accept";
+      "user-agent";
+      "anthropic-version";
+      "x-msh-platform";
+      "x-msh-version";
+      "x-msh-device-name";
+      "x-msh-device-model";
+      "x-msh-os-version";
+      "x-msh-device-id";
+    ]
+  in
   H.Core.Header.unsafe_of_list
     ([
        ( "Authorization",
@@ -240,7 +291,8 @@ let messages_auth_headers ?identity
        ("Accept", "application/json");
        ("anthropic-version", anthropic_version);
      ]
-    @ identity_headers identity @ extra_headers)
+    @ identity_headers identity
+    @ filter_extras ~reserved extra_headers)
 
 let trim_slash s =
   let s = String.trim s in
@@ -265,14 +317,28 @@ let form_body fields =
   |> List.map (fun (k, v) -> url_encode k ^ "=" ^ url_encode v)
   |> String.concat "&"
 
-let form_request ~uri ?identity body =
+let form_request ~uri ~identity ?(extra_headers = []) body =
+  let reserved =
+    [
+      "content-type";
+      "accept";
+      "user-agent";
+      "x-msh-platform";
+      "x-msh-version";
+      "x-msh-device-name";
+      "x-msh-device-model";
+      "x-msh-os-version";
+      "x-msh-device-id";
+    ]
+  in
   let headers =
     H.Core.Header.unsafe_of_list
       ([
          ("Content-Type", "application/x-www-form-urlencoded");
          ("Accept", "application/json");
        ]
-      @ identity_headers identity)
+      @ identity_headers identity
+      @ filter_extras ~reserved extra_headers)
   in
   H.Request.make ~headers
     ~body:(H.Request.Fixed [ Bytes.of_string body ])
@@ -285,10 +351,10 @@ let usable_http_url value =
      || String.starts_with ~prefix:"http://" value)
 
 let device_authorization_request ?(oauth_host = default_oauth_host)
-    ?(client_id = client_id) ?identity () =
+    ?(client_id = client_id) ~identity ?extra_headers () =
   form_request
     ~uri:(trim_slash oauth_host ^ "/api/oauth/device_authorization")
-    ?identity
+    ~identity ?extra_headers
     (form_body [ ("client_id", client_id) ])
 
 let decode_device_authorization raw =
@@ -382,16 +448,18 @@ let oauth_transport_provider =
 let run_raw client request decode =
   A.run_raw_decoded oauth_transport_provider client (Stdlib.Ok request) decode
 
-let request_device_authorization ?oauth_host ?client_id ?identity client =
+let request_device_authorization ?oauth_host ?client_id ~identity ?extra_headers
+    client =
   run_raw client
-    (device_authorization_request ?oauth_host ?client_id ?identity ())
+    (device_authorization_request ?oauth_host ?client_id ~identity
+       ?extra_headers ())
     decode_device_authorization
 
 let device_token_poll_request ?(oauth_host = default_oauth_host)
-    ?(client_id = client_id) ?identity ~device_code () =
+    ?(client_id = client_id) ~identity ?extra_headers ~device_code () =
   form_request
     ~uri:(trim_slash oauth_host ^ "/api/oauth/token")
-    ?identity
+    ~identity ?extra_headers
     (form_body
        [
          ("client_id", client_id);
@@ -415,46 +483,49 @@ let oauth_from_token_json ~now_s json =
                 ()
           | Some _ | None -> safe_error "token response missing expires_in"))
 
-let decode_token_response ?now_s raw =
-  match now_s with
-  | None -> safe_error "token decode requires now_s"
-  | Some now_s -> (
-      match Json.parse raw with
-      | Stdlib.Error message -> safe_error message
-      | Stdlib.Ok json -> oauth_from_token_json ~now_s json)
+let decode_token_response ~now_s raw =
+  match Json.parse raw with
+  | Stdlib.Error message -> safe_error message
+  | Stdlib.Ok json -> oauth_from_token_json ~now_s json
 
 let error_description json =
   match Json.string_member "error_description" json with
   | Some _ as v -> v
   | None -> Json.string_member "message" json
 
-let decode_device_poll ~status ?now_s ?(current_interval = 5) raw =
-  match Json.parse raw with
-  | Stdlib.Error message -> safe_error message
-  | Stdlib.Ok json -> (
-      if status >= 200 && status < 300 then
-        match now_s with
-        | None -> safe_error "authorized token decode requires now_s"
-        | Some now_s -> (
-            match oauth_from_token_json ~now_s json with
-            | Stdlib.Ok oauth -> Stdlib.Ok (Authorized oauth)
-            | Stdlib.Error _ as e -> e)
-      else if status >= 500 then
+let oauth_provider_error ~status ?code ?message () =
+  A.Provider_error
+    {
+      provider = provider_name;
+      status = Some status;
+      code;
+      message =
+        (match message with
+        | Some m when String.trim m <> "" -> String.trim m
+        | Some _ | None -> "kimi oauth error");
+      raw = None;
+      retry_after_s = None;
+    }
+
+let decode_device_poll ~status ~now_s ?(current_interval = 5) raw =
+  if status >= 200 && status < 300 then
+    match decode_token_response ~now_s raw with
+    | Stdlib.Ok oauth -> Stdlib.Ok (Authorized oauth)
+    | Stdlib.Error _ as e -> e
+  else
+    match Json.parse raw with
+    | Stdlib.Error _ when status >= 500 ->
         Stdlib.Error
-          (A.Provider_error
-             {
-               provider = provider_name;
-               status = Some status;
-               code = None;
-               message = "device token polling server error";
-               raw = None;
-               retry_after_s = None;
-             })
-      else
+          (oauth_provider_error ~status
+             ~message:"device token polling server error" ())
+    | Stdlib.Error _ ->
+        Stdlib.Error
+          (oauth_provider_error ~status ~message:"device token poll failed" ())
+    | Stdlib.Ok json -> (
         let error_code =
           match Json.string_member "error" json with
-          | Some code -> code
-          | None -> "unknown_error"
+          | Some code when String.trim code <> "" -> String.trim code
+          | Some _ | None -> "unknown_error"
         in
         let description = error_description json in
         match error_code with
@@ -469,17 +540,21 @@ let decode_device_poll ~status ?now_s ?(current_interval = 5) raw =
             Stdlib.Ok (Slow_down { interval; description })
         | "expired_token" -> Stdlib.Ok (Expired { description })
         | "access_denied" -> Stdlib.Ok (Denied { description })
-        | other -> safe_error ("device token poll failed with " ^ other))
+        | other ->
+            Stdlib.Error
+              (oauth_provider_error ~status ~code:other ?message:description ())
+        )
 
 let read_body_text body =
   H.Body.Stream.read_all body
   |> E.map Bytes.unsafe_to_string
   |> E.catch (fun error -> E.fail (A.Eta_http_error error))
 
-let poll_device_token ?oauth_host ?client_id ?identity ?now_s ?current_interval
-    client ~device_code =
+let poll_device_token ?oauth_host ?client_id ~identity ?extra_headers ~now_s
+    ?current_interval client ~device_code =
   let request =
-    device_token_poll_request ?oauth_host ?client_id ?identity ~device_code ()
+    device_token_poll_request ?oauth_host ?client_id ~identity ?extra_headers
+      ~device_code ()
   in
   H.request client request
   |> E.catch (fun error -> E.fail (A.Eta_http_error error))
@@ -487,17 +562,17 @@ let poll_device_token ?oauth_host ?client_id ?identity ?now_s ?current_interval
          read_body_text response.body
          |> E.bind (fun raw ->
                 match
-                  decode_device_poll ~status:response.status ?now_s
+                  decode_device_poll ~status:response.status ~now_s
                     ?current_interval raw
                 with
                 | Stdlib.Ok value -> E.pure value
                 | Stdlib.Error error -> E.fail error))
 
 let refresh_request ?(oauth_host = default_oauth_host) ?(client_id = client_id)
-    ?identity credential =
+    ~identity ?extra_headers credential =
   form_request
     ~uri:(trim_slash oauth_host ^ "/api/oauth/token")
-    ?identity
+    ~identity ?extra_headers
     (form_body
        [
          ("client_id", client_id);
@@ -505,16 +580,32 @@ let refresh_request ?(oauth_host = default_oauth_host) ?(client_id = client_id)
          ("refresh_token", Eta_redacted.value credential.refresh_token);
        ])
 
-let refresh ?oauth_host ?client_id ?identity ?now_s client credential =
-  match now_s with
-  | None -> (
-      match safe_error "refresh requires now_s" with
-      | Stdlib.Error error -> E.fail error
-      | Stdlib.Ok _ -> assert false)
-  | Some now_s ->
-      run_raw client
-        (refresh_request ?oauth_host ?client_id ?identity credential)
-        (decode_token_response ~now_s)
+let refresh ?oauth_host ?client_id ~identity ?extra_headers ~now_s client
+    credential =
+  let request =
+    refresh_request ?oauth_host ?client_id ~identity ?extra_headers credential
+  in
+  H.request client request
+  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind (fun (response : H.Response.t) ->
+         read_body_text response.body
+         |> E.bind (fun raw ->
+                if response.status >= 200 && response.status < 300 then
+                  match decode_token_response ~now_s raw with
+                  | Stdlib.Ok oauth -> E.pure oauth
+                  | Stdlib.Error error -> E.fail error
+                else
+                  match Json.parse raw with
+                  | Stdlib.Ok json ->
+                      let code = Json.string_member "error" json in
+                      let message = error_description json in
+                      E.fail
+                        (oauth_provider_error ~status:response.status ?code
+                           ?message ())
+                  | Stdlib.Error _ ->
+                      E.fail
+                        (oauth_provider_error ~status:response.status
+                           ~message:"kimi oauth refresh failed" ())))
 
 let protocol_to_string = function Kimi -> "kimi" | Anthropic -> "anthropic"
 
@@ -550,47 +641,93 @@ let parse_think_efforts = function
 
 let model_info_of_json json =
   match Json.string_member "id" json with
-  | None | Some "" -> None
-  | Some id ->
-      Some
-        {
-          id;
-          display_name =
-            (match Json.string_member "display_name" json with
-            | Some _ as v -> v
-            | None -> Json.string_member "name" json);
-          context_length = Json.int_member "context_length" json;
-          supports_reasoning = bool_member "supports_reasoning" json;
-          supports_image_in = bool_member "supports_image_in" json;
-          supports_video_in = bool_member "supports_video_in" json;
-          supports_tool_use = bool_member "supports_tool_use" json;
-          supports_thinking_type =
-            parse_supports_thinking_type
-              (Json.string_member "supports_thinking_type" json);
-          think_efforts =
-            parse_think_efforts (Json.object_member "think_efforts" json);
-          protocol =
-            (match Json.string_member "protocol" json with
-            | Some s -> protocol_of_string s
-            | None -> None);
-        }
+  | None | Some "" -> Stdlib.Ok None
+  | Some id -> (
+      match Json.string_member "protocol" json with
+      | Some s -> (
+          match protocol_of_string s with
+          | None -> safe_error ("unknown model protocol declaration " ^ s)
+          | Some protocol ->
+              let supports_tool_use =
+                match Json.member "supports_tool_use" json with
+                | None -> Some true
+                | Some (`Bool b) -> Some b
+                | Some _ -> None
+              in
+              Stdlib.Ok
+                (Some
+                   {
+                     id;
+                     display_name =
+                       (match Json.string_member "display_name" json with
+                       | Some _ as v -> v
+                       | None -> Json.string_member "name" json);
+                     context_length = Json.int_member "context_length" json;
+                     supports_reasoning = bool_member "supports_reasoning" json;
+                     supports_image_in = bool_member "supports_image_in" json;
+                     supports_video_in = bool_member "supports_video_in" json;
+                     supports_tool_use;
+                     supports_thinking_type =
+                       parse_supports_thinking_type
+                         (Json.string_member "supports_thinking_type" json);
+                     think_efforts =
+                       parse_think_efforts
+                         (Json.object_member "think_efforts" json);
+                     protocol = Some protocol;
+                   }))
+      | None ->
+          let supports_tool_use =
+            match Json.member "supports_tool_use" json with
+            | None -> Some true
+            | Some (`Bool b) -> Some b
+            | Some _ -> None
+          in
+          Stdlib.Ok
+            (Some
+               {
+                 id;
+                 display_name =
+                   (match Json.string_member "display_name" json with
+                   | Some _ as v -> v
+                   | None -> Json.string_member "name" json);
+                 context_length = Json.int_member "context_length" json;
+                 supports_reasoning = bool_member "supports_reasoning" json;
+                 supports_image_in = bool_member "supports_image_in" json;
+                 supports_video_in = bool_member "supports_video_in" json;
+                 supports_tool_use;
+                 supports_thinking_type =
+                   parse_supports_thinking_type
+                     (Json.string_member "supports_thinking_type" json);
+                 think_efforts =
+                   parse_think_efforts (Json.object_member "think_efforts" json);
+                 protocol = None;
+               }))
 
 let decode_models raw =
   match Json.parse raw with
   | Stdlib.Error message -> safe_error message
-  | Stdlib.Ok json ->
+  | Stdlib.Ok json -> (
       let items =
         match Json.array_member "data" json with
         | Some items -> items
         | None -> ( match json with `List items -> items | _ -> [])
       in
-      let models = List.filter_map model_info_of_json items in
-      if models = [] then safe_error "models catalog is empty"
-      else Stdlib.Ok models
+      let rec loop acc = function
+        | [] -> Stdlib.Ok (List.rev acc)
+        | item :: rest -> (
+            match model_info_of_json item with
+            | Stdlib.Error _ as e -> e
+            | Stdlib.Ok None -> loop acc rest
+            | Stdlib.Ok (Some model) -> loop (model :: acc) rest)
+      in
+      match loop [] items with
+      | Stdlib.Error _ as e -> e
+      | Stdlib.Ok [] -> safe_error "models catalog is empty"
+      | Stdlib.Ok models -> Stdlib.Ok models)
 
 let structured_output = Compat.structured_output
 
-let provider ?(base_url = default_base_url) ?identity ?(extra_headers = []) () =
+let provider ?(base_url = default_base_url) ~identity ?(extra_headers = []) () =
   let p =
     Compat.provider ~name:provider_name ~base_url ~chat_path:"/chat/completions"
       ~extra_headers ()
@@ -598,25 +735,28 @@ let provider ?(base_url = default_base_url) ?identity ?(extra_headers = []) () =
   {
     p with
     auth_headers =
-      (fun key -> auth_headers ?identity ~extra_headers (Api_key key));
+      (fun key -> auth_headers ~identity ~extra_headers (Api_key key));
     capabilities =
       { p.capabilities with image_input = true; structured_outputs = true };
   }
 
-let models_request ?provider:custom ?identity ~credential () =
+let models_request ?provider:custom ~identity ?extra_headers ~credential () =
   let provider =
-    match custom with Some p -> p | None -> provider ?identity ()
+    match custom with
+    | Some p -> p
+    | None -> provider ~identity ?extra_headers ()
   in
-  let request =
-    A.provider_get_request provider ~path:"/models" (access_api_key credential)
-  in
-  Stdlib.Ok { request with headers = auth_headers ?identity credential }
+  Stdlib.Ok
+    (A.provider_get_request provider ~path:"/models"
+       (access_api_key credential))
 
-let list_models ?provider:custom ?identity client ~credential =
+let list_models ?provider:custom ~identity ?extra_headers client ~credential =
   let provider =
-    match custom with Some p -> p | None -> provider ?identity ()
+    match custom with
+    | Some p -> p
+    | None -> provider ~identity ?extra_headers ()
   in
-  match models_request ~provider ?identity ~credential () with
+  match models_request ~provider ~identity ?extra_headers ~credential () with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok request ->
       A.run_raw_decoded provider client (Stdlib.Ok request) decode_models
@@ -626,49 +766,54 @@ let decode_chat = Compat.decode_chat
 let decode_stream_event = Compat.decode_stream_event
 let decode_error = Compat.decode_error
 
-let chat_completions_request ?structured_output ?provider:custom ?identity
-    ~credential request =
+let chat_completions_request ?structured_output ?provider:custom ~identity
+    ?extra_headers ~credential request =
   let provider =
-    match custom with Some p -> p | None -> provider ?identity ()
+    match custom with
+    | Some p -> p
+    | None -> provider ~identity ?extra_headers ()
   in
-  match
-    Compat.chat_completions_request ?structured_output ~provider
-      ~api_key:(access_api_key credential)
-      request
-  with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok http_request ->
-      Stdlib.Ok
-        { http_request with headers = auth_headers ?identity credential }
+  Compat.chat_completions_request ?structured_output ~provider
+    ~api_key:(access_api_key credential)
+    request
 
-let chat_completions ?structured_output ?provider:custom ?identity client
-    ~credential request =
+let chat_completions ?structured_output ?provider:custom ~identity
+    ?extra_headers client ~credential request =
   let provider =
-    match custom with Some p -> p | None -> provider ?identity ()
+    match custom with
+    | Some p -> p
+    | None -> provider ~identity ?extra_headers ()
   in
   match
-    chat_completions_request ?structured_output ~provider ?identity ~credential
-      request
+    chat_completions_request ?structured_output ~provider ~identity
+      ?extra_headers ~credential request
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
       A.with_chat_span provider request
         (A.perform_chat provider client http_request)
 
-let stream_chat_completions ?structured_output ?provider:custom ?identity client
-    ~credential request =
+let stream_chat_completions ?structured_output ?provider:custom ~identity
+    ?extra_headers client ~credential request =
   let provider =
-    match custom with Some p -> p | None -> provider ?identity ()
+    match custom with
+    | Some p -> p
+    | None -> provider ~identity ?extra_headers ()
   in
   let streamed = { request with A.stream = true } in
   match
-    chat_completions_request ?structured_output ~provider ?identity ~credential
-      streamed
+    chat_completions_request ?structured_output ~provider ~identity
+      ?extra_headers ~credential streamed
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
+      let headers =
+        provider.auth_headers (access_api_key credential)
+        |> H.Core.Header.remove "accept"
+        |> H.Core.Header.unsafe_add "Accept" "text/event-stream"
+      in
       A.with_stream_span provider streamed
-        (A.perform_stream provider client http_request)
+        (A.perform_stream provider client { http_request with headers })
 
 module Chat = struct
   let request = chat_completions_request
@@ -676,7 +821,7 @@ module Chat = struct
   let stream = stream_chat_completions
 end
 
-let messages_provider ?(base_url = default_base_url) ?identity
+let messages_provider ?(base_url = default_base_url) ~identity
     ?(anthropic_version = default_anthropic_version) ?(extra_headers = []) () =
   let base = Anthropic.provider ~base_url () in
   {
@@ -686,7 +831,7 @@ let messages_provider ?(base_url = default_base_url) ?identity
     chat_path = default_messages_path;
     auth_headers =
       (fun key ->
-        messages_auth_headers ?identity ~anthropic_version ~extra_headers
+        messages_auth_headers ~identity ~anthropic_version ~extra_headers
           (Api_key key));
   }
 
@@ -694,62 +839,56 @@ let encode_messages request = Anthropic.encode_messages request
 let decode_message raw = Anthropic.decode_message raw
 let decode_messages_stream_event event = Anthropic.decode_stream_event event
 
-let messages_request ?provider:custom ?identity
-    ?(anthropic_version = default_anthropic_version) ~credential request =
-  let provider =
-    match custom with
-    | Some p -> p
-    | None -> messages_provider ?identity ~anthropic_version ()
-  in
-  match encode_messages request with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok raw ->
-      let http_request =
-        A.provider_request provider (access_api_key credential) raw
-      in
-      Stdlib.Ok
-        {
-          http_request with
-          headers =
-            messages_auth_headers ?identity ~anthropic_version credential;
-        }
-
-let messages ?provider:custom ?identity ?anthropic_version client ~credential
+let messages_request ?provider:custom ~identity
+    ?(anthropic_version = default_anthropic_version) ?extra_headers ~credential
     request =
   let provider =
     match custom with
     | Some p -> p
-    | None -> messages_provider ?identity ?anthropic_version ()
+    | None -> messages_provider ~identity ~anthropic_version ?extra_headers ()
+  in
+  match encode_messages request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw ->
+      Stdlib.Ok (A.provider_request provider (access_api_key credential) raw)
+
+let messages ?provider:custom ~identity ?anthropic_version ?extra_headers client
+    ~credential request =
+  let provider =
+    match custom with
+    | Some p -> p
+    | None -> messages_provider ~identity ?anthropic_version ?extra_headers ()
   in
   match
-    messages_request ~provider ?identity ?anthropic_version ~credential request
+    messages_request ~provider ~identity ?anthropic_version ?extra_headers
+      ~credential request
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
       A.with_chat_span provider request
         (A.perform_chat provider client http_request)
 
-let stream_messages ?provider:custom ?identity ?anthropic_version client
-    ~credential request =
+let stream_messages ?provider:custom ~identity ?anthropic_version ?extra_headers
+    client ~credential request =
   let provider =
     match custom with
     | Some p -> p
-    | None -> messages_provider ?identity ?anthropic_version ()
+    | None -> messages_provider ~identity ?anthropic_version ?extra_headers ()
   in
   let streamed = { request with A.stream = true } in
   match
-    messages_request ~provider ?identity ?anthropic_version ~credential streamed
+    messages_request ~provider ~identity ?anthropic_version ?extra_headers
+      ~credential streamed
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
       let headers =
-        messages_auth_headers ?identity ?anthropic_version credential
+        provider.auth_headers (access_api_key credential)
         |> H.Core.Header.remove "accept"
         |> H.Core.Header.unsafe_add "Accept" "text/event-stream"
       in
-      let http_request = { http_request with headers } in
       A.with_stream_span provider streamed
-        (A.perform_stream provider client http_request)
+        (A.perform_stream provider client { http_request with headers })
 
 module Messages = struct
   let request = messages_request
