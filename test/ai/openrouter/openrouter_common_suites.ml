@@ -882,6 +882,140 @@ let test_task_request_endpoints_and_binary_runners () =
   in
   Alcotest.(check string) "speech bytes" "PCM" (Bytes.to_string speech.audio)
 
+let option_float = Alcotest.(option (float 1e-12))
+let option_int = Alcotest.(option int)
+let option_string = Alcotest.(option string)
+
+let test_decode_models_fixture () =
+  let models =
+    O.decode_models (read_fixture "models.json") |> expect_ok "models"
+  in
+  Alcotest.(check int) "keeps usable entries only" 3 (List.length models);
+  match models with
+  | a :: b :: c :: [] ->
+      Alcotest.(check string) "id a" "anthropic/claude-sonnet-4" a.id;
+      Alcotest.(check option_string)
+        "name a" (Some "Claude Sonnet 4") a.name;
+      Alcotest.(check option_int)
+        "context a" (Some 200_000) a.context_length;
+      let pricing = Option.get a.pricing in
+      Alcotest.(check option_float) "prompt" (Some 0.000003) pricing.prompt;
+      Alcotest.(check option_float)
+        "completion" (Some 0.000015) pricing.completion;
+      Alcotest.(check option_float)
+        "cache read" (Some 0.0000003) pricing.input_cache_read;
+      Alcotest.(check option_float)
+        "cache write" (Some 0.00000375) pricing.input_cache_write;
+      Alcotest.(check option_float) "request" (Some 0.) pricing.request;
+      Alcotest.(check string) "id b" "openai/gpt-4.1-mini" b.id;
+      Alcotest.(check option_string) "missing name" None b.name;
+      Alcotest.(check option_int)
+        "top_provider context fallback" (Some 1_047_576) b.context_length;
+      let pricing_b = Option.get b.pricing in
+      Alcotest.(check option_float)
+        "prompt present" (Some 0.0000004) pricing_b.prompt;
+      Alcotest.(check option_float)
+        "completion present" (Some 0.0000016) pricing_b.completion;
+      Alcotest.(check option_float)
+        "malformed cache read" None pricing_b.input_cache_read;
+      Alcotest.(check option_float)
+        "malformed cache write" None pricing_b.input_cache_write;
+      Alcotest.(check option_float) "null request" None pricing_b.request;
+      Alcotest.(check string) "strips openrouter prefix" "prefixed/model" c.id;
+      Alcotest.(check option_string)
+        "trims name" (Some "Prefixed") c.name;
+      Alcotest.(check bool) "no pricing" true (Option.is_none c.pricing)
+  | _ -> Alcotest.failf "expected 3 models, got %d" (List.length models)
+
+let test_decode_models_empty_ok () =
+  let models = O.decode_models {|{"data":[]}|} |> expect_ok "empty models" in
+  Alcotest.(check int) "empty list" 0 (List.length models)
+
+let test_decode_models_malformed_shape () =
+  List.iter
+    (fun document ->
+      match O.decode_models document with
+      | Stdlib.Error (A.Decode_error { message; _ }) ->
+          require_contains "shape" ~needle:"data array" message
+      | Stdlib.Error _ ->
+          Alcotest.fail ("expected decode shape error: " ^ document)
+      | Stdlib.Ok _ ->
+          Alcotest.fail ("expected malformed shape failure: " ^ document))
+    [ "{}"; {|{"data":"not-an-array"}|}; "[]"; {|{"models":[]}|} ]
+
+let test_decode_models_id_only_and_bad_context () =
+  let models =
+    O.decode_models
+      {|{"data":[{"id":"only/id","context_length":"not-int"}]}|}
+    |> expect_ok "id only"
+  in
+  match models with
+  | [ model ] ->
+      Alcotest.(check string) "identity" "only/id" model.id;
+      Alcotest.(check option_int) "bad context" None model.context_length;
+      Alcotest.(check bool) "no pricing" true (Option.is_none model.pricing)
+  | _ -> Alcotest.fail "id-only entry should parse"
+
+let test_models_request_uses_auth () =
+  let api_key = A.api_key "test-openrouter-key" in
+  match O.models_request ~api_key () with
+  | Stdlib.Error _ -> Alcotest.fail "planning should succeed"
+  | Stdlib.Ok request ->
+      Alcotest.(check string) "method" "GET" request.H.Request.method_;
+      Alcotest.(check string)
+        "uri" "https://openrouter.ai/api/v1/models" request.uri;
+      Alcotest.(check (option string))
+        "authorization" (Some "Bearer test-openrouter-key")
+        (H.Core.Header.get "Authorization" request.headers);
+      Alcotest.(check (option string))
+        "accept" (Some "application/json")
+        (H.Core.Header.get "Accept" request.headers)
+
+let test_list_models_runner () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "or-secret-key" in
+  let captured = ref None in
+  let models =
+    run_ok rt "list_models"
+      (O.list_models
+         (test_client (response_of_fixture "models.json") captured)
+         ~api_key)
+  in
+  let ids = List.map (fun (m : O.model_info) -> m.id) models in
+  Alcotest.(check (list string))
+    "ids"
+    [ "anthropic/claude-sonnet-4"; "openai/gpt-4.1-mini"; "prefixed/model" ]
+    ids;
+  match !captured with
+  | None -> Alcotest.fail "missing models request"
+  | Some request ->
+      Alcotest.(check string) "method" "GET" request.H.Request.method_;
+      Alcotest.(check string)
+        "uri" "https://openrouter.ai/api/v1/models" request.uri;
+      Alcotest.(check (option string))
+        "auth" (Some "Bearer or-secret-key")
+        (H.Core.Header.get "authorization" request.headers)
+
+let test_list_models_provider_error_is_safe () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "or-secret-key" in
+  let client =
+    test_client (response_of_fixture ~status:401 "error.json") (ref None)
+  in
+  match B.run rt (O.list_models client ~api_key) with
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
+  | Eta.Exit.Error cause ->
+      let diagnostic =
+        Format.asprintf "%a"
+          (Eta.Cause.pp (fun fmt err ->
+               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
+          cause
+      in
+      Alcotest.(check bool)
+        "no bearer leak" false
+        (contains ~needle:"Bearer or-secret-key" diagnostic)
+
+
 let tests =
   [
       ( "provider",
@@ -910,6 +1044,16 @@ let tests =
             test_encode_and_decode_task_apis;
           Alcotest.test_case "midstream error" `Quick
             test_stream_midstream_error_fixture;
+          Alcotest.test_case "decode models fixture" `Quick
+            test_decode_models_fixture;
+          Alcotest.test_case "decode models empty ok" `Quick
+            test_decode_models_empty_ok;
+          Alcotest.test_case "decode models malformed shape" `Quick
+            test_decode_models_malformed_shape;
+          Alcotest.test_case "decode models id only" `Quick
+            test_decode_models_id_only_and_bad_context;
+          Alcotest.test_case "models request auth" `Quick
+            test_models_request_uses_auth;
         ] );
       ( "http",
         [
@@ -928,6 +1072,9 @@ let tests =
             test_responses_stream_preserves_metadata_and_reasoning;
           Alcotest.test_case "incomplete and reasoning replay" `Quick
             test_incomplete_response_and_reasoning_replay;
+          Alcotest.test_case "list models runner" `Quick test_list_models_runner;
+          Alcotest.test_case "list models provider error is safe" `Quick
+            test_list_models_provider_error_is_safe;
         ] );
   ]
 end
