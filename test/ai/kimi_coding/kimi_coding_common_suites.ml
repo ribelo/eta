@@ -324,6 +324,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     require_contains "proto" ~needle:"unknown model protocol"
       (A.project_ai_error unknown).diagnostic;
+    let wrong_type =
+      K.decode_models
+        "{\"data\":[{\"id\":\"x\",\"context_length\":1,\"protocol\":42}]}"
+      |> expect_error "non-string protocol"
+    in
+    require_contains "protocol type" ~needle:"must be a string"
+      (A.project_ai_error wrong_type).diagnostic;
     let non_json_5xx =
       K.decode_device_poll ~status:503 ~now_s:1L "not-json"
       |> expect_error "5xx"

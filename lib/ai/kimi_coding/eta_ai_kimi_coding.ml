@@ -643,43 +643,22 @@ let model_info_of_json json =
   match Json.string_member "id" json with
   | None | Some "" -> Stdlib.Ok None
   | Some id -> (
-      match Json.string_member "protocol" json with
-      | Some s -> (
-          match protocol_of_string s with
-          | None -> safe_error ("unknown model protocol declaration " ^ s)
-          | Some protocol ->
-              let supports_tool_use =
-                match Json.member "supports_tool_use" json with
-                | None -> Some true
-                | Some (`Bool b) -> Some b
-                | Some _ -> None
-              in
-              Stdlib.Ok
-                (Some
-                   {
-                     id;
-                     display_name =
-                       (match Json.string_member "display_name" json with
-                       | Some _ as v -> v
-                       | None -> Json.string_member "name" json);
-                     context_length = Json.int_member "context_length" json;
-                     supports_reasoning = bool_member "supports_reasoning" json;
-                     supports_image_in = bool_member "supports_image_in" json;
-                     supports_video_in = bool_member "supports_video_in" json;
-                     supports_tool_use;
-                     supports_thinking_type =
-                       parse_supports_thinking_type
-                         (Json.string_member "supports_thinking_type" json);
-                     think_efforts =
-                       parse_think_efforts
-                         (Json.object_member "think_efforts" json);
-                     protocol = Some protocol;
-                   }))
-      | None ->
+      let protocol =
+        match Json.member "protocol" json with
+        | None -> Stdlib.Ok None
+        | Some (`String value) -> (
+            match protocol_of_string value with
+            | Some protocol -> Stdlib.Ok (Some protocol)
+            | None -> safe_error ("unknown model protocol declaration " ^ value))
+        | Some _ -> safe_error "model protocol declaration must be a string"
+      in
+      match protocol with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok protocol ->
           let supports_tool_use =
             match Json.member "supports_tool_use" json with
             | None -> Some true
-            | Some (`Bool b) -> Some b
+            | Some (`Bool value) -> Some value
             | Some _ -> None
           in
           Stdlib.Ok
@@ -688,7 +667,7 @@ let model_info_of_json json =
                  id;
                  display_name =
                    (match Json.string_member "display_name" json with
-                   | Some _ as v -> v
+                   | Some _ as value -> value
                    | None -> Json.string_member "name" json);
                  context_length = Json.int_member "context_length" json;
                  supports_reasoning = bool_member "supports_reasoning" json;
@@ -700,7 +679,7 @@ let model_info_of_json json =
                      (Json.string_member "supports_thinking_type" json);
                  think_efforts =
                    parse_think_efforts (Json.object_member "think_efforts" json);
-                 protocol = None;
+                 protocol;
                }))
 
 let decode_models raw =
