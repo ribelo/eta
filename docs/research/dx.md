@@ -13,8 +13,32 @@ channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
 **Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
-C: 3 promoted, 2 held). Syntheses: V-DX-PHASE-A/B/C in the journal.
-Phase D next (E26 → E19 → E20 → E12 → E11 → E13 → E14).
+C: 3 promoted, 2 held). Phase D started: E26 promoted.
+
+## E26 — `Effect.fresh` / `fresh_named` (promoted 2026-07-20)
+
+Fiber names, span-correlation ids, and test fixtures get one honest source:
+`fresh` (a per-runtime monotonic counter) and `fresh_named "worker"`
+(formatting over the same counter). The contract that matters: unique and
+increasing **only within one runtime** — explicitly not global (distinct
+runtimes/domains may collide; correlate with your own namespace), and
+`Eta_test` runtimes reset it, so test programs replay deterministically.
+Native increments are atomic; jsoo uses a plain per-runtime cell.
+
+Why a leaf at all: the steelmanned DIY case (hand-rolled `Atomic`, seeded
+`Random`) was rejected in review — a library operation defines ownership,
+isolation, reset behavior, formatting, and test determinism **once**, vs.
+every caller choosing incompatible semantics. The four pre-existing
+process-global counters (tracer context ids, interrupt ids, service keys,
+runtime ids) keep their own cross-runtime jobs, deliberately unmigrated.
+
+Accepted tradeoff: the name doesn't carry the runtime-local scope (cold
+read misguessed it; the mli disarmed completely — rated 2-then-resolved,
+preference still the new form). Logged as watch F6. Import provenance:
+fused-effects `Control.Effect.Fresh`.
+
+Provenance: `.scratch/research/dx/e26/` (on branch), V-DX-E26-001..002,
+branch `research/dx-e26-effect-fresh`.
 
 ## E10 — Function-level sugar: `let%eta` killed, `[@@eta.trace]` held with a trigger (2026-07-19)
 

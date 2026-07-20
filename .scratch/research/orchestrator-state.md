@@ -6,10 +6,8 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E26 — Effect.fresh (Phase D warm-up)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e26`
-  - Branch: `research/dx-e26-effect-fresh`
-  - Stage: predictions sealed (V-DX-E26-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase D): E26 promoted (`dfe5f904`) — `Effect.fresh`/`fresh_named`
 - Done (Phase A): E23 promoted (`66bad437`) · E24 promoted (`29bd23e9`) ·
   E25 promoted
 - Done (Phase B): E1 promoted (sync_option killed, then **promoted by
@@ -20,8 +18,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D** — E26 (`fresh`) → E19 (scoped capability override;
-  flagship) → E20 (intercept) → E12 (audit/describe) → E11 (Eta_test.run)
+- Queue: **Phase D** — **E19** (scoped capability override; flagship)
+  → E20 (intercept) → E12 (audit/describe) → E11 (Eta_test.run)
   → E13 (async) → E14 (Promise, hold-gated)
 - Backlog: E24b hook-ownership (after E19/E20 context); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -34,6 +32,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   typed-vs-defect encoding (otel/E4-adjacent); `map_par` default-8 bench;
   `[@@eta.trace]` promote trigger; `[%eta.option]` stays excluded
   (substrate exists again, frequency rule still gates); E9 split →
-  parking lot (superseded by E9b)
+  parking lot (superseded by E9b); F6 `fresh` cold-read scope assumption
+  (watch)
 - Pending decisions: none
-- Last update: 2026-07-20 — E26 launched
+- Last update: 2026-07-20 — E26 promoted

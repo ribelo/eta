@@ -25,7 +25,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E9 | Syntax.Parallel/Applicative | C | M | med | **held** 2026-07-19 (baseline 2/6, explicit 2/6) | SC | research/dx-e9-syntax-parallel-applicative | V-DX-E9-001..002 |
 | E9b | Honest and* (sequential); Effect.par | C | S-M | low-med | **promoted** 2026-07-19 | SC | research/dx-e9b-honest-and-star | V-DX-E9B-001..002 |
 | E10 | let%eta function sugar | C | M | med | **held** (let%eta killed; [@@eta.trace] pre-selected, trigger defined) | SC | research/dx-e10-function-sugar | V-DX-E10-001..002 |
-| E26 | Effect.fresh | D | S | low | proposed | | | |
+| E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
 | E19 | Scoped capability override | D | M | med | proposed | | | |
 | E20 | intercept_log/metric | D | M | low-med | proposed | | | |
 | E11 | Eta_test.run golden record | D | L | med | proposed | | | |
@@ -2044,3 +2044,61 @@ split. Predicted median ≥ 4.
 **Outcome (predicted).** Promote. Effort S; the only design risk is the
 per-runtime vs global distinction being under-documented — flagged as the
 mli's job, not a hold condition.
+
+---
+
+## V-DX-E26-002 — 2026-07-20 — research/dx-e26-effect-fresh — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`dfe5f904`); mainline `test/js_jsoo` +
+`test/cache_jsoo` compile clean; jsoo runtime suite passes (`fresh
+runtime-local counter`).
+
+**Contract** (verified verbatim): `fresh` in the runtime contract record +
+`RUNTIME` signature with owner-domain fence; jsoo `ref 0` per runtime
+instance; mli states per-runtime uniqueness, explicitly denies global
+uniqueness (incl. cross-domain), prescribes application-owned namespacing,
+documents `Eta_test` reset. `fresh_named` = formatting over the same
+counter, not a second one. The four pre-existing global counters
+(deliberately) not migrated.
+
+**Mechanical** (all re-verified): strictly increasing `[1;2;3]`; 128
+concurrent pulls → 128 unique; two fresh test runtimes → identical
+sequences; `fresh_named "worker"` after six pulls → `"worker-7"`; native
+contention 10,000 pulls → 10,000 unique.
+
+**Red-team:** cross-runtime collision is an executable test (`[1;2;3]` vs
+`[1;2;3]`, collision `1=1`) with the mli warning as the disarmer — the
+trap is documented, not hidden.
+
+**Review** `[agent-sim, spot-check]` (oracle, fixed persona, randomized):
+new form **2** (cold-read scope misguess — "unique for the process" — then
+fully disarmed by the mli) vs hand-rolled Atomic **4**; preference still
+the new form ("uniqueness policy belongs with the runtime"). **Kill gate
+unfired**: steelmanned DIY case rejected — a library operation defines
+ownership/isolation/reset/determinism once, vs. every caller choosing
+incompatible semantics. Reviewer's alternative name `fresh_runtime_named`
+considered and rejected (reads as *creating* runtimes; `fresh` carries
+fused-effects `Fresh` provenance).
+
+**Census:** construct cluster +2 vals / +1 concept (verified).
+**Footguns:** +0; the per-runtime trap is documented + executable-tested.
+
+**Prediction scoring (orchestrator, V-DX-E26-001).** Hits: census,
+footguns, all mechanicals, both backends, reviewer question ("unique
+across runtimes?" — asked and mli-answered), kill gate unfired, promote.
+Misses: call-site ratings — predicted 4–5 "reads obviously", actual 2 on
+the cold scope read (median < 4); the risk I flagged (per-runtime vs
+global being the mli's job) is exactly where it materialized. Executor:
+5/5.
+
+**Decision: PROMOTE** (the one-pager's own gate — "unless Random-based DIY
+is found adequate" — evaluated and not met). Merged `--no-ff`
+(`dfe5f904`); master gates green; master + branch pushed; worktree
+removed; objective archived.
+
+**Follow-up F6 (new):** `fresh` cold-read scope assumption — watch. The
+call site cannot carry the scope (same accepted shape as F4 `map_par`
+omission). If real users misread, candidates: docs emphasis in
+`docs/api-dx.md`, a scope-bearing alias — not a rename (`Fresh`
+provenance; `fresh_runtime_named` misreads as runtime construction).

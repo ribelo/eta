@@ -1577,7 +1577,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E9 | Syntax.Parallel/Applicative | C | M | med | **held** 2026-07-19 (baseline 2/6, explicit 2/6) | SC | research/dx-e9-syntax-parallel-applicative | V-DX-E9-001..002 |
 | E9b | Honest and* (sequential); Effect.par | C | S-M | low-med | **promoted** 2026-07-19 | SC | research/dx-e9b-honest-and-star | V-DX-E9B-001..002 |
 | E10 | let%eta function sugar | C | M | med | **held** 2026-07-19 (let%eta killed; [@@eta.trace] pre-selected) | SC | research/dx-e10-function-sugar | V-DX-E10-001..002 |
-| E26 | Effect.fresh | D | S | low | proposed | | | |
+| E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
 | E19 | Scoped capability override | D | M | med | proposed | | | |
 | E20 | intercept_log/metric | D | M | low-med | proposed | | | |
 | E11 | Eta_test.run golden record | D | L | med | proposed | | | |
