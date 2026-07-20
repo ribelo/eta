@@ -38,6 +38,7 @@ type service = Service : 'a service_key * 'a -> service
 type t = {
   root_scope : scope;
   now_ms : unit -> int;
+  fresh : unit -> int;
   sleep : Duration.t -> unit;
   protect : 'a. (unit -> 'a) -> 'a;
   run_scope : 'a. ?name:string -> (scope -> 'a) -> 'a;
@@ -97,6 +98,13 @@ type t = {
     are one clock pair; mixing a wall-clock [now_ms] with a relative monotonic
     sleeper makes clock-jump behavior undefined.
 
+    [fresh] advances a counter owned by this runtime instance. It must return a
+    strictly increasing, duplicate-free sequence under the backend's concurrent
+    fiber substrate. It does not provide global or cross-domain uniqueness;
+    separately created runtimes may return the same values. Native concurrent
+    backends must synchronize increments, while single-domain JavaScript
+    backends may use a plain mutable cell.
+
     Promise resolution is a commit point for Eta-owned wait queues. When
     [resolve_promise] is called with an unsettled resolver, the backend must
     settle the promise and make every still-observable waiter able to resume
@@ -124,6 +132,11 @@ module type RUNTIME = sig
   (** Current monotonic runtime clock in milliseconds. This is elapsed runtime
       time, not wall/civil time, and should not move backwards during ordinary
       execution. *)
+
+  val fresh : unit -> int
+  (** Advance this backend runtime's monotonic fresh counter. Values must be
+      strictly increasing and duplicate-free within this runtime instance, but
+      need not be unique across separately created runtimes or domains. *)
 
   val sleep : Duration.t -> unit
   (** Suspend the current runtime task for at least [duration] on the same

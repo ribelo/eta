@@ -564,6 +564,7 @@ module Private = struct
 end
 
 let runtime () =
+  let fresh_counter = ref 0 in
   (module struct
     type nonrec scope = scope
     type nonrec cancel_context = cancel_context
@@ -573,6 +574,9 @@ let runtime () =
 
     let root_scope = root_scope
     let now_ms = now_ms
+    let fresh () =
+      incr fresh_counter;
+      !fresh_counter
     let sleep = sleep
     let protect = protect
     let run_scope = run_scope

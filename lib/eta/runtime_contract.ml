@@ -44,6 +44,7 @@ type service = Service : 'a service_key * 'a -> service
 type t = {
   root_scope : scope;
   now_ms : unit -> int;
+  fresh : unit -> int;
   sleep : Duration.t -> unit;
   protect : 'a. (unit -> 'a) -> 'a;
   run_scope : 'a. ?name:string -> (scope -> 'a) -> 'a;
@@ -85,6 +86,7 @@ module type RUNTIME = sig
 
   val root_scope : scope
   val now_ms : unit -> int
+  val fresh : unit -> int
   val sleep : Duration.t -> unit
   val protect : (unit -> 'a) -> 'a
   val run_scope : ?name:string -> (scope -> 'a) -> 'a
@@ -203,6 +205,10 @@ let of_runtime (module R : RUNTIME) =
       (fun () ->
         ensure_owner_domain ();
         R.now_ms ());
+    fresh =
+      (fun () ->
+        ensure_owner_domain ();
+        R.fresh ());
     sleep =
       (fun duration ->
         ensure_runtime_operation ();

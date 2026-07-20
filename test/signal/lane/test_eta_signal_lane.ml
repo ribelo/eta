@@ -51,6 +51,7 @@ let with_hooked_runtime f =
 
     let root_scope = Base.root_scope
     let now_ms = Base.now_ms
+    let fresh = Base.fresh
     let sleep = Base.sleep
     let protect = Base.protect
     let run_scope = Base.run_scope

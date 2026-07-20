@@ -189,8 +189,10 @@ module Cleanup_interrupt_runtime = struct
   let deferred_daemons : (unit -> [ `Stop_daemon ]) Stdlib.Queue.t =
     Stdlib.Queue.create ()
   let now = ref 0
+  let fresh_counter = Atomic.make 0
   let root_scope = ()
   let now_ms () = !now
+  let fresh () = Atomic.fetch_and_add fresh_counter 1 + 1
   let sleep duration = now := !now + Duration.to_ms duration
 
   let protect f =
@@ -309,7 +311,9 @@ module Make_isolated_sync_runtime () = struct
   type 'a stream = 'a Stdlib.Queue.t
 
   let root_scope = ()
+  let fresh_counter = ref 0
   let now_ms () = 0
+  let fresh () = incr fresh_counter; !fresh_counter
   let sleep _duration = ()
   let protect f = f ()
   let run_scope ?name:_ f = f ()
@@ -3861,6 +3865,7 @@ let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
 
     let root_scope = Base.root_scope
     let now_ms () = Eta_test.Test_clock.now_ms clock
+    let fresh = Base.fresh
     let sleep duration = Eta_test.Test_clock.sleep clock duration
     let protect = Base.protect
     let run_scope = Base.run_scope

@@ -70,6 +70,39 @@ let test_with_logger_and_tracer_wires_both () =
   Alcotest.(check int) "logs" 1 (List.length (Eta.Logger.dump logger));
   Alcotest.(check int) "spans" 1 (List.length (Eta.Tracer.dump tracer))
 
+let fresh_sequence_in_new_test_runtime () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let open Eta.Syntax in
+  let program =
+    let* first = Eta.Effect.fresh () in
+    let* second = Eta.Effect.fresh () in
+    let+ third = Eta.Effect.fresh () in
+    [ first; second; third ]
+  in
+  Expect.expect_ok (Eta.Runtime.run rt program)
+
+let test_fresh_replays_across_test_runtimes () =
+  let first = fresh_sequence_in_new_test_runtime () in
+  let second = fresh_sequence_in_new_test_runtime () in
+  Alcotest.(check (list int)) "first runtime sequence" [ 1; 2; 3 ] first;
+  Alcotest.(check (list int)) "fresh test runtime replay" first second
+
+let test_fresh_map_par_contention () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let count = 10_000 in
+  let started = Unix.gettimeofday () in
+  let values =
+    List.init count Fun.id
+    |> Eta.Effect.map_par ~max_concurrent:64 (fun _ -> Eta.Effect.fresh ())
+    |> Eta.Runtime.run rt |> Expect.expect_ok
+  in
+  let elapsed_ms = (Unix.gettimeofday () -. started) *. 1_000.0 in
+  let unique = List.sort_uniq Int.compare values in
+  Alcotest.(check int) "map_par pulls" count (List.length values);
+  Alcotest.(check int) "map_par unique values" count (List.length unique);
+  Format.printf "fresh map_par: n=%d max_concurrent=64 unique=%d elapsed_ms=%.3f@."
+    count (List.length unique) elapsed_ms
+
 let () =
   Alcotest.run "eta-test"
     [
@@ -86,5 +119,12 @@ let () =
           Alcotest.test_case "with_tracer" `Quick test_with_tracer_captures_spans;
           Alcotest.test_case "with_logger_and_tracer" `Quick
             test_with_logger_and_tracer_wires_both;
+        ] );
+      ( "Fresh",
+        [
+          Alcotest.test_case "replays across test runtimes" `Quick
+            test_fresh_replays_across_test_runtimes;
+          Alcotest.test_case "map_par contention" `Quick
+            test_fresh_map_par_contention;
         ] );
     ]

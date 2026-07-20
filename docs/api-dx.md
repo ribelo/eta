@@ -29,6 +29,9 @@ Use ordinary OCaml at the boundary and lift into Eta deliberately:
   succeeds with a `result` (not only the sync leaf).
 - `Effect.yield` when an Eta workflow should cooperatively yield to the active
   runtime backend.
+- `Effect.fresh` for runtime-local monotonic tokens, and `Effect.fresh_named`
+  for readable runtime-local names such as `worker-7`. These values are not
+  globally unique; add an application namespace for cross-runtime correlation.
 - `Effect.tap` for success-side observers that should preserve the original
   value. Wrap plain synchronous observers with `Effect.sync`.
 - `Effect.bind_error` for effectful typed failure recovery inside the Eta blueprint.
