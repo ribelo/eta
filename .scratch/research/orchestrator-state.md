@@ -7,13 +7,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **C** (syntax & PPX) — E7 promoted
 - In flight: nothing
-- **BLOCKED EXTERNAL**: master is red from programme-external merge
-  `9e2e3be1` (ladybug read-only classifier — OCaml binding without the
-  mock symbol `lbug_prepared_statement_is_read_only`; 8 failures in
-  `test/connectors` + `test/ladybug_leak`). Master push withheld; options
-  reported to human 2026-07-19. Isolated verification worktree:
-  `/tmp/eta-master-gate` (at the E9b merge; identical 8 failures, zero
-  from E9b).
+- RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green;
+  master pushed.
 - Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (`0644da2e`)
   · **E9 held** (branch kept/pushed) · **E9b promoted** (`006c2572`,
   push pending master-green)

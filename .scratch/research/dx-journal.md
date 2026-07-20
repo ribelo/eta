@@ -1719,3 +1719,16 @@ a conservative mock symbol with the human's blessing; (c) revert
 `9e2e3be1` to keep master green, ladybug continues on its branch. Rule
 proposed: master stays green — whoever merges to master runs the full
 gate first.
+
+---
+
+## V-DX-E9B-002b — 2026-07-19 — incident resolved
+
+The ladybug workstream fixed the ABI gap on master (`7a16e6fb`
+"fix(ladybug): keep test drivers ABI-complete" — mock now exports
+`lbug_prepared_statement_is_read_only`). Full master gates re-run in an
+isolated worktree at `7a16e6fb`: **green, zero failures**. Master pushed
+(`4d8441ce..7a16e6fb`): includes the ladybug merge, the E9b merge
+(`006c2572`), and E9b bookkeeping. Isolated worktree removed. Rule
+recorded: master stays green — whoever merges to master runs the full
+gate first.
