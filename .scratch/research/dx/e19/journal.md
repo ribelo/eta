@@ -89,3 +89,104 @@ lexical subtree and preserve the existing two-parameter effect type.
   environment machinery.
 
 Status: **PREDICTIONS SEALED; implementation evidence pending.**
+
+## V-DX-E19-002 — implementation verdict
+
+Status: **ACCEPT**
+
+Decision: promote the four scoped capability overrides. They remain a narrow
+runtime-service seam over `Runtime_contract.local_with_binding`; they do not add
+an application environment or dependency row.
+
+### Implementation evidence
+
+- `Capabilities.clock` was already present at the branch baseline, contrary to
+  the assignment's baseline description. It now carries the complete monotonic
+  `now_ms`/`sleep` pair, and every repository implementation was updated.
+- Four typed runtime-local keys back one generic internal binding helper.
+  Capability lookup is activated only inside an override frame. This preserves
+  the existing ability to run a runtime's purely fiberless leaves on another
+  domain without calling owner-domain-only runtime-local APIs.
+- Runtime record copies share daemon drain waiters through a ref. The first
+  implementation copied a mutable list field; the full suite exposed a lost
+  wakeup when a daemon inherited an override-frame copy. The shared ref is the
+  executable correction, not a fallback path.
+- Active spans carry their captured tracer, integer handle, and propagation
+  info. Cross-tracer nesting uses an external parent context instead of passing
+  a foreign tracer's integer handle. Same-fiber tracer task contexts are
+  reentrant; newly forked fibers get isolated mutable tracer state.
+- Core clock leaves, retry/repeat drivers, timestamps, log sinks, span
+  lifecycle, runtime trace-ID generation, and daemon diagnostics select the
+  active capability at their operation boundary. Explicit random tokens and
+  non-Effect schedule drivers remain explicit by contract.
+- Eio and jsoo local-binding implementations required no semantic change.
+  Jsoo clock/logger parity is executable in `test/js_jsoo/test_eta_jsoo.ml`.
+
+### Disconfirming evidence and corrections
+
+An attempted dynamic rewrite of `Runtime_contract.now_ms`/`sleep` made every
+contract read perform an owner-domain local lookup. The full suite rejected it
+in the existing “fiberless frame is domain local” regression. It was removed:
+the public Effect clock leaves use scoped lookup, while direct low-level
+contract consumers keep the contract's existing domain rules.
+
+The first full gate also rejected calling `current_fiber_id` from manual tracer
+use without an established identity. Tracer task-context entry now establishes
+the identity through the runtime contract and reuses it when already present.
+
+These failures changed the implementation but did not weaken or add fallback
+branches to the public semantics.
+
+### Edge matrix
+
+| Obligation | Executable evidence | Result |
+| --- | --- | --- |
+| Restore on success / typed failure / defect / interruption | Scoped-capability case 0 | Proven |
+| Restore after actual runtime cancellation | Case 8 | Proven |
+| Fork inheritance across all four bindings | Case 1 | Proven |
+| `par` sibling isolation, both directions | Case 2 | Proven |
+| Innermost wins; restore outer | Case 3 | Proven |
+| Clock controls sleep and timeout without wall time | Case 4 | Proven |
+| Random override controls retry jitter replay | Case 5 | Proven |
+| Logger replacement + attrs + minimum filter | Case 6 | Proven |
+| Daemon retains fork-time bindings | Case 7 | Proven |
+| Cross-tracer open-span ownership | Cases 9 and 10 | Proven |
+| In-flight real sleep unchanged | Case 11 | Proven |
+| Daemon failure diagnostics use inherited overrides | Case 12 | Proven |
+| Jsoo clock + logger parity | `scoped clock and logger parity` | Proven |
+
+### Prediction score
+
+| # | Prediction | Score | Outcome |
+| --- | --- | --- | --- |
+| 1 | Public census +4 vals, +1 effective clock type change | 1 | Exact after accounting for the pre-existing sleep-only type. |
+| 2 | Four keys, generic helper, no backend API change | 1 | Exact; additional active-span ownership work was required. |
+| 3 | Edge tests pass after ordinary fixes; jsoo needs no local change | 0.5 | Jsoo prediction held; native full-gate failures exposed two non-ordinary runtime invariants before final pass. |
+| 4 | W6 at least 40% fewer lines | 0 | 31 to 24 code lines (22.6%); the user-facing gain is one visible override instead of runtime clock assembly, but the sealed percentage missed. |
+| 5 | Contract fits at most 30 lines | 1 | 29 caveat prose lines; 30 nonblank lines including the example. |
+| 6 | +0 undisclosed footguns; three traps documented | 1 | All three traps are in every relevant contract and executable red-team evidence. |
+
+Total: **4.5 / 6**.
+
+### Hypothesis ledger final state
+
+- **A — four combinators over runtime locals: ACCEPTED.** It satisfies the full
+  matrix and preserves Eta's boundary.
+- **B — explicit runtime assembly: DOMINATED for subtree substitution.** It
+  remains valid interpreter configuration, but W6 shows the fake clock is no
+  longer coupled to runtime construction.
+- **C — universal environment/service row: OUT OF SCOPE.** No evidence or code
+  widened `Effect.t`.
+- **D — documentation-only recipe: DOMINATED.** It cannot provide lexical
+  substitution, fork inheritance, and sibling isolation in one call.
+
+Counterevidence considered: W6 missed the sealed 40% whole-fixture LOC target,
+and low-level direct `Runtime_contract` clock consumers cannot be dynamically
+rewritten without violating the existing owner-domain contract. Neither is a
+public-semantics failure: W6 removes the bespoke runtime seam, and the scoped
+contract names the corresponding Effect leaves.
+
+Confidence: **High**, because both backends, all exit/lifecycle edges, the
+adversarial traps, and every required repository gate are executable and pass.
+
+Recommendation: **PROMOTE DX-E19**.
