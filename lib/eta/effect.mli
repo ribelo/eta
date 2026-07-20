@@ -632,6 +632,45 @@ val supervisor_yield : ('s, unit, 'err) supervisor_scope
 (** Low-level abstract supervisor-scope builders used by {!Supervisor.Scope}.
     They intentionally do not expose the interpreter AST constructors. *)
 
+val with_clock : Capabilities.clock -> ('a, 'err) t -> ('a, 'err) t
+(** Dynamically replace the fiber-local runtime clock for [body]. Children
+    inherit it at fork without join-merge. Success, typed failure, defect, or
+    interruption restores it. Innermost wins; [par] siblings are isolated.
+    Leaves capture it at call time; in-flight sleeps are unchanged. Daemons keep it after scope exit.
+    This governs clock reads/sleeps and their users:
+    delay, timed, timeout, retry/repeat, timestamps, and span timing.
+
+    {[ Effect.with_clock (Eta_test.Test_clock.as_capability clock) program ]} *)
+
+val with_random : Capabilities.random -> ('a, 'err) t -> ('a, 'err) t
+(** Dynamically replace the fiber-local runtime random source for [body].
+    Children inherit it at fork without join-merge. Success, typed failure,
+    defect, and interruption restore it.
+    Innermost wins and [par] siblings are isolated. Runtime random operations
+    capture it when called; already-started operations are unchanged. A daemon
+    retains its fork-time source after this scope exits. This governs
+    [retry]/[repeat] schedule jitter and runtime-generated trace identifiers,
+    not explicitly passed application random tokens. *)
+
+val with_logger : Capabilities.logger -> ('a, 'err) t -> ('a, 'err) t
+(** Dynamically replace the fiber-local log sink for [body]. Children inherit
+    it at fork without join-merge. Success, typed failure, defect, and
+    interruption restore it. Innermost wins and
+    [par] siblings are isolated. Each log chooses its sink when called; earlier
+    emissions are unchanged. A daemon retains its fork-time sink after this
+    scope exits. [annotate_logs] adds attributes and [with_minimum_log_level]
+    filters before this sink; a future [intercept_log] would transform after
+    those steps and before the sink. *)
+
+val with_tracer : Capabilities.tracer -> ('a, 'err) t -> ('a, 'err) t
+(** Dynamically replace the fiber-local tracer for [body]. Children inherit it
+    at fork without join-merge. Success, typed failure, defect, and interruption
+    restore it. Innermost wins and
+    [par] siblings are isolated. [named]/[fn] capture it when opening a span, so
+    an open span is unchanged by a later override. A daemon retains its
+    fork-time tracer after this scope exits. Span operations for that span use
+    the captured tracer through completion. *)
+
 val named :
   ?kind:Capabilities.span_kind ->
   ?error_pp:(Format.formatter -> 'err -> unit) ->

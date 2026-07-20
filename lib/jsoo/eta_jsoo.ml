@@ -550,6 +550,7 @@ let now_ms = Js_host.now_ms
 
 let clock : Eta.Capabilities.clock =
   object
+    method now_ms () = now_ms ()
     method sleep duration = sleep duration
   end
 

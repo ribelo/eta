@@ -10,6 +10,9 @@ let local_get frame key =
 let local_with_binding frame key value f =
   frame.runtime.contract.Runtime_contract.local_with_binding key value f
 
+let first_some left right =
+  match left with Some _ -> left | None -> right
+
 let string_error_renderer (pp : Format.formatter -> 'err -> unit) : Obj.t -> string =
   (* Memoize by physical identity so span status and exception-event paths share
      one render for the same typed failure. *)
@@ -36,9 +39,31 @@ let suppress_observability eff =
       auto_instrument = false;
       logging_enabled = false;
       metrics_enabled = false;
+      observability_suppressed = true;
     }
   in
   run_to_exit { frame with runtime } eff
+
+let with_runtime_binding key value eff =
+  preserve eff @@ fun frame ->
+  let runtime = { frame.runtime with capability_overrides_active = true } in
+  local_with_binding frame key value @@ fun () -> eval { frame with runtime } eff
+
+let with_clock clock eff =
+  with_runtime_binding Runtime_core.clock_override clock eff
+
+let with_random random eff =
+  with_runtime_binding Runtime_core.random_override random eff
+
+let with_logger logger eff =
+  with_runtime_binding Runtime_core.logger_override logger eff
+
+let with_tracer tracer eff =
+  preserve eff @@ fun frame ->
+  let runtime = { frame.runtime with capability_overrides_active = true } in
+  local_with_binding frame Runtime_core.tracer_override tracer @@ fun () ->
+  tracer#with_task_context frame.runtime.contract @@ fun () ->
+  eval { frame with runtime } eff
 
 let named ?(kind = Capabilities.Internal) ?error_pp name eff =
   make ~leaf_name:name ~names:(name :: names eff) @@ fun frame ->
@@ -56,27 +81,29 @@ let named ?(kind = Capabilities.Internal) ?error_pp name eff =
 
 let annotate ~key ~value eff =
   preserve eff @@ fun frame ->
-  (if frame.runtime.tracing_enabled then
+  let tracing_enabled, tracer = Runtime_core.current_tracer frame.runtime in
+  (if tracing_enabled then
     match local_get frame RObs.active_span_key with
-    | Some span_id ->
-        frame.runtime.tracer#add_attr_to frame.runtime.contract ~span_id ~key
-          ~value
-    | None -> frame.runtime.tracer#add_attr frame.runtime.contract ~key ~value);
+    | Some active ->
+        active.RObs.tracer#add_attr_to frame.runtime.contract
+          ~span_id:active.span_id ~key ~value
+    | None -> tracer#add_attr frame.runtime.contract ~key ~value);
   RObs.with_die_annotation frame.runtime.contract key value @@ fun () ->
   eval frame eff
 
 let[@inline always] add_attrs_to_tracer frame attrs =
+  let _, tracer = Runtime_core.current_tracer frame.runtime in
   match local_get frame RObs.active_span_key with
-  | Some span_id ->
+  | Some active ->
       List.iter
         (fun (key, value) ->
-          frame.runtime.tracer#add_attr_to frame.runtime.contract ~span_id ~key
-            ~value)
+          active.RObs.tracer#add_attr_to frame.runtime.contract
+            ~span_id:active.span_id ~key ~value)
         attrs
   | None ->
       List.iter
         (fun (key, value) ->
-          frame.runtime.tracer#add_attr frame.runtime.contract ~key ~value)
+          tracer#add_attr frame.runtime.contract ~key ~value)
         attrs
 
 let annotate_all attrs eff =
@@ -84,13 +111,15 @@ let annotate_all attrs eff =
   | [] -> eff
   | _ ->
       preserve eff @@ fun frame ->
-      (if frame.runtime.tracing_enabled then add_attrs_to_tracer frame attrs);
+      let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+      (if tracing_enabled then add_attrs_to_tracer frame attrs);
       RObs.with_die_annotations frame.runtime.contract attrs @@ fun () ->
       eval frame eff
 
 let annotate_all_lazy make_attrs eff =
   preserve eff @@ fun frame ->
-  if not frame.runtime.tracing_enabled then eval frame eff
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  if not tracing_enabled then eval frame eff
   else
     match make_attrs () with
     | [] -> eval frame eff
@@ -100,24 +129,28 @@ let annotate_all_lazy make_attrs eff =
         eval frame eff
 
 let add_attrs_to_active_span frame attrs =
-  if frame.runtime.tracing_enabled then
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  if tracing_enabled then
     match local_get frame RObs.active_span_key with
     | None -> ()
-    | Some span_id ->
+    | Some active ->
         List.iter
           (fun (key, value) ->
-            frame.runtime.tracer#add_attr_to frame.runtime.contract ~span_id
-              ~key ~value)
+            active.RObs.tracer#add_attr_to frame.runtime.contract
+              ~span_id:active.span_id ~key ~value)
           attrs
 
 let event ?(attrs = []) name =
   make @@ fun frame ->
-  (if frame.runtime.tracing_enabled then
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  (if tracing_enabled then
      match local_get frame RObs.active_span_key with
      | None -> ()
-     | Some span_id ->
-         frame.runtime.tracer#add_event frame.runtime.contract ~span_id ~name
-           ~ts_ms:(frame.runtime.now_ms ()) ~attrs);
+     | Some active ->
+         let clock = Runtime_core.current_clock frame.runtime in
+         active.RObs.tracer#add_event frame.runtime.contract
+           ~span_id:active.span_id ~name
+           ~ts_ms:(clock#now_ms ()) ~attrs);
   ok ()
 
 let rec iter_cause_fail f = function
@@ -157,17 +190,20 @@ let link_span ?(attrs = []) ~trace_id ~span_id eff =
   let link =
     { Capabilities.link_trace_id = trace_id; link_span_id = span_id; link_attrs = attrs }
   in
-  (if frame.runtime.tracing_enabled then
+  let tracing_enabled, tracer = Runtime_core.current_tracer frame.runtime in
+  (if tracing_enabled then
     match local_get frame RObs.active_span_key with
-    | Some span_id ->
-        frame.runtime.tracer#add_link_to frame.runtime.contract ~span_id link
-    | None -> frame.runtime.tracer#add_link frame.runtime.contract link);
+    | Some active ->
+        active.RObs.tracer#add_link_to frame.runtime.contract
+          ~span_id:active.span_id link
+    | None -> tracer#add_link frame.runtime.contract link);
   eval frame eff
 
 let with_context ctx eff =
   preserve eff @@ fun frame ->
   local_with_binding frame RObs.trace_context_key ctx @@ fun () ->
-  if frame.runtime.tracing_enabled then
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  if tracing_enabled then
     local_with_binding frame RObs.sampled_key (Trace_context.sampled ctx) (fun () ->
         eval frame eff)
   else eval frame eff
@@ -177,24 +213,37 @@ let with_external_parent ~trace_id ~span_id eff =
   | Some ctx -> with_context ctx eff
   | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
 
-let is_tracing_enabled = make @@ fun frame -> ok frame.runtime.tracing_enabled
+let is_tracing_enabled =
+  make @@ fun frame ->
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  ok tracing_enabled
 
 let current_span =
   make @@ fun frame ->
-  if not frame.runtime.tracing_enabled then ok None
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  if not tracing_enabled then ok None
   else
     match local_get frame RObs.active_span_key with
     | None -> ok None
-    | Some span_id ->
-        ok (frame.runtime.tracer#inspect frame.runtime.contract ~span_id)
+    | Some active ->
+        let current =
+          active.RObs.tracer#inspect frame.runtime.contract
+            ~span_id:active.span_id
+        in
+        ok (first_some current active.info)
 
 let current_context =
   make @@ fun frame ->
-  if not frame.runtime.tracing_enabled then ok (local_get frame RObs.trace_context_key)
+  let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+  if not tracing_enabled then ok (local_get frame RObs.trace_context_key)
   else
     match local_get frame RObs.active_span_key with
-    | Some span_id -> (
-        match frame.runtime.tracer#inspect frame.runtime.contract ~span_id with
+    | Some active -> (
+        let current =
+          active.RObs.tracer#inspect frame.runtime.contract
+            ~span_id:active.span_id
+        in
+        match first_some current active.info with
         | Some info ->
             ok
               (Some
@@ -223,8 +272,9 @@ let with_minimum_log_level level eff =
 
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   make @@ fun frame ->
+  let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
   (if
-     frame.runtime.logging_enabled
+     logging_enabled
      &&
      match RObs.current_minimum_log_level frame.runtime.contract with
      | None -> true
@@ -232,20 +282,26 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
    then
     let scoped_attrs = RObs.current_log_attrs frame.runtime.contract in
     let trace_id, span_id =
-      if not frame.runtime.tracing_enabled then ("", "")
+      let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+      if not tracing_enabled then ("", "")
       else
         match local_get frame RObs.active_span_key with
         | None -> ("", "")
-        | Some span_id -> (
-            match frame.runtime.tracer#inspect frame.runtime.contract ~span_id with
+        | Some active -> (
+            let current =
+              active.RObs.tracer#inspect frame.runtime.contract
+                ~span_id:active.span_id
+            in
+            match first_some current active.info with
             | None -> ("", "")
             | Some info -> (info.trace_id, info.span_id))
     in
-    frame.runtime.logger#log
+    let clock = Runtime_core.current_clock frame.runtime in
+    logger#log
       {
         Capabilities.level;
         body;
-        ts_ms = frame.runtime.now_ms ();
+        ts_ms = clock#now_ms ();
         attrs = scoped_attrs @ attrs;
         trace_id;
         span_id;
@@ -279,7 +335,8 @@ let metric_update ?description ?unit_ ?attrs ~name ~kind value =
   make @@ fun frame ->
   (if frame.runtime.metrics_enabled then
      let update = metric ?description ?unit_ ?attrs ~name ~kind value in
-     record_metric frame ~ts_ms:(frame.runtime.now_ms ()) update);
+     let clock = Runtime_core.current_clock frame.runtime in
+     record_metric frame ~ts_ms:(clock#now_ms ()) update);
   ok ()
 
 let metric_counter ?description ?unit_ ?attrs ~name ?(monotonic = false) value =
@@ -309,7 +366,8 @@ let metric_summary ?description ?unit_ ?attrs ~name ~quantiles ~max_age
 let metric_updates updates =
   make @@ fun frame ->
   (if frame.runtime.metrics_enabled then
-    let ts_ms = frame.runtime.now_ms () in
+    let clock = Runtime_core.current_clock frame.runtime in
+    let ts_ms = clock#now_ms () in
     List.iter (record_metric frame ~ts_ms) updates);
   ok ()
 

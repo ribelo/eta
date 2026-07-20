@@ -1,4 +1,10 @@
-let active_span_key : int Runtime_contract.local =
+type active_span = {
+  tracer : Capabilities.tracer;
+  span_id : int;
+  info : Capabilities.span_info option;
+}
+
+let active_span_key : active_span Runtime_contract.local =
   Runtime_contract.create_local ()
 let sampled_key : bool Runtime_contract.local =
   Runtime_contract.create_local ()

@@ -107,6 +107,7 @@ end
 let clock (c : _ Eio.Std.r) : Eta.Capabilities.clock =
   let c = (c :> float Eio.Time.clock_ty Eio.Std.r) in
   object
+    method now_ms () = int_of_float (Eio.Time.now c *. 1_000.0)
     method sleep d = Eio.Time.sleep c (Eta.Duration.to_seconds_float d)
   end
 

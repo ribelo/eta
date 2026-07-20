@@ -181,8 +181,12 @@ and fiber_state = {
   mutable pending_links : Eta.Capabilities.span_link list;
 }
 
-let task_context_local :
-    (int, fiber_state) Hashtbl.t Eta.Runtime_contract.local =
+and task_context = {
+  fiber_id : int;
+  states : (int, fiber_state) Hashtbl.t;
+}
+
+let task_context_local : task_context Eta.Runtime_contract.local =
   Eta.Runtime_contract.create_local ()
 
 let next_context_id = ref 0
@@ -194,11 +198,18 @@ let fresh_context_id () =
 let empty_fiber_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
 let with_task_context contract f =
-  contract.Eta.Runtime_contract.local_with_binding task_context_local
-    (Hashtbl.create 1) f
+  contract.Eta.Runtime_contract.with_fiber_identity @@ fun () ->
+  let fiber_id = contract.Eta.Runtime_contract.current_fiber_id () in
+  match contract.Eta.Runtime_contract.local_get task_context_local with
+  | Some context when context.fiber_id = fiber_id -> f ()
+  | Some _ | None ->
+      contract.Eta.Runtime_contract.local_with_binding task_context_local
+        { fiber_id; states = Hashtbl.create 1 } f
 
 let task_context contract =
-  contract.Eta.Runtime_contract.local_get task_context_local
+  Option.map
+    (fun context -> context.states)
+    (contract.Eta.Runtime_contract.local_get task_context_local)
 
 let fiber_state contract t =
   match task_context contract with
@@ -648,6 +659,7 @@ let default_now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
 
 let default_clock : Eta.Capabilities.clock =
   object
+    method now_ms () = default_now_ms ()
     method sleep duration =
       let seconds = Eta.Duration.to_seconds_float duration in
       if seconds > 0.0 then Unix.sleepf seconds
@@ -806,6 +818,11 @@ module Terminal = struct
     mutable pending_links : Eta.Capabilities.span_link list;
   }
 
+  type task_context = {
+    fiber_id : int;
+    states : (int, fiber_state) Hashtbl.t;
+  }
+
   type t = {
     state_lock : Eta.Sync_lock.t;
     output_lock : Eta.Sync_lock.t;
@@ -817,8 +834,7 @@ module Terminal = struct
     fallback : fiber_state;
   }
 
-  let task_context_local :
-      (int, fiber_state) Hashtbl.t Eta.Runtime_contract.local =
+  let task_context_local : task_context Eta.Runtime_contract.local =
     Eta.Runtime_contract.create_local ()
 
   let next_context_id = ref 0
@@ -833,11 +849,18 @@ module Terminal = struct
     { stack = []; pending_attrs = []; pending_links = [] }
 
   let with_task_context contract f =
-    contract.Eta.Runtime_contract.local_with_binding task_context_local
-      (Hashtbl.create 1) f
+    contract.Eta.Runtime_contract.with_fiber_identity @@ fun () ->
+    let fiber_id = contract.Eta.Runtime_contract.current_fiber_id () in
+    match contract.Eta.Runtime_contract.local_get task_context_local with
+    | Some context when context.fiber_id = fiber_id -> f ()
+    | Some _ | None ->
+        contract.Eta.Runtime_contract.local_with_binding task_context_local
+          { fiber_id; states = Hashtbl.create 1 } f
 
   let task_context contract =
-    contract.Eta.Runtime_contract.local_get task_context_local
+    Option.map
+      (fun context -> context.states)
+      (contract.Eta.Runtime_contract.local_get task_context_local)
 
   let fiber_state contract t =
     match task_context contract with

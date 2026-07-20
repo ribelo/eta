@@ -60,6 +60,12 @@ module Test_clock = struct
 
   let now_ms t = t.now_ms
 
+  let as_capability t : Eta.Capabilities.clock =
+    object
+      method now_ms () = now_ms t
+      method sleep duration = sleep t duration
+    end
+
   let sleeper_count t = List.length t.sleepers
 end
 

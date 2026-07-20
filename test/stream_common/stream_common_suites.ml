@@ -1408,6 +1408,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let clock =
       object
+        method now_ms () = 0
         method sleep _duration = ()
       end
     in

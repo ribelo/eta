@@ -290,6 +290,41 @@ let test_daemon_drain done_ =
                  (Format.asprintf "daemon start failed: %a"
                     (Eta.Cause.pp pp_err) cause)))
 
+let test_scoped_clock_and_logger_parity done_ =
+  let clock value : Eta.Capabilities.clock =
+    object
+      method now_ms () = value
+      method sleep _duration = ()
+    end
+  in
+  let logger = Eta.Logger.in_memory () in
+  let open Eta.Syntax in
+  let program =
+    let* before = Eta.Effect.now_ms in
+    let* inner = Eta.Effect.with_clock (clock 22) Eta.Effect.now_ms in
+    let* after = Eta.Effect.now_ms in
+    let+ () =
+      Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+        (Eta.Effect.log "jsoo")
+    in
+    (before, inner, after)
+  in
+  run (Eta.Effect.with_clock (clock 11) program)
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok (11, 22, 11) -> (
+            match Eta.Logger.dump logger with
+            | [ record ] when record.Eta.Logger.body = "jsoo" -> ()
+            | records ->
+                fail
+                  (Printf.sprintf "expected one jsoo override log, got %d"
+                     (List.length records)))
+        | Eta.Exit.Ok _ -> fail "scoped clock nesting did not restore outer"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "scoped clock/logger failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
 let tests =
   [
     ("delay", test_delay);
@@ -304,6 +339,7 @@ let tests =
     ( "runtime canceled waiter does not strand live waiter",
       test_runtime_canceled_waiter_does_not_strand_live_waiter );
     ("daemon drain", test_daemon_drain);
+    ("scoped clock and logger parity", test_scoped_clock_and_logger_parity);
   ]
 
 let rec run_tests = function

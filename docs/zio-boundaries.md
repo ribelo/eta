@@ -46,6 +46,24 @@ fork-inherit and join-merge semantics. Prefer lexical arguments and explicit
 state. Add ambient fiber-local user state only if Eta owns a clear invariant
 that cannot be expressed with ordinary OCaml values.
 
+Runtime services meet that rule. `Effect.with_clock`, `with_random`,
+`with_logger`, and `with_tracer` temporarily replace an Eta-owned interpreter
+service for one dynamic subtree; they do not add application dependencies or an
+environment parameter. The innermost binding wins, children inherit at fork,
+there is no join-merge, and concurrent siblings remain isolated:
+
+```ocaml
+Effect.par
+  (Effect.with_clock test_clock left)
+  (Effect.with_clock test_clock right)
+```
+
+Put the override around both branches when both need it; putting it inside only
+`left` cannot affect `right`. Leaves select the active service when called. An
+already sleeping fiber or open span keeps the service with which that operation
+started, and a runtime-owned daemon keeps the binding it inherited at fork even
+after the lexical override returns.
+
 Eta also does not wrap `Eio.Promise`, `Eio.Mutex`, or `Eio.Condition` as
 generic effect data types. Use them directly for local coordination. Wrap Eio
 only when Eta owns typed failure preservation, cancellation cleanup, scoped
