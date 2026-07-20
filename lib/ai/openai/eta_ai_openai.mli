@@ -203,3 +203,24 @@ val stream_responses :
   api_key:Eta_ai.api_key ->
   Eta_ai.chat_request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
+
+(** {1 Native model catalog}
+
+    [GET /v1/models] against the configured provider base URL. Bodies are bounded
+    to 5 MiB. Non-2xx responses use the provider error decoder (no credentials). *)
+
+type model_info = { id : string }
+
+val models_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  unit ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val decode_models : Eta_ai.raw_json -> (model_info list, Eta_ai.ai_error) result
+
+val list_models :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  (model_info list, Eta_ai.ai_error) Eta.Effect.t

@@ -156,9 +156,9 @@ let run_embeddings_request provider client embedding_request request =
 
 let decode_effect decode raw = result_effect (decode raw)
 
-let run_raw_decoded provider client request decode =
+let run_raw_decoded ?max_bytes provider client request decode =
   run_request request (fun http_request ->
-      perform_raw provider client http_request
+      perform_raw ?max_bytes provider client http_request
       |> Eta.Effect.bind (decode_effect decode))
 
 let run_binary_decoded ?max_bytes provider client request decode =

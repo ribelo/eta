@@ -622,3 +622,50 @@ module Chat = struct
 end
 
 module Embeddings = A.Provider.Embeddings
+
+
+(** Native model catalog ([GET /v1/models]). *)
+
+let models_catalog_max_bytes = 5 * 1024 * 1024
+
+type model_info = {
+  id : string;
+  display_name : string option;
+}
+
+let model_info_of_json json =
+  match Json.string_member "id" json with
+  | None -> None
+  | Some id ->
+      let id = String.trim id in
+      if id = "" then None
+      else
+        let display_name =
+          match Json.string_member "display_name" json with
+          | Some name when String.trim name <> "" -> Some (String.trim name)
+          | Some _ | None -> None
+        in
+        Some { id; display_name }
+
+let decode_models raw =
+  match Json.parse raw with
+  | Stdlib.Error message -> decode_error_result message
+  | Stdlib.Ok json -> (
+      match Json.array_member "data" json with
+      | None -> decode_error_result "expected a top-level data array"
+      | Some items ->
+          let models = List.filter_map model_info_of_json items in
+          if models = [] then decode_error_result "models catalog is empty"
+          else Stdlib.Ok models)
+
+let models_request ?provider:custom_provider ~api_key () =
+  let provider = resolve_provider custom_provider in
+  Stdlib.Ok (A.provider_get_request provider ~path:"/v1/models" api_key)
+
+let list_models ?provider:custom_provider client ~api_key =
+  let provider = resolve_provider custom_provider in
+  match models_request ~provider ~api_key () with
+  | Stdlib.Error error -> E.fail error
+  | Stdlib.Ok request ->
+      A.run_raw_decoded ~max_bytes:models_catalog_max_bytes provider client
+        (Stdlib.Ok request) decode_models
