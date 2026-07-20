@@ -28,6 +28,10 @@ module Test_clock : sig
   (** [now_ms clock] returns the current monotonic virtual millisecond
       timestamp. *)
 
+  val as_capability : t -> Eta.Capabilities.clock
+  (** [as_capability clock] exposes one virtual monotonic clock pair for
+      [Eta.Effect.with_clock]. *)
+
   val sleeper_count : t -> int
   (** [sleeper_count clock] returns the number of fibers waiting on the test
       clock. *)

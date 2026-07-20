@@ -5,9 +5,11 @@
     environment parameter; pass dependencies to functions in normal OCaml style
     and close over them in [Effect.sync] leaves when needed. *)
 
-(** A clock can sleep for a duration. Every Eta runtime supplies a
-    runtime-backed default clock. *)
+(** One monotonic runtime-clock pair. [now_ms] is elapsed runtime time, not
+    wall/civil time, and [sleep] must suspend on the same time base. Every Eta
+    runtime supplies a runtime-backed default clock. *)
 class type clock = object
+  method now_ms : unit -> int
   method sleep : Duration.t -> unit
 end
 
