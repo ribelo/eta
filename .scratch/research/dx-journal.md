@@ -1873,3 +1873,124 @@ tells the honest kill→promote history). Merged `--no-ff` (`98aeebb6`),
 master gates green, pushed. Census: construct cluster 8 → 9 vals —
 justified as completion of the public 2×2 (`from_result`/`from_option` ×
 `sync_result`/`sync_option`), per the human decision.
+
+---
+
+## V-DX-PHASE-C — 2026-07-20 — phase synthesis: Phase C (syntax & PPX)
+
+**Evidence summary.** Five experiments, three promotes, two holds, one kill:
+- E7 (V-DX-E7-001/002): `[@@deriving eta_error]` **promoted** (`df55d1df`) —
+  plain-match `pp_err` for closed polymorphic variants; built-in payloads;
+  `[@eta.render f]` escape; every rejection PPX-time with what/where/
+  what-next. Golden test: `<typed failure>` → `db:7` through real Eio +
+  in-memory tracer. 54 derivations across 49 example files; 23/23 named/fn
+  sites wired; zero hand-written telemetry printers. Board: telemetry
+  2 → 4; expansions 5,5 "approve verbatim". T6 satisfied in examples.
+- E8 (V-DX-E8-001/002): `[%eta.result "name" body]` **promoted** — expansion
+  is the sealed contract verbatim; adoption rule stated before conversion
+  (IO/trust leaves with static names); 12 converted / 14 stayed with
+  per-site reasons; operators per leaf boundary 4 → 1. Review: sugar 4 vs
+  hand 3; reviewer independently validated the adoption rule. First
+  all-hit prediction round. `[%eta.option]` excluded — the substrate was
+  killed at the time; sugar follows frequency, not symmetry.
+- E9 (V-DX-E9-001/002-pre/002): `Syntax.Parallel`/`Applicative` split
+  **held** — baseline 2/6, explicit 2/6, delta 0; neither pre-registered
+  gate fired. Readings: the footgun is real (named unprompted by both
+  reviewers); the proposed module names carry no semantics; the premise
+  "open as declaration of intent" contested. Branch kept as provenance;
+  the design itself superseded by E9b.
+- E9b (V-DX-E9B-001/002/002b): `and*`/`and+` **sequential everywhere**,
+  concurrency spelled `Effect.par` — **promoted** (`006c2572`) by human
+  design decision (option B, least astonishment). Safety inversion: under
+  the old shape, misreading `and*` wrote a correctness bug (silent race);
+  under B, the worst case is a latency surprise. Review: 0/6 dangerous
+  misreadings; red-team 3/3 (race unwriteable). Strongest articulation
+  from the reviewer: a rigorous reader won't commit to ANY combinator
+  reading of lazy blueprints — under B, not-knowing is *safe*.
+- E10 (V-DX-E10-001/002, V-DX-AMEND-2): function sugar **held** — cohort
+  3 passes: `let%eta` **killed** (3×6 unanimous — names the library, not
+  the intent); `[@@eta.trace]` validated (5×6) and pre-selected with a
+  defined promote trigger. Kill gate unfired (error locations 4–5).
+  Amendment born here: frequency evidence is user-first.
+
+**What Phase C teaches (the durable laws).**
+1. **Sugar that mirrors decided semantics earns its place; sugar that
+   renames without semantics dies.** E7/E8/`[@@eta.trace]` (5s) expand to
+   already-decided shapes; E9's split (delta 0) and `let%eta` (3s) renamed
+   without adding meaning.
+2. **Names must carry intent, not provenance.** `eta.trace` says *trace*;
+   `%eta` says *Eta*. `Applicative`/`Parallel` said neither *ordered* nor
+   *fork-count+cancel*. (Extends the E6 law: names carry execution
+   strategy.)
+3. **Safety beats comprehension for operator semantics.** E9b promotes on
+   "the misreading is now harmless", not on "everyone reads it right" —
+   with lazy blueprints, rigorous readers won't commit to *any* reading
+   (0/3 correct, all "not determined", all safe).
+4. **Gate-bearing reviews get pre-registered scoring rules**
+   (V-DX-E9-002-pre) — sealed before any answers seen. Strongest
+   anti-post-hoc protocol in the programme; now standard.
+
+**Wrong predictions and lessons.**
+- Orchestrator: E9 explicit-form 3/3 → actual 2/6 (miss); E9 promote ~70%
+  → hold (miss); E9b ≥2/3 read sequencing → actual 0/3 correct-but-safe
+  (miss); E10 "reviewers won't ask" → 2/3 asked (miss); E10 attr ~3–4 →
+  actual 5×6 (miss); E7 declarations ~14 → 54 (miss, same undercount
+  direction as E23 — quick censuses keep underestimating). Pattern of the
+  phase: I over-estimate what names can prove about *semantics* (the
+  "not determined" wall) and misprice spelling risk between forms.
+  Hits: E7 census/coverage/ratings; E8 clean sweep; E9 baseline band;
+  E9b contract/red-team/promote; E10 outcome + kill gate.
+- Executors: E9 baseline 55% → 33% (miss); otherwise accurate and
+  honestly scored (E7's executor declined to self-award review
+  predictions — protocol credit).
+- The plan: E9's premise measured zero visibility; E10's brief produced
+  one killable and one validatable spelling — process over prophet, again.
+
+**Rubber-stamp audit (§4.5.3).** Not needed-but-shown anyway: 1 kill
+(`let%eta`), 2 holds (E9, E10), and E9b's promote required a fresh human
+design decision plus a three-clause sealed decision rule. Gates fired and
+were honored (E10 kill gate evaluated, unfired on evidence).
+
+**Protocol-compliance self-audit.** Predictions dual-sealed for all five,
+commit-verified; E9 added the sealed scoring rule. Reviews: fresh-context
+oracle passes throughout; E9 used two independent uncontaminated runs;
+E10 a 3-pass cohort. Incidents, all recorded and fixed: (1) E8 bookkeeping
+landed on a foreign branch (checkout switched by concurrent non-programme
+work) — repaired by cherry-pick (`ef6e6a79`); rule: verify
+`git branch --show-current` before every master commit (V-DX-E8-002a).
+(2) Post-E9b master red — root-caused to a programme-external ladybug
+merge (`9e2e3be1`), E9b proven clean by isolated reproduction; fixed by
+the ladybug workstream (`7a16e6fb`); rule: **master stays green — whoever
+merges runs the full gate first** (V-DX-E9B-002b). (3) Orchestrator
+bookkeeping miss: E10 dashboard row left uncommitted, caught by an agent
+baseline commit; fixed (`ca650db7`). PPX-file sharing honored: E7→E8→E10
+strictly sequential.
+
+**Plan adjustments adopted.** (1) Sealed review scoring rules for
+gate-bearing reviews. (2) V-DX-AMEND-2 user-first frequency. (3) Branch
+discipline rule. (4) Master-stays-green rule. (5) Human design decisions
+get their own sealed-prediction experiments (E9b pattern), not post-hoc
+retests of held shapes.
+
+**Spot-check list (promote decisions resting on [agent-sim] evidence).**
+E7 (telemetry strings are a stable-dashboards contract), E8 (adoption
+rule's 12 site judgments), E9b (`and*`'s meaning changed everywhere —
+partially de-risked: the design was human-chosen). Recommended first
+reads: E9b's mli paragraph (`and*` strict left-to-right + `Effect.par`),
+then E7's generated `pp_err` next to one hand-written renderer.
+
+**Backlog triage (carried into Phase D).** E24b hook-ownership (after
+E19/E20 context); retry cause-alignment; same-domain runtime fence;
+dead PPX rejections ×2; resource/pool escape fence;
+`Supervisor.Scope.start` first-contact error; `die` terminology watch;
+F3 `catch_recovery.ml`; F4 `map_par` omission misreading; F5 span-status
+typed-vs-defect encoding (otel/E4-adjacent); `map_par` default-8 bench;
+`[@@eta.trace]` promote trigger (watch for real-app frequency);
+`[%eta.option]` stays excluded — the substrate exists again (V-DX-E1-003)
+but the frequency rule still gates the sugar; E9 split → parking lot
+(superseded by E9b; branch kept as provenance).
+
+**Phase D next:** E26 (`fresh`, warm-up) → E19 (scoped capability
+override — flagship; E24b context follows it) → E20 (intercept) → E12
+(audit/describe) → E11 (Eta_test.run) → E13 (async) → E14 (Promise,
+hold-gated). Master green at `5943585a`.
