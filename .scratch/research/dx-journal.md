@@ -24,7 +24,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E8 | [%eta.result] sugar | C | S | low | **promoted** 2026-07-19 | SC | research/dx-e8-eta-result-sugar | V-DX-E8-001..002 |
 | E9 | Syntax.Parallel/Applicative | C | M | med | **held** 2026-07-19 (baseline 2/6, explicit 2/6) | SC | research/dx-e9-syntax-parallel-applicative | V-DX-E9-001..002 |
 | E9b | Honest and* (sequential); Effect.par | C | S-M | low-med | **promoted** 2026-07-19 | SC | research/dx-e9b-honest-and-star | V-DX-E9B-001..002 |
-| E10 | let%eta function sugar | C | M | med | proposed (hold default) | | | |
+| E10 | let%eta function sugar | C | M | med | **held** (let%eta killed; [@@eta.trace] pre-selected, trigger defined) | SC | research/dx-e10-function-sugar | V-DX-E10-001..002 |
 | E26 | Effect.fresh | D | S | low | proposed | | | |
 | E19 | Scoped capability override | D | M | med | proposed | | | |
 | E20 | intercept_log/metric | D | M | low-med | proposed | | | |
@@ -1792,3 +1792,69 @@ experiments:
    (b) the one example using it needs `~error_pp`/`~kind` — a form the
    prototyped sugar does NOT cover (plain `fn` only). The review cohort's
    frequency question is reframed user-first accordingly.
+
+---
+
+## V-DX-E10-002 — 2026-07-19 — research/dx-e10-function-sugar — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass. PPX is compile-time; no
+JS-track impact. Expansion corpus (`j_`–`o_`) matches the sealed one-liner
+shape; `wrap_result_position` verified in `ppx_eta.ml` (params/constraints/
+newtype/coerce preserved; wrapper inside `let rec` — per-call spans proven,
+`countdown 3` → 4 spans). Error-location corpus 4–5 (kill gate ≤3:
+**does not fire**). `.mli` invariance proven for all three forms.
+
+**Review cohort** `[agent-sim, spot-check]` (3 fresh-context oracle passes,
+P-OCaml persona, user-first frequency framing per V-DX-AMEND-2):
+
+| Pass | handwritten | `let%eta` | `[@@eta.trace]` | asks for sugar? |
+|---|---|---|---|---|
+| 1 | 4,4 | 3,3 | 5,5 | yes (conditional) |
+| 2 | 4,4 | 3,3 | 5,5 | no |
+| 3 | 5,5 | 3,3 | 5,5 | yes |
+
+- **`let%eta` KILLED** (unanimous): does not name the tracing intent; reads
+  as a general effect transformation; no pass would accept it verbatim.
+- **`[@@eta.trace]`** (unanimous clarity): attribute = metadata on an
+  ordinary definition; verbatim-PR acceptable; named ship-candidate by all
+  three passes including the hold voter.
+- Frequency split: passes 1+3 predict the plain form is the common case
+  (custom args exceptional → hand form is a *useful* distinction); pass 2
+  predicts boundary functions disproportionately need `~error_pp`/`~kind`
+  (plain-only sugar = two spellings for one concept). Untestable without
+  external consumers.
+
+**Decision: HOLD.** The promote condition ("reviewers still ask") is not
+decisively met (1 unconditional yes / 1 conditional / 1 no), and T4's
+demonstrated frequency cannot be established with zero external consumers.
+The hold is sharp, not vague: (a) `let%eta` killed with evidence;
+(b) `[@@eta.trace]` pre-selected; implementation, snapshots, and corpus
+complete on the kept branch — promotion is a merge when the trigger fires;
+(c) **promote trigger defined**: application code showing the plain wrapper
+pervasive at function boundaries AND `~error_pp`/`~kind` rare, or evidence
+that developers omit function spans due to boilerplate.
+
+**Prediction scoring (orchestrator, V-DX-E10-001).** Hits: expansion
+shapes; error locations 3–4 predicted / 4–5 actual (kill unfired); HOLD
+outcome; census flat. Misses: "reviewers do not ask" (2/3 asked, one
+conditionally); "sugar ~3–4" (attr form rated 5 uniformly — I priced the
+spelling risk into the wrong spelling). Executor predictions: all hit.
+
+**Follow-ups:** none new. The branch remains the ready record.
+
+---
+
+## V-DX-E1-003 — 2026-07-20 — decision: `sync_option` promoted by human decision authority
+
+Human override of the E1 `sync_option` kill (V-DX-E1-002), exercised under
+the programme's supreme rule (human instructions outrank the plan).
+Rationale: "who cares if Eta is using it?" — the kill rested on zero
+*internal* usage, which V-DX-AMEND-2 (adopted after the kill) classifies as
+weak evidence. User-first, the construct family is a symmetric 2×2:
+`from_result`/`from_option` for computed values, `sync_result`/`sync_option`
+for thunks — one breath to teach, and the name's comprehension was never
+challenged (the kill was utility-only). The E1 decision is not re-scored:
+decisions are revisited when the evidence rules change; the amendment
+changed the rules. Implementation delegated to a spawned agent; gates and
+merge by orchestrator. Census: construct cluster +1, justified as family
+completion.
