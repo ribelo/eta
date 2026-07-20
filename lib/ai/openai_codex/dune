@@ -1,0 +1,13 @@
+(library
+ (name eta_ai_openai_codex)
+ (public_name eta_ai_openai_codex)
+ (synopsis "OpenAI Codex Responses provider and ChatGPT OAuth for eta_ai")
+ (private_modules sha256)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_redacted
+  eta_http
+  yojson
+  base64))

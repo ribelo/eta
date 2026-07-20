@@ -3,6 +3,11 @@
 
 include Common
 
+type credential = A.api_key
+
+let credential = A.api_key
+let authorization_headers = auth_headers
+
 let responses_request = Responses_impl.request
 let responses = Responses_impl.run
 let stream_responses = Responses_impl.stream

@@ -1,0 +1,12 @@
+(library
+ (name eta_ai_moonshot)
+ (public_name eta_ai_moonshot)
+ (synopsis "Moonshot Open Platform Kimi-native Chat Completions for eta_ai")
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_ai_openai_compat
+  eta_redacted
+  eta_http
+  yojson))

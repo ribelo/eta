@@ -95,6 +95,9 @@
             "eta_ai"
             "eta_ai_openai_codec"
             "eta_ai_openrouter"
+            "eta_ai_openai_codex"
+            "eta_ai_moonshot"
+            "eta_ai_kimi_coding"
             "eta_exa"
             "eta_blocking"
             "eta_eio"
@@ -226,7 +229,7 @@
               eval "$(opam env --switch "$switch_name" --set-switch)"
 
               eta_url="git+file://$repo_root#master"
-              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_blocking eta_eio eta_exa eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
+              packages="''${ETA_OPAM_PACKAGES:-eta eta_ai eta_ai_openai_codec eta_ai_openrouter eta_ai_openai_codex eta_ai_moonshot eta_ai_kimi_coding eta_blocking eta_eio eta_exa eta_http eta_http_eio eta_http_h1 eta_http_h2 eta_http_service eta_http_service_eio eta_http_tls_openssl eta_http_ws eta_ladybug eta_linux_input eta_otel eta_redacted eta_router eta_signal eta_sql eta_sql_driver eta_sql_dsl eta_stream}"
               if [ "$#" -gt 0 ]; then
                 packages="$*"
               fi
@@ -336,6 +339,9 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
+                lib/ai/openai_codex \
+                lib/ai/moonshot \
+                lib/ai/kimi_coding \
                 drivers/eta_duckdb \
                 lib/otel \
                 drivers/eta_ladybug \
@@ -351,6 +357,9 @@
                 test/ai/openai_compat \
                 test/ai/openai \
                 test/ai/openrouter \
+                test/ai/openai_codex \
+                test/ai/moonshot \
+                test/ai/kimi_coding \
                 test/connectors \
                 test/otel \
                 test/schema_eio \
@@ -366,6 +375,9 @@
                 lib/ai/openai_compat \
                 lib/ai/openai \
                 lib/ai/openrouter \
+                lib/ai/openai_codex \
+                lib/ai/moonshot \
+                lib/ai/kimi_coding \
                 drivers/eta_duckdb \
                 lib/otel \
                 drivers/eta_ladybug \
@@ -374,6 +386,9 @@
                 drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
+                test/ai/openai_codex \
+                test/ai/moonshot \
+                test/ai/kimi_coding \
                 test/schema_eio \
                 test/schema_test_eio \
                 test/ppx_eio \

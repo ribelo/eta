@@ -491,6 +491,53 @@
   base64
   (yojson (>= 2.0))))
 
+
+(package
+ (name eta_ai_openai_codex)
+ (synopsis "OpenAI Codex Responses and ChatGPT OAuth for Eta AI")
+ (description
+  "eta_ai_openai_codex provides Codex Responses transport, ChatGPT OAuth PKCE credential types, and provider-owned headers for Eta.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_redacted
+  eta_http
+  base64
+  (yojson (>= 2.0))))
+
+(package
+ (name eta_ai_moonshot)
+ (synopsis "Moonshot Open Platform provider for Eta AI")
+ (description
+  "eta_ai_moonshot provides Kimi-native Chat Completions, API-key credentials, and native model catalog helpers for Moonshot Open Platform.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_ai_openai_compat
+  eta_redacted
+  eta_http
+  (yojson (>= 2.0))))
+
+(package
+ (name eta_ai_kimi_coding)
+ (synopsis "Kimi Coding provider for Eta AI")
+ (description
+  "eta_ai_kimi_coding provides Kimi-native Chat Completions, Anthropic-compatible Messages routing, device-code OAuth, API-key credentials, provider headers, and catalog metadata including protocol declaration.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_ai_openai_compat
+  eta_ai_anthropic
+  eta_redacted
+  eta_http
+  (yojson (>= 2.0))))
+
 (package
  (name eta_exa)
  (synopsis "Exa HTTP client for Eta")

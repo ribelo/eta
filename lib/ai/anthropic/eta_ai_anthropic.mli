@@ -18,6 +18,19 @@ type prompt_cache = {
 val prompt_cache :
   ?beta_header:string -> ?cache_system:bool -> unit -> prompt_cache
 
+(** {1 Credentials}
+
+    Callers pass resolved API keys; this package owns [x-api-key] and version
+    headers via {!provider}. *)
+
+type credential = Eta_ai.api_key
+val credential : string -> credential
+val authorization_headers :
+  ?version:string ->
+  ?beta_headers:string list ->
+  credential ->
+  Eta_ai.headers
+
 val provider :
   ?base_url:string ->
   ?version:string ->
