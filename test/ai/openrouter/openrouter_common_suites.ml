@@ -227,7 +227,11 @@ let test_request_reasoning_levels () =
       in
       let expected =
         Option.map
-          (fun effort -> Printf.sprintf {|{"effort":"%s"}|} effort)
+          (fun effort ->
+            let effort =
+              if String.equal effort "off" then "none" else effort
+            in
+            Printf.sprintf {|{"effort":"%s"}|} effort)
           reasoning
       in
       Alcotest.(check (option string)) "reasoning" expected actual)
