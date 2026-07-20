@@ -12,9 +12,9 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** Phases A–C experiments complete (A: 3 promoted · B: 4 promoted,
-2 killed · C: 3 promoted, 1 held, 1 promote-by-evidence held). Phase C
-synthesis next.
+**Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
+C: 3 promoted, 2 held). Syntheses: V-DX-PHASE-A/B/C in the journal.
+Phase D next (E26 → E19 → E20 → E12 → E11 → E13 → E14).
 
 ## E10 — Function-level sugar: `let%eta` killed, `[@@eta.trace]` held with a trigger (2026-07-19)
 
