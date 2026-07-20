@@ -1095,6 +1095,18 @@ let test_ladybug_connection_query_timeout () =
             in
             Alcotest.(check (list int64)) "connection reusable" [ 1L ] reusable))
 
+let test_ladybug_classify_read_only () =
+  let open Eta_ladybug in
+  with_ladybug_connection (fun conn ->
+      Alcotest.(check bool)
+        "RETURN is read-only" true
+        (Connection.classify_read_only conn "RETURN 1" |> ladybug_ok);
+      Alcotest.(check bool)
+        "DDL is mutating" false
+        (Connection.classify_read_only conn
+           "CREATE NODE TABLE Classified(id INT64, PRIMARY KEY(id))"
+        |> ladybug_ok))
+
 (* P0: Memory leak of C-allocated statements on bind errors.
    When binding fails (e.g. unsupported List/Struct parameter in DuckDB, or
    unsupported type in LadybugDB), caml_failwith() longjmps out of C without
@@ -1400,6 +1412,8 @@ let () =
             test_ladybug_many_int_rows_survive_gc;
           Alcotest.test_case "connection query timeout" `Quick
             test_ladybug_connection_query_timeout;
+          Alcotest.test_case "read-only classifier" `Quick
+            test_ladybug_classify_read_only;
           Alcotest.test_case "bind error does not leak statements" `Slow
             test_ladybug_bind_error_does_not_leak_prepared_statements;
         ] );

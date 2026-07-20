@@ -252,6 +252,12 @@ bool lbug_prepared_statement_is_success(lbug_prepared_statement *stmt)
   return true;
 }
 
+bool lbug_prepared_statement_is_read_only(lbug_prepared_statement *stmt)
+{
+  (void)stmt;
+  return true;
+}
+
 char *lbug_prepared_statement_get_error_message(lbug_prepared_statement *stmt)
 {
   (void)stmt;

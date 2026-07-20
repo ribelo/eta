@@ -231,6 +231,7 @@ typedef struct {
 
 typedef struct {
   bool success;
+  bool read_only;
 } fake_lbug_stmt;
 
 static char *fake_strdup(const char *value)
@@ -336,6 +337,7 @@ int lbug_connection_prepare(lbug_connection *conn, const char *cypher,
   fake_lbug_stmt *stmt = malloc(sizeof(*stmt));
   if (stmt == NULL) return LbugError;
   stmt->success = true;
+  stmt->read_only = cypher != NULL && strncmp(cypher, "RETURN", 6) == 0;
   mutate_first_char(cypher);
   out->ptr = stmt;
   out->bound_values = NULL;
@@ -344,6 +346,11 @@ int lbug_connection_prepare(lbug_connection *conn, const char *cypher,
 bool lbug_prepared_statement_is_success(lbug_prepared_statement *stmt)
 {
   return stmt != NULL && stmt->ptr != NULL && ((fake_lbug_stmt *)stmt->ptr)->success;
+}
+bool lbug_prepared_statement_is_read_only(lbug_prepared_statement *stmt)
+{
+  return stmt != NULL && stmt->ptr != NULL &&
+         ((fake_lbug_stmt *)stmt->ptr)->read_only;
 }
 char *lbug_prepared_statement_get_error_message(lbug_prepared_statement *stmt)
 {
