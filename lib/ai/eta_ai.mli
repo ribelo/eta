@@ -140,6 +140,11 @@ type chat_request = {
   prompt : prompt;
   tools : tool list;
   temperature : float option;
+  reasoning : string option;
+  (** Opaque canonical reasoning level for provider codecs. [None] omits
+      provider reasoning controls. Canonical values are [off], [minimal],
+      [low], [medium], [high], [xhigh], and [max]; codecs reject empty or
+      unsupported values and own provider-specific mapping. *)
   max_output_tokens : int option;
   replay_items : raw_json list;
   (** Transient provider-issued items from the preceding response. Provider

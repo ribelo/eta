@@ -706,6 +706,11 @@ let decode_models raw =
 
 let structured_output = Compat.structured_output
 
+let encode_chat ?structured_output request =
+  Codec.encode_chat_with_thinking ~provider:provider_name
+    ~schema_value:(Codec.schema_value ~provider:provider_name)
+    ?structured_output request
+
 let provider ?(base_url = default_base_url) ~identity ?(extra_headers = []) () =
   let p =
     Compat.provider ~name:provider_name ~base_url ~chat_path:"/chat/completions"
@@ -717,6 +722,7 @@ let provider ?(base_url = default_base_url) ~identity ?(extra_headers = []) () =
       (fun key -> auth_headers ~identity ~extra_headers (Api_key key));
     capabilities =
       { p.capabilities with image_input = true; structured_outputs = true };
+    encode_chat;
   }
 
 let models_request ?provider:custom ~identity ?extra_headers ~credential () =
@@ -740,7 +746,6 @@ let list_models ?provider:custom ~identity ?extra_headers client ~credential =
   | Stdlib.Ok request ->
       A.run_raw_decoded provider client (Stdlib.Ok request) decode_models
 
-let encode_chat = Compat.encode_chat
 let decode_chat = Compat.decode_chat
 let decode_stream_event = Compat.decode_stream_event
 let decode_error = Compat.decode_error
@@ -752,9 +757,11 @@ let chat_completions_request ?structured_output ?provider:custom ~identity
     | Some p -> p
     | None -> provider ~identity ?extra_headers ()
   in
-  Compat.chat_completions_request ?structured_output ~provider
-    ~api_key:(access_api_key credential)
-    request
+  match encode_chat ?structured_output request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw ->
+      Stdlib.Ok
+        (A.provider_request provider (access_api_key credential) raw)
 
 let chat_completions ?structured_output ?provider:custom ~identity
     ?extra_headers client ~credential request =
@@ -800,6 +807,14 @@ module Chat = struct
   let stream = stream_chat_completions
 end
 
+let encode_messages (request : A.chat_request) =
+  match request.reasoning with
+  | Some value -> (
+      match Codec.reasoning_level_of_string ~provider:provider_name value with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok _ -> Anthropic.encode_messages request)
+  | None -> Anthropic.encode_messages request
+
 let messages_provider ?(base_url = default_base_url) ~identity
     ?(anthropic_version = default_anthropic_version) ?(extra_headers = []) () =
   let base = Anthropic.provider ~base_url () in
@@ -812,9 +827,9 @@ let messages_provider ?(base_url = default_base_url) ~identity
       (fun key ->
         messages_auth_headers ~identity ~anthropic_version ~extra_headers
           (Api_key key));
+    encode_chat = encode_messages;
   }
 
-let encode_messages request = Anthropic.encode_messages request
 let decode_message raw = Anthropic.decode_message raw
 let decode_messages_stream_event event = Anthropic.decode_stream_event event
 

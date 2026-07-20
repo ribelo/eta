@@ -39,6 +39,22 @@ let response_input_items ~provider ~replay_items prompt =
 let encode_responses_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
   let* temperature = temperature_json ~provider request.temperature in
+  let* reasoning =
+    match request.reasoning with
+    | None -> Stdlib.Ok None
+    | Some value ->
+        reasoning_level_of_string ~provider value
+        |> Result.map (fun level ->
+               let effort =
+                 match level with
+                 | Off -> "none"
+                 | Minimal | Low | Medium | High | Xhigh | Max ->
+                     reasoning_level_to_string level
+               in
+               Some
+                 (Json.object_
+                    [ ("effort", Some (Json.string effort)) ]))
+  in
   let* tools =
     result_map_all (tool_json ~schema_value ~shape:Responses_tool) request.tools
   in
@@ -59,6 +75,7 @@ let encode_responses_json ~provider ~schema_value ?structured_output
          ("input", Some (Json.array input));
          ("stream", Some (Json.bool request.stream));
          ("temperature", temperature);
+         ("reasoning", reasoning);
          ("max_output_tokens", Option.map Json.int request.max_output_tokens);
          ("tools", if tools = [] then None else Some (Json.array tools));
          ("text", text_format);

@@ -38,13 +38,14 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok "weather tool"
 
-let chat_request ?(stream = false) ?(model = "mistral-large-latest") () :
+let chat_request ?reasoning ?(stream = false) ?(model = "mistral-large-latest") () :
     A.chat_request =
   {
     model;
     prompt = [ A.User [ A.Text "weather in Warsaw" ] ];
     tools = [ weather_tool () ];
     temperature = Some 0.2;
+    reasoning;
     max_output_tokens = Some 64;
     replay_items = [];
     stream;
@@ -189,7 +190,13 @@ let test_request_uses_compatible_endpoint_and_extra_headers () =
     ~needle:"\"response_format\":{\"type\":\"json_schema\""
     (request_body_string request);
   require_contains "structured output strict" ~needle:"\"strict\":true"
-    (request_body_string request)
+    (request_body_string request);
+  match
+    C.chat_completions_request ~provider ~api_key:(A.api_key "mk-test")
+      (chat_request ~reasoning:"high" ())
+  with
+  | Stdlib.Error (A.Unsupported _) -> ()
+  | _ -> Alcotest.fail "expected unsupported reasoning error"
 
 let test_decode_compatible_fixtures () =
   let text =

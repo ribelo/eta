@@ -8,6 +8,11 @@ open Tools
 let encode_chat_json ~provider ~schema_value ?structured_output
     (request : A.chat_request) =
   let* () =
+    match request.reasoning with
+    | None -> Stdlib.Ok ()
+    | Some _ -> unsupported ~provider "reasoning with Chat Completions"
+  in
+  let* () =
     if request.replay_items = [] then Stdlib.Ok ()
     else unsupported ~provider "provider replay items with Chat Completions"
   in
@@ -36,6 +41,38 @@ let encode_chat_json ~provider ~schema_value ?structured_output
 
 let encode_chat ~provider ~schema_value ?structured_output request =
   encode_chat_json ~provider ~schema_value ?structured_output request
+  |> Result.map Json.to_string
+
+let thinking_json = function
+  | Off -> Json.object_ [ ("type", Some (Json.string "disabled")) ]
+  | Minimal | Low | Medium | High | Xhigh | Max ->
+      Json.object_ [ ("type", Some (Json.string "enabled")) ]
+
+let encode_chat_with_thinking_json ~provider ~schema_value ?structured_output
+    (request : A.chat_request) =
+  let* reasoning =
+    match request.reasoning with
+    | None -> Stdlib.Ok None
+    | Some value ->
+        reasoning_level_of_string ~provider value |> Result.map Option.some
+  in
+  let request = { request with reasoning = None } in
+  let* json =
+    encode_chat_json ~provider ~schema_value ?structured_output request
+  in
+  match json with
+  | `Assoc fields ->
+      let thinking =
+        match reasoning with
+        | None -> []
+        | Some level -> [ ("thinking", thinking_json level) ]
+      in
+      Stdlib.Ok (`Assoc (fields @ thinking))
+  | _ -> assert false
+
+let encode_chat_with_thinking ~provider ~schema_value ?structured_output request =
+  encode_chat_with_thinking_json ~provider ~schema_value ?structured_output
+    request
   |> Result.map Json.to_string
 
 let chat_tool_call json =

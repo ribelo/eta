@@ -86,6 +86,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Eta.Exit.Error cause -> cause
     | Eta.Exit.Ok _ -> Alcotest.fail ("expected error: " ^ label)
 
+  let chat_request ?reasoning () : A.chat_request =
+    {
+      model = "kimi-for-coding";
+      prompt = [ A.User [ A.Text "hi" ] ];
+      tools = [];
+      temperature = None;
+      reasoning;
+      max_output_tokens = Some 32;
+      replay_items = [];
+      stream = false;
+    }
+
   let identity =
     K.device_identity ~product:"eta-test" ~version:"0.0.1" ~device_id:"dev-1"
       ~device_name:"eta-test" ()
@@ -210,6 +222,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           prompt = [ A.User [ A.Text "hi" ] ];
           tools = [];
           temperature = None;
+          reasoning = None;
           max_output_tokens = Some 32;
           replay_items = [];
           stream = false;
@@ -240,6 +253,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              prompt = [ A.User [ A.Text "hi" ] ];
              tools = [];
              temperature = None;
+             reasoning = None;
              max_output_tokens = Some 32;
              replay_items = [];
              stream = false;
@@ -259,6 +273,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              prompt = [ A.User [ A.Text "hi" ] ];
              tools = [];
              temperature = None;
+             reasoning = None;
              max_output_tokens = Some 32;
              replay_items = [];
              stream = true;
@@ -302,6 +317,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              prompt = [ A.User [ A.Text "hi" ] ];
              tools = [];
              temperature = None;
+             reasoning = None;
              max_output_tokens = None;
              replay_items = [];
              stream = true;
@@ -314,6 +330,86 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         events
     in
     Alcotest.(check bool) "reasoning" true has_reasoning
+
+  let test_reasoning_levels () =
+    let credential =
+      K.api_key "kimi-api-secret" |> expect_ok "api" |> fun key ->
+      K.Api_key key
+    in
+    let cases =
+      [ None; Some "off"; Some "minimal"; Some "low"; Some "medium";
+        Some "high"; Some "xhigh"; Some "max" ]
+    in
+    let parse raw =
+      match A.Json.parse raw with
+      | Stdlib.Ok json -> json
+      | Stdlib.Error message -> Alcotest.fail message
+    in
+    List.iter
+      (fun reasoning ->
+        let chat =
+          K.chat_completions_request ~identity ~credential
+            (chat_request ?reasoning ())
+          |> expect_ok "chat reasoning request" |> request_body_string |> parse
+        in
+        let chat_thinking =
+          A.Json.member "thinking" chat |> Option.map A.Json.compact
+        in
+        let expected_chat =
+          Option.map
+            (fun level ->
+              if String.equal level "off" then {|{"type":"disabled"}|}
+              else {|{"type":"enabled"}|})
+            reasoning
+        in
+        Alcotest.(check (option string))
+          "chat thinking" expected_chat chat_thinking;
+        List.iter
+          (fun name ->
+            Alcotest.(check (option string))
+              ("chat no " ^ name) None
+              (A.Json.member name chat |> Option.map A.Json.compact))
+          [ "reasoning"; "reasoning_effort"; "output_config" ];
+        let messages =
+          K.encode_messages (chat_request ?reasoning ())
+          |> expect_ok "messages reasoning" |> parse
+        in
+        let member name =
+          A.Json.member name messages |> Option.map A.Json.compact
+        in
+        let expected_thinking, expected_output =
+          match reasoning with
+          | None -> (None, None)
+          | Some "off" -> (Some {|{"type":"disabled"}|}, None)
+          | Some ("minimal" | "low") ->
+              (Some {|{"type":"adaptive"}|}, Some {|{"effort":"low"}|})
+          | Some "medium" ->
+              (Some {|{"type":"adaptive"}|}, Some {|{"effort":"medium"}|})
+          | Some ("high" | "xhigh" | "max") ->
+              (Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|})
+          | Some _ -> assert false
+        in
+        Alcotest.(check (option string))
+          "messages thinking" expected_thinking (member "thinking");
+        Alcotest.(check (option string))
+          "messages output config" expected_output (member "output_config"))
+      cases;
+    List.iter
+      (fun reasoning ->
+        (match
+           K.chat_completions_request ~identity ~credential
+             (chat_request ~reasoning ())
+         with
+        | Stdlib.Error (A.Unsupported { provider = "kimi-coding"; _ }) -> ()
+        | _ -> Alcotest.fail "expected invalid chat reasoning error");
+        match K.encode_messages (chat_request ~reasoning ()) with
+        | Stdlib.Error (A.Unsupported { provider = "kimi-coding"; _ }) -> ()
+        | _ -> Alcotest.fail "expected invalid messages reasoning error")
+      [ ""; " "; "unknown" ];
+    let provider = K.messages_provider ~identity () in
+    match provider.encode_chat (chat_request ~reasoning:"unknown" ()) with
+    | Stdlib.Error (A.Unsupported { provider = "kimi-coding"; _ }) -> ()
+    | _ -> Alcotest.fail "expected Kimi provider attribution"
 
   let test_protocol_and_poll_errors () =
     with_runtime @@ fun rt ->
@@ -385,6 +481,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_messages_headers_and_stream;
           Alcotest.test_case "catalog and chat reasoning" `Quick
             test_catalog_and_chat_reasoning;
+          Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "identity requires product" `Quick
             test_identity_requires_product;
           Alcotest.test_case "protocol and poll errors" `Quick

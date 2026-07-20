@@ -248,6 +248,47 @@ let tool_json (tool : A.tool) =
          ("input_schema", Some schema);
        ])
 
+type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
+
+let reasoning_level = function
+  | value when A.Json_helpers.is_blank value ->
+      Stdlib.Error
+        (A.Unsupported
+           {
+             provider = "anthropic";
+             feature = "reasoning level must not be empty";
+           })
+  | "off" -> Stdlib.Ok Off
+  | "minimal" -> Stdlib.Ok Minimal
+  | "low" -> Stdlib.Ok Low
+  | "medium" -> Stdlib.Ok Medium
+  | "high" -> Stdlib.Ok High
+  | "xhigh" -> Stdlib.Ok Xhigh
+  | "max" -> Stdlib.Ok Max
+  | _ ->
+      Stdlib.Error
+        (A.Unsupported
+           {
+             provider = "anthropic";
+             feature =
+               "reasoning level must be off, minimal, low, medium, high, xhigh, or max";
+           })
+
+let reasoning_json = function
+  | Off ->
+      ( Some (Json.object_ [ ("type", Some (Json.string "disabled")) ]),
+        None )
+  | (Minimal | Low | Medium | High | Xhigh | Max) as level ->
+      let effort =
+        match level with
+        | Minimal | Low -> "low"
+        | Medium -> "medium"
+        | High | Xhigh | Max -> "high"
+        | Off -> assert false
+      in
+      ( Some (Json.object_ [ ("type", Some (Json.string "adaptive")) ]),
+        Some (Json.object_ [ ("effort", Some (Json.string effort)) ]) )
+
 let encode_messages ?prompt_cache (request : A.chat_request) =
   let* () =
     if request.replay_items = [] then Stdlib.Ok ()
@@ -280,6 +321,11 @@ let encode_messages ?prompt_cache (request : A.chat_request) =
   in
   let* max_tokens = max_tokens in
   let* temperature = temperature in
+  let* thinking, output_config =
+    match request.reasoning with
+    | None -> Stdlib.Ok (None, None)
+    | Some value -> reasoning_level value |> Result.map reasoning_json
+  in
   let* messages = result_all (List.map message_json request.prompt) in
   let* tools = result_map_all tool_json request.tools in
   Stdlib.Ok
@@ -292,6 +338,8 @@ let encode_messages ?prompt_cache (request : A.chat_request) =
             ("max_tokens", Some (Json.int max_tokens));
             ("stream", Some (Json.bool request.stream));
             ("temperature", temperature);
+            ("thinking", thinking);
+            ("output_config", output_config);
             ("tools", if tools = [] then None else Some (Json.array tools));
           ]))
 

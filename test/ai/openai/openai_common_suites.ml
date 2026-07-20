@@ -43,12 +43,13 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok "weather tool"
 
-let chat_request ?(stream = false) () : A.chat_request =
+let chat_request ?reasoning ?(stream = false) () : A.chat_request =
   {
     model = "gpt-4o-mini";
     prompt = [ A.System "stay brief"; A.User [ A.Text "weather in Warsaw" ] ];
     tools = [ weather_tool () ];
     temperature = Some 0.2;
+    reasoning;
     max_output_tokens = Some 64;
     replay_items = [];
     stream;
@@ -210,6 +211,39 @@ let test_encode_chat_and_responses () =
   let responses = O.encode_responses tool_output_request |> expect_ok "tool output" in
   require_contains "function call output"
     ~needle:"\"type\":\"function_call_output\"" responses
+
+let test_responses_reasoning_levels () =
+  let cases =
+    [
+      (None, None);
+      (Some "off", Some {|{"effort":"none"}|});
+      (Some "minimal", Some {|{"effort":"minimal"}|});
+      (Some "low", Some {|{"effort":"low"}|});
+      (Some "medium", Some {|{"effort":"medium"}|});
+      (Some "high", Some {|{"effort":"high"}|});
+      (Some "xhigh", Some {|{"effort":"xhigh"}|});
+      (Some "max", Some {|{"effort":"max"}|});
+    ]
+  in
+  List.iter
+    (fun (reasoning, expected) ->
+      let raw =
+        O.encode_responses (chat_request ?reasoning ())
+        |> expect_ok "responses reasoning"
+      in
+      let json = A.Json.parse raw |> expect_ok "responses reasoning JSON" in
+      let actual =
+        A.Json.member "reasoning" json |> Option.map A.Json.compact
+      in
+      Alcotest.(check (option string)) "reasoning" expected actual)
+    cases;
+  List.iter
+    (fun reasoning ->
+      O.encode_responses (chat_request ~reasoning ())
+      |> expect_unsupported "invalid reasoning" |> ignore)
+    [ ""; " "; "unknown" ];
+  O.encode_chat (chat_request ~reasoning:"high" ())
+  |> expect_unsupported "Chat Completions reasoning" |> ignore
 
 let test_decode_chat_fixture () =
   let response =
@@ -755,6 +789,7 @@ let test_openai_image_content_wire_shape () =
         ];
       tools = [];
       temperature = None;
+      reasoning = None;
       max_output_tokens = Some 100;
       replay_items = [];
       stream = false;
@@ -839,6 +874,7 @@ let test_openai_tool_result_with_image_does_not_crash () =
         ];
       tools = [];
       temperature = None;
+      reasoning = None;
       max_output_tokens = Some 100;
       replay_items = [];
       stream = false;
@@ -942,6 +978,8 @@ let tests =
           Alcotest.test_case "value" `Quick test_provider_value;
           Alcotest.test_case "encode chat and responses" `Quick
             test_encode_chat_and_responses;
+          Alcotest.test_case "responses reasoning levels" `Quick
+            test_responses_reasoning_levels;
           Alcotest.test_case "encodes audio content" `Quick
             test_chat_and_responses_encode_audio_content;
           Alcotest.test_case "tool result with image does not crash" `Quick

@@ -126,18 +126,34 @@ let add_reasoning reasoning json =
     "reasoning" (Option.map reasoning_json reasoning) json
 
 let encode_responses ?structured_output ?routing ?reasoning request =
-  match
-    Codec.encode_responses_json ~provider:"openrouter"
-      ~schema_value:require_json ?structured_output request
-  with
+  let request_reasoning =
+    match request.A.reasoning with
+    | None -> Stdlib.Ok None
+    | Some effort ->
+        Codec.reasoning_level_of_string ~provider:"openrouter" effort
+        |> Result.map (fun _ -> Some { effort = Some effort })
+  in
+  let request = { request with A.reasoning = None } in
+  match request_reasoning with
   | Stdlib.Error _ as error -> error
-  | Stdlib.Ok json -> (
-      match add_routing routing json with
+  | Stdlib.Ok request_reasoning -> (
+      match
+        Codec.encode_responses_json ~provider:"openrouter"
+          ~schema_value:require_json ?structured_output request
+      with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok json -> (
-          match add_reasoning reasoning json with
+      | Stdlib.Ok json ->
+          let reasoning =
+            match reasoning with
+            | Some _ -> reasoning
+            | None -> request_reasoning
+          in
+          match add_routing routing json with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)))
+          | Stdlib.Ok json -> (
+              match add_reasoning reasoning json with
+              | Stdlib.Error _ as error -> error
+              | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)))
 
 let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 

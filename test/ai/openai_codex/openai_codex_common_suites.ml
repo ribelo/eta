@@ -87,6 +87,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let entropy n = String.make n '\042'
 
+  let chat_request ?reasoning () : A.chat_request =
+    {
+      model = "gpt-5.1-codex";
+      prompt = [ A.User [ A.Text "hi" ] ];
+      tools = [];
+      temperature = None;
+      reasoning;
+      max_output_tokens = Some 16;
+      replay_items = [];
+      stream = false;
+    }
+
   let test_pkce_requires_caller_entropy () =
     let verifier =
       C.code_verifier_of_entropy (entropy 32) |> expect_ok "verifier"
@@ -188,6 +200,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           prompt = [ A.User [ A.Text "hi" ] ];
           tools = [];
           temperature = None;
+          reasoning = None;
           max_output_tokens = Some 16;
           replay_items = [];
           stream = true;
@@ -221,6 +234,42 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           [ "low"; "medium"; "high" ]
           m.supported_reasoning_levels
     | _ -> Alcotest.fail "one model"
+
+  let test_reasoning_levels () =
+    let cases =
+      [
+        (None, None);
+        (Some "off", Some {|{"effort":"none"}|});
+        (Some "minimal", Some {|{"effort":"minimal"}|});
+        (Some "low", Some {|{"effort":"low"}|});
+        (Some "medium", Some {|{"effort":"medium"}|});
+        (Some "high", Some {|{"effort":"high"}|});
+        (Some "xhigh", Some {|{"effort":"xhigh"}|});
+        (Some "max", Some {|{"effort":"max"}|});
+      ]
+    in
+    List.iter
+      (fun (reasoning, expected) ->
+        let raw =
+          C.encode_responses (chat_request ?reasoning ())
+          |> expect_ok "reasoning"
+        in
+        let json =
+          match A.Json.parse raw with
+          | Stdlib.Ok json -> json
+          | Stdlib.Error message -> Alcotest.fail message
+        in
+        let actual =
+          A.Json.member "reasoning" json |> Option.map A.Json.compact
+        in
+        Alcotest.(check (option string)) "reasoning" expected actual)
+      cases;
+    List.iter
+      (fun reasoning ->
+        match C.encode_responses (chat_request ~reasoning ()) with
+        | Stdlib.Error (A.Unsupported { provider = "openai-codex"; _ }) -> ()
+        | _ -> Alcotest.fail "expected invalid reasoning error")
+      [ ""; " "; "unknown" ]
 
   let test_exchange_effect () =
     with_runtime @@ fun rt ->
@@ -305,6 +354,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "token account and headers" `Quick
             test_token_requires_account_and_headers;
           Alcotest.test_case "models catalog" `Quick test_models_catalog;
+          Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "exchange effect" `Quick test_exchange_effect;
           Alcotest.test_case "extra headers and malformed expires" `Quick
             test_extra_headers_and_malformed_expires;

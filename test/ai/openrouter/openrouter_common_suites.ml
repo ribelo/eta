@@ -38,12 +38,13 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok "weather tool"
 
-let chat_request ?(stream = false) () : A.chat_request =
+let chat_request ?reasoning ?(stream = false) () : A.chat_request =
   {
     model = "openrouter/auto";
     prompt = [ A.User [ A.Text "weather in Warsaw" ] ];
     tools = [ weather_tool () ];
     temperature = Some 0.2;
+    reasoning;
     max_output_tokens = Some 64;
     replay_items = [];
     stream;
@@ -209,6 +210,52 @@ let test_encode_routing_and_rejects_empty_provider () =
   | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
   | _ -> Alcotest.fail "expected empty provider rejection"
 
+let test_request_reasoning_levels () =
+  let cases =
+    [ None; Some "off"; Some "minimal"; Some "low"; Some "medium";
+      Some "high"; Some "xhigh"; Some "max" ]
+  in
+  List.iter
+    (fun reasoning ->
+      let raw =
+        O.encode_responses (chat_request ?reasoning ())
+        |> expect_ok "request reasoning"
+      in
+      let json = A.Json.parse raw |> expect_ok "request reasoning JSON" in
+      let actual =
+        A.Json.member "reasoning" json |> Option.map A.Json.compact
+      in
+      let expected =
+        Option.map
+          (fun effort -> Printf.sprintf {|{"effort":"%s"}|} effort)
+          reasoning
+      in
+      Alcotest.(check (option string)) "reasoning" expected actual)
+    cases;
+  let explicit = O.reasoning ~effort:"explicit" () |> expect_ok "explicit" in
+  let raw =
+    O.encode_responses ~reasoning:explicit (chat_request ~reasoning:"high" ())
+    |> expect_ok "explicit precedence"
+  in
+  require_contains "explicit precedence"
+    ~needle:{|"reasoning":{"effort":"explicit"}|} raw;
+  List.iter
+    (fun request ->
+      match O.encode_responses request with
+      | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
+      | _ -> Alcotest.fail "expected invalid reasoning error")
+    [
+      chat_request ~reasoning:"" ();
+      chat_request ~reasoning:" " ();
+      chat_request ~reasoning:"unknown" ();
+    ];
+  match
+    O.encode_responses ~reasoning:explicit
+      (chat_request ~reasoning:"unknown" ())
+  with
+  | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
+  | _ -> Alcotest.fail "expected invalid generic reasoning to win"
+
 let test_encode_audio_prompt_input () =
   let request : A.chat_request =
     {
@@ -228,6 +275,7 @@ let test_encode_audio_prompt_input () =
         ];
       tools = [];
       temperature = Some 0.0;
+      reasoning = None;
       max_output_tokens = Some 32;
       replay_items = [];
       stream = false;
@@ -1023,6 +1071,8 @@ let tests =
           Alcotest.test_case "headers" `Quick test_provider_headers;
           Alcotest.test_case "encode routing" `Quick
             test_encode_routing_and_rejects_empty_provider;
+          Alcotest.test_case "request reasoning levels" `Quick
+            test_request_reasoning_levels;
           Alcotest.test_case "encode audio prompt input" `Quick
             test_encode_audio_prompt_input;
           Alcotest.test_case "request endpoint" `Quick
