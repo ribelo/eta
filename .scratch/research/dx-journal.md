@@ -1771,3 +1771,24 @@ forms stay 3 (`[%eta.sync]`, `[%eta.result]`, `[@@deriving eta_error]`).
 Footguns ±0. Value of the experiment: the hold becomes evidence-backed
 (expansion corpus + error-location corpus + review), not a hunch — and the
 corpus is the ready-made record if definition-site `fn` usage ever grows.
+
+---
+
+## V-DX-AMEND-2 — 2026-07-19 — frequency evidence is user-first (protocol amendment, supersedes frequency framing everywhere)
+
+Human correction, adopted as standing protocol: Eta is a library; the
+consumers that matter are *applications using Eta*, not Eta's own internal
+cross-package or test consumers. Consequences for all past and future
+experiments:
+
+1. **Frequency evidence counts user-shaped code with full weight:**
+   `examples/`, docs-taught patterns, and downstream consumers. A pattern
+   the docs teach is user-facing demand even at zero internal usage.
+2. **Internal usage (lib cross-package, tests) is weak evidence** — it
+   measures our own shortcuts (leaf sugar), not user need.
+3. Applied to E10 immediately: the "5 sites, all tests" census is weak
+   evidence; the user-facing facts are (a) README/api-dx teach
+   `Effect.fn __POS__ __FUNCTION__` as the way to get function-name spans,
+   (b) the one example using it needs `~error_pp`/`~kind` — a form the
+   prototyped sugar does NOT cover (plain `fn` only). The review cohort's
+   frequency question is reframed user-first accordingly.
