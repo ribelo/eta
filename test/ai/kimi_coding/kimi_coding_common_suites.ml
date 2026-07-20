@@ -385,8 +385,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
               (Some {|{"type":"adaptive"}|}, Some {|{"effort":"low"}|})
           | Some "medium" ->
               (Some {|{"type":"adaptive"}|}, Some {|{"effort":"medium"}|})
-          | Some ("high" | "xhigh" | "max") ->
+          | Some "high" ->
               (Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|})
+          | Some "xhigh" ->
+              (Some {|{"type":"adaptive"}|}, Some {|{"effort":"xhigh"}|})
+          | Some "max" ->
+              (Some {|{"type":"adaptive"}|}, Some {|{"effort":"max"}|})
           | Some _ -> assert false
         in
         Alcotest.(check (option string))

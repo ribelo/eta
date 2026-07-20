@@ -131,7 +131,11 @@ let encode_responses ?structured_output ?routing ?reasoning request =
     | None -> Stdlib.Ok None
     | Some effort ->
         Codec.reasoning_level_of_string ~provider:"openrouter" effort
-        |> Result.map (fun _ -> Some { effort = Some effort })
+        |> Result.map (fun level ->
+               let effort =
+                 match level with Codec.Off -> "none" | _ -> effort
+               in
+               Some { effort = Some effort })
   in
   let request = { request with A.reasoning = None } in
   match request_reasoning with

@@ -200,8 +200,8 @@ let test_reasoning_levels () =
       (Some "high", Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|});
       ( Some "xhigh",
         Some {|{"type":"adaptive"}|},
-        Some {|{"effort":"high"}|} );
-      (Some "max", Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|});
+        Some {|{"effort":"xhigh"}|} );
+      (Some "max", Some {|{"type":"adaptive"}|}, Some {|{"effort":"max"}|});
     ]
   in
   List.iter

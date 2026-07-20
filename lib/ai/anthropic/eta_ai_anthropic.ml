@@ -283,7 +283,9 @@ let reasoning_json = function
         match level with
         | Minimal | Low -> "low"
         | Medium -> "medium"
-        | High | Xhigh | Max -> "high"
+        | High -> "high"
+        | Xhigh -> "xhigh"
+        | Max -> "max"
         | Off -> assert false
       in
       ( Some (Json.object_ [ ("type", Some (Json.string "adaptive")) ]),
