@@ -71,3 +71,58 @@ determinism, coupling, and call-site burden.
   - `nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo`
 
 No production code or public contract has been changed at this seal point.
+
+## V-DX-E26-002 — Implementation verdict
+
+Status: ACCEPT
+
+Decision: promote the one-pager's `Effect.fresh` / `Effect.fresh_named` slice.
+
+Evidence:
+
+- `lib/eta/effect.mli` and `lib/eta/runtime_contract.mli` state the per-runtime,
+  non-global, deterministic-test, and shared-counter contracts.
+- Native core tests prove `[1;2;3]`, 128-way `Effect.all` uniqueness, and
+  `"worker-7"` formatting from the same counter.
+- `Eta_test` proves two newly created runtimes replay `[1;2;3]`.
+- `redteam/two-runtimes.md` demonstrates the intentional cross-runtime collision.
+- `redteam/contention.md` records 10,000/10,000 unique `map_par` pulls at
+  `max_concurrent=64` (0.958 ms local elapsed on Linux 7.1.3 x86_64).
+- The jsoo Node suite observes `[1;2;3]` then `"worker-4"` from a plain mutable
+  runtime-local cell.
+
+Verification (all exited 0):
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo
+nix develop .#mainline -c dune runtest test/js_jsoo --force
+```
+
+Hypothesis ledger final status:
+
+| Candidate | Final status | Evidence |
+| --- | --- | --- |
+| A. First-class `Effect.fresh` capability | ACCEPTED | All six proof obligations passed; call site removes counter synchronization/reset plumbing. |
+| B. Caller-owned counter | DOMINATED for runtime-local IDs; still valid out of scope for wider namespaces | `review/worker-spawn-old.ml` vs `worker-spawn-new.ml`; global namespacing remains application-owned. |
+| C. Runtime `Random` DIY | REJECTED | It cannot guarantee uniqueness and perturbs unrelated schedule randomness/replay. |
+
+Prediction result: construct census +2 values / +1 concept, exactly predicted;
+unresolved footguns +0, exactly predicted. The global-ID trap candidate was real,
+the two-runtime fixture reproduced it, and the `.mli` warns before use. Score:
+5/5 (`report.md`).
+
+Counterevidence considered: two runtimes collide immediately, so this API is
+unsafe when silently substituted for a global correlation namespace. That does
+not contradict the selected contract; it is the explicitly documented boundary.
+
+Remaining uncertainty: the local contention time is not a portable benchmark and
+is not used as a performance guarantee. It was collected only to show that the
+tight concurrent path completed with no duplicates. No proof result depends on a
+timing threshold.
+
+Implementation follow-up: code, public contracts, regression tests, red-team
+artifacts, and the review packet now agree. The pre-existing global counters were
+left untouched as required.
