@@ -592,6 +592,17 @@ module Connection = struct
   let query_string ?params conn cypher =
     query_string_with_operation "query" ?params conn cypher
 
+  let query_rows_with_operation operation ?(params = []) (conn : connection)
+      cypher =
+    if_connection_open conn @@ fun () ->
+    match validate_params params with
+    | Result.Error _ as err -> err
+    | Ok () ->
+        wrap operation (fun () -> raw_query_values conn.raw cypher params)
+
+  let query_rows ?params conn cypher =
+    query_rows_with_operation "query" ?params conn cypher
+
   let query_with_operation operation conn query =
     if_connection_open conn @@ fun () ->
     match validate_params (Query.params query) with
@@ -633,6 +644,11 @@ module Connection = struct
   let query_string_with_timeout ?blocking_pool ~timeout ?params conn cypher =
     timed_blocking_result ?blocking_pool ~timeout ~conn ~name:"ladybug.query"
       (fun () -> query_string ?params conn cypher)
+    |> timed_public
+
+  let query_rows_with_timeout ?blocking_pool ~timeout ?params conn cypher =
+    timed_blocking_result ?blocking_pool ~timeout ~conn
+      ~name:"ladybug.dynamic_query" (fun () -> query_rows ?params conn cypher)
     |> timed_public
 
   let query_with_timeout ?blocking_pool ~timeout conn query_ =

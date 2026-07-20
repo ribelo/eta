@@ -235,6 +235,10 @@ module Connection : sig
       mutating, and [Error _] means prepare failed. *)
   val classify_read_only : t -> string -> (bool, error) result
   val query_string : ?params:Param.t list -> t -> string -> (string, error) result
+  val query_rows :
+    ?params:Param.t list -> t -> string -> (Row.t list, error) result
+  (** Execute Cypher and return engine-named dynamic rows without a typed
+      decoder. *)
   val query : t -> 'a Query.t -> ('a list, error) result
   val exec : ?params:Param.t list -> t -> string -> (unit, error) result
   val query_string_with_timeout :
@@ -244,6 +248,13 @@ module Connection : sig
     t ->
     string ->
     (string, timed_error) Eta.Effect.t
+  val query_rows_with_timeout :
+    ?blocking_pool:Eta_blocking.Pool.t ->
+    timeout:Eta.Duration.t ->
+    ?params:Param.t list ->
+    t ->
+    string ->
+    (Row.t list, timed_error) Eta.Effect.t
   val query_with_timeout :
     ?blocking_pool:Eta_blocking.Pool.t ->
     timeout:Eta.Duration.t ->
