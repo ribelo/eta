@@ -514,6 +514,12 @@ let auth_headers ~version ~beta_headers api_key =
      ]
     @ beta)
 
+
+type credential = A.api_key
+let credential = A.api_key
+let authorization_headers ?(version = "2023-06-01") ?(beta_headers = []) api_key =
+  auth_headers ~version ~beta_headers api_key
+
 let capabilities =
   {
     A.streaming = true;

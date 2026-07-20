@@ -1,0 +1,22 @@
+(library
+ (name eta_ai_moonshot_common_tests)
+ (modules moonshot_common_suites)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_moonshot
+  eta_http
+  eta_runtime_common_tests
+  alcotest))
+
+(test
+ (name run_eio)
+ (modules run_eio)
+ (libraries eta_ai_moonshot_common_tests eta_test_backend_eio alcotest)
+ (deps
+  (source_tree fixtures))
+ (action
+  (setenv
+   EIO_BACKEND
+   posix
+   (run %{test}))))

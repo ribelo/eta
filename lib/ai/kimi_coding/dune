@@ -1,0 +1,14 @@
+(library
+ (name eta_ai_kimi_coding)
+ (public_name eta_ai_kimi_coding)
+ (synopsis
+  "Kimi Coding Chat Completions, catalog, and device-code OAuth for eta_ai")
+ (libraries
+  eta
+  eta_ai
+  eta_ai_openai_codec
+  eta_ai_openai_compat
+  eta_ai_anthropic
+  eta_redacted
+  eta_http
+  yojson))

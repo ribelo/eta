@@ -1,0 +1,12 @@
+{
+  "data": [
+    {
+      "id": "kimi-k2.5",
+      "display_name": "Kimi K2.5",
+      "context_length": 262144,
+      "supports_reasoning": true,
+      "supports_image_in": true,
+      "supports_tool_use": true
+    }
+  ]
+}

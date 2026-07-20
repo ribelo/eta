@@ -1,0 +1,12 @@
+{
+  "id": "chatcmpl_test",
+  "model": "kimi-k2.5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "moonshot hello"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}
+}

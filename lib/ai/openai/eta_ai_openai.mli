@@ -22,6 +22,15 @@ val structured_output :
   unit ->
   (structured_output, Eta_ai.ai_error) result
 
+(** {1 Credentials}
+
+    Callers pass resolved API keys; this package owns the Authorization header. *)
+
+type credential = Eta_ai.api_key
+val credential : string -> credential
+val authorization_headers : credential -> Eta_ai.headers
+(** [Authorization: Bearer ...] plus JSON content headers. *)
+
 val provider : ?base_url:string -> unit -> Eta_ai.provider
 (** Default Responses API provider value. The default base URL is
     [https://api.openai.com] and the path is [/v1/responses]. *)

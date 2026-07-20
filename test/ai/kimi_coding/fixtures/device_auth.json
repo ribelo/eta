@@ -1,0 +1,8 @@
+{
+  "user_code": "ABCD-EFGH",
+  "device_code": "device-secret-code",
+  "verification_uri": "https://auth.kimi.com/device",
+  "verification_uri_complete": "https://auth.kimi.com/device?user_code=ABCD-EFGH",
+  "expires_in": 900,
+  "interval": 5
+}

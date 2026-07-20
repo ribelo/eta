@@ -3,6 +3,11 @@
 
 include Common
 
+type credential = A.api_key
+
+let credential = A.api_key
+let authorization_headers = auth_headers
+
 module Image_endpoint = Images
 module Speech_endpoint = Speech
 module Transcription_endpoint = Transcriptions

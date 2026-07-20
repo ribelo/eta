@@ -49,6 +49,19 @@ val reasoning :
   unit ->
   (reasoning, Eta_ai.ai_error) result
 
+(** {1 Credentials}
+
+    Callers pass resolved API keys; this package owns Authorization and optional
+    attribution headers via {!provider}. *)
+
+type credential = Eta_ai.api_key
+val credential : string -> credential
+val authorization_headers :
+  ?attribution:attribution ->
+  ?extra_headers:Eta_ai.headers ->
+  credential ->
+  Eta_ai.headers
+
 val provider :
   ?base_url:string ->
   ?attribution:attribution ->
