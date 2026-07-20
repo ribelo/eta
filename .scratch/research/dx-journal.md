@@ -2102,3 +2102,72 @@ call site cannot carry the scope (same accepted shape as F4 `map_par`
 omission). If real users misread, candidates: docs emphasis in
 `docs/api-dx.md`, a scope-bearing alias — not a rename (`Fresh`
 provenance; `fresh_runtime_named` misreads as runtime construction).
+
+---
+
+## V-DX-E19-001 — 2026-07-20 — research/dx-e19-scoped-capability-override — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E19-002.
+
+**Current shapes (measured pre-change).** The fiber-local binding
+machinery exists and is in heavy use: `local_with_binding : 'a 'b. 'a
+local -> 'a -> (unit -> 'b) -> 'b` in the runtime contract, 19 uses in
+`lib/eta`, powering `annotate_logs` / `with_minimum_log_level` /
+`with_context` / `with_error_pp` (`effect_observability.ml`).
+`Capabilities.tracer` and `Capabilities.logger` exist as **class types**.
+**`Capabilities.clock` does not exist** — the clock is the
+`?now_ms`/`?sleep` constructor pair ("one monotonic runtime-clock pair",
+per `runtime.mli`); E19 must introduce the type. Leaves consult
+`frame.runtime.now_ms` / `frame.runtime.sleep` directly. jsoo runtime
+locals verified working (E26: "runtime locals cross fork").
+
+**Contract (from the one-pager).**
+```ocaml
+val with_clock  : Capabilities.clock  -> ('a, 'err) t -> ('a, 'err) t
+val with_random : Capabilities.random -> ('a, 'err) t -> ('a, 'err) t
+val with_logger : Capabilities.logger -> ('a, 'err) t -> ('a, 'err) t
+val with_tracer : Capabilities.tracer -> ('a, 'err) t -> ('a, 'err) t
+```
+Fiber-local, dynamically scoped; inherit at fork; innermost wins; restore
+on success/typed failure/defect/cancellation; sibling isolation under
+`par`.
+
+**Census (predicted).** Observability cluster +4 vals; Capabilities +1
+type (`clock`). Concepts +1 (scoped capability override) — justified:
+replaces bespoke test runtimes for subtree faking (T1: one way to fake a
+capability; T9: explicit value). Footguns +0; recorded trap candidates:
+(a) believing an override retroactively affects in-flight sleeps/spans —
+mli must say *consulted at leaf call time*; (b) believing `par` siblings
+see each other's overrides; (c) daemon outliving its scope keeps the
+fork-time binding — mli must say it.
+
+**Mechanical (predicted).** Restore on all four exit kinds; fork-inherit;
+sibling isolation under `par`; clock override observed by `sleep`/
+`timeout` (fake clock fires deterministically); innermost-wins; jsoo
+parity; W6 rewritten with a scoped fake clock is shorter than the
+test-runtime assembly.
+
+**Kill-gate (predicted NOT fired).** The gate: kill if semantics or otel
+interplay "grows a paragraph of caveats". The `annotate_logs` precedent
+carries the semantics; interplay fits existing doc shape: `with_logger`
+replaces the sink; `annotate_logs` (attrs) and `with_minimum_log_level`
+(filter) are orthogonal and compose; predicted doc cost ≤ 15 lines across
+four vals + one docs section.
+
+**Persona mistakes (two each, predicted).**
+- P-OCaml: (1) expects `with_clock` to affect an already-running `sleep`
+  (it consults at call time); (2) expects `par` siblings to leak overrides.
+- P-ZIO: (1) reads it as `Layer`/`provide` — docs must say *fiber-local
+  runtime-service override*, not application DI; (2) expects join-merge on
+  fork (inherit-at-fork, no merge).
+- P-Maint: (1) asks what a daemon spawned inside the scope sees after the
+  scope exits (fork-time binding, kept); (2) asks whether an open span
+  switches sinks mid-flight (no — consult at leaf call time).
+
+**Review (predicted).** W6 both-ways A/B (test-runtime assembly vs scoped
+override): scoped ≥ 4, assembly ~ 3. Teach-back "where does the fake
+clock stop applying?" — "at the end of the `with_clock` subtree" ≥ 2/3.
+Cohort rule applies (≥3 passes before gate evaluation).
+
+**Outcome (predicted).** Promote. Effort M; the risk is doc discipline,
+not semantics (the `annotate_logs` generalization is proven machinery).
