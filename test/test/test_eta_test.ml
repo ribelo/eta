@@ -238,15 +238,6 @@ let test_with_clock_controls_sleep_and_timeout_without_wall_time () =
   with_test_clock @@ fun sw base_clock rt ->
   let clock = Test_clock.create () in
   Test_clock.set_time clock 5;
-  let contract_now =
-    Eta.Effect.Expert.make @@ fun context ->
-    Eta.Exit.Ok
-      ((Eta.Effect.Expert.contract context).Eta.Runtime_contract.now_ms ())
-  in
-  Alcotest.(check int) "runtime contract dispatches override" 5
-    (Eta.Runtime.run rt
-       (Eta.Effect.with_clock (Test_clock.as_capability clock) contract_now)
-    |> Expect.expect_ok);
   let sleep_run =
     Eta.Effect.with_clock (Test_clock.as_capability clock)
       (Eta.Effect.sleep (Eta.Duration.ms 25))
@@ -353,6 +344,14 @@ let test_daemon_retains_fork_time_capabilities_after_scope_exit () =
     |> Eta.Effect.with_clock (recording_clock_capability clock)
   in
   Expect.expect_ok (Eta.Runtime.run rt start);
+  let attempts = ref 0 in
+  while not (Eio.Promise.is_resolved started) && !attempts < 200 do
+    incr attempts;
+    yield ()
+  done;
+  if not (Eio.Promise.is_resolved started) then
+    Alcotest.failf "daemon did not start; override diagnostics=%d"
+      (List.length (Eta.Logger.dump logger));
   Eio.Promise.await started;
   Eio.Promise.resolve release ();
   Eta.Runtime.drain rt;
@@ -462,7 +461,12 @@ let test_tracer_override_preserves_open_span_and_captured_tracer () =
       Alcotest.(check string) "log keeps captured outer trace" outer_span.trace_id
         record.trace_id;
       Alcotest.(check bool) "log keeps captured outer span" true
-        (record.span_id <> "")
+        (record.span_id <> "");
+      (match inner_span.external_parent with
+      | Some parent ->
+          Alcotest.(check string) "cross-tracer external parent span"
+            record.span_id parent.span_id
+      | None -> Alcotest.fail "inner tracer did not record an external parent")
   | records ->
       Alcotest.failf "expected one correlated log, got %d" (List.length records))
 
@@ -483,6 +487,62 @@ let test_same_tracer_nested_override_keeps_parent_context () =
   Alcotest.(check (option int)) "same tracer parent" (Some outer.span_id)
     inner.parent_id;
   Alcotest.(check string) "same tracer trace" outer.trace_id inner.trace_id
+
+let test_in_flight_real_sleep_ignores_later_override () =
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let eio_clock = Eio.Stdenv.clock stdenv in
+  let sleep_started, mark_sleep_started = Eio.Promise.create () in
+  let marked = ref false in
+  let sleep duration =
+    if not !marked then (
+      marked := true;
+      Eio.Promise.resolve mark_sleep_started ());
+    Eio.Time.sleep eio_clock (Eta.Duration.to_seconds_float duration)
+  in
+  let now_ms () = int_of_float (Eio.Time.now eio_clock *. 1_000.0) in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:eio_clock ~sleep ~now_ms () in
+  let started_at = Unix.gettimeofday () in
+  let sleeping = fork_run sw rt (Eta.Effect.sleep (Eta.Duration.ms 30)) in
+  Eio.Promise.await sleep_started;
+  let override = recording_clock 999 in
+  Alcotest.(check int) "later override is active only in its scope" 999
+    (Eta.Runtime.run rt
+       (Eta.Effect.with_clock (recording_clock_capability override)
+          Eta.Effect.now_ms)
+    |> Expect.expect_ok);
+  Expect.expect_ok (Eio.Promise.await sleeping);
+  let elapsed_ms = (Unix.gettimeofday () -. started_at) *. 1_000.0 in
+  Alcotest.(check bool) "real sleep was not accelerated" true (elapsed_ms >= 20.0)
+
+let test_daemon_failure_uses_inherited_override_diagnostics () =
+  with_test_clock @@ fun _sw _base_clock rt ->
+  let clock = recording_clock 123 in
+  let logger = Eta.Logger.in_memory () in
+  let tracer = Eta.Tracer.in_memory () in
+  let start =
+    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    |> Eta.Effect.with_tracer (Eta.Tracer.as_capability tracer)
+    |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+    |> Eta.Effect.with_random (Eta.Capabilities.random_of_seed 123)
+    |> Eta.Effect.with_clock (recording_clock_capability clock)
+  in
+  Expect.expect_ok (Eta.Runtime.run rt start);
+  Eta.Runtime.drain rt;
+  (match Eta.Logger.dump logger with
+  | [ record ] ->
+      Alcotest.(check string) "daemon diagnostic sink" "eta.daemon.failure"
+        record.body;
+      Alcotest.(check int) "daemon diagnostic clock" 123 record.ts_ms
+  | records ->
+      Alcotest.failf "expected one daemon diagnostic, got %d"
+        (List.length records));
+  match Eta.Tracer.dump tracer with
+  | [ span ] ->
+      Alcotest.(check string) "daemon diagnostic tracer" "eta.daemon" span.name
+  | spans ->
+      Alcotest.failf "expected one daemon diagnostic span, got %d"
+        (List.length spans)
 
 let test_clock_adjust_wakes_in_deadline_order () =
   with_test_clock @@ fun sw clock rt ->
@@ -613,6 +673,10 @@ let () =
             test_tracer_override_preserves_open_span_and_captured_tracer;
           Alcotest.test_case "same tracer nested override" `Quick
             test_same_tracer_nested_override_keeps_parent_context;
+          Alcotest.test_case "in-flight real sleep ignores later override" `Quick
+            test_in_flight_real_sleep_ignores_later_override;
+          Alcotest.test_case "daemon failure uses inherited diagnostics" `Quick
+            test_daemon_failure_uses_inherited_override_diagnostics;
         ] );
       ( "Fresh",
         [

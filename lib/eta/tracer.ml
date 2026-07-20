@@ -81,6 +81,7 @@ let fresh_context_id () =
 let empty_state () = { stack = []; pending_attrs = []; pending_links = [] }
 
 let with_task_context contract f =
+  contract.Runtime_contract.with_fiber_identity @@ fun () ->
   let fiber_id = contract.Runtime_contract.current_fiber_id () in
   match contract.Runtime_contract.local_get task_context_local with
   | Some context when context.fiber_id = fiber_id -> f ()

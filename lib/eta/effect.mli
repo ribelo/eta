@@ -648,9 +648,9 @@ val with_random : Capabilities.random -> ('a, 'err) t -> ('a, 'err) t
     defect, and interruption restore it.
     Innermost wins and [par] siblings are isolated. Runtime random operations
     capture it when called; already-started operations are unchanged. A daemon
-    retains its fork-time source after this scope exits. This governs schedule
-    jitter and runtime-generated trace identifiers, not explicitly passed
-    application random tokens. *)
+    retains its fork-time source after this scope exits. This governs
+    [retry]/[repeat] schedule jitter and runtime-generated trace identifiers,
+    not explicitly passed application random tokens. *)
 
 val with_logger : Capabilities.logger -> ('a, 'err) t -> ('a, 'err) t
 (** Dynamically replace the fiber-local log sink for [body]. Children inherit

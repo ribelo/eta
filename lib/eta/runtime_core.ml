@@ -80,6 +80,7 @@ let tracer_override : Capabilities.tracer Runtime_contract.local =
 
 type 'err t = {
   clock : Capabilities.clock;
+  capability_overrides_active : bool;
   tracer : Capabilities.tracer;
   tracing_enabled : bool;
   sampler : Sampler.t;
@@ -97,7 +98,7 @@ type 'err t = {
   outer_scope : Runtime_contract.scope;
   active : int P_atomic.t;
   active_lock : Sync_lock.t;
-  mutable active_waiters : drain_waiter list;
+  active_waiters : drain_waiter list ref;
   default_fail_key : Typed_fail.key;
 }
 
@@ -118,23 +119,8 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
       method sleep duration = sleep duration
     end
   in
-  let current_clock () =
-    Option.value
-      (contract.Runtime_contract.local_get clock_override)
-      ~default:clock
-  in
   let contract =
-    {
-      contract with
-      Runtime_contract.sleep =
-        (fun duration ->
-          let clock = current_clock () in
-          clock#sleep duration);
-      now_ms =
-        (fun () ->
-          let clock = current_clock () in
-          clock#now_ms ());
-    }
+    { contract with Runtime_contract.sleep = sleep; now_ms = now_ms }
   in
   let random =
     match random with
@@ -152,6 +138,7 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
     services;
   {
     clock;
+    capability_overrides_active = false;
     tracer;
     tracing_enabled;
     sampler;
@@ -169,7 +156,7 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
     outer_scope = contract.Runtime_contract.root_scope;
     active = P_atomic.make 0;
     active_lock = Sync_lock.create ();
-    active_waiters = [];
+    active_waiters = ref [];
     default_fail_key = Typed_fail.fresh ();
   }
 
@@ -177,19 +164,29 @@ let local_override runtime key =
   runtime.contract.Runtime_contract.local_get key
 
 let current_clock runtime =
-  Option.value (local_override runtime clock_override) ~default:runtime.clock
+  if not runtime.capability_overrides_active then runtime.clock
+  else Option.value (local_override runtime clock_override) ~default:runtime.clock
 
 let current_random runtime =
-  Option.value (local_override runtime random_override) ~default:runtime.random
+  if not runtime.capability_overrides_active then runtime.random
+  else Option.value (local_override runtime random_override) ~default:runtime.random
 
 let current_logger runtime =
-  let override = local_override runtime logger_override in
+  let override =
+    if runtime.capability_overrides_active then
+      local_override runtime logger_override
+    else None
+  in
   ( (not runtime.observability_suppressed)
     && (runtime.logging_enabled || Option.is_some override),
     Option.value override ~default:runtime.logger )
 
 let current_tracer runtime =
-  let override = local_override runtime tracer_override in
+  let override =
+    if runtime.capability_overrides_active then
+      local_override runtime tracer_override
+    else None
+  in
   ( (not runtime.observability_suppressed)
     && (runtime.tracing_enabled || Option.is_some override),
     Option.value override ~default:runtime.tracer )
@@ -211,8 +208,8 @@ let decr_active runtime =
     Sync_lock.use runtime.active_lock @@ fun () ->
     P_atomic.decr runtime.active;
     if P_atomic.get runtime.active = 0 then (
-      let waiters = runtime.active_waiters in
-      runtime.active_waiters <- [];
+      let waiters = !(runtime.active_waiters) in
+      runtime.active_waiters := [];
       waiters)
     else []
   in
@@ -228,7 +225,7 @@ let wait_active_zero runtime =
           runtime.contract.Runtime_contract.create_promise ()
         in
         let waiter = { drain_resolver = resolver; drain_active = true } in
-        runtime.active_waiters <- waiter :: runtime.active_waiters;
+        runtime.active_waiters := waiter :: !(runtime.active_waiters);
         Some (promise, waiter)
     with
     | None -> ()

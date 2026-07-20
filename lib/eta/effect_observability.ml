@@ -46,7 +46,8 @@ let suppress_observability eff =
 
 let with_runtime_binding key value eff =
   preserve eff @@ fun frame ->
-  local_with_binding frame key value @@ fun () -> eval frame eff
+  let runtime = { frame.runtime with capability_overrides_active = true } in
+  local_with_binding frame key value @@ fun () -> eval { frame with runtime } eff
 
 let with_clock clock eff =
   with_runtime_binding Runtime_core.clock_override clock eff
@@ -59,8 +60,10 @@ let with_logger logger eff =
 
 let with_tracer tracer eff =
   preserve eff @@ fun frame ->
+  let runtime = { frame.runtime with capability_overrides_active = true } in
   local_with_binding frame Runtime_core.tracer_override tracer @@ fun () ->
-  tracer#with_task_context frame.runtime.contract @@ fun () -> eval frame eff
+  tracer#with_task_context frame.runtime.contract @@ fun () ->
+  eval { frame with runtime } eff
 
 let named ?(kind = Capabilities.Internal) ?error_pp name eff =
   make ~leaf_name:name ~names:(name :: names eff) @@ fun frame ->
