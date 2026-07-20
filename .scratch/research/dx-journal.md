@@ -1994,3 +1994,53 @@ but the frequency rule still gates the sugar; E9 split → parking lot
 override — flagship; E24b context follows it) → E20 (intercept) → E12
 (audit/describe) → E11 (Eta_test.run) → E13 (async) → E14 (Promise,
 hold-gated). Master green at `5943585a`.
+
+---
+
+## V-DX-E26-001 — 2026-07-20 — research/dx-e26-effect-fresh — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E26-002.
+
+**Current shapes (measured pre-change).** Ad-hoc uniqueness counters inside
+Eta itself: `tracer.ml` (`fresh_context_id`), `cause.ml`
+(`fresh_interrupt_id`), `runtime_core.ml` (service-key `fresh`),
+`runtime_contract.ml` (`fresh_runtime_id`) — all process-global Atomics.
+Example counters (`incr` in retry/metric examples) are domain counting,
+not uniqueness tokens. `Capabilities` already owns `random`
+(`random_of_seed`). The new `Effect.fresh` is **per-runtime** — a different
+semantic from the existing global counters; unifying them is OUT of scope
+(they have cross-runtime uniqueness jobs).
+
+**Contract (from the one-pager).**
+```ocaml
+val fresh : unit -> (int, 'err) t
+val fresh_named : string -> (string, 'err) t  (* "worker-7" *)
+```
+Runtime-owned monotonic counter; per-runtime uniqueness (no cross-domain
+guarantee beyond that, documented); deterministic under `Eta_test`
+(counter resets with the test runtime); jsoo = plain mutable cell per
+runtime (T10).
+
+**Census (predicted).** Construct cluster +2 vals / +1 concept
+(unique-token generation) — justified: replaces DIY counters and
+`Random`-abuse for a job that is not randomness. Footguns +0; new-trap
+candidate recorded: assuming global/cross-runtime uniqueness — the mli
+must state per-runtime semantics and `Eta_test` reset behavior.
+
+**Mechanical (predicted).** Monotonicity (strictly increasing per
+runtime); uniqueness under `par` (concurrent pulls all distinct);
+test-runtime determinism (same program, two fresh test runtimes → same
+sequence); both backends implement (adding to the runtime contract forces
+native + jsoo — compile-checked via mainline build of `test/js_jsoo` +
+`test/cache_jsoo`); zero allocation beyond the counter cell.
+
+**Review (predicted).** Call-site ratings 4–5 (`fresh ()`,
+`fresh_named "worker"` read obviously). Predicted reviewer question: "are
+ids unique across runtimes?" — answered by the mli. Kill gate ("review
+finds `Random`-based DIY adequate") does NOT fire: seeded `Random` is for
+deterministic values, `fresh` is for uniqueness — reviewers see the job
+split. Predicted median ≥ 4.
+
+**Outcome (predicted).** Promote. Effort S; the only design risk is the
+per-runtime vs global distinction being under-documented — flagged as the
+mli's job, not a hold condition.
