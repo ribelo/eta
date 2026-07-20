@@ -6,12 +6,9 @@
     prompt input is not advertised. Image generation, speech, transcription,
     rerank, and video generation use OpenRouter-specific endpoint helpers. *)
 
-type attribution = {
-  referer : string option;
-  title : string option;
-}
-(** Optional OpenRouter attribution headers. [referer] is sent as
-    [HTTP-Referer] and [title] is sent as [X-Title]. *)
+type attribution = { referer : string option; title : string option }
+(** Optional OpenRouter attribution headers. [referer] is sent as [HTTP-Referer]
+    and [title] is sent as [X-Title]. *)
 
 val attribution : ?referer:string -> ?title:string -> unit -> attribution
 
@@ -26,8 +23,7 @@ type routing = {
 (** OpenRouter provider routing object.
 
     [order] models an ordered provider fallback chain. [only_providers] and
-    [ignored_providers] map to OpenRouter's [only] and [ignore] provider
-    fields. *)
+    [ignored_providers] map to OpenRouter's [only] and [ignore] provider fields. *)
 
 val routing :
   ?order:string list ->
@@ -39,15 +35,10 @@ val routing :
   unit ->
   (routing, Eta_ai.ai_error) result
 
-type reasoning = {
-  effort : string option;
-}
+type reasoning = { effort : string option }
 (** OpenRouter reasoning controls for Responses requests. *)
 
-val reasoning :
-  ?effort:string ->
-  unit ->
-  (reasoning, Eta_ai.ai_error) result
+val reasoning : ?effort:string -> unit -> (reasoning, Eta_ai.ai_error) result
 
 (** {1 Credentials}
 
@@ -55,7 +46,9 @@ val reasoning :
     attribution headers via {!provider}. *)
 
 type credential = Eta_ai.api_key
+
 val credential : string -> credential
+
 val authorization_headers :
   ?attribution:attribution ->
   ?extra_headers:Eta_ai.headers ->
@@ -148,7 +141,7 @@ module Embeddings : sig
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
     Eta_ai.Embedding.request ->
-      (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
+    (Eta_ai.Embedding.response, Eta_ai.ai_error) Eta.Effect.t
 end
 
 module Speech : Eta_ai.Provider.Speech
@@ -167,6 +160,7 @@ val encode_responses :
 
 val decode_responses :
   Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
+
 val encode_embeddings :
   ?routing:routing ->
   ?input_type:string ->
@@ -176,28 +170,75 @@ val encode_embeddings :
 
 val decode_embeddings :
   Eta_ai.raw_json -> (Eta_ai.Embedding.response, Eta_ai.ai_error) result
+
 val encode_speech :
   Eta_ai.Speech.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val encode_image_generation :
   Eta_ai.Image.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val decode_image_generation :
   Eta_ai.raw_json -> (Eta_ai.Image.response, Eta_ai.ai_error) result
+
 val encode_transcription :
   Eta_ai.Transcription.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val decode_transcription :
   Eta_ai.raw_json -> (Eta_ai.Transcription.response, Eta_ai.ai_error) result
+
 val encode_rerank :
   Eta_ai.Rerank.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val decode_rerank :
   Eta_ai.raw_json -> (Eta_ai.Rerank.response, Eta_ai.ai_error) result
+
 val encode_video :
   Eta_ai.Video.request -> (Eta_ai.raw_json, Eta_ai.ai_error) result
+
 val decode_video :
   Eta_ai.raw_json -> (Eta_ai.Video.response, Eta_ai.ai_error) result
+
 val decode_stream_event :
   Eta_ai.sse_event -> (Eta_ai.stream_event list, Eta_ai.ai_error) result
+
 val decode_error :
   status:int -> headers:Eta_ai.headers -> Eta_ai.raw_json -> Eta_ai.ai_error
+
+(** {1 Native model catalog}
+
+    [GET /api/v1/models] against the configured provider base URL. Bodies are
+    bounded to 5 MiB. Non-2xx responses use the provider error decoder (no
+    credentials). Empty [data] arrays decode as [Ok []]; callers own empty
+    snapshot policy. *)
+
+type pricing = {
+  prompt : float option;
+  completion : float option;
+  input_cache_read : float option;
+  input_cache_write : float option;
+  request : float option;
+}
+
+type model_info = {
+  id : string;
+  name : string option;
+  context_length : int option;
+  pricing : pricing option;
+}
+
+val models_request :
+  ?provider:Eta_ai.provider ->
+  api_key:Eta_ai.api_key ->
+  unit ->
+  (Eta_http.Request.t, Eta_ai.ai_error) result
+
+val decode_models : Eta_ai.raw_json -> (model_info list, Eta_ai.ai_error) result
+
+val list_models :
+  ?provider:Eta_ai.provider ->
+  Eta_http.Client.t ->
+  api_key:Eta_ai.api_key ->
+  (model_info list, Eta_ai.ai_error) Eta.Effect.t
 
 val responses_request :
   ?structured_output:structured_output ->
