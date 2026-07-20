@@ -87,8 +87,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Eta.Exit.Ok _ -> Alcotest.fail ("expected error: " ^ label)
 
   let identity =
-    K.device_identity ~version:"0.0.1" ~device_id:"dev-1"
+    K.device_identity ~product:"eta-test" ~version:"0.0.1" ~device_id:"dev-1"
       ~device_name:"eta-test" ()
+    |> expect_ok "identity"
+
+  let test_identity_requires_product () =
+    let err =
+      K.device_identity ~product:"" ~version:"1" ()
+      |> expect_error "empty product"
+    in
+    require_contains "product" ~needle:"product"
+      (A.project_ai_error err).diagnostic
 
   let test_credentials_strict_safe () =
     let api =
@@ -306,6 +315,57 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check bool) "reasoning" true has_reasoning
 
+  let test_protocol_and_poll_errors () =
+    with_runtime @@ fun rt ->
+    let unknown =
+      K.decode_models
+        "{\"data\":[{\"id\":\"x\",\"context_length\":1,\"protocol\":\"nope\"}]}"
+      |> expect_error "unknown protocol"
+    in
+    require_contains "proto" ~needle:"unknown model protocol"
+      (A.project_ai_error unknown).diagnostic;
+    let non_json_5xx =
+      K.decode_device_poll ~status:503 ~now_s:1L "not-json"
+      |> expect_error "5xx"
+    in
+    (match non_json_5xx with
+    | A.Provider_error { status = Some 503; raw = None; _ } -> ()
+    | _ -> Alcotest.fail "expected 503 provider error");
+    let unknown_4xx =
+      K.decode_device_poll ~status:400 ~now_s:1L
+        "{\"error\":\"invalid_grant\",\"error_description\":\"gone\"}"
+      |> expect_error "4xx"
+    in
+    (match unknown_4xx with
+    | A.Provider_error
+        {
+          status = Some 400;
+          code = Some "invalid_grant";
+          message;
+          raw = None;
+          _;
+        } ->
+        require_contains "gone" ~needle:"gone" message
+    | _ -> Alcotest.fail "expected invalid_grant provider error");
+    let cred =
+      K.api_key "kimi-api-secret" |> expect_ok "api" |> fun k -> K.Api_key k
+    in
+    let provider =
+      K.provider ~identity
+        ~extra_headers:[ ("X-Debug", "fixture"); ("Authorization", "nope") ]
+        ()
+    in
+    let headers = provider.auth_headers (K.access_api_key cred) in
+    Alcotest.(check (option string))
+      "auth wins" (Some "Bearer kimi-api-secret")
+      (H.Core.Header.get "authorization" headers);
+    Alcotest.(check (option string))
+      "ua" (Some "eta-test/0.0.1")
+      (H.Core.Header.get "user-agent" headers);
+    Alcotest.(check (option string))
+      "extra" (Some "fixture")
+      (H.Core.Header.get "x-debug" headers)
+
   let tests =
     [
       ( "kimi-coding",
@@ -318,6 +378,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_messages_headers_and_stream;
           Alcotest.test_case "catalog and chat reasoning" `Quick
             test_catalog_and_chat_reasoning;
+          Alcotest.test_case "identity requires product" `Quick
+            test_identity_requires_product;
+          Alcotest.test_case "protocol and poll errors" `Quick
+            test_protocol_and_poll_errors;
         ] );
     ]
 end

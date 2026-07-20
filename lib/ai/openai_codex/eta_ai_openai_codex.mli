@@ -111,7 +111,7 @@ type token_set = private {
   account_id : string;
 }
 
-val credential_of_token_set : ?now_ms:int64 -> token_set -> oauth_credential
+val credential_of_token_set : now_ms:int64 -> token_set -> oauth_credential
 
 val exchange_code_request :
   ?issuer:string ->
@@ -135,14 +135,20 @@ val exchange_code :
   redirect_uri:string ->
   code:string ->
   code_verifier:string ->
-  (token_set, Eta_ai.ai_error) Eta.Effect.t
+  now_ms:int64 ->
+  (oauth_credential, Eta_ai.ai_error) Eta.Effect.t
+(** Deep exchange: returns a durable credential with required account identity
+    and absolute expiry. OAuth HTTP failures are typed provider errors with safe
+    code/description only. *)
 
 val refresh :
   ?issuer:string ->
   ?client_id:string ->
   Eta_http.Client.t ->
   oauth_credential ->
-  (token_set, Eta_ai.ai_error) Eta.Effect.t
+  now_ms:int64 ->
+  (oauth_credential, Eta_ai.ai_error) Eta.Effect.t
+(** Deep refresh: returns the updated durable credential. *)
 
 (** {1 Provider and Responses} *)
 

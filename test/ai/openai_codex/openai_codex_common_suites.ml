@@ -213,24 +213,86 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | [ m ] ->
         Alcotest.(check string) "slug" "gpt-test" m.slug;
         Alcotest.(check bool) "api" true m.supported_in_api;
-        Alcotest.(check (option int)) "priority" (Some 1) m.priority
+        Alcotest.(check (option int)) "priority" (Some 1) m.priority;
+        Alcotest.(check (option string))
+          "default effort" (Some "medium") m.default_reasoning_level;
+        Alcotest.(check (list string))
+          "levels"
+          [ "low"; "medium"; "high" ]
+          m.supported_reasoning_levels
     | _ -> Alcotest.fail "one model"
 
   let test_exchange_effect () =
     with_runtime @@ fun rt ->
     let captured = ref None in
     let client = test_client (response_of_fixture "token.json") captured in
-    let token =
+    let cred =
       run_ok rt "exchange"
         (C.exchange_code client ~redirect_uri:C.default_redirect_uri ~code:"c"
-           ~code_verifier:"v")
+           ~code_verifier:"v" ~now_ms:1000L)
     in
-    Alcotest.(check string) "account" "acc_test" token.account_id;
+    Alcotest.(check string) "account" "acc_test" cred.account_id;
+    Alcotest.(check bool)
+      "expires set" true
+      (match cred.expires_at_ms with Some ms -> ms > 1000L | None -> false);
     match !captured with
     | None -> Alcotest.fail "missing request"
     | Some req ->
         Alcotest.(check string)
           "uri" "https://auth.openai.com/oauth/token" req.uri
+
+  let test_extra_headers_and_malformed_expires () =
+    let token =
+      C.decode_token_response (read_fixture "token.json") |> expect_ok "token"
+    in
+    let cred = C.credential_of_token_set ~now_ms:1L token in
+    let provider =
+      C.provider_for_credential ~identity
+        ~extra_headers:[ ("X-Debug", "fixture"); ("Authorization", "nope") ]
+        cred
+    in
+    let headers = provider.auth_headers (C.access_api_key cred) in
+    Alcotest.(check (option string))
+      "auth wins" (Some "Bearer access-secret-token")
+      (H.Core.Header.get "authorization" headers);
+    Alcotest.(check (option string))
+      "extra" (Some "fixture")
+      (H.Core.Header.get "x-debug" headers);
+    let malformed =
+      C.credential_of_string
+        "{\"type\":\"oauth\",\"access_token\":\"a\",\"refresh_token\":\"b\",\"account_id\":\"acc\",\"expires\":\"nope\"}"
+      |> expect_error "malformed expires"
+    in
+    require_contains "malformed" ~needle:"malformed expires"
+      (A.project_ai_error malformed).diagnostic
+
+  let test_oauth_error_code () =
+    with_runtime @@ fun rt ->
+    let body =
+      "{\"error\":\"invalid_grant\",\"error_description\":\"revoked\"}"
+    in
+    let client =
+      test_client
+        (H.Response.make ~status:400
+           ~body:(H.Body.Stream.of_bytes [ Bytes.of_string body ])
+           ())
+        (ref None)
+    in
+    let token =
+      C.decode_token_response (read_fixture "token.json") |> expect_ok "token"
+    in
+    let cred = C.credential_of_token_set ~now_ms:1L token in
+    match B.run rt (C.refresh client cred ~now_ms:2L) with
+    | Eta.Exit.Error cause ->
+        let diagnostic =
+          Format.asprintf "%a"
+            (Eta.Cause.pp (fun fmt err ->
+                 Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
+            cause
+        in
+        require_contains "invalid_grant" ~needle:"invalid_grant" diagnostic;
+        require_contains "revoked" ~needle:"revoked" diagnostic
+    | Eta.Exit.Ok _ -> Alcotest.fail "expected refresh failure"
 
   let tests =
     [
@@ -244,6 +306,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_token_requires_account_and_headers;
           Alcotest.test_case "models catalog" `Quick test_models_catalog;
           Alcotest.test_case "exchange effect" `Quick test_exchange_effect;
+          Alcotest.test_case "extra headers and malformed expires" `Quick
+            test_extra_headers_and_malformed_expires;
+          Alcotest.test_case "oauth error code" `Quick test_oauth_error_code;
         ] );
     ]
 end

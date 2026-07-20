@@ -52,6 +52,7 @@ type model_info = {
   context_length : int option;
   supports_reasoning : bool option;
   supports_image_in : bool option;
+  supports_video_in : bool option;
   supports_tool_use : bool option;
   supports_thinking_type : supports_thinking_type option;
   think_efforts : think_efforts option;
