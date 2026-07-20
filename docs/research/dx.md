@@ -12,7 +12,29 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** Phase A complete (3 promoted). Phase B in progress: batch 1 landed (E1 partial, E2, E3 killed).
+**Status:** Phases A–C experiments complete (A: 3 promoted · B: 4 promoted,
+2 killed · C: 3 promoted, 1 held, 1 promote-by-evidence held). Phase C
+synthesis next.
+
+## E10 — Function-level sugar: `let%eta` killed, `[@@eta.trace]` held with a trigger (2026-07-19)
+
+The hold-default experiment did its job. A 3-pass independent review cohort
+unanimously **killed `let%eta`** (rated 3 everywhere: the name doesn't say
+"trace", it says "some Eta transformation") and unanimously validated
+**`[@@eta.trace]`** (rated 5 everywhere: metadata on an ordinary definition,
+verbatim-PR acceptable). The promote condition ("reviewers still ask after
+E7/E8") was met unconditionally by only 1 of 3 passes, so the default
+holds — sharpened into a defined **promote trigger**: application code
+showing the plain `Effect.fn __POS__ __FUNCTION__` wrapper pervasive at
+function boundaries with `~error_pp`/`~kind` rare, or evidence that the
+boilerplate suppresses function spans. The full implementation, expansion
+corpus, and error-location corpus (rated 4–5; kill gate unfired) sit on the
+kept branch — promotion becomes a merge when the trigger fires. Evidence:
+`.scratch/research/dx/e10/` (on branch), V-DX-E10-001..002.
+
+Frequency lesson adopted as protocol (V-DX-AMEND-2): Eta is a library —
+frequency evidence counts **user-shaped code** (`examples/`, docs-taught
+patterns), not Eta's own internal cross-package or test usage.
 
 ## E2 — `discard` / `ignore_errors` (promoted 2026-07-18)
 
