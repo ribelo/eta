@@ -388,6 +388,19 @@ val now_ms : (int, 'err) t
     elapsed time, not wall/civil time. Runtime constructors and tests can
     override this clock with their [?now_ms] argument. *)
 
+val fresh : unit -> (int, 'err) t
+(** Return the next value from the active runtime's monotonic counter.
+
+    Values are unique and strictly increasing only within one runtime. They are
+    not globally unique: distinct runtimes, including runtimes on different
+    domains, may return the same values. Add an application-owned namespace when
+    correlating identifiers across runtimes. A newly created [Eta_test] runtime
+    resets the counter, so test programs replay deterministically. *)
+
+val fresh_named : string -> (string, 'err) t
+(** [fresh_named prefix] formats the next {!fresh} value as ["prefix-N"]. It is
+    convenience formatting over the same runtime counter, not a second counter. *)
+
 val sleep : Duration.t -> (unit, 'err) t
 (** Sleep through the active monotonic runtime clock. The sleeper and
     {!now_ms} must use the same time base. Runtime constructors and tests can
