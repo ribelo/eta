@@ -6,7 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E19 — scoped capability override (flagship)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e19`
+  - Branch: `research/dx-e19-scoped-capability-override`
+  - Stage: predictions sealed (V-DX-E19-001); objective.md written; awaiting executor
 - Done (Phase D): E26 promoted (`dfe5f904`) — `Effect.fresh`/`fresh_named`
 - Done (Phase A): E23 promoted (`66bad437`) · E24 promoted (`29bd23e9`) ·
   E25 promoted
@@ -35,4 +38,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   parking lot (superseded by E9b); F6 `fresh` cold-read scope assumption
   (watch)
 - Pending decisions: none
-- Last update: 2026-07-20 — E26 promoted
+- Last update: 2026-07-20 — E19 launched
