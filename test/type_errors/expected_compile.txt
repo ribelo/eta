@@ -14,6 +14,35 @@ Error: eta_error: payload of tag `Custom in type err is unsupported;
        supported built-ins are string, int, int64, float, and bool; add
        [@eta.render My_type.pp] to this tag or write pp_err manually
 exit=2
+===== ppx_eta_trace_non_effect_body.ml =====
+File "cases/ppx_eta_trace_non_effect_body.ml", line 12, characters 11-12:
+12 | let f () = 1 [@@eta.trace]
+                ^
+Error: This expression has type "int" but an expression was expected of type
+         "('a, 'b) Eta.Effect.t"
+exit=2
+===== ppx_let_eta_deep_body.ml =====
+File "cases/ppx_let_eta_deep_body.ml", line 14, characters 14-17:
+14 |   let _ = 1 + "x" in
+                   ^^^
+Error: This expression has type "string" but an expression was expected of type
+         "int"
+exit=2
+===== ppx_let_eta_non_effect_body.ml =====
+File "cases/ppx_let_eta_non_effect_body.ml", line 12, characters 15-16:
+12 | let%eta f () = 1
+                    ^
+Error: This expression has type "int" but an expression was expected of type
+         "('a, 'b) Eta.Effect.t"
+exit=2
+===== ppx_let_eta_wrong_return.ml =====
+File "cases/ppx_let_eta_wrong_return.ml", line 13, characters 44-66:
+13 | let%eta f () : (int, [ `E ]) Eta.Effect.t = Eta.Effect.pure "nope"
+                                                 ^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type "(string, 'a) Eta.Effect.t"
+       but an expression was expected of type "(int, [ `E ]) Eta.Effect.t"
+       Type "string" is not compatible with type "int"
+exit=2
 ===== ppx_result_nonstring.ml =====
 File "cases/ppx_result_nonstring.ml", line 1, characters 21-24:
 1 | let x = [%eta.result 123]

@@ -6,8 +6,7 @@ let eta_effect_ident ~loc name =
     (Located.mk ~loc
        (Longident.Ldot (Longident.Ldot (Lident "Eta", "Effect"), name)))
 
-let expand_fn ~ctxt body =
-  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+let wrap_fn ~loc body =
   let open Ast_builder.Default in
   pexp_apply ~loc (eta_effect_ident ~loc "fn")
     [
@@ -16,7 +15,106 @@ let expand_fn ~ctxt body =
       (Nolabel, body);
     ]
 
+let expand_fn ~ctxt body =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  wrap_fn ~loc body
+
 let fail loc message = Location.raise_errorf ~loc "%s" message
+
+(** Wrap the result position of a (possibly multi-arg) function expression.
+
+    [let f x y = body] becomes [let f x y = Effect.fn __POS__ __FUNCTION__ body].
+    Labeled/optional arguments and [newtype] binders are preserved; only the
+    innermost body is wrapped so recursive calls re-enter [fn]. *)
+let rec wrap_result_position expr =
+  match expr.pexp_desc with
+  | Pexp_function (params, constraint_, Pfunction_body body) ->
+      {
+        expr with
+        pexp_desc =
+          Pexp_function
+            (params, constraint_, Pfunction_body (wrap_result_position body));
+      }
+  | Pexp_function (params, constraint_, Pfunction_cases (cases, cases_loc, attrs))
+    ->
+      let cases =
+        List.map
+          (fun case -> { case with pc_rhs = wrap_result_position case.pc_rhs })
+          cases
+      in
+      {
+        expr with
+        pexp_desc =
+          Pexp_function
+            (params, constraint_, Pfunction_cases (cases, cases_loc, attrs));
+      }
+  | Pexp_newtype (name, jkind, body) ->
+      {
+        expr with
+        pexp_desc = Pexp_newtype (name, jkind, wrap_result_position body);
+      }
+  | Pexp_constraint (body, ctyp, modes) ->
+      {
+        expr with
+        pexp_desc = Pexp_constraint (wrap_result_position body, ctyp, modes);
+      }
+  | Pexp_coerce (body, ctyp_opt, ctyp) ->
+      {
+        expr with
+        pexp_desc = Pexp_coerce (wrap_result_position body, ctyp_opt, ctyp);
+      }
+  | _ -> wrap_fn ~loc:expr.pexp_loc expr
+
+let map_value_bindings wrap bindings =
+  List.map
+    (fun vb -> { vb with pvb_expr = wrap vb.pvb_expr })
+    bindings
+
+let expand_let_eta_structure ~ctxt items =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  match items with
+  | [ { pstr_desc = Pstr_value (rec_flag, bindings); pstr_loc } ] ->
+      Ast_builder.Default.pstr_value ~loc:pstr_loc rec_flag
+        (map_value_bindings wrap_result_position bindings)
+  | _ ->
+      fail loc
+        "expected let%eta binding (let%eta name pats = body)"
+
+let expand_let_eta_expression ~ctxt expr =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  match expr.pexp_desc with
+  | Pexp_let (mutable_flag, rec_flag, bindings, body) ->
+      {
+        expr with
+        pexp_desc =
+          Pexp_let
+            ( mutable_flag,
+              rec_flag,
+              map_value_bindings wrap_result_position bindings,
+              body );
+      }
+  | _ ->
+      fail loc
+        "expected let%eta binding (let%eta name pats = body in ...)"
+
+let eta_trace_attr =
+  Attribute.declare "eta.trace" Attribute.Context.value_binding
+    Ast_pattern.(pstr nil)
+    ()
+
+let apply_eta_trace_binding vb =
+  match Attribute.consume eta_trace_attr vb with
+  | None -> vb
+  | Some (vb, ()) -> { vb with pvb_expr = wrap_result_position vb.pvb_expr }
+
+let eta_trace_mapper =
+  object
+    inherit Ast_traverse.map as super
+
+    method! value_binding vb = super#value_binding (apply_eta_trace_binding vb)
+  end
+
+let impl_eta_trace structure = eta_trace_mapper#structure structure
 
 let expand_sync_like ~ctxt ~kind ~form expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
@@ -54,6 +152,16 @@ let result_extension =
   Extension.V3.declare "eta.result" Extension.Context.expression
     Ast_pattern.(single_expr_payload __)
     (expand_sync_like ~kind:"sync_result" ~form:"result")
+
+let let_eta_structure_extension =
+  Extension.V3.declare "eta" Extension.Context.structure_item
+    Ast_pattern.(pstr __)
+    expand_let_eta_structure
+
+let let_eta_expression_extension =
+  Extension.V3.declare "eta" Extension.Context.expression
+    Ast_pattern.(single_expr_payload __)
+    expand_let_eta_expression
 
 let longident_of_path path =
   match String.split_on_char '.' path with
@@ -612,5 +720,8 @@ let () =
         Context_free.Rule.extension fn_extension;
         Context_free.Rule.extension sync_extension;
         Context_free.Rule.extension result_extension;
+        Context_free.Rule.extension let_eta_structure_extension;
+        Context_free.Rule.extension let_eta_expression_extension;
         Context_free.Rule.extension sql_table_extension;
       ]
+    ~impl:impl_eta_trace

@@ -1,0 +1,5 @@
+File ".scratch/research/dx/e10/redteam/non_effect_body.ml", line 12, characters 15-16:
+12 | let%eta f () = 1
+                    ^
+Error: This expression has type "int" but an expression was expected of type
+         "('a, 'b) Eta.Effect.t"

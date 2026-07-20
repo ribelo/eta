@@ -157,3 +157,40 @@ rate ≤ 3 after location-discipline fixes.
   consumed in a structure mapper, or `attr_replace` if expression-context
   placement works for binding attributes — verify during implement.
 - No docs promotion, no mass call-site conversion (scope fence).
+
+## Implementation follow-up (post-seal)
+
+Predictions above remain sealed. This section records what shipped on the
+branch after the seal commit.
+
+### Code
+
+- `lib/ppx/ppx_eta.ml`: `wrap_fn`, `wrap_result_position` (OxCaml
+  `Pexp_function` result body), `let%eta` structure + expression extensions,
+  `[@@eta.trace]` via `Attribute.consume` + `~impl` mapper.
+- Expansion fixtures `test/ppx_expansion/cases/j_*.ml` … `o_*.ml`.
+- Error fixtures `test/type_errors/cases/ppx_let_eta_*.ml` and
+  `ppx_eta_trace_non_effect_body.ml`.
+- Runtime suite: parity + rec spans in `test/ppx_common/ppx_common_suites.ml`.
+
+### Evidence paths
+
+- Red-team: `.scratch/research/dx/e10/redteam/`
+- Review packet: `.scratch/research/dx/e10/review/`
+- `.mli` invariance: `.scratch/research/dx/e10/mli_invariance/`
+- Report: `.scratch/research/dx/e10/report.md`
+
+### Gate commands
+
+```sh
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+```
+
+All three PASS.
+
+### Verdict pointer
+
+Author recommendation **HOLD** — see `report.md`. Independent review cohort
+owned by orchestrator.

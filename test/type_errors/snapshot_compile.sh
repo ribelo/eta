@@ -16,7 +16,9 @@ for src in cases/*.ml; do
   echo "===== $name ====="
   case "$name" in
     ppx_* | sql_*)
-      ocamlfind ocamlc -ppx "$PPX --as-ppx" -c "$src" 2>&1
+      # Include eta cmi so body type errors under sugar can resolve Effect.t
+      # when cases use the real library; stub-only cases ignore the path.
+      ocamlfind ocamlc -I "$ETA_CMI" -ppx "$PPX --as-ppx" -c "$src" 2>&1
       ;;
     *)
       ocamlfind ocamlc -I "$ETA_CMI" -c "$src" 2>&1

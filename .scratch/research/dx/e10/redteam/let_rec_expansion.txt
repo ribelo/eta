@@ -1,0 +1,8 @@
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let rec countdown n =
+  Eta.Effect.fn __POS__ __FUNCTION__
+    (if n <= 0 then Eta.Effect.pure () else countdown (n - 1))

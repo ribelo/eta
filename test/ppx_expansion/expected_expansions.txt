@@ -118,3 +118,49 @@ let _ =
   Eta.Effect.fn __POS__ __FUNCTION__
     (Eta.Effect.named "db.find"
        (Eta.Effect.sync_result (fun () -> Db.find db id)))
+===== j_let_eta_plain.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let f x = Eta.Effect.fn __POS__ __FUNCTION__ (Eta.Effect.pure x)
+===== k_let_eta_labeled.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let f ~name x =
+  Eta.Effect.fn __POS__ __FUNCTION__ (Eta.Effect.pure (name, x))
+===== l_let_eta_optional.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let f ?(flag= false) x =
+  Eta.Effect.fn __POS__ __FUNCTION__ (Eta.Effect.pure (flag, x))
+===== m_let_eta_rec.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let rec countdown n =
+  Eta.Effect.fn __POS__ __FUNCTION__
+    (if n <= 0 then Eta.Effect.pure () else countdown (n - 1))
+===== n_let_eta_curried.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let f x y z = Eta.Effect.fn __POS__ __FUNCTION__ (Eta.Effect.pure (x, y, z))
+===== o_eta_trace_attr.ml =====
+module Eta =
+  struct
+    module Effect = struct let fn _pos _name body = body
+                           let pure x = x end
+  end
+let f x = Eta.Effect.fn __POS__ __FUNCTION__ (Eta.Effect.pure x)

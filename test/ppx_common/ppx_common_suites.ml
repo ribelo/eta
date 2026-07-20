@@ -212,6 +212,53 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error _ -> Alcotest.fail "expected die defect"
     | Exit.Ok _ -> Alcotest.fail "expected failure"
 
+  let%eta let_eta_add x =
+    Effect.pure (x + 1)
+
+  let eta_trace_add x = Effect.pure (x + 1) [@@eta.trace]
+
+  let hand_fn_add x = Effect.fn __POS__ __FUNCTION__ (Effect.pure (x + 1))
+
+  let test_let_eta_and_attr_parity () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    Alcotest.(check int) "let%eta value" 2 (run_ok rt (let_eta_add 1));
+    Alcotest.(check int) "attr value" 3 (run_ok rt (eta_trace_add 2));
+    Alcotest.(check int) "hand value" 4 (run_ok rt (hand_fn_add 3));
+    let spans = Tracer.dump tracer in
+    Alcotest.(check int) "three spans" 3 (List.length spans);
+    List.iter
+      (fun span ->
+        match attr "loc" span with
+        | Some loc ->
+            Alcotest.(check bool) "loc present" true (String.contains loc '/')
+        | None -> Alcotest.fail "missing loc attr")
+      spans
+
+  let%eta rec countdown n =
+    if n <= 0 then Effect.pure 0
+    else
+      let open Syntax in
+      let* _ = Effect.pure () in
+      countdown (n - 1)
+
+  let test_let_eta_rec_spans () =
+    B.with_traced_runtime @@ fun _ctx rt tracer ->
+    Alcotest.(check int) "countdown" 0 (run_ok rt (countdown 3));
+    let spans = Tracer.dump tracer in
+    (* Wrapper is inside the recursive body: each entry re-enters fn. *)
+    Alcotest.(check int) "per-call spans" 4 (List.length spans);
+    List.iter
+      (fun span ->
+        Alcotest.(check bool)
+          "span name ends with countdown" true
+          (let name = span.Tracer.name in
+           let suffix = "countdown" in
+           let nlen = String.length name in
+           let slen = String.length suffix in
+           nlen >= slen
+           && String.equal (String.sub name (nlen - slen) slen) suffix))
+      spans
+
   let test_sql_table_projection () =
     let select =
       Q.Select.(
@@ -244,6 +291,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "fn" `Quick test_ppx_fn;
           Alcotest.test_case "sync leaf" `Quick test_ppx_thunk_leaf;
           Alcotest.test_case "result leaf parity" `Quick test_ppx_result_parity;
+          Alcotest.test_case "let%eta / [@@eta.trace] parity" `Quick
+            test_let_eta_and_attr_parity;
+          Alcotest.test_case "let%eta rec per-call spans" `Quick
+            test_let_eta_rec_spans;
           Alcotest.test_case "eta_error span status" `Quick
             test_eta_error_span_status;
           Alcotest.test_case "eta_error raising renderer" `Quick
