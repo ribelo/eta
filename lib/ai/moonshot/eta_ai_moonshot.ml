@@ -64,6 +64,11 @@ type structured_output = Codec.structured_output = {
 
 let structured_output = Compat.structured_output
 
+let encode_chat ?structured_output request =
+  Codec.encode_chat_with_thinking ~provider:provider_name
+    ~schema_value:(Codec.schema_value ~provider:provider_name)
+    ?structured_output request
+
 let provider ?(base_url = default_base_url) ?(extra_headers = []) () =
   let p =
     Compat.provider ~name:provider_name ~base_url ~chat_path:"/chat/completions"
@@ -74,6 +79,7 @@ let provider ?(base_url = default_base_url) ?(extra_headers = []) () =
     auth_headers = (fun key -> auth_headers ~extra_headers key);
     capabilities =
       { p.capabilities with image_input = true; structured_outputs = true };
+    encode_chat;
   }
 
 type supports_thinking_type = Only | No | Both
@@ -179,7 +185,6 @@ let list_models ?provider:custom client ~credential =
   | Stdlib.Ok request ->
       A.run_raw_decoded provider client (Stdlib.Ok request) decode_models
 
-let encode_chat = Compat.encode_chat
 let decode_chat = Compat.decode_chat
 let decode_stream_event = Compat.decode_stream_event
 let decode_error = Compat.decode_error
@@ -187,20 +192,32 @@ let decode_error = Compat.decode_error
 let chat_completions_request ?structured_output ?provider:custom ~credential
     request =
   let provider = match custom with Some p -> p | None -> provider () in
-  Compat.chat_completions_request ?structured_output ~provider
-    ~api_key:credential request
+  match encode_chat ?structured_output request with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok raw -> Stdlib.Ok (A.provider_request provider credential raw)
 
 let chat_completions ?structured_output ?provider:custom client ~credential
     request =
   let provider = match custom with Some p -> p | None -> provider () in
-  Compat.chat_completions ?structured_output ~provider client
-    ~api_key:credential request
+  match
+    chat_completions_request ?structured_output ~provider ~credential request
+  with
+  | Stdlib.Error error -> E.fail error
+  | Stdlib.Ok http_request ->
+      A.with_chat_span provider request
+        (A.perform_chat provider client http_request)
 
 let stream_chat_completions ?structured_output ?provider:custom client
     ~credential request =
   let provider = match custom with Some p -> p | None -> provider () in
-  Compat.stream_chat_completions ?structured_output ~provider client
-    ~api_key:credential request
+  let streamed = { request with A.stream = true } in
+  match
+    chat_completions_request ?structured_output ~provider ~credential streamed
+  with
+  | Stdlib.Error error -> E.fail error
+  | Stdlib.Ok http_request ->
+      A.with_stream_span provider streamed
+        (A.perform_stream provider client http_request)
 
 module Chat = struct
   let request = chat_completions_request

@@ -38,13 +38,14 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok "weather tool"
 
-let chat_request ?(stream = false) ?(max_output_tokens = Some 64) () :
+let chat_request ?reasoning ?(stream = false) ?(max_output_tokens = Some 64) () :
     A.chat_request =
   {
     model = "claude-3-5-sonnet-latest";
     prompt = [ A.System "stay brief"; A.User [ A.Text "weather in Warsaw" ] ];
     tools = [ weather_tool () ];
     temperature = Some 0.2;
+    reasoning;
     max_output_tokens;
     replay_items = [];
     stream;
@@ -184,6 +185,47 @@ let test_encode_requires_max_tokens () =
       ()
   | _ -> Alcotest.fail "expected max_output_tokens rejection"
 
+let test_reasoning_levels () =
+  let cases =
+    [
+      (None, None, None);
+      (Some "off", Some {|{"type":"disabled"}|}, None);
+      ( Some "minimal",
+        Some {|{"type":"adaptive"}|},
+        Some {|{"effort":"low"}|} );
+      (Some "low", Some {|{"type":"adaptive"}|}, Some {|{"effort":"low"}|});
+      ( Some "medium",
+        Some {|{"type":"adaptive"}|},
+        Some {|{"effort":"medium"}|} );
+      (Some "high", Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|});
+      ( Some "xhigh",
+        Some {|{"type":"adaptive"}|},
+        Some {|{"effort":"high"}|} );
+      (Some "max", Some {|{"type":"adaptive"}|}, Some {|{"effort":"high"}|});
+    ]
+  in
+  List.iter
+    (fun (reasoning, expected_thinking, expected_output_config) ->
+      let raw =
+        O.encode_messages (chat_request ?reasoning ())
+        |> expect_ok "reasoning"
+      in
+      let json = A.Json.parse raw |> expect_ok "reasoning JSON" in
+      let member name = A.Json.member name json |> Option.map A.Json.compact in
+      Alcotest.(check (option string))
+        "thinking" expected_thinking (member "thinking");
+      Alcotest.(check (option string))
+        "output_config" expected_output_config (member "output_config");
+      Alcotest.(check (option string))
+        "temperature preserved" (Some "0.2") (member "temperature"))
+    cases;
+  List.iter
+    (fun reasoning ->
+      match O.encode_messages (chat_request ~reasoning ()) with
+      | Stdlib.Error (A.Unsupported { provider = "anthropic"; _ }) -> ()
+      | _ -> Alcotest.fail "expected invalid reasoning error")
+    [ ""; " "; "unknown" ]
+
 (* P1: Anthropic provider crashes on image inputs.
    Claude 3+ supports vision. The provider should encode images,
    not crash or return Unsupported. *)
@@ -210,6 +252,7 @@ let test_encode_user_image_does_not_reject () =
         ];
       tools = [];
       temperature = None;
+      reasoning = None;
       max_output_tokens = Some 100;
       replay_items = [];
       stream = false;
@@ -254,6 +297,7 @@ let test_encode_tool_result_with_image_does_not_crash () =
         ];
       tools = [];
       temperature = None;
+      reasoning = None;
       max_output_tokens = Some 100;
       replay_items = [];
       stream = false;
@@ -581,6 +625,7 @@ let tests =
             test_encode_messages_tools_and_cache;
           Alcotest.test_case "requires max tokens" `Quick
             test_encode_requires_max_tokens;
+          Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "user image does not reject" `Quick
             test_encode_user_image_does_not_reject;
           Alcotest.test_case "tool result with image does not crash" `Quick

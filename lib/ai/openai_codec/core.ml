@@ -28,6 +28,31 @@ let result_map_all = A.Json_helpers.result_map_all
 let unsupported ~provider feature =
   Stdlib.Error (A.Unsupported { provider; feature })
 
+type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
+
+let reasoning_level_of_string ~provider = function
+  | value when A.Json_helpers.is_blank value ->
+      unsupported ~provider "reasoning level must not be empty"
+  | "off" -> Stdlib.Ok Off
+  | "minimal" -> Stdlib.Ok Minimal
+  | "low" -> Stdlib.Ok Low
+  | "medium" -> Stdlib.Ok Medium
+  | "high" -> Stdlib.Ok High
+  | "xhigh" -> Stdlib.Ok Xhigh
+  | "max" -> Stdlib.Ok Max
+  | _ ->
+      unsupported ~provider
+        "reasoning level must be off, minimal, low, medium, high, xhigh, or max"
+
+let reasoning_level_to_string = function
+  | Off -> "off"
+  | Minimal -> "minimal"
+  | Low -> "low"
+  | Medium -> "medium"
+  | High -> "high"
+  | Xhigh -> "xhigh"
+  | Max -> "max"
+
 let non_empty_list ~provider label = function
   | [] -> unsupported ~provider (label ^ " must not be empty")
   | values -> Stdlib.Ok values

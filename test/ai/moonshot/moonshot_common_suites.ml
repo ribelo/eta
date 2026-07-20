@@ -38,6 +38,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let require_absent label ~needle value =
     Alcotest.(check bool) label false (contains ~needle value)
 
+  let request_body_string (request : H.Request.t) =
+    match request.body with
+    | H.Request.Fixed chunks ->
+        chunks |> List.map Bytes.to_string |> String.concat ""
+    | H.Request.Empty -> ""
+    | _ -> Alcotest.fail "expected fixed request body"
+
   let body_of_fixture name =
     H.Body.Stream.of_bytes [ Bytes.of_string (read_fixture name) ]
 
@@ -73,6 +80,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Eta.Cause.pp (fun fmt err ->
                Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
           cause
+
+  let chat_request ?reasoning () : A.chat_request =
+    {
+      model = "kimi-k2.5";
+      prompt = [ A.User [ A.Text "hi" ] ];
+      tools = [];
+      temperature = None;
+      reasoning;
+      max_output_tokens = Some 32;
+      replay_items = [];
+      stream = false;
+    }
 
   let test_credential_strict_and_safe () =
     let cred = M.credential "ms-secret-key" |> expect_ok "cred" in
@@ -121,6 +140,52 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | _ -> Alcotest.fail "think efforts")
     | _ -> Alcotest.fail "one model"
 
+  let test_reasoning_levels () =
+    let credential = M.credential "ms-secret-key" |> expect_ok "credential" in
+    let cases =
+      [ None; Some "off"; Some "minimal"; Some "low"; Some "medium";
+        Some "high"; Some "xhigh"; Some "max" ]
+    in
+    List.iter
+      (fun reasoning ->
+        let raw =
+          M.chat_completions_request ~credential
+            (chat_request ?reasoning ())
+          |> expect_ok "reasoning request" |> request_body_string
+        in
+        let json =
+          match A.Json.parse raw with
+          | Stdlib.Ok json -> json
+          | Stdlib.Error message -> Alcotest.fail message
+        in
+        let actual =
+          A.Json.member "thinking" json |> Option.map A.Json.compact
+        in
+        let expected =
+          Option.map
+            (fun level ->
+              if String.equal level "off" then {|{"type":"disabled"}|}
+              else {|{"type":"enabled"}|})
+            reasoning
+        in
+        Alcotest.(check (option string)) "thinking" expected actual;
+        List.iter
+          (fun name ->
+            Alcotest.(check (option string))
+              ("no " ^ name) None
+              (A.Json.member name json |> Option.map A.Json.compact))
+          [ "reasoning"; "reasoning_effort"; "output_config" ])
+      cases;
+    List.iter
+      (fun reasoning ->
+        match
+          M.chat_completions_request ~credential
+            (chat_request ~reasoning ())
+        with
+        | Stdlib.Error (A.Unsupported { provider = "moonshotai"; _ }) -> ()
+        | _ -> Alcotest.fail "expected invalid reasoning error")
+      [ ""; " "; "unknown" ]
+
   let test_chat_and_reasoning_stream () =
     with_runtime @@ fun rt ->
     let cred = M.credential "ms-secret-key" |> expect_ok "cred" in
@@ -131,6 +196,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           prompt = [ A.User [ A.Text "hi" ] ];
           tools = [];
           temperature = Some 0.1;
+          reasoning = None;
           max_output_tokens = Some 32;
           replay_items = [];
           stream = false;
@@ -149,6 +215,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              prompt = [ A.User [ A.Text "hi" ] ];
              tools = [];
              temperature = None;
+             reasoning = None;
              max_output_tokens = None;
              replay_items = [];
              stream = true;
@@ -176,6 +243,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_credential_strict_and_safe;
           Alcotest.test_case "catalog thinking metadata" `Quick
             test_catalog_thinking_metadata;
+          Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "chat and reasoning stream" `Quick
             test_chat_and_reasoning_stream;
         ] );

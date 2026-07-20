@@ -6,6 +6,11 @@ type structured_output = {
   strict : bool option;
 }
 
+type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
+
+val reasoning_level_of_string :
+  provider:string -> string -> (reasoning_level, Eta_ai.ai_error) result
+
 val structured_output :
   schema_value:
     (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
@@ -111,6 +116,14 @@ val encode_chat_json :
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
 val encode_chat :
+  provider:string ->
+  schema_value:
+    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
+  ?structured_output:structured_output ->
+  Eta_ai.chat_request ->
+  (Eta_ai.raw_json, Eta_ai.ai_error) result
+
+val encode_chat_with_thinking :
   provider:string ->
   schema_value:
     (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->

@@ -102,6 +102,7 @@ type chat_request = {
   prompt : prompt;
   tools : tool list;
   temperature : float option;
+  reasoning : string option;
   max_output_tokens : int option;
   replay_items : raw_json list;
   stream : bool;

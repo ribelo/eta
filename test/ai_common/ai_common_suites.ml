@@ -302,6 +302,7 @@ let test_provider_value_carries_endpoint_auth_and_codecs () =
       prompt = [ User [ Text "hello" ] ];
       tools = [];
       temperature = Some 0.2;
+      reasoning = None;
       max_output_tokens = Some 64;
       replay_items = [];
       stream = true;
@@ -404,6 +405,7 @@ let test_provider_encoder_can_reject_unsupported_features () =
           };
         ];
       temperature = None;
+      reasoning = None;
       max_output_tokens = None;
       replay_items = [];
       stream = false;
@@ -931,6 +933,7 @@ let telemetry_request ?(stream = false) () =
     prompt = [ System "stay brief"; User [ Text "hello" ] ];
     tools = [ weather_tool () ];
     temperature = Some 0.2;
+    reasoning = None;
     max_output_tokens = Some 64;
     replay_items = [];
     stream;
