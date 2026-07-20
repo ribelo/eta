@@ -619,12 +619,16 @@ val run_embeddings_request :
 (** Run a built embeddings request under the standard provider embeddings span. *)
 
 val run_raw_decoded :
+  ?max_bytes:int ->
   provider ->
   Eta_http.Client.t ->
   (Eta_http.Request.t, ai_error) result ->
   (raw_json -> ('a, ai_error) result) ->
   ('a, ai_error) Eta.Effect.t
-(** Run a built request, read a successful text body, and decode it. *)
+(** Run a built request, read a successful text body, and decode it.
+
+    [max_bytes] bounds both successful body reads and non-2xx diagnostic body
+    reads (default is the HTTP stream default). *)
 
 val run_binary_decoded :
   ?max_bytes:int ->

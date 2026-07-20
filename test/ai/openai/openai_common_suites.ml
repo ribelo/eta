@@ -867,6 +867,72 @@ let test_openai_tool_result_with_image_does_not_crash () =
     "encode_chat should NOT throw Invalid_argument on image in tool result"
     false crashed_chat
 
+
+let test_decode_models_fixture () =
+  let models = O.decode_models (read_fixture "models.json") |> expect_ok "models" in
+  let ids = List.map (fun (m : O.model_info) -> m.id) models in
+  Alcotest.(check (list string)) "ids" [ "gpt-4.1-mini"; "gpt-4.1" ] ids
+
+let test_decode_models_empty_fails () =
+  match O.decode_models {|{"data":[]}|} with
+  | Stdlib.Error (A.Decode_error { message; raw = None; _ }) ->
+      require_contains "empty" ~needle:"empty" message
+  | Stdlib.Error (A.Decode_error { message; raw = Some leaked; _ }) ->
+      Alcotest.failf "raw retained on empty catalog: %s (%s)" message leaked
+  | Stdlib.Error _ -> Alcotest.fail "expected decode empty catalog"
+  | Stdlib.Ok _ -> Alcotest.fail "expected empty catalog failure"
+
+let test_list_models_runner () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "oa-secret-key" in
+  let captured = ref None in
+  let models =
+    run_ok rt "list_models"
+      (O.list_models
+         (test_client (response_of_fixture "models.json") captured)
+         ~api_key)
+  in
+  let ids = List.map (fun (m : O.model_info) -> m.id) models in
+  Alcotest.(check (list string)) "ids" [ "gpt-4.1-mini"; "gpt-4.1" ] ids;
+  match !captured with
+  | None -> Alcotest.fail "missing models request"
+  | Some request ->
+      Alcotest.(check string) "method" "GET" request.H.Request.method_;
+      Alcotest.(check string)
+        "uri" "https://api.openai.com/v1/models" request.uri;
+      Alcotest.(check (option string))
+        "auth" (Some "Bearer oa-secret-key")
+        (H.Core.Header.get "authorization" request.headers)
+
+let test_list_models_provider_error_is_safe () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "oa-secret-key" in
+  let body =
+    {|{"error":{"message":"invalid api key oa-secret-key","type":"invalid_request_error","code":"invalid_api_key"}}|}
+  in
+  let client =
+    test_client
+      (response_of_bytes ~status:401
+         ~headers:[ ("content-type", "application/json") ]
+         body)
+      (ref None)
+  in
+  match B.run rt (O.list_models client ~api_key) with
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
+  | Eta.Exit.Error cause ->
+      let diagnostic =
+        Format.asprintf "%a"
+          (Eta.Cause.pp (fun fmt err ->
+               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
+          cause
+      in
+      require_contains "status or invalid" ~needle:"invalid" diagnostic;
+      (* Credential must not appear outside the provider message body itself;
+         project_ai_error should not invent Authorization headers. *)
+      Alcotest.(check bool)
+        "no bearer leak" false
+        (contains ~needle:"Bearer oa-secret-key" diagnostic)
+
 let tests =
   [
       ( "provider",
@@ -893,6 +959,9 @@ let tests =
             test_decode_responses_fixture;
           Alcotest.test_case "responses failed status is error" `Quick
             test_decode_responses_failed_status_is_error;
+          Alcotest.test_case "models fixture" `Quick test_decode_models_fixture;
+          Alcotest.test_case "models empty fails" `Quick
+            test_decode_models_empty_fails;
         ] );
       ( "streaming",
         [
@@ -924,6 +993,9 @@ let tests =
             test_transcription_request_rejects_multipart_header_injection;
           Alcotest.test_case "transcription multipart boundary collision" `Quick
             test_transcription_request_avoids_boundary_collision;
+          Alcotest.test_case "list models runner" `Quick test_list_models_runner;
+          Alcotest.test_case "list models provider error is safe" `Quick
+            test_list_models_provider_error_is_safe;
         ] );
       ( "realtime",
         [

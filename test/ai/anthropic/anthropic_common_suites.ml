@@ -493,6 +493,83 @@ let test_stream_runner_and_prompt_cache_header () =
     "prompt cache beta header" (Some "prompt-caching-2024-07-31")
     (H.Core.Header.get "anthropic-beta" request.headers)
 
+
+let test_decode_models_fixture () =
+  let models = O.decode_models (read_fixture "models.json") |> expect_ok "models" in
+  match models with
+  | [ a; b; c ] ->
+      Alcotest.(check string) "id a" "claude-3-5-sonnet-20241022" a.id;
+      Alcotest.(check (option string))
+        "display a" (Some "Claude 3.5 Sonnet") a.display_name;
+      Alcotest.(check string) "id b" "claude-3-opus-20240229" b.id;
+      Alcotest.(check (option string)) "display blank" None b.display_name;
+      Alcotest.(check string) "id c" "claude-sonnet-4-0" c.id;
+      Alcotest.(check (option string)) "display missing" None c.display_name
+  | _ -> Alcotest.failf "expected 3 models, got %d" (List.length models)
+
+let test_decode_models_empty_fails () =
+  match O.decode_models {|{"data":[]}|} with
+  | Stdlib.Error (A.Decode_error { message; raw = None; _ }) ->
+      require_contains "empty" ~needle:"empty" message
+  | Stdlib.Error (A.Decode_error { message; raw = Some leaked; _ }) ->
+      Alcotest.failf "raw retained on empty catalog: %s (%s)" message leaked
+  | Stdlib.Error _ -> Alcotest.fail "expected decode empty catalog"
+  | Stdlib.Ok _ -> Alcotest.fail "expected empty catalog failure"
+
+let test_list_models_runner () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "ant-secret-key" in
+  let captured = ref None in
+  let models =
+    run_ok rt "list_models"
+      (O.list_models
+         (test_client (response_of_fixture "models.json") captured)
+         ~api_key)
+  in
+  let ids = List.map (fun (m : O.model_info) -> m.id) models in
+  Alcotest.(check (list string))
+    "ids"
+    [
+      "claude-3-5-sonnet-20241022";
+      "claude-3-opus-20240229";
+      "claude-sonnet-4-0";
+    ]
+    ids;
+  match !captured with
+  | None -> Alcotest.fail "missing models request"
+  | Some request ->
+      Alcotest.(check string) "method" "GET" request.H.Request.method_;
+      Alcotest.(check string)
+        "uri" "https://api.anthropic.com/v1/models" request.uri;
+      Alcotest.(check (option string))
+        "x-api-key" (Some "ant-secret-key")
+        (H.Core.Header.get "x-api-key" request.headers);
+      Alcotest.(check (option string))
+        "version" (Some "2023-06-01")
+        (H.Core.Header.get "anthropic-version" request.headers)
+
+let test_list_models_provider_error_is_safe () =
+  with_runtime @@ fun rt ->
+  let api_key = O.credential "ant-secret-key" in
+  let client =
+    test_client (response_of_fixture ~status:401 "error.json") (ref None)
+  in
+  match B.run rt (O.list_models client ~api_key) with
+  | Eta.Exit.Ok _ -> Alcotest.fail "expected provider error"
+  | Eta.Exit.Error cause ->
+      let diagnostic =
+        Format.asprintf "%a"
+          (Eta.Cause.pp (fun fmt err ->
+               Format.pp_print_string fmt (A.project_ai_error err).diagnostic))
+          cause
+      in
+      Alcotest.(check bool)
+        "no x-api-key header leak" false
+        (contains ~needle:"x-api-key: ant-secret-key" diagnostic);
+      Alcotest.(check bool)
+        "no bare credential header form" false
+        (contains ~needle:"Bearer ant-secret-key" diagnostic)
+
 let tests =
   [
       ( "provider",
@@ -511,6 +588,9 @@ let tests =
         [
           Alcotest.test_case "message fixture" `Quick test_decode_message_fixture;
           Alcotest.test_case "tool fixture" `Quick test_decode_tool_fixture;
+          Alcotest.test_case "models fixture" `Quick test_decode_models_fixture;
+          Alcotest.test_case "models empty fails" `Quick
+            test_decode_models_empty_fails;
         ] );
       ( "streaming",
         [
@@ -527,6 +607,9 @@ let tests =
             test_message_runner_uses_eta_http_and_suppresses_transport_span;
           Alcotest.test_case "provider error" `Quick
             test_message_runner_provider_error;
+          Alcotest.test_case "list models runner" `Quick test_list_models_runner;
+          Alcotest.test_case "list models provider error is safe" `Quick
+            test_list_models_provider_error_is_safe;
         ] );
   ]
 end

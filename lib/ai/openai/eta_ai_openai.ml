@@ -66,3 +66,40 @@ module Transcriptions = struct
   let create ~provider client ~api_key request =
     transcription ~provider client ~api_key request
 end
+
+
+(** Native model catalog ([GET /v1/models]). *)
+
+let models_catalog_max_bytes = 5 * 1024 * 1024
+
+type model_info = { id : string }
+
+let model_info_of_json json =
+  match Json.string_member "id" json with
+  | None -> None
+  | Some id ->
+      let id = String.trim id in
+      if id = "" then None else Some { id }
+
+let decode_models raw =
+  match Json.parse raw with
+  | Stdlib.Error message -> decode_error_result message
+  | Stdlib.Ok json -> (
+      match Json.array_member "data" json with
+      | None -> decode_error_result "expected a top-level data array"
+      | Some items ->
+          let models = List.filter_map model_info_of_json items in
+          if models = [] then decode_error_result "models catalog is empty"
+          else Stdlib.Ok models)
+
+let models_request ?provider:custom_provider ~api_key () =
+  let provider = default_provider provider custom_provider in
+  Stdlib.Ok (A.provider_get_request provider ~path:"/v1/models" api_key)
+
+let list_models ?provider:custom_provider client ~api_key =
+  let provider = default_provider provider custom_provider in
+  match models_request ~provider ~api_key () with
+  | Stdlib.Error error -> Eta.Effect.fail error
+  | Stdlib.Ok request ->
+      A.run_raw_decoded ~max_bytes:models_catalog_max_bytes provider client
+        (Stdlib.Ok request) decode_models
