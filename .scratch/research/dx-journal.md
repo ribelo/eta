@@ -1732,3 +1732,42 @@ isolated worktree at `7a16e6fb`: **green, zero failures**. Master pushed
 (`006c2572`), and E9b bookkeeping. Isolated worktree removed. Rule
 recorded: master stays green — whoever merges to master runs the full
 gate first.
+
+---
+
+## V-DX-E10-001 — 2026-07-19 — research/dx-e10-function-sugar — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. E10 is the programme's hold-default
+experiment: the deliverable is evidence for the hold/promote decision, not
+a promotion push.
+
+**Frequency evidence (measured pre-change).** `Effect.fn __POS__` = **5
+sites repo-wide** (3 in tests). `[%eta.sync]`/`[%eta.result]` = 66 uses in
+`examples/`. The definition-site boilerplate E10 targets has already been
+absorbed by E8's leaf sugar. T4's "demonstrated frequency" bar: not met by
+current usage. This is the load-bearing fact of the whole experiment.
+
+**Expansion (predicted).** Both spellings implementable with the E7/E8
+machinery: `let%eta f x = body` → `let f x = Effect.fn __POS__
+__FUNCTION__ body`; `[@@eta.trace]` the same as a structure-item attribute.
+Labeled/optional/`let rec` shapes work; wrapper-inside recursion semantics
+defined and documented (each recursive call re-enters `fn` — spans per
+call). Expansion stays one line; `.mli` unchanged (representation-level).
+
+**Error locations (predicted).** Mistyped body: error points into the body
+(locations preserved), wrapper name visible in the trace; board rating 3–4.
+Kill gate (≤3 and unimprovable) does NOT fire.
+
+**Review cohort (predicted).** A/B of a real converted module:
+hand-written ~4, sugar ~3–4. The plan's sealed prediction stands: "authors
+like it, reviewers neutral-to-negative" — the "sugar reads like behaviour"
+concern appears in comments. On the hold-gate question ("after E7/E8, do
+you still want this?"), reviewers told the frequency data (5 sites) do
+NOT ask for it.
+
+**Outcome (predicted).** HOLD — the pre-registered default. Promote
+condition ("reviewers still ask") unmet; kill gate unfired. Census: PPX
+forms stay 3 (`[%eta.sync]`, `[%eta.result]`, `[@@deriving eta_error]`).
+Footguns ±0. Value of the experiment: the hold becomes evidence-backed
+(expansion corpus + error-location corpus + review), not a hunch — and the
+corpus is the ready-made record if definition-site `fn` usage ever grows.
