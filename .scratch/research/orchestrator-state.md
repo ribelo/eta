@@ -5,9 +5,11 @@ session: read this file, the tail of `.scratch/research/dx-journal.md`, and
 the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **C → D transition** — Phase C synthesis written
-  (V-DX-PHASE-C, `7184c893`)
-- In flight: nothing
+- Current phase: **D** (runtime & model)
+- In flight: **E26 — Effect.fresh (Phase D warm-up)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e26`
+  - Branch: `research/dx-e26-effect-fresh`
+  - Stage: predictions sealed (V-DX-E26-001); objective.md written; awaiting executor
 - Done (Phase A): E23 promoted (`66bad437`) · E24 promoted (`29bd23e9`) ·
   E25 promoted
 - Done (Phase B): E1 promoted (sync_option killed, then **promoted by
@@ -34,4 +36,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   (substrate exists again, frequency rule still gates); E9 split →
   parking lot (superseded by E9b)
 - Pending decisions: none
-- Last update: 2026-07-20 — Phase C synthesis complete; Phase D next
+- Last update: 2026-07-20 — E26 launched
