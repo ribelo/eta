@@ -13,7 +13,34 @@ channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
 **Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
-C: 3 promoted, 2 held). Phase D started: E26 promoted.
+C: 3 promoted, 2 held). Phase D: E26, E19 promoted.
+
+## E19 — Scoped capability override (promoted 2026-07-20)
+
+polysemy's `reinterpret`, in Eta's idiom — and explicitly **not** an
+environment: `with_clock` / `with_random` / `with_logger` / `with_tracer`
+are fiber-local dynamic bindings over the four runtime services, the same
+machinery as `annotate_logs` at its natural home. A fake clock for one
+assertion costs one combinator, not a bespoke runtime:
+`Effect.with_clock (Test_clock.as_capability c) program`.
+
+The semantics in one breath: children inherit at fork (no join-merge);
+restore on success, typed failure, defect, and cancellation; innermost
+wins; `par` siblings isolated; consulted at leaf call time (in-flight
+sleeps and open spans don't retroactively change); daemons keep their
+fork-time binding after the scope exits. All thirteen edge cases are
+executable tests, on both backends.
+
+Evidence: the W6 test (prove retry slept 10/20/40 ms) drops its
+runtime-assembly ceremony for one combinator at the assertion; an
+independent reviewer preferred it 4–3 and spotted the old form's footgun
+unprompted (real `~clock` next to fake `~sleep`/`~now_ms`: which
+operations remain real?). `Capabilities.clock` gained `now_ms` (was
+sleep-only); the otel tracer gained a fiber-identity seam for open-span
+ownership.
+
+Provenance: `.scratch/research/dx/e19/` (on branch), V-DX-E19-001..002,
+branch `research/dx-e19-scoped-capability-override`.
 
 ## E26 — `Effect.fresh` / `fresh_named` (promoted 2026-07-20)
 

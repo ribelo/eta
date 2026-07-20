@@ -6,10 +6,9 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E19 — scoped capability override (flagship)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e19`
-  - Branch: `research/dx-e19-scoped-capability-override`
-  - Stage: predictions sealed (V-DX-E19-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase D): E26 promoted (`dfe5f904`) · **E19 promoted** (`42d6a4d2`,
+  flagship — scoped capability overrides)
 - Done (Phase D): E26 promoted (`dfe5f904`) — `Effect.fresh`/`fresh_named`
 - Done (Phase A): E23 promoted (`66bad437`) · E24 promoted (`29bd23e9`) ·
   E25 promoted
@@ -21,10 +20,10 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D** — **E19** (scoped capability override; flagship)
-  → E20 (intercept) → E12 (audit/describe) → E11 (Eta_test.run)
-  → E13 (async) → E14 (Promise, hold-gated)
-- Backlog: E24b hook-ownership (after E19/E20 context); retry
+- Queue: **Phase D** — **E20** (intercept_log/metric) → E12
+  (audit/describe) → E11 (Eta_test.run) → E13 (async) → E14 (Promise,
+  hold-gated)
+- Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
   (silent hang → named error); dead PPX rejections ×2 (delete candidates);
   resource/pool escape-fence question; `Supervisor.Scope.start`
@@ -38,4 +37,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   parking lot (superseded by E9b); F6 `fresh` cold-read scope assumption
   (watch)
 - Pending decisions: none
-- Last update: 2026-07-20 — E19 launched
+- OPS NOTE: main checkout found on `erg-v1-ocaml54` with DX research tree
+  staged on top (foreign workstream state — LEFT AS FOUND, reported to
+  human); E19 merge+bookkeeping done in isolated worktree per V-DX-E8-002a
+- Last update: 2026-07-20 — E19 promoted

@@ -26,7 +26,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E9b | Honest and* (sequential); Effect.par | C | S-M | low-med | **promoted** 2026-07-19 | SC | research/dx-e9b-honest-and-star | V-DX-E9B-001..002 |
 | E10 | let%eta function sugar | C | M | med | **held** (let%eta killed; [@@eta.trace] pre-selected, trigger defined) | SC | research/dx-e10-function-sugar | V-DX-E10-001..002 |
 | E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
-| E19 | Scoped capability override | D | M | med | proposed | | | |
+| E19 | Scoped capability override | D | M | med | **promoted** 2026-07-20 | SC | research/dx-e19-scoped-capability-override | V-DX-E19-001..002 |
 | E20 | intercept_log/metric | D | M | low-med | proposed | | | |
 | E11 | Eta_test.run golden record | D | L | med | proposed | | | |
 | E12 | audit / describe | D | M | low | proposed | | | |
@@ -2171,3 +2171,70 @@ Cohort rule applies (≥3 passes before gate evaluation).
 
 **Outcome (predicted).** Promote. Effort M; the risk is doc discipline,
 not semantics (the `annotate_logs` generalization is proven machinery).
+
+---
+
+## V-DX-E19-002 — 2026-07-20 — research/dx-e19-scoped-capability-override — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`42d6a4d2`); mainline `test/js_jsoo` +
+`test/cache_jsoo` compile clean; jsoo suite passes (`scoped clock and
+logger parity`).
+
+**Contract** (verified): four `with_*` combinators over the existing
+`local_with_binding` machinery; `Capabilities.clock` **pre-existed as a
+sleep-only class type** (orchestrator pre-flight miss — grep pattern
+`^type clock` vs `class type clock`; the executor extended it with
+`method now_ms`, documented). mli per val: inherit at fork, no join-merge,
+restore on all four exit kinds, innermost wins, `par` isolation,
+consult-at-call-time, in-flight sleep/span stability, daemon fork-time
+retention. `with_random` honestly scoped (retry/repeat jitter + runtime
+trace ids; NOT explicit application tokens). Interplay order documented:
+scoped min-level filter → scoped/per-call attributes → future
+`intercept_log` transform → sink. New low-level contract seam
+`current_fiber_id`/`with_fiber_identity` for the otel tracer (open-span
+ownership; disclosed as contract-internal).
+
+**Edge matrix** (13 cases, orchestrator re-run, all green): restore ×4
+exit kinds + runtime-cancellation restore; fork-inherit ×4 capabilities;
+`par` sibling isolation both directions; innermost-wins + restore-outer;
+fake-clock sleep/timeout without wall time; seeded retry jitter replay;
+logger sink composition (attrs, filter); cross-tracer + same-tracer
+open-span ownership; daemon fork-time retention + inherited failure
+diagnostics; in-flight real sleep ignores later override; jsoo parity.
+
+**Red-team 3/3** (executable): sibling-leak trap `(11,0)` not `(11,11)`;
+in-flight 30 ms sleep not accelerated by a later 999-clock sibling;
+gated daemon sees fork-time clock+logger+tracer after scope exit. All
+disarmed by docs.
+
+**Doc budget (kill gate input):** 29 caveat-prose lines across 4 vals
+(6–8 each; executor's sealed budget ≤ 30). Every pre-registered caveat
+present; per-val within T8's ~10. **Kill gate does not fire.**
+
+**Review** `[agent-sim, spot-check]` (oracle, W6 A/B, randomized):
+scoped override **4** vs runtime assembly **3**; preference scoped — "the
+fake dependency is attached directly and narrowly"; the old form's
+footgun surfaced unprompted ("real `~clock` next to fake `~sleep`/
+`~now_ms` — which operations remain real?"). Teach-back 3/3: leak
+boundary correct; `par` sibling written correctly; fork inheritance
+expected (mli confirms). W6 line census: 31 → 24.
+
+**Prediction scoring (orchestrator, V-DX-E19-001).** Hits: edge matrix
+(all of it), kill gate unfired, interplay doc shape, review medians
+(scoped ≥4 / assembly ~3 — exact 4/3), teach-back, promote outcome,
+persona mistakes (fork-inheritance question materialized). Misses:
+"Capabilities.clock does not exist" (pre-existed sleep-only; census is
++1 method, not +1 type); doc-cost estimate ≤15 (actual 29 — within
+per-val budget; my number was tight, the gate's spirit held). Executor:
+4.5/6 (missed its 40% W6-reduction seal: actual 22.6%).
+
+**Decision: PROMOTE.** Merged `--no-ff` (`42d6a4d2`); master gates green;
+master + branch pushed; objective archived. **Ops note:** the main
+checkout was found on `erg-v1-ocaml54` (foreign workstream) with the DX
+research tree staged on top — merge and bookkeeping executed in an
+isolated worktree per the V-DX-E8-002a rule; the foreign state was left
+exactly as found (reported to the human).
+
+**Follow-ups:** none new. E24b context now complete for hook-ownership
+(E19/E20 machinery known); scheduled per Phase D queue.
