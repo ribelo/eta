@@ -5,26 +5,26 @@ session: read this file, the tail of `.scratch/research/dx-journal.md`, and
 the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **C** (syntax & PPX) — E7 promoted
-- In flight: nothing
-- RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green;
-  master pushed.
-- Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (`0644da2e`)
-  · **E9 held** (branch kept/pushed) · **E9b promoted** (`006c2572`,
-  push pending master-green)
-- Done (Phase C): **E7 promoted** (`df55d1df`) · **E8 promoted** (merged
-  `--no-ff`, master gates green, pushed; worktree removed)
-- Done: Phase A (E23/E24/E25) · Phase B (E1/E2/E3-k/E4/E5/E6-k) ·
-  **E7 promoted** (`df55d1df`) — `[@@deriving eta_error]`, zero hand-written
-  telemetry printers in examples
-- Queue: E10 (hold default) → Phase C synthesis (covers E7/E8/E9-hold/E9b/E10); then Phase D
+- Current phase: **C** (syntax & PPX)
+- In flight: **E10 — `let%eta` / `[@@eta.trace]` function sugar (hold-default)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e10`
+  - Branch: `research/dx-e10-function-sugar`
+  - Stage: predictions sealed (V-DX-E10-001); objective.md written; awaiting executor
+- Done (Phase A): E23 promoted (`66bad437`) · E24 promoted (`29bd23e9`) ·
+  E25 promoted
+- Done (Phase B): E1 promoted (sync_option killed) · E2 promoted ·
+  E3 killed · E4 promoted · E5 promoted · E6 killed (helpers; recipe kept)
+- Done (Phase C): E7 promoted (`df55d1df`) · E8 promoted (`0644da2e`) ·
+  E9 held (branch kept/pushed) · E9b promoted (`006c2572`)
+- RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
+- Queue: E10 → Phase C synthesis (covers E7/E8/E9-hold/E9b/E10) → Phase D
 - Backlog: E24b hook-ownership; retry cause-alignment; **same-domain
   runtime fence for Channel/Pubsub/Pool** (silent hang → named error);
   dead PPX rejections ×2 (delete candidates); resource/pool escape-fence
   question; `Supervisor.Scope.start` first-contact error; compact `die`
   terminology watch; ~~F1 signal_jsoo~~ **closed 2026-07-19** (`077f763e`);
-  F2 `fold ~ok:Fun.id` noise; F3
-  `catch_recovery.ml`; F4 `map_par` omission misreading; F5
+  F2 `fold ~ok:Fun.id` noise (**closed — accepted as idiom**, E23b
+  declined); F3 `catch_recovery.ml`; F4 `map_par` omission misreading; F5
   `Supervisor.scoped` vocabulary; candidate: `map_par` default-8 bench
-- Pending decisions: none — E23b declined (F2 accepted as idiom)
-- Last update: 2026-07-19 — F1 + F2 closed
+- Pending decisions: none
+- Last update: 2026-07-19 — E10 launched
