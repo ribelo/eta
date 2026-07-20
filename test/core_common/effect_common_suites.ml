@@ -762,6 +762,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "discard swallowed finalizer diagnostic"
 
+  let test_fresh_sequence_is_strictly_increasing () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Syntax in
+    let program =
+      let* first = Effect.fresh () in
+      let* second = Effect.fresh () in
+      let+ third = Effect.fresh () in
+      [ first; second; third ]
+    in
+    Alcotest.(check (list int)) "fresh sequence" [ 1; 2; 3 ]
+      (run_ok rt program)
+
+  let test_fresh_is_unique_under_concurrency () =
+    B.with_runtime @@ fun _ctx rt ->
+    let count = 128 in
+    let values =
+      List.init count (fun _ -> Effect.fresh ())
+      |> Effect.all
+      |> run_ok rt
+    in
+    let unique = List.sort_uniq Int.compare values in
+    Alcotest.(check int) "fresh pull count" count (List.length values);
+    Alcotest.(check int) "unique fresh values" count (List.length unique)
+
+  let test_fresh_named_uses_fresh_counter () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Syntax in
+    let program =
+      let* _ = Effect.all (List.init 6 (fun _ -> Effect.fresh ())) in
+      Effect.fresh_named "worker"
+    in
+    Alcotest.(check string) "fresh name" "worker-7" (run_ok rt program)
+
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     let typed_cause cause =
@@ -3454,6 +3487,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_all_settled_empty;
           Alcotest.test_case "map_par success" `Quick
             test_map_par_success;
+          Alcotest.test_case "fresh sequence is strictly increasing" `Quick
+            test_fresh_sequence_is_strictly_increasing;
+          Alcotest.test_case "fresh is unique under concurrency" `Quick
+            test_fresh_is_unique_under_concurrency;
+          Alcotest.test_case "fresh_named uses fresh counter" `Quick
+            test_fresh_named_uses_fresh_counter;
           Alcotest.test_case "iteration optional omission yields effects" `Quick
             test_iteration_optional_omission_yields_effects;
           Alcotest.test_case "map_par one fails" `Quick

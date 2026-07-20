@@ -393,6 +393,8 @@ let delay duration eff =
 
 let sleep duration = sync_frame (fun frame -> frame.runtime.sleep duration)
 let now_ms = sync_frame (fun frame -> frame.runtime.now_ms ())
+let fresh () = sync_frame (fun frame -> frame.runtime.contract.fresh ())
+let fresh_named prefix = fresh () |> map (Printf.sprintf "%s-%d" prefix)
 
 let timed eff =
   preserve eff @@ fun frame ->

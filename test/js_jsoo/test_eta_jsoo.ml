@@ -43,6 +43,14 @@ let expect_ok_pair expected = function
         (Format.asprintf "expected Ok pair, got %a"
            (Eta.Cause.pp pp_err) cause)
 
+let expect_ok_fresh_values = function
+  | Eta.Exit.Ok ([ 1; 2; 3 ], "worker-4") -> ()
+  | Eta.Exit.Ok _ -> fail "unexpected fresh sequence or fresh_named value"
+  | Eta.Exit.Error cause ->
+      fail
+        (Format.asprintf "expected fresh values, got %a"
+           (Eta.Cause.pp pp_err) cause)
+
 let expect_fail pred = function
   | Eta.Exit.Error (Eta.Cause.Fail err) when pred err -> ()
   | Eta.Exit.Error cause ->
@@ -54,6 +62,17 @@ let expect_fail pred = function
 let test_delay done_ =
   run (Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure 42))
     ~on_result:(finish done_ (expect_ok_int 42))
+
+let test_fresh_uses_runtime_local_mutable_counter done_ =
+  let open Eta.Syntax in
+  let program =
+    let* first = Eta.Effect.fresh () in
+    let* second = Eta.Effect.fresh () in
+    let* third = Eta.Effect.fresh () in
+    let+ named = Eta.Effect.fresh_named "worker" in
+    ([ first; second; third ], named)
+  in
+  run program ~on_result:(finish done_ expect_ok_fresh_values)
 
 let test_timeout_releases_resource done_ =
   let released = ref false in
@@ -274,6 +293,7 @@ let test_daemon_drain done_ =
 let tests =
   [
     ("delay", test_delay);
+    ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
     ("timeout releases resource", test_timeout_releases_resource);
     ("await cancel hook", test_await_cancel_hook);
     ("runtime locals cross fork", test_runtime_locals_cross_fork);

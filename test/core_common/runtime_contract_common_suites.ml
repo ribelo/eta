@@ -8,8 +8,10 @@ module Direct_runtime = struct
   type 'a stream = 'a Stdlib.Queue.t
 
   let now = ref 0
+  let fresh_counter = Atomic.make 0
   let root_scope = ()
   let now_ms () = !now
+  let fresh () = Atomic.fetch_and_add fresh_counter 1 + 1
   let sleep duration = now := !now + Duration.to_ms duration
   let protect f = f ()
   let run_scope ?name:_ f = f ()

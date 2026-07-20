@@ -259,6 +259,7 @@ let runtime_with_host host ~sw ~clock:raw_clock =
   let module Cancel = (val Host.cancel host : Host.CANCEL) in
   let fiber = (module Fiber : Host.FIBER) in
   let clock = (raw_clock :> float Eio.Time.clock_ty Eio.Std.r) in
+  let fresh_counter = Atomic.make 0 in
   (module struct
     type scope = Eio.Switch.t
     type cancel_context = Eio.Cancel.t
@@ -268,6 +269,7 @@ let runtime_with_host host ~sw ~clock:raw_clock =
 
     let root_scope = sw
     let now_ms () = int_of_float (Time.now clock *. 1000.0)
+    let fresh () = Atomic.fetch_and_add fresh_counter 1 + 1
     let sleep duration =
       let seconds = Eta.Duration.to_seconds_float duration in
       if seconds > 0.0 then Time.sleep clock seconds
