@@ -873,14 +873,16 @@ let test_decode_models_fixture () =
   let ids = List.map (fun (m : O.model_info) -> m.id) models in
   Alcotest.(check (list string)) "ids" [ "gpt-4.1-mini"; "gpt-4.1" ] ids
 
-let test_decode_models_empty_fails () =
-  match O.decode_models {|{"data":[]}|} with
-  | Stdlib.Error (A.Decode_error { message; raw = None; _ }) ->
-      require_contains "empty" ~needle:"empty" message
-  | Stdlib.Error (A.Decode_error { message; raw = Some leaked; _ }) ->
-      Alcotest.failf "raw retained on empty catalog: %s (%s)" message leaked
-  | Stdlib.Error _ -> Alcotest.fail "expected decode empty catalog"
-  | Stdlib.Ok _ -> Alcotest.fail "expected empty catalog failure"
+let test_decode_models_empty_ok () =
+  let models = O.decode_models {|{"data":[]}|} |> expect_ok "empty models" in
+  Alcotest.(check int) "empty list" 0 (List.length models)
+
+let test_decode_models_malformed_shape () =
+  match O.decode_models {|{"models":[]}|} with
+  | Stdlib.Error (A.Decode_error { message; _ }) ->
+      require_contains "shape" ~needle:"data array" message
+  | Stdlib.Error _ -> Alcotest.fail "expected decode shape error"
+  | Stdlib.Ok _ -> Alcotest.fail "expected malformed shape failure"
 
 let test_list_models_runner () =
   with_runtime @@ fun rt ->
@@ -960,8 +962,9 @@ let tests =
           Alcotest.test_case "responses failed status is error" `Quick
             test_decode_responses_failed_status_is_error;
           Alcotest.test_case "models fixture" `Quick test_decode_models_fixture;
-          Alcotest.test_case "models empty fails" `Quick
-            test_decode_models_empty_fails;
+          Alcotest.test_case "models empty ok" `Quick test_decode_models_empty_ok;
+          Alcotest.test_case "models malformed shape" `Quick
+            test_decode_models_malformed_shape;
         ] );
       ( "streaming",
         [

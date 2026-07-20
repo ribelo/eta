@@ -654,9 +654,8 @@ let decode_models raw =
       match Json.array_member "data" json with
       | None -> decode_error_result "expected a top-level data array"
       | Some items ->
-          let models = List.filter_map model_info_of_json items in
-          if models = [] then decode_error_result "models catalog is empty"
-          else Stdlib.Ok models)
+          (* Empty catalogs are valid wire results; callers decide refresh policy. *)
+          Stdlib.Ok (List.filter_map model_info_of_json items))
 
 let models_request ?provider:custom_provider ~api_key () =
   let provider = resolve_provider custom_provider in
