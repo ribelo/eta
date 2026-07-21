@@ -2238,3 +2238,68 @@ exactly as found (reported to the human).
 
 **Follow-ups:** none new. E24b context now complete for hook-ownership
 (E19/E20 machinery known); scheduled per Phase D queue.
+
+---
+
+## V-DX-E20-001 — 2026-07-21 — research/dx-e20-intercept — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E20-002.
+
+**Current shapes (measured pre-change).** Log leaves: `log*`; metric
+leaves: `metric_update`/`metric_counter`/`metric_gauge`/`metric_frequency`/
+`metric_histogram`. Fiber-local stages exist for logs: `annotate_logs`
+(attrs), `with_minimum_log_level` (filter) in `effect_observability.ml`
+over runtime_observability locals. E19 documented the order: **scoped
+min-level filter → scoped/per-call attributes → intercept transform →
+sink** — E20 must match it exactly. There is NO bare `metric` type: the
+record flowing to meter sinks is `Capabilities.metric_point` — the
+one-pager's `(metric -> metric option)` becomes
+`(Capabilities.metric_point -> Capabilities.metric_point option)`.
+`Redacted.scrub_record` does not exist (review snippets define a scrub
+inline). No per-subtree metric enrichment exists today — that is
+`intercept_metric`'s case.
+
+**Contract.**
+```ocaml
+val intercept_log :
+  (Capabilities.log_record -> Capabilities.log_record option) ->
+  ('a, 'err) t -> ('a, 'err) t
+val intercept_metric :
+  (Capabilities.metric_point -> Capabilities.metric_point option) ->
+  ('a, 'err) t -> ('a, 'err) t
+```
+`None` drops the record. `annotate_logs`/`with_minimum_log_level` stay as
+the friendly special cases (progressive disclosure). Transforms compose
+outermost-to-innermost; `None` short-circuits; transform runs before the
+currently bound sink (E19 order); fiber-local (only records emitted in
+the subtree).
+
+**Census (predicted).** Observability cluster +2 vals / +1 concept
+(interception). Footguns +0; trap candidates recorded: (a) believing
+intercept sees records the min-level filter dropped (it runs AFTER
+filter+attrs — mli restates the E19 order); (b) believing it sees other
+fibers' emissions (fiber-local); (c) believing `None` skips to later
+transforms (it short-circuits).
+
+**Mechanical (predicted).** Composition order outermost→innermost; `None`
+short-circuit; drop semantics (record never reaches sink); shorthand
+parity exact (`annotate_logs`, `with_minimum_log_level` behave as before);
+order vs E19 overrides (transform applies to the currently bound sink —
+tested with `with_logger` inside and outside); redaction use case works;
+fast path (`Some`-identity) noise-level on the watchlist bench; jsoo
+parity for log.
+
+**Kill gate (metric half) — predicted NOT fired.** Compelling use cases
+exist and the review will surface them: per-subtree label enrichment
+(tenant id — no other mechanism today), sampling high-cardinality series,
+dropping a noisy metric in tests. Predicted survivor argument: enrichment
+has no shorthand, unlike logs.
+
+**Review (predicted).** A/B redaction (hand-filtered logger discipline vs
+`intercept_log`) + enrichment/sampling snippet: intercept ≥ 4, discipline
+~ 3. Teach-back "which combinator drops records?" — "`intercept_*`
+returning `None`" ≥ 2/3. Cohort rule if the metric gate is contested.
+
+**Outcome (predicted).** Promote both halves. Effort M, risk low-med;
+E19's machinery and documented order make this an application of a proven
+pattern, not a new one.
