@@ -1,6 +1,17 @@
 (test
  (name test_eta_test)
+ (modules test_eta_test)
  (libraries eta_eio eta_test eta alcotest eio_main unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(executable
+ (name dx_e11_broken_retry)
+ (modules dx_e11_broken_retry)
+ (libraries eta_test eta alcotest))
+
+(executable
+ (name dx_e11_daemon_pending)
+ (modules dx_e11_daemon_pending)
+ (libraries eta_test eta))
