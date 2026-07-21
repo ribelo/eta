@@ -9,11 +9,9 @@ module Test_clock = struct
     mutable now_ms : int;
     mutable next_sequence : int;
     mutable sleepers : sleeper list;
-    mutable observed_sleeps_rev : Eta.Duration.t list;
   }
 
-  let create () =
-    { now_ms = 0; next_sequence = 0; sleepers = []; observed_sleeps_rev = [] }
+  let create () = { now_ms = 0; next_sequence = 0; sleepers = [] }
 
   let sleeper_compare a b =
     match Int.compare a.deadline_ms b.deadline_ms with
@@ -47,7 +45,6 @@ module Test_clock = struct
     let deadline_ms = t.now_ms + Eta.Duration.to_ms duration in
     if deadline_ms <= t.now_ms then ()
     else
-      let () = t.observed_sleeps_rev <- duration :: t.observed_sleeps_rev in
       let promise, resolver = Eio.Promise.create () in
       let sequence = t.next_sequence in
       t.next_sequence <- t.next_sequence + 1;
@@ -76,8 +73,103 @@ module Test_clock = struct
     | [] -> None
     | sleeper :: _ -> Some (Eta.Duration.ms (sleeper.deadline_ms - t.now_ms))
 
-  let observed_sleeps t = List.rev t.observed_sleeps_rev
 end
+
+module Fiber_accounting = struct
+  type kind = Structured | Daemon
+
+  type info = {
+    id : int;
+    parent_id : int option;
+    kind : kind;
+  }
+
+  type t = {
+    mutable next_id : int;
+    mutable pending_rev : info list;
+  }
+
+  let fiber_id = Eta.Runtime_contract.create_local ()
+  let create () = { next_id = 1; pending_rev = [] }
+  let pending t = List.rev t.pending_rev
+
+  let start t local_get kind =
+    let id = t.next_id in
+    t.next_id <- id + 1;
+    let info = { id; parent_id = local_get fiber_id; kind } in
+    t.pending_rev <- info :: t.pending_rev;
+    info
+
+  let finish t id =
+    t.pending_rev <- List.filter (fun fiber -> fiber.id <> id) t.pending_rev
+
+  let wrap t backend =
+    let module Base = (val backend : Eta.Runtime_contract.RUNTIME) in
+    (module struct
+      type scope = Base.scope
+      type cancel_context = Base.cancel_context
+      type 'a promise = 'a Base.promise
+      type 'a resolver = 'a Base.resolver
+      type 'a stream = 'a Base.stream
+
+      let root_scope = Base.root_scope
+      let now_ms = Base.now_ms
+      let fresh = Base.fresh
+      let sleep = Base.sleep
+      let protect = Base.protect
+      let run_scope = Base.run_scope
+      let fail_scope = Base.fail_scope
+
+      let fork scope f =
+        let info = start t Base.local_get Structured in
+        try
+          Base.fork scope (fun () ->
+              Base.local_with_binding fiber_id info.id (fun () ->
+                  Fun.protect ~finally:(fun () -> finish t info.id) f))
+        with exn ->
+          finish t info.id;
+          raise exn
+
+      let fork_daemon scope f =
+        let info = start t Base.local_get Daemon in
+        try
+          Base.fork_daemon scope (fun () ->
+              Base.local_with_binding fiber_id info.id (fun () ->
+                  Fun.protect ~finally:(fun () -> finish t info.id) f))
+        with exn ->
+          finish t info.id;
+          raise exn
+
+      let await_cancel = Base.await_cancel
+      let yield = Base.yield
+      let check = Base.check
+      let create_promise = Base.create_promise
+      let resolve_promise = Base.resolve_promise
+      let await_promise = Base.await_promise
+      let create_stream = Base.create_stream
+      let stream_add = Base.stream_add
+      let stream_take = Base.stream_take
+      let stream_take_nonblocking = Base.stream_take_nonblocking
+      let with_worker_context = Base.with_worker_context
+      let in_worker_context = Base.in_worker_context
+      let cancellation_reason = Base.cancellation_reason
+      let multiple_exceptions = Base.multiple_exceptions
+      let cancel_sub = Base.cancel_sub
+      let cancel = Base.cancel
+      let local_get = Base.local_get
+      let local_with_binding = Base.local_with_binding
+      let current_fiber_id = Base.current_fiber_id
+      let with_fiber_identity = Base.with_fiber_identity
+    end : Eta.Runtime_contract.RUNTIME)
+end
+
+let create_accounted_runtime ~sw ~eio_clock ~clock ?logger ?tracer () =
+  let accounting = Fiber_accounting.create () in
+  let backend =
+    Eta_eio.runtime ~sw ~clock:eio_clock |> Fiber_accounting.wrap accounting
+  in
+  Eta.Runtime.create_with_runtime backend ~sleep:(Test_clock.sleep clock)
+    ~now_ms:(fun () -> Test_clock.now_ms clock) ?logger ?tracer ()
 
 let with_logger f =
   Eio_main.run @@ fun stdenv ->
@@ -85,8 +177,7 @@ let with_logger f =
   let clock = Test_clock.create () in
   let logger = Eta.Logger.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~now_ms:(fun () -> Test_clock.now_ms clock)
+    create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
       ~logger:(Eta.Logger.as_capability logger) ()
   in
   f sw rt logger
@@ -97,8 +188,7 @@ let with_tracer f =
   let clock = Test_clock.create () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~now_ms:(fun () -> Test_clock.now_ms clock)
+    create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f sw rt tracer
@@ -110,8 +200,7 @@ let with_logger_and_tracer f =
   let logger = Eta.Logger.in_memory () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~now_ms:(fun () -> Test_clock.now_ms clock)
+    create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
       ~logger:(Eta.Logger.as_capability logger)
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
@@ -122,9 +211,7 @@ let with_test_clock f =
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock) ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ()
+    create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock ()
   in
   f sw clock rt
 
@@ -134,9 +221,7 @@ let with_traced_test_clock f =
   let clock = Test_clock.create () in
   let tracer = Eta.Tracer.in_memory () in
   let rt =
-    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~sleep:(Test_clock.sleep clock)
-      ~now_ms:(fun () -> Test_clock.now_ms clock)
+    create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
       ~tracer:(Eta.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer
@@ -207,13 +292,19 @@ module Test_random = struct
 end
 
 module Run = struct
-  type fiber_kind = Structured | Daemon
+  type fiber_kind = Fiber_accounting.kind = Structured | Daemon
 
-  type fiber_info = {
+  type fiber_info = Fiber_accounting.info = {
     id : int;
     parent_id : int option;
     kind : fiber_kind;
   }
+
+  type event =
+    | Sleep of Eta.Duration.t
+    | Log of Eta.Logger.record
+    | Span of Eta.Tracer.span
+    | Metric of Eta.Meter.point
 
   type ('a, 'err) outcome = {
     exit : ('a, 'err) Eta.Exit.t;
@@ -221,90 +312,9 @@ module Run = struct
     spans : Eta.Tracer.span list;
     metrics : Eta.Meter.point list;
     sleeps : Eta.Duration.t list;
+    events : event list;
     pending_fibers : fiber_info list;
   }
-
-  type accounting = {
-    mutable next_id : int;
-    mutable pending_rev : fiber_info list;
-  }
-
-  let accounting_fiber_id = Eta.Runtime_contract.create_local ()
-
-  let start_fiber accounting local_get kind =
-    let id = accounting.next_id in
-    accounting.next_id <- id + 1;
-    let parent_id = local_get accounting_fiber_id in
-    let info = { id; parent_id; kind } in
-    accounting.pending_rev <- info :: accounting.pending_rev;
-    info
-
-  let finish_fiber accounting id =
-    accounting.pending_rev <-
-      List.filter (fun fiber -> fiber.id <> id) accounting.pending_rev
-
-  let accounting_runtime accounting backend =
-    let module Base = (val backend : Eta.Runtime_contract.RUNTIME) in
-    (module struct
-      type scope = Base.scope
-      type cancel_context = Base.cancel_context
-      type 'a promise = 'a Base.promise
-      type 'a resolver = 'a Base.resolver
-      type 'a stream = 'a Base.stream
-
-      let root_scope = Base.root_scope
-      let now_ms = Base.now_ms
-      let fresh = Base.fresh
-      let sleep = Base.sleep
-      let protect = Base.protect
-      let run_scope = Base.run_scope
-      let fail_scope = Base.fail_scope
-
-      let fork scope f =
-        let info = start_fiber accounting Base.local_get Structured in
-        try
-          Base.fork scope (fun () ->
-              Base.local_with_binding accounting_fiber_id info.id (fun () ->
-                  Fun.protect
-                    ~finally:(fun () -> finish_fiber accounting info.id)
-                    f))
-        with exn ->
-          finish_fiber accounting info.id;
-          raise exn
-
-      let fork_daemon scope f =
-        let info = start_fiber accounting Base.local_get Daemon in
-        try
-          Base.fork_daemon scope (fun () ->
-              Base.local_with_binding accounting_fiber_id info.id (fun () ->
-                  Fun.protect
-                    ~finally:(fun () -> finish_fiber accounting info.id)
-                    f))
-        with exn ->
-          finish_fiber accounting info.id;
-          raise exn
-
-      let await_cancel = Base.await_cancel
-      let yield = Base.yield
-      let check = Base.check
-      let create_promise = Base.create_promise
-      let resolve_promise = Base.resolve_promise
-      let await_promise = Base.await_promise
-      let create_stream = Base.create_stream
-      let stream_add = Base.stream_add
-      let stream_take = Base.stream_take
-      let stream_take_nonblocking = Base.stream_take_nonblocking
-      let with_worker_context = Base.with_worker_context
-      let in_worker_context = Base.in_worker_context
-      let cancellation_reason = Base.cancellation_reason
-      let multiple_exceptions = Base.multiple_exceptions
-      let cancel_sub = Base.cancel_sub
-      let cancel = Base.cancel
-      let local_get = Base.local_get
-      let local_with_binding = Base.local_with_binding
-      let current_fiber_id = Base.current_fiber_id
-      let with_fiber_identity = Base.with_fiber_identity
-    end : Eta.Runtime_contract.RUNTIME)
 
   let rec drive clock result =
     if Eio.Promise.is_resolved result then ()
@@ -317,7 +327,7 @@ module Run = struct
           Eio.Fiber.yield ();
           drive clock result
 
-  let run ?clock ?(seed = 0) eff =
+  let run ?clock ?(seed = 0) ?(account_fibers = true) eff =
     Eio_main.run @@ fun stdenv ->
     Eio.Switch.run @@ fun sw ->
     let clock = Option.value clock ~default:(Test_clock.create ()) in
@@ -325,34 +335,106 @@ module Run = struct
     let tracer = Eta.Tracer.in_memory () in
     let meter = Eta.Meter.in_memory () in
     let random = Eta.Capabilities.random_of_seed seed in
-    let accounting = { next_id = 1; pending_rev = [] } in
+    let events_rev = ref [] in
+    let record event = events_rev := event :: !events_rev in
+    let logger_capability = Eta.Logger.as_capability logger in
+    let logger_capability : Eta.Capabilities.logger =
+      object
+        method log log_record =
+          logger_capability#log log_record;
+          record (Log log_record)
+      end
+    in
+    let meter_capability = Eta.Meter.as_capability meter in
+    let meter_capability : Eta.Capabilities.meter =
+      object
+        method record point =
+          meter_capability#record point;
+          record (Metric point)
+      end
+    in
+    let tracer_capability = Eta.Tracer.as_capability tracer in
+    let tracer_capability : Eta.Capabilities.tracer =
+      object
+        method with_task_context : 'a. Eta.Runtime_contract.t -> (unit -> 'a) -> 'a =
+          fun contract f -> tracer_capability#with_task_context contract f
+
+        method begin_span contract ?parent_id ?external_parent ?trace_id
+            ?trace_flags ?trace_state ?baggage ?kind ~name ~started_ms () =
+          tracer_capability#begin_span contract ?parent_id ?external_parent
+            ?trace_id ?trace_flags ?trace_state ?baggage ?kind ~name ~started_ms
+            ()
+
+        method end_span contract ~span_id ~status ~ended_ms =
+          tracer_capability#end_span contract ~span_id ~status ~ended_ms;
+          match
+            List.find_opt
+              (fun span -> span.Eta.Tracer.span_id = span_id)
+              (Eta.Tracer.dump tracer)
+          with
+          | Some span -> record (Span span)
+          | None -> invalid_arg "Eta_test.Run: ended span missing from test tracer"
+
+        method add_attr contract ~key ~value =
+          tracer_capability#add_attr contract ~key ~value
+
+        method add_attr_to contract ~span_id ~key ~value =
+          tracer_capability#add_attr_to contract ~span_id ~key ~value
+
+        method add_event contract ~span_id ~name ~ts_ms ~attrs =
+          tracer_capability#add_event contract ~span_id ~name ~ts_ms ~attrs
+
+        method add_link contract link = tracer_capability#add_link contract link
+
+        method add_link_to contract ~span_id link =
+          tracer_capability#add_link_to contract ~span_id link
+
+        method inspect contract ~span_id =
+          tracer_capability#inspect contract ~span_id
+      end
+    in
+    let clock_capability : Eta.Capabilities.clock =
+      object
+        method now_ms () = Test_clock.now_ms clock
+
+        method sleep duration =
+          if Eta.Duration.to_ms duration > 0 then record (Sleep duration);
+          Test_clock.sleep clock duration
+      end
+    in
+    let accounting = Fiber_accounting.create () in
+    let backend = Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv) in
     let backend =
-      Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      |> accounting_runtime accounting
+      if account_fibers then Fiber_accounting.wrap accounting backend else backend
     in
     let runtime =
       Eta.Runtime.create_with_runtime backend
-        ~meter:(Eta.Meter.as_capability meter) ~capture_backtrace:false ()
+        ~meter:meter_capability ~capture_backtrace:false ()
     in
     let program =
       eff
-      |> Eta.Effect.with_tracer (Eta.Tracer.as_capability tracer)
-      |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+      |> Eta.Effect.with_tracer tracer_capability
+      |> Eta.Effect.with_logger logger_capability
       |> Eta.Effect.with_random random
-      |> Eta.Effect.with_clock (Test_clock.as_capability clock)
+      |> Eta.Effect.with_clock clock_capability
     in
     let result, resolve = Eio.Promise.create () in
     Eio.Fiber.fork ~sw (fun () ->
         Eio.Promise.resolve resolve (Eta.Runtime.run runtime program));
     drive clock result;
     let exit = Eio.Promise.await result in
+    let events = List.rev !events_rev in
     {
       exit;
       logs = Eta.Logger.dump logger;
       spans = Eta.Tracer.dump tracer;
       metrics = Eta.Meter.dump meter;
-      sleeps = Test_clock.observed_sleeps clock;
-      pending_fibers = List.rev accounting.pending_rev;
+      sleeps =
+        List.filter_map
+          (function Sleep duration -> Some duration | _ -> None)
+          events;
+      events;
+      pending_fibers = Fiber_accounting.pending accounting;
     }
 
   let expect_no_pending_fibers outcome =
@@ -394,38 +476,85 @@ module Run = struct
     | Fatal -> Format.pp_print_string fmt "FATAL"
 
   let pp_log fmt record =
-    Format.fprintf fmt "t=%d %a %S" record.Eta.Logger.ts_ms pp_level record.level
-      record.body;
-    if record.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs record.attrs;
-    if record.trace_id <> "" then
-      Format.fprintf fmt " trace=%s span=%s" record.trace_id record.span_id
+    Format.fprintf fmt "t=%d %a %S attrs={%a} trace=%S span=%S"
+      record.Eta.Logger.ts_ms pp_level record.level record.body pp_attrs
+      record.attrs record.trace_id record.span_id
 
   let pp_span_status fmt = function
     | Eta.Tracer.Ok -> Format.pp_print_string fmt "ok"
     | Error message -> Format.fprintf fmt "error(%S)" message
     | Cancelled -> Format.pp_print_string fmt "cancelled"
 
+  let pp_span_kind fmt = function
+    | Eta.Capabilities.Internal -> Format.pp_print_string fmt "internal"
+    | Server -> Format.pp_print_string fmt "server"
+    | Client -> Format.pp_print_string fmt "client"
+    | Producer -> Format.pp_print_string fmt "producer"
+    | Consumer -> Format.pp_print_string fmt "consumer"
+
+  let pp_trace_context fmt (context : Eta.Capabilities.trace_context) =
+    Format.fprintf fmt "trace=%S span=%S flags=%d state={%a} baggage={%a}"
+      context.Eta.Capabilities.trace_id context.span_id context.trace_flags
+      pp_attrs context.trace_state pp_attrs context.baggage
+
+  let pp_span_event fmt event =
+    Format.fprintf fmt "(%d,%S,{%a})" event.Eta.Tracer.ev_ts_ms event.ev_name
+      pp_attrs event.ev_attrs
+
+  let pp_span_link fmt link =
+    Format.fprintf fmt "(%S,%S,{%a})" link.Eta.Tracer.link_trace_id
+      link.link_span_id pp_attrs link.link_attrs
+
   let pp_span fmt span =
-    Format.fprintf fmt "t=%d..%d %S status=%a" span.Eta.Tracer.started_ms
-      span.ended_ms span.name pp_span_status span.status;
-    if span.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs span.attrs;
-    List.iter
-      (fun event ->
-        Format.fprintf fmt " event(%d,%S" event.Eta.Tracer.ev_ts_ms event.ev_name;
-        if event.ev_attrs <> [] then
-          Format.fprintf fmt ",{%a}" pp_attrs event.ev_attrs;
-        Format.pp_print_char fmt ')')
+    Format.fprintf fmt
+      "id=%d parent=%a t=%d..%d name=%S kind=%a status=%a attrs={%a} \
+       events=[%a] links=[%a] trace=%S flags=%d state={%a} baggage={%a} \
+       external_parent=%a"
+      span.Eta.Tracer.span_id (Format.pp_print_option Format.pp_print_int)
+      span.parent_id span.started_ms span.ended_ms span.name pp_span_kind span.kind
+      pp_span_status span.status pp_attrs span.attrs
+      (Format.pp_print_list
+         ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+         pp_span_event)
       span.events
+      (Format.pp_print_list
+         ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+         pp_span_link)
+      span.links span.trace_id span.trace_flags pp_attrs span.trace_state pp_attrs
+      span.baggage (Format.pp_print_option pp_trace_context) span.external_parent
 
   let pp_metric_value fmt = function
     | Eta.Capabilities.Number (Int value) -> Format.pp_print_int fmt value
     | Number (Float value) -> Format.pp_print_float fmt value
     | Category value -> Format.fprintf fmt "%S" value
 
+  let pp_float_list fmt values =
+    Format.pp_print_list
+      ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ",")
+      Format.pp_print_float fmt values
+
+  let pp_metric_kind fmt = function
+    | Eta.Capabilities.Counter { monotonic } ->
+        Format.fprintf fmt "counter(monotonic=%b)" monotonic
+    | Gauge -> Format.pp_print_string fmt "gauge"
+    | Frequency -> Format.pp_print_string fmt "frequency"
+    | Histogram { boundaries } ->
+        Format.fprintf fmt "histogram([%a])" pp_float_list boundaries
+    | Summary { quantiles; max_age; max_size } ->
+        Format.fprintf fmt "summary(q=[%a],max_age=%a,max_size=%d)" pp_float_list
+          quantiles Eta.Duration.pp max_age max_size
+
   let pp_metric fmt point =
-    Format.fprintf fmt "t=%d %s=%a" point.Eta.Meter.ts_ms point.name
-      pp_metric_value point.value;
-    if point.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs point.attrs
+    Format.fprintf fmt
+      "t=%d name=%S description=%S unit=%S kind=%a attrs={%a} value=%a"
+      point.Eta.Meter.ts_ms point.name point.description point.unit_ pp_metric_kind
+      point.kind pp_attrs point.attrs pp_metric_value point.value
+
+  let pp_event fmt = function
+    | Sleep duration -> Format.fprintf fmt "sleep %a" Eta.Duration.pp duration
+    | Log record -> Format.fprintf fmt "log %a" pp_log record
+    | Span span -> Format.fprintf fmt "span %a" pp_span span
+    | Metric point -> Format.fprintf fmt "metric %a" pp_metric point
 
   let pp_fiber_kind fmt = function
     | Structured -> Format.pp_print_string fmt "structured"
@@ -449,22 +578,27 @@ module Run = struct
 
   let pp pp_ok pp_err fmt outcome =
     Format.fprintf fmt
-      "@[<v>execution outcome@,exit: %a@,events:@, sleeps:%a@, logs:%a@, \
-       spans:%a@, metrics:%a@, finalizers: unavailable (failures remain in \
-       exit)@,pending fibers:%a@]"
+      "@[<v>execution outcome@,exit: %a@,ordered events:%a@,snapshots:@, \
+       sleeps:%a@, logs:%a@, spans:%a@, metrics:%a@, finalizers: unavailable \
+       (failures remain in exit)@,pending fibers:%a@]"
       (Eta.Exit.pp pp_ok pp_err) outcome.exit
+      (pp_indexed pp_event) outcome.events
       (pp_indexed Eta.Duration.pp) outcome.sleeps
       (pp_indexed pp_log) outcome.logs (pp_indexed pp_span) outcome.spans
       (pp_indexed pp_metric) outcome.metrics (pp_indexed pp_fiber)
       outcome.pending_fibers
 
   let equal ok_test err_test left right =
-    Eta.Exit.equal (Alcotest.equal ok_test) (Alcotest.equal err_test) left.exit
-      right.exit
+    (match (left.exit, right.exit) with
+    | Eta.Exit.Ok left, Eta.Exit.Ok right -> Alcotest.equal ok_test left right
+    | Eta.Exit.Error left, Eta.Exit.Error right ->
+        Eta.Cause.diagnostic_equal (Alcotest.equal err_test) left right
+    | _ -> false)
     && left.logs = right.logs
     && left.spans = right.spans
     && left.metrics = right.metrics
     && List.equal Eta.Duration.equal left.sleeps right.sleeps
+    && left.events = right.events
     && left.pending_fibers = right.pending_fibers
 
   let testable ok_test err_test =

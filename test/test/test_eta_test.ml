@@ -685,14 +685,60 @@ let test_run_fiber_accounting_preserves_exit_corpus () =
   in
   List.iter
     (fun (name, program) ->
-      let ordinary =
-        with_test_clock @@ fun _sw _clock runtime ->
-        Eta.Runtime.run runtime program
-      in
-      let accounted = (Run.run program).exit in
-      Alcotest.(check bool) name true
-        (Eta.Exit.equal Int.equal String.equal ordinary accounted))
+      let ordinary = Run.run ~account_fibers:false program in
+      let accounted = Run.run ~account_fibers:true program in
+      Alcotest.check (Run.testable Alcotest.int Alcotest.string) name ordinary
+        accounted)
     corpus
+
+let test_run_reused_clock_reports_only_current_sleeps () =
+  let clock = Test_clock.create () in
+  let first =
+    Run.run ~clock (Eta.Effect.sleep (Eta.Duration.ms 5))
+  in
+  Run.expect_sleeps [ Eta.Duration.ms 5 ] first;
+  let second = Run.run ~clock Eta.Effect.unit in
+  Run.expect_sleeps [] second;
+  Alcotest.(check int) "no stale ordered sleep event" 0
+    (List.length second.events)
+
+let test_run_ordered_events_cross_categories () =
+  let open Eta.Syntax in
+  let program =
+    Eta.Effect.named "ordered"
+      (let* () = Eta.Effect.log_info "first" in
+       let* () =
+         Eta.Effect.metric_gauge ~name:"second" (Eta.Capabilities.Int 2)
+       in
+       Eta.Effect.sleep (Eta.Duration.ms 3))
+  in
+  let outcome = Run.run program in
+  match outcome.events with
+  | [ Run.Log _; Metric _; Sleep duration; Span _ ] ->
+      Alcotest.(check int) "sleep duration" 3 (Eta.Duration.to_ms duration)
+  | events ->
+      Alcotest.failf "expected log/metric/sleep/span order, got %d events"
+        (List.length events)
+
+let test_run_testable_uses_diagnostic_defect_equality () =
+  let program : (unit, string) Eta.Effect.t = Eta.Effect.die_message "same defect" in
+  let first = Run.run program in
+  let second = Run.run program in
+  Alcotest.check (Run.testable Alcotest.unit Alcotest.string)
+    "same defect diagnostics" first second
+
+let test_run_nested_pending_parentage_replays () =
+  let program =
+    Eta.Effect.par (Eta.Effect.daemon Eta.Effect.never) Eta.Effect.unit
+    |> Eta.Effect.discard
+  in
+  let first = Run.run program in
+  let second = Run.run program in
+  (match first.pending_fibers with
+  | [ { Run.parent_id = Some _; kind = Daemon; _ } ] -> ()
+  | _ -> Alcotest.fail "expected a daemon parented by a structured child");
+  Alcotest.(check bool) "stable pending identities" true
+    (first.pending_fibers = second.pending_fibers)
 
 let has_log body outcome =
   List.exists (fun record -> record.Eta.Logger.body = body) outcome.Run.logs
@@ -848,6 +894,18 @@ let test_run_printer_is_readable_at_six_scenarios () =
   Alcotest.(check bool) "six-scenario corpus stays below 120 lines" true
     (List.fold_left (fun total output -> total + line_count output) 0 corpus < 120)
 
+let test_run_six_complete_outcomes_replay () =
+  let ( a1, b1, c1, d1, e1, f1 ) = run_golden_scenarios () in
+  let ( a2, b2, c2, d2, e2, f2 ) = run_golden_scenarios () in
+  let check name testable left right = Alcotest.check testable name left right in
+  check "sibling cancelled" (Run.testable Alcotest.unit Alcotest.string) a1 a2;
+  check "finalizer interruption" (Run.testable Alcotest.string Alcotest.string)
+    b1 b2;
+  check "retry sleeps" (Run.testable Alcotest.unit Alcotest.string) c1 c2;
+  check "span defect" (Run.testable Alcotest.unit Alcotest.string) d1 d2;
+  check "suppressed finalizer" (Run.testable Alcotest.unit Alcotest.string) e1 e2;
+  check "race loser" (Run.testable Alcotest.unit Alcotest.string) f1 f2
+
 let fresh_sequence_in_new_test_runtime () =
   with_test_clock @@ fun _sw _clock rt ->
   let open Eta.Syntax in
@@ -921,10 +979,20 @@ let () =
             test_run_completed_structured_fibers_are_not_pending;
           Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
             test_run_fiber_accounting_preserves_exit_corpus;
+          Alcotest.test_case "reused clock isolates sleep history" `Quick
+            test_run_reused_clock_reports_only_current_sleeps;
+          Alcotest.test_case "ordered events cross categories" `Quick
+            test_run_ordered_events_cross_categories;
+          Alcotest.test_case "testable uses diagnostic defect equality" `Quick
+            test_run_testable_uses_diagnostic_defect_equality;
+          Alcotest.test_case "nested pending parentage replays" `Quick
+            test_run_nested_pending_parentage_replays;
           Alcotest.test_case "six canonical golden scenarios" `Quick
             test_run_six_canonical_golden_scenarios;
           Alcotest.test_case "printer readable at six scenarios" `Quick
             test_run_printer_is_readable_at_six_scenarios;
+          Alcotest.test_case "six complete outcomes replay" `Quick
+            test_run_six_complete_outcomes_replay;
         ] );
       ( "Scoped capabilities",
         [

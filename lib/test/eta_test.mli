@@ -138,19 +138,30 @@ module Run : sig
       when the program's root exit became available. IDs start at one for each
       [run] and describe only fibers created by the tested program. *)
 
+  type event =
+    | Sleep of Eta.Duration.t
+    | Log of Eta.Logger.record
+    | Span of Eta.Tracer.span
+    | Metric of Eta.Meter.point
+  (** One cross-category execution observation. Events are sequenced when the
+      virtual sleep is requested, a log/metric reaches its sink, or a span
+      closes. *)
+
   type ('a, 'err) outcome = {
     exit : ('a, 'err) Eta.Exit.t;
     logs : Eta.Logger.record list;
     spans : Eta.Tracer.span list;
     metrics : Eta.Meter.point list;
     sleeps : Eta.Duration.t list;
+    events : event list;
     pending_fibers : fiber_info list;
   }
   (** One inspectable execution record.
 
       [logs], [spans], and [metrics] are insertion-ordered snapshots of fresh
       in-memory sinks. [sleeps] contains every positive virtual-clock sleep in
-      call order, including retry/repeat backoff. [pending_fibers] is the
+      call order, including retry/repeat backoff. [events] preserves their
+      cross-category observation order. [pending_fibers] is the
       root-exit snapshot described by {!fiber_info}; completed fibers are absent.
 
       Finalizer failures remain in [exit] as [Cause.Finalizer] or
@@ -161,12 +172,15 @@ module Run : sig
   val run :
     ?clock:Test_clock.t ->
     ?seed:int ->
+    ?account_fibers:bool ->
     ('a, 'err) Eta.Effect.t ->
     ('a, 'err) outcome
   (** [run ?clock ?seed program] executes [program] once on a fresh Eio-backed
       test runtime and returns all observations in one record. The default clock
-      starts at zero and the default random seed is zero. Virtual sleeps are
-      advanced automatically; [run] does not wait for wall time.
+      starts at zero, the default random seed is zero, and fiber accounting is
+      enabled by default. Virtual sleeps are advanced automatically; [run] does
+      not wait for wall time. [account_fibers=false] is provided for exact
+      accounting-neutrality comparisons using otherwise identical construction.
 
       Determinism contract: the same effect blueprint, initial clock state, seed,
       and runtime construction produce the same exit and ordered observations.
