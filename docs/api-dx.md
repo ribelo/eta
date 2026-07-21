@@ -166,7 +166,9 @@ daemon draining, supervised nurseries, runtime-owned resource failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
-observability signals; `and*` remains where a fixed product must stay sequential;
+
+observability signals; `and*` is the rule for products that must stay
+sequential (this file's formerly-concurrent uses all moved to `Effect.par`);
 `Effect.par` remains where independent foreground effects run concurrently;
 `let@` remains where code marks lexical resource lifetime.
 `Supervisor.Scope.(let*)` remains inside the supervisor example because child

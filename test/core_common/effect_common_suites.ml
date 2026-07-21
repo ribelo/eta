@@ -1506,6 +1506,39 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (list string))
       "and* order" [ "right"; "left" ] !log
 
+  let test_syntax_andplus_strict_left_to_right () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let log = ref [] in
+    let mark name = Effect.sync (fun () -> log := name :: !log) in
+    let result =
+      run_ok rt
+        (let+ () = mark "left"
+         and+ () = mark "right" in
+         ())
+    in
+    ignore (result : unit);
+    Alcotest.(check (list string))
+      "and+ order" [ "right"; "left" ] !log
+
+  let test_syntax_andplus_left_fail_skips_right () =
+    B.with_runtime @@ fun _ctx rt ->
+    let open Eta.Syntax in
+    let ran = ref false in
+    let eff =
+      let+ _ = Effect.fail "andplus-left-boom"
+      and+ _ =
+        Effect.sync (fun () ->
+            ran := true;
+            1)
+      in
+      ()
+    in
+    let exit = B.run rt eff in
+    check_exit_error string_cause "and+ left fail"
+      (Cause.Fail "andplus-left-boom") exit;
+    Alcotest.(check bool) "and+ right skipped" false !ran
+
   let test_syntax_and_right_waits_for_left () =
     B.with_runtime @@ fun ctx rt ->
     let open Eta.Syntax in
@@ -3548,6 +3581,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_or_die_preserves_interruption;
           Alcotest.test_case "syntax operators" `Quick
             test_effect_syntax_operators;
+          Alcotest.test_case "syntax and+ strict left-to-right" `Quick
+            test_syntax_andplus_strict_left_to_right;
+          Alcotest.test_case "syntax and+ left fail skips right" `Quick
+            test_syntax_andplus_left_fail_skips_right;
           Alcotest.test_case "syntax and* strict left-to-right" `Quick
             test_syntax_and_strict_left_to_right;
           Alcotest.test_case "syntax and* right waits for left" `Quick
