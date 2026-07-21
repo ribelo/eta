@@ -13,7 +13,31 @@ channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
 **Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
-C: 3 promoted, 2 held). Phase D: E26, E19 promoted.
+C: 3 promoted, 2 held). Phase D: E26, E19, E20 promoted.
+
+## E20 — `intercept_log` / `intercept_metric` (promoted 2026-07-21, as E20b)
+
+polysemy's `intercept`, in Eta's idiom: fiber-local transforms over log
+records and metric points — `Keep | Drop | Replace` — sitting in the
+E19-documented pipeline: min-level filter → attributes → intercept
+(outermost-to-innermost) → sink. `annotate_logs` and
+`with_minimum_log_level` stay as the friendly special cases with exact
+parity. Redaction and tenant-enrichment become scoped *mechanisms*, not
+discipline: a deeper `with_logger` can no longer accidentally bypass the
+policy (the old wrapper-sink style's invited bug, found blind in review).
+
+Two findings shaped the outcome: (1) the `option` representation made the
+"allocation-free identity" contract unfulfillable — the executor
+self-rejected on measurement, and the variant representation fixed it
+(`Keep` ≡ `Replace` in cost); (2) the residual active-scope cost (~10.5
+minor words/record) turned out to be the shared fiber-local machinery —
+a control measurement showed an active `annotate_logs` scope costs
+*identically*. Zero cost when no interceptor is installed; when installed,
+the same price as any scoped stage. The deep follow-up (allocation-free
+lookup) is registered as F7 and benefits all scoped stages.
+
+Provenance: `.scratch/research/dx/e20/` (on branch), V-DX-E20-001..002,
+V-DX-E20B-001..002, branch `research/dx-e20-intercept`.
 
 ## E19 — Scoped capability override (promoted 2026-07-20)
 

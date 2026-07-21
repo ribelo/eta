@@ -27,7 +27,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E10 | let%eta function sugar | C | M | med | **held** (let%eta killed; [@@eta.trace] pre-selected, trigger defined) | SC | research/dx-e10-function-sugar | V-DX-E10-001..002 |
 | E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
 | E19 | Scoped capability override | D | M | med | **promoted** 2026-07-20 | SC | research/dx-e19-scoped-capability-override | V-DX-E19-001..002 |
-| E20 | intercept_log/metric | D | M | low-med | proposed | | | |
+| E20 | intercept_log/metric | D | M | low-med | **promoted** 2026-07-21 (as E20b variant repr) | SC | research/dx-e20-intercept | V-DX-E20-001..002, V-DX-E20B-001..002 |
 | E11 | Eta_test.run golden record | D | L | med | proposed | | | |
 | E12 | audit / describe | D | M | low | proposed | | | |
 | E13 | Effect.async | D | M-L | med | proposed | | | |
@@ -2391,3 +2391,59 @@ judges them.
   sites (`fun _ -> Keep`, `fun r -> Drop`, `Replace (scrub r)`);
   predicted median ≥ 4; `Drop` vs `None` teach-back correct.
 - Outcome: promote both halves. E20's metric kill gate stays unfired.
+
+---
+
+## V-DX-E20B-002 — 2026-07-21 — research/dx-e20-intercept — phase: results + decision (PROMOTE via gate re-evaluation)
+
+**Representation fix: proven.** `Effect.intercept = Keep | Drop | Replace`.
+Watchlist (orchestrator re-run, stddev 0): `identity_intercept` 6,291,445
+minor words; `replace_intercept` 6,291,447 — **Keep ≡ Replace**: the
+transform representation now adds zero. E20b delivered exactly what was
+asked of it.
+
+**The structural residual, and the control that settles it.** `Keep` still
+shows +1,048,569 minor words/100k over baseline — the fiber-local scoped-
+stage lookup. Control measurement (orchestrator-added permanent bench row):
+**an active `annotate_logs` scope costs 6,291,437 — the same ~10.49
+words/record.** The one-pager's "allocation-free fast path while scoped"
+is a path no scoped stage in Eta has; the goalposts were planted in the
+wrong field. Gate re-evaluation (pre-registered clause, exercised with the
+control as evidence): the honest contract is — zero cost when no
+interceptor is installed (the common case); when installed, the same cost
+as any scoped observability stage, measured; the transform representation
+adds nothing beyond it. Holding E20 to a standard `annotate_logs` does not
+meet would be incoherent. **PROMOTE.**
+
+**Behavior: carried and re-verified.** Pipeline order (filter → attrs →
+outermost-to-innermost → sink), drop/short-circuit, shorthand parity,
+E19 interplay both orders, redaction + tenant-enrichment executable,
+raising transform → `Die`, jsoo parity. Native trio + mainline JS gates
+green (orchestrator re-run in worktree AND on master post-merge,
+`6deb7694`).
+
+**Review** `[agent-sim, spot-check]` (oracle, randomized pairs):
+`intercept_log` **4** vs sink-wrapper **3** (its invited bug named
+unprompted: deeper `with_logger` bypasses the policy); `intercept_metric`
+**4** vs meter-wrapper **1** — the reviewer found a *latent bug* in the
+old-style snippet (decorated meter defined, never installed around the
+emission). Cold reads: `Keep`/`Drop`/`Replace` all interpreted correctly
+(`Drop` = the dropper); stage order (filter → enrich → transform → sink)
+guessed unprompted.
+
+**Prediction scoring (V-DX-E20B-001).** Hits: Replace ≤ variant block
+(representation is free); behavior parity carried; wall no regression
+(11.6 ms vs 16.7 ms baseline); review median ≥ 4 (4,4); `Drop` teach-
+back; metric kill gate unfired; promote outcome. Miss: "Keep zero minor-
+word increment" — the sealed bar failed and was re-evaluated with the
+control measurement; the residual is the shared scoped-stage machinery
+(identical to `annotate_logs`), not the transform.
+
+**Follow-up F7 (new):** scoped-stage active cost (~10.5 minor words/
+record) — investigate whether the fiber-local lookup path can be made
+allocation-free; benefits ALL scoped stages uniformly (annotate_logs,
+min-level, E19 overrides, intercepts). Runtime-instrument territory.
+
+**Decision: PROMOTE both halves.** Merged `--no-ff` (`6deb7694`); master
+gates green; master + branch pushed; objectives archived (incl.
+followup-1); worktree removed.
