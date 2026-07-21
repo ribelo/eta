@@ -359,9 +359,9 @@ scope boundary.
 be unchecked defects and the success value is not already a `result`/`option`.
 When the leaf operation returns expected typed failures as `result`, prefer
 `Effect.sync_result f`. It is exactly `sync f |> flatten_result`: `Ok` succeeds,
-`Error` is typed failure, and raised exceptions remain `Cause.Die`. When the
+`Error` is typed failure, and ordinary exceptions remain `Cause.Die`. When the
 leaf returns an `option`, prefer `Effect.sync_option ~if_none f`: `Some`
-succeeds, `None` is the typed `if_none` failure, and raised exceptions remain
+succeeds, `None` is the typed `if_none` failure, and ordinary exceptions remain
 `Cause.Die`. The sync-defect example keeps unexpected exceptions in
 `Cause.Die`.
 
