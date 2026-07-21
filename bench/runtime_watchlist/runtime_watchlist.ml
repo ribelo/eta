@@ -121,6 +121,7 @@ let overhead_workloads rt =
   let eta_logs_replaced =
     Effect.intercept_log (fun record -> Effect.Replace record) eta_logs
   in
+  let eta_logs_annotated = Effect.annotate_logs [ "k", "v" ] eta_logs in
   [
     workload "overhead.eta.pure.reused_rt" (fun () ->
         run_eta_int rt (Effect.pure 0));
@@ -134,6 +135,8 @@ let overhead_workloads rt =
         run_eta_unit rt eta_logs_intercepted);
     workload "overhead.eta.log.100k.replace_intercept" (fun () ->
         run_eta_unit rt eta_logs_replaced);
+    workload "overhead.eta.log.100k.annotate_logs_active" (fun () ->
+        run_eta_unit rt eta_logs_annotated);
   ]
 
 let realuse_workloads () =
