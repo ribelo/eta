@@ -31,7 +31,8 @@ six-scenario corpus remains below the sealed 120-line readability ceiling.
 `eta_test` now names `eta_blocking` directly in Dune because its decorated
 runtime constructors must install the same default blocking service that
 `Eta_eio.Runtime.create` installs. This was already in `eta_test`'s transitive
-closure through `eta_eio`; the explicit edge preserves runtime semantics.
+closure through `eta_eio`; the explicit edge is declared in `dune-project` and
+`eta_test.opam` and preserves runtime semantics.
 
 `run` uses fresh in-memory logger/tracer/meter sinks, a seeded random token, the
 E19 clock/logger/tracer/random scoped overrides, and an Eio backend contract
@@ -89,7 +90,7 @@ The proof has two rungs:
 
 1. Every legacy Eta_test `with_*` helper now constructs its runtime through the
    decorated test contract. `accounting-neutrality.sh` runs the existing helper
-   regression suite (35 cases) unchanged and it passes, including a real
+   regression suite (36 cases) unchanged and it passes, including a real
    Eta_blocking callback through both a legacy helper and `Run`.
 2. `fiber accounting preserves exit corpus` runs success, typed failure,
    successful/suppressed finalizer, structured concurrency, and race blueprints
@@ -218,6 +219,9 @@ Footguns checked against predictions:
    accounting enabled or disabled.
 3. Span events enter the ordered stream when the span closes; this is documented
    observation order, not span-start order.
+   Scheduler progress excludes daemon-owned subtrees, so an endlessly yielding
+   daemon remains visible as pending work without preventing two root virtual
+   deadlines from advancing.
 4. A root effect that never exits and creates no virtual sleeper still waits
    forever; `Run` does not invent a timeout or silently cancel the program.
 5. Successful individual finalizers remain unavailable by the zero-cost gate;

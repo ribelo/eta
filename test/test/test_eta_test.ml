@@ -745,6 +745,21 @@ let test_accounted_test_runtimes_preserve_blocking_defaults () =
   in
   Alcotest.(check int) "Run blocking runner" 8 run_result
 
+let test_run_yielding_daemon_does_not_block_virtual_deadlines () =
+  let open Eta.Syntax in
+  let daemon = Eta.Effect.forever Eta.Effect.yield in
+  let program =
+    let* () = Eta.Effect.daemon daemon in
+    let* () = Eta.Effect.sleep (Eta.Duration.ms 1) in
+    Eta.Effect.sleep (Eta.Duration.ms 2)
+  in
+  let outcome = Run.run program in
+  Expect.expect_ok outcome.exit;
+  Run.expect_sleeps (List.map Eta.Duration.ms [ 1; 2 ]) outcome;
+  match outcome.pending_fibers with
+  | [ { Run.kind = Daemon; _ } ] -> ()
+  | _ -> Alcotest.fail "expected the yielding runtime-owned daemon to remain"
+
 let test_run_ordered_events_cross_categories () =
   let open Eta.Syntax in
   let program =
@@ -1028,6 +1043,8 @@ let () =
             `Quick test_run_cancelled_sleep_does_not_contaminate_reused_clock;
           Alcotest.test_case "accounting preserves blocking defaults" `Quick
             test_accounted_test_runtimes_preserve_blocking_defaults;
+          Alcotest.test_case "yielding daemon does not block virtual deadlines"
+            `Quick test_run_yielding_daemon_does_not_block_virtual_deadlines;
           Alcotest.test_case "ordered events cross categories" `Quick
             test_run_ordered_events_cross_categories;
           Alcotest.test_case "testable uses diagnostic defect equality" `Quick

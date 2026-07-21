@@ -92,23 +92,39 @@ module Fiber_accounting = struct
     mutable next_id : int;
     mutable pending_rev : info list;
     mutable activity : int;
+    mutable scheduler_active : int;
   }
 
   let fiber_id = Eta.Runtime_contract.create_local ()
-  let create () = { next_id = 1; pending_rev = []; activity = 0 }
+  let daemon_subtree = Eta.Runtime_contract.create_local ()
+  let create () =
+    { next_id = 1; pending_rev = []; activity = 0; scheduler_active = 0 }
   let pending t = List.rev t.pending_rev
   let activity t = t.activity
+  let scheduler_active t = t.scheduler_active
 
   let start t local_get kind =
     let id = t.next_id in
     t.next_id <- id + 1;
     let info = { id; parent_id = local_get fiber_id; kind } in
     t.pending_rev <- info :: t.pending_rev;
-    t.activity <- t.activity + 1;
     info
 
   let finish t id =
-    t.pending_rev <- List.filter (fun fiber -> fiber.id <> id) t.pending_rev;
+    t.pending_rev <- List.filter (fun fiber -> fiber.id <> id) t.pending_rev
+
+  let scheduler_start t daemon_owned =
+    if not daemon_owned then (
+      t.scheduler_active <- t.scheduler_active + 1;
+      t.activity <- t.activity + 1)
+
+  let scheduler_finish t daemon_owned =
+    if not daemon_owned then (
+      t.scheduler_active <- t.scheduler_active - 1;
+      t.activity <- t.activity + 1)
+
+  let note_yield t daemon_owned =
+    if not daemon_owned then
     t.activity <- t.activity + 1
 
   let wrap ?(record_fibers = true) t backend =
@@ -129,32 +145,47 @@ module Fiber_accounting = struct
       let fail_scope = Base.fail_scope
 
       let fork scope f =
-        if not record_fibers then Base.fork scope f
-        else
-          let info = start t Base.local_get Structured in
-          try
-            Base.fork scope (fun () ->
-                Base.local_with_binding fiber_id info.id (fun () ->
-                    Fun.protect ~finally:(fun () -> finish t info.id) f))
-          with exn ->
-            finish t info.id;
-            raise exn
+        let daemon_owned =
+          Option.value (Base.local_get daemon_subtree) ~default:false
+        in
+        let info =
+          if record_fibers then Some (start t Base.local_get Structured) else None
+        in
+        scheduler_start t daemon_owned;
+        let finish () =
+          Option.iter (fun info -> finish t info.id) info;
+          scheduler_finish t daemon_owned
+        in
+        try
+          Base.fork scope (fun () ->
+              let run () = Fun.protect ~finally:finish f in
+              match info with
+              | None -> run ()
+              | Some info -> Base.local_with_binding fiber_id info.id run)
+        with exn ->
+          finish ();
+          raise exn
 
       let fork_daemon scope f =
-        if not record_fibers then Base.fork_daemon scope f
-        else
-          let info = start t Base.local_get Daemon in
-          try
-            Base.fork_daemon scope (fun () ->
-                Base.local_with_binding fiber_id info.id (fun () ->
-                    Fun.protect ~finally:(fun () -> finish t info.id) f))
-          with exn ->
-            finish t info.id;
-            raise exn
+        let info =
+          if record_fibers then Some (start t Base.local_get Daemon) else None
+        in
+        let finish () = Option.iter (fun info -> finish t info.id) info in
+        try
+          Base.fork_daemon scope (fun () ->
+              Base.local_with_binding daemon_subtree true (fun () ->
+                  let run () = Fun.protect ~finally:finish f in
+                  match info with
+                  | None -> run ()
+                  | Some info -> Base.local_with_binding fiber_id info.id run))
+        with exn ->
+          finish ();
+          raise exn
 
       let await_cancel = Base.await_cancel
       let yield () =
-        t.activity <- t.activity + 1;
+        note_yield t
+          (Option.value (Base.local_get daemon_subtree) ~default:false);
         Base.yield ()
       let check = Base.check
       let create_promise = Base.create_promise
@@ -347,7 +378,7 @@ module Run = struct
           let required_stable_turns =
             (* After the last observed child activity, allow the scope
                coordinator and root-result publisher to run as well. *)
-            List.length (Fiber_accounting.pending accounting) + 3
+            Fiber_accounting.scheduler_active accounting + 3
           in
           if stable < required_stable_turns then
             loop (stable + 1) next_activity next_sleepers

@@ -178,7 +178,7 @@ Final exact gates, rerun after the diagnostic-completeness fixes:
 
 Additional evidence:
 
-- `.scratch/research/dx/e11/accounting-neutrality.sh` — PASS, 35 Eta_test cases.
+- `.scratch/research/dx/e11/accounting-neutrality.sh` — PASS, 36 Eta_test cases.
 - `.scratch/research/dx/e11/redteam/run.sh` — PASS (daemon fixture succeeds;
   deliberately broken retry fails as required; outputs stable on rerun).
 
@@ -224,5 +224,11 @@ The second independent review found two additional gaps and both are now closed:
   `Eta_blocking.runtime_service`; a real blocking callback passes through both
   constructions.
 
-These regressions raise the focused Eta_test suite from 33 to 35 cases without
+The scheduler progress tracker ignores daemon-owned subtrees while retaining
+structured-fiber activity, so an endlessly yielding owned daemon cannot block
+later virtual deadlines. The dedicated regression drives two deadlines while
+such a daemon remains pending. `eta_blocking` is declared in both `dune-project`
+and generated package metadata.
+
+These regressions raise the focused Eta_test suite from 33 to 36 cases without
 changing the prediction score or final recommendation.
