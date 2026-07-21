@@ -4,9 +4,9 @@ type error = [ `Missing_user of string ]
 [@@deriving eta_error]
 
 let load_user id =
-  [%eta.result "user.load"
-    (if String.equal id "" then Error (`Missing_user id)
-     else Ok ("user:" ^ id))]
+  Effect.sync_result (fun () ->
+      if String.equal id "" then Error (`Missing_user id)
+      else Ok ("user:" ^ id))
 
 let program id =
   let open Syntax in

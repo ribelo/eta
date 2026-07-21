@@ -1,1 +1,1 @@
-let x = [%eta.result 123]
+let x = [%eta.result name (Ok 1)]

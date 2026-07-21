@@ -15,9 +15,9 @@ Error: eta_error: payload of tag `Custom in type err is unsupported;
        [@eta.render My_type.pp] to this tag or write pp_err manually
 exit=2
 ===== ppx_result_nonstring.ml =====
-File "cases/ppx_result_nonstring.ml", line 1, characters 21-24:
-1 | let x = [%eta.result 123]
-                         ^^^
+File "cases/ppx_result_nonstring.ml", line 1, characters 21-32:
+1 | let x = [%eta.result name (Ok 1)]
+                         ^^^^^^^^^^^
 Error: expected [%eta.result "name" body]
 exit=2
 ===== ppx_result_wrong_arity.ml =====

@@ -9,8 +9,7 @@ let parse_id = function
   | "" -> Error (`Invalid_id "empty")
   | id -> Ok id
 
-let lookup_user id =
-  [%eta.result "user.lookup" (Ok ("user:" ^ id))]
+let lookup_user id = Effect.pure ("user:" ^ id)
 
 let program raw =
   let open Syntax in
