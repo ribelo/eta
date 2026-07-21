@@ -14,10 +14,12 @@ let broken_retry () =
     Eta_test.Run.run
       (Eta.Effect.retry ~schedule ~while_:(String.equal "retry") attempt)
   in
+  let expected_sleeps = List.map Eta.Duration.ms [ 10; 20; 40 ] in
   let expected =
     {
       observed with
-      sleeps = List.map Eta.Duration.ms [ 10; 20; 40 ];
+      sleeps = expected_sleeps;
+      events = List.map (fun duration -> Eta_test.Run.Sleep duration) expected_sleeps;
     }
   in
   Alcotest.check
