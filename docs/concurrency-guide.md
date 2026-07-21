@@ -49,6 +49,7 @@ Every box in the diagram:
 |---|---|---|---|---|
 | `Effect.sync` | Runs on the current domain, same fiber | None | Anything not too heavy or blocking | Blocks the domain if the work is CPU-heavy |
 | `Effect.par` / `Effect.map_par` | Runs child effects as Eio fibers on the current runtime | None | Concurrent effect workflows: overlapping sleeps, async I/O, queues, resources | `map_par` defaults to at most 8 fibers; neither API is CPU parallelism, and heavy sync work still blocks the domain |
+| `Effect.race` | First child to succeed wins; losers are cancelled | None | First-result races, speculative work | Map heterogeneous branches into domain-tagged variants first; losers' scoped resources are released on cancellation |
 | `Eta_par.Island.run` | Runs a single callback on a worker domain | Explicit domain pool (heartbeat) | One-shot CPU offload: parse JSON, hash a file, compress a chunk | Callback crosses a native domain boundary and must return on its own |
 | `Eta_par.Island.map` | Runs N callbacks in parallel batch | Explicit domain pool (heartbeat) | Batch CPU offload with input-order results | Same constraints as island; started callbacks are not preempted by Eta cancellation |
 | `Eta_blocking.run` | Runs a blocking call on an OS thread | OS thread pool | syscalls, DB queries, file I/O, third-party SDK calls | Work blocks the thread, not the domain; callback cannot hold domain-local resources |

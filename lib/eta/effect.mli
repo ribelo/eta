@@ -163,7 +163,13 @@ val race : ('a, 'err) t list -> ('a, 'err) t
     cancelled, even if it ran to completion before losing. An acquisition whose
     ownership is carried through a value can be discarded by race; use
     {!Semaphore.with_permits_or_abort} when racing permit acquisition against an
-    abort signal. *)
+    abort signal.
+
+    Heterogeneous branches: map each branch into a common domain-tagged
+    variant first (e.g. [Effect.map (fun v -> `Done v) work] vs.
+    [Effect.map (fun () -> `Timeout) (delay d)]). Named tags beat positional
+    either-types at the call site. For ordinary timeouts prefer {!timeout_as},
+    which owns cancellation and finalizer semantics. *)
 
 val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
 (** Run two effects concurrently; collect both successes as a pair.
