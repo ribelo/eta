@@ -714,12 +714,10 @@ module Expert : sig
   val make :
     ?leaf_name:string ->
     ?names:string list ->
-    uses_clock:bool ->
-    emits_logs:bool ->
-    emits_metrics:bool ->
-    has_concurrency:bool ->
-    has_resources:bool ->
-    has_background:bool ->
+    ?inherit_:('child, 'child_err) t ->
+    capabilities:
+      [ `Clock | `Logs | `Metrics | `Concurrency | `Resources | `Background ]
+      list ->
     (context -> ('a, 'err) Exit.t) ->
     ('a, 'err) t
   (** Build a runtime-backed effect without exposing Eta's internal effect
@@ -727,12 +725,16 @@ module Expert : sig
       to the current {!Runtime_contract.t}; ordinary user code should prefer the
       typed combinators in this module.
 
-      All six capability declarations are required because the evaluator is an
-      opaque function that {!audit} cannot inspect. Set a flag when the custom
-      leaf directly performs the corresponding operation. A false declaration
+      The capability declaration is required because the evaluator is an opaque
+      function that {!audit} cannot inspect. Include [`Clock], [`Logs],
+      [`Metrics], [`Concurrency], [`Resources], or [`Background] when the custom
+      leaf directly performs the corresponding operation. An omitted capability
       is a contract made by the custom leaf author, not something Eta can verify.
-      Child effects evaluated with {!eval} are also opaque to this leaf's static
-      footprint and must be represented by the declaration. *)
+      [`Background] also sets [has_concurrency], so a background declaration
+      cannot produce an internally inconsistent audit.
+      Pass a statically available child as [inherit_] when the evaluator wraps it;
+      its declared footprint is unioned with the custom leaf's direct footprint.
+      Effects created later by ordinary functions remain opaque. *)
 
   val contract : context -> Runtime_contract.t
   (** Runtime contract selected by the current interpreter. *)
@@ -750,11 +752,14 @@ module Expert : sig
   (** Whether runtime leaf auto-instrumentation is enabled. *)
 
   val instrument_leaf : context -> name:string -> (unit -> 'a) -> 'a
-  (** Run a leaf body under Eta's standard runtime instrumentation. *)
+  (** Run a leaf body under Eta's standard runtime instrumentation. A custom
+      leaf that calls this declares [`Clock] because enabled tracing timestamps
+      the span. *)
 
   val emit_trace_event :
     context -> name:string -> attrs:(string * string) list -> unit
-  (** Emit an event on the active span, if tracing is enabled and sampled. *)
+  (** Emit an event on the active span, if tracing is enabled and sampled. A
+      custom leaf that calls this declares [`Clock] for the event timestamp. *)
 
   val record_metric :
     context ->
@@ -765,11 +770,13 @@ module Expert : sig
     attrs:(string * string) list ->
     value:Capabilities.metric_value ->
     unit
-  (** Record a metric point when runtime metrics are enabled. *)
+  (** Record a metric point when runtime metrics are enabled. A custom leaf that
+      calls this declares both [`Metrics] and [`Clock]. *)
 
   val fork_daemon : context -> (unit -> [ `Stop_daemon ]) -> unit
   (** Fork runtime-owned finite background work and include it in
-      {!Runtime.drain} accounting. *)
+      {!Runtime.drain} accounting. A custom leaf that calls this declares
+      [`Background], which also implies concurrency. *)
 
   val eval : context -> ('a, 'err) t -> ('a, 'err) Exit.t
   (** Evaluate a child effect in the current runtime context. *)

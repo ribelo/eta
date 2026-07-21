@@ -66,7 +66,8 @@ let make_cache ?(capacity = 16)
   run_ok rt (Int_cache.make ~capacity ~lookup ~time_to_live)
 
 let runtime_interrupt_effect () =
-  Effect.Expert.make ~leaf_name:"test.cache.interrupt" @@ fun context ->
+  Effect.Expert.make ~capabilities:[ `Concurrency ]
+    ~leaf_name:"test.cache.interrupt" @@ fun context ->
   let contract = Effect.Expert.contract context in
   contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
   contract.Runtime_contract.cancel cancel_context Exit;
@@ -76,7 +77,7 @@ let mixed_interrupt_failure_cause () =
   Cause.concurrent [ Cause.interrupt; Cause.fail (`Mixed 1) ]
 
 let mixed_interrupt_failure_effect () =
-  Effect.Expert.make ~leaf_name:"test.cache.mixed_interrupt" @@ fun _context ->
+  Effect.Expert.make ~capabilities:[] ~leaf_name:"test.cache.mixed_interrupt" @@ fun _context ->
   Exit.Error (mixed_interrupt_failure_cause ())
 
 let expect_mixed_interrupt_failure label = function

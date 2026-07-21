@@ -57,7 +57,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until (fun () -> B.sleeper_count clock >= expected)
 
   let yield_effect () =
-    E.Expert.make ~leaf_name:"test.yield" @@ fun context ->
+    E.Expert.make ~capabilities:[ `Concurrency ] ~leaf_name:"test.yield"
+    @@ fun context ->
     let contract = E.Expert.contract context in
     contract.Runtime_contract.yield ();
     Exit.Ok ()

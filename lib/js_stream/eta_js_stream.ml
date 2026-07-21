@@ -288,7 +288,7 @@ module Sink = struct
 end
 
 let fail_cause cause =
-  Eta_js.Effect.Expert.make ~leaf_name:"eta_js_stream.fail_cause" @@ fun _ ->
+  Eta_js.Effect.Expert.make ~capabilities:[] ~leaf_name:"eta_js_stream.fail_cause" @@ fun _ ->
   Eta_js.Exit.error cause
 
 let run (source : ('a, 'err) stream) sink =

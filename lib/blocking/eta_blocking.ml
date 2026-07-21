@@ -33,7 +33,9 @@ module Pool = struct
   include Blocking_runtime.Pool
 
   let shutdown pool =
-    Expert.make @@ fun context ->
+    Expert.make
+      ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources ]
+    @@ fun context ->
     try
       Blocking_runtime.shutdown
         ~contract:(Expert.contract context)
@@ -80,7 +82,7 @@ let current_defaults context =
       | None -> Lazy.force fallback_defaults)
 
 let with_defaults ?pool ?runner eff =
-  Expert.make @@ fun context ->
+  Expert.make ~inherit_:eff ~capabilities:[] @@ fun context ->
   let parent = current_defaults context in
   let pool =
     match pool with
@@ -114,7 +116,9 @@ let pool_and_runner context override =
 
 let run ?pool ?(name = "blocking") ?on_cancel f =
   check_not_worker "Eta_blocking.run";
-  Expert.make ~names:[ name ] @@ fun context ->
+  Expert.make ~names:[ name ]
+    ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources ]
+  @@ fun context ->
   let contract = Expert.contract context in
   let pool, runner = pool_and_runner context pool in
   let body () =
@@ -144,7 +148,10 @@ let run_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
           (fun () ->
             if Atomic.compare_and_set cancel_hook_called false true then hook ())
   in
-  Expert.make ~names:[ name ] @@ fun context ->
+  Expert.make ~names:[ name ]
+    ~capabilities:
+      [ `Clock; `Metrics; `Concurrency; `Resources; `Background ]
+  @@ fun context ->
   let contract = Expert.contract context in
   let completed, resolver = contract.Runtime_contract.create_promise () in
   let resolved = Atomic.make false in

@@ -453,7 +453,8 @@ let close_expired_entries_before_retry t entries =
   |> Effect.map (fun () -> Reserve_slot)
 
 let yield_for_slot () =
-  Effect.Expert.make ~leaf_name:"eta.pool.wait_for_slot" @@ fun context ->
+  Effect.Expert.make ~capabilities:[ `Concurrency ]
+    ~leaf_name:"eta.pool.wait_for_slot" @@ fun context ->
   let contract = Effect.Expert.contract context in
   contract.Runtime_contract.yield ();
   Exit.Ok ()
@@ -573,7 +574,10 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
   let max_idle = Option.value max_idle ~default:max_size in
   validate ~max_size ~max_idle ~idle_check_interval;
   Effect_erasure.effect_to_public
-    (Effect_core.sync_frame (fun frame ->
+    (Effect_core.sync_frame ~leaf_name:"Pool.create"
+       ~footprint:
+         (Effect_core.footprint ~has_concurrency:true ~has_resources:true ())
+       (fun frame ->
          let shutdown_contract =
            frame.Effect_core.runtime.Runtime_core.contract
          in

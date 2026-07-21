@@ -68,7 +68,10 @@ let with_tracer tracer eff =
   eval { frame with runtime } eff
 
 let named ?(kind = Capabilities.Internal) ?error_pp name eff =
-  make ~leaf_name:name ~names:(name :: names eff) @@ fun frame ->
+  make ~leaf_name:name ~names:(name :: names eff)
+    ~footprint:
+      (union_footprint (capability_footprint eff)
+         (footprint ~uses_clock:true ())) @@ fun frame ->
   let frame =
     match error_pp with
     | None -> frame
@@ -143,7 +146,8 @@ let add_attrs_to_active_span frame attrs =
           attrs
 
 let event ?(attrs = []) name =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.event" ~footprint:(footprint ~uses_clock:true ())
+  @@ fun frame ->
   let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
   (if tracing_enabled then
      match local_get frame RObs.active_span_key with
@@ -216,12 +220,13 @@ let with_external_parent ~trace_id ~span_id eff =
   | None -> invalid_arg "Effect.with_external_parent: invalid trace context"
 
 let is_tracing_enabled =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.is_tracing_enabled" ~footprint:no_footprint
+  @@ fun frame ->
   let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
   ok tracing_enabled
 
 let current_span =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.current_span" ~footprint:no_footprint @@ fun frame ->
   let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
   if not tracing_enabled then ok None
   else
@@ -235,7 +240,8 @@ let current_span =
         ok (first_some current active.info)
 
 let current_context =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.current_context" ~footprint:no_footprint
+  @@ fun frame ->
   let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
   if not tracing_enabled then ok (local_get frame RObs.trace_context_key)
   else
@@ -278,7 +284,8 @@ let intercept_log transform eff =
   eval frame eff
 
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.log"
+    ~footprint:(footprint ~uses_clock:true ~emits_logs:true ()) @@ fun frame ->
   let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
   (if
      logging_enabled
@@ -344,7 +351,8 @@ let intercept_metric transform eff =
   eval frame eff
 
 let metric_update ?description ?unit_ ?attrs ~name ~kind value =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.metric_update"
+    ~footprint:(footprint ~uses_clock:true ~emits_metrics:true ()) @@ fun frame ->
   (if frame.runtime.metrics_enabled then
      let update = metric ?description ?unit_ ?attrs ~name ~kind value in
      let clock = Runtime_core.current_clock frame.runtime in
@@ -376,7 +384,8 @@ let metric_summary ?description ?unit_ ?attrs ~name ~quantiles ~max_age
     (Capabilities.Number (Capabilities.Float value))
 
 let metric_updates updates =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.metric_updates"
+    ~footprint:(footprint ~uses_clock:true ~emits_metrics:true ()) @@ fun frame ->
   (if frame.runtime.metrics_enabled then
     let clock = Runtime_core.current_clock frame.runtime in
     let ts_ms = clock#now_ms () in
@@ -384,7 +393,8 @@ let metric_updates updates =
   ok ()
 
 let metric_updates_lazy make_updates =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.metric_updates_lazy"
+    ~footprint:(footprint ~uses_clock:true ~emits_metrics:true ()) @@ fun frame ->
   if frame.runtime.metrics_enabled then
     try eval frame (metric_updates (make_updates ())) with
     | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->

@@ -195,7 +195,8 @@ let rec interpret_supervisor_scope :
   | Supervisor_yield -> fiber_yield frame
 
 let supervisor_scoped ?max_failures body =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.supervisor_scoped"
+    ~footprint:(footprint ~has_concurrency:true ()) @@ fun frame ->
   try
     ok
       (switch_run frame @@ fun sw ->
@@ -207,7 +208,8 @@ let supervisor_scoped ?max_failures body =
   with exn -> exit_of_exn frame exn
 
 let cancel_child_effect child =
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.supervisor_cancel"
+    ~footprint:(footprint ~has_concurrency:true ()) @@ fun frame ->
   let contract = frame.runtime.contract in
   Runtime_supervisor.child_cancel child ();
   match

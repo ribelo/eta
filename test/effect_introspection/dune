@@ -1,0 +1,20 @@
+(executable
+ (name snapshot_effect_describe)
+ (modules snapshot_effect_describe)
+ (libraries eta))
+
+(executable
+ (name redteam_effect_audit)
+ (modules redteam_effect_audit)
+ (libraries eta eta_eio eio_main))
+
+(rule
+ (target actual_descriptions.txt)
+ (action
+  (with-stdout-to actual_descriptions.txt
+   (run %{exe:snapshot_effect_describe.exe}))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff expected_descriptions.txt actual_descriptions.txt)))

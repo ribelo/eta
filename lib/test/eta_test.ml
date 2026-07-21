@@ -195,3 +195,35 @@ module Test_random = struct
   let create ~seed = Eta.Capabilities.random_of_seed seed
   let set_seed = Eta.Capabilities.random_set_seed
 end
+
+let fail_audit assertion eff =
+  Alcotest.failf "%s failed for static blueprint:\n%s" assertion
+    (Eta.Effect.describe eff)
+
+let assert_no_clock eff =
+  if (Eta.Effect.audit eff).uses_clock then fail_audit "assert_no_clock" eff
+
+let assert_no_logs eff =
+  if (Eta.Effect.audit eff).emits_logs then fail_audit "assert_no_logs" eff
+
+let assert_no_metrics eff =
+  if (Eta.Effect.audit eff).emits_metrics then fail_audit "assert_no_metrics" eff
+
+let assert_no_concurrency eff =
+  if (Eta.Effect.audit eff).has_concurrency then
+    fail_audit "assert_no_concurrency" eff
+
+let assert_no_resources eff =
+  if (Eta.Effect.audit eff).has_resources then
+    fail_audit "assert_no_resources" eff
+
+let assert_no_background eff =
+  if (Eta.Effect.audit eff).has_background then
+    fail_audit "assert_no_background" eff
+
+let assert_pure_eff eff =
+  let audit = Eta.Effect.audit eff in
+  if
+    audit.uses_clock || audit.emits_logs || audit.emits_metrics
+    || audit.has_concurrency || audit.has_resources || audit.has_background
+  then fail_audit "assert_pure_eff" eff

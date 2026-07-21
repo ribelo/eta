@@ -212,7 +212,8 @@ let add_ms_capped a b =
   if b <= 0 then a else if a > max_int - b then max_int else a + b
 
 let post_delay_check deadline_ms =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.post-delay-check" (fun ctx ->
+  Eta.Effect.Expert.make ~capabilities:[ `Clock; `Concurrency ]
+    ~leaf_name:"eta-http.retry.post-delay-check" (fun ctx ->
       let contract = Eta.Effect.Expert.contract ctx in
       try
         contract.Eta.Runtime_contract.yield ();
@@ -223,7 +224,8 @@ let post_delay_check deadline_ms =
       with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
 
 let delay_then delay eff =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.delay" (fun ctx ->
+  Eta.Effect.Expert.make ~inherit_:eff ~capabilities:[ `Clock ]
+    ~leaf_name:"eta-http.retry.delay" (fun ctx ->
       let contract = Eta.Effect.Expert.contract ctx in
       let deadline_ms =
         add_ms_capped
@@ -235,12 +237,13 @@ let delay_then delay eff =
       |> Eta.Effect.Expert.eval ctx)
 
 let request_once_effect request_once request =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.request-once" (fun ctx ->
+  Eta.Effect.Expert.make ~capabilities:[] ~leaf_name:"eta-http.retry.request-once" (fun ctx ->
       try request_once request |> Eta.Effect.Expert.eval ctx
       with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
 
 let runtime_now_s =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.now" (fun ctx ->
+  Eta.Effect.Expert.make ~capabilities:[ `Clock ]
+    ~leaf_name:"eta-http.retry.now" (fun ctx ->
       let contract = Eta.Effect.Expert.contract ctx in
       Eta.Exit.Ok
         (float_of_int (contract.Eta.Runtime_contract.now_ms ()) /. 1000.0))

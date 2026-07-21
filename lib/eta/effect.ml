@@ -10,19 +10,26 @@ include Effect_supervisor_scope
 include Effect_schedule
 
 let metric_timer ?description ?(unit_ = "ms") ?attrs ~name ~boundaries eff =
-  now_ms
-  |> bind (fun started ->
-         on_exit
-           (fun _exit ->
-             now_ms
-             |> bind (fun ended ->
-                    let elapsed_ms = max 0 (ended - started) in
-                    metric_histogram ?description ~unit_ ?attrs ~name
-                      ~boundaries (float_of_int elapsed_ms)))
-           eff)
+  let timer =
+    now_ms
+    |> bind (fun started ->
+           on_exit
+             (fun _exit ->
+               now_ms
+               |> bind (fun ended ->
+                      let elapsed_ms = max 0 (ended - started) in
+                      metric_histogram ?description ~unit_ ?attrs ~name
+                        ~boundaries (float_of_int elapsed_ms)))
+             eff)
+  in
+  preserve ~leaf_name:"Effect.metric_timer"
+    ~footprint:(footprint ~uses_clock:true ~emits_metrics:true ()) timer
+    (fun frame -> eval frame timer)
 
 let daemon_internal eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.daemon"
+    ~footprint:(footprint ~has_concurrency:true ~has_background:true ()) eff
+  @@ fun frame ->
   Runtime_core.incr_active frame.runtime;
   fiber_fork_daemon frame ~sw:frame.runtime.outer_scope (fun () ->
       let _, tracer = Runtime_core.current_tracer frame.runtime in
@@ -56,7 +63,29 @@ let daemon = daemon_internal
 module Expert = struct
   type context = Effect_core.frame
 
-  let make ?leaf_name ?names f = Effect_core.make ?leaf_name ?names f
+  let footprint_of_capabilities capabilities =
+    List.fold_left
+      (fun acc -> function
+        | `Clock -> union_footprint acc (footprint ~uses_clock:true ())
+        | `Logs -> union_footprint acc (footprint ~emits_logs:true ())
+        | `Metrics -> union_footprint acc (footprint ~emits_metrics:true ())
+        | `Concurrency ->
+            union_footprint acc (footprint ~has_concurrency:true ())
+        | `Resources -> union_footprint acc (footprint ~has_resources:true ())
+        | `Background ->
+            union_footprint acc
+              (footprint ~has_concurrency:true ~has_background:true ()))
+      no_footprint capabilities
+
+  let make ?leaf_name ?names ?inherit_ ~capabilities f =
+    let footprint = footprint_of_capabilities capabilities in
+    let footprint =
+      match inherit_ with
+      | None -> footprint
+      | Some eff -> union_footprint (capability_footprint eff) footprint
+    in
+    Effect_core.make ?leaf_name ?names
+      ~footprint f
   let contract context = context.runtime.Runtime_core.contract
   let current_scope context = context.sw
   let outer_scope context = context.runtime.Runtime_core.outer_scope

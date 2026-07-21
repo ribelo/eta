@@ -216,7 +216,13 @@ let race_eval effects frame =
               error (cause_of_list diagnostics))
       | None -> error (Cause.concurrent !causes))
 
-let race effects = make ~names:(concat_names effects) (race_eval effects)
+let concurrent_footprint effects =
+  union_footprint (concat_footprints effects)
+    (footprint ~has_concurrency:true ())
+
+let race effects =
+  make ~leaf_name:"Effect.race" ~names:(concat_names effects)
+    ~footprint:(concurrent_footprint effects) (race_eval effects)
 
 type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
@@ -252,7 +258,13 @@ let par_eval left right frame =
   | Exit.Error cause -> error cause
 
 let par left right =
-  make ~names:(names left @ names right) (par_eval left right)
+  let footprint =
+    union_footprint
+      (union_footprint (capability_footprint left) (capability_footprint right))
+      (footprint ~has_concurrency:true ())
+  in
+  make ~leaf_name:"Effect.par" ~names:(names left @ names right)
+    ~footprint (par_eval left right)
 
 let all_eval effects frame =
   par_collect frame ~name:"Effect.all"
@@ -261,7 +273,9 @@ let all_eval effects frame =
          exit_to_value frame (run_child ~internal_cancel frame sw eff))
        effects)
 
-let all effects = make ~names:(concat_names effects) (all_eval effects)
+let all effects =
+  make ~leaf_name:"Effect.all" ~names:(concat_names effects)
+    ~footprint:(concurrent_footprint effects) (all_eval effects)
 
 let all_settled_eval effects frame =
   let results = Array.make (List.length effects) None in
@@ -278,7 +292,8 @@ let all_settled_eval effects frame =
   ok (collect_results "Effect.all_settled" results)
 
 let all_settled effects =
-  make ~names:(concat_names effects) (all_settled_eval effects)
+  make ~leaf_name:"Effect.all_settled" ~names:(concat_names effects)
+    ~footprint:(concurrent_footprint effects) (all_settled_eval effects)
 
 (** Worker-pool variant: [workers] forks share an atomic counter, each pulling
     the next task off [tasks] until the index reaches [n]. The parent frame is
@@ -307,5 +322,6 @@ let map_par ?(max_concurrent = 8) f xs =
     invalid_arg "Effect.map_par: max_concurrent must be > 0";
   let inputs = Array.of_list xs in
   let n = Array.length inputs in
-  make @@ fun frame ->
+  make ~leaf_name:"Effect.map_par"
+    ~footprint:(footprint ~has_concurrency:true ()) @@ fun frame ->
   map_par_workers frame ~workers:(min max_concurrent n) ~inputs ~f ~n

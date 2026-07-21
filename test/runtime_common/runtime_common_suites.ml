@@ -854,7 +854,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let local = Rc.create_local () in
     let locals_eff =
-      E.Expert.make @@ fun context ->
+      E.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
       let contract = E.Expert.contract context in
       let result =
         contract.Rc.local_with_binding local 42 (fun () ->
@@ -872,7 +872,7 @@ module Make (B : Runtime_backend.S) = struct
     check_ok Alcotest.int "local" 42 (B.run rt locals_eff);
 
     let stream_eff =
-      E.Expert.make @@ fun context ->
+      E.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
       let contract = E.Expert.contract context in
       let stream = contract.Rc.create_stream 2 in
       let values =
@@ -1091,7 +1091,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_runtime_fork_daemon_scope_does_not_join () =
     B.with_test_clock @@ fun ctx clock rt ->
     let daemon_scope =
-      E.Expert.make @@ fun context ->
+      E.Expert.make ~capabilities:[ `Concurrency; `Background ] @@ fun context ->
       let contract = E.Expert.contract context in
       try
         contract.Rc.run_scope @@ fun sw ->

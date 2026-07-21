@@ -57,6 +57,58 @@ let[@cold] [@zero_alloc assume error] error cause = Exit.Error cause
 let default_renderer _ = "<typed failure>"
 let default_interrupt_of_cancel _ = Cause.interrupt
 
+type audit = {
+  names : string list;
+  uses_clock : bool;
+  emits_logs : bool;
+  emits_metrics : bool;
+  has_concurrency : bool;
+  has_resources : bool;
+  has_background : bool;
+}
+
+type capability_footprint = {
+  uses_clock : bool;
+  emits_logs : bool;
+  emits_metrics : bool;
+  has_concurrency : bool;
+  has_resources : bool;
+  has_background : bool;
+}
+
+let footprint ?(uses_clock = false) ?(emits_logs = false)
+    ?(emits_metrics = false) ?(has_concurrency = false)
+    ?(has_resources = false) ?(has_background = false) () =
+  {
+    uses_clock;
+    emits_logs;
+    emits_metrics;
+    has_concurrency;
+    has_resources;
+    has_background;
+  }
+
+let no_footprint = footprint ()
+let concurrency_footprint =
+  {
+    uses_clock = false;
+    emits_logs = false;
+    emits_metrics = false;
+    has_concurrency = true;
+    has_resources = false;
+    has_background = false;
+  }
+
+let union_footprint left right =
+  {
+    uses_clock = left.uses_clock || right.uses_clock;
+    emits_logs = left.emits_logs || right.emits_logs;
+    emits_metrics = left.emits_metrics || right.emits_metrics;
+    has_concurrency = left.has_concurrency || right.has_concurrency;
+    has_resources = left.has_resources || right.has_resources;
+    has_background = left.has_background || right.has_background;
+  }
+
 type ('a, +'err) t =
   | Pure : 'a -> ('a, 'err) t
   | Fail : 'err -> ('a, 'err) t
@@ -65,6 +117,7 @@ type ('a, +'err) t =
         eval : frame -> ('a, 'err) Exit.t;
         leaf_name : string option;
         names : string list;
+        footprint : capability_footprint;
       }
       -> ('a, 'err) t
   | Map :
@@ -90,9 +143,26 @@ let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ -> None
 
-let make ?leaf_name ?(names = []) eval = Custom { eval; leaf_name; names }
-let preserve eff (eval) = make ~names:(names eff) eval
+let rec capability_footprint : type a err. (a, err) t -> capability_footprint =
+  function
+  | Pure _ | Fail _ -> no_footprint
+  | Custom { footprint; _ } -> footprint
+  | Map { inner; _ } -> capability_footprint inner
+  | Bind { inner; _ } -> capability_footprint inner
+
+let make ?leaf_name ?(names = []) ~footprint eval =
+  Custom { eval; leaf_name; names; footprint }
+
+let preserve ?leaf_name ?(footprint = no_footprint) eff (eval) =
+  make ?leaf_name ~names:(names eff)
+    ~footprint:(union_footprint (capability_footprint eff) footprint)
+    eval
+
 let concat_names effects = List.concat_map names effects
+let concat_footprints effects =
+  List.fold_left
+    (fun acc eff -> union_footprint acc (capability_footprint eff))
+    no_footprint effects
 
 let[@inline always] [@zero_alloc opt] exit_to_value frame = function
   | Exit.Ok value -> value
@@ -118,7 +188,8 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
 let with_names names eff =
   match eff with
   | Custom custom -> Custom { custom with names }
-  | Pure _ | Fail _ | Map _ | Bind _ -> make ~names (fun frame -> eval frame eff)
+  | Pure _ | Fail _ | Map _ | Bind _ ->
+      make ~names ~footprint:(capability_footprint eff) (fun frame -> eval frame eff)
 
 let run_to_exit frame eff =
   try eval frame eff with
@@ -176,8 +247,8 @@ let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
 let from_option ~if_none = function Some value -> pure value | None -> fail if_none
 
-let sync_frame f =
-  make (fun frame ->
+let sync_frame ?leaf_name ?(footprint = no_footprint) f =
+  make ?leaf_name ~footprint (fun frame ->
       try ok (f frame) with
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
@@ -201,6 +272,7 @@ let never : 'a 'err. ('a, 'err) t =
           | exn -> exit_of_exn frame exn);
       leaf_name = Some "Effect.never";
       names = [];
+      footprint = concurrency_footprint;
     }
 
 let die_message message = sync (fun () -> failwith message)
@@ -267,7 +339,7 @@ let bind_error :
  match eff with
   | Pure value -> Pure value
   | _ ->
-      preserve eff @@ fun frame ->
+      preserve ~leaf_name:"Effect.bind_error" eff @@ fun frame ->
       match eval frame eff with
       | Exit.Ok value -> ok value
       | Exit.Error cause -> (
@@ -282,7 +354,7 @@ let catch_some (handler) eff =
   match eff with
   | Pure value -> Pure value
   | _ ->
-      preserve eff @@ fun frame ->
+      preserve ~leaf_name:"Effect.catch_some" eff @@ fun frame ->
       match eval frame eff with
       | Exit.Ok value -> ok value
       | Exit.Error cause -> (
@@ -318,7 +390,7 @@ let to_result eff =
 let to_option eff = bind_error (fun _ -> pure None) (map (fun value -> Some value) eff)
 
 let to_exit eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.to_exit" eff @@ fun frame ->
   ok
     (try eval frame eff with
     | exn -> exit_of_exn frame exn)
@@ -329,7 +401,7 @@ let render_cause_error frame cause =
   Cause.finalizer_of_cause (render_error frame) cause
 
 let map_error (f) eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.map_error" eff @@ fun frame ->
   match eval frame eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause -> error (map_cause_error f cause)
@@ -352,7 +424,7 @@ let or_die (to_exn) eff =
   match eff with
   | Pure value -> Pure value
   | _ ->
-      preserve eff @@ fun frame ->
+      preserve ~leaf_name:"Effect.or_die" eff @@ fun frame ->
       match eval frame eff with
       | Exit.Ok _ as ok -> ok
       | Exit.Error cause -> error (or_die_cause frame to_exn cause)
@@ -363,7 +435,7 @@ let run_observer frame original observer =
   | Exit.Error cause -> error cause
 
 let tap_error (observe) eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.tap_error" eff @@ fun frame ->
   match eval frame eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause as original -> (
@@ -372,13 +444,13 @@ let tap_error (observe) eff =
       | None -> original)
 
 let tap_cause (observe) eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.tap_cause" eff @@ fun frame ->
   match eval frame eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause as original -> run_observer frame original (observe cause)
 
 let tap_defect (observe) eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.tap_defect" eff @@ fun frame ->
   match eval frame eff with
   | Exit.Ok _ as ok -> ok
   | Exit.Error cause as original -> (
@@ -387,25 +459,29 @@ let tap_defect (observe) eff =
       | [] -> original)
 
 let delay duration eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.delay"
+    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   clock#sleep duration;
   eval frame eff
 
 let sleep duration =
-  sync_frame (fun frame ->
+  sync_frame ~leaf_name:"Effect.sleep" ~footprint:(footprint ~uses_clock:true ())
+    (fun frame ->
       let clock = Runtime_core.current_clock frame.runtime in
       clock#sleep duration)
 
 let now_ms =
-  sync_frame (fun frame ->
+  sync_frame ~leaf_name:"Effect.now_ms" ~footprint:(footprint ~uses_clock:true ())
+    (fun frame ->
       let clock = Runtime_core.current_clock frame.runtime in
       clock#now_ms ())
 let fresh () = sync_frame (fun frame -> frame.runtime.contract.fresh ())
 let fresh_named prefix = fresh () |> map (Printf.sprintf "%s-%d" prefix)
 
 let timed eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.timed"
+    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   let started_ms = clock#now_ms () in
   match eval frame eff with
@@ -415,7 +491,9 @@ let timed eff =
   | Exit.Error _ as err -> err
 
 let timeout_as duration ~on_timeout eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.timeout_as"
+    ~footprint:(footprint ~uses_clock:true ~has_concurrency:true ())
+    eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   let body_result = ref None in
   let timeout_fired = ref false in
@@ -465,8 +543,45 @@ let timeout_as duration ~on_timeout eff =
 let timeout duration eff = timeout_as duration ~on_timeout:`Timeout eff
 
 let uninterruptible eff =
-  preserve eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.uninterruptible" eff @@ fun frame ->
   frame.runtime.contract.Runtime_contract.protect (fun () -> eval frame eff)
 
 let name eff = leaf_name eff
 let collect_names eff = names eff
+
+let audit eff =
+  let footprint = capability_footprint eff in
+  {
+    names = names eff;
+    uses_clock = footprint.uses_clock;
+    emits_logs = footprint.emits_logs;
+    emits_metrics = footprint.emits_metrics;
+    has_concurrency = footprint.has_concurrency;
+    has_resources = footprint.has_resources;
+    has_background = footprint.has_background;
+  }
+
+let describe eff =
+  let buffer = Buffer.create 128 in
+  let line depth text =
+    if Buffer.length buffer > 0 then Buffer.add_char buffer '\n';
+    Buffer.add_string buffer (String.make (depth * 2) ' ');
+    Buffer.add_string buffer text
+  in
+  let rec walk : type a err. int -> (a, err) t -> unit =
+   fun depth -> function
+    | Pure _ -> line depth "Pure"
+    | Fail _ -> line depth "Fail"
+    | Custom { leaf_name = None; _ } -> line depth "Custom"
+    | Custom { leaf_name = Some name; _ } ->
+        line depth (Printf.sprintf "Custom(%S)" name)
+    | Map { inner; _ } ->
+        line depth "Map";
+        walk (depth + 1) inner
+    | Bind { inner; _ } ->
+        line depth "Bind";
+        walk (depth + 1) inner;
+        line (depth + 1) "<bind …>"
+  in
+  walk 0 eff;
+  Buffer.contents buffer

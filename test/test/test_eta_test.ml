@@ -54,7 +54,7 @@ let terminal :
   | `Typed_failure -> Eta.Effect.fail `Expected
   | `Defect -> Eta.Effect.die_message "expected scoped defect"
   | `Interruption ->
-      Eta.Effect.Expert.make (fun _ ->
+      Eta.Effect.Expert.make ~capabilities:[] (fun _ ->
           Eta.Exit.Error Eta.Cause.interrupt)
 
 let test_scoped_capabilities_restore_on_all_exit_kinds () =
@@ -632,6 +632,17 @@ let test_fresh_map_par_contention () =
   Format.printf "fresh map_par: n=%d max_concurrent=64 unique=%d elapsed_ms=%.3f@."
     count (List.length unique) elapsed_ms
 
+let test_audit_assertions_accept_matching_blueprints () =
+  assert_pure_eff (Eta.Effect.pure 1 |> Eta.Effect.map (( + ) 1));
+  assert_no_clock (Eta.Effect.sync (fun () -> ()));
+  assert_no_logs (Eta.Effect.sleep Eta.Duration.zero);
+  assert_no_metrics (Eta.Effect.log "hello");
+  assert_no_concurrency (Eta.Effect.with_scope Eta.Effect.unit);
+  assert_no_resources
+    (Eta.Effect.par Eta.Effect.unit Eta.Effect.unit |> Eta.Effect.discard);
+  assert_no_background
+    (Eta.Effect.with_background Eta.Effect.unit (fun () -> Eta.Effect.unit))
+
 let () =
   Alcotest.run "eta-test"
     [
@@ -684,5 +695,10 @@ let () =
             test_fresh_replays_across_test_runtimes;
           Alcotest.test_case "map_par contention" `Quick
             test_fresh_map_par_contention;
+        ] );
+      ( "Audit assertions",
+        [
+          Alcotest.test_case "accept matching blueprints" `Quick
+            test_audit_assertions_accept_matching_blueprints;
         ] );
     ]
