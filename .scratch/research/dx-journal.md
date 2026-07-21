@@ -2655,3 +2655,18 @@ scenarios.
 
 **Outcome (predicted).** Promote the record with accounting. Effort L;
 risk med — phased: record first, accounting second, printer last.
+
+---
+
+## V-DX-E11-001a — 2026-07-21 — protocol note (third branch-discipline violation; root fix)
+
+The sealed E11 predictions landed on `erg-v1-ocaml54` again — the same
+violation as V-DX-E12-001a, one day later, by the rule's own author.
+Repair: predictions re-applied onto master directly (`8366512e`), erg
+reset to the workstream's exact tip (`681cd150`), E11 branch repointed.
+Analysis: the recurring failure is not forgetting the rule but *where the
+work happens* — the main checkout is effectively shared with the foreign
+workstream, which switches it unpredictably. **Root fix, now standing:
+ALL master writes (commits, merges, bookkeeping) happen in dedicated temp
+worktrees; the main checkout is treated as read-only for the
+orchestrator.** This subsumes the merge-only rule of V-DX-E12-002a.
