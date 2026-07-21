@@ -2,9 +2,10 @@
 File "cases/ppx_eta_error_nominal.ml", line 1, characters 5-8:
 1 | type err = Unavailable [@@deriving eta_error]
          ^^^
-Error: eta_error: type err is not a closed polymorphic-variant alias;
-       [@@deriving eta_error] supports type err = [ `Tag ... ]; rewrite the
-       type as a closed polymorphic variant or write pp_err manually
+Error: eta_error: type err is not a public, explicit-tag closed
+       polymorphic-variant alias; [@@deriving eta_error] supports type err =
+       [ `Tag ... ]; rewrite the type as a public closed row with every tag
+       listed explicitly, or write pp_err manually
 exit=2
 ===== ppx_eta_error_unsupported_payload.ml =====
 File "cases/ppx_eta_error_unsupported_payload.ml", line 3, characters 24-31:
