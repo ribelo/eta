@@ -198,7 +198,7 @@ let run_client_probe ~env ~name ~deadline_sec ~expected ~server_logic =
                 let eta_timeout_ms =
                   max 1 (int_of_float (eta_timeout_sec *. 1000.0))
                 in
-                let effect =
+                let eff =
                   Eta_http_eio.Client.request_h2_on_connection conn request url
                   |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail error)
                   |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
@@ -208,7 +208,7 @@ let run_client_probe ~env ~name ~deadline_sec ~expected ~server_logic =
                 let timed =
                   Eta.Effect.timeout_as (Eta.Duration.ms eta_timeout_ms)
                     ~on_timeout:(timeout_error ~url:uri ~deadline_sec:eta_timeout_sec)
-                    effect
+                    eff
                 in
                 match Eta.Runtime.run rt timed with
                 | Eta.Exit.Ok `Ok -> Ok "response consumed"

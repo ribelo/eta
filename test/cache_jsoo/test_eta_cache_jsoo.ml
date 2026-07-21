@@ -29,8 +29,8 @@ let finish done_ f value =
     set_exit_code 1;
     log ("eta_cache_jsoo failed: " ^ Printexc.to_string exn)
 
-let run eff ~on_result =
-  let runtime = Eta_jsoo.Runtime.create () in
+let run ?now_ms eff ~on_result =
+  let runtime = Eta_jsoo.Runtime.create ?now_ms () in
   Eta_jsoo.Runtime.run runtime eff ~on_result
 
 let expect_ok = function
@@ -102,8 +102,9 @@ let rec get_keys cache acc = function
       Int_cache.get cache key
       |> Eta.Effect.bind (fun value -> get_keys cache (value :: acc) rest)
 
-let run_test done_ program check =
-  run program ~on_result:(finish done_ (fun result -> check (expect_ok result)))
+let run_test ?now_ms done_ program check =
+  run ?now_ms program
+    ~on_result:(finish done_ (fun result -> check (expect_ok result)))
 
 let test_single_flight done_ =
   let calls = ref 0 in
@@ -238,6 +239,7 @@ let test_lru_eviction done_ =
 
 let test_stats done_ =
   let calls = ref 0 in
+  let clock_ms = ref 0 in
   let lookup key =
     Eta.Effect.sync (fun () -> incr calls)
     |> Eta.Effect.bind (fun () ->
@@ -252,7 +254,8 @@ let test_stats done_ =
            |> Eta.Effect.bind (fun _ ->
                   Int_cache.get cache 1
                   |> Eta.Effect.bind (fun _ ->
-                         Eta.Effect.delay (Eta.Duration.ms 5) (Int_cache.get cache 1)
+                         Eta.Effect.sync (fun () -> clock_ms := 5)
+                         |> Eta.Effect.bind (fun () -> Int_cache.get cache 1)
                          |> Eta.Effect.bind (fun _ ->
                                 Eta.Effect.to_exit (Int_cache.get cache 9)
                                 |> Eta.Effect.bind (fun failure ->
@@ -260,7 +263,8 @@ let test_stats done_ =
                                        |> Eta.Effect.map (fun stats ->
                                               (failure, stats, !calls)))))))
   in
-  run_test done_ program @@ fun (failure, stats, calls) ->
+  run_test ~now_ms:(fun () -> !clock_ms) done_ program
+  @@ fun (failure, stats, calls) ->
   expect_fail "stats failure" (( = ) `Bad) failure;
   if calls <> 3 then fail "stats lookup count mismatch";
   if stats.Int_cache.hits <> 1 || stats.misses <> 3 || stats.loads <> 3

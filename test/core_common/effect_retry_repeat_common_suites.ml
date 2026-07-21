@@ -844,7 +844,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_retry_or_else_first_rejection_has_no_schedule_output () =
     B.with_runtime @@ fun _ctx rt ->
     let fallback_output = ref (Some (-1)) in
-    let effect =
+    let eff =
       Effect.fail (`Reject 1)
       |> Effect.retry_or_else ~schedule:(Schedule.recurs 5)
            ~while_:(fun (`Reject _) -> false)
@@ -852,7 +852,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              fallback_output := output;
              Effect.pure ("fallback-" ^ string_of_int n))
     in
-    Alcotest.(check string) "fallback result" "fallback-1" (run_ok rt effect);
+    Alcotest.(check string) "fallback result" "fallback-1" (run_ok rt eff);
     Alcotest.(check (option int)) "no schedule output" None !fallback_output
 
   let test_effect_retry_or_else_exhausted_fallback () =

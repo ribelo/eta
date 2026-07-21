@@ -49,7 +49,7 @@ let test_staged_switch_commit_runs_graph_effects_in_bind_order () =
   let current = Bind.switch ~source_value:0 ~inner:"old" ~scope:1 in
   let staged = Bind.switch ~source_value:1 ~inner:"new" ~scope:2 in
   let effects = ref [] in
-  let record effect = effects := !effects @ [ effect ] in
+  let record eff = effects := !effects @ [ eff ] in
   let switch = Bind.staged_switch ~owner:(Some "owner") ~current
       ~staged:(Some staged)
   in

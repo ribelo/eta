@@ -5,8 +5,8 @@ let inactive generation = Timer_policy.inactive_state ~generation
 
 let pp_hidden ppf _ = Format.pp_print_string ppf "<timer-error>"
 
-let run_ok runtime effect =
-  match Eta_eio.Runtime.run runtime effect with
+let run_ok runtime eff =
+  match Eta_eio.Runtime.run runtime eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       Alcotest.failf "expected Ok, got %a" (Eta.Cause.pp pp_hidden) cause
@@ -104,7 +104,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
       ~effective:(inactive 0)
   in
   let cases = [ start; stop; idle ] in
-  let effect =
+  let eff =
     Eta.Effect.Expert.make
       ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
@@ -202,7 +202,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
             Eta.Exit.Ok ()
         | Eta.Exit.Error _ as exit -> exit)
   in
-  run_ok runtime effect
+  run_ok runtime eff
 
 let test_node_demand_refresh_owns_node_bracketing () =
   with_runtime @@ fun runtime ->
@@ -444,7 +444,7 @@ let test_refresh_node_demand_runtime_mismatch_short_circuits () =
     | Some case -> case
     | None -> Alcotest.fail "unknown timer node"
   in
-  let effect =
+  let eff =
     Eta.Effect.Expert.make
       ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
@@ -485,7 +485,7 @@ let test_refresh_node_demand_runtime_mismatch_short_circuits () =
     | Error error -> Alcotest.failf "unexpected error %s" error
     | Ok _ -> Alcotest.fail "expected runtime validation failure"
   in
-  run_ok runtime effect;
+  run_ok runtime eff;
   Alcotest.(check bool) "no state changes" false !changed_state;
   Alcotest.(check bool) "no start effects" false !started;
   Alcotest.(check string) "bad state unchanged" "inactive:0"
@@ -877,7 +877,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
         current := state;
         append_event events ("set:" ^ state_label state))
   in
-  let effect =
+  let eff =
     Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node"
     @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
@@ -905,7 +905,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
          runtime_contract);
     Eta.Effect.Expert.eval context (Timer.start_effect timer)
   in
-  run_ok runtime effect;
+  run_ok runtime eff;
   Alcotest.(check (list string))
     "events"
     [

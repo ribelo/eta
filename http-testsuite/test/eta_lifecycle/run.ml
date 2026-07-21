@@ -27,7 +27,7 @@ let probe_health ~env ~sw ~port ~protocol ~transport ?cert_dir () =
       in
       let rt = Eta_eio.Runtime.create ~sw ~clock () in
       let request = Eta_http.Request.make "GET" url in
-      let effect =
+      let eff =
         Eta_http.request client request
         |> Eta.Effect.bind (fun response ->
                Util.body_to_string response.Eta_http.Response.body
@@ -35,7 +35,7 @@ let probe_health ~env ~sw ~port ~protocol ~transport ?cert_dir () =
                       (response.Eta_http.Response.status, body)))
         |> Eta.Effect.tap (fun _ -> Eta_http.Client.shutdown client)
       in
-      (match Eta.Runtime.run rt effect with
+      (match Eta.Runtime.run rt eff with
       | Eta.Exit.Ok (200, "ok\n") -> ()
       | Eta.Exit.Ok (status, body) ->
           fail

@@ -25,10 +25,13 @@ compile_fixture() {
 
 log_contains_all() {
   local log="$1"
+  local normalized_log="$log.normalized"
   shift
 
+  tr -d '"' <"$log" >"$normalized_log"
   for expected in "$@"; do
-    if ! grep -Fqi "$expected" "$log"; then
+    expected="${expected//\"/}"
+    if ! grep -Fqi "$expected" "$normalized_log"; then
       return 1
     fi
   done
@@ -53,7 +56,7 @@ for src in "$fixture_dir"/*_negative.ml; do
   case "$name" in
     cross_graph_signal_negative.ml)
       expected_substrings=(
-        'This expression has type "int A.signal"'
+        'has type "int A.signal"'
         'but an expression was expected of type "int B.signal"'
       )
       ;;
@@ -112,7 +115,7 @@ for src in "$fixture_dir"/*_negative.ml; do
       ;;
     time_deadline_raw_int_negative.ml)
       expected_substrings=(
-        'This expression has type "int"'
+        'has type "int"'
         'but an expression was expected of type'
         'Signal.Time.monotonic_time'
       )

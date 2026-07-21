@@ -124,7 +124,7 @@ let test_reentry_policy () =
 
 let test_access_token_guards_leave () =
   let lane = Lane.create () in
-  let effect =
+  let eff =
     Eta.Effect.Expert.make ~leaf_name:"eta_signal_lane.test" @@ fun context ->
     try
       let contract = Eta.Effect.Expert.contract context in
@@ -143,7 +143,7 @@ let test_access_token_guards_leave () =
       Eta.Exit.Ok ()
     with exn -> Eta.Effect.Expert.exit_of_exn context exn
   in
-  expect_effect_ok "lane access token" effect
+  expect_effect_ok "lane access token" eff
 
 let test_granted_waiter_survives_resolver_failure () =
   with_hooked_runtime @@ fun sw runtime ~fail_next_resolve

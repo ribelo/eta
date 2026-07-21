@@ -138,7 +138,7 @@ let test_h1_serve_ready_and_external_stop () =
 
 let run_h2_request rt connection uri =
   let request = Eta_http.Request.make "GET" uri in
-  let effect =
+  let eff =
     Eta_http_eio.Client.request_h2_on_connection connection request
       (Eta_http.Request.url request)
     |> Eta.Effect.bind (fun response ->
@@ -146,7 +146,7 @@ let run_h2_request rt connection uri =
            |> Eta.Effect.map (fun body ->
                   (response.Eta_http.Response.status, Bytes.to_string body)))
   in
-  match Eta_eio.Runtime.run rt effect with
+  match Eta_eio.Runtime.run rt eff with
   | Eta.Exit.Ok value -> value
   | Eta.Exit.Error cause ->
       Alcotest.failf "unexpected h2 client failure: %a"
