@@ -23,6 +23,11 @@ open Eta
 
 let int_sink = ref 0
 let one = Sys.opaque_identity 1
+let log_sink : Capabilities.logger =
+  object
+    method log (record : Capabilities.log_record) =
+      int_sink := Sys.opaque_identity (!int_sink lxor String.length record.body)
+  end
 
 let run_eta_int rt program =
   match Runtime.run rt program with
@@ -135,6 +140,6 @@ let () =
   Eio.Switch.run @@ fun sw ->
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~logger:Logger.noop ()
+      ~logger:log_sink ()
   in
   Bench_lib.run opts (overhead_workloads rt)
