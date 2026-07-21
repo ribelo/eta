@@ -1,33 +1,43 @@
-# DX-E20 report — log and metric interception
+# DX-E20b report — immediate interception results
 
 ## Recommendation
 
-**DO NOT PROMOTE THE CURRENT CONTRACT.** The behavioral design is coherent and
-all repository gates pass, but the pre-registered fast-path allocation claim is
-false for the required standard `option` callback. The branch is complete
-review evidence, not a merge-ready feature.
+**HOLD FOR GATE RE-EVALUATION.** `Keep | Drop | Replace` fixes the public result
+representation and preserves every proven E20 behavior. All repository and jsoo
+gates pass. The exact watchlist zero-increment bar still fails, however: an
+active runtime-local lookup costs ~10.49 minor words per emitted record even
+when the callback returns immediate `Keep`.
 
-The log and metric recommendations are separate:
+The two halves are considered separately:
 
-- **Log half:** behavior passes; promotion is blocked by measured identity-path
-  allocation.
-- **Metric half:** the tenant-label fixture is compelling, so the metric-use-case
-  kill condition does not fire. Keep it in a revised design, but it shares the
-  callback representation problem and should not merge from this branch.
+- **Log half:** HOLD. Behavior and representation pass; end-to-end allocation
+  remains above the sealed bar.
+- **Metric half:** HOLD, not KILL. Per-subtree tenant enrichment remains a
+  compelling executable use case and shares the same representation/local
+  machinery.
 
-## Delivered experiment surface
+## Current surface
 
-- `Effect.intercept_log` and `Effect.intercept_metric`: +2 vals / +1
-  observability concept.
-- Two private fiber-local transform stacks and shared emission walkers.
-- Existing `annotate_logs` and `with_minimum_log_level` code unchanged.
-- Native common-suite tests, explicit jsoo parity, watchlist denominator pair,
-  red-team artifacts, and old/new review packet.
-- Public types +0; dependencies +0; compatibility paths +0.
+```ocaml
+type 'a Effect.intercept = Keep | Drop | Replace of 'a
+
+val Effect.intercept_log :
+  (Capabilities.log_record -> Capabilities.log_record Effect.intercept) ->
+  ('a, 'err) Effect.t -> ('a, 'err) Effect.t
+
+val Effect.intercept_metric :
+  (Capabilities.metric_point -> Capabilities.metric_point Effect.intercept) ->
+  ('a, 'err) Effect.t -> ('a, 'err) Effect.t
+```
+
+`Keep` and `Drop` are immediate. `Replace value` identifies the only branch that
+substitutes a value. The private walkers recurse directly and create no result
+wrapper, list node, or continuation per emission.
+
+Census: observability cluster +2 vals / +1 concept, plus one public result type
+with three constructors. Public dependencies +0; compatibility paths +0.
 
 ## Required gates
-
-All exact commands passed from the assigned worktree:
 
 | Gate | Result |
 | --- | --- |
@@ -36,61 +46,63 @@ All exact commands passed from the assigned worktree:
 | `nix develop -c eta-oxcaml-test-shipped` | PASS |
 | `nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo` | PASS |
 
-Additional executable JS evidence:
+Additional executable parity:
 
 - `nix develop .#mainline -c dune runtest test/js_jsoo --force` — PASS,
-  including `intercept_log parity`.
+  including `intercept_log parity` with all three result constructors.
 
-## Composition, drop, and parity results
+## Carried behavioral evidence
 
-The fixed log pipeline is proven as:
+The fixed log pipeline remains:
 
 1. scoped minimum-level admission;
 2. scoped attributes, then per-call attributes;
 3. outermost-to-innermost intercept transforms;
-4. the currently bound sink.
+4. the currently bound logger.
 
-An outer transform sees the fully attributed record first. If it returns
-`Some`, the inner transform sees that transformed record. `None` prevents every
-later transform and the sink. A below-threshold record calls no interceptor.
+`Keep` passes the current record to the next stage, `Replace record` passes the
+replacement, and `Drop` prevents every later transform and the sink. A filtered
+record invokes no interceptor. `with_logger` inside and outside interception
+selects the sink without bypassing the transform.
 
-`with_logger` was tested both inside and outside `intercept_log`; both selected
-sinks received the scrubbed record and the base sink received nothing. The
-transform therefore applies to whichever sink is active rather than replacing
-that sink.
+The carried suite proves composition traces, drop short-circuiting, fiber-local
+sibling isolation, redaction after attributes, both logger-override nestings,
+raising-transform defect capture, metric tenant enrichment, metric drop, and
+jsoo parity. Existing `annotate_logs` and `with_minimum_log_level`
+implementations remain unchanged and their suites pass unchanged.
 
-Shorthand parity is exact: their implementations were not changed, their
-existing record-order/filter suites passed unchanged, and the new order test
-confirms interception starts only after those stages.
+## Review and red-team packets
 
-Metric points use the same nesting/drop rules after point construction and
-before the meter. Executable evidence enriches a subtree with `tenant=acme` and
-proves a dropped point skips later transforms and the meter.
+Artifacts: `.scratch/research/dx/e20/review/` and
+`.scratch/research/dx/e20/redteam/`.
 
-## Redaction and metric review packet
+- `redact-old.ml` versus `redact-new.ml`: delegating logger discipline versus a
+  lexical `Replace` scrub independent of sink selection.
+- `metric-old.ml` versus `metric-new.ml`: runtime-wide meter wrapper versus
+  lexical tenant enrichment with `Replace`.
+- `intercept-results.ml`: one readable callback using `Keep`, `Drop`, and
+  `Replace` without helper machinery.
+- The filter trap re-runs with `Keep` and still proves the callback is not
+  invoked. The raising transform still becomes `Exit.Error (Cause.Die _)` and
+  never reaches the sink.
 
-Artifacts: `.scratch/research/dx/e20/review/`.
+The metric case remains honest and compelling; its kill condition does not
+fire.
 
-- `redact-old.ml` is the strongest ordinary baseline: a delegating logger
-  wrapper. A nested `with_logger` replaces the wrapper and its policy.
-- `redact-new.ml` scopes one inline scrub independently of sink selection.
-- `metric-old.ml` wraps the meter at runtime construction because Eta has no
-  scoped meter override; its tenant policy is runtime-wide.
-- `metric-new.ml` adds the tenant only to one lexical subtree while preserving
-  the installed meter.
-- `MANIFEST.md` and `QUESTIONS.md` provide the inventory and required
-  teach-back prompts/key.
+## E20 historical result
 
-The metric case is honest and compelling: it changes policy scope from runtime
-construction to a lexical tenant subtree. **Do not kill the metric half for
-lack of a use case.**
+E20's standard-`option` design proved behavior but measured:
 
-## Fast-path benchmark
+| Row | minor words/100k |
+| --- | ---: |
+| no intercept | 5,242,876 |
+| `Some` identity | 6,291,447 |
 
-Watchlist rows:
+It scored **6 / 7** and was correctly held because identity added ~10.49 minor
+words per record. E20b was sealed to distinguish callback representation cost
+from the remaining active-local cost.
 
-- `overhead.eta.log.100k.no_intercept`
-- `overhead.eta.log.100k.identity_intercept`
+## E20b watchlist result
 
 Command:
 
@@ -102,52 +114,48 @@ taskset -c 0 nix develop -c dune exec \
 
 | Row | wall mean ± stddev | minor words | major words |
 | --- | ---: | ---: | ---: |
-| no intercept | 16,629,791 ± 127,940 ns | 5,242,876 | 67 |
-| identity intercept | 11,186,719 ± 66,532 ns | 6,291,447 | 153 |
+| no intercept | 17,063,689 ± 187,713 ns | 5,242,876 | 67 |
+| `Keep` identity | 11,671,758 ± 76,696 ns | 6,291,445 | 149 |
+| `Replace record` | 11,580,610 ± 40,250 ns | 6,291,447 | 153 |
 
-The wall delta is -32.7%, which is not interpreted as a speedup: the scope's
-fiber-local context changes backend lookup and GC behavior, so the pair does not
-isolate call latency. It does show no wall-time regression in this sample.
+- **Wall gate:** PASS. `Keep` is 31.6% below baseline; this is not claimed as a
+  speedup because activating fiber-local context changes backend lookup/GC
+  behavior.
+- **Keep zero-increment gate:** FAIL. Delta is +1,048,569 minor words/100k,
+  ~10.48569 words/record.
+- **Replace representation gate:** PASS relative to `Keep`. The complete 100k
+  sample adds only 2 minor words, far below 3 words/record.
+- **Replace end-to-end versus no intercept:** still includes the same active-
+  local residual, ~10.48571 words/record.
 
-The allocation result is decisive. Identity adds 1,048,571 minor words per
-100,000 records (~10.49 words/record), repeatably. The ordinary boxed
-`Some record` callback result plus fiber-local lookup is not allocation-free.
-Although the implementation reuses the record and does not add another final
-option wrapper, it cannot make an opaque upstream-OCaml callback's boxed option
-disappear. The sealed ±5%/zero-increment prediction and the one-pager promotion
-gate therefore fail.
+E20b removes only two minor words from the entire sample versus E20. This shows
+the old callback's boxed `Some` was not the per-record source in the optimized
+binary. The residual comes from retrieving an active local through the current
+Eio backend. Changing runtime-local representation or the denominator is outside
+the follow-up's representation-only scope, so the raw result is preserved.
 
-## Red-team outcomes
+## Prediction scores
 
-Artifacts: `.scratch/research/dx/e20/redteam/`.
+### E20 original — 6 / 7
 
-1. **Filter trap:** a `Debug` log under a `Warn` scope never invokes the
-   interceptor and never reaches the sink. Contract and executable test agree.
-2. **Raising transform:** the runtime returns `Exit.Error (Cause.Die _)`, keeps
-   exception identity, and does not call the sink. The contract states ordinary
-   defect capture.
+Pipeline order, drop, shorthand parity, both use cases, jsoo, and defect capture
+passed. The option identity allocation prediction failed.
 
-No exception swallowing, fallback, or silent default was introduced.
+### E20b amendment — 3.5 / 5
 
-## Census, footguns, and prediction score
+| Prediction | Result | Score |
+| --- | --- | ---: |
+| Carried behavior | PASS | 1 |
+| Zero end-to-end `Keep` increment | FAIL | 0 |
+| Replace cost | Representation PASS; stricter sealed denominator wording FAIL | 0.5 |
+| No wall regression | PASS | 1 |
+| Constructor readability | PASS | 1 |
 
-- Census: observability cluster +2 vals / +1 concept; public types +0;
-  dependencies +0.
-- Traps recorded and disarmed by docs/tests: filter-before-intercept,
-  inner-first nesting expectation, and sink-placement bypass expectation.
-- Undisclosed footguns: +0.
-- Prediction score: **6 / 7**. Pipeline, drop, shorthand parity, both use cases,
-  jsoo parity, and defect capture passed. Allocation failed.
+## Footguns and final verdict
 
-## Evidence verdicts
+The same three traps remain disarmed by docs and tests: expecting interception
+before minimum-level filtering, expecting inner-first transform order, and
+expecting logger-override placement to bypass transformation. Undisclosed
+footguns remain +0.
 
-- **A — ship both interceptors:** REJECTED under the fixed allocation contract.
-- **B — ship log only:** REJECTED under the same log allocation evidence.
-- **C — retain ordinary sink wrappers:** BASELINE RETAINED pending a portable
-  callback redesign.
-
-A credible next candidate would represent unchanged identity with an immediate
-result such as `Keep`, while reserving an allocating case for replacement. That
-is outside E20's fixed signature and must be a separately sealed experiment.
-
-Final verdict: **BEHAVIOR PROVEN; CURRENT CONTRACT NOT PROMOTABLE**.
+Verdict: **REPRESENTATION FIX PROVEN; PROMOTION HELD ON ACTIVE-LOCAL ALLOCATION**.

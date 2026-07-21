@@ -237,3 +237,112 @@ delta will distinguish walker/local overhead from representation cost.
 Scoring: one point each for P1–P5. Promotion requires P1 plus the orchestrator's
 allocation and wall gates; the metric half remains separately justified by the
 already compelling tenant-subtree fixture.
+
+## V-DX-E20b-002 — representation and carried behavior
+
+Status: ACCEPTED.
+
+Decision: expose `type 'a intercept = Keep | Drop | Replace of 'a`. The private
+walker dispatches directly to the logger/meter: `Keep` recurs with the existing
+value, `Drop` returns immediately, and `Replace value` recurs with that value.
+The walker creates no result wrapper or continuation per record.
+
+Evidence:
+
+- Every E20 native behavior test passed after mechanical result updates.
+- `Keep` is exercised by inner composition, later-transform, filter-observer,
+  and metric-later branches; `Drop` still short-circuits; `Replace` still proves
+  redaction and metric enrichment.
+- Logger override placement, fiber isolation, filter order, raising-transform
+  defect capture, and unchanged shorthand suites all pass.
+- Mainline jsoo `intercept_log parity` passes with `Replace`, `Drop`, and `Keep`.
+- `.scratch/research/dx/e20/review/intercept-results.ml` puts all three answers
+  in one ordinary callback. No extra helper type or conversion is needed.
+
+## V-DX-E20b-003 — representation fixed; active-local residual remains
+
+Status: PARTIAL; zero-increment end-to-end gate missed.
+
+Command (OxCaml, CPU 0, 10 samples, enabled consuming logger):
+
+```sh
+taskset -c 0 nix develop -c dune exec \
+  bench/runtime_watchlist/runtime_watchlist.exe -- \
+  --samples 10 --filter overhead.eta.log
+```
+
+| Row | wall mean | wall stddev | minor words | major words |
+| --- | ---: | ---: | ---: | ---: |
+| no intercept | 17,063,689 ns | 187,713 ns | 5,242,876 | 67 |
+| `Keep` identity | 11,671,758 ns | 76,696 ns | 6,291,445 | 149 |
+| `Replace record` | 11,580,610 ns | 40,250 ns | 6,291,447 | 153 |
+
+Results:
+
+- Wall: `Keep` is 31.6% below the denominator, so there is no observed
+  regression. As in E20, this is attributed to the active fiber-local context,
+  not claimed as an interceptor speedup.
+- End-to-end `Keep`: +1,048,569 minor words/100k, about +10.48569 words/record.
+  The sealed zero-increment bar is missed.
+- `Replace` versus `Keep`: +2 minor words total across the whole 100k sample,
+  well below 3 words/record. The unary result representation does not add a
+  per-record heap cost in this optimized build.
+- `Replace` versus no intercept still includes the same +10.48571 words/record
+  active-local residual. Therefore sealed E20b-P3's stricter denominator wording
+  was overbroad even though the amendment's representation-specific Replace bar
+  passes.
+
+Comparison with E20 is diagnostic: E20 identity used 6,291,447 minor words;
+E20b `Keep` uses 6,291,445, only two fewer words per 100k sample. The original
+~10.49 words were not produced per callback by boxed `Some`; they are the cost
+of retrieving an active runtime local through the current Eio backend. The
+follow-up authorizes only the result-representation change, so no runtime-local
+backend or denominator change was attempted.
+
+Would change the decision: a separately sealed local-lookup change that makes an
+active binding retrieval allocation-free, followed by the exact same rows, or an
+explicit gate re-evaluation accepting this residual as outside E20b's
+representation scope.
+
+## V-DX-E20b-004 — amended score and recommendation
+
+Status: HOLD, ready for review.
+
+E20 original score remains **6 / 7**: all behavior passed; its `option` identity
+allocation prediction failed.
+
+E20b amendment score:
+
+| Prediction | Result | Score |
+| --- | --- | ---: |
+| P1 carried behavior | Proven native and jsoo | 1 |
+| P2 zero end-to-end `Keep` increment | Contradicted: +10.48569 words/record | 0 |
+| P3 Replace cost | Representation delta passes; sealed denominator wording fails | 0.5 |
+| P4 no wall regression | Proven in the pinned run | 1 |
+| P5 constructor readability | Proven by review fixture | 1 |
+| **Total** |  | **3.5 / 5** |
+
+Recommendation:
+
+- **Log half:** HOLD. The public representation and behavior are now sound, but
+  the exact watchlist zero-increment gate remains red due to active-local lookup.
+- **Metric half:** HOLD with the log half, not KILL. Its tenant-subtree use case
+  remains compelling and the carried metric tests pass; no metric-specific
+  evidence regressed.
+- Do not optimize runtime locals inside this branch and do not relabel the raw
+  allocation delta. Submit the representation result and residual for gate
+  re-evaluation.
+
+Census: observability remains +2 vals / +1 concept and now has +1 public result
+type with three constructors; dependencies +0. The same three documented traps
+remain disarmed; undisclosed footguns +0.
+
+Final exact gates, all PASS:
+
+- `nix develop -c dune build @install`
+- `nix develop -c dune runtest --force`
+- `nix develop -c eta-oxcaml-test-shipped`
+- `nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo`
+
+Additional parity gate PASS:
+`nix develop .#mainline -c dune runtest test/js_jsoo --force`.
