@@ -495,7 +495,8 @@ unless a named effect supplies a typed renderer:
 ```ocaml
 let save =
   Effect.named
-    ~error_pp:(function `Db code -> "db:" ^ string_of_int code)
+    ~error_pp:(fun fmt -> function
+      | `Db code -> Format.fprintf fmt "db:%d" code)
     "db.save"
     (Effect.fail (`Db 42))
 ```

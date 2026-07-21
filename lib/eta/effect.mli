@@ -613,8 +613,8 @@ val with_error_pp :
     events on the wrapped eff. The printer is scoped to this eff's error
     channel. Output is rendered at most once per span status or exception
     event. The printer must be total; a raising [error_pp] becomes a defect
-    through the ordinary capture path. Omitted printers keep the default
-    ["<typed failure>"] status text. *)
+    through the ordinary capture path. When no printer is installed, the
+    default ["<typed failure>"] status text is used. *)
 
 val suppress_observability : ('a, 'err) t -> ('a, 'err) t
 (** Run the wrapped eff without emitting tracer, logger, or meter events
