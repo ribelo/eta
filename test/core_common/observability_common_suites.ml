@@ -740,14 +740,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             else (key, value))
           record.attrs
       in
-      Some { record with attrs }
+      Effect.Replace { record with attrs }
     in
     let inner (record : Capabilities.log_record) =
       calls := !calls @ [ "inner" ];
       Alcotest.(check (option string)) "inner sees outer transform"
         (Some "[redacted]")
         (List.assoc_opt "password" record.attrs);
-      Some record
+      Effect.Keep
     in
     let program =
       Effect.log ~attrs:[ ("password", "open-sesame") ] "login"
@@ -766,11 +766,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let calls = ref [] in
     let drop (_ : Capabilities.log_record) =
       calls := !calls @ [ "drop" ];
-      None
+      Effect.Drop
     in
     let later record =
       calls := !calls @ [ "later" ];
-      Some record
+      Effect.Keep
     in
     let program =
       Effect.log "secret"
@@ -786,7 +786,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let calls = ref 0 in
     let observe record =
       incr calls;
-      Some record
+      Effect.Keep
     in
     let program =
       Effect.log_debug "filtered"
@@ -800,7 +800,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_intercept_log_is_fiber_local () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let redact (record : Capabilities.log_record) =
-      Some { record with body = "redacted" }
+      Effect.Replace { record with body = "redacted" }
     in
     let left = Effect.intercept_log redact (Effect.log "left") in
     let right = Effect.yield |> Effect.bind (fun () -> Effect.log "right") in
@@ -814,7 +814,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let inside_logger = Logger.in_memory () in
     let outside_logger = Logger.in_memory () in
     let scrub (record : Capabilities.log_record) =
-      Some { record with body = "[redacted]" }
+      Effect.Replace { record with body = "[redacted]" }
     in
     let sink logger = Logger.as_capability logger in
     let logger_inside =
@@ -848,7 +848,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_observability_intercept_metric_enriches_subtree () =
     B.with_observed_runtime @@ fun _ctx rt _tracer _logger meter ->
     let enrich (point : Capabilities.metric_point) =
-      Some { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
+      Effect.Replace { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
     in
     let program =
       Effect.metric_counter ~name:"requests" ~monotonic:true
@@ -867,11 +867,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let calls = ref [] in
     let drop (_ : Capabilities.metric_point) =
       calls := !calls @ [ "drop" ];
-      None
+      Effect.Drop
     in
     let later point =
       calls := !calls @ [ "later" ];
-      Some point
+      Effect.Keep
     in
     let program =
       Effect.metric_gauge ~name:"queue.depth" (Capabilities.Int 3)

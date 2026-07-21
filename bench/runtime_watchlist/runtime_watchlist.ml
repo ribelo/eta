@@ -14,6 +14,7 @@
    DX-E20 adds a denominator pair outside the composite score:
      - overhead.eta.log.100k.no_intercept
      - overhead.eta.log.100k.identity_intercept
+     - overhead.eta.log.100k.replace_intercept
 
    Composite score is normalized against the v2 ship baselines so each
    contribution starts at 1.0. Lower is better. Use the @watchlist-bench alias
@@ -115,7 +116,10 @@ let overhead_workloads rt =
   let eta_fail = eta_fail_catch_loop fail_n in
   let eta_logs = eta_log_loop log_n in
   let eta_logs_intercepted =
-    Effect.intercept_log (fun record -> Some record) eta_logs
+    Effect.intercept_log (fun _record -> Effect.Keep) eta_logs
+  in
+  let eta_logs_replaced =
+    Effect.intercept_log (fun record -> Effect.Replace record) eta_logs
   in
   [
     workload "overhead.eta.pure.reused_rt" (fun () ->
@@ -128,6 +132,8 @@ let overhead_workloads rt =
         run_eta_unit rt eta_logs);
     workload "overhead.eta.log.100k.identity_intercept" (fun () ->
         run_eta_unit rt eta_logs_intercepted);
+    workload "overhead.eta.log.100k.replace_intercept" (fun () ->
+        run_eta_unit rt eta_logs_replaced);
   ]
 
 let realuse_workloads () =

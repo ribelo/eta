@@ -4,6 +4,8 @@
 
 open Effect_core
 
+type 'a intercept = 'a RObs.intercept = Keep | Drop | Replace of 'a
+
 let local_get frame key =
   frame.runtime.contract.Runtime_contract.local_get key
 

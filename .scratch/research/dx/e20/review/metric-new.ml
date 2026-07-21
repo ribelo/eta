@@ -1,7 +1,7 @@
 open Eta
 
 let tenant_acme (point : Capabilities.metric_point) =
-  Some { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
+  Effect.Replace { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
 
 let request =
   Effect.metric_counter ~name:"requests" ~monotonic:true (Capabilities.Int 1)

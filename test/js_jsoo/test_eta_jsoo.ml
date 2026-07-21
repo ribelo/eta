@@ -330,11 +330,12 @@ let test_intercept_log_parity done_ =
   let calls = ref [] in
   let outer (record : Eta.Capabilities.log_record) =
     calls := !calls @ [ "outer:" ^ record.body ];
-    Some { record with body = "scrubbed:" ^ record.body }
+    Eta.Effect.Replace { record with body = "scrubbed:" ^ record.body }
   in
   let inner (record : Eta.Capabilities.log_record) =
     calls := !calls @ [ "inner:" ^ record.body ];
-    if String.equal record.body "scrubbed:drop" then None else Some record
+    if String.equal record.body "scrubbed:drop" then Eta.Effect.Drop
+    else Eta.Effect.Keep
   in
   let program =
     Eta.Effect.concat [ Eta.Effect.log "keep"; Eta.Effect.log "drop" ]

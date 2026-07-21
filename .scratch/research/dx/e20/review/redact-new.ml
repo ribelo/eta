@@ -8,7 +8,7 @@ let scrub (record : Capabilities.log_record) =
         else (key, value))
       record.attrs
   in
-  Some { record with attrs }
+  Effect.Replace { record with attrs }
 
 let login ~sink =
   Effect.intercept_log scrub

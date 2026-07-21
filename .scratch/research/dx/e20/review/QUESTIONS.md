@@ -9,12 +9,12 @@
 
 ## Reviewer key
 
-1. `intercept_log` drops a record when its transform returns `None`;
+1. `intercept_log` drops a record when its transform returns `Drop`;
    `with_minimum_log_level` also drops below-threshold records before any
    interceptor can observe them.
 2. Scoped minimum-level filter → scoped attributes → per-call attributes →
    intercept transforms → currently bound sink.
-3. Outermost-to-innermost. `None` prevents all later/inner transforms.
+3. Outermost-to-innermost. `Drop` prevents all later/inner transforms.
 4. No. Both nesting orders transform before the selected sink.
 5. Compare `metric-old.ml`'s runtime-wide meter replacement with
    `metric-new.ml`'s lexical tenant scope; answer independently of the log case.

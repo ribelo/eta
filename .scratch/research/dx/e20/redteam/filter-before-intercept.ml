@@ -4,7 +4,7 @@ let expected_to_observe_but_cannot =
   let observed = ref false in
   let observe record =
     observed := true;
-    Some record
+    Effect.Keep
   in
   let effect =
     Effect.log_debug "below minimum"
