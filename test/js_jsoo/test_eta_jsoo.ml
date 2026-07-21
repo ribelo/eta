@@ -325,6 +325,48 @@ let test_scoped_clock_and_logger_parity done_ =
               (Format.asprintf "scoped clock/logger failed: %a"
                  (Eta.Cause.pp pp_err) cause)))
 
+let test_intercept_log_parity done_ =
+  let logger = Eta.Logger.in_memory () in
+  let calls = ref [] in
+  let outer (record : Eta.Capabilities.log_record) =
+    calls := !calls @ [ "outer:" ^ record.body ];
+    Some { record with body = "scrubbed:" ^ record.body }
+  in
+  let inner (record : Eta.Capabilities.log_record) =
+    calls := !calls @ [ "inner:" ^ record.body ];
+    if String.equal record.body "scrubbed:drop" then None else Some record
+  in
+  let program =
+    Eta.Effect.concat [ Eta.Effect.log "keep"; Eta.Effect.log "drop" ]
+    |> Eta.Effect.intercept_log inner
+    |> Eta.Effect.intercept_log outer
+    |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+  in
+  run program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok () -> (
+            let expected_calls =
+              [
+                "outer:keep";
+                "inner:scrubbed:keep";
+                "outer:drop";
+                "inner:scrubbed:drop";
+              ]
+            in
+            if !calls <> expected_calls then
+              fail "jsoo intercept order differed";
+            match Eta.Logger.dump logger with
+            | [ record ] when record.Eta.Logger.body = "scrubbed:keep" -> ()
+            | records ->
+                fail
+                  (Printf.sprintf "expected one intercepted jsoo log, got %d"
+                     (List.length records)))
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "jsoo intercept failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
 let tests =
   [
     ("delay", test_delay);
@@ -340,6 +382,7 @@ let tests =
       test_runtime_canceled_waiter_does_not_strand_live_waiter );
     ("daemon drain", test_daemon_drain);
     ("scoped clock and logger parity", test_scoped_clock_and_logger_parity);
+    ("intercept_log parity", test_intercept_log_parity);
   ]
 
 let rec run_tests = function

@@ -11,6 +11,10 @@
      - retry.flaky.fail4_then_ok minor_words MUST stay 0
      - pure.reused_rt minor_words MUST stay 0
 
+   DX-E20 adds a denominator pair outside the composite score:
+     - overhead.eta.log.100k.no_intercept
+     - overhead.eta.log.100k.identity_intercept
+
    Composite score is normalized against the v2 ship baselines so each
    contribution starts at 1.0. Lower is better. Use the @watchlist-bench alias
    for a small focused run while optimizing these rows. *)
@@ -23,6 +27,11 @@ let one = Sys.opaque_identity 1
 let run_eta_int rt program =
   match Runtime.run rt program with
   | Exit.Ok v -> int_sink := Sys.opaque_identity v
+  | Exit.Error _ -> failwith "unexpected Eta failure"
+
+let run_eta_unit rt program =
+  match Runtime.run rt program with
+  | Exit.Ok () -> ()
   | Exit.Error _ -> failwith "unexpected Eta failure"
 
 let rec eta_bind_chain n acc =
@@ -45,8 +54,17 @@ let eta_fail_catch_loop n =
   in
   build n leaf
 
+let eta_log_loop n =
+  let emit = Effect.log "watchlist" in
+  let rec build i acc =
+    if i = 0 then acc
+    else build (i - 1) (Effect.bind (fun () -> acc) emit)
+  in
+  build n Effect.unit
+
 let bind_n = 100_000
 let fail_n = 100_000
+let log_n = 100_000
 
 (* ---- realuse.retry.flaky.fail4_then_ok (mirror of runtime_real) ---- *)
 let retry_flaky_program () =
@@ -90,6 +108,10 @@ let workload name run = { Bench_lib.name; run; samples = None }
 let overhead_workloads rt =
   let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
   let eta_fail = eta_fail_catch_loop fail_n in
+  let eta_logs = eta_log_loop log_n in
+  let eta_logs_intercepted =
+    Effect.intercept_log (fun record -> Some record) eta_logs
+  in
   [
     workload "overhead.eta.pure.reused_rt" (fun () ->
         run_eta_int rt (Effect.pure 0));
@@ -97,6 +119,10 @@ let overhead_workloads rt =
         run_eta_int rt eta_bind);
     workload "overhead.eta.fail_catch.100k.prebuilt" (fun () ->
         run_eta_int rt eta_fail);
+    workload "overhead.eta.log.100k.no_intercept" (fun () ->
+        run_eta_unit rt eta_logs);
+    workload "overhead.eta.log.100k.identity_intercept" (fun () ->
+        run_eta_unit rt eta_logs_intercepted);
   ]
 
 let realuse_workloads () =
@@ -107,5 +133,8 @@ let () =
   Bench_lib.run opts (realuse_workloads ());
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
+  let rt =
+    Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      ~logger:Logger.noop ()
+  in
   Bench_lib.run opts (overhead_workloads rt)
