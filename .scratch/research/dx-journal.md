@@ -2447,3 +2447,68 @@ min-level, E19 overrides, intercepts). Runtime-instrument territory.
 **Decision: PROMOTE both halves.** Merged `--no-ff` (`6deb7694`); master
 gates green; master + branch pushed; objectives archived (incl.
 followup-1); worktree removed.
+
+---
+
+## V-DX-E12-001 — 2026-07-21 — research/dx-e12-audit-describe — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E12-002.
+
+**Current shapes (measured pre-change).** The blueprint is a 4-constructor
+GADT: `Pure`, `Fail`, `Custom { eval; leaf_name; names }`, `Map`,
+`Bind`. `collect_names` already traverses it (proves reification).
+**`Custom` leaves carry NO capability footprint** — `eval` is opaque.
+Library combinators (`retry`, `map_par`, resource ops) are single opaque
+`Custom` nodes via `preserve eff (fun frame -> …)`; user compositions are
+`Map`/`Bind` spines. So E12's real work: a capability-flags field on
+`Custom`, declared at every `make`/`preserve` site, with `preserve`
+INHERITING the inner effect's flags (union). 54 example files for the
+golden manifest.
+
+**Contract (from the one-pager).**
+```ocaml
+type audit = {
+  names : string list;
+  uses_clock : bool;  emits_logs : bool;  emits_metrics : bool;
+  has_concurrency : bool;  has_resources : bool; has_background : bool;
+}
+val audit : ('a, 'err) t -> audit
+val describe : ('a, 'err) t -> string  (* unforced continuations: <bind …> *)
+```
+Plus `Eta_test` assertions (`assert_no_clock`, `assert_pure_eff`, …).
+Static preflight, NOT a runtime inventory.
+
+**The honesty constraint (predicted central).** Bind continuations cannot
+be forced — user lambdas are opaque ordinary functions. The docs must
+say: flags cover the **static spine plus declared footprints of library
+leaves**; a `bind (fun x -> sleep …)` is invisible. The poisoned-clock
+property (`uses_clock = false` ⇒ runs against a poisoned clock) holds
+only for the blueprint class the docs define — property tests generate
+from that class (pure/fail/map + declared leaves), not arbitrary
+lambdas. If the executor can't state this boundary crisply, the flags
+mislead — that is the one-pager's kill trigger for the manifest role.
+
+**Census (predicted).** Introspection/observability cluster: +2 vals
+(`audit`, `describe`), +1 public type (`audit`); `Eta_test` +3–5
+assertion vals. Concepts +1 (blueprint introspection). Footguns +0;
+trap candidate recorded: reading `uses_clock = false` as a runtime
+guarantee over opaque lambdas — disarmed by the boundary docs.
+
+**Mechanical (predicted).** Flags on `Custom`; `preserve` inherits;
+primitive leaves declare; `audit` ORs the static spine; `describe`
+snapshot corpus (pure chain, named leaves, nested bind `<bind …>`,
+concurrent shapes); property tests: generated blueprints from the
+documented class — flags consistent with poisoned-capability execution;
+golden manifest for 54 examples (machine-generated, zero drift);
+`Eta_test` assertions executable.
+
+**Review (predicted).** Teaching A/B: the blueprint model from
+`describe` output vs. from prose — `describe`-aided rated ≥ 4;
+teach-back "what does `uses_clock = false` guarantee?" answered WITH the
+static-spine caveat by ≥ 2/3. Kill gate (example flags mislead more than
+inform) NOT fired: the manifest's flags match what a reader expects from
+each example's name.
+
+**Outcome (predicted).** Promote. Risk low; the GADT surgery is small,
+the flag threading is the bulk of the diff, and the boundary docs are
+the taste test.
