@@ -363,7 +363,7 @@ module Run = struct
     metrics : Eta.Meter.point list;
     sleeps : Eta.Duration.t list;
     events : event list;
-    pending_fibers : fiber_info list;
+    pending_fibers : fiber_info list option;
   }
 
   let settle_deadline accounting clock result =
@@ -513,13 +513,18 @@ module Run = struct
           (function Sleep duration -> Some duration | _ -> None)
           events;
       events;
-      pending_fibers = Fiber_accounting.pending accounting;
+      pending_fibers =
+        (if account_fibers then Some (Fiber_accounting.pending accounting)
+         else None);
     }
 
   let expect_no_pending_fibers outcome =
     match outcome.pending_fibers with
-    | [] -> ()
-    | fibers ->
+    | None ->
+        Alcotest.fail
+          "pending-fiber census unavailable (run with ~account_fibers:true)"
+    | Some [] -> ()
+    | Some fibers ->
         let pp_kind fmt = function
           | Structured -> Format.pp_print_string fmt "structured"
           | Daemon -> Format.pp_print_string fmt "daemon (runtime-owned)"
@@ -664,8 +669,64 @@ module Run = struct
       (pp_indexed pp_event) outcome.events
       (pp_indexed Eta.Duration.pp) outcome.sleeps
       (pp_indexed pp_log) outcome.logs (pp_indexed pp_span) outcome.spans
-      (pp_indexed pp_metric) outcome.metrics (pp_indexed pp_fiber)
+      (pp_indexed pp_metric) outcome.metrics
+      (fun fmt -> function
+        | None ->
+            Format.pp_print_string fmt "unavailable (account_fibers=false)"
+        | Some fibers -> (pp_indexed pp_fiber) fmt fibers)
       outcome.pending_fibers
+
+  let float_bits_equal left right =
+    Int64.equal (Int64.bits_of_float left) (Int64.bits_of_float right)
+
+  let float_list_equal left right =
+    List.length left = List.length right
+    && List.for_all2 float_bits_equal left right
+
+  let metric_number_equal left right =
+    match (left, right) with
+    | Eta.Capabilities.Int left, Eta.Capabilities.Int right -> Int.equal left right
+    | Eta.Capabilities.Float left, Eta.Capabilities.Float right ->
+        float_bits_equal left right
+    | _ -> false
+
+  let metric_kind_equal (left : Eta.Capabilities.metric_kind)
+      (right : Eta.Capabilities.metric_kind) =
+    match (left, right) with
+    | Eta.Capabilities.Counter a, Eta.Capabilities.Counter b ->
+        Bool.equal a.monotonic b.monotonic
+    | Eta.Capabilities.Gauge, Eta.Capabilities.Gauge -> true
+    | Eta.Capabilities.Frequency, Eta.Capabilities.Frequency -> true
+    | Eta.Capabilities.Histogram a, Eta.Capabilities.Histogram b ->
+        float_list_equal a.boundaries b.boundaries
+    | Eta.Capabilities.Summary a, Eta.Capabilities.Summary b ->
+        float_list_equal a.quantiles b.quantiles
+        && Eta.Duration.equal a.max_age b.max_age
+        && Int.equal a.max_size b.max_size
+    | _ -> false
+
+  let metric_point_equal (left : Eta.Capabilities.metric_point)
+      (right : Eta.Capabilities.metric_point) =
+    String.equal left.name right.name
+    && String.equal left.description right.description
+    && String.equal left.unit_ right.unit_
+    && metric_kind_equal left.kind right.kind
+    && left.attrs = right.attrs
+    && (match (left.value, right.value) with
+        | Eta.Capabilities.Number left, Eta.Capabilities.Number right ->
+            metric_number_equal left right
+        | Eta.Capabilities.Category left, Eta.Capabilities.Category right ->
+            String.equal left right
+        | _ -> false)
+    && Int.equal left.ts_ms right.ts_ms
+
+  let event_equal left right =
+    match (left, right) with
+    | Sleep left, Sleep right -> Eta.Duration.equal left right
+    | Log left, Log right -> left = right
+    | Span left, Span right -> left = right
+    | Metric left, Metric right -> metric_point_equal left right
+    | _ -> false
 
   let equal ok_test err_test left right =
     (match (left.exit, right.exit) with
@@ -675,9 +736,9 @@ module Run = struct
     | _ -> false)
     && left.logs = right.logs
     && left.spans = right.spans
-    && left.metrics = right.metrics
+    && List.equal metric_point_equal left.metrics right.metrics
     && List.equal Eta.Duration.equal left.sleeps right.sleeps
-    && left.events = right.events
+    && List.equal event_equal left.events right.events
     && left.pending_fibers = right.pending_fibers
 
   let testable ok_test err_test =

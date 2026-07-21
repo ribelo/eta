@@ -154,7 +154,7 @@ module Run : sig
     metrics : Eta.Meter.point list;
     sleeps : Eta.Duration.t list;
     events : event list;
-    pending_fibers : fiber_info list;
+    pending_fibers : fiber_info list option;
   }
   (** One inspectable execution record.
 
@@ -163,6 +163,12 @@ module Run : sig
       call order, including retry/repeat backoff. [events] preserves their
       cross-category observation order. [pending_fibers] is the
       root-exit snapshot described by {!fiber_info}; completed fibers are absent.
+      It is [None] — explicitly unavailable, never an empty census — when
+      [account_fibers=false], so pending work cannot be confused with no
+      pending work. The flag disables census recording only; the decorated
+      contract's scheduler accounting stays active. Neutrality is proven for
+      the recording path and for the legacy helper suite through the decorated
+      contract, not against a fully undecorated backend.
 
       Finalizer failures remain in [exit] as [Cause.Finalizer] or
       [Cause.Suppressed]. Successful individual finalizers are not claimed as
@@ -193,7 +199,9 @@ module Run : sig
 
   val expect_no_pending_fibers : ('a, 'err) outcome -> unit
   (** Fail the current Alcotest case with the pending-fiber census when any work
-      remains. Daemons are reported as owned runtime work, not called leaks. *)
+      remains. Daemons are reported as owned runtime work, not called leaks.
+      Fails (rather than vacuously passing) when the census is unavailable
+      ([account_fibers=false]). *)
 
   val expect_sleeps :
     Eta.Duration.t list -> ('a, 'err) outcome -> unit

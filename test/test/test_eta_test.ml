@@ -684,10 +684,37 @@ let test_run_accounts_for_pending_owned_daemon () =
   let outcome = Run.run (Eta.Effect.daemon Eta.Effect.never) in
   Expect.expect_ok outcome.exit;
   match outcome.pending_fibers with
-  | [ { Run.id = 1; parent_id = None; kind = Run.Daemon } ] -> ()
-  | fibers ->
+  | Some [ { Run.id = 1; parent_id = None; kind = Run.Daemon } ] -> ()
+  | Some fibers ->
       Alcotest.failf "expected one root-owned pending daemon, got %d fibers"
         (List.length fibers)
+  | None -> Alcotest.fail "expected a fiber census, got unavailable"
+
+let test_run_disabled_accounting_fails_census_expectation () =
+  let outcome =
+    Run.run ~account_fibers:false (Eta.Effect.daemon Eta.Effect.never)
+  in
+  Alcotest.(check bool) "census unavailable" true
+    (outcome.Run.pending_fibers = None);
+  match
+    (try
+       Run.expect_no_pending_fibers outcome;
+       `Passes
+     with _ -> `Fails)
+  with
+  | `Fails -> ()
+  | `Passes ->
+      Alcotest.fail
+        "expect_no_pending_fibers passed on an unavailable census"
+
+let test_run_nan_metric_replays_equal () =
+  let program =
+    Eta.Effect.metric_gauge ~name:"load" (Eta.Meter.Float Float.nan)
+  in
+  let first = Run.run program in
+  let second = Run.run program in
+  Alcotest.(check (Run.testable Alcotest.unit Alcotest.string))
+    "nan gauge replays equal" first second
 
 let test_run_completed_structured_fibers_are_not_pending () =
   let outcome =
@@ -718,6 +745,10 @@ let test_run_fiber_accounting_preserves_exit_corpus () =
     (fun (name, program) ->
       let ordinary = Run.run ~account_fibers:false program in
       let accounted = Run.run ~account_fibers:true program in
+      (* Neutrality covers everything except the census field itself, which
+         legitimately differs: unavailable (None) vs recorded (Some _). *)
+      let ordinary = { ordinary with Run.pending_fibers = None } in
+      let accounted = { accounted with Run.pending_fibers = None } in
       Alcotest.check (Run.testable Alcotest.int Alcotest.string) name ordinary
         accounted)
     corpus
@@ -788,8 +819,9 @@ let test_run_yielding_daemon_does_not_block_virtual_deadlines () =
   Expect.expect_ok outcome.exit;
   Run.expect_sleeps (List.map Eta.Duration.ms [ 1; 2 ]) outcome;
   match outcome.pending_fibers with
-  | [ { Run.kind = Daemon; _ } ] -> ()
-  | _ -> Alcotest.fail "expected the yielding runtime-owned daemon to remain"
+  | Some [ { Run.kind = Daemon; _ } ] -> ()
+  | Some _ -> Alcotest.fail "expected the yielding runtime-owned daemon to remain"
+  | None -> Alcotest.fail "expected a fiber census, got unavailable"
 
 let test_run_ordered_events_cross_categories () =
   let open Eta.Syntax in
@@ -824,8 +856,9 @@ let test_run_nested_pending_parentage_replays () =
   let first = Run.run program in
   let second = Run.run program in
   (match first.pending_fibers with
-  | [ { Run.parent_id = Some _; kind = Daemon; _ } ] -> ()
-  | _ -> Alcotest.fail "expected a daemon parented by a structured child");
+  | Some [ { Run.parent_id = Some _; kind = Daemon; _ } ] -> ()
+  | Some _ -> Alcotest.fail "expected a daemon parented by a structured child"
+  | None -> Alcotest.fail "expected a fiber census, got unavailable");
   Alcotest.(check bool) "stable pending identities" true
     (first.pending_fibers = second.pending_fibers)
 
@@ -1064,6 +1097,10 @@ let () =
             test_run_replays_with_same_construction;
           Alcotest.test_case "accounts for pending owned daemon" `Quick
             test_run_accounts_for_pending_owned_daemon;
+          Alcotest.test_case "disabled accounting fails census expectation"
+            `Quick test_run_disabled_accounting_fails_census_expectation;
+          Alcotest.test_case "nan metric replays equal" `Quick
+            test_run_nan_metric_replays_equal;
           Alcotest.test_case "completed structured fibers are not pending" `Quick
             test_run_completed_structured_fibers_are_not_pending;
           Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
