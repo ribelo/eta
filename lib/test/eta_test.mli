@@ -184,6 +184,23 @@ module Run : sig
   val expect_sleeps :
     Eta.Duration.t list -> ('a, 'err) outcome -> unit
   (** Check the complete ordered virtual-sleep history. *)
+
+  val pp :
+    (Format.formatter -> 'a -> unit) ->
+    (Format.formatter -> 'err -> unit) ->
+    Format.formatter ->
+    ('a, 'err) outcome ->
+    unit
+  (** Print the complete execution in diagnostic order: exit, ordered sleep/log/
+      span/metric observations, the finalizer-accounting boundary, then pending
+      fibers. Empty categories remain explicit but compact. *)
+
+  val testable :
+    'a Alcotest.testable ->
+    'err Alcotest.testable ->
+    ('a, 'err) outcome Alcotest.testable
+  (** Golden-record Alcotest testable. A failed check prints the complete
+      expected and observed executions through {!pp}. *)
 end
 
 val assert_no_clock : ('a, 'err) Eta.Effect.t -> unit

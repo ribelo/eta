@@ -694,6 +694,160 @@ let test_run_fiber_accounting_preserves_exit_corpus () =
         (Eta.Exit.equal Int.equal String.equal ordinary accounted))
     corpus
 
+let has_log body outcome =
+  List.exists (fun record -> record.Eta.Logger.body = body) outcome.Run.logs
+
+let run_golden_scenarios () =
+  let sibling_cancelled =
+    let sibling =
+      Eta.Effect.finally (Eta.Effect.log_info "sibling finalizer ran")
+        Eta.Effect.never
+    in
+    let failing =
+      Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.fail "sibling failed")
+    in
+    Run.run (Eta.Effect.par sibling failing |> Eta.Effect.discard)
+  in
+  let finalizer_on_interruption =
+    let loser =
+      Eta.Effect.finally (Eta.Effect.log_info "interrupted finalizer ran")
+        Eta.Effect.never
+    in
+    let winner =
+      Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure "winner")
+    in
+    Run.run (Eta.Effect.race [ loser; winner ])
+  in
+  let retry_10_20_40 =
+    let attempts = ref 0 in
+    let attempt =
+      Eta.Effect.sync (fun () -> incr attempts)
+      |> Eta.Effect.bind (fun () ->
+             if !attempts <= 3 then Eta.Effect.fail "retry"
+             else Eta.Effect.unit)
+    in
+    let schedule =
+      Eta.Schedule.both (Eta.Schedule.recurs 3)
+        (Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 10))
+    in
+    Run.run (Eta.Effect.retry ~schedule ~while_:(String.equal "retry") attempt)
+  in
+  let span_closed_on_defect =
+    let defective : (unit, string) Eta.Effect.t =
+      Eta.Effect.named "defective-span" (Eta.Effect.die_message "span boom")
+    in
+    Run.run defective
+  in
+  let suppressed_finalizer =
+    let suppressed : (unit, string) Eta.Effect.t =
+      Eta.Effect.finally (Eta.Effect.fail "cleanup failed")
+        (Eta.Effect.fail "body failed")
+    in
+    Run.run suppressed
+  in
+  let race_loser_released =
+    let loser =
+      Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure ())
+        ~release:(fun () -> Eta.Effect.log_info "race loser released")
+      |> Eta.Effect.bind (fun () -> Eta.Effect.never)
+    in
+    let winner = Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure ()) in
+    Run.run (Eta.Effect.race [ loser; winner ])
+  in
+  ( sibling_cancelled,
+    finalizer_on_interruption,
+    retry_10_20_40,
+    span_closed_on_defect,
+    suppressed_finalizer,
+    race_loser_released )
+
+let test_run_six_canonical_golden_scenarios () =
+  let ( sibling_cancelled,
+        finalizer_on_interruption,
+        retry_10_20_40,
+        span_closed_on_defect,
+        suppressed_finalizer,
+        race_loser_released ) =
+    run_golden_scenarios ()
+  in
+  (match sibling_cancelled.exit with
+  | Eta.Exit.Error (Eta.Cause.Fail "sibling failed") -> ()
+  | _ -> Alcotest.fail "sibling failure was not preserved");
+  Alcotest.(check bool) "cancelled sibling finalizer" true
+    (has_log "sibling finalizer ran" sibling_cancelled);
+  Alcotest.(check string) "race winner" "winner"
+    (Expect.expect_ok finalizer_on_interruption.exit);
+  Alcotest.(check bool) "finalizer ran on interruption" true
+    (has_log "interrupted finalizer ran" finalizer_on_interruption);
+  Expect.expect_ok retry_10_20_40.exit;
+  Run.expect_sleeps
+    (List.map Eta.Duration.ms [ 10; 20; 40 ])
+    retry_10_20_40;
+  (match (span_closed_on_defect.exit, span_closed_on_defect.spans) with
+  | Eta.Exit.Error (Eta.Cause.Die _),
+    [ { Eta.Tracer.status = Eta.Tracer.Error _; _ } ] ->
+      ()
+  | _ -> Alcotest.fail "defect did not close its span with error status");
+  (match suppressed_finalizer.exit with
+  | Eta.Exit.Error
+      (Eta.Cause.Suppressed
+        {
+          primary = Eta.Cause.Fail "body failed";
+          finalizer = Eta.Cause.Finalizer.Fail "<typed failure>";
+        }) ->
+      ()
+  | _ -> Alcotest.fail "suppressed finalizer cause was not preserved");
+  Expect.expect_ok race_loser_released.exit;
+  Alcotest.(check bool) "race loser release" true
+    (has_log "race loser released" race_loser_released)
+
+let test_run_printer_is_readable_at_six_scenarios () =
+  let ( sibling_cancelled,
+        finalizer_on_interruption,
+        retry_10_20_40,
+        span_closed_on_defect,
+        suppressed_finalizer,
+        race_loser_released ) =
+    run_golden_scenarios ()
+  in
+  let render outcome =
+    let pp_hidden fmt _ = Format.pp_print_string fmt "_" in
+    Format.asprintf "%a" (Run.pp pp_hidden pp_hidden) outcome
+  in
+  let corpus =
+    [
+      render sibling_cancelled;
+      render finalizer_on_interruption;
+      render retry_10_20_40;
+      render span_closed_on_defect;
+      render suppressed_finalizer;
+      render race_loser_released;
+    ]
+  in
+  let contains haystack needle =
+    let haystack_length = String.length haystack in
+    let needle_length = String.length needle in
+    let rec loop index =
+      index + needle_length <= haystack_length
+      &&
+      (String.sub haystack index needle_length = needle || loop (index + 1))
+    in
+    needle_length = 0 || loop 0
+  in
+  List.iter
+    (fun output ->
+      List.iter
+        (fun section ->
+          Alcotest.(check bool) ("printer section " ^ section) true
+            (contains output section))
+        [ "exit:"; "events:"; "pending fibers:" ])
+    corpus;
+  let line_count output =
+    String.split_on_char '\n' output |> List.length
+  in
+  Alcotest.(check bool) "six-scenario corpus stays below 120 lines" true
+    (List.fold_left (fun total output -> total + line_count output) 0 corpus < 120)
+
 let fresh_sequence_in_new_test_runtime () =
   with_test_clock @@ fun _sw _clock rt ->
   let open Eta.Syntax in
@@ -767,6 +921,10 @@ let () =
             test_run_completed_structured_fibers_are_not_pending;
           Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
             test_run_fiber_accounting_preserves_exit_corpus;
+          Alcotest.test_case "six canonical golden scenarios" `Quick
+            test_run_six_canonical_golden_scenarios;
+          Alcotest.test_case "printer readable at six scenarios" `Quick
+            test_run_printer_is_readable_at_six_scenarios;
         ] );
       ( "Scoped capabilities",
         [

@@ -378,6 +378,99 @@ module Run = struct
     Alcotest.check
       (Alcotest.list (Alcotest.testable Eta.Duration.pp Eta.Duration.equal))
       "virtual sleeps" expected outcome.sleeps
+
+  let pp_attrs fmt attrs =
+    let pp_attr fmt (key, value) = Format.fprintf fmt "%s=%S" key value in
+    Format.pp_print_list
+      ~pp_sep:(fun fmt () -> Format.pp_print_string fmt " ")
+      pp_attr fmt attrs
+
+  let pp_level fmt = function
+    | Eta.Capabilities.Trace -> Format.pp_print_string fmt "TRACE"
+    | Debug -> Format.pp_print_string fmt "DEBUG"
+    | Info -> Format.pp_print_string fmt "INFO"
+    | Warn -> Format.pp_print_string fmt "WARN"
+    | Error -> Format.pp_print_string fmt "ERROR"
+    | Fatal -> Format.pp_print_string fmt "FATAL"
+
+  let pp_log fmt record =
+    Format.fprintf fmt "t=%d %a %S" record.Eta.Logger.ts_ms pp_level record.level
+      record.body;
+    if record.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs record.attrs;
+    if record.trace_id <> "" then
+      Format.fprintf fmt " trace=%s span=%s" record.trace_id record.span_id
+
+  let pp_span_status fmt = function
+    | Eta.Tracer.Ok -> Format.pp_print_string fmt "ok"
+    | Error message -> Format.fprintf fmt "error(%S)" message
+    | Cancelled -> Format.pp_print_string fmt "cancelled"
+
+  let pp_span fmt span =
+    Format.fprintf fmt "t=%d..%d %S status=%a" span.Eta.Tracer.started_ms
+      span.ended_ms span.name pp_span_status span.status;
+    if span.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs span.attrs;
+    List.iter
+      (fun event ->
+        Format.fprintf fmt " event(%d,%S" event.Eta.Tracer.ev_ts_ms event.ev_name;
+        if event.ev_attrs <> [] then
+          Format.fprintf fmt ",{%a}" pp_attrs event.ev_attrs;
+        Format.pp_print_char fmt ')')
+      span.events
+
+  let pp_metric_value fmt = function
+    | Eta.Capabilities.Number (Int value) -> Format.pp_print_int fmt value
+    | Number (Float value) -> Format.pp_print_float fmt value
+    | Category value -> Format.fprintf fmt "%S" value
+
+  let pp_metric fmt point =
+    Format.fprintf fmt "t=%d %s=%a" point.Eta.Meter.ts_ms point.name
+      pp_metric_value point.value;
+    if point.attrs <> [] then Format.fprintf fmt " {%a}" pp_attrs point.attrs
+
+  let pp_fiber_kind fmt = function
+    | Structured -> Format.pp_print_string fmt "structured"
+    | Daemon -> Format.pp_print_string fmt "daemon(runtime-owned)"
+
+  let pp_parent fmt = function
+    | None -> Format.pp_print_string fmt "root"
+    | Some id -> Format.pp_print_int fmt id
+
+  let pp_fiber fmt fiber =
+    Format.fprintf fmt "#%d parent=%a kind=%a" fiber.id pp_parent fiber.parent_id
+      pp_fiber_kind fiber.kind
+
+  let pp_indexed pp_item fmt items =
+    match items with
+    | [] -> Format.pp_print_string fmt "none"
+    | _ ->
+        List.iteri
+          (fun index item -> Format.fprintf fmt "@,  [%d] %a" index pp_item item)
+          items
+
+  let pp pp_ok pp_err fmt outcome =
+    Format.fprintf fmt
+      "@[<v>execution outcome@,exit: %a@,events:@, sleeps:%a@, logs:%a@, \
+       spans:%a@, metrics:%a@, finalizers: unavailable (failures remain in \
+       exit)@,pending fibers:%a@]"
+      (Eta.Exit.pp pp_ok pp_err) outcome.exit
+      (pp_indexed Eta.Duration.pp) outcome.sleeps
+      (pp_indexed pp_log) outcome.logs (pp_indexed pp_span) outcome.spans
+      (pp_indexed pp_metric) outcome.metrics (pp_indexed pp_fiber)
+      outcome.pending_fibers
+
+  let equal ok_test err_test left right =
+    Eta.Exit.equal (Alcotest.equal ok_test) (Alcotest.equal err_test) left.exit
+      right.exit
+    && left.logs = right.logs
+    && left.spans = right.spans
+    && left.metrics = right.metrics
+    && List.equal Eta.Duration.equal left.sleeps right.sleeps
+    && left.pending_fibers = right.pending_fibers
+
+  let testable ok_test err_test =
+    Alcotest.testable
+      (pp (Alcotest.pp ok_test) (Alcotest.pp err_test))
+      (equal ok_test err_test)
 end
 
 let fail_audit assertion eff =
