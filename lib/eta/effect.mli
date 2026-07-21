@@ -659,8 +659,7 @@ val with_logger : Capabilities.logger -> ('a, 'err) t -> ('a, 'err) t
     [par] siblings are isolated. Each log chooses its sink when called; earlier
     emissions are unchanged. A daemon retains its fork-time sink after this
     scope exits. [annotate_logs] adds attributes and [with_minimum_log_level]
-    filters before this sink; a future [intercept_log] would transform after
-    those steps and before the sink. *)
+    filters before {!intercept_log} transforms the record for this sink. *)
 
 val with_tracer : Capabilities.tracer -> ('a, 'err) t -> ('a, 'err) t
 (** Dynamically replace the fiber-local tracer for [body]. Children inherit it
@@ -852,6 +851,19 @@ val with_minimum_log_level :
     below; logger-level filters still apply independently after a record is
     admitted by this scope. *)
 
+val intercept_log :
+  (Capabilities.log_record -> Capabilities.log_record option) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** Fiber-locally transform records emitted in [body]'s dynamic subtree. The
+    order is minimum-level filter, scoped/per-call attributes, interceptors,
+    then the currently bound logger. Nested interceptors run outermost first;
+    [None] drops the record and skips later interceptors. Thus
+    [intercept_log scrub (with_logger sink body)] and
+    [with_logger sink (intercept_log scrub body)] both scrub before [sink]. A
+    raising transform becomes a defect through ordinary capture. The
+    [Some]-identity transform is allocation-free on the emission fast path. *)
+
 val log :
   ?level:Capabilities.log_level ->
   ?attrs:(string * string) list ->
@@ -885,6 +897,16 @@ val log_error :
 val log_fatal :
   ?attrs:(string * string) list -> string -> (unit, 'err) t
 (** Emit a structured log record at [Fatal] level. *)
+
+val intercept_metric :
+  (Capabilities.metric_point -> Capabilities.metric_point option) ->
+  ('a, 'err) t ->
+  ('a, 'err) t
+(** Fiber-locally transform metric points emitted in [body]'s dynamic subtree
+    after each point is built and before the current meter. Nested interceptors
+    run outermost first; [None] drops the point and skips later interceptors. A
+    raising transform becomes a defect through ordinary capture. The
+    [Some]-identity transform is allocation-free on the emission fast path. *)
 
 val metric_update :
   ?description:string ->
