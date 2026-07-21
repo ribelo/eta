@@ -84,7 +84,7 @@ let responses_content_part = function
       Json.object_
         [
           ("type", Some (Json.string "input_image"));
-          ("url", Some (Json.string media.A.url));
+          ("image_url", Some (Json.string media.A.url));
           ("detail", Option.map Json.string media.detail);
         ]
   | A.Audio audio -> audio_content_part audio
@@ -99,6 +99,45 @@ let responses_content_json ~provider contents =
   if contents_are_text contents then
     contents_text ~provider contents |> Result.map Json.string
   else Stdlib.Ok (Json.array (List.map responses_content_part contents))
+
+let responses_tool_content_part ~provider = function
+  | A.Text text ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_text"));
+             ("text", Some (Json.string text));
+           ])
+  | A.Json raw ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_text"));
+             ("text", Some (Json.string raw));
+           ])
+  | A.Image media ->
+      Stdlib.Ok
+        (Json.object_
+           [
+             ("type", Some (Json.string "input_image"));
+             ("image_url", Some (Json.string media.A.url));
+             ("detail", Option.map Json.string media.detail);
+           ])
+  | A.Audio _ -> unsupported ~provider "tool result audio content"
+  | A.Video _ -> unsupported ~provider "tool result video content"
+
+let responses_tool_content_json ~provider contents =
+  if contents_are_text contents then
+    contents_text ~provider contents |> Result.map Json.string
+  else
+    let rec loop acc = function
+      | [] -> Stdlib.Ok (Json.array (List.rev acc))
+      | content :: rest -> (
+          match responses_tool_content_part ~provider content with
+          | Stdlib.Error _ as error -> error
+          | Stdlib.Ok part -> loop (part :: acc) rest)
+    in
+    loop [] contents
 
 let contents_empty contents =
   match contents with
@@ -139,14 +178,14 @@ let input_items ~provider = function
         (fun content_item -> content_item @ List.map function_call_item tool_calls)
         content_item
   | A.Tool { tool_call_id; content } ->
-      contents_text ~provider content
-      |> Result.map (fun text ->
+      responses_tool_content_json ~provider content
+      |> Result.map (fun output ->
              [
                Json.object_
                  [
                    ("type", Some (Json.string "function_call_output"));
                    ("call_id", Some (Json.string tool_call_id));
-                   ("output", Some (Json.string text));
+                   ("output", Some output);
                  ];
              ])
 

@@ -852,25 +852,66 @@ let test_realtime_decode_server_events () =
   | O.Realtime.Server_error { code = Some "bad_request"; message = "nope"; _ } -> ()
   | _ -> Alcotest.fail "expected realtime error event"
 
-(* P1: OpenAI codec raises Invalid_argument instead of returning typed error
-   when tool result content contains image/video. *)
+let tool_image_request () : A.chat_request =
+  {
+    model = "gpt-4o-mini";
+    prompt =
+      [
+        A.User [ A.Text "take screenshot" ];
+        A.Tool
+          {
+            tool_call_id = "call_screenshot";
+            content =
+              [
+                A.Text "Screenshot:";
+                A.Image
+                  {
+                    url = "data:image/png;base64,iVBORw0KGgo=";
+                    detail = Some "low";
+                  };
+              ];
+          };
+      ];
+    tools = [];
+    temperature = None;
+    reasoning = None;
+    max_output_tokens = Some 100;
+    replay_items = [];
+    stream = false;
+  }
 
-let test_openai_tool_result_with_image_does_not_crash () =
+let test_openai_responses_tool_result_image_wire_shape () =
+  let raw =
+    O.encode_responses (tool_image_request ())
+    |> expect_ok "responses tool image"
+  in
+  require_contains "function output"
+    ~needle:
+      "\"output\":[{\"type\":\"input_text\",\"text\":\"Screenshot:\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0KGgo=\",\"detail\":\"low\"}]"
+    raw
+
+let test_openai_chat_tool_result_image_is_unsupported () =
+  match O.encode_chat (tool_image_request ()) with
+  | Stdlib.Error
+      (A.Unsupported
+        { provider = "openai"; feature = "tool result media content" }) ->
+      ()
+  | Stdlib.Error _ -> Alcotest.fail "unexpected Chat Completions error"
+  | Stdlib.Ok _ ->
+      Alcotest.fail "Chat Completions must reject image-bearing tool results"
+
+let test_openai_responses_user_image_wire_shape () =
   let request : A.chat_request =
     {
-      model = "gpt-4o-mini";
+      model = "gpt-4o";
       prompt =
         [
-          A.User [ A.Text "take screenshot" ];
-          A.Tool
-            {
-              tool_call_id = "call_screenshot";
-              content =
-                [
-                  A.Text "Screenshot:";
-                  A.Image { url = "data:image/png;base64,iVBORw0KGgo="; detail = None };
-                ];
-            };
+          A.User
+            [
+              A.Text "What is in this image?";
+              A.Image
+                { url = "https://example.com/cat.png"; detail = Some "low" };
+            ];
         ];
       tools = [];
       temperature = None;
@@ -880,28 +921,11 @@ let test_openai_tool_result_with_image_does_not_crash () =
       stream = false;
     }
   in
-  (* encode_chat uses chat_message_json which calls chat_content_json for Tool.
-     encode_responses uses input_items which calls contents_text for Tool.
-     contents_text raises Invalid_argument on Image content. *)
-  let crashed_responses =
-    try
-      ignore (O.encode_responses request);
-      false
-    with Invalid_argument _ -> true
-  in
-  let crashed_chat =
-    try
-      ignore (O.encode_chat request);
-      false
-    with Invalid_argument _ -> true
-  in
-  (* At least one encoder should NOT crash. Both crashing proves the bug. *)
-  Alcotest.(check bool)
-    "encode_responses should NOT throw Invalid_argument on image in tool result"
-    false crashed_responses;
-  Alcotest.(check bool)
-    "encode_chat should NOT throw Invalid_argument on image in tool result"
-    false crashed_chat
+  let raw = O.encode_responses request |> expect_ok "image responses" in
+  require_contains "responses image type" ~needle:"\"type\":\"input_image\""
+    raw;
+  require_contains "responses image_url"
+    ~needle:"\"image_url\":\"https://example.com/cat.png\"" raw
 
 
 let test_decode_models_fixture () =
@@ -982,8 +1006,12 @@ let tests =
             test_responses_reasoning_levels;
           Alcotest.test_case "encodes audio content" `Quick
             test_chat_and_responses_encode_audio_content;
-          Alcotest.test_case "tool result with image does not crash" `Quick
-            test_openai_tool_result_with_image_does_not_crash;
+          Alcotest.test_case "responses tool result image wire shape" `Quick
+            test_openai_responses_tool_result_image_wire_shape;
+          Alcotest.test_case "chat tool result image unsupported" `Quick
+            test_openai_chat_tool_result_image_is_unsupported;
+          Alcotest.test_case "responses user image wire shape" `Quick
+            test_openai_responses_user_image_wire_shape;
           Alcotest.test_case "image content wire shape" `Quick
             test_openai_image_content_wire_shape;
         ] );

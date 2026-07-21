@@ -55,8 +55,9 @@ base-path behavior.
 
 ## API Coverage
 
-- Responses API: input messages, function tools, raw JSON structured outputs,
-  streaming flag, temperature, and max_output_tokens.
+- Responses API: text and image input messages, function tools, mixed text/image
+  function-call outputs, raw JSON structured outputs, streaming flag,
+  temperature, and max_output_tokens.
 - Explicit legacy Chat Completions: messages, function tools, raw JSON
   structured outputs, streaming flag, temperature, and max_tokens.
 - Streaming: OpenAI chat completion chunks, Responses output text deltas,

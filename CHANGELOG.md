@@ -4,6 +4,10 @@
 
 ### Added
 
+- OpenAI Responses encoding now projects mixed text and image function-call
+  outputs using the provider's structured `function_call_output.output` content
+  array; legacy Chat Completions continues to reject tool-result media with a
+  typed unsupported error.
 - `Effect.sync_option ~if_none` — thunk counterpart of `from_option`, completing
   the `from_result`/`from_option` × `sync_result`/`sync_option` construct family.
   `Some` succeeds, `None` is the typed `if_none` failure, ordinary exceptions
