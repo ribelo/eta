@@ -6,7 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E20 — intercept_log / intercept_metric**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e20`
+  - Branch: `research/dx-e20-intercept`
+  - Stage: predictions sealed (V-DX-E20-001); objective.md written; awaiting executor
 - Done (Phase D): E26 promoted (`dfe5f904`) · **E19 promoted** (`42d6a4d2`,
   flagship — scoped capability overrides)
 - Done (Phase D): E26 promoted (`dfe5f904`) — `Effect.fresh`/`fresh_named`
@@ -20,9 +23,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D** — **E20** (intercept_log/metric) → E12
-  (audit/describe) → E11 (Eta_test.run) → E13 (async) → E14 (Promise,
-  hold-gated)
+- Queue: **Phase D** — E20 → **E12** (audit/describe) → E11
+  (Eta_test.run) → E13 (async) → E14 (Promise, hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
   (silent hang → named error); dead PPX rejections ×2 (delete candidates);
@@ -40,4 +42,6 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - OPS NOTE: main checkout found on `erg-v1-ocaml54` with DX research tree
   staged on top (foreign workstream state — LEFT AS FOUND, reported to
   human); E19 merge+bookkeeping done in isolated worktree per V-DX-E8-002a
-- Last update: 2026-07-20 — E19 promoted
+- RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
+  26 linear commits, gates verified green, pushed)
+- Last update: 2026-07-21 — E20 launched
