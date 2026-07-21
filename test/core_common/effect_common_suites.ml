@@ -257,6 +257,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_audit "daemon preserve"
       (audit ~uses_clock:true ~has_concurrency:true ~has_background:true ())
       (Effect.daemon (Effect.sleep Duration.zero));
+    check_audit "concat unions child footprints"
+      (audit ~uses_clock:true ~emits_logs:true ())
+      (Effect.concat [ Effect.sleep Duration.zero; Effect.log "hello" ]);
     check_audit "structured background"
       (audit ~has_concurrency:true ())
       (Effect.with_background Effect.unit (fun () -> Effect.unit));

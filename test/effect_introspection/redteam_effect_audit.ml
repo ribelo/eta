@@ -17,4 +17,11 @@ let () =
   ignore (Eta_eio.Runtime.run rt hidden : (unit, _) Exit.t);
   Printf.printf "hidden-bind uses_clock=%b runtime_sleeps=%d\n"
     hidden_audit.uses_clock !sleeps;
-  Printf.printf "preserve-wrapped uses_clock=%b\n" wrapped_audit.uses_clock
+  Printf.printf "preserve-wrapped uses_clock=%b\n" wrapped_audit.uses_clock;
+  (* The contract under test: the hidden bind's sleep is invisible to audit
+     (uses_clock=false) while execution sleeps once; the preserve-wrapped
+     sleep is visible. Fail loudly on drift. *)
+  if hidden_audit.uses_clock || !sleeps <> 1 then
+    failwith "redteam: hidden-bind contract drifted";
+  if not wrapped_audit.uses_clock then
+    failwith "redteam: preserve inheritance drifted"

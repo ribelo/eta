@@ -34,7 +34,7 @@ module Pool = struct
 
   let shutdown pool =
     Expert.make
-      ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources ]
+      ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources; `Background ]
     @@ fun context ->
     try
       Blocking_runtime.shutdown
@@ -117,7 +117,7 @@ let pool_and_runner context override =
 let run ?pool ?(name = "blocking") ?on_cancel f =
   check_not_worker "Eta_blocking.run";
   Expert.make ~names:[ name ]
-    ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources ]
+    ~capabilities:[ `Clock; `Metrics; `Concurrency; `Resources; `Background ]
   @@ fun context ->
   let contract = Expert.contract context in
   let pool, runner = pool_and_runner context pool in

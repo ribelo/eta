@@ -295,8 +295,9 @@ let tap (k) eff = bind (fun value -> map (fun _ -> value) (k value)) eff
 let seq next self = bind (fun () -> next) self
 
 let concat effects =
-  with_names (concat_names effects)
-    (List.fold_left (fun acc eff -> seq eff acc) unit effects)
+  let sequenced = List.fold_left (fun acc eff -> seq eff acc) unit effects in
+  make ~names:(concat_names effects) ~footprint:(concat_footprints effects)
+    (fun frame -> eval frame sequenced)
 
 let combine_stripped combine causes =
   match List.filter_map Fun.id causes with

@@ -18,3 +18,8 @@
  (alias runtest)
  (action
   (diff expected_descriptions.txt actual_descriptions.txt)))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:redteam_effect_audit.exe})))
