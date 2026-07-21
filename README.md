@@ -590,6 +590,13 @@ The handoff gate is:
 nix develop -c dune runtest --force
 ```
 
+The full upstream OCaml 5.4 gate builds every installable package and runs the
+native, js_of_ocaml, and benchmark suites:
+
+```sh
+nix develop .#mainline -c eta-mainline-test-shipped
+```
+
 Erg consumes Eta through the pinned upstream OCaml 5.4 native track:
 
 ```sh
@@ -630,8 +637,8 @@ Footguns:
 - `dune build` without an alias also builds tests, examples, and benchmark
   executables. Use `dune build @install` when you only need installable
   packages.
-- `nix develop .#mainline` is an upstream-OCaml comparison shell, not the
-  primary development shell.
+- `nix develop .#mainline` is the full upstream OCaml 5.4 and js_of_ocaml gate,
+  not the primary development shell.
 - `nix develop .#ocaml54` is the pinned upstream OCaml 5.4 native shell for the
   package subset consumed by Erg.
 - `test/http` is the low-level protocol test target. `test/http_eio` is the

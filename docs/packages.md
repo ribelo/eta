@@ -145,8 +145,9 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 
 > Footgun: the JS packages are disabled in the `5.2.0+ox` switch used by the
 > default Nix/OxCaml shell (`enabled_if (<> %{ocaml_version} 5.2.0+ox)`). Build
-> and test them through the flake's mainline shell:
-> `nix develop .#mainline -c dune runtest test/http_js --force`.
+> every installable package and run the native and JS suites on upstream OCaml
+> 5.4 through the flake's mainline gate:
+> `nix develop .#mainline -c eta-mainline-test-shipped`.
 
 > Erg pins Eta's native upstream-compiler surface through
 > `nix develop .#ocaml54 -c eta-ocaml54-test-erg`. That gate covers Eta core,

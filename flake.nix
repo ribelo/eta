@@ -454,29 +454,7 @@
               export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
               export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"
 
-              dune build \
-                lib/redacted \
-                lib/eta \
-                lib/stream \
-                lib/http \
-                lib/schema \
-                lib/schema_test \
-                lib/test \
-                lib/ppx \
-                lib/ai \
-                lib/ai/openai_codec \
-                lib/ai/anthropic \
-                lib/ai/openai_compat \
-                lib/ai/openai \
-                lib/ai/openrouter \
-                lib/otel \
-                lib/sql_dsl \
-                lib/sql_driver \
-                lib/sql \
-                drivers/eta_duckdb \
-                drivers/eta_turso \
-                drivers/eta_ladybug
-
+              dune build @install
               dune runtest --force
               dune build @bench
             '';
@@ -637,6 +615,7 @@
               ocamlPackages.utop
               ocamlPackages.faraday
               ocamlPackages.ipaddr
+              ocamlPackages.memtrace
               ocamlPackages.yojson
               ocamlPackages.ppxlib
               pkgs.duckdb
