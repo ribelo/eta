@@ -586,6 +586,7 @@ let eta_error_type declaration =
          (ptyp_constr ~loc (Located.mk ~loc (Longident.Lident "unit")) []))
   in
   let fmt = gen_symbol ~prefix:"__eta_fmt" () in
+  let error = gen_symbol ~prefix:"__eta_error" () in
   pstr_value ~loc Nonrecursive
     [
       value_binding ~loc
@@ -596,8 +597,10 @@ let eta_error_type declaration =
         ~expr:
           (pexp_fun ~loc Nolabel None
              (ppat_var ~loc (Located.mk ~loc fmt))
-             (pexp_function ~loc
-                (List.map (eta_error_case ~fmt ~type_name) rows)));
+             (pexp_fun ~loc Nolabel None
+                (ppat_var ~loc (Located.mk ~loc error))
+                (pexp_match ~loc (evar ~loc error)
+                   (List.map (eta_error_case ~fmt ~type_name) rows))));
     ]
 
 let eta_error_generator =
