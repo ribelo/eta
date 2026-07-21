@@ -2741,3 +2741,41 @@ change (diff, new mli, docs) in a fresh context — no goals, no
 predictions — and says whether it's fine and what's wrong. Findings must
 be checkable; the orchestrator verifies them. The `[agent-sim]` label and
 human spot-check/veto remain.
+
+---
+
+## V-DX-RETRO-E7 — 2026-07-21 — retro review (V-DX-AMEND-3 protocol)
+
+**Verdict: should-not-have-merged (as shipped).** The deriver cannot
+generate interface declarations — executable probe: `[@@deriving
+eta_error]` in an `.mli` fails with "not a supported signature type
+deriving generator" (only `~str_type_decl` is registered). For a library
+whose own AGENTS.md keeps public APIs in `.mli` files, that is a
+half-feature. Secondary findings (verified): the `[@eta.render]` escape
+hatch has no non-built-in expansion test (the existing case uses
+`string`, a built-in); the "closed polymorphic variants" contract is
+overstated (actual: public, explicit-tag closed rows); two examples
+(`map_projection.ml`, `channel_probe.ml`) invent `` `Unexpected `` /
+`` `Impossible `` error types for infallible programs solely to use the
+deriver — the "zero hand-written printers" metric gamed itself.
+
+**Disposition: fix-forward as E7b** (sealed predictions V-DX-E7B-001):
+signature generator, paired .ml/.mli consumer test, non-built-in
+`[@eta.render]` expansion case, contract precision in docs, revert the
+two slop examples. The retro ledger updates to promoted-clean when E7b
+lands.
+
+## V-DX-E7B-001 — 2026-07-21 — research/dx-e7b-eta-error-sig — phase: predict (orchestrator-sealed)
+
+- `[@@deriving eta_error]` in an `.mli` emits
+  `val pp_err : Format.formatter -> err -> unit`; a paired .ml/.mli
+  consumer compiles and uses `pp_err` through the interface.
+- New expansion case: a record-payload tag with `[@eta.render custom_pp]`
+  accepted; the same tag without it rejected at PPX time with
+  what/where/what-next.
+- Docs state the actual contract: public, explicit-tag closed rows
+  (predicted: document, not support, inherited rows — the machinery
+  outweighs the value).
+- The two slop examples revert to no invented error types.
+- Gates green; sig expansion snapshot pinned. Outcome: E7's retro
+  reservation clears.
