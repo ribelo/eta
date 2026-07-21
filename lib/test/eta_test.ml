@@ -224,6 +224,88 @@ module Run = struct
     pending_fibers : fiber_info list;
   }
 
+  type accounting = {
+    mutable next_id : int;
+    mutable pending_rev : fiber_info list;
+  }
+
+  let accounting_fiber_id = Eta.Runtime_contract.create_local ()
+
+  let start_fiber accounting local_get kind =
+    let id = accounting.next_id in
+    accounting.next_id <- id + 1;
+    let parent_id = local_get accounting_fiber_id in
+    let info = { id; parent_id; kind } in
+    accounting.pending_rev <- info :: accounting.pending_rev;
+    info
+
+  let finish_fiber accounting id =
+    accounting.pending_rev <-
+      List.filter (fun fiber -> fiber.id <> id) accounting.pending_rev
+
+  let accounting_runtime accounting backend =
+    let module Base = (val backend : Eta.Runtime_contract.RUNTIME) in
+    (module struct
+      type scope = Base.scope
+      type cancel_context = Base.cancel_context
+      type 'a promise = 'a Base.promise
+      type 'a resolver = 'a Base.resolver
+      type 'a stream = 'a Base.stream
+
+      let root_scope = Base.root_scope
+      let now_ms = Base.now_ms
+      let fresh = Base.fresh
+      let sleep = Base.sleep
+      let protect = Base.protect
+      let run_scope = Base.run_scope
+      let fail_scope = Base.fail_scope
+
+      let fork scope f =
+        let info = start_fiber accounting Base.local_get Structured in
+        try
+          Base.fork scope (fun () ->
+              Base.local_with_binding accounting_fiber_id info.id (fun () ->
+                  Fun.protect
+                    ~finally:(fun () -> finish_fiber accounting info.id)
+                    f))
+        with exn ->
+          finish_fiber accounting info.id;
+          raise exn
+
+      let fork_daemon scope f =
+        let info = start_fiber accounting Base.local_get Daemon in
+        try
+          Base.fork_daemon scope (fun () ->
+              Base.local_with_binding accounting_fiber_id info.id (fun () ->
+                  Fun.protect
+                    ~finally:(fun () -> finish_fiber accounting info.id)
+                    f))
+        with exn ->
+          finish_fiber accounting info.id;
+          raise exn
+
+      let await_cancel = Base.await_cancel
+      let yield = Base.yield
+      let check = Base.check
+      let create_promise = Base.create_promise
+      let resolve_promise = Base.resolve_promise
+      let await_promise = Base.await_promise
+      let create_stream = Base.create_stream
+      let stream_add = Base.stream_add
+      let stream_take = Base.stream_take
+      let stream_take_nonblocking = Base.stream_take_nonblocking
+      let with_worker_context = Base.with_worker_context
+      let in_worker_context = Base.in_worker_context
+      let cancellation_reason = Base.cancellation_reason
+      let multiple_exceptions = Base.multiple_exceptions
+      let cancel_sub = Base.cancel_sub
+      let cancel = Base.cancel
+      let local_get = Base.local_get
+      let local_with_binding = Base.local_with_binding
+      let current_fiber_id = Base.current_fiber_id
+      let with_fiber_identity = Base.with_fiber_identity
+    end : Eta.Runtime_contract.RUNTIME)
+
   let rec drive clock result =
     if Eio.Promise.is_resolved result then ()
     else
@@ -243,8 +325,13 @@ module Run = struct
     let tracer = Eta.Tracer.in_memory () in
     let meter = Eta.Meter.in_memory () in
     let random = Eta.Capabilities.random_of_seed seed in
+    let accounting = { next_id = 1; pending_rev = [] } in
+    let backend =
+      Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      |> accounting_runtime accounting
+    in
     let runtime =
-      Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      Eta.Runtime.create_with_runtime backend
         ~meter:(Eta.Meter.as_capability meter) ~capture_backtrace:false ()
     in
     let program =
@@ -265,7 +352,7 @@ module Run = struct
       spans = Eta.Tracer.dump tracer;
       metrics = Eta.Meter.dump meter;
       sleeps = Test_clock.observed_sleeps clock;
-      pending_fibers = [];
+      pending_fibers = List.rev accounting.pending_rev;
     }
 
   let expect_no_pending_fibers outcome =

@@ -649,6 +649,51 @@ let test_run_replays_with_same_construction () =
     (List.map (fun span -> span.Eta.Tracer.trace_id) first.spans)
     (List.map (fun span -> span.Eta.Tracer.trace_id) second.spans)
 
+let test_run_accounts_for_pending_owned_daemon () =
+  let outcome = Run.run (Eta.Effect.daemon Eta.Effect.never) in
+  Expect.expect_ok outcome.exit;
+  match outcome.pending_fibers with
+  | [ { Run.id = 1; parent_id = None; kind = Run.Daemon } ] -> ()
+  | fibers ->
+      Alcotest.failf "expected one root-owned pending daemon, got %d fibers"
+        (List.length fibers)
+
+let test_run_completed_structured_fibers_are_not_pending () =
+  let outcome =
+    Run.run
+      (Eta.Effect.par (Eta.Effect.pure 1) (Eta.Effect.pure 2)
+      |> Eta.Effect.discard)
+  in
+  Expect.expect_ok outcome.exit;
+  Run.expect_no_pending_fibers outcome
+
+let test_run_fiber_accounting_preserves_exit_corpus () =
+  let corpus =
+    [
+      ("success", Eta.Effect.pure 1);
+      ("typed failure", Eta.Effect.fail "expected");
+      ( "successful finalizer",
+        Eta.Effect.finally Eta.Effect.unit (Eta.Effect.pure 2) );
+      ( "suppressed finalizer",
+        Eta.Effect.finally (Eta.Effect.fail "cleanup")
+          (Eta.Effect.fail "body") );
+      ( "structured fibers",
+        Eta.Effect.par (Eta.Effect.pure 3) (Eta.Effect.pure 4)
+        |> Eta.Effect.map fst );
+      ("race", Eta.Effect.race [ Eta.Effect.pure 5; Eta.Effect.never ]);
+    ]
+  in
+  List.iter
+    (fun (name, program) ->
+      let ordinary =
+        with_test_clock @@ fun _sw _clock runtime ->
+        Eta.Runtime.run runtime program
+      in
+      let accounted = (Run.run program).exit in
+      Alcotest.(check bool) name true
+        (Eta.Exit.equal Int.equal String.equal ordinary accounted))
+    corpus
+
 let fresh_sequence_in_new_test_runtime () =
   with_test_clock @@ fun _sw _clock rt ->
   let open Eta.Syntax in
@@ -716,6 +761,12 @@ let () =
             test_run_collects_one_execution_record;
           Alcotest.test_case "replays with same construction" `Quick
             test_run_replays_with_same_construction;
+          Alcotest.test_case "accounts for pending owned daemon" `Quick
+            test_run_accounts_for_pending_owned_daemon;
+          Alcotest.test_case "completed structured fibers are not pending" `Quick
+            test_run_completed_structured_fibers_are_not_pending;
+          Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
+            test_run_fiber_accounting_preserves_exit_corpus;
         ] );
       ( "Scoped capabilities",
         [
