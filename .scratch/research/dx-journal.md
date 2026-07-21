@@ -2820,3 +2820,54 @@ verified, one partially refuted:
   removed or delegating — no silent ignore).
 - Gates green (native trio; otel suite; mainline js for the jsoo side).
 - E19's retro ledger updates to promoted-clean.
+
+---
+
+## V-DX-RETRO — 2026-07-22 — retro review of all 19 cases (V-DX-AMEND-3 protocol)
+
+Each case re-reviewed by a separate fresh-context oracle doing a PR-style
+review of the actual change ("is it fine, what's wrong"), each answering
+the decision question explicitly (promote / promote-with-reservations /
+should-not-have-merged / keep-killed / hold-confirmed). Every finding
+verified by the orchestrator before any fix.
+
+| Case | Verdict | Key findings | Disposition |
+|---|---|---|---|
+| E23 | promote-with-reservations | stale `catch` in README + example; api-dx contradiction (already fixed) | resolved `c29832cc` |
+| E24 | **promote** | none | stands |
+| E25 | promote-with-reservations | error_pp example didn't type-check; TS/Eta naming slip; mli omission wording | fixed `ad8f589d` |
+| E1 | sync_result **promote**; sync_option p.w.r. | exception carve-out missing in 5 docs; merge-history note; no non-test consumer (human-decided) | fixed `254f7524` |
+| E2 | promote-with-reservations | `ignore_errors` unit-only guidance vs generalized sig | fixed `ac70e490` |
+| E3 | **keep-killed** | race recipe under-documented; guide omitted race | docs `464b33b5` |
+| E4 | promote-with-reservations | **pp_compact spoofable** (leaf text counterfeits composites); self-referential snapshots; "Total" claim false | fixed `42ac4cd8` |
+| E5 | promote-with-reservations | CI-gating overstated; compiler unpinned; Pubsub/Pool unprobed; wide-table fix incomplete; promote hint broken; stray file | fixed `2b7d6315` |
+| E6 | **keep-killed** | parallel recipe poorly surfaced; Expert bridge unlabeled | docs `dcfc7c44` |
+| E7 | **should-not-have-merged** (as shipped) | **no signature generator** (P1, probe-verified); escape hatch untested; contract overstated; slop examples | **E7b staged** |
+| E8 | promote-with-reservations | slop sugar conversions ×3; nonstring negative test malformed | fixed `eb915f68` |
+| E9 | **hold-confirmed** | none | stands |
+| E9b | promote-with-reservations | "never correctness" overreach (hang risk); right side invisible to introspection; and+ laws untested; api-dx summary wrong | fixed `29f1a9c7` |
+| E10 | **hold-confirmed** | trigger unmet; sole example needs kwargs sugar can't cover | stands |
+| E26 | promote-with-reservations | counter overflow silent wrap; "contention" test name | fixed `9d709f44` |
+| E19 | **should-not-have-merged** (as shipped) | **Expert leaves bypass with_clock** (P1); invalid W3C from empty ids; otel wall-clock "monotonic"; one finding refuted | **E19b staged** |
+| E20 | should-not-have-merged → **downgraded p.w.r.** | daemon diagnostics skip filter+attrs (fixed); unconditional local_get (already F7) | fixed `f9399b29` |
+| E12 | should-not-have-merged → p.w.r. | **concat discarded child footprints** (audit unsound); Eta_blocking omitted Background; redteam not CI-wired | fixed `d95cef58` |
+| E11 | promote-with-reservations | account_fibers=false vacuous passes; NaN breaks golden equality; neutrality claim imprecise | fixed `8e2b995c` |
+
+**Tally:** 1 clean promote · 12 promote-with-reservations (11 resolved by
+fix commits + sync_option accepted by human decision) · 4 initial
+should-not-have-merged (E7→E7b, E19→E19b in flight; E20/E12 fixed) ·
+2 keep-killed · 2 hold-confirmed. **14 fix commits** landed from the
+series plus F3's rename.
+
+**Meta-finding (the user's vindication).** The retired snippet-theater
+reviews (blinded A/B, personas, teach-backs) missed what plain PR reviews
+of the real diff found: a spoofable output format, a missing signature
+generator, an Expert bypass of a flagship contract, unsound audit
+footprints, three slop example conversions, and a vacuous census. The
+simple review is the stronger instrument. V-DX-AMEND-3 stands.
+
+**Prediction note.** Every "should-not-have-merged" verdict targeted the
+state *as shipped*, not the experiment's value — each became a fix-forward
+rather than a revert, because the underlying designs were sound and the
+defects were local. The one downgrade (E20) shows the retro series is not
+rubber-stamping itself either.
