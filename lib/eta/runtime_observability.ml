@@ -325,7 +325,14 @@ let emit_daemon_failure ~contract ~now_ms ~logging_enabled
       exception_event_attrs_tree ~error_renderer:default_error_renderer cause
       |> with_failure_outcome []
     in
-    if logging_enabled then
+    if
+      logging_enabled
+      &&
+      match current_minimum_log_level contract with
+      | None -> true
+      | Some minimum -> log_level_enabled ~minimum Capabilities.Error
+    then (
+      let scoped_attrs = current_log_attrs contract in
       List.iter
         (fun attrs ->
           emit_log contract logger
@@ -333,11 +340,11 @@ let emit_daemon_failure ~contract ~now_ms ~logging_enabled
               Capabilities.level = Error;
               body = "eta.daemon.failure";
               ts_ms;
-              attrs;
+              attrs = scoped_attrs @ attrs;
               trace_id = "";
               span_id = "";
             })
-        attrs;
+        attrs);
     if tracing_enabled then (
       let span_id =
         tracer#begin_span contract ~kind:Capabilities.Internal ~name:"eta.daemon"

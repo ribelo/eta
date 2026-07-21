@@ -515,6 +515,37 @@ let test_in_flight_real_sleep_ignores_later_override () =
   let elapsed_ms = (Unix.gettimeofday () -. started_at) *. 1_000.0 in
   Alcotest.(check bool) "real sleep was not accelerated" true (elapsed_ms >= 20.0)
 
+let test_daemon_failure_respects_minimum_log_level () =
+  with_test_clock @@ fun _sw _base_clock rt ->
+  let logger = Eta.Logger.in_memory () in
+  let start =
+    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+    |> Eta.Effect.with_minimum_log_level Eta.Capabilities.Fatal
+  in
+  Expect.expect_ok (Eta.Runtime.run rt start);
+  Eta.Runtime.drain rt;
+  Alcotest.(check int) "error diagnostic filtered under Fatal minimum" 0
+    (List.length (Eta.Logger.dump logger))
+
+let test_daemon_failure_carries_scoped_attrs () =
+  with_test_clock @@ fun _sw _base_clock rt ->
+  let logger = Eta.Logger.in_memory () in
+  let start =
+    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+    |> Eta.Effect.annotate_logs [ ("tenant", "acme") ]
+  in
+  Expect.expect_ok (Eta.Runtime.run rt start);
+  Eta.Runtime.drain rt;
+  match Eta.Logger.dump logger with
+  | [ record ] ->
+      Alcotest.(check bool) "scoped attr present" true
+        (List.mem ("tenant", "acme") record.attrs)
+  | records ->
+      Alcotest.failf "expected one daemon diagnostic, got %d"
+        (List.length records)
+
 let test_daemon_failure_uses_inherited_override_diagnostics () =
   with_test_clock @@ fun _sw _base_clock rt ->
   let clock = recording_clock 123 in
@@ -1084,6 +1115,10 @@ let () =
             test_same_tracer_nested_override_keeps_parent_context;
           Alcotest.test_case "in-flight real sleep ignores later override" `Quick
             test_in_flight_real_sleep_ignores_later_override;
+          Alcotest.test_case "daemon failure respects minimum log level" `Quick
+            test_daemon_failure_respects_minimum_log_level;
+          Alcotest.test_case "daemon failure carries scoped attrs" `Quick
+            test_daemon_failure_carries_scoped_attrs;
           Alcotest.test_case "daemon failure uses inherited diagnostics" `Quick
             test_daemon_failure_uses_inherited_override_diagnostics;
         ] );
