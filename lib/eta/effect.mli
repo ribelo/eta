@@ -527,7 +527,12 @@ val acquire_release :
     boundary, scope, supervisor scope, or daemon body exits. The release eff
     runs on success and on typed failure; release failures are reported as
     [Cause.Finalizer] after a successful body or suppressed onto the primary
-    failure after a failed body. *)
+    failure after a failed body.
+
+    Parallel acquisition caveat: parallel combinators give each child its own
+    finalizer scope, so a resource acquired under {!map_par} and registered
+    into the enclosing {!with_scope} needs an explicit ownership bridge
+    (advanced; see the parallel-acquisition recipe in docs/api-dx.md). *)
 
 val acquire_use_release :
   acquire:('a, 'err) t ->
@@ -589,7 +594,10 @@ val with_scope : ('a, 'err) t -> ('a, 'err) t
 
     Scopes compose: nested [with_scope] blocks release their own resources
     before the outer scope continues. Use this for resource lifetimes that
-    should not extend to the runtime boundary. *)
+    should not extend to the runtime boundary. For acquiring several
+    independent resources in parallel into one scope, see the
+    parallel-acquisition recipe in docs/api-dx.md (and the caveat on
+    {!acquire_release}). *)
 
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t

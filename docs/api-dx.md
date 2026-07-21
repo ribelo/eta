@@ -320,8 +320,11 @@ When acquisition concurrency matters, use one `Effect.with_scope`, acquire the
 independent descriptions with `Effect.map_par` (or `Effect.all` for an existing
 homogeneous list), and register each completed resource in the owner scope with
 `Effect.acquire_release`. Parallel combinators give each child its own finalizer
-scope, so the bridge must perform owner registration explicitly. For example,
-four homogeneous database shards can share one owner scope:
+scope, so the bridge must perform owner registration explicitly. **This bridge
+is advanced**: it uses `Effect.Expert.make`/`eval`, the runtime-package
+extension point, not ordinary application API — most programs should prefer the
+`with_resource` ladder above. For example, four homogeneous database shards can
+share one owner scope:
 
 ```ocaml
 let acquire_into scope ~acquire ~release =
