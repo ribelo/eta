@@ -193,3 +193,47 @@ Final exact gates, all PASS:
 
 Additional parity gate PASS:
 `nix develop .#mainline -c dune runtest test/js_jsoo --force`.
+
+## V-DX-E20b-001 — representation-fix predictions (sealed)
+
+Status: SEALED before E20b code or public-contract changes. This entry amends
+the implementation hypothesis; it does not alter the sealed E20 predictions.
+
+Decision: test the public result type
+`type 'a intercept = Keep | Drop | Replace of 'a`. `Keep` and `Drop` are
+immediate constructors; `Replace value` is the only boxed successful result.
+All E20 pipeline, scope, sink, drop, exception, and metric-use-case semantics
+remain fixed.
+
+| ID | Prediction | Falsifier |
+| --- | --- | --- |
+| E20b-P1 | The carried native and jsoo behavioral suite passes after mechanical `Some`→`Keep`/`Replace` and `None`→`Drop` updates | Any semantic trace, sink, or defect-path difference |
+| E20b-P2 | A `Keep` callback itself allocates zero words and the watchlist identity row adds zero minor words over no intercept | Any repeatable positive minor-word delta |
+| E20b-P3 | `Replace record` adds only its variant block, at most 3 words per emitted record | Delta above 300,000 minor words for 100,000 records after accounting against the same denominator |
+| E20b-P4 | Identity wall time does not regress beyond local measurement noise | Identity mean materially above baseline on the pinned watchlist run |
+| E20b-P5 | The three constructors read clearly in redaction, metric enrichment, and a dedicated readability snippet | Review packet requires explanatory machinery beyond the constructor contract |
+
+Strongest risk: E20 measured about 10.49 incremental minor words per record,
+while an ordinary boxed `Some record` explains only part of that total. Active
+fiber-local lookup may allocate option wrappers before the walker invokes the
+callback. E20b is constrained to the transform representation; if that residual
+cost remains, record it raw rather than changing the backend or benchmark.
+
+Hypothesis ledger:
+
+- A — `Keep | Drop | Replace`: **favored, active**. It makes identity/drop
+  representation explicit and portable across OxCaml and upstream OCaml 5.4.
+- B — retain standard `option`: **rejected by E20 evidence** and the follow-up
+  contract.
+- C — optimize runtime-local lookup too: **out of scope** unless a later sealed
+  experiment authorizes a backend change; it is not a representation fix.
+
+Predicted outcome: behavior and readability pass. `Keep` removes the callback's
+boxed identity result, but confidence in the sealed zero-increment end-to-end
+bar is low because of the measured lookup residual. `Replace` is expected to
+allocate one 2-word block for the unary variant itself; any larger end-to-end
+delta will distinguish walker/local overhead from representation cost.
+
+Scoring: one point each for P1–P5. Promotion requires P1 plus the orchestrator's
+allocation and wall gates; the metric half remains separately justified by the
+already compelling tenant-subtree fixture.
