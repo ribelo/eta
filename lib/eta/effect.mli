@@ -426,7 +426,9 @@ val fresh : unit -> (int, 'err) t
     not globally unique: distinct runtimes, including runtimes on different
     domains, may return the same values. Add an application-owned namespace when
     correlating identifiers across runtimes. A newly created [Eta_test] runtime
-    resets the counter, so test programs replay deterministically. *)
+    resets the counter, so test programs replay deterministically. Exhaustion
+    ([2^62] pulls on 64-bit) fails loudly with [Invalid_argument] rather than
+    wrapping. *)
 
 val fresh_named : string -> (string, 'err) t
 (** [fresh_named prefix] formats the next {!fresh} value as ["prefix-N"]. It is

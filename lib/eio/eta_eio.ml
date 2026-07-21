@@ -270,7 +270,11 @@ let runtime_with_host host ~sw ~clock:raw_clock =
 
     let root_scope = sw
     let now_ms () = int_of_float (Time.now clock *. 1000.0)
-    let fresh () = Atomic.fetch_and_add fresh_counter 1 + 1
+    let fresh () =
+      let previous = Atomic.fetch_and_add fresh_counter 1 in
+      if previous = max_int then
+        invalid_arg "Eta.Effect.fresh: runtime counter exhausted"
+      else previous + 1
     let sleep duration =
       let seconds = Eta.Duration.to_seconds_float duration in
       if seconds > 0.0 then Time.sleep clock seconds

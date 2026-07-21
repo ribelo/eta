@@ -1091,7 +1091,7 @@ let () =
         [
           Alcotest.test_case "replays across test runtimes" `Quick
             test_fresh_replays_across_test_runtimes;
-          Alcotest.test_case "map_par contention" `Quick
+          Alcotest.test_case "map_par concurrent pulls are unique" `Quick
             test_fresh_map_par_contention;
         ] );
       ( "Audit assertions",

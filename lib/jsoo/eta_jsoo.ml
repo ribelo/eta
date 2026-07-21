@@ -576,8 +576,11 @@ let runtime () =
     let root_scope = root_scope
     let now_ms = now_ms
     let fresh () =
-      incr fresh_counter;
-      !fresh_counter
+      if !fresh_counter = max_int then
+        invalid_arg "Eta.Effect.fresh: runtime counter exhausted"
+      else (
+        incr fresh_counter;
+        !fresh_counter)
     let sleep = sleep
     let protect = protect
     let run_scope = run_scope
