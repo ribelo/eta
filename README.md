@@ -223,8 +223,8 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
 
 ### Derived typed-error printers
 
-`[@@deriving eta_error]` generates an ordinary `Format` printer for a closed
-polymorphic variant:
+`[@@deriving eta_error]` generates an ordinary `Format` printer for a public,
+explicit-tag closed polymorphic-variant alias:
 
 ```ocaml
 type err =
@@ -237,13 +237,21 @@ let save =
   Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
 ```
 
-The generated value is named `pp_<type-name>` and is a plain typed match:
+Put the deriving annotation on the declaration in both the `.ml` and `.mli`.
+The structure generator defines `pp_<type-name>` as a plain typed match:
 
 ```ocaml
 let pp_err : Format.formatter -> err -> unit = fun fmt -> function
   | `Not_found id -> Format.fprintf fmt "not_found:%s" id
   | `Db code -> Format.fprintf fmt "db:%d" code
   | `Unavailable -> Format.pp_print_string fmt "unavailable"
+```
+
+The signature generator exposes the matching public value. For the `err`
+declaration above, the generated interface item is:
+
+```ocaml
+val pp_err : Format.formatter -> err -> unit
 ```
 
 Constructor text is lowercase with underscores preserved: `Not_found` becomes
@@ -263,9 +271,9 @@ type err =
 The attribute must name a `Format.formatter -> payload -> unit` printer.
 Unsupported payloads without this attribute fail during PPX expansion;
 the error identifies the constructor and tells you to use a built-in payload or
-add `[@eta.render f]`. Nominal variants, private aliases, open or inherited
-rows, and multi-value/tuple payloads are outside version 1 and are rejected at
-PPX time rather than rendered as placeholders.
+add `[@eta.render f]`. Nominal variants, private aliases, open or restricted
+rows, inherited rows, and multi-value/tuple payloads are outside version 1 and
+are rejected at PPX time rather than rendered as placeholders.
 
 Derivation does not install ambient policy. Pass the generated function through
 `?error_pp` on `Effect.named` / `Effect.fn`, or explicitly scope it with
