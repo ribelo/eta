@@ -271,6 +271,28 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         | _ -> Alcotest.fail "expected invalid reasoning error")
       [ ""; " "; "unknown" ]
 
+  let test_responses_request_disables_server_storage () =
+    let token =
+      C.decode_token_response (read_fixture "token.json") |> expect_ok "token"
+    in
+    let credential = C.credential_of_token_set ~now_ms:1L token in
+    let request =
+      C.responses_request ~identity ~credential
+        { (chat_request ~reasoning:"medium" ()) with stream = true }
+      |> expect_ok "responses request"
+    in
+    let body = request_body_string request in
+    let json =
+      match A.Json.parse body with
+      | Stdlib.Ok json -> json
+      | Stdlib.Error message -> Alcotest.fail message
+    in
+    Alcotest.(check bool)
+      "Codex subscription requests explicitly disable server storage" true
+      (match A.Json.member "store" json with
+      | Some (`Bool false) -> true
+      | Some _ | None -> false)
+
   let test_exchange_effect () =
     with_runtime @@ fun rt ->
     let captured = ref None in
@@ -355,6 +377,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_token_requires_account_and_headers;
           Alcotest.test_case "models catalog" `Quick test_models_catalog;
           Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
+          Alcotest.test_case "responses disable server storage" `Quick
+            test_responses_request_disables_server_storage;
           Alcotest.test_case "exchange effect" `Quick test_exchange_effect;
           Alcotest.test_case "extra headers and malformed expires" `Quick
             test_extra_headers_and_malformed_expires;
