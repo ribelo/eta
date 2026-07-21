@@ -2594,3 +2594,64 @@ workstream's exact tip; their work untouched). Standing rule, now
 corrected: **all master merges happen in isolated temp worktrees, never
 in the main checkout** — no exceptions, regardless of which branch the
 checkout claims to be on. The print-then-chain "guard" is retired.
+
+---
+
+## V-DX-E11-001 — 2026-07-21 — research/dx-e11-test-run — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E11-002.
+
+**Current shapes (measured pre-change).** All three in-memory sinks exist
+(`Logger.in_memory`, `Tracer.in_memory`, `Meter.in_memory`) — the outcome
+record's `logs`/`spans`/`metrics` have sinks already. E19's scoped
+overrides are on master — `run`'s internals can compose
+`with_clock`/`with_logger`/`with_tracer` instead of bespoke runtimes
+(one-pager's post-E19 note, now applicable). The drain seam exists
+(`drain_waiter` records + resolvers in `runtime_core.ml`) but **no
+fiber-count accounting exists** — `pending_fibers` is genuinely new,
+implemented as test-only contract-level instrumentation (production
+untouched). Eta_test has `Test_clock`, `Async`, `Expect`, `Test_random`
+and the E19-era `with_*` helpers (today's assembly baseline).
+
+**Contract (from the one-pager).**
+```ocaml
+module Eta_test.Run : sig
+  type ('a, 'err) outcome = {
+    exit : ('a, 'err) Exit.t;
+    logs : Logger.record list;
+    spans : Tracer.span list;
+    metrics : …;
+    sleeps : Duration.t list;        (* observed, in order *)
+    pending_fibers : fiber_info list;
+    finalizer_events : finalizer_event list;
+  }
+  val run : ?clock:Test_clock.t -> ?seed:int -> … -> ('a,'err) Effect.t -> ('a,'err) outcome
+  val expect_no_pending_fibers : _ outcome -> unit
+  val expect_sleeps : Duration.t list -> _ outcome -> unit
+  val expect_finalizers : int -> _ outcome -> unit
+end
+```
+Golden record: `Alcotest.testable`s + a printer so a failure prints the
+whole execution, not a boolean. Deterministic by construction.
+
+**Census (predicted).** `Eta_test` +1 module (~4–6 vals, 3 types);
+concepts +1 (golden test runtime). Footguns +0; trap candidate: treating
+`pending_fibers` as a leak detector across daemon-intended programs —
+docs must say daemons are owned work, not leaks (drain semantics).
+
+**Mechanical (predicted).** Six golden scenarios green: sibling cancelled
+on failure; finalizer ran on interruption; retry slept [10;20;40]; span
+closed on defect; suppressed finalizer preserved; race-loser resource
+released. Accounting-neutrality: the existing suite under the accounting
+runtime produces identical exits. `pending_fibers` survives its kill
+criterion (test-only, zero production cost — contract-level
+instrumentation proves feasible).
+
+**Review (predicted).** W6 one-call vs E19-era assembly: ~10 lines vs
+~24. Deliberately-broken-test failure output rated ≥ 4 on the message
+rubric (what/where/what-next) — the printer is the product; the
+kill-the-whole trigger (unreadable at corpus size) NOT fired at 6
+scenarios.
+
+**Outcome (predicted).** Promote the record with accounting. Effort L;
+risk med — phased: record first, accounting second, printer last.
