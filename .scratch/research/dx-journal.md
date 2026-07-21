@@ -2345,3 +2345,49 @@ stated; the `option` representation makes it impossible. This is exactly
 the class of claim (cost-as-contract) that must be measured, not
 asserted — the process caught it. Executor: 6/7, honest self-rejection
 (protocol credit — it recommended against its own branch on evidence).
+
+---
+
+## V-DX-E20B-001 — 2026-07-21 — research/dx-e20-intercept — phase: predict (orchestrator-sealed, E20b redesign)
+
+Sealed before E20b work resumed. Scored at V-DX-E20B-002.
+
+**The redesign.** Keep every behavioral contract of E20 (pipeline order,
+drop semantics, shorthand parity, E19 interplay, jsoo parity — the tests
+carry). Change ONLY the transform representation so identity is
+allocation-free by construction:
+
+```ocaml
+type 'a Effect.intercept = Keep | Drop | Replace of 'a
+val intercept_log :
+  (Capabilities.log_record -> Capabilities.log_record Effect.intercept) ->
+  ('a, 'err) t -> ('a, 'err) t
+val intercept_metric :
+  (Capabilities.metric_point -> Capabilities.metric_point Effect.intercept) ->
+  ('a, 'err) t -> ('a, 'err) t
+```
+
+`Keep` = pass unchanged (immediate constructor, no boxing); `Drop` =
+`None` equivalent (immediate); `Replace r` = substitute (allocates the
+variant block only when the record actually changes). Final type/constructor
+names are the docs-first step's to settle within this sketch; the review
+judges them.
+
+**Predictions.**
+- Allocation (the gate): `Keep`-identity intercept shows **zero minor-word
+  increment** per record on the watchlist denominator pair
+  (`overhead.eta.log.100k.{no_intercept,identity_intercept}` — same
+  harness, updated to the variant). If a small irreducible walker overhead
+  exists, the executor reports it raw and the gate re-evaluates — but the
+  sealed bar is zero.
+- `Replace` allocates only the variant block (≤ 3 words/record).
+- Behavior parity with E20's proven semantics: the same test suite,
+  updated only for the new representation, passes unchanged in substance
+  (pipeline order, drop, shorthand parity, interplay, redaction,
+  enrichment, defect capture, jsoo).
+- Wall time: no regression on the pair (identity ≤ baseline within
+  noise; E20 already showed −32% wall, unexplained but favorable).
+- Review (naming/spelling judgment): the variant reads clearly at call
+  sites (`fun _ -> Keep`, `fun r -> Drop`, `Replace (scrub r)`);
+  predicted median ≥ 4; `Drop` vs `None` teach-back correct.
+- Outcome: promote both halves. E20's metric kill gate stays unfired.
