@@ -2730,3 +2730,14 @@ location, not only Alcotest internals ("where" rated 3).
 **Decision: PROMOTE** the record + printer + test-only fiber accounting.
 Merged `--no-ff` (`41f9eac9`); master gates green; master + branch
 pushed; objective archived; worktree removed.
+
+---
+
+## V-DX-AMEND-3 — 2026-07-21 — review protocol simplified (human directive)
+
+Retired: blinded A/B packets, randomized labels, personas, anchored
+scales, teach-backs. A review is a review: the oracle reads the actual
+change (diff, new mli, docs) in a fresh context — no goals, no
+predictions — and says whether it's fine and what's wrong. Findings must
+be checkable; the orchestrator verifies them. The `[agent-sim]` label and
+human spot-check/veto remain.
