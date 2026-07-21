@@ -548,7 +548,7 @@ let decode_device_poll ~status ~now_s ?(current_interval = 5) raw =
 let read_body_text body =
   H.Body.Stream.read_all body
   |> E.map Bytes.unsafe_to_string
-  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
 
 let poll_device_token ?oauth_host ?client_id ~identity ?extra_headers ~now_s
     ?current_interval client ~device_code =
@@ -557,7 +557,7 @@ let poll_device_token ?oauth_host ?client_id ~identity ?extra_headers ~now_s
       ~device_code ()
   in
   H.request client request
-  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
   |> E.bind (fun (response : H.Response.t) ->
          read_body_text response.body
          |> E.bind (fun raw ->
@@ -586,7 +586,7 @@ let refresh ?oauth_host ?client_id ~identity ?extra_headers ~now_s client
     refresh_request ?oauth_host ?client_id ~identity ?extra_headers credential
   in
   H.request client request
-  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
   |> E.bind (fun (response : H.Response.t) ->
          read_body_text response.body
          |> E.bind (fun raw ->

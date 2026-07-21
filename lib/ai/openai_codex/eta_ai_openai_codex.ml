@@ -556,11 +556,11 @@ let oauth_provider =
 let read_body_text body =
   H.Body.Stream.read_all body
   |> E.map Bytes.unsafe_to_string
-  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
 
 let run_token_request client request =
   H.request client request
-  |> E.catch (fun error -> E.fail (A.Eta_http_error error))
+  |> E.bind_error (fun error -> E.fail (A.Eta_http_error error))
   |> E.bind (fun (response : H.Response.t) ->
          read_body_text response.body
          |> E.bind (fun raw ->
