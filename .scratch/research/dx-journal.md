@@ -2303,3 +2303,45 @@ returning `None`" ≥ 2/3. Cohort rule if the metric gate is contested.
 **Outcome (predicted).** Promote both halves. Effort M, risk low-med;
 E19's machinery and documented order make this an application of a proven
 pattern, not a new one.
+
+---
+
+## V-DX-E20-002 — 2026-07-21 — research/dx-e20-intercept — phase: results + decision (HOLD)
+
+**Behavior: fully proven.** Pipeline order matches the E19-documented
+contract exactly (scoped min-level filter → scoped/per-call attributes →
+outermost-to-innermost intercept transforms → currently bound sink);
+`None` short-circuits; shorthand parity exact (implementations untouched,
+suites green unchanged); E19 interplay both orders tested; redaction and
+metric-enrichment use cases executable; red-team 2/2 (filter-before-
+intercept, raising transform → `Cause.Die`); jsoo parity; native trio +
+mainline JS gates green (executor run).
+
+**Contract: failed on measurement.** The one-pager promised "no allocation
+when the transform is `Some`-identity (fast path)". Identity interception
+adds **1,048,571 minor words per 100k records (~10.49/record)**, bit-for-
+bit repeatable (orchestrator reproduction: `minor_words` mean 6,291,447 vs
+5,242,876 baseline, stddev 0). An opaque OCaml callback's boxed
+`Some record` plus the emission walk cannot be elided by implementation
+cleverness within the `option` representation.
+
+**Decision: HOLD — do not promote this contract.** Amending the sealed
+contract post-hoc ("~10 words/record is fine") is goalpost-moving and is
+rejected by the programme's own discipline. Killing is wrong too: the
+behavior is proven and the use cases are compelling (the metric half's
+kill gate explicitly does NOT fire — per-subtree label enrichment has no
+other mechanism). The failure is representational, and it has a precise
+fix: an immediate-identity variant (`Keep | Drop | Replace of 'a`) makes
+identity allocation-free by construction. Registered as **E20b** on the
+same branch (behavioral evidence and tests carry; only the transform
+type and its docs change). Branch kept and pushed as provenance.
+
+**Prediction scoring (orchestrator, V-DX-E20-001).** Hits: pipeline order,
+drop/short-circuit, shorthand parity, E19 interplay, both use cases
+compelling (metric survives), jsoo parity, red-team outcomes, census.
+Miss: the fast-path allocation claim — I sealed "noise-level on the
+watchlist" believing the one-pager's fast path was implementable as
+stated; the `option` representation makes it impossible. This is exactly
+the class of claim (cost-as-contract) that must be measured, not
+asserted — the process caught it. Executor: 6/7, honest self-rejection
+(protocol credit — it recommended against its own branch on evidence).
