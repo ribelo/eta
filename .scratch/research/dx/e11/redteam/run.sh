@@ -24,7 +24,8 @@ if [ "$status" -eq 0 ]; then
   exit 1
 fi
 
-cp "$daemon_output" .scratch/research/dx/e11/redteam/daemon-output.txt
+sed '/^warning: Git tree /d' "$daemon_output" \
+  >.scratch/research/dx/e11/redteam/daemon-output.txt
 sed -e '/^warning: Git tree /d' -e '/This run has ID/d' "$broken_output" \
   >.scratch/research/dx/e11/review/broken-output.txt
 cp .scratch/research/dx/e11/review/broken-output.txt \

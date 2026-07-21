@@ -1,4 +1,3 @@
-warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e11' is dirty
 execution outcome
 exit: Ok(())
 events:
