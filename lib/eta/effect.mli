@@ -851,18 +851,25 @@ val with_minimum_log_level :
     below; logger-level filters still apply independently after a record is
     admitted by this scope. *)
 
+type 'a intercept = Keep | Drop | Replace of 'a
+(** Result of an observability interceptor. [Keep] passes the input unchanged
+    and [Drop] stops the pipeline; both are immediate and allocation-free.
+    [Replace value] passes [value] to the next interceptor and allocates only
+    its unary variant block. *)
+
 val intercept_log :
-  (Capabilities.log_record -> Capabilities.log_record option) ->
+  (Capabilities.log_record -> Capabilities.log_record intercept) ->
   ('a, 'err) t ->
   ('a, 'err) t
 (** Fiber-locally transform records emitted in [body]'s dynamic subtree. The
     order is minimum-level filter, scoped/per-call attributes, interceptors,
     then the currently bound logger. Nested interceptors run outermost first;
-    [None] drops the record and skips later interceptors. Thus
+    [Drop] drops the record and skips later interceptors. Thus
     [intercept_log scrub (with_logger sink body)] and
     [with_logger sink (intercept_log scrub body)] both scrub before [sink]. A
-    raising transform becomes a defect through ordinary capture. The
-    [Some]-identity transform is allocation-free on the emission fast path. *)
+    raising transform becomes a defect through ordinary capture. Each active
+    interceptor adds one function call per record; [Keep] does not box or
+    allocate a replacement record on the emission fast path. *)
 
 val log :
   ?level:Capabilities.log_level ->
@@ -899,14 +906,15 @@ val log_fatal :
 (** Emit a structured log record at [Fatal] level. *)
 
 val intercept_metric :
-  (Capabilities.metric_point -> Capabilities.metric_point option) ->
+  (Capabilities.metric_point -> Capabilities.metric_point intercept) ->
   ('a, 'err) t ->
   ('a, 'err) t
 (** Fiber-locally transform metric points emitted in [body]'s dynamic subtree
     after each point is built and before the current meter. Nested interceptors
-    run outermost first; [None] drops the point and skips later interceptors. A
-    raising transform becomes a defect through ordinary capture. The
-    [Some]-identity transform is allocation-free on the emission fast path. *)
+    run outermost first; [Drop] drops the point and skips later interceptors. A
+    raising transform becomes a defect through ordinary capture. Each active
+    interceptor adds one function call per point; [Keep] does not box or
+    allocate a replacement point on the emission fast path. *)
 
 val metric_update :
   ?description:string ->
