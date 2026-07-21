@@ -276,8 +276,8 @@ Eta effect.
 
 `Effect.discard` is not a recovery combinator: every cause still fails.
 `Effect.ignore_errors` is not a replacement for `Effect.bind_error` or
-`Effect.fold`. Use it only for best-effort unit effects where typed failures
-are intentionally suppressed. It does not handle defects, interruption, or
+`Effect.fold`. Use it only for best-effort effects whose success value is unused and whose
+typed failures are intentionally suppressed. It does not handle defects, interruption, or
 finalizer diagnostics.
 
 `Effect.to_result` is not a replacement for typed recovery. Use `bind_error` or
@@ -685,8 +685,9 @@ What the migration proved:
   body-bounded acquisition/release. It made Pulse clients, record streams, and
   keyboard monitors read as scoped resource use rather than exposed primitive
   `acquire_release |> bind`.
-- `Effect.ignore_errors` is valuable for best-effort unit effects such as
-  cleanup, cancellation, and notifications. It is clearer than repeating
+- `Effect.ignore_errors` is valuable for best-effort effects such as
+  cleanup, cancellation, and notifications, where the success value is
+  unused. It is clearer than repeating
   `bind_error (fun _ -> Effect.unit)`.
 - `Effect.to_result` is useful when a background workflow must publish either
   success or typed failure as data, as in the Codex realtime stream handoff.
