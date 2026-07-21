@@ -22,6 +22,30 @@
 
 type ('a, 'err) t
 
+type audit = {
+  names : string list;
+  uses_clock : bool;
+  emits_logs : bool;
+  emits_metrics : bool;
+  has_concurrency : bool;
+  has_resources : bool;
+  has_background : bool;
+}
+(** Static preflight summary of an effect blueprint.
+
+    The summary covers only the blueprint's currently constructed static spine
+    and capability footprints declared by Eta library leaves. It is not a
+    runtime inventory. In particular, {!bind} and other continuation-producing
+    combinators do not call ordinary OCaml continuation functions during
+    inspection, so an effect constructed later by such a function is absent.
+
+    Every [true] capability flag means that the static blueprint may use that
+    capability if execution reaches the declaring leaf. It may over-report one
+    execution because control flow or disabled observability can prevent the
+    operation. A [false] flag excludes only declared use in the visible static
+    blueprint; it does not constrain opaque continuation code, arbitrary work
+    inside {!sync}, or a dishonest custom {!Expert.make} declaration. *)
+
 type ('s, 'a, 'err) supervisor_scope
 
 type ('a, 'err) supervisor_body = {
@@ -690,12 +714,25 @@ module Expert : sig
   val make :
     ?leaf_name:string ->
     ?names:string list ->
+    uses_clock:bool ->
+    emits_logs:bool ->
+    emits_metrics:bool ->
+    has_concurrency:bool ->
+    has_resources:bool ->
+    has_background:bool ->
     (context -> ('a, 'err) Exit.t) ->
     ('a, 'err) t
   (** Build a runtime-backed effect without exposing Eta's internal effect
       representation. Runtime-specific packages use this to attach operations
-      to the current {!Runtime_contract.t}; ordinary user code should prefer
-      the typed combinators in this module. *)
+      to the current {!Runtime_contract.t}; ordinary user code should prefer the
+      typed combinators in this module.
+
+      All six capability declarations are required because the evaluator is an
+      opaque function that {!audit} cannot inspect. Set a flag when the custom
+      leaf directly performs the corresponding operation. A false declaration
+      is a contract made by the custom leaf author, not something Eta can verify.
+      Child effects evaluated with {!eval} are also opaque to this leaf's static
+      footprint and must be represented by the declaration. *)
 
   val contract : context -> Runtime_contract.t
   (** Runtime contract selected by the current interpreter. *)
@@ -1043,3 +1080,33 @@ val collect_names : ('a, 'err) t -> string list
     Continuation-producing nodes such as [bind], [bind_error], [map_par], and
     [supervisor_scoped] are not forced or traversed,
     so names created by those continuations are intentionally absent. *)
+
+val audit : ('a, 'err) t -> audit
+(** Inspect the statically constructed part of an effect blueprint.
+
+    [names] has the same ordering and continuation boundary as
+    {!collect_names}. [uses_clock] is set by declared Eta clock reads or sleeps,
+    including clock-backed scheduling and observability timestamps.
+    [emits_logs] and [emits_metrics] are set by declared log and metric leaves.
+    [has_concurrency] is set by declared fiber/concurrent combinators.
+    [has_resources] is set by declared resource scopes or finalizer lifecycle
+    combinators. [has_background] is set only by declared runtime-owned work
+    that may outlive the caller's lexical scope; structured background work sets
+    [has_concurrency] but not [has_background].
+
+    Flags are unioned across the visible static spine and through Eta wrappers.
+    They are conservative possibilities, so [true] does not promise an observed
+    operation. Conversely, [false] says only that no visible declared leaf has
+    that footprint. For example, the sleep in
+    [bind (fun () -> sleep duration) unit] is invisible because inspecting the
+    blueprint never calls the continuation. *)
+
+val describe : ('a, 'err) t -> string
+(** Render the statically constructed blueprint as a deterministic tree without
+    evaluating it.
+
+    The node labels are [Pure], [Fail], [Custom], [Custom("name")], [Map], and
+    [Bind], with two spaces per child depth and no trailing newline. A [Bind]
+    includes its visible input subtree followed by a literal [<bind …>] child;
+    the continuation is never forced. Opaque custom/wrapper evaluators remain
+    leaves rather than pretending their runtime work is inspectable. *)
