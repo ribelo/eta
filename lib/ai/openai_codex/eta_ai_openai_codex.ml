@@ -620,8 +620,16 @@ let auth_headers_of_credential ~identity ?session_id ?stream ?extra_headers
     ()
 
 let encode_responses ?structured_output request =
-  Codec.encode_responses ~provider:provider_name ~schema_value
-    ?structured_output request
+  match
+    Codec.encode_responses_json ~provider:provider_name ~schema_value
+      ?structured_output request
+  with
+  | Stdlib.Error _ as error -> error
+  | Stdlib.Ok (`Assoc fields) ->
+      Stdlib.Ok
+        (Json.to_string
+           (`Assoc (("store", `Bool false) :: List.remove_assoc "store" fields)))
+  | Stdlib.Ok _ -> safe_decode_error "Responses encoder did not return an object"
 
 let decode_responses raw = Codec.decode_responses ~provider:provider_name raw
 
