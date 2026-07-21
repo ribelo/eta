@@ -1,0 +1,45 @@
+Testing `dx-e11-redteam'.
+
+> [FAIL]        broken golden          0   retry slept 10/20/30.
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ [FAIL]        broken golden          0   retry slept 10/20/30.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+ASSERT retry backoff at Run.outcome.sleeps; expected exponential 10/20/40; inspect the schedule constructor
+FAIL retry backoff at Run.outcome.sleeps; expected exponential 10/20/40; inspect the schedule constructor
+
+   Expected: `execution outcome
+              exit: Ok(())
+              events:
+               sleeps:
+                [0] 10ms
+                [1] 20ms
+                [2] 40ms
+               logs:none
+               spans:none
+               metrics:none
+               finalizers: unavailable (failures remain in exit)
+              pending fibers:none'
+
+   Received: `execution outcome
+              exit: Ok(())
+              events:
+               sleeps:
+                [0] 10ms
+                [1] 20ms
+                [2] 30ms
+               logs:none
+               spans:none
+               metrics:none
+               finalizers: unavailable (failures remain in exit)
+              pending fibers:none'
+
+Raised at Alcotest_engine__Test.check in file "src/alcotest-engine/test.ml", lines 216-226, characters 4-261
+Called from Alcotest_engine__Core.Make.protect_test.(fun) in file "src/alcotest-engine/core.ml", line 186, characters 17-23
+Called from Alcotest_engine__Monad.Identity.catch in file "src/alcotest-engine/monad.ml", line 24, characters 31-35
+
+Logs saved to `~/projects/ribelo/ocaml/Eta-dx-e11/_build/_tests/dx-e11-redteam/broken golden.000.output'.
+ ──────────────────────────────────────────────────────────────────────────────
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e11/_build/_tests/dx-e11-redteam'.
+1 failure! in 0.000s. 1 test run.

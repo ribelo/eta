@@ -1,0 +1,11 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e11' is dirty
+execution outcome
+exit: Ok(())
+events:
+ sleeps:none
+ logs:none
+ spans:none
+ metrics:none
+ finalizers: unavailable (failures remain in exit)
+pending fibers:
+  [0] #1 parent=root kind=daemon(runtime-owned)

@@ -13,7 +13,8 @@ NO_COLOR=1 nix develop -c dune exec test/test/dx_e11_daemon_pending.exe \
   >"$daemon_output" 2>&1
 
 set +e
-NO_COLOR=1 nix develop -c dune exec test/test/dx_e11_broken_retry.exe \
+ALCOTEST_COLOR=never nix develop -c dune exec test/test/dx_e11_broken_retry.exe -- \
+  --color=never \
   >"$broken_output" 2>&1
 status=$?
 set -e
@@ -24,5 +25,7 @@ if [ "$status" -eq 0 ]; then
 fi
 
 cp "$daemon_output" .scratch/research/dx/e11/redteam/daemon-output.txt
-cp "$broken_output" .scratch/research/dx/e11/review/broken-output.txt
-cp "$broken_output" .scratch/research/dx/e11/redteam/broken-output.txt
+sed -e '/^warning: Git tree /d' -e '/This run has ID/d' "$broken_output" \
+  >.scratch/research/dx/e11/review/broken-output.txt
+cp .scratch/research/dx/e11/review/broken-output.txt \
+  .scratch/research/dx/e11/redteam/broken-output.txt
