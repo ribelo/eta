@@ -368,6 +368,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_blocking
   eta_eio
   (eio (>= 1.0))
   (eio_main (>= 1.0))

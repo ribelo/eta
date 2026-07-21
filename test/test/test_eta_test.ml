@@ -599,6 +599,371 @@ let test_with_logger_and_tracer_wires_both () =
   Alcotest.(check int) "logs" 1 (List.length (Eta.Logger.dump logger));
   Alcotest.(check int) "spans" 1 (List.length (Eta.Tracer.dump tracer))
 
+let test_run_collects_one_execution_record () =
+  let open Eta.Syntax in
+  let program =
+    Eta.Effect.named "workflow"
+      (let* () = Eta.Effect.log_info "starting" in
+       let* () =
+         Eta.Effect.metric_counter ~name:"requests"
+           (Eta.Capabilities.Int 1)
+       in
+       let* () = Eta.Effect.sleep (Eta.Duration.ms 10) in
+       Eta.Effect.pure 42)
+  in
+  let outcome = Run.run ~seed:17 program in
+  Alcotest.(check int) "exit" 42 (Expect.expect_ok outcome.exit);
+  (match outcome.logs with
+  | [ record ] ->
+      Alcotest.(check string) "log" "starting" record.body;
+      Alcotest.(check int) "log timestamp" 0 record.ts_ms
+  | records -> Alcotest.failf "expected one log, got %d" (List.length records));
+  (match outcome.spans with
+  | [ span ] ->
+      Alcotest.(check string) "span" "workflow" span.name;
+      Alcotest.(check int) "span start" 0 span.started_ms;
+      Alcotest.(check int) "span end" 10 span.ended_ms
+  | spans -> Alcotest.failf "expected one span, got %d" (List.length spans));
+  (match outcome.metrics with
+  | [ point ] ->
+      Alcotest.(check string) "metric" "requests" point.name;
+      Alcotest.(check int) "metric timestamp" 0 point.ts_ms
+  | points ->
+      Alcotest.failf "expected one metric point, got %d" (List.length points));
+  Run.expect_sleeps [ Eta.Duration.ms 10 ] outcome;
+  Run.expect_no_pending_fibers outcome
+
+let test_run_replays_with_same_construction () =
+  let program =
+    Eta.Effect.named "replay"
+      (Eta.Effect.delay (Eta.Duration.ms 5) (Eta.Effect.pure "done"))
+  in
+  let first = Run.run ~seed:23 program in
+  let second = Run.run ~seed:23 program in
+  Alcotest.(check string) "first exit" "done" (Expect.expect_ok first.exit);
+  Alcotest.(check string) "second exit" "done" (Expect.expect_ok second.exit);
+  Alcotest.(check (list int)) "sleep replay"
+    (List.map Eta.Duration.to_ms first.sleeps)
+    (List.map Eta.Duration.to_ms second.sleeps);
+  Alcotest.(check (list string)) "trace replay"
+    (List.map (fun span -> span.Eta.Tracer.trace_id) first.spans)
+    (List.map (fun span -> span.Eta.Tracer.trace_id) second.spans)
+
+let test_run_accounts_for_pending_owned_daemon () =
+  let outcome = Run.run (Eta.Effect.daemon Eta.Effect.never) in
+  Expect.expect_ok outcome.exit;
+  match outcome.pending_fibers with
+  | [ { Run.id = 1; parent_id = None; kind = Run.Daemon } ] -> ()
+  | fibers ->
+      Alcotest.failf "expected one root-owned pending daemon, got %d fibers"
+        (List.length fibers)
+
+let test_run_completed_structured_fibers_are_not_pending () =
+  let outcome =
+    Run.run
+      (Eta.Effect.par (Eta.Effect.pure 1) (Eta.Effect.pure 2)
+      |> Eta.Effect.discard)
+  in
+  Expect.expect_ok outcome.exit;
+  Run.expect_no_pending_fibers outcome
+
+let test_run_fiber_accounting_preserves_exit_corpus () =
+  let corpus =
+    [
+      ("success", Eta.Effect.pure 1);
+      ("typed failure", Eta.Effect.fail "expected");
+      ( "successful finalizer",
+        Eta.Effect.finally Eta.Effect.unit (Eta.Effect.pure 2) );
+      ( "suppressed finalizer",
+        Eta.Effect.finally (Eta.Effect.fail "cleanup")
+          (Eta.Effect.fail "body") );
+      ( "structured fibers",
+        Eta.Effect.par (Eta.Effect.pure 3) (Eta.Effect.pure 4)
+        |> Eta.Effect.map fst );
+      ("race", Eta.Effect.race [ Eta.Effect.pure 5; Eta.Effect.never ]);
+    ]
+  in
+  List.iter
+    (fun (name, program) ->
+      let ordinary = Run.run ~account_fibers:false program in
+      let accounted = Run.run ~account_fibers:true program in
+      Alcotest.check (Run.testable Alcotest.int Alcotest.string) name ordinary
+        accounted)
+    corpus
+
+let test_run_reused_clock_reports_only_current_sleeps () =
+  let clock = Test_clock.create () in
+  let first =
+    Run.run ~clock (Eta.Effect.sleep (Eta.Duration.ms 5))
+  in
+  Run.expect_sleeps [ Eta.Duration.ms 5 ] first;
+  let second = Run.run ~clock Eta.Effect.unit in
+  Run.expect_sleeps [] second;
+  Alcotest.(check int) "no stale ordered sleep event" 0
+    (List.length second.events)
+
+let test_run_cancelled_sleep_does_not_contaminate_reused_clock () =
+  let clock = Test_clock.create () in
+  let yielding_winner =
+    List.init 50 (fun _ -> Eta.Effect.yield) |> Eta.Effect.concat
+  in
+  let program =
+    Eta.Effect.race
+      [
+        Eta.Effect.delay (Eta.Duration.ms 1) yielding_winner;
+        Eta.Effect.delay (Eta.Duration.ms 100) (Eta.Effect.pure ());
+      ]
+  in
+  let first = Run.run ~clock program in
+  Expect.expect_ok first.exit;
+  Alcotest.(check int) "cancelled sleeper removed" 0
+    (Test_clock.sleeper_count clock);
+  let second = Run.run ~clock Eta.Effect.now_ms in
+  Alcotest.(check int) "reused clock did not advance to stale deadline" 1
+    (Expect.expect_ok second.exit);
+  Run.expect_sleeps [] second;
+  let unaccounted_clock = Test_clock.create () in
+  let unaccounted =
+    Run.run ~clock:unaccounted_clock ~account_fibers:false program
+  in
+  Expect.expect_ok unaccounted.exit;
+  Alcotest.(check int) "unaccounted scheduler preserves winning time" 1
+    (Test_clock.now_ms unaccounted_clock);
+  Alcotest.(check int) "unaccounted cancelled sleeper removed" 0
+    (Test_clock.sleeper_count unaccounted_clock)
+
+let test_accounted_test_runtimes_preserve_blocking_defaults () =
+  let helper_result =
+    with_test_clock @@ fun _sw _clock runtime ->
+    Eta.Runtime.run runtime (Eta_blocking.run (fun () -> 7))
+    |> Expect.expect_ok
+  in
+  Alcotest.(check int) "legacy helper blocking runner" 7 helper_result;
+  let run_result =
+    Run.run (Eta_blocking.run (fun () -> 8)) |> fun outcome ->
+    Expect.expect_ok outcome.exit
+  in
+  Alcotest.(check int) "Run blocking runner" 8 run_result
+
+let test_run_yielding_daemon_does_not_block_virtual_deadlines () =
+  let open Eta.Syntax in
+  let daemon = Eta.Effect.forever Eta.Effect.yield in
+  let program =
+    let* () = Eta.Effect.daemon daemon in
+    let* () = Eta.Effect.sleep (Eta.Duration.ms 1) in
+    Eta.Effect.sleep (Eta.Duration.ms 2)
+  in
+  let outcome = Run.run program in
+  Expect.expect_ok outcome.exit;
+  Run.expect_sleeps (List.map Eta.Duration.ms [ 1; 2 ]) outcome;
+  match outcome.pending_fibers with
+  | [ { Run.kind = Daemon; _ } ] -> ()
+  | _ -> Alcotest.fail "expected the yielding runtime-owned daemon to remain"
+
+let test_run_ordered_events_cross_categories () =
+  let open Eta.Syntax in
+  let program =
+    Eta.Effect.named "ordered"
+      (let* () = Eta.Effect.log_info "first" in
+       let* () =
+         Eta.Effect.metric_gauge ~name:"second" (Eta.Capabilities.Int 2)
+       in
+       Eta.Effect.sleep (Eta.Duration.ms 3))
+  in
+  let outcome = Run.run program in
+  match outcome.events with
+  | [ Run.Log _; Metric _; Sleep duration; Span _ ] ->
+      Alcotest.(check int) "sleep duration" 3 (Eta.Duration.to_ms duration)
+  | events ->
+      Alcotest.failf "expected log/metric/sleep/span order, got %d events"
+        (List.length events)
+
+let test_run_testable_uses_diagnostic_defect_equality () =
+  let program : (unit, string) Eta.Effect.t = Eta.Effect.die_message "same defect" in
+  let first = Run.run program in
+  let second = Run.run program in
+  Alcotest.check (Run.testable Alcotest.unit Alcotest.string)
+    "same defect diagnostics" first second
+
+let test_run_nested_pending_parentage_replays () =
+  let program =
+    Eta.Effect.par (Eta.Effect.daemon Eta.Effect.never) Eta.Effect.unit
+    |> Eta.Effect.discard
+  in
+  let first = Run.run program in
+  let second = Run.run program in
+  (match first.pending_fibers with
+  | [ { Run.parent_id = Some _; kind = Daemon; _ } ] -> ()
+  | _ -> Alcotest.fail "expected a daemon parented by a structured child");
+  Alcotest.(check bool) "stable pending identities" true
+    (first.pending_fibers = second.pending_fibers)
+
+let has_log body outcome =
+  List.exists (fun record -> record.Eta.Logger.body = body) outcome.Run.logs
+
+let run_golden_scenarios () =
+  let sibling_cancelled =
+    let sibling =
+      Eta.Effect.finally (Eta.Effect.log_info "sibling finalizer ran")
+        Eta.Effect.never
+    in
+    let failing =
+      Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.fail "sibling failed")
+    in
+    Run.run (Eta.Effect.par sibling failing |> Eta.Effect.discard)
+  in
+  let finalizer_on_interruption =
+    let loser =
+      Eta.Effect.finally (Eta.Effect.log_info "interrupted finalizer ran")
+        Eta.Effect.never
+    in
+    let winner =
+      Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure "winner")
+    in
+    Run.run (Eta.Effect.race [ loser; winner ])
+  in
+  let retry_10_20_40 =
+    let attempts = ref 0 in
+    let attempt =
+      Eta.Effect.sync (fun () -> incr attempts)
+      |> Eta.Effect.bind (fun () ->
+             if !attempts <= 3 then Eta.Effect.fail "retry"
+             else Eta.Effect.unit)
+    in
+    let schedule =
+      Eta.Schedule.both (Eta.Schedule.recurs 3)
+        (Eta.Schedule.exponential ~factor:2.0 (Eta.Duration.ms 10))
+    in
+    Run.run (Eta.Effect.retry ~schedule ~while_:(String.equal "retry") attempt)
+  in
+  let span_closed_on_defect =
+    let defective : (unit, string) Eta.Effect.t =
+      Eta.Effect.named "defective-span" (Eta.Effect.die_message "span boom")
+    in
+    Run.run defective
+  in
+  let suppressed_finalizer =
+    let suppressed : (unit, string) Eta.Effect.t =
+      Eta.Effect.finally (Eta.Effect.fail "cleanup failed")
+        (Eta.Effect.fail "body failed")
+    in
+    Run.run suppressed
+  in
+  let race_loser_released =
+    let loser =
+      Eta.Effect.acquire_release ~acquire:(Eta.Effect.pure ())
+        ~release:(fun () -> Eta.Effect.log_info "race loser released")
+      |> Eta.Effect.bind (fun () -> Eta.Effect.never)
+    in
+    let winner = Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure ()) in
+    Run.run (Eta.Effect.race [ loser; winner ])
+  in
+  ( sibling_cancelled,
+    finalizer_on_interruption,
+    retry_10_20_40,
+    span_closed_on_defect,
+    suppressed_finalizer,
+    race_loser_released )
+
+let test_run_six_canonical_golden_scenarios () =
+  let ( sibling_cancelled,
+        finalizer_on_interruption,
+        retry_10_20_40,
+        span_closed_on_defect,
+        suppressed_finalizer,
+        race_loser_released ) =
+    run_golden_scenarios ()
+  in
+  (match sibling_cancelled.exit with
+  | Eta.Exit.Error (Eta.Cause.Fail "sibling failed") -> ()
+  | _ -> Alcotest.fail "sibling failure was not preserved");
+  Alcotest.(check bool) "cancelled sibling finalizer" true
+    (has_log "sibling finalizer ran" sibling_cancelled);
+  Alcotest.(check string) "race winner" "winner"
+    (Expect.expect_ok finalizer_on_interruption.exit);
+  Alcotest.(check bool) "finalizer ran on interruption" true
+    (has_log "interrupted finalizer ran" finalizer_on_interruption);
+  Expect.expect_ok retry_10_20_40.exit;
+  Run.expect_sleeps
+    (List.map Eta.Duration.ms [ 10; 20; 40 ])
+    retry_10_20_40;
+  (match (span_closed_on_defect.exit, span_closed_on_defect.spans) with
+  | Eta.Exit.Error (Eta.Cause.Die _),
+    [ { Eta.Tracer.status = Eta.Tracer.Error _; _ } ] ->
+      ()
+  | _ -> Alcotest.fail "defect did not close its span with error status");
+  (match suppressed_finalizer.exit with
+  | Eta.Exit.Error
+      (Eta.Cause.Suppressed
+        {
+          primary = Eta.Cause.Fail "body failed";
+          finalizer = Eta.Cause.Finalizer.Fail "<typed failure>";
+        }) ->
+      ()
+  | _ -> Alcotest.fail "suppressed finalizer cause was not preserved");
+  Expect.expect_ok race_loser_released.exit;
+  Alcotest.(check bool) "race loser release" true
+    (has_log "race loser released" race_loser_released)
+
+let test_run_printer_is_readable_at_six_scenarios () =
+  let ( sibling_cancelled,
+        finalizer_on_interruption,
+        retry_10_20_40,
+        span_closed_on_defect,
+        suppressed_finalizer,
+        race_loser_released ) =
+    run_golden_scenarios ()
+  in
+  let render outcome =
+    let pp_hidden fmt _ = Format.pp_print_string fmt "_" in
+    Format.asprintf "%a" (Run.pp pp_hidden pp_hidden) outcome
+  in
+  let corpus =
+    [
+      render sibling_cancelled;
+      render finalizer_on_interruption;
+      render retry_10_20_40;
+      render span_closed_on_defect;
+      render suppressed_finalizer;
+      render race_loser_released;
+    ]
+  in
+  let contains haystack needle =
+    let haystack_length = String.length haystack in
+    let needle_length = String.length needle in
+    let rec loop index =
+      index + needle_length <= haystack_length
+      &&
+      (String.sub haystack index needle_length = needle || loop (index + 1))
+    in
+    needle_length = 0 || loop 0
+  in
+  List.iter
+    (fun output ->
+      List.iter
+        (fun section ->
+          Alcotest.(check bool) ("printer section " ^ section) true
+            (contains output section))
+        [ "exit:"; "events:"; "pending fibers:" ])
+    corpus;
+  let line_count output =
+    String.split_on_char '\n' output |> List.length
+  in
+  Alcotest.(check bool) "six-scenario corpus stays below 120 lines" true
+    (List.fold_left (fun total output -> total + line_count output) 0 corpus < 120)
+
+let test_run_six_complete_outcomes_replay () =
+  let ( a1, b1, c1, d1, e1, f1 ) = run_golden_scenarios () in
+  let ( a2, b2, c2, d2, e2, f2 ) = run_golden_scenarios () in
+  let check name testable left right = Alcotest.check testable name left right in
+  check "sibling cancelled" (Run.testable Alcotest.unit Alcotest.string) a1 a2;
+  check "finalizer interruption" (Run.testable Alcotest.string Alcotest.string)
+    b1 b2;
+  check "retry sleeps" (Run.testable Alcotest.unit Alcotest.string) c1 c2;
+  check "span defect" (Run.testable Alcotest.unit Alcotest.string) d1 d2;
+  check "suppressed finalizer" (Run.testable Alcotest.unit Alcotest.string) e1 e2;
+  check "race loser" (Run.testable Alcotest.unit Alcotest.string) f1 f2
+
 let fresh_sequence_in_new_test_runtime () =
   with_test_clock @@ fun _sw _clock rt ->
   let open Eta.Syntax in
@@ -659,6 +1024,39 @@ let () =
           Alcotest.test_case "with_tracer" `Quick test_with_tracer_captures_spans;
           Alcotest.test_case "with_logger_and_tracer" `Quick
             test_with_logger_and_tracer_wires_both;
+        ] );
+      ( "Run",
+        [
+          Alcotest.test_case "collects one execution record" `Quick
+            test_run_collects_one_execution_record;
+          Alcotest.test_case "replays with same construction" `Quick
+            test_run_replays_with_same_construction;
+          Alcotest.test_case "accounts for pending owned daemon" `Quick
+            test_run_accounts_for_pending_owned_daemon;
+          Alcotest.test_case "completed structured fibers are not pending" `Quick
+            test_run_completed_structured_fibers_are_not_pending;
+          Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
+            test_run_fiber_accounting_preserves_exit_corpus;
+          Alcotest.test_case "reused clock isolates sleep history" `Quick
+            test_run_reused_clock_reports_only_current_sleeps;
+          Alcotest.test_case "cancelled sleep does not contaminate reused clock"
+            `Quick test_run_cancelled_sleep_does_not_contaminate_reused_clock;
+          Alcotest.test_case "accounting preserves blocking defaults" `Quick
+            test_accounted_test_runtimes_preserve_blocking_defaults;
+          Alcotest.test_case "yielding daemon does not block virtual deadlines"
+            `Quick test_run_yielding_daemon_does_not_block_virtual_deadlines;
+          Alcotest.test_case "ordered events cross categories" `Quick
+            test_run_ordered_events_cross_categories;
+          Alcotest.test_case "testable uses diagnostic defect equality" `Quick
+            test_run_testable_uses_diagnostic_defect_equality;
+          Alcotest.test_case "nested pending parentage replays" `Quick
+            test_run_nested_pending_parentage_replays;
+          Alcotest.test_case "six canonical golden scenarios" `Quick
+            test_run_six_canonical_golden_scenarios;
+          Alcotest.test_case "printer readable at six scenarios" `Quick
+            test_run_printer_is_readable_at_six_scenarios;
+          Alcotest.test_case "six complete outcomes replay" `Quick
+            test_run_six_complete_outcomes_replay;
         ] );
       ( "Scoped capabilities",
         [

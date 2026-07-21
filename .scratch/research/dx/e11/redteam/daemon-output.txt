@@ -1,0 +1,11 @@
+execution outcome
+exit: Ok(())
+ordered events:none
+snapshots:
+ sleeps:none
+ logs:none
+ spans:none
+ metrics:none
+ finalizers: unavailable (failures remain in exit)
+pending fibers:
+  [0] #1 parent=root kind=daemon(runtime-owned)
