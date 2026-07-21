@@ -1,0 +1,5 @@
+(test
+ (name consumer)
+ (modules derived_error consumer)
+ (preprocess
+  (pps ppx_eta)))

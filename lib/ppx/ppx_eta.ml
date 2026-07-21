@@ -533,7 +533,7 @@ let eta_error_case ~fmt ~type_name row =
             supported payload type or write pp_%s manually"
            tag.txt type_name (List.length payloads) type_name)
 
-let eta_error_type declaration =
+let eta_error_declaration declaration =
   let loc = declaration.ptype_loc in
   let type_name = declaration.ptype_name.txt in
   let open Ast_builder.Default in
@@ -562,9 +562,10 @@ let eta_error_type declaration =
     | _ ->
         fail declaration.ptype_name.loc
           (Printf.sprintf
-             "eta_error: type %s is not a closed polymorphic-variant alias; \
-              [@@deriving eta_error] supports type %s = [ `Tag ... ]; rewrite \
-              the type as a closed polymorphic variant or write pp_%s manually"
+             "eta_error: type %s is not a public, explicit-tag closed \
+              polymorphic-variant alias; [@@deriving eta_error] supports type \
+              %s = [ `Tag ... ]; rewrite the type as a public closed row with \
+              every tag listed explicitly, or write pp_%s manually"
              type_name type_name type_name)
   in
   if rows = [] then
@@ -585,6 +586,12 @@ let eta_error_type declaration =
          (core_type_of_type_declaration declaration)
          (ptyp_constr ~loc (Located.mk ~loc (Longident.Lident "unit")) []))
   in
+  (type_name, rows, printer_type)
+
+let eta_error_type declaration =
+  let loc = declaration.ptype_loc in
+  let type_name, rows, printer_type = eta_error_declaration declaration in
+  let open Ast_builder.Default in
   let fmt = gen_symbol ~prefix:"__eta_fmt" () in
   let error = gen_symbol ~prefix:"__eta_error" () in
   pstr_value ~loc Nonrecursive
@@ -603,12 +610,29 @@ let eta_error_type declaration =
                    (List.map (eta_error_case ~fmt ~type_name) rows))));
     ]
 
-let eta_error_generator =
+let eta_error_signature declaration =
+  let loc = declaration.ptype_loc in
+  let type_name, rows, printer_type = eta_error_declaration declaration in
+  let open Ast_builder.Default in
+  List.iter
+    (fun row -> ignore (eta_error_case ~fmt:"__eta_fmt" ~type_name row))
+    rows;
+  psig_value ~loc
+    (value_description ~loc ~name:(Located.mk ~loc ("pp_" ^ type_name))
+       ~type_:printer_type ~prim:[])
+
+let eta_error_structure_generator =
   Deriving.Generator.make_noarg (fun ~loc:_ ~path:_ (_, declarations) ->
       List.map eta_error_type declarations)
 
+let eta_error_signature_generator =
+  Deriving.Generator.make_noarg (fun ~loc:_ ~path:_ (_, declarations) ->
+      List.map eta_error_signature declarations)
+
 let () =
-  Deriving.add "eta_error" ~str_type_decl:eta_error_generator |> Deriving.ignore;
+  Deriving.add "eta_error" ~str_type_decl:eta_error_structure_generator
+    ~sig_type_decl:eta_error_signature_generator
+  |> Deriving.ignore;
   Driver.register_transformation "ppx_eta"
     ~rules:
       [
