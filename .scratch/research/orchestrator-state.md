@@ -6,10 +6,12 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E20 — intercept_log / intercept_metric**
+- In flight: **E20b — intercept, variant representation (Keep|Drop|Replace)**
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e20`
   - Branch: `research/dx-e20-intercept`
-  - Stage: predictions sealed (V-DX-E20-001); objective.md written; awaiting executor
+  - Stage: E20 HELD (behavior proven, option-repr allocation contract failed,
+    V-DX-E20-002); E20b sealed (V-DX-E20B-001); followup-1.md written;
+    awaiting executor rework
 - Done (Phase D): E26 promoted (`dfe5f904`) · **E19 promoted** (`42d6a4d2`,
   flagship — scoped capability overrides)
 - Done (Phase D): E26 promoted (`dfe5f904`) — `Effect.fresh`/`fresh_named`
@@ -44,4 +46,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   human); E19 merge+bookkeeping done in isolated worktree per V-DX-E8-002a
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-21 — E20 launched
+- Last update: 2026-07-21 — E20 held; E20b sealed, awaiting rework
