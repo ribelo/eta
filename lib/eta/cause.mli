@@ -167,10 +167,13 @@ val pp_compact : ('err -> string) -> 'err t -> string
     [Concurrent] joins with [ + ], [Sequential] with [ ; ]; a differently
     flavored child is parenthesized. [finalizer(f)] wraps finalizer
     diagnostics; [p | suppressed: finalizer(f)] keeps the primary left of
-    the labeled separator and names the finalizer role on the right. Total
-    and newline-free: embedded renderings and exception messages are
-    sanitized, so the result is always a single line. Defect span names,
-    annotations, and backtraces are omitted; use {!pretty} for full
-    multi-line diagnostics. *)
+    the labeled separator and names the finalizer role on the right.
+    Newline-free when [render_error] and the embedded exception printers
+    return normally: embedded renderings are sanitized, and text that could
+    counterfeit grammar structure (parens or operators) is quoted, so a
+    leaf cannot masquerade as a composite. The printers are not protected;
+    a raising [render_error] propagates. Defect span names, annotations,
+    and backtraces are omitted; use {!pretty} for full multi-line
+    diagnostics. *)
 
 val to_portable : ('err -> 'portable_err) -> 'err t -> 'portable_err Portable.t

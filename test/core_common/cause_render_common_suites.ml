@@ -16,6 +16,10 @@ let render_err = function
 let die_record exn =
   match Cause.die exn with Cause.Die die -> die | _ -> assert false
 
+(* [die]s rendering after anti-counterfeit quoting: the exception message is
+   quoted whenever it contains grammar-structural characters. *)
+let die_s exn = "die(" ^ Printf.sprintf "%S" (Printexc.to_string exn) ^ ")"
+
 let check_case name cause ~pretty ~compact =
   Alcotest.(check string) (name ^ " (pretty)") pretty
     (Cause.pretty render_err cause);
@@ -37,12 +41,16 @@ let test_corpus_suppressed_fail_die () =
     ~pretty:
       "suppressed:\n  primary:\n    fail: B\n  finalizer:\n    defect: \
        Invalid_argument(\"cleanup\")"
-    ~compact:"fail(B) | suppressed: finalizer(die(Invalid_argument(\"cleanup\")))"
+    ~compact:("fail(B) | suppressed: finalizer(" ^ die_s (Invalid_argument "cleanup") ^ ")")
 
 let test_corpus_nested_finalizer_sequential () =
   let id = Cause.fresh_interrupt_id () in
-  let pretty_id = Cause.pretty render_err (Cause.interrupt_with_id id) in
-  let compact_id = Cause.pp_compact render_err (Cause.interrupt_with_id id) in
+  let pretty_id =
+    "interrupt: " ^ string_of_int (Cause.interrupt_id_to_int id)
+  in
+  let compact_id =
+    "interrupt#" ^ string_of_int (Cause.interrupt_id_to_int id)
+  in
   check_case "nested finalizer sequential"
     (Cause.finalizer
        (Cause.Finalizer.Sequential
@@ -56,12 +64,16 @@ let test_corpus_nested_finalizer_sequential () =
         defect: Invalid_argument(\"cleanup defect\")\n    " ^ pretty_id)
     ~compact:
       ("finalizer(fail(\"cleanup failed\") ; \
-        die(Invalid_argument(\"cleanup defect\")) ; " ^ compact_id ^ ")")
+        " ^ die_s (Invalid_argument "cleanup defect") ^ " ; " ^ compact_id ^ ")")
 
 let test_corpus_interrupts_anonymous_vs_identified () =
   let id = Cause.fresh_interrupt_id () in
-  let pretty_id = Cause.pretty render_err (Cause.interrupt_with_id id) in
-  let compact_id = Cause.pp_compact render_err (Cause.interrupt_with_id id) in
+  let pretty_id =
+    "interrupt: " ^ string_of_int (Cause.interrupt_id_to_int id)
+  in
+  let compact_id =
+    "interrupt#" ^ string_of_int (Cause.interrupt_id_to_int id)
+  in
   Alcotest.(check string) "anonymous interrupt (pretty)" "interrupt"
     (Cause.pretty render_err Cause.interrupt);
   Alcotest.(check string) "anonymous interrupt (compact)" "interrupt"
@@ -71,12 +83,24 @@ let test_corpus_interrupts_anonymous_vs_identified () =
   Alcotest.(check string) "identified interrupt (compact)" compact_id
     (Cause.pp_compact render_err (Cause.interrupt_with_id id))
 
+let test_corpus_leaf_cannot_counterfeit_composite () =
+  let spoof = "A) + interrupt ; fail(B" in
+  let render_spoof = function `A -> spoof | _ -> assert false in
+  Alcotest.(check string)
+    "compact quotes structural fail text"
+    ("fail(" ^ Printf.sprintf "%S" spoof ^ ")")
+    (Cause.pp_compact render_spoof (Cause.fail `A));
+  Alcotest.(check string)
+    "compact quotes structural die message"
+    (die_s (Failure "x) + interrupt"))
+    (Cause.pp_compact render_spoof (Cause.die (Failure "x) + interrupt")))
+
 let test_corpus_multi_defect_composite () =
   check_case "multi-defect composite"
     (Cause.concurrent
        [ Cause.die (Failure "a"); Cause.die (Failure "b") ])
     ~pretty:"concurrent:\n  defect: Failure(\"a\")\n  defect: Failure(\"b\")"
-    ~compact:"die(Failure(\"a\")) + die(Failure(\"b\"))"
+    ~compact:(die_s (Failure "a") ^ " + " ^ die_s (Failure "b"))
 
 (* Ugly composites: suppressed x concurrent x finalizer, parenthesization. *)
 
@@ -93,8 +117,8 @@ let test_corpus_suppressed_concurrent_finalizer () =
        Failure(\"boom\")\n  finalizer:\n    sequential:\n      finalizer fail: \
        cleanup failed\n      interrupt"
     ~compact:
-      "fail(A) + die(Failure(\"boom\")) | suppressed: finalizer(fail(\"cleanup \
-       failed\") ; interrupt)"
+      ("fail(A) + " ^ die_s (Failure "boom")
+      ^ " | suppressed: finalizer(fail(\"cleanup failed\") ; interrupt)")
 
 let test_corpus_mixed_nesting_parens () =
   check_case "mixed nesting parenthesizes"
@@ -252,6 +276,8 @@ let tests =
           test_corpus_nested_finalizer_sequential;
         Alcotest.test_case "corpus interrupts anonymous vs identified" `Quick
           test_corpus_interrupts_anonymous_vs_identified;
+        Alcotest.test_case "corpus leaf cannot counterfeit composite" `Quick
+          test_corpus_leaf_cannot_counterfeit_composite;
         Alcotest.test_case "corpus multi-defect composite" `Quick
           test_corpus_multi_defect_composite;
         Alcotest.test_case "corpus suppressed x concurrent x finalizer" `Quick

@@ -580,9 +580,20 @@ let pp_compact render_error cause =
   in
   let buffer = Buffer.create 64 in
   let add text = Buffer.add_string buffer text in
+  let add_leaf text =
+    (* Quote text that could counterfeit grammar structure (parens or
+       operators); plain atoms stay unquoted. *)
+    let text = sanitize text in
+    if
+      String.exists
+        (fun c -> List.mem c [ '('; ')'; '|'; '+'; ';' ])
+        text
+    then add (Printf.sprintf "%S" text)
+    else add text
+  in
   let add_die die =
     add "die(";
-    add (sanitize (Printexc.to_string die.exn));
+    add_leaf (Printexc.to_string die.exn);
     add ")"
   in
   let add_interrupt = function
@@ -651,7 +662,7 @@ let pp_compact render_error cause =
     (match node with
     | Fail err ->
         add "fail(";
-        add (sanitize (render_error err));
+        add_leaf (render_error err);
         add ")"
     | Die die -> add_die die
     | Interrupt id -> add_interrupt id
