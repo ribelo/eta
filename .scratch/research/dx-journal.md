@@ -2779,3 +2779,44 @@ lands.
 - The two slop examples revert to no invented error types.
 - Gates green; sig expansion snapshot pinned. Outcome: E7's retro
   reservation clears.
+
+---
+
+## V-DX-RETRO-E19 — 2026-07-21 — retro review (V-DX-AMEND-3 protocol)
+
+**Verdict: should-not-have-merged (as shipped).** Four findings, three
+verified, one partially refuted:
+
+1. **Expert leaves bypass `with_clock` (verified, P1).** The runtime
+   contract installs base `now_ms`/`sleep`; only Effect-level leaves
+   consult the scoped selector. An `Effect.Expert.make` leaf reading the
+   contract sees the base clock inside `with_clock` — the advertised
+   "governs clock reads/sleeps" is false for the package extension point.
+2. **Tracer fork metadata (partially refuted).** The cross-tracer path
+   copies all fields (`trace_context_of_span_info` includes
+   flags/state/baggage); same-tracer fork passes parent_id+trace_id by
+   design (the tracer owns its own state). Ledger note only.
+3. **W3C context manufactured from empty span_info ids (verified).**
+   `span_info.trace_id`/`span_id` may be empty ("tracer does not track");
+   the bridge converts blindly and forwards an invalid context as
+   external parent. Must validate and fall back to ambient.
+4. **Eta_otel clock violates the monotonic-pair contract (verified).**
+   `default_now_ms` is `Unix.gettimeofday` (wall time — NTP-jumpable),
+   and a supplied `?clock`'s `now_ms` is silently ignored in favor of a
+   separate `?now_ms` argument.
+
+**Disposition: fix-forward as E19b** (sealed predictions V-DX-E19B-001).
+
+## V-DX-E19B-001 — 2026-07-21 — research/dx-e19b-scoped-clock-fences — phase: predict (orchestrator-sealed)
+
+- The runtime contract's clock consults the scoped override: an
+  `Expert.make` leaf inside `with_clock` sees the override (test);
+  outside, base (test). Both backends (native + jsoo — the same pattern
+  exists in `eta_jsoo.ml`; fix or explicitly carve with docs).
+- Cross-tracer bridge validates `span_info` ids: empty/invalid → no
+  external parent, ambient fallback (test with an empty-id tracer).
+- `Eta_otel`'s default clock uses a monotonic source (documented); a
+  supplied `?clock`'s `now_ms` is honored (the separate `?now_ms` arg
+  removed or delegating — no silent ignore).
+- Gates green (native trio; otel suite; mainline js for the jsoo side).
+- E19's retro ledger updates to promoted-clean.
