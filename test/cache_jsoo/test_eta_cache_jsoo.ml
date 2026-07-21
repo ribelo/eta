@@ -69,7 +69,7 @@ let mixed_interrupt_failure_cause () =
   Eta.Cause.concurrent [ Eta.Cause.interrupt; Eta.Cause.fail (`Mixed 1) ]
 
 let mixed_interrupt_failure_effect () =
-  Eta.Effect.Expert.make ~leaf_name:"test.cache.mixed_interrupt" @@ fun _context ->
+  Eta.Effect.Expert.make ~capabilities:[] ~leaf_name:"test.cache.mixed_interrupt" @@ fun _context ->
   Eta.Exit.Error (mixed_interrupt_failure_cause ())
 
 let expect_mixed_interrupt_failure label = function
@@ -86,7 +86,8 @@ let expect_mixed_interrupt_failure label = function
            value)
 
 let runtime_interrupt_effect () =
-  Eta.Effect.Expert.make ~leaf_name:"test.cache.interrupt" @@ fun context ->
+  Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
+    ~leaf_name:"test.cache.interrupt" @@ fun context ->
   let contract = Eta.Effect.Expert.contract context in
   contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
   contract.Eta.Runtime_contract.cancel cancel_context Exit;

@@ -7,7 +7,7 @@ let fail_hooks causes =
     | [ cause ] -> cause
     | causes -> Eta.Cause.sequential causes
   in
-  Eta.Effect.Expert.make ~leaf_name:"Eta_signal_cleanup.run_hooks" (fun _ ->
+  Eta.Effect.Expert.make ~capabilities:[] ~leaf_name:"Eta_signal_cleanup.run_hooks" (fun _ ->
       Eta.Exit.Error cause)
 
 let run_hooks hooks =

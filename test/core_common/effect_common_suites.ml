@@ -15,7 +15,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ()
 
   let runtime_interrupt_effect () =
-    Effect.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
+    Effect.Expert.make ~capabilities:[ `Concurrency ]
+      ~leaf_name:"test.interrupt" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
     contract.Eta.Runtime_contract.cancel cancel_context Exit;
@@ -28,7 +29,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
   let effect_error_cause cause =
-    Effect.Expert.make ~leaf_name:"test.error-cause" @@ fun _context ->
+    Effect.Expert.make ~capabilities:[] ~leaf_name:"test.error-cause" @@ fun _context ->
     Exit.Error cause
 
   let expect_typed_failure_eq testable exit expected =
@@ -198,6 +199,171 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "names in pre-order"
       [ "outer"; "leaf-a"; "leaf-b" ]
       (Effect.collect_names e)
+
+  let check_audit label expected eff =
+    let actual = Effect.audit eff in
+    Alcotest.(check (list string)) (label ^ " names") expected.Effect.names
+      actual.names;
+    Alcotest.(check bool) (label ^ " clock") expected.uses_clock
+      actual.uses_clock;
+    Alcotest.(check bool) (label ^ " logs") expected.emits_logs
+      actual.emits_logs;
+    Alcotest.(check bool) (label ^ " metrics") expected.emits_metrics
+      actual.emits_metrics;
+    Alcotest.(check bool) (label ^ " concurrency") expected.has_concurrency
+      actual.has_concurrency;
+    Alcotest.(check bool) (label ^ " resources") expected.has_resources
+      actual.has_resources;
+    Alcotest.(check bool) (label ^ " background") expected.has_background
+      actual.has_background
+
+  let audit ?(names = []) ?(uses_clock = false) ?(emits_logs = false)
+      ?(emits_metrics = false) ?(has_concurrency = false)
+      ?(has_resources = false) ?(has_background = false) () : Effect.audit =
+    {
+      names;
+      uses_clock;
+      emits_logs;
+      emits_metrics;
+      has_concurrency;
+      has_resources;
+      has_background;
+    }
+
+  let test_audit_declared_leaves_and_preserve_union () =
+    check_audit "pure" (audit ()) (Effect.pure ());
+    check_audit "sleep" (audit ~uses_clock:true ())
+      (Effect.sleep Duration.zero);
+    check_audit "log" (audit ~uses_clock:true ~emits_logs:true ())
+      (Effect.log "hello");
+    check_audit "metric"
+      (audit ~uses_clock:true ~emits_metrics:true ())
+      (Effect.metric_counter ~name:"jobs" (Meter.Int 1));
+    check_audit "parallel union"
+      (audit ~uses_clock:true ~emits_metrics:true ~has_concurrency:true ())
+      (Effect.par (Effect.sleep Duration.zero)
+         (Effect.metric_counter ~name:"jobs" (Meter.Int 1)));
+    check_audit "map_par" (audit ~has_concurrency:true ())
+      (Effect.map_par (fun value -> Effect.pure value) [ () ]);
+    check_audit "retry" (audit ~uses_clock:true ())
+      (Effect.retry ~schedule:(Schedule.recurs 1) ~while_:(fun _ -> true)
+         (Effect.fail "retry"));
+    check_audit "acquire_release" (audit ~has_resources:true ())
+      (Effect.acquire_release ~acquire:Effect.unit
+         ~release:(fun () -> Effect.unit));
+    check_audit "resource preserve"
+      (audit ~uses_clock:true ~has_resources:true ())
+      (Effect.with_scope (Effect.sleep Duration.zero));
+    check_audit "daemon preserve"
+      (audit ~uses_clock:true ~has_concurrency:true ~has_background:true ())
+      (Effect.daemon (Effect.sleep Duration.zero));
+    check_audit "structured background"
+      (audit ~has_concurrency:true ())
+      (Effect.with_background Effect.unit (fun () -> Effect.unit));
+    check_audit "named preserve"
+      (audit ~names:[ "request" ] ~uses_clock:true ~emits_logs:true ())
+      (Effect.named "request" (Effect.log "hello"))
+
+  let test_audit_does_not_force_bind_continuation () =
+    let forced = ref false in
+    let eff =
+      Effect.unit
+      |> Effect.bind (fun () ->
+             forced := true;
+             Effect.sleep (Duration.ms 1))
+    in
+    check_audit "opaque bind" (audit ()) eff;
+    Alcotest.(check bool) "continuation not forced" false !forced;
+    Alcotest.(check string) "bind description" "Bind\n  Pure\n  <bind …>"
+      (Effect.describe eff)
+
+  let custom capabilities =
+    Effect.Expert.make ~capabilities (fun _ -> Exit.Ok ())
+
+  let test_expert_audit_declarations_and_inheritance () =
+    check_audit "expert empty" (audit ()) (custom []);
+    check_audit "expert all declarations"
+      (audit ~uses_clock:true ~emits_logs:true ~emits_metrics:true
+         ~has_concurrency:true ~has_resources:true ~has_background:true ())
+      (custom
+         [ `Clock; `Logs; `Metrics; `Concurrency; `Resources; `Background ]);
+    check_audit "expert background implies concurrency"
+      (audit ~has_concurrency:true ~has_background:true ())
+      (custom [ `Background ]);
+    let child = Effect.log "inherited" in
+    let wrapper =
+      Effect.Expert.make ~inherit_:child ~capabilities:[] (fun context ->
+          Effect.Expert.eval context child)
+    in
+    check_audit "expert inherited child"
+      (audit ~uses_clock:true ~emits_logs:true ()) wrapper
+
+  exception Poisoned_clock
+
+  let poisoned_clock : Capabilities.clock =
+    object
+      method now_ms () = raise Poisoned_clock
+      method sleep _ = raise Poisoned_clock
+    end
+
+  let generated_blueprints depth =
+    let base =
+      [
+        Effect.unit;
+        Effect.fail "expected";
+        Effect.sync (fun () -> ());
+        Effect.sleep Duration.zero;
+        Effect.log "generated";
+        Effect.metric_counter ~name:"generated" (Meter.Int 1);
+        Effect.with_scope Effect.unit;
+        Effect.daemon Effect.unit;
+      ]
+    in
+    let rec generate level remaining =
+      if remaining = 0 then level
+      else
+        let derived =
+          List.mapi
+            (fun index eff ->
+              [
+                Effect.map Fun.id eff;
+                Effect.named (Printf.sprintf "generated.%d.%d" remaining index)
+                  eff;
+                Effect.uninterruptible eff;
+                Effect.par eff Effect.unit |> Effect.discard;
+              ])
+            level
+          |> List.concat
+        in
+        level @ generate derived (remaining - 1)
+    in
+    generate base depth
+
+  let poisoned_clock_reached = function
+    | Exit.Ok _ -> false
+    | Exit.Error cause ->
+        Cause.defects cause
+        |> List.exists (fun (die : Cause.die) -> die.exn == Poisoned_clock)
+
+  let test_audit_generated_false_flags_match_runtime () =
+    B.with_runtime @@ fun _ctx rt ->
+    let logger = Logger.in_memory () in
+    List.iteri
+      (fun index eff ->
+        let audit = Effect.audit eff in
+        if not audit.uses_clock then
+          let exit = B.run rt (Effect.with_clock poisoned_clock eff) in
+          if poisoned_clock_reached exit then
+            Alcotest.failf "generated blueprint %d reached poisoned clock:\n%s"
+              index (Effect.describe eff);
+        if not audit.emits_logs then (
+          ignore (B.run rt (Effect.with_logger (Logger.as_capability logger) eff));
+          B.drain rt;
+          Alcotest.(check int)
+            (Printf.sprintf "generated blueprint %d emitted no logs" index)
+            0
+            (List.length (Logger.dump logger))))
+      (generated_blueprints 2)
 
   let test_effect_map_bind_tap_runtime () =
     B.with_runtime @@ fun _ctx rt ->
@@ -798,7 +964,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     let typed_cause cause =
-      Effect.Expert.make ~leaf_name:"test.typed-cause" @@ fun _context ->
+      Effect.Expert.make ~capabilities:[] ~leaf_name:"test.typed-cause" @@ fun _context ->
       Exit.Error cause
     in
     Alcotest.(check unit)
@@ -3283,6 +3449,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_exit_captures_die_message;
           Alcotest.test_case "Map" `Quick test_map;
           Alcotest.test_case "collect_names" `Quick test_collect_names;
+          Alcotest.test_case "audit declared leaves and preserve union" `Quick
+            test_audit_declared_leaves_and_preserve_union;
+          Alcotest.test_case "audit does not force bind continuation" `Quick
+            test_audit_does_not_force_bind_continuation;
+          Alcotest.test_case "expert audit declarations and inheritance" `Quick
+            test_expert_audit_declarations_and_inheritance;
+          Alcotest.test_case "audit generated false flags match runtime" `Quick
+            test_audit_generated_false_flags_match_runtime;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
           Alcotest.test_case "tap observer runtime" `Quick

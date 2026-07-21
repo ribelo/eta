@@ -171,7 +171,8 @@ module Adapter = struct
     { demand_claim_plan = claim; demand_effect_plan = effects }
 
   let run_cancellable ~install_cancel ~loop =
-    Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
+    Effect.Expert.make ~capabilities:[ `Concurrency ]
+      ~leaf_name:"eta_signal.timer" @@ fun context ->
     let contract = Effect.Expert.contract context in
     let cancelled_exit = function
       | Exit.Error cause when Cause.is_interrupt_only cause -> Exit.Ok ()
@@ -192,7 +193,7 @@ module Adapter = struct
       else Effect.Expert.exit_of_exn context exn
 
   let current_runtime_contract () =
-    Effect.Expert.make ~leaf_name:"eta_signal.timer.demand.runtime_contract"
+    Effect.Expert.make ~capabilities:[] ~leaf_name:"eta_signal.timer.demand.runtime_contract"
       (fun context -> Exit.Ok (Effect.Expert.contract context))
 
   let run_pending_cancel_hooks effects hooks_ref =

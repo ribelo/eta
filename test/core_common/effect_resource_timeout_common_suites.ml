@@ -6,7 +6,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let pp_hidden ppf _ = Format.pp_print_string ppf "<effect>"
 
   let runtime_interrupt_effect () =
-    E.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
+    E.Expert.make ~capabilities:[ `Concurrency ] ~leaf_name:"test.interrupt"
+    @@ fun context ->
     let contract = E.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
     contract.Eta.Runtime_contract.cancel cancel_context Exit;
@@ -398,7 +399,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (List.rev !trail)
 
   let acquire_into owner ~acquire ~release =
-    E.Expert.make @@ fun child ->
+    E.Expert.make ~inherit_:acquire ~capabilities:[ `Resources ] @@ fun child ->
     match E.Expert.eval child acquire with
     | Exit.Error _ as error -> error
     | Exit.Ok resource ->
@@ -407,7 +408,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let parallel_acquire_recipe acquisitions ~release body =
     E.with_scope
-      (E.Expert.make @@ fun owner ->
+      (E.Expert.make ~capabilities:[ `Concurrency; `Resources ] @@ fun owner ->
        E.Expert.eval owner
          (E.map_par
             (fun acquire -> acquire_into owner ~acquire ~release)

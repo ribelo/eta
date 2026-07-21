@@ -1659,7 +1659,7 @@ module Make (Observer_error : Observer_error) () = struct
           ~state:timer_state_port)
 
   let current_runtime_contract () =
-    Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
+    Effect.Expert.make ~capabilities:[] ~leaf_name:"Eta_signal.current_runtime_contract"
       (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
 
   let timer_demand_access =
@@ -1798,7 +1798,7 @@ module Make (Observer_error : Observer_error) () = struct
     let render_graph_error err =
       Format.asprintf "%a" Error.pp_graph_error err
     in
-    Effect.Expert.make @@ fun context ->
+    Effect.Expert.make ~inherit_:eff ~capabilities:[ `Resources ] @@ fun context ->
     let exit =
       try Effect.Expert.eval context eff
       with exn -> Effect.Expert.exit_of_exn context exn
@@ -1905,7 +1905,8 @@ module Make (Observer_error : Observer_error) () = struct
     | _ -> None
 
   let run_observer_effect _observer _token observer_eff =
-    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+    Effect.Expert.make ~inherit_:observer_eff ~capabilities:[]
+      ~leaf_name:"eta_signal.observer" @@ fun context ->
     try
       match Effect.Expert.eval context observer_eff with
       | Eta.Exit.Ok () -> Eta.Exit.Ok ()

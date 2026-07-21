@@ -122,3 +122,39 @@ module Test_random : sig
   val set_seed : Eta.Capabilities.random -> int -> unit
   (** [set_seed random 42] resets the token for deterministic test replay. *)
 end
+
+val assert_no_clock : ('a, 'err) Eta.Effect.t -> unit
+(** Fail the current Alcotest case when the visible static blueprint declares an
+    Eta clock read or sleep. This has the same opaque-continuation boundary as
+    {!Eta.Effect.audit}; it does not prove that arbitrary OCaml code never uses a
+    clock. *)
+
+val assert_no_logs : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when the visible static blueprint declares log emission. A log created
+    later by an opaque continuation is not inspected. *)
+
+val assert_no_metrics : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when the visible static blueprint declares metric emission. A metric
+    created later by an opaque continuation is not inspected. *)
+
+val assert_no_concurrency : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when the visible static blueprint declares concurrent fiber work. An
+    effect created later by an opaque continuation is not inspected. *)
+
+val assert_no_resources : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when the visible static blueprint declares resource or finalizer
+    lifecycle management. An effect created later by an opaque continuation is
+    not inspected. *)
+
+val assert_no_background : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when the visible static blueprint declares runtime-owned background
+    work. Structured concurrency is checked separately by
+    {!assert_no_concurrency}. *)
+
+val assert_pure_eff : ('a, 'err) Eta.Effect.t -> unit
+(** Fail when any capability flag in {!Eta.Effect.audit} is true.
+
+    Here “pure” means no declared Eta capability footprint in the visible static
+    blueprint. It does not establish referential transparency for arbitrary
+    functions passed to {!Eta.Effect.sync}, and it cannot inspect effects created
+    later by opaque continuations. Names alone do not make an effect impure. *)

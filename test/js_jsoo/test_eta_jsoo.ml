@@ -107,7 +107,7 @@ let test_await_cancel_hook done_ =
 let test_runtime_locals_cross_fork done_ =
   let local = Runtime_contract.create_local () in
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let result =
       contract.Runtime_contract.local_with_binding local 42 (fun () ->
@@ -126,7 +126,7 @@ let test_runtime_locals_cross_fork done_ =
 
 let test_runtime_stream_fifo done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let stream = contract.Runtime_contract.create_stream 1 in
     let values =
@@ -144,7 +144,7 @@ let test_runtime_stream_fifo done_ =
 
 let test_runtime_resolve_wakes_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let waiter_started, waiter_started_resolver =
@@ -174,7 +174,7 @@ let test_runtime_resolve_wakes_live_waiter done_ =
 
 let test_runtime_resolve_after_waiter_cancellation done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let started, started_resolver =
@@ -220,7 +220,7 @@ let test_runtime_resolve_after_waiter_cancellation done_ =
 
 let test_runtime_canceled_waiter_does_not_strand_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let canceled_started, canceled_started_resolver =

@@ -216,7 +216,8 @@ let fork_run sw rt eff =
   promise
 
 let cancelable_effect cancel_ref eff =
-  Eta.Effect.Expert.make ~leaf_name:"test.cancelable" @@ fun context ->
+  Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
+    ~leaf_name:"test.cancelable" @@ fun context ->
   let contract = Eta.Effect.Expert.contract context in
   contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
   cancel_ref :=
