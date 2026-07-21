@@ -1,7 +1,7 @@
 ; Negative compile-test corpus (DX-E5). Each cases/*.ml MUST fail to compile;
 ; the exact compiler output is snapshotted into expected_compile.txt.
 ; `dune runtest` fails when a captured message drifts; accept intentional
-; message changes with `dune runtest test/type_errors && dune promote`.
+; message changes with `dune runtest test/type_errors; dune promote`.
 ; Snapshot text is pinned to the OxCaml gate compiler — other compilers may
 ; word errors differently, so the whole corpus is fenced to 5.2.0+ox.
 

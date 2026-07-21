@@ -6,6 +6,13 @@ forbids it, and the two canonical fixes. If the quoted text here no longer
 matches what your compiler prints, the snapshot corpus in
 `test/type_errors/` is the source of truth — and CI should have failed.
 
+Exactly what is gated: the **compile-time** snapshots run under plain
+`dune runtest` and fail CI on drift, pinned to the OxCaml **5.2.0+ox**
+compiler (other compilers print different text; the rules then deactivate
+rather than pass silently wrong snapshots). The **runtime** probes
+(same-domain hangs) are opt-in: `dune build @type-errors-runtime` — they
+are deliberately not in the default gate.
+
 ---
 
 ## 1. `This field value has type … which is less general than "'s. …"`
@@ -129,8 +136,10 @@ pre-generated tuple combinators that stop at 8.
 
 **Fix 1 (usual).** Split the table: a wide table is usually two tables
 (core row + details) joined by key.
-**Fix 2.** Keep ≤ 8 fields in the `[%%eta.sql.table]` record and hand-write
-the extra columns with `Eta_sql.Eta_schema.column`.
+**Fix 2.** Keep ≤ 8 fields in the `[%%eta.sql.table]` record; define the
+extra columns through the generated table module's `Table.column` and build
+a schema by hand with `Eta_sql.Eta_schema.column` instead of using the
+generated fixed projection.
 
 ---
 
@@ -152,17 +161,20 @@ exit=124
 probe. The non-blocking call crossed domains fine; the first blocking pair
 never woke up.
 
-**What you tried.** Capturing a `Channel` (or `Pubsub`, or `Pool`) handle in
+**What you tried.** Capturing a `Channel` handle in
 an `Eta_par.Island.run` / `Domain.spawn` callback and running channel
 effects against it from the other domain — usually via a second runtime you
 built there.
 
-**Why Eta forbids it.** It doesn't — that's the trap. `Channel`, `Pubsub`,
-and `Pool` are *same-domain* primitives: a fiber blocked on one parks on
+**Why Eta forbids it.** It doesn't — that's the trap. `Channel` is a
+*same-domain* primitive: a fiber blocked on one parks on
 its own runtime's scheduler, and a wakeup from another domain is never
 delivered. Non-blocking calls (`try_send`) can look like they work; the
 first blocking call hangs silently. `Queue` is the designed cross-domain
-primitive and completes the same probe cleanly.
+primitive and completes the same probe cleanly. `Pubsub` and `Pool` are
+believed same-domain for the same scheduler-parking reason, but the corpus
+probes only `Channel` (hang) and `Queue` (clean) — treat their status as
+unprobed, not established.
 
 **Fix 1.** Cross domains with `Eta.Queue` (documented cross-domain); keep
 `Channel`/`Pubsub`/`Pool` handles on the domain and runtime that created
