@@ -96,3 +96,49 @@ final report.
   and the scenario location rejects the printer and therefore the whole E11
   proposal.
 
+## V-DX-E11-002 — accounting feasibility verdict
+
+Status: **PARTIAL — fiber accounting accepted; finalizer journal killed**
+
+### Evidence
+
+- `Runtime_contract.RUNTIME.fork` and `fork_daemon` are public backend contract
+  operations. `Eta_test` can decorate the Eio test backend, assign local
+  deterministic IDs, and remove entries when callbacks settle. This requires no
+  edit to `Runtime_core.t`, `Effect_core.frame`, or any production runtime path.
+- `Effect_core.frame.finalizers` is a private `(unit -> unit) list ref`.
+  `Runtime_core.run_finalizers` directly invokes every closure inside one
+  `Runtime_contract.protect` callback and collapses failures into one cause tree.
+  There is no contract operation around an individual finalizer.
+- `protect` cannot stand in for a finalizer event: it wraps the whole batch and
+  is also used by channel, queue, pool, pubsub, semaphore, concurrency, and
+  uninterruptible paths. Treating it as a finalizer would produce false events,
+  lose per-finalizer order, and fail to distinguish success/failure per item.
+- Existing `Cause.Finalizer` and `Cause.Suppressed` values preserve aggregate
+  finalizer failures in `Exit.t`, but successful finalizers leave no runtime
+  diagnostic and therefore cannot be reconstructed from the exit.
+
+### Decision
+
+- **Accept** test-only fiber accounting by contract decoration.
+- **Kill** `finalizer_events` and `expect_finalizers`. Do not expose an
+  always-empty field and do not infer events from `protect`.
+- Canonical finalizer scenarios remain executable: failed finalizers are visible
+  in `outcome.exit`; successful finalizer effects can emit ordinary recorded
+  logs/metrics for scenario evidence. This is not represented as runtime
+  finalizer accounting.
+
+### Counterevidence considered
+
+A production callback in `run_finalizers` would provide exact events, but it
+would add a branch/callback to every production finalizer batch and violates the
+assignment's zero-cost and scope fences. Copying the private interpreter into
+`eta_test` would duplicate runtime semantics and violate the requirement to
+compose the existing runtime.
+
+### Confidence and change condition
+
+Confidence: **High**, because the individual closure invocation is visible in
+the private implementation and absent from the complete public contract.
+Reconsider only if the production runtime independently acquires a zero-cost
+compile-time accounting specialization or a per-finalizer contract trampoline.
