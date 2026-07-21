@@ -64,6 +64,18 @@ already sleeping fiber or open span keeps the service with which that operation
 started, and a runtime-owned daemon keeps the binding it inherited at fork even
 after the lexical override returns.
 
+Log interception is another fiber-local stage, not a sink replacement. The
+fixed pipeline is scoped minimum-level filter, scoped then per-call attributes,
+outermost-to-innermost `Effect.intercept_log` transforms, and finally the
+currently bound logger. `Keep` passes the record unchanged, `Replace record`
+substitutes it, and `Drop` stops the remaining transforms and drops it.
+Consequently both
+`Effect.intercept_log scrub (Effect.with_logger sink body)` and
+`Effect.with_logger sink (Effect.intercept_log scrub body)` scrub records before
+`sink`; moving the logger override does not bypass interception. Metric
+interception follows the same nesting and drop rules after a metric point is
+built and before the current meter.
+
 Eta also does not wrap `Eio.Promise`, `Eio.Mutex`, or `Eio.Condition` as
 generic effect data types. Use them directly for local coordination. Wrap Eio
 only when Eta owns typed failure preservation, cancellation cleanup, scoped

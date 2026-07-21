@@ -86,7 +86,7 @@ module Expert = struct
     let runtime = context.runtime in
     if runtime.Runtime_core.metrics_enabled then
       let clock = Runtime_core.current_clock runtime in
-      runtime.meter#record
+      Runtime_observability.emit_metric runtime.contract runtime.meter
         {
           Capabilities.name;
           description;

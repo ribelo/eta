@@ -4,6 +4,8 @@
 
 open Effect_core
 
+type 'a intercept = 'a RObs.intercept = Keep | Drop | Replace of 'a
+
 let local_get frame key =
   frame.runtime.contract.Runtime_contract.local_get key
 
@@ -270,6 +272,11 @@ let with_minimum_log_level level eff =
   RObs.with_minimum_log_level frame.runtime.contract level @@ fun () ->
   eval frame eff
 
+let intercept_log transform eff =
+  preserve eff @@ fun frame ->
+  RObs.with_log_interceptor frame.runtime.contract transform @@ fun () ->
+  eval frame eff
+
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   make @@ fun frame ->
   let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
@@ -297,7 +304,7 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
             | Some info -> (info.trace_id, info.span_id))
     in
     let clock = Runtime_core.current_clock frame.runtime in
-    logger#log
+    RObs.emit_log frame.runtime.contract logger
       {
         Capabilities.level;
         body;
@@ -328,8 +335,13 @@ let metric ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind value =
   { name; description; unit_; attrs; kind; value }
 
 let record_metric frame ~ts_ms { name; description; unit_; attrs; kind; value } =
-  frame.runtime.meter#record
+  RObs.emit_metric frame.runtime.contract frame.runtime.meter
     { name; description; unit_; attrs; kind; value; ts_ms }
+
+let intercept_metric transform eff =
+  preserve eff @@ fun frame ->
+  RObs.with_metric_interceptor frame.runtime.contract transform @@ fun () ->
+  eval frame eff
 
 let metric_update ?description ?unit_ ?attrs ~name ~kind value =
   make @@ fun frame ->

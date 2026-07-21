@@ -726,6 +726,162 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check (option string)) "request id" (Some "req-1")
       (log_attr "request.id" record)
 
+  let test_observability_intercept_log_order_and_redaction () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let calls = ref [] in
+    let outer (record : Capabilities.log_record) =
+      calls := !calls @ [ "outer" ];
+      Alcotest.(check (option string)) "scoped attr visible" (Some "req-1")
+        (List.assoc_opt "request.id" record.attrs);
+      let attrs =
+        List.map
+          (fun (key, value) ->
+            if String.equal key "password" then (key, "[redacted]")
+            else (key, value))
+          record.attrs
+      in
+      Effect.Replace { record with attrs }
+    in
+    let inner (record : Capabilities.log_record) =
+      calls := !calls @ [ "inner" ];
+      Alcotest.(check (option string)) "inner sees outer transform"
+        (Some "[redacted]")
+        (List.assoc_opt "password" record.attrs);
+      Effect.Keep
+    in
+    let program =
+      Effect.log ~attrs:[ ("password", "open-sesame") ] "login"
+      |> Effect.annotate_logs [ ("request.id", "req-1") ]
+      |> Effect.intercept_log inner
+      |> Effect.intercept_log outer
+    in
+    run_ok rt program;
+    Alcotest.(check (list string)) "outermost first" [ "outer"; "inner" ]
+      !calls;
+    Alcotest.(check (option string)) "sink sees redaction" (Some "[redacted]")
+      (log_attr "password" (only_log logger))
+
+  let test_observability_intercept_log_drop_short_circuits () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let calls = ref [] in
+    let drop (_ : Capabilities.log_record) =
+      calls := !calls @ [ "drop" ];
+      Effect.Drop
+    in
+    let later record =
+      calls := !calls @ [ "later" ];
+      Effect.Keep
+    in
+    let program =
+      Effect.log "secret"
+      |> Effect.intercept_log later
+      |> Effect.intercept_log drop
+    in
+    run_ok rt program;
+    Alcotest.(check (list string)) "short-circuit" [ "drop" ] !calls;
+    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+
+  let test_observability_intercept_log_runs_after_filter () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let calls = ref 0 in
+    let observe record =
+      incr calls;
+      Effect.Keep
+    in
+    let program =
+      Effect.log_debug "filtered"
+      |> Effect.intercept_log observe
+      |> Effect.with_minimum_log_level Capabilities.Warn
+    in
+    run_ok rt program;
+    Alcotest.(check int) "intercept not called" 0 !calls;
+    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+
+  let test_observability_intercept_log_is_fiber_local () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let redact (record : Capabilities.log_record) =
+      Effect.Replace { record with body = "redacted" }
+    in
+    let left = Effect.intercept_log redact (Effect.log "left") in
+    let right = Effect.yield |> Effect.bind (fun () -> Effect.log "right") in
+    ignore (run_ok rt (Effect.par left right) : unit * unit);
+    let bodies = log_bodies logger in
+    Alcotest.(check bool) "left transformed" true (List.mem "redacted" bodies);
+    Alcotest.(check bool) "sibling unchanged" true (List.mem "right" bodies)
+
+  let test_observability_intercept_log_with_logger_both_orders () =
+    B.with_logger_runtime @@ fun _ctx rt base_logger ->
+    let inside_logger = Logger.in_memory () in
+    let outside_logger = Logger.in_memory () in
+    let scrub (record : Capabilities.log_record) =
+      Effect.Replace { record with body = "[redacted]" }
+    in
+    let sink logger = Logger.as_capability logger in
+    let logger_inside =
+      Effect.intercept_log scrub
+        (Effect.with_logger (sink inside_logger) (Effect.log "secret-1"))
+    in
+    let logger_outside =
+      Effect.with_logger (sink outside_logger)
+        (Effect.intercept_log scrub (Effect.log "secret-2"))
+    in
+    run_ok rt (Effect.concat [ logger_inside; logger_outside ]);
+    Alcotest.(check string) "logger inside" "[redacted]"
+      (only_log inside_logger).Logger.body;
+    Alcotest.(check string) "logger outside" "[redacted]"
+      (only_log outside_logger).Logger.body;
+    Alcotest.(check int) "base bypassed" 0
+      (List.length (Logger.dump base_logger))
+
+  let test_observability_intercept_log_raise_becomes_defect () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let exn = Failure "intercept failed" in
+    let program =
+      Effect.intercept_log (fun _ -> raise exn) (Effect.log "not emitted")
+    in
+    (match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check bool) "same exception" true (die.exn == exn)
+    | _ -> Alcotest.fail "expected intercept exception to become Die");
+    Alcotest.(check int) "sink not called" 0 (List.length (Logger.dump logger))
+
+  let test_observability_intercept_metric_enriches_subtree () =
+    B.with_observed_runtime @@ fun _ctx rt _tracer _logger meter ->
+    let enrich (point : Capabilities.metric_point) =
+      Effect.Replace { point with attrs = point.attrs @ [ ("tenant", "acme") ] }
+    in
+    let program =
+      Effect.metric_counter ~name:"requests" ~monotonic:true
+        (Capabilities.Int 1)
+      |> Effect.intercept_metric enrich
+    in
+    run_ok rt program;
+    match Meter.dump meter with
+    | [ point ] ->
+        Alcotest.(check (option string)) "tenant" (Some "acme")
+          (List.assoc_opt "tenant" point.attrs)
+    | points -> Alcotest.failf "expected one metric, got %d" (List.length points)
+
+  let test_observability_intercept_metric_drop_short_circuits () =
+    B.with_observed_runtime @@ fun _ctx rt _tracer _logger meter ->
+    let calls = ref [] in
+    let drop (_ : Capabilities.metric_point) =
+      calls := !calls @ [ "drop" ];
+      Effect.Drop
+    in
+    let later point =
+      calls := !calls @ [ "later" ];
+      Effect.Keep
+    in
+    let program =
+      Effect.metric_gauge ~name:"queue.depth" (Capabilities.Int 3)
+      |> Effect.intercept_metric later
+      |> Effect.intercept_metric drop
+    in
+    run_ok rt program;
+    Alcotest.(check (list string)) "short-circuit" [ "drop" ] !calls;
+    Alcotest.(check int) "meter not called" 0 (List.length (Meter.dump meter))
+
   let counting_noop_tracer count : Capabilities.tracer =
     object
       method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
@@ -1145,6 +1301,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_log_level_helpers_respect_minimum;
           Alcotest.test_case "annotate_logs with minimum log level" `Quick
             test_observability_annotate_logs_with_minimum_log_level;
+          Alcotest.test_case "intercept_log order and redaction" `Quick
+            test_observability_intercept_log_order_and_redaction;
+          Alcotest.test_case "intercept_log drop short-circuits" `Quick
+            test_observability_intercept_log_drop_short_circuits;
+          Alcotest.test_case "intercept_log runs after filter" `Quick
+            test_observability_intercept_log_runs_after_filter;
+          Alcotest.test_case "intercept_log is fiber-local" `Quick
+            test_observability_intercept_log_is_fiber_local;
+          Alcotest.test_case "intercept_log with_logger both orders" `Quick
+            test_observability_intercept_log_with_logger_both_orders;
+          Alcotest.test_case "intercept_log raise becomes defect" `Quick
+            test_observability_intercept_log_raise_becomes_defect;
+          Alcotest.test_case "intercept_metric enriches subtree" `Quick
+            test_observability_intercept_metric_enriches_subtree;
+          Alcotest.test_case "intercept_metric drop short-circuits" `Quick
+            test_observability_intercept_metric_drop_short_circuits;
           Alcotest.test_case "custom noop tracer is explicitly enabled" `Quick
             test_observability_custom_noop_tracer_is_explicitly_enabled;
           Alcotest.test_case "suppress observability" `Quick

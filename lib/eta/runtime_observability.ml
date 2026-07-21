@@ -14,6 +14,15 @@ let log_attrs_key : (string * string) list Runtime_contract.local =
   Runtime_contract.create_local ()
 let minimum_log_level_key : Capabilities.log_level Runtime_contract.local =
   Runtime_contract.create_local ()
+type 'a intercept = Keep | Drop | Replace of 'a
+let log_interceptors_key :
+    (Capabilities.log_record -> Capabilities.log_record intercept) list
+    Runtime_contract.local =
+  Runtime_contract.create_local ()
+let metric_interceptors_key :
+    (Capabilities.metric_point -> Capabilities.metric_point intercept) list
+    Runtime_contract.local =
+  Runtime_contract.create_local ()
 type die_context = {
   span_name : string option;
   rev_annotations : (string * string) list;
@@ -69,6 +78,48 @@ let with_minimum_log_level contract level f =
         if log_level_compare current level >= 0 then current else level
   in
   local_with_binding contract minimum_log_level_key effective f
+
+let with_interceptor contract key transform f =
+  let transforms =
+    match local_get contract key with
+    | None -> [ transform ]
+    | Some current -> current @ [ transform ]
+  in
+  local_with_binding contract key transforms f
+
+let with_log_interceptor contract transform f =
+  with_interceptor contract log_interceptors_key transform f
+
+let with_metric_interceptor contract transform f =
+  with_interceptor contract metric_interceptors_key transform f
+
+let rec emit_intercepted_log (logger : Capabilities.logger) transforms record =
+  match transforms with
+  | [] -> logger#log record
+  | transform :: rest -> (
+      match transform record with
+      | Keep -> emit_intercepted_log logger rest record
+      | Drop -> ()
+      | Replace transformed -> emit_intercepted_log logger rest transformed)
+
+let rec emit_intercepted_metric (meter : Capabilities.meter) transforms point =
+  match transforms with
+  | [] -> meter#record point
+  | transform :: rest -> (
+      match transform point with
+      | Keep -> emit_intercepted_metric meter rest point
+      | Drop -> ()
+      | Replace transformed -> emit_intercepted_metric meter rest transformed)
+
+let emit_log contract (logger : Capabilities.logger) record =
+  match local_get contract log_interceptors_key with
+  | None -> logger#log record
+  | Some transforms -> emit_intercepted_log logger transforms record
+
+let emit_metric contract (meter : Capabilities.meter) point =
+  match local_get contract metric_interceptors_key with
+  | None -> meter#record point
+  | Some transforms -> emit_intercepted_metric meter transforms point
 
 let with_die_context contract context f =
   local_with_binding contract die_context_key context f
@@ -277,7 +328,7 @@ let emit_daemon_failure ~contract ~now_ms ~logging_enabled
     if logging_enabled then
       List.iter
         (fun attrs ->
-          logger#log
+          emit_log contract logger
             {
               Capabilities.level = Error;
               body = "eta.daemon.failure";
