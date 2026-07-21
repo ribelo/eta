@@ -6,11 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E12 — audit / describe (blueprint introspection)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e12`
-  - Branch: `research/dx-e12-audit-describe`
-  - Stage: predictions sealed (V-DX-E12-001, after branch-discipline
-    repair V-DX-E12-001a); objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
+  flagship) · E20 promoted (`6deb7694`, as E20b) · **E12 promoted**
+  (`dbd51ff6`; API only — manifest role killed, evidence kept for E17)
 - Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
   flagship) · **E20 promoted** (`6deb7694`, as E20b `Keep|Drop|Replace`;
   E20 option-repr held → redesigned on evidence)
@@ -28,8 +27,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D** — E12 → **E11** (Eta_test.run) → E13 (async)
-  → E14 (Promise, hold-gated)
+- Queue: **Phase D** — **E11** (Eta_test.run) → E13 (async) → E14
+  (Promise, hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
   (silent hang → named error); dead PPX rejections ×2 (delete candidates);
@@ -45,10 +44,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   (watch); F7 scoped-stage active cost ~10.5 words/record (allocation-free
   lookup?; benefits ALL scoped stages)
 - Pending decisions: none
-- OPS NOTE: main checkout found on `erg-v1-ocaml54` with DX research tree
-  staged on top (foreign workstream state — LEFT AS FOUND, reported to
-  human); E19 merge+bookkeeping done in isolated worktree per V-DX-E8-002a
+- OPS RULE: all master merges in isolated temp worktrees, never the main
+  checkout (V-DX-E12-002a — the print-then-chain guard failed twice)
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-21 — E12 launched (with branch-discipline repair,
-  V-DX-E12-001a)
+- Last update: 2026-07-21 — E12 promoted (two-part decision)

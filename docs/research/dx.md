@@ -13,7 +13,29 @@ channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
 **Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
-C: 3 promoted, 2 held). Phase D: E26, E19, E20 promoted.
+C: 3 promoted, 2 held). Phase D: E26, E19, E20, E12 promoted.
+
+## E12 — `Effect.audit` / `Effect.describe` (promoted 2026-07-21; manifest role killed)
+
+The blueprint is now inspectable: `audit` reports names + six capability
+flags (clock/logs/metrics/concurrency/resources/background), `describe`
+prints the static tree with `<bind …>` for unforced continuations, and
+seven `Eta_test` assertions make the docs' vocabulary executable
+(`assert_no_clock`, `assert_pure_eff`, …). The honesty boundary is the
+design: flags cover the **visible static spine plus declared library
+leaves** — an opaque `bind` lambda is invisible, by docs and by an
+executable red-team attack. A teaching review preferred the real
+`describe` output over prose 5–4 for exactly that caveat.
+
+The examples-manifest role was **killed by its own evidence**: the
+54-example golden showed mechanically-correct-but-humanly-misleading
+flags (`cli_business` all-false despite retry behavior; channel/queue
+probes reporting no concurrency). Static preflight dies at dynamic
+continuations — and that finding is now E17's entry-gate data, preserved
+in `.scratch/research/dx/e12/manifest/`.
+
+Provenance: `.scratch/research/dx/e12/` (on branch), V-DX-E12-001..002a,
+branch `research/dx-e12-audit-describe`.
 
 ## E20 — `intercept_log` / `intercept_metric` (promoted 2026-07-21, as E20b)
 

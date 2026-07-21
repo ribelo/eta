@@ -29,7 +29,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E19 | Scoped capability override | D | M | med | **promoted** 2026-07-20 | SC | research/dx-e19-scoped-capability-override | V-DX-E19-001..002 |
 | E20 | intercept_log/metric | D | M | low-med | **promoted** 2026-07-21 (as E20b variant repr) | SC | research/dx-e20-intercept | V-DX-E20-001..002, V-DX-E20B-001..002 |
 | E11 | Eta_test.run golden record | D | L | med | proposed | | | |
-| E12 | audit / describe | D | M | low | proposed | | | |
+| E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | proposed | | | |
 | E14 | Eta.Promise | D | M | med | proposed (hold-gated) | | | |
 | E22 | Law-property policy | E (flex) | M | low | proposed | | | |
@@ -2529,3 +2529,68 @@ the stray commit while preserving the workstream's unpushed commit
 the corrected master. No pushed history was rewritten. Reinforced rule:
 the branch check runs before EVERY commit, not only master-commit
 sequences — the violation happened in a "routine" bookkeeping command.
+
+---
+
+## V-DX-E12-002 — 2026-07-21 — research/dx-e12-audit-describe — phase: results + decision (two-part, as pre-registered)
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`dbd51ff6`); mainline `test/js_jsoo` +
+`test/cache_jsoo` compile clean.
+
+**Contract** (verified): `capability_footprint` on `Custom`;
+`union_footprint` through `preserve` (inheritance proven by red-team:
+`uninterruptible (sleep …)` still flags `uses_clock`); primitive leaves
+declare; `audit` ORs the static spine; `describe` prints `<bind …>` for
+unforced continuations; seven `Eta_test` assertions; `Expert.make` takes
+explicit declarations with child inheritance. 11 describe snapshots
+(regeneration script committed).
+
+**Properties** (orchestrator-reviewed): 168 generated blueprints from the
+documented class (8 base leaves × 2 recursive levels) — `uses_clock =
+false` ⇒ poisoned clock never reached; `emits_logs = false` ⇒ in-memory
+logger stays silent. Arbitrary bind lambdas excluded from the class and
+attacked adversarially instead (the honest boundary).
+
+**Part 1 — PROMOTE the static introspection API.** Tutorial gate:
+describe-aided lesson rated 5/5 by executor's independent review and 5/5
+by the orchestrator's oracle pass (prose 4/5 both); teach-back all
+correct WITH the static-spine caveat; `<bind …>` specifically credited
+for retention.
+
+**Part 2 — KILL the examples-manifest role (gate fired).** The 54-example
+golden shows mechanically-correct-but-humanly-misleading flags at named
+examples: `cli_business` all-false despite retry behavior;
+`channel_probe`/`queue_probe` report no concurrency (continuations build
+the operations); `resource_retry` reports `clock=false`;
+`observability[_sinks]` miss their metrics; `signal_stabilization`
+all-false. The static preflight dies exactly at dynamic continuations —
+and that is now E17's entry-gate evidence. The golden
+(`.scratch/research/dx/e12/manifest/`) is preserved as that evidence,
+not shipped as a feature.
+
+**Prediction scoring (orchestrator, V-DX-E12-001).** Hits: footprint-on-
+Custom design, preserve inheritance, honesty constraint central,
+properties, corpus, tutorial ≥ 4, teach-back caveat, opaque-lambda trap
+disarmed-by-docs. Misses: assertion count (predicted 3–5, actual 7);
+**"manifest flags match reader expectation; kill gate NOT fired" — wrong
+on both counts** (fired, with named evidence). Executor: 6/7 (same
+manifest miss, honestly scored).
+
+**Decision:** API promoted (merged `dbd51ff6`, gates green, pushed);
+manifest role killed; evidence preserved for E17.
+
+---
+
+## V-DX-E12-002a — 2026-07-21 — protocol note (branch discipline, second violation + guard fix)
+
+During the E12 merge the orchestrator's `git branch --show-current` check
+printed `erg-v1-ocaml54` — and the merge ran anyway, because the command
+always exits 0 and does not guard an `&&` chain. The orchestrator had
+incorrectly believed the chain aborted and launched the temp-worktree
+merge in parallel. Result: an accidental E12 merge commit on the foreign
+branch (unpushed), repaired by `git reset --hard 681cd150` (the AI
+workstream's exact tip; their work untouched). Standing rule, now
+corrected: **all master merges happen in isolated temp worktrees, never
+in the main checkout** — no exceptions, regardless of which branch the
+checkout claims to be on. The print-then-chain "guard" is retired.
