@@ -142,3 +142,72 @@ Confidence: **High**, because the individual closure invocation is visible in
 the private implementation and absent from the complete public contract.
 Reconsider only if the production runtime independently acquires a zero-cost
 compile-time accounting specialization or a per-finalizer contract trampoline.
+
+## V-DX-E11-003 — implementation and final verdict
+
+Status: **ACCEPT record/printer/fiber accounting; retain finalizer-journal kill**
+
+### Implemented evidence
+
+- `Eta_test.Run.run` returns exit, sink snapshots, current-run sleeps, a true
+  cross-category ordered event stream, and pending fiber census.
+- The test-only `Fiber_accounting` decorator wraps `Runtime_contract.RUNTIME`
+  before interpreter construction. Production `lib/eta/` is unchanged.
+- All legacy Eta_test `with_*` helper runtimes use the decorator; the committed
+  `accounting-neutrality.sh` runs their existing regression suite. A focused
+  corpus also compares complete outcomes with `account_fibers=false` and `true`
+  under otherwise identical `Run` construction.
+- `Run.testable` uses diagnostic cause equality, so replayed defects compare by
+  stable diagnostics rather than physical exception identity.
+- Six canonical scenarios execute twice and compare as complete outcomes. A
+  reused caller clock has a regression proving prior sleeps do not contaminate
+  the next outcome.
+- The printer exposes every field used by equality and prints cross-category
+  events in observation order before snapshots and pending fibers.
+
+### Verification
+
+Final exact gates, rerun after the diagnostic-completeness fixes:
+
+| Command | Result |
+| --- | --- |
+| `nix develop -c dune build @install` | PASS |
+| `nix develop -c dune runtest --force` | PASS |
+| `nix develop -c eta-oxcaml-test-shipped` | PASS |
+| `nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo` | PASS |
+
+Additional evidence:
+
+- `.scratch/research/dx/e11/accounting-neutrality.sh` — PASS, 33 Eta_test cases.
+- `.scratch/research/dx/e11/redteam/run.sh` — PASS (daemon fixture succeeds;
+  deliberately broken retry fails as required; outputs stable on rerun).
+
+### Prediction score — 7.5 / 8
+
+| # | Prediction | Result | Score |
+| --- | --- | --- | ---: |
+| 1 | Phase 1 composes existing sinks/overrides | PASS | 1 |
+| 2 | One test-only clock seam auto-drives sleeps | PASS; ordered event wrapper avoided persistent clock history | 1 |
+| 3 | Contract decoration accounts fibers at zero production cost | PASS | 1 |
+| 4 | Contract cannot identify individual finalizers without production hook | PASS; field/helper killed | 1 |
+| 5 | Accounted and unaccounted exits remain identical | PASS, plus complete-outcome comparison | 1 |
+| 6 | Six canonical scenarios executable | PASS, twice each | 1 |
+| 7 | Golden printer passes readability/rubric gate | PASS | 1 |
+| 8 | Public census stays in one module with predicted concepts | PARTIAL: ordered `event` was additionally required; finalizer types/helper removed | 0.5 |
+
+### Final hypothesis ledger
+
+- **A. Golden record plus test-only accounting:** ACCEPTED for fiber accounting.
+- **B. Golden record without accounting:** DOMINATED for fibers; retained as
+  `account_fibers=false` only for direct neutrality evidence.
+- **C. Existing helpers only:** DOMINATED by one-call W6 and broken-output
+  diagnostics.
+- **D. Bespoke interpreter:** REJECTED by the runtime-composition constraint and
+  unnecessary for the proven slice.
+- **Per-finalizer event hook:** REJECTED by the zero-production-cost constraint;
+  aggregate failures remain in `exit`.
+
+Strongest remaining limitation: successful finalizer identity/order is not
+observable without a production interpreter seam. The API states this instead
+of fabricating events. This would change only if Eta independently gains a
+compile-time-specialized finalizer audit path.
