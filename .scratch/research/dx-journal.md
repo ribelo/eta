@@ -2512,3 +2512,20 @@ each example's name.
 **Outcome (predicted).** Promote. Risk low; the GADT surgery is small,
 the flag threading is the bulk of the diff, and the boundary docs are
 the taste test.
+
+---
+
+## V-DX-E12-001a — 2026-07-21 — protocol note (branch discipline, orchestrator self-inflicted)
+
+The sealed E12 predictions initially landed on `erg-v1-ocaml54` (foreign
+workstream branch): the main checkout had been switched between sessions
+and the orchestrator committed without verifying
+`git branch --show-current` — a direct violation of the rule recorded in
+V-DX-E8-002a, by the rule's own author. The error was compounded when the
+AI workstream committed on top of the stray commit. Repair: predictions
+cherry-picked to master (`40cc4c70`); `erg-v1-ocaml54` rebased to drop
+the stray commit while preserving the workstream's unpushed commit
+(content-identical, new hash `681cd150`); the E12 branch repointed to
+the corrected master. No pushed history was rewritten. Reinforced rule:
+the branch check runs before EVERY commit, not only master-commit
+sequences — the violation happened in a "routine" bookkeeping command.
