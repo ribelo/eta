@@ -1,6 +1,7 @@
 execution outcome
 exit: Ok(())
-events:
+ordered events:none
+snapshots:
  sleeps:none
  logs:none
  spans:none

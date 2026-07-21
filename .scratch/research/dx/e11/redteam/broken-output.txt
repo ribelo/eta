@@ -10,7 +10,11 @@ FAIL retry backoff at Run.outcome.sleeps; expected exponential 10/20/40; inspect
 
    Expected: `execution outcome
               exit: Ok(())
-              events:
+              ordered events:
+                [0] sleep 10ms
+                [1] sleep 20ms
+                [2] sleep 40ms
+              snapshots:
                sleeps:
                 [0] 10ms
                 [1] 20ms
@@ -23,7 +27,11 @@ FAIL retry backoff at Run.outcome.sleeps; expected exponential 10/20/40; inspect
 
    Received: `execution outcome
               exit: Ok(())
-              events:
+              ordered events:
+                [0] sleep 10ms
+                [1] sleep 20ms
+                [2] sleep 30ms
+              snapshots:
                sleeps:
                 [0] 10ms
                 [1] 20ms
