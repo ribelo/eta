@@ -181,7 +181,7 @@ not return to the recommended surface by accident.
 The runnable examples under `examples/` use real public modules:
 
 - `quickstart.ml`
-- `catch_recovery.ml`
+- `fold_recovery.ml`
 - `validation_boundary.ml`
 - `sync_defect_boundary.ml`
 - `resource_retry.ml`
@@ -814,7 +814,7 @@ git diff --check
 ```sh
 dune runtest test/api_dx --force
 nix develop -c dune build @examples
-nix develop -c dune exec examples/catch_recovery.exe
+nix develop -c dune exec examples/fold_recovery.exe
 nix develop -c dune exec examples/validation_boundary.exe
 nix develop -c dune exec examples/sync_defect_boundary.exe
 nix develop -c dune exec examples/retry_schedule.exe

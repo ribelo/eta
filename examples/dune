@@ -6,8 +6,8 @@
   (pps ppx_eta)))
 
 (executable
- (name catch_recovery)
- (modules catch_recovery)
+ (name fold_recovery)
+ (modules fold_recovery)
  (libraries eta eta_eio eio_main)
  (preprocess
   (pps ppx_eta)))
@@ -380,7 +380,7 @@
  (name examples)
 (deps
   quickstart.exe
-  catch_recovery.exe
+  fold_recovery.exe
   validation_boundary.exe
   sync_defect_boundary.exe
   resource_retry.exe

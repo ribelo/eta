@@ -165,13 +165,13 @@ let service_current env id =
 let service_proposed clock db id =
   Effect.sync_result (fun () -> Domain.load_user_at clock db id)
 
-let catch_recovery_current body_as_result fallback =
+let fold_recovery_current body_as_result fallback =
   body_as_result
   |> Effect.bind (function
        | Ok value -> Effect.pure value
        | Error `Cache_miss -> fallback)
 
-let catch_recovery_proposed body fallback =
+let fold_recovery_proposed body fallback =
   body |> Effect.bind_error (function `Cache_miss -> fallback)
 
 let pure_recovery_current render_error body =
@@ -1323,7 +1323,7 @@ Effect.with_scope
         {|Effect.sync_result (fun () -> load_user_at clock db id)|};
     };
     {
-      area = "catch_recovery";
+      area = "fold_recovery";
       variant = "current";
       code =
         {|body_as_result
@@ -1332,7 +1332,7 @@ Effect.with_scope
      | Error `Cache_miss -> fallback)|};
     };
     {
-      area = "catch_recovery";
+      area = "fold_recovery";
       variant = "proposed";
       code =
         {|body

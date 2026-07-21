@@ -77,7 +77,7 @@ let check_no_explicit_bind path =
 let promoted_examples =
   [
     "examples/quickstart.ml";
-    "examples/catch_recovery.ml";
+    "examples/fold_recovery.ml";
     "examples/validation_boundary.ml";
     "examples/sync_defect_boundary.ml";
     "examples/resource_retry.ml";

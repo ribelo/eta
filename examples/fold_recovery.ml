@@ -25,7 +25,7 @@ let defect_or_exit = function
   | Exit.Error cause ->
       Format.eprintf "unexpected defect exit: %a@." (Cause.pp pp_error) cause;
       exit 1
-  | Exit.Ok _ -> failwith "catch recovery expected defect to remain uncaught"
+  | Exit.Ok _ -> failwith "fold recovery expected defect to remain uncaught"
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -33,5 +33,5 @@ let () =
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
   let recovered_value = Eta_eio.Runtime.run rt recovered |> ok_or_exit in
   let defect_value = Eta_eio.Runtime.run rt defect |> defect_or_exit in
-  Format.printf "catch-recovery:recovered=%s defect=%s@." recovered_value
+  Format.printf "fold-recovery:recovered=%s defect=%s@." recovered_value
     defect_value

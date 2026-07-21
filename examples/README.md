@@ -28,7 +28,7 @@ nix develop -c dune exec examples/resource_retry.exe
 The current examples cover:
 
 - `quickstart.ml` - minimal Eio-backed Eta executable.
-- `catch_recovery.ml` - pure typed failure recovery with `Effect.fold`,
+- `fold_recovery.ml` - pure typed failure recovery with `Effect.fold`,
   while defects remain uncaught.
 - `validation_boundary.ml` - pure validation lifted with `Effect.from_result`
   rather than an unnecessary synchronous leaf.
