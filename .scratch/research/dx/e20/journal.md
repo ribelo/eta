@@ -78,3 +78,118 @@ Would change the decision: a repeatable allocation increase on identity,
 composition that cannot match the contracted order without broader machinery,
 jsoo divergence, shorthand regression, or a metric review fixture where the old
 wrapper is honestly clearer.
+
+## V-DX-E20-002 — implementation and behavioral evidence
+
+Status: ACCEPTED for semantics; performance verdict deferred to V-DX-E20-003.
+
+Decision: implement the smallest fiber-local transform lists over the existing
+runtime locals. Scope entry appends a transform to the inherited list. Emission
+walks that list in order and returns immediately on `None`. Log emission reaches
+the list only after level admission and record construction; metric emission
+reaches it after timestamped point construction.
+
+Evidence:
+
+- `test/core_common/observability_common_suites.ml`: outer/inner call trace,
+  redaction after merged attributes, drop short-circuit, filter-before-transform,
+  sibling isolation, logger override in both nesting orders, raising-transform
+  defect capture, metric tenant enrichment, and metric drop short-circuit.
+- Existing `annotate_logs` and `with_minimum_log_level` implementations and tests
+  were not rewritten. The unchanged suites passed in the full gate.
+- `test/js_jsoo/test_eta_jsoo.ml`: outer-first transformation and inner drop on
+  the jsoo runtime.
+- `.scratch/research/dx/e20/review/`: strong object-wrapper baselines versus the
+  new lexical mechanism.
+- `.scratch/research/dx/e20/redteam/`: both required adversarial cases.
+
+Counterevidence considered: a sink wrapper is sufficient when one fixed logger
+owns the policy. It loses to interception when a nested `with_logger` selects a
+different sink, because the wrapper is the replaced sink rather than an
+independent pipeline stage. A meter wrapper is stronger than producer-by-
+producer labels, but Eta has no scoped meter override; it changes runtime
+construction rather than one tenant subtree.
+
+## V-DX-E20-003 — fast-path gate contradicts the contract
+
+Status: REJECT current promotion.
+
+Command (OxCaml, pinned to CPU 0, 10 samples):
+
+```sh
+taskset -c 0 nix develop -c dune exec \
+  bench/runtime_watchlist/runtime_watchlist.exe -- \
+  --samples 10 --filter overhead.eta.log
+```
+
+The benchmark uses an enabled logger that consumes each body, 100,000 prebuilt
+log effects, and the same runtime for both rows.
+
+| Row | wall mean | wall stddev | minor words | major words |
+| --- | ---: | ---: | ---: | ---: |
+| no intercept | 16,629,791 ns | 127,940 ns | 5,242,876 | 67 |
+| `Some`-identity intercept | 11,186,719 ns | 66,532 ns | 6,291,447 | 153 |
+
+The wall result is 32.7% lower, not a credible interceptor speedup; installing a
+fiber-local context changes the backend lookup/GC profile, so this pair cannot
+isolate one function-call latency. It does establish that there is no observed
+wall-time regression in this run. Allocation is diagnostic and repeatable:
+identity adds 1,048,571 minor words per 100,000 records, or about 10.49 words per
+record. The callback's ordinary `Some record` result and fiber-local lookup are
+not allocation-free. This falsifies P5 and the public target contract. Do not
+merge the branch contract as a true claim.
+
+Counterevidence considered: the implementation itself reuses the input record
+and preserves the final callback option rather than wrapping it again. That
+does not make an opaque standard-OCaml callback returning a boxed `option`
+allocation-free. OxCaml-only local return modes also cannot repair a public API
+that must compile on upstream OCaml 5.4.
+
+Would change the decision: a revised portable callback representation with an
+immediate identity/keep result (for example an explicit `Keep` case), followed
+by the same denominator benchmark showing zero incremental allocation.
+
+## V-DX-E20-004 — final prediction score and recommendation
+
+Status: PARTIAL; experiment complete, promotion rejected.
+
+| Obligation | Result | Score |
+| --- | --- | ---: |
+| P1 pipeline and sink order | Proven | 1 |
+| P2 outer-first/drop short-circuit | Proven | 1 |
+| P3 shorthand parity | Proven by unchanged implementations/suites | 1 |
+| P4 redaction and metric use cases | Proven | 1 |
+| P5 identity fast path | Contradicted by allocation | 0 |
+| P6 jsoo parity | Proven | 1 |
+| P7 raising transform capture | Proven | 1 |
+| **Total** |  | **6 / 7** |
+
+Hypothesis outcome:
+
+- A — ship both specialized interceptors: **REJECTED for the fixed one-pager
+  contract**, solely because the measured identity path allocates.
+- B — ship log only: **REJECTED under the same allocation contract**; dropping
+  metric does not fix the log callback representation.
+- C — sink wrappers only: **BASELINE RETAINED** until the callback contract is
+  revised. It remains less compositional but makes no false fast-path promise.
+
+Metric fate, considered separately: the lexical tenant example is compelling
+and passes executable review evidence, so the one-pager's metric-use-case kill
+condition does **not** fire. Retain `intercept_metric` in a future revised design;
+do not promote either half from this branch while the shared allocation claim is
+false.
+
+Census: observability cluster +2 vals / +1 concept, public types +0,
+dependencies +0. The three sealed traps are all explicitly documented and
+tested; undisclosed footguns +0. Behavioral predictions were accurate, but the
+quantitative allocation prediction was wrong.
+
+Final exact gates, all PASS:
+
+- `nix develop -c dune build @install`
+- `nix develop -c dune runtest --force`
+- `nix develop -c eta-oxcaml-test-shipped`
+- `nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo`
+
+Additional parity gate PASS:
+`nix develop .#mainline -c dune runtest test/js_jsoo --force`.
