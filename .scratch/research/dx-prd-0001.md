@@ -1580,7 +1580,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
 | E19 | Scoped capability override | D | M | med | **promoted** 2026-07-20 | SC | research/dx-e19-scoped-capability-override | V-DX-E19-001..002 |
 | E20 | intercept_log/metric | D | M | low-med | **promoted** 2026-07-21 (as E20b variant repr) | SC | research/dx-e20-intercept | V-DX-E20-001..002, V-DX-E20B-001..002 |
-| E11 | Eta_test.run golden record | D | L | med | proposed | | | |
+| E11 | Eta_test.run golden record | D | L | med | **promoted** (finalizer_events killed) 2026-07-21 | SC | research/dx-e11-test-run | V-DX-E11-001..002 |
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | proposed | | | |
 | E14 | Eta.Promise | D | M | med | proposed (hold-gated) | | | |

@@ -28,7 +28,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E26 | Effect.fresh | D | S | low | **promoted** 2026-07-20 | SC | research/dx-e26-effect-fresh | V-DX-E26-001..002 |
 | E19 | Scoped capability override | D | M | med | **promoted** 2026-07-20 | SC | research/dx-e19-scoped-capability-override | V-DX-E19-001..002 |
 | E20 | intercept_log/metric | D | M | low-med | **promoted** 2026-07-21 (as E20b variant repr) | SC | research/dx-e20-intercept | V-DX-E20-001..002, V-DX-E20B-001..002 |
-| E11 | Eta_test.run golden record | D | L | med | proposed | | | |
+| E11 | Eta_test.run golden record | D | L | med | **promoted** (finalizer_events killed) 2026-07-21 | SC | research/dx-e11-test-run | V-DX-E11-001..002 |
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | proposed | | | |
 | E14 | Eta.Promise | D | M | med | proposed (hold-gated) | | | |
@@ -2670,3 +2670,63 @@ workstream, which switches it unpredictably. **Root fix, now standing:
 ALL master writes (commits, merges, bookkeeping) happen in dedicated temp
 worktrees; the main checkout is treated as read-only for the
 orchestrator.** This subsumes the merge-only rule of V-DX-E12-002a.
+
+---
+
+## V-DX-E11-002 — 2026-07-21 — research/dx-e11-test-run — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge (`41f9eac9`); mainline `test/js_jsoo` +
+`test/cache_jsoo` compile clean; `accounting-neutrality.sh` (36 cases) and
+`redteam/run.sh` pass.
+
+**Contract** (verified): 7-field `outcome` record; `run` with
+`?clock`/`?seed`/`?account_fibers`; `expect_no_pending_fibers`/
+`expect_sleeps`; `pp` + `testable`. The mli is the honest-boundary model:
+finalizer accounting explicitly NOT claimed with the production-seam
+reason; accounting decorates only the test contract; determinism contract
+states application-owned nondeterminism; daemons are owned work, not
+leaks. `eta_test` declares its `eta_blocking` edge explicitly (default
+blocking service preserved; disclosed).
+
+**Six canonical scenarios** (orchestrator re-run): all PASS, each run
+twice with complete-outcome replay equality (diagnostic equality for
+defects). Cross-category ordered events proven; reused-clock history
+proven per-execution.
+
+**Accounting-neutrality (two rungs):** (1) 36 legacy `with_*` helper cases
+pass unchanged through the decorated contract, incl. a real Eta_blocking
+callback; (2) exit corpus with accounting disabled/enabled compares
+diagnostically equal. Production neutrality is structural: zero
+production-path changes.
+
+**Scoped kill (confirmed): `finalizer_events` + `expect_finalizers`.**
+Individual finalizers are private closures inside one production
+`run_finalizers` batch; per-finalizer observation requires a production
+seam, violating the zero-cost gate. Aggregate failures remain in `exit`
+as `Cause.Finalizer`/`Suppressed`; the printer says "unavailable (failures
+remain in exit)" instead of faking a journal. Correct per the one-pager's
+scoped gate.
+
+**Review** `[agent-sim, spot-check]` (oracle, randomized): `Run` **4** vs
+E19-era assembly **1** — the old form's evidence proven CIRCULAR cold
+(the test advances the clock by [10;20;40] and asserts 70; a broken
+10/20/30 policy still passes). "Observes rather than manufactures the
+evidence." Rubric for the broken golden: what 5, where **3** (points at
+Alcotest internals, not user-code location — follow-up F8), what-next 5.
+Preference: `Run`.
+
+**Prediction scoring (orchestrator, V-DX-E11-001).** Hits: sinks/scoped-
+override composition; `pending_fibers` survives; neutrality; printer
+gate unfired; promote-the-record outcome; daemon-vs-leak doc point.
+Misses: W6 line numbers (predicted ~10 vs actual 22 — the real win was
+evidence soundness, unquantified); rubric ≥4 across the board ("where" =
+3); `finalizer_events` predicted to land — killed on the seam argument
+(recorded, correct call).
+
+**Follow-up F8 (new):** golden failure output should cite user-code
+location, not only Alcotest internals ("where" rated 3).
+
+**Decision: PROMOTE** the record + printer + test-only fiber accounting.
+Merged `--no-ff` (`41f9eac9`); master gates green; master + branch
+pushed; objective archived; worktree removed.

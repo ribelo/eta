@@ -6,11 +6,11 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E11 — Eta_test.Run golden-record test runtime (L effort)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e11`
-  - Branch: `research/dx-e11-test-run`
-  - Stage: predictions sealed (V-DX-E11-001, after repair V-DX-E11-001a);
-    objective.md written; awaiting executor
+- In flight: nothing
+- Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
+  flagship) · E20 promoted (`6deb7694`, as E20b) · E12 promoted
+  (`dbd51ff6`) · **E11 promoted** (`41f9eac9`; finalizer_events killed
+  per zero-cost gate)
 - Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
   flagship) · E20 promoted (`6deb7694`, as E20b) · **E12 promoted**
   (`dbd51ff6`; API only — manifest role killed, evidence kept for E17)
@@ -31,7 +31,8 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D** — E11 → **E13** (async) → E14 (Promise, hold-gated)
+- Queue: **Phase D** — **E13** (Effect.async) → E14 (Promise,
+  hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
   (silent hang → named error); dead PPX rejections ×2 (delete candidates);
@@ -45,11 +46,12 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   (substrate exists again, frequency rule still gates); E9 split →
   parking lot (superseded by E9b); F6 `fresh` cold-read scope assumption
   (watch); F7 scoped-stage active cost ~10.5 words/record (allocation-free
-  lookup?; benefits ALL scoped stages)
+  lookup?; benefits ALL scoped stages); F8 golden failure output should
+  cite user-code location (E11 "where" rated 3)
 - Pending decisions: none
 - OPS RULE: ALL master writes (commits, merges, bookkeeping) in dedicated
   temp worktrees; main checkout is READ-ONLY for the orchestrator
   (V-DX-E11-001a — third violation; subsumes V-DX-E12-002a)
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-21 — E11 launched
+- Last update: 2026-07-21 — E11 promoted
