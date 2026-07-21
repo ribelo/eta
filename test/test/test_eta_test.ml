@@ -702,6 +702,49 @@ let test_run_reused_clock_reports_only_current_sleeps () =
   Alcotest.(check int) "no stale ordered sleep event" 0
     (List.length second.events)
 
+let test_run_cancelled_sleep_does_not_contaminate_reused_clock () =
+  let clock = Test_clock.create () in
+  let yielding_winner =
+    List.init 50 (fun _ -> Eta.Effect.yield) |> Eta.Effect.concat
+  in
+  let program =
+    Eta.Effect.race
+      [
+        Eta.Effect.delay (Eta.Duration.ms 1) yielding_winner;
+        Eta.Effect.delay (Eta.Duration.ms 100) (Eta.Effect.pure ());
+      ]
+  in
+  let first = Run.run ~clock program in
+  Expect.expect_ok first.exit;
+  Alcotest.(check int) "cancelled sleeper removed" 0
+    (Test_clock.sleeper_count clock);
+  let second = Run.run ~clock Eta.Effect.now_ms in
+  Alcotest.(check int) "reused clock did not advance to stale deadline" 1
+    (Expect.expect_ok second.exit);
+  Run.expect_sleeps [] second;
+  let unaccounted_clock = Test_clock.create () in
+  let unaccounted =
+    Run.run ~clock:unaccounted_clock ~account_fibers:false program
+  in
+  Expect.expect_ok unaccounted.exit;
+  Alcotest.(check int) "unaccounted scheduler preserves winning time" 1
+    (Test_clock.now_ms unaccounted_clock);
+  Alcotest.(check int) "unaccounted cancelled sleeper removed" 0
+    (Test_clock.sleeper_count unaccounted_clock)
+
+let test_accounted_test_runtimes_preserve_blocking_defaults () =
+  let helper_result =
+    with_test_clock @@ fun _sw _clock runtime ->
+    Eta.Runtime.run runtime (Eta_blocking.run (fun () -> 7))
+    |> Expect.expect_ok
+  in
+  Alcotest.(check int) "legacy helper blocking runner" 7 helper_result;
+  let run_result =
+    Run.run (Eta_blocking.run (fun () -> 8)) |> fun outcome ->
+    Expect.expect_ok outcome.exit
+  in
+  Alcotest.(check int) "Run blocking runner" 8 run_result
+
 let test_run_ordered_events_cross_categories () =
   let open Eta.Syntax in
   let program =
@@ -981,6 +1024,10 @@ let () =
             test_run_fiber_accounting_preserves_exit_corpus;
           Alcotest.test_case "reused clock isolates sleep history" `Quick
             test_run_reused_clock_reports_only_current_sleeps;
+          Alcotest.test_case "cancelled sleep does not contaminate reused clock"
+            `Quick test_run_cancelled_sleep_does_not_contaminate_reused_clock;
+          Alcotest.test_case "accounting preserves blocking defaults" `Quick
+            test_accounted_test_runtimes_preserve_blocking_defaults;
           Alcotest.test_case "ordered events cross categories" `Quick
             test_run_ordered_events_cross_categories;
           Alcotest.test_case "testable uses diagnostic defect equality" `Quick

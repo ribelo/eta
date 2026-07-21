@@ -1,7 +1,7 @@
 (test
  (name test_eta_test)
  (modules test_eta_test)
- (libraries eta_eio eta_test eta alcotest eio_main unix)
+ (libraries eta_eio eta_test eta_blocking eta alcotest eio_main unix)
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))

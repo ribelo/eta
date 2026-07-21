@@ -28,6 +28,11 @@ six-scenario corpus remains below the sealed 120-line readability ceiling.
 - **0 changes** to `Schedule.t`, E19/E20 machinery, root `eta` dependencies, or
   application state ownership.
 
+`eta_test` now names `eta_blocking` directly in Dune because its decorated
+runtime constructors must install the same default blocking service that
+`Eta_eio.Runtime.create` installs. This was already in `eta_test`'s transitive
+closure through `eta_eio`; the explicit edge preserves runtime semantics.
+
 `run` uses fresh in-memory logger/tracer/meter sinks, a seeded random token, the
 E19 clock/logger/tracer/random scoped overrides, and an Eio backend contract
 decorated only inside `eta_test`. `account_fibers=false` exists for exact
@@ -84,7 +89,8 @@ The proof has two rungs:
 
 1. Every legacy Eta_test `with_*` helper now constructs its runtime through the
    decorated test contract. `accounting-neutrality.sh` runs the existing helper
-   regression suite (33 cases) unchanged and it passes.
+   regression suite (35 cases) unchanged and it passes, including a real
+   Eta_blocking callback through both a legacy helper and `Run`.
 2. `fiber accounting preserves exit corpus` runs success, typed failure,
    successful/suppressed finalizer, structured concurrency, and race blueprints
    with accounting disabled and enabled under otherwise identical `Run`
@@ -207,6 +213,9 @@ Footguns checked against predictions:
 
 1. Pending daemons are explicitly `daemon(runtime-owned)`, never labeled leaks.
 2. A caller-provided reused clock contributes only sleeps from the current run.
+   Cancelled waiters remove themselves, and a 1ms race winner with 50 explicit
+   yields does not spuriously advance to its cancelled 100ms competitor, with
+   accounting enabled or disabled.
 3. Span events enter the ordered stream when the span closes; this is documented
    observation order, not span-start order.
 4. A root effect that never exits and creates no virtual sleeper still waits
@@ -216,8 +225,9 @@ Footguns checked against predictions:
 
 Undisclosed footguns found after red-team/review: **0**. The independent review
 initially found physical defect equality, incomplete rendering, stale reused
-clock history, partial replay, and weak neutrality isolation. Each now has a
-focused passing regression and is reflected in this report.
+clock history, partial replay, weak neutrality isolation, cancelled-sleeper
+retention, and loss of Eta_eio's default blocking service. Each now has a focused
+passing regression and is reflected in this report.
 
 Final ledger:
 

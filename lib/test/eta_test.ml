@@ -50,7 +50,11 @@ module Test_clock = struct
       t.next_sequence <- t.next_sequence + 1;
       t.sleepers <-
         insert_sleeper { deadline_ms; sequence; resolver } t.sleepers;
-      Eio.Promise.await promise
+      try Eio.Promise.await promise
+      with exn ->
+        t.sleepers <-
+          List.filter (fun sleeper -> sleeper.sequence <> sequence) t.sleepers;
+        raise exn
 
   let adjust t duration =
     wake_until t (t.now_ms + Eta.Duration.to_ms duration)
@@ -87,23 +91,27 @@ module Fiber_accounting = struct
   type t = {
     mutable next_id : int;
     mutable pending_rev : info list;
+    mutable activity : int;
   }
 
   let fiber_id = Eta.Runtime_contract.create_local ()
-  let create () = { next_id = 1; pending_rev = [] }
+  let create () = { next_id = 1; pending_rev = []; activity = 0 }
   let pending t = List.rev t.pending_rev
+  let activity t = t.activity
 
   let start t local_get kind =
     let id = t.next_id in
     t.next_id <- id + 1;
     let info = { id; parent_id = local_get fiber_id; kind } in
     t.pending_rev <- info :: t.pending_rev;
+    t.activity <- t.activity + 1;
     info
 
   let finish t id =
-    t.pending_rev <- List.filter (fun fiber -> fiber.id <> id) t.pending_rev
+    t.pending_rev <- List.filter (fun fiber -> fiber.id <> id) t.pending_rev;
+    t.activity <- t.activity + 1
 
-  let wrap t backend =
+  let wrap ?(record_fibers = true) t backend =
     let module Base = (val backend : Eta.Runtime_contract.RUNTIME) in
     (module struct
       type scope = Base.scope
@@ -121,27 +129,33 @@ module Fiber_accounting = struct
       let fail_scope = Base.fail_scope
 
       let fork scope f =
-        let info = start t Base.local_get Structured in
-        try
-          Base.fork scope (fun () ->
-              Base.local_with_binding fiber_id info.id (fun () ->
-                  Fun.protect ~finally:(fun () -> finish t info.id) f))
-        with exn ->
-          finish t info.id;
-          raise exn
+        if not record_fibers then Base.fork scope f
+        else
+          let info = start t Base.local_get Structured in
+          try
+            Base.fork scope (fun () ->
+                Base.local_with_binding fiber_id info.id (fun () ->
+                    Fun.protect ~finally:(fun () -> finish t info.id) f))
+          with exn ->
+            finish t info.id;
+            raise exn
 
       let fork_daemon scope f =
-        let info = start t Base.local_get Daemon in
-        try
-          Base.fork_daemon scope (fun () ->
-              Base.local_with_binding fiber_id info.id (fun () ->
-                  Fun.protect ~finally:(fun () -> finish t info.id) f))
-        with exn ->
-          finish t info.id;
-          raise exn
+        if not record_fibers then Base.fork_daemon scope f
+        else
+          let info = start t Base.local_get Daemon in
+          try
+            Base.fork_daemon scope (fun () ->
+                Base.local_with_binding fiber_id info.id (fun () ->
+                    Fun.protect ~finally:(fun () -> finish t info.id) f))
+          with exn ->
+            finish t info.id;
+            raise exn
 
       let await_cancel = Base.await_cancel
-      let yield = Base.yield
+      let yield () =
+        t.activity <- t.activity + 1;
+        Base.yield ()
       let check = Base.check
       let create_promise = Base.create_promise
       let resolve_promise = Base.resolve_promise
@@ -169,7 +183,12 @@ let create_accounted_runtime ~sw ~eio_clock ~clock ?logger ?tracer () =
     Eta_eio.runtime ~sw ~clock:eio_clock |> Fiber_accounting.wrap accounting
   in
   Eta.Runtime.create_with_runtime backend ~sleep:(Test_clock.sleep clock)
-    ~now_ms:(fun () -> Test_clock.now_ms clock) ?logger ?tracer ()
+    ~now_ms:(fun () -> Test_clock.now_ms clock) ?logger ?tracer
+    ~services:
+      [
+        Eta_blocking.runtime_service ~runner:Eta_eio.default_blocking_runner ();
+      ]
+    ()
 
 let with_logger f =
   Eio_main.run @@ fun stdenv ->
@@ -316,16 +335,39 @@ module Run = struct
     pending_fibers : fiber_info list;
   }
 
-  let rec drive clock result =
+  let settle_deadline accounting clock result =
+    let rec loop stable activity sleepers =
+      Eio.Fiber.yield ();
+      if not (Eio.Promise.is_resolved result) then
+        let next_activity = Fiber_accounting.activity accounting in
+        let next_sleepers = Test_clock.sleeper_count clock in
+        if next_activity <> activity || next_sleepers <> sleepers then
+          loop 0 next_activity next_sleepers
+        else
+          let required_stable_turns =
+            (* After the last observed child activity, allow the scope
+               coordinator and root-result publisher to run as well. *)
+            List.length (Fiber_accounting.pending accounting) + 3
+          in
+          if stable < required_stable_turns then
+            loop (stable + 1) next_activity next_sleepers
+    in
+    loop 0 (Fiber_accounting.activity accounting)
+      (Test_clock.sleeper_count clock)
+
+  let rec drive accounting clock result =
     if Eio.Promise.is_resolved result then ()
     else
       match Test_clock.next_sleep_duration clock with
       | Some duration ->
           Test_clock.adjust clock duration;
-          drive clock result
+          (* Let work made runnable at this deadline settle (and cancel losing
+             sleepers) before selecting the next virtual timer. *)
+          settle_deadline accounting clock result;
+          drive accounting clock result
       | None ->
           Eio.Fiber.yield ();
-          drive clock result
+          drive accounting clock result
 
   let run ?clock ?(seed = 0) ?(account_fibers = true) eff =
     Eio_main.run @@ fun stdenv ->
@@ -403,13 +445,19 @@ module Run = struct
       end
     in
     let accounting = Fiber_accounting.create () in
-    let backend = Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv) in
     let backend =
-      if account_fibers then Fiber_accounting.wrap accounting backend else backend
+      Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv)
+      |> Fiber_accounting.wrap ~record_fibers:account_fibers accounting
     in
     let runtime =
       Eta.Runtime.create_with_runtime backend
-        ~meter:meter_capability ~capture_backtrace:false ()
+        ~meter:meter_capability
+        ~services:
+          [
+            Eta_blocking.runtime_service ~runner:Eta_eio.default_blocking_runner
+              ();
+          ]
+        ~capture_backtrace:false ()
     in
     let program =
       eff
@@ -421,7 +469,7 @@ module Run = struct
     let result, resolve = Eio.Promise.create () in
     Eio.Fiber.fork ~sw (fun () ->
         Eio.Promise.resolve resolve (Eta.Runtime.run runtime program));
-    drive clock result;
+    drive accounting clock result;
     let exit = Eio.Promise.await result in
     let events = List.rev !events_rev in
     {

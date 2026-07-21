@@ -178,7 +178,7 @@ Final exact gates, rerun after the diagnostic-completeness fixes:
 
 Additional evidence:
 
-- `.scratch/research/dx/e11/accounting-neutrality.sh` — PASS, 33 Eta_test cases.
+- `.scratch/research/dx/e11/accounting-neutrality.sh` — PASS, 35 Eta_test cases.
 - `.scratch/research/dx/e11/redteam/run.sh` — PASS (daemon fixture succeeds;
   deliberately broken retry fails as required; outputs stable on rerun).
 
@@ -211,3 +211,18 @@ Strongest remaining limitation: successful finalizer identity/order is not
 observable without a production interpreter seam. The API states this instead
 of fabricating events. This would change only if Eta independently gains a
 compile-time-specialized finalizer audit path.
+
+### Follow-up review closure
+
+The second independent review found two additional gaps and both are now closed:
+
+- cancelled `Test_clock` waiters remove themselves, and the auto-driver observes
+  scheduler activity before selecting the next deadline; a 1ms race winner that
+  performs 50 explicit yields no longer advances to the cancelled 100ms timer,
+  with accounting both enabled and disabled;
+- decorated helper and Run runtimes explicitly install Eta_eio's default
+  `Eta_blocking.runtime_service`; a real blocking callback passes through both
+  constructions.
+
+These regressions raise the focused Eta_test suite from 33 to 35 cases without
+changing the prediction score or final recommendation.
