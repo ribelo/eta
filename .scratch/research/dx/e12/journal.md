@@ -155,3 +155,112 @@ runtime completeness.
 This prediction section was created before E12 documentation, implementation,
 tests, manifests, or example changes. Later entries will record evidence without
 editing the sealed predictions above.
+
+### V-DX-E12-002 — Docs-first contract
+
+Status: ACCEPT.
+
+`Effect.audit`, `Effect.describe`, the seven `Eta_test` assertions, flag
+directionality, and the opaque-continuation limitation were documented in the
+public interfaces before implementation. `Expert.make` now requires an explicit
+capability declaration; statically available wrapped children are passed with
+`inherit_` and unioned. `Background` implies concurrency, preventing an invalid
+public flag combination.
+
+### V-DX-E12-003 — Static model and properties
+
+Status: ACCEPT for the documented blueprint class.
+
+- `Custom` stores a private six-boolean footprint.
+- `preserve` unions wrapper and child footprints.
+- `Map` and the input side of `Bind` retain visible footprints; continuations
+  are not called.
+- A recursive deterministic generator produces 168 blueprints from eight base
+  leaves through two levels of map, named, preserve-backed uninterruptible, and
+  parallel composition.
+- For every generated false clock flag, execution with a poisoned Eta clock did
+  not reach that clock. For every false log flag, a recording logger stayed
+  empty.
+- Focused declarations cover all six flags, empty `Expert.make`, inherited
+  custom children, background/concurrency consistency, retry, resources,
+  concurrency, logs, metrics, clock, and daemon behavior.
+
+The generator intentionally excludes arbitrary continuation functions. The
+separate red-team fixture proves why that exclusion is necessary.
+
+### V-DX-E12-004 — Describe corpus and assertions
+
+Status: ACCEPT.
+
+`test/effect_introspection/expected_descriptions.txt` pins 11 cases: pure/map,
+named leaf, nested binds, par/all/race/map-par, fold, bind_error, resource, and
+background. Every bind continuation is rendered as literal `<bind …>`.
+
+`Eta_test` exposes seven executable checks: the six negative capability
+assertions plus `assert_pure_eff`. Their contracts repeat the static-spine
+boundary and define “pure” as no declared Eta capability footprint, not
+referential transparency.
+
+### V-DX-E12-005 — Examples manifest
+
+Status: REJECT as a product manifest role; ACCEPT as experiment evidence.
+
+The regeneration script instruments copies of all 54 committed examples and
+calls the real `Effect.audit` on the exact effect passed to each supported,
+reached runtime boundary. It records 71 boundaries and four programs with no
+Eta runtime boundary. Nonzero exits and timeouts fail generation.
+
+The output is mechanically faithful but several rows are predictably poor
+reader manifests. `resource_retry` reports no clock, `cli_business` reports no
+capabilities, `channel_probe` / `queue_probe` report no concurrency, and the
+observability examples miss metrics constructed after binds. These are central,
+not incidental, expectations from the filenames. The sealed prediction that
+only a minority of surprises would remain was too optimistic. Keep the golden
+as evidence for the static boundary; do not promote `audit` as an examples
+inventory.
+
+### V-DX-E12-006 — Red-team and teaching review
+
+Status: PARTIAL promotion evidence.
+
+The opaque-bind executable reports:
+
+```text
+hidden-bind uses_clock=false runtime_sleeps=1
+preserve-wrapped uses_clock=true
+```
+
+The first result falsifies any runtime-inventory interpretation. The second
+proves preserve inheritance. The public MLI warning predicts the attack exactly.
+
+The executor rubric rates prose teaching 3/5 and real `describe` teaching 4/5.
+An independent technical review rates them 4/5 and 5/5 respectively: the literal
+marker, absent sleep, and false-clock consequence make the boundary directly
+inspectable. The >=4 promotion gate is met.
+
+### V-DX-E12-007 — Recommendation
+
+Status: ACCEPT API, REJECT manifest role.
+
+Promote `audit`, `describe`, and the explicitly static `Eta_test` assertions.
+Kill `audit`'s product/examples-manifest role and feed the observed dynamic-bind
+gap to DX-E17. The strongest remaining risk is naming: `assert_no_clock` can
+sound stronger than its contract when read without documentation, even though
+the MLI, failure output, snapshots, and red-team packet make the boundary
+explicit.
+
+### V-DX-E12-008 — Exact gates
+
+Status: ACCEPT.
+
+All required commands passed after the independent review fixes:
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build test/js_jsoo test/cache_jsoo
+```
+
+The final manifest regeneration also passed with 54 headers, 71 reached runtime
+boundaries, four no-boundary entries, and fail-loudly process handling.

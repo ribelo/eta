@@ -1,0 +1,2 @@
+hidden-bind uses_clock=false runtime_sleeps=1
+preserve-wrapped uses_clock=true

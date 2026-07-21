@@ -1,0 +1,125 @@
+===== admission_control.ml =====
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=true background=false
+===== all_health_checks.ml =====
+run: names=["health.db","health.cache","health.queue"] clock=true logs=false metrics=false concurrency=true resources=false background=false
+run: names=["health.db","health.cache"] clock=true logs=false metrics=false concurrency=true resources=false background=false
+===== background_lifecycle.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== batch_concurrency.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== blocking_result.ml =====
+run: names=["config.read"] clock=true logs=false metrics=true concurrency=true resources=true background=false
+===== blueprint_names.ml =====
+run: names=["request.handle","config.load"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== bounded_channel.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== cached_resource.ml =====
+run: names=["config.load"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== catch_recovery.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== channel_probe.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== cli_business.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== connection_pool.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=true background=false
+===== daemon_drain.ml =====
+run: names=["daemon.flush"] clock=true logs=false metrics=false concurrency=true resources=false background=true
+===== deterministic_random.ml =====
+run: <no Effect.t runtime boundary>
+===== duration_budget.ml =====
+run: <no Effect.t runtime boundary>
+===== error_rendering.ml =====
+run: names=["payment.charge"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+run: names=["payment.ledger"] clock=true logs=false metrics=false concurrency=false resources=true background=false
+===== exit_cause_boundary.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=["decode"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== finally_cleanup.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=true background=false
+===== http_handlers.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== log_level_policy.ml =====
+run: <no Effect.t runtime boundary>
+===== manual_resource_refresh.ml =====
+run: names=["manual.config.load"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== map_projection.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== metric_batching.ml =====
+run: names=[] clock=true logs=false metrics=true concurrency=false resources=false background=false
+run: names=[] clock=true logs=false metrics=true concurrency=false resources=false background=false
+===== mutable_ref_state.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== observability.ml =====
+run: names=["example.request"] clock=true logs=true metrics=false concurrency=false resources=false background=false
+===== observability_controls.ml =====
+run: names=["visible.request"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+run: names=["visible.request"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== observability_sinks.ml =====
+run: names=["first"] clock=true logs=true metrics=false concurrency=false resources=false background=false
+run: names=["second"] clock=true logs=true metrics=false concurrency=false resources=false background=false
+===== pubsub_poll.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== pubsub_subscription.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== queue_probe.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== quickstart.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== race_mirror.ml =====
+run: names=["mirror.primary","mirror.secondary","mirror.tertiary"] clock=true logs=false metrics=false concurrency=true resources=false background=false
+===== repeat_heartbeat.ml =====
+run: names=[] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== resource_retry.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== retry_schedule.ml =====
+run: names=["Dune__exe__Retry_schedule.call","api.call"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== runtime_boundary.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== scoped_resource.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== semaphore_permits.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=true background=false
+===== service_composition.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=true background=false
+===== signal_stabilization.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== source_locations.ml =====
+run: names=["Dune__exe__Source_locations.load_user"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== span_linking.ml =====
+run: names=["events.publish"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== stream_decode.ml =====
+run: names=["Dune__exe__Stream_decode.program.(fun)","stream.decode"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== supervisor_scope.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== sync_defect_boundary.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== tap_success.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== timeout_policy.ml =====
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=false background=false
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=false background=false
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=false background=false
+===== trace_context_boundary.ml =====
+run: names=["boundary.request"] clock=true logs=false metrics=false concurrency=false resources=false background=false
+===== trace_sampling.ml =====
+run: <no Effect.t runtime boundary>
+===== typed_error_boundary.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== unbounded_queue.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=true resources=false background=false
+===== uninterruptible_commit.ml =====
+run: names=[] clock=true logs=false metrics=false concurrency=true resources=false background=false
+===== validation_boundary.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
+===== workflow_test.ml =====
+run: names=[] clock=false logs=false metrics=false concurrency=false resources=false background=false
