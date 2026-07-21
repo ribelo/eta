@@ -599,6 +599,56 @@ let test_with_logger_and_tracer_wires_both () =
   Alcotest.(check int) "logs" 1 (List.length (Eta.Logger.dump logger));
   Alcotest.(check int) "spans" 1 (List.length (Eta.Tracer.dump tracer))
 
+let test_run_collects_one_execution_record () =
+  let open Eta.Syntax in
+  let program =
+    Eta.Effect.named "workflow"
+      (let* () = Eta.Effect.log_info "starting" in
+       let* () =
+         Eta.Effect.metric_counter ~name:"requests"
+           (Eta.Capabilities.Int 1)
+       in
+       let* () = Eta.Effect.sleep (Eta.Duration.ms 10) in
+       Eta.Effect.pure 42)
+  in
+  let outcome = Run.run ~seed:17 program in
+  Alcotest.(check int) "exit" 42 (Expect.expect_ok outcome.exit);
+  (match outcome.logs with
+  | [ record ] ->
+      Alcotest.(check string) "log" "starting" record.body;
+      Alcotest.(check int) "log timestamp" 0 record.ts_ms
+  | records -> Alcotest.failf "expected one log, got %d" (List.length records));
+  (match outcome.spans with
+  | [ span ] ->
+      Alcotest.(check string) "span" "workflow" span.name;
+      Alcotest.(check int) "span start" 0 span.started_ms;
+      Alcotest.(check int) "span end" 10 span.ended_ms
+  | spans -> Alcotest.failf "expected one span, got %d" (List.length spans));
+  (match outcome.metrics with
+  | [ point ] ->
+      Alcotest.(check string) "metric" "requests" point.name;
+      Alcotest.(check int) "metric timestamp" 0 point.ts_ms
+  | points ->
+      Alcotest.failf "expected one metric point, got %d" (List.length points));
+  Run.expect_sleeps [ Eta.Duration.ms 10 ] outcome;
+  Run.expect_no_pending_fibers outcome
+
+let test_run_replays_with_same_construction () =
+  let program =
+    Eta.Effect.named "replay"
+      (Eta.Effect.delay (Eta.Duration.ms 5) (Eta.Effect.pure "done"))
+  in
+  let first = Run.run ~seed:23 program in
+  let second = Run.run ~seed:23 program in
+  Alcotest.(check string) "first exit" "done" (Expect.expect_ok first.exit);
+  Alcotest.(check string) "second exit" "done" (Expect.expect_ok second.exit);
+  Alcotest.(check (list int)) "sleep replay"
+    (List.map Eta.Duration.to_ms first.sleeps)
+    (List.map Eta.Duration.to_ms second.sleeps);
+  Alcotest.(check (list string)) "trace replay"
+    (List.map (fun span -> span.Eta.Tracer.trace_id) first.spans)
+    (List.map (fun span -> span.Eta.Tracer.trace_id) second.spans)
+
 let fresh_sequence_in_new_test_runtime () =
   with_test_clock @@ fun _sw _clock rt ->
   let open Eta.Syntax in
@@ -659,6 +709,13 @@ let () =
           Alcotest.test_case "with_tracer" `Quick test_with_tracer_captures_spans;
           Alcotest.test_case "with_logger_and_tracer" `Quick
             test_with_logger_and_tracer_wires_both;
+        ] );
+      ( "Run",
+        [
+          Alcotest.test_case "collects one execution record" `Quick
+            test_run_collects_one_execution_record;
+          Alcotest.test_case "replays with same construction" `Quick
+            test_run_replays_with_same_construction;
         ] );
       ( "Scoped capabilities",
         [

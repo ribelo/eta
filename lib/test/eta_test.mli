@@ -123,6 +123,69 @@ module Test_random : sig
   (** [set_seed random 42] resets the token for deterministic test replay. *)
 end
 
+module Run : sig
+  type fiber_kind = Structured | Daemon
+  (** Classification of pending Eta work. [Structured] work belongs to a lexical
+      runtime scope. [Daemon] work belongs to the runtime itself: a pending
+      daemon is owned work and is not, by itself, a resource leak. *)
+
+  type fiber_info = {
+    id : int;
+    parent_id : int option;
+    kind : fiber_kind;
+  }
+  (** Deterministic identity and parentage for a fiber that was still running
+      when the program's root exit became available. IDs start at one for each
+      [run] and describe only fibers created by the tested program. *)
+
+  type ('a, 'err) outcome = {
+    exit : ('a, 'err) Eta.Exit.t;
+    logs : Eta.Logger.record list;
+    spans : Eta.Tracer.span list;
+    metrics : Eta.Meter.point list;
+    sleeps : Eta.Duration.t list;
+    pending_fibers : fiber_info list;
+  }
+  (** One inspectable execution record.
+
+      [logs], [spans], and [metrics] are insertion-ordered snapshots of fresh
+      in-memory sinks. [sleeps] contains every positive virtual-clock sleep in
+      call order, including retry/repeat backoff. [pending_fibers] is the
+      root-exit snapshot described by {!fiber_info}; completed fibers are absent.
+
+      Finalizer failures remain in [exit] as [Cause.Finalizer] or
+      [Cause.Suppressed]. Successful individual finalizers are not claimed as
+      runtime events: the production interpreter has no per-finalizer contract
+      seam, and [Run] does not add one to a production path. *)
+
+  val run :
+    ?clock:Test_clock.t ->
+    ?seed:int ->
+    ('a, 'err) Eta.Effect.t ->
+    ('a, 'err) outcome
+  (** [run ?clock ?seed program] executes [program] once on a fresh Eio-backed
+      test runtime and returns all observations in one record. The default clock
+      starts at zero and the default random seed is zero. Virtual sleeps are
+      advanced automatically; [run] does not wait for wall time.
+
+      Determinism contract: the same effect blueprint, initial clock state, seed,
+      and runtime construction produce the same exit and ordered observations.
+      Arbitrary nondeterminism inside [Effect.sync], external I/O, or mutable
+      values shared between runs remains application-owned.
+
+      Fiber accounting decorates only the test backend contract. It does not add
+      a field, branch, service lookup, or callback to Eta's production runtime
+      interpreter, and decoration does not change the tested program's exit. *)
+
+  val expect_no_pending_fibers : ('a, 'err) outcome -> unit
+  (** Fail the current Alcotest case with the pending-fiber census when any work
+      remains. Daemons are reported as owned runtime work, not called leaks. *)
+
+  val expect_sleeps :
+    Eta.Duration.t list -> ('a, 'err) outcome -> unit
+  (** Check the complete ordered virtual-sleep history. *)
+end
+
 val assert_no_clock : ('a, 'err) Eta.Effect.t -> unit
 (** Fail the current Alcotest case when the visible static blueprint declares an
     Eta clock read or sleep. This has the same opaque-continuation boundary as

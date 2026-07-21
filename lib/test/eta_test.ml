@@ -9,9 +9,11 @@ module Test_clock = struct
     mutable now_ms : int;
     mutable next_sequence : int;
     mutable sleepers : sleeper list;
+    mutable observed_sleeps_rev : Eta.Duration.t list;
   }
 
-  let create () = { now_ms = 0; next_sequence = 0; sleepers = [] }
+  let create () =
+    { now_ms = 0; next_sequence = 0; sleepers = []; observed_sleeps_rev = [] }
 
   let sleeper_compare a b =
     match Int.compare a.deadline_ms b.deadline_ms with
@@ -45,6 +47,7 @@ module Test_clock = struct
     let deadline_ms = t.now_ms + Eta.Duration.to_ms duration in
     if deadline_ms <= t.now_ms then ()
     else
+      let () = t.observed_sleeps_rev <- duration :: t.observed_sleeps_rev in
       let promise, resolver = Eio.Promise.create () in
       let sequence = t.next_sequence in
       t.next_sequence <- t.next_sequence + 1;
@@ -67,6 +70,13 @@ module Test_clock = struct
     end
 
   let sleeper_count t = List.length t.sleepers
+
+  let next_sleep_duration t =
+    match t.sleepers with
+    | [] -> None
+    | sleeper :: _ -> Some (Eta.Duration.ms (sleeper.deadline_ms - t.now_ms))
+
+  let observed_sleeps t = List.rev t.observed_sleeps_rev
 end
 
 let with_logger f =
@@ -194,6 +204,93 @@ end
 module Test_random = struct
   let create ~seed = Eta.Capabilities.random_of_seed seed
   let set_seed = Eta.Capabilities.random_set_seed
+end
+
+module Run = struct
+  type fiber_kind = Structured | Daemon
+
+  type fiber_info = {
+    id : int;
+    parent_id : int option;
+    kind : fiber_kind;
+  }
+
+  type ('a, 'err) outcome = {
+    exit : ('a, 'err) Eta.Exit.t;
+    logs : Eta.Logger.record list;
+    spans : Eta.Tracer.span list;
+    metrics : Eta.Meter.point list;
+    sleeps : Eta.Duration.t list;
+    pending_fibers : fiber_info list;
+  }
+
+  let rec drive clock result =
+    if Eio.Promise.is_resolved result then ()
+    else
+      match Test_clock.next_sleep_duration clock with
+      | Some duration ->
+          Test_clock.adjust clock duration;
+          drive clock result
+      | None ->
+          Eio.Fiber.yield ();
+          drive clock result
+
+  let run ?clock ?(seed = 0) eff =
+    Eio_main.run @@ fun stdenv ->
+    Eio.Switch.run @@ fun sw ->
+    let clock = Option.value clock ~default:(Test_clock.create ()) in
+    let logger = Eta.Logger.in_memory () in
+    let tracer = Eta.Tracer.in_memory () in
+    let meter = Eta.Meter.in_memory () in
+    let random = Eta.Capabilities.random_of_seed seed in
+    let runtime =
+      Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
+        ~meter:(Eta.Meter.as_capability meter) ~capture_backtrace:false ()
+    in
+    let program =
+      eff
+      |> Eta.Effect.with_tracer (Eta.Tracer.as_capability tracer)
+      |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
+      |> Eta.Effect.with_random random
+      |> Eta.Effect.with_clock (Test_clock.as_capability clock)
+    in
+    let result, resolve = Eio.Promise.create () in
+    Eio.Fiber.fork ~sw (fun () ->
+        Eio.Promise.resolve resolve (Eta.Runtime.run runtime program));
+    drive clock result;
+    let exit = Eio.Promise.await result in
+    {
+      exit;
+      logs = Eta.Logger.dump logger;
+      spans = Eta.Tracer.dump tracer;
+      metrics = Eta.Meter.dump meter;
+      sleeps = Test_clock.observed_sleeps clock;
+      pending_fibers = [];
+    }
+
+  let expect_no_pending_fibers outcome =
+    match outcome.pending_fibers with
+    | [] -> ()
+    | fibers ->
+        let pp_kind fmt = function
+          | Structured -> Format.pp_print_string fmt "structured"
+          | Daemon -> Format.pp_print_string fmt "daemon (runtime-owned)"
+        in
+        let pp_fiber fmt fiber =
+          Format.fprintf fmt "#%d parent=%a %a" fiber.id
+            (Format.pp_print_option Format.pp_print_int)
+            fiber.parent_id pp_kind fiber.kind
+        in
+        Alcotest.failf "expected no pending fibers, got %a"
+          (Format.pp_print_list
+             ~pp_sep:(fun fmt () -> Format.pp_print_string fmt ", ")
+             pp_fiber)
+          fibers
+
+  let expect_sleeps expected outcome =
+    Alcotest.check
+      (Alcotest.list (Alcotest.testable Eta.Duration.pp Eta.Duration.equal))
+      "virtual sleeps" expected outcome.sleeps
 end
 
 let fail_audit assertion eff =
