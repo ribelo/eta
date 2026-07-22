@@ -124,3 +124,91 @@ seven named cases prove the six guarantees on both substrates. Predict **HOLD**
 with the divergence recorded if implementation works on only one substrate.
 Predict **KILL** if either backend cannot cleanly test the resume-before-park
 guarantee or needs a fallback, polyfill, polling loop, or weakened canceler law.
+
+## Follow-up 1 — independent correctness review
+
+This entry is appended after the sealed predictions; no prediction text above
+was edited. The independent verdict was `CORRECT-WITH-RESERVATIONS`: the async
+state machine, cancellation winner, and wakeup linearization survived review,
+but one jsoo retention defect and two evidence-honesty defects required rework.
+
+### Finding 1 — canceled jsoo `Await` subscription retention
+
+Before the fix, jsoo promises stored bare callbacks in `Pending`. Cancellation
+set the local `resumed` flag and scheduled discontinuation but did not remove the
+callback. For `Effect.async`, a host-retained late `resume` retained the private
+promise while the async atomic state dropped every late call before promise
+settlement. The promise therefore retained the canceled continuation, fiber, and
+locals indefinitely.
+
+The first regression added an observable private diagnostic and timed out a
+direct `Eta_jsoo.Private.await`. Before the runtime fix it failed with:
+
+```text
+Failure("canceled await remained subscribed to its promise")
+```
+
+The fix replaces bare pending callbacks with active subscription records.
+`subscribe` returns an idempotent unsubscriber that marks the record inactive
+and physically removes it from a still-pending promise. The `Await` handler
+installs the subscription before its cancellation waiter; when cancellation
+wins it unsubscribes synchronously before invoking the cancellation hook or
+scheduling discontinuation. Settled-promise microtasks check the active bit, so
+cancellation can also suppress a callback already queued for a later host turn.
+
+An adversarial re-review found that a throwing `on_cancel` hook could still
+abandon the waiter after unsubscription. A second red test then reached the Node
+`beforeExit` sentinel without completing. The final handler converts the hook
+exception into the continuation's discontinuation exception, preserving the
+defect while allowing the waiter and scope shutdown to complete.
+
+Executable proof:
+
+- `await cancellation removes promise subscription` observes
+  `Private.pending_subscriptions promise = 0` from inside the cancellation hook
+  and again after completion;
+- `throwing await cancel hook does not strand fiber` observes zero retained
+  subscriptions, terminal completion, and a cause containing the hook defect.
+
+This is generic `Await` hygiene, not an async-only settlement escape. The direct
+test is a non-async waiter; `Effect.async`, `Effect.never`, runtime-contract
+`await_promise`, timer waits, and other jsoo promise paths use the same handler.
+
+### Finding 2 — registration protection honesty
+
+The public signature and six guarantees are unchanged. The `Effect.async` MLI
+now states that registration is cancellation-protected until it returns and
+therefore must return promptly. The existing canceler-termination warning
+remains.
+
+### Finding 3 — evidence naming honesty
+
+The former “second interrupt” case re-fired one idempotent cancellation context.
+The redundant call was removed and the evidence is now named `async canceler
+survives pending interruption across yields`, which is exactly what it proves.
+
+The former seeded race name is now `async fixed same-domain resolution/cancel
+orderings preserve wakeups`; its twelve cases are deterministic scheduler-visible
+orders, not thread stress. The native 32-trial case is now `async cross-domain
+callback-vs-callback settles once`. A callback-vs-cancellation cross-domain test
+would violate the mechanism contract: erased `Runtime_contract.cancel` is
+owner-domain-only, while `resolve_promise` is the sole explicit cross-domain wake
+operation. Callback-versus-cancellation remains covered by owner-domain fixed
+orders without claiming cross-domain stress.
+
+### Final follow-up gates
+
+After the final throwing-hook correction, all prescribed gates were rerun from
+the final worktree and passed:
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/cache_jsoo test/signal_jsoo --force
+```
+
+Follow-up verdict: **PROMOTE**. The retention reservation is fixed with
+observable red/green evidence; the two honesty reservations are corrected; no
+public `Effect.async` contract change was required.

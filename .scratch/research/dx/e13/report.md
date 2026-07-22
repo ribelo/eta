@@ -57,8 +57,11 @@ race two callback domains and accept exactly one result.
 jsoo uses the same core state machine. Its promise changes to `Settled` before
 scheduling subscribers, and a subscriber arriving after settlement schedules
 the stored result. CPS protection depth prevents cancellation from discontinuing
-the canceler. The Node runner has a `beforeExit` completion sentinel, so a lost
-wakeup cannot false-pass because no host handles remain.
+the canceler. Promise subscriptions are removable: cancellation synchronously
+unsubscribes the CPS continuation from a still-pending promise before scheduling
+discontinuation. This applies to every jsoo `Await`, not only `Effect.async`.
+The Node runner has a `beforeExit` completion sentinel, so a lost wakeup cannot
+false-pass because no host handles remain.
 
 ## V-DX-E13-003 — Guarantee evidence
 
@@ -70,11 +73,11 @@ runners around that same module.
 
 | Guarantee | Shared executable cases | Native Eio | Node CPS |
 | --- | --- | --- | --- |
-| 1. First `Exit.t` wins; later calls drop | `async one-shot first resolution wins` | PASS, plus `async cross-domain callbacks settle once` (32 trials) | PASS |
-| 2. Canceler: interruption only, at most once, protected, never after resolution | `async canceler runs once on interruption`; `async canceler is uninterruptible under second interrupt`; `async canceler never runs after resolution`; typed-failure and defect suppression cases | PASS | PASS |
+| 1. First `Exit.t` wins; later calls drop | `async one-shot first resolution wins` | PASS, plus `async cross-domain callback-vs-callback settles once` (32 trials) | PASS |
+| 2. Canceler: interruption only, at most once, protected, never after resolution | `async canceler runs once on interruption`; `async canceler survives pending interruption across yields`; `async canceler never runs after resolution`; typed-failure and defect suppression cases | PASS | PASS |
 | 3. Register raise becomes `Cause.Die` | `async register raise becomes die`; `async register raise wins after synchronous resume` | PASS | PASS |
 | 4. Synchronous resolution does not deadlock | `async synchronous resolution does not deadlock` | PASS | PASS; completion sentinel reached |
-| 5. No registration/parking wakeup loss | synchronous case plus `async no lost wakeup under seeded register/cancel races` | PASS, plus cross-domain races | PASS; completion sentinel reached |
+| 5. No registration/parking wakeup loss | synchronous case plus `async fixed same-domain resolution/cancel orderings preserve wakeups` | PASS, plus cross-domain callback-vs-callback trials | PASS; completion sentinel reached |
 | 6. Same jsoo CPS meaning; no host polyfill | the entire shared suite, linked unchanged into `test_eta_jsoo`; review examples require both EventTarget methods | PASS as shared core source | PASS under `--effects=cps` |
 
 The canceler diagnostic cases are:
@@ -82,19 +85,24 @@ The canceler diagnostic cases are:
 - `async canceler failure is suppressed under interruption`;
 - `async canceler defect is suppressed under interruption`.
 
-The twelve seeded cases are fixed scheduler-visible orderings selected from
+The twelve fixed cases are deterministic same-domain scheduler-visible
+orderings selected from
 synchronous resolution, resolution-before-interruption, and
 interruption-claim-before-late-resolution. They are not simultaneous thread
 stress. Full post-return/pre-await seeding is impossible on single-thread jsoo:
 there is no host scheduler turn between ordinary `register` return and the CPS
 await handler installing its subscriber. The forceable proof is settlement
 before any subscriber exists; fixed orders cover both race winners once the
-scheduler can run another task. Native adds real cross-domain callback races.
+scheduler can run another task. Native adds real cross-domain
+callback-vs-callback competition. It does not add cross-domain cancellation:
+the erased runtime contract permits only `resolve_promise`, not `cancel`, away
+from the owner domain.
 
 ## V-DX-E13-004 — Exact gates
 
-Status: **ACCEPT**. Every required gate passed on its first gate attempt.
-All mainline commands used the isolated `_build-mainline` directory.
+Status: **ACCEPT**. After the final retention and throwing-hook corrections,
+every required follow-up gate was rerun from the final worktree and passed. All
+mainline commands used the isolated `_build-mainline` directory.
 
 | Command | Result |
 | --- | --- |
@@ -102,8 +110,7 @@ All mainline commands used the isolated `_build-mainline` directory.
 | `nix develop -c dune runtest --force` | PASS |
 | `nix develop -c eta-oxcaml-test-shipped` | PASS |
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline @install` | PASS |
-| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/cache_jsoo --force` | PASS |
-| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/signal_jsoo --force` | PASS (required unchanged F1 suite) |
+| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/cache_jsoo test/signal_jsoo --force` | PASS, including unchanged signal suite |
 
 The mainline compiler repeated the repository's existing integer-overflow
 warnings for two large constants; tests completed successfully. Focused
@@ -150,10 +157,11 @@ Detailed verdicts are in `redteam/VERDICTS.md`.
 | Call `resume` three times with conflicting exits | First exit retained; all later calls visibly attempted and dropped before resolver access |
 | Resolve before any park/subscriber and race registration with cancellation | Promise latch and atomic winner refuse the lost-wakeup construction on both backends |
 | Return `Some Effect.never` as canceler | Trap confirmed: interruption waits forever by contract; no hidden timeout or detach is safe |
+| Retain `resume` after jsoo cancellation | Canceled `Await` unsubscribes; the pending promise observably retains zero subscriptions |
 
 The blocking-canceler attack is documented rather than executed indefinitely.
-The bounded second-interrupt test proves that Eta waits for protected cleanup and
-continues only when that cleanup is released.
+The bounded pending-interruption test proves that Eta waits for protected cleanup
+across yields and continues only when that cleanup is released.
 
 ## V-DX-E13-007 — Review and prediction reconciliation
 
@@ -181,7 +189,7 @@ that payload directly. The sealed journal was not edited.
 Additional evidence beyond prediction: ten shared cases rather than seven, two
 explicit canceler-failure shapes, registration-defect precedence after a
 synchronous callback, the Node completion sentinel, and native cross-domain
-callback competition.
+callback-vs-callback competition.
 
 Hypothesis ledger result:
 
@@ -200,3 +208,33 @@ settlement is latched; cancellation cleanup is one-shot and protected; defects
 and cleanup diagnostics follow Eta's existing cause model; jsoo uses the same
 CPS promise discipline; all exact gates and the unchanged signal jsoo suite are
 green. No hold or kill condition fired.
+
+## V-DX-E13-009 — Correctness follow-up 1
+
+Status: **RESERVATIONS FIXED**.
+
+The independent correctness review found no async state-machine race,
+cancellation duplication, or lost wakeup. Its `CORRECT-WITH-RESERVATIONS`
+verdict identified one jsoo retention defect and two evidence-honesty defects.
+
+1. **Retention:** before the fix, cancellation marked `resumed` but left the CPS
+   callback in an unresolved promise's pending list. A host-retained `resume`
+   could therefore root the canceled continuation indefinitely. `subscribe` now
+   returns an idempotent unsubscriber, and the `Await` cancellation path removes
+   the subscription before scheduling discontinuation. The regression first
+   failed with one retained callback and now passes with
+   `Private.pending_subscriptions promise = 0`. A direct non-async
+   `Private.await` is the executable witness; the same `Await` handler backs
+   runtime-contract promises and `Effect.never`. A second regression proves a
+   throwing cancellation hook is resumed as a defect after unsubscription and
+   cannot strand the waiter or scope shutdown.
+2. **MLI honesty:** the contract now says registration itself is
+   cancellation-protected until return and must return promptly.
+3. **Evidence honesty:** the protected-canceler case names the already-pending
+   interruption across yields; fixed same-domain orderings are not called race
+   stress; the native trial is named callback-vs-callback. A callback-vs-cancel
+   cross-domain trial is intentionally absent because `Runtime_contract.cancel`
+   is owner-domain-only.
+
+The `Effect.async` signature and six guarantees are unchanged. Attack D and its
+before/after evidence are recorded in `redteam/VERDICTS.md`.

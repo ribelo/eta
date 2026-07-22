@@ -16,12 +16,14 @@ The reviewed fixes were:
 - lock registration-defect precedence after synchronous resolution;
 - install a Node `beforeExit` completion sentinel;
 - require both EventTarget host methods in the review examples;
-- run 32 native cross-domain double-callback trials.
+- run 32 native cross-domain callback-vs-callback trials.
 
 The final review accepted the lost-wakeup proof as the combination of promise
 creation before registration, synchronous settled-before-subscribe evidence,
 latched Eio/jsoo promise semantics, fixed resolution/cancellation orderings,
-native cross-domain races, and the documented single-thread CPS limitation.
+native cross-domain callback-vs-callback trials, and the documented
+single-thread CPS limitation. Cross-domain cancellation is outside the
+owner-domain `Runtime_contract` and is not claimed.
 
 Remaining uncertainty is ordinary concurrency-test coverage, not a known
 semantic divergence. The review was read-only and reported fresh focused Eio
