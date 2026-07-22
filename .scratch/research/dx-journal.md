@@ -2848,15 +2848,15 @@ verified by the orchestrator before any fix.
 | E9b | promote-with-reservations | "never correctness" overreach (hang risk); right side invisible to introspection; and+ laws untested; api-dx summary wrong | fixed `29f1a9c7` |
 | E10 | **hold-confirmed** | trigger unmet; sole example needs kwargs sugar can't cover | stands |
 | E26 | promote-with-reservations | counter overflow silent wrap; "contention" test name | fixed `9d709f44` |
-| E19 | **should-not-have-merged** (as shipped) | **Expert leaves bypass with_clock** (P1); invalid W3C from empty ids; otel wall-clock "monotonic"; one finding refuted | **E19b staged** |
+| E19 | should-not-have-merged → **resolved** | Expert leaves bypass with_clock (P1); invalid W3C from empty ids; otel wall-clock "monotonic"; one finding refuted | **E19b merged `77975e31`** — all three violations fixed |
 | E20 | should-not-have-merged → **downgraded p.w.r.** | daemon diagnostics skip filter+attrs (fixed); unconditional local_get (already F7) | fixed `f9399b29` |
 | E12 | should-not-have-merged → p.w.r. | **concat discarded child footprints** (audit unsound); Eta_blocking omitted Background; redteam not CI-wired | fixed `d95cef58` |
 | E11 | promote-with-reservations | account_fibers=false vacuous passes; NaN breaks golden equality; neutrality claim imprecise | fixed `8e2b995c` |
 
 **Tally:** 1 clean promote · 12 promote-with-reservations (11 resolved by
 fix commits + sync_option accepted by human decision) · 4 initial
-should-not-have-merged (E7 resolved via E7b `d4edcafa`; E19→E19b in
-flight; E20/E12 fixed) · 2 keep-killed · 2 hold-confirmed. **14 fix commits** landed from the
+should-not-have-merged (E7 resolved via E7b `d4edcafa`; E19 resolved via
+E19b `77975e31`; E20/E12 fixed) · 2 keep-killed · 2 hold-confirmed. **14 fix commits** landed from the
 series plus F3's rename.
 
 **Meta-finding (the user's vindication).** The retired snippet-theater

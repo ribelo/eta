@@ -52,6 +52,10 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - OPS RULE: ALL master writes (commits, merges, bookkeeping) in dedicated
   temp worktrees; main checkout is READ-ONLY for the orchestrator
   (V-DX-E11-001a — third violation; subsumes V-DX-E12-002a)
+- OPS RULE 2: agent_spawn worktree isolation bases on the CHECKOUT's
+  current HEAD, not master — when the checkout sits on a foreign branch,
+  spawned agents inherit stale state (E19b retro rework needed a re-port).
+  Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
 - Last update: 2026-07-21 — E11 promoted
