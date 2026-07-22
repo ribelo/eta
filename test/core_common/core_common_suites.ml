@@ -285,6 +285,235 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (run_ok rt (Queue.Dequeue.take consumer));
     Alcotest.(check bool) "empty after take" true (Queue.is_empty q)
 
+  let test_queue_sent_token_changes_only_on_admission () =
+    B.with_runtime @@ fun ctx rt ->
+    let changed label queue before =
+      Alcotest.(check bool) label false
+        (Queue.same_sent_token before (Queue.sent_token queue))
+    in
+    let stable label queue before =
+      Alcotest.(check bool) label true
+        (Queue.same_sent_token before (Queue.sent_token queue))
+    in
+    let unbounded = Queue.unbounded () in
+    let before = Queue.sent_token unbounded in
+    Alcotest.(check bool) "unbounded offer admitted" true
+      (run_ok rt (Queue.offer unbounded 1));
+    changed "unbounded offer changes" unbounded before;
+    let before = Queue.sent_token unbounded in
+    (match run_ok rt (Queue.try_offer unbounded 2) with
+    | `Sent -> ()
+    | _ -> Alcotest.fail "unbounded try_offer was not admitted");
+    changed "try_offer admission changes" unbounded before;
+    let before = Queue.sent_token unbounded in
+    Alcotest.(check (list int)) "unbounded offer_all admitted" []
+      (run_ok rt (Queue.offer_all unbounded [ 3 ]));
+    changed "offer_all admission changes" unbounded before;
+    let before = Queue.sent_token unbounded in
+    Alcotest.(check (list int)) "empty offer_all" []
+      (run_ok rt (Queue.offer_all unbounded []));
+    stable "empty offer_all stable" unbounded before;
+
+    let rendezvous = Queue.unbounded () in
+    let receiver = B.fork_run ctx rt (Queue.take rendezvous) in
+    wait_until (fun () -> (Queue.stats rendezvous).Queue.waiting_receivers = 1);
+    let before = Queue.sent_token rendezvous in
+    ignore (run_ok rt (Queue.offer rendezvous 4) : bool);
+    changed "waiting receiver admission changes" rendezvous before;
+    check_exit_ok Alcotest.int "waiting receiver value" 4 (B.await receiver);
+
+    let bounded = Queue.bounded ~capacity:1 () in
+    let before = Queue.sent_token bounded in
+    ignore (run_ok rt (Queue.offer bounded 1) : bool);
+    changed "bounded offer changes" bounded before;
+    let full = Queue.sent_token bounded in
+    (match run_ok rt (Queue.try_offer bounded 2) with
+    | `Full -> ()
+    | _ -> Alcotest.fail "bounded try_offer did not report full");
+    stable "bounded full try_offer stable" bounded full;
+    let sender = B.fork_run ctx rt (Queue.offer bounded 2) in
+    run_ok rt (wait_for_waiting_queue_sender bounded);
+    stable "bounded waiting offer stable" bounded full;
+    Alcotest.(check int) "bounded first value" 1 (run_ok rt (Queue.take bounded));
+    changed "bounded deferred admission changes" bounded full;
+    check_exit_ok Alcotest.bool "bounded sender admitted" true (B.await sender);
+
+    let dropping = Queue.dropping ~capacity:1 () in
+    let initial = Queue.sent_token dropping in
+    Alcotest.(check bool) "first value admitted" true
+      (run_ok rt (Queue.offer dropping 1));
+    changed "dropping admission changes" dropping initial;
+    let admitted = Queue.sent_token dropping in
+    Alcotest.(check bool) "full dropping queue rejects" false
+      (run_ok rt (Queue.offer dropping 2));
+    stable "dropping rejection stable" dropping admitted;
+    (match run_ok rt (Queue.try_offer dropping 3) with
+    | `Dropped -> ()
+    | _ -> Alcotest.fail "dropping try_offer did not report dropped");
+    stable "dropping try_offer stable" dropping admitted;
+    Alcotest.(check (list int)) "dropping offer_all leftovers" [ 4; 5 ]
+      (run_ok rt (Queue.offer_all dropping [ 4; 5 ]));
+    stable "rejected offer_all stable" dropping admitted;
+
+    let sliding = Queue.sliding ~capacity:1 () in
+    let before = Queue.sent_token sliding in
+    ignore (run_ok rt (Queue.offer sliding 1) : bool);
+    changed "sliding initial admission changes" sliding before;
+    let before_slide = Queue.sent_token sliding in
+    ignore (run_ok rt (Queue.offer sliding 2) : bool);
+    changed "sliding replacement changes" sliding before_slide;
+    let before_slide = Queue.sent_token sliding in
+    (match run_ok rt (Queue.try_offer sliding 3) with
+    | `Sent -> ()
+    | _ -> Alcotest.fail "sliding try_offer was not admitted");
+    changed "sliding try_offer changes" sliding before_slide;
+    let before_slide = Queue.sent_token sliding in
+    Alcotest.(check (list int)) "sliding offer_all admitted" []
+      (run_ok rt (Queue.offer_all sliding [ 4 ]));
+    changed "sliding offer_all changes" sliding before_slide;
+
+    let check_send_admission label queue value =
+      let before = Queue.sent_token queue in
+      ignore (run_ok rt (Queue.send queue value) : unit);
+      changed (label ^ " changes") queue before
+    in
+    check_send_admission "unbounded send" (Queue.unbounded ()) 1;
+    check_send_admission "bounded send" (Queue.bounded ~capacity:1 ()) 1;
+    let dropping_send = Queue.dropping ~capacity:1 () in
+    check_send_admission "dropping send admission" dropping_send 1;
+    let before = Queue.sent_token dropping_send in
+    expect_fail "dropping send rejected" (( = ) `Dropped)
+      (B.run rt (Queue.send dropping_send 2));
+    stable "dropping send rejection stable" dropping_send before;
+    let sliding_send = Queue.sliding ~capacity:1 () in
+    check_send_admission "sliding send admission" sliding_send 1;
+    check_send_admission "sliding send replacement" sliding_send 2;
+
+    let enqueue_unbounded_queue = Queue.unbounded () in
+    let enqueue_unbounded = Queue.enqueue enqueue_unbounded_queue in
+    let before = Queue.sent_token enqueue_unbounded_queue in
+    Alcotest.(check bool) "enqueue offer admitted" true
+      (run_ok rt (Queue.Enqueue.offer enqueue_unbounded 1));
+    changed "enqueue offer changes" enqueue_unbounded_queue before;
+    let before = Queue.sent_token enqueue_unbounded_queue in
+    Alcotest.(check (list int)) "enqueue offer_all admitted" []
+      (run_ok rt (Queue.Enqueue.offer_all enqueue_unbounded [ 2 ]));
+    changed "enqueue offer_all changes" enqueue_unbounded_queue before;
+    let before = Queue.sent_token enqueue_unbounded_queue in
+    ignore (run_ok rt (Queue.Enqueue.send enqueue_unbounded 3) : unit);
+    changed "enqueue send changes" enqueue_unbounded_queue before;
+    let before = Queue.sent_token enqueue_unbounded_queue in
+    (match run_ok rt (Queue.Enqueue.try_offer enqueue_unbounded 4) with
+    | `Sent -> ()
+    | _ -> Alcotest.fail "enqueue try_offer was not admitted");
+    changed "enqueue try_offer changes" enqueue_unbounded_queue before;
+    let before = Queue.sent_token enqueue_unbounded_queue in
+    Alcotest.(check (list int)) "enqueue empty offer_all" []
+      (run_ok rt (Queue.Enqueue.offer_all enqueue_unbounded []));
+    stable "enqueue empty offer_all stable" enqueue_unbounded_queue before;
+
+    let enqueue_bounded_queue = Queue.bounded ~capacity:2 () in
+    let enqueue_bounded = Queue.enqueue enqueue_bounded_queue in
+    let before = Queue.sent_token enqueue_bounded_queue in
+    ignore (run_ok rt (Queue.Enqueue.send enqueue_bounded 1) : unit);
+    changed "enqueue bounded send changes" enqueue_bounded_queue before;
+    let before = Queue.sent_token enqueue_bounded_queue in
+    Alcotest.(check (list int)) "enqueue bounded offer_all admitted" []
+      (run_ok rt (Queue.Enqueue.offer_all enqueue_bounded [ 2 ]));
+    changed "enqueue bounded offer_all changes" enqueue_bounded_queue before;
+    let full = Queue.sent_token enqueue_bounded_queue in
+    (match run_ok rt (Queue.Enqueue.try_offer enqueue_bounded 3) with
+    | `Full -> ()
+    | _ -> Alcotest.fail "enqueue bounded try_offer did not report full");
+    stable "enqueue bounded full stable" enqueue_bounded_queue full;
+    let sender =
+      B.fork_run ctx rt (Queue.Enqueue.offer enqueue_bounded 3)
+    in
+    run_ok rt (wait_for_waiting_queue_sender enqueue_bounded_queue);
+    stable "enqueue bounded waiting offer stable" enqueue_bounded_queue full;
+    Alcotest.(check int) "enqueue bounded first value" 1
+      (run_ok rt (Queue.take enqueue_bounded_queue));
+    changed "enqueue bounded deferred admission changes" enqueue_bounded_queue
+      full;
+    check_exit_ok Alcotest.bool "enqueue bounded sender admitted" true
+      (B.await sender);
+
+    let enqueue_dropping_queue = Queue.dropping ~capacity:1 () in
+    let enqueue_dropping = Queue.enqueue enqueue_dropping_queue in
+    let before = Queue.sent_token enqueue_dropping_queue in
+    Alcotest.(check bool) "enqueue dropping offer admitted" true
+      (run_ok rt (Queue.Enqueue.offer enqueue_dropping 1));
+    changed "enqueue dropping admission changes" enqueue_dropping_queue before;
+    let full = Queue.sent_token enqueue_dropping_queue in
+    Alcotest.(check bool) "enqueue dropping offer rejected" false
+      (run_ok rt (Queue.Enqueue.offer enqueue_dropping 2));
+    stable "enqueue dropping offer stable" enqueue_dropping_queue full;
+    Alcotest.(check (list int)) "enqueue dropping offer_all leftovers" [ 3; 4 ]
+      (run_ok rt (Queue.Enqueue.offer_all enqueue_dropping [ 3; 4 ]));
+    stable "enqueue dropping offer_all stable" enqueue_dropping_queue full;
+    expect_fail "enqueue dropping send rejected" (( = ) `Dropped)
+      (B.run rt (Queue.Enqueue.send enqueue_dropping 5));
+    stable "enqueue dropping send stable" enqueue_dropping_queue full;
+    (match run_ok rt (Queue.Enqueue.try_offer enqueue_dropping 6) with
+    | `Dropped -> ()
+    | _ -> Alcotest.fail "enqueue dropping try_offer did not report dropped");
+    stable "enqueue dropping try_offer stable" enqueue_dropping_queue full;
+
+    let enqueue_sliding_queue = Queue.sliding ~capacity:1 () in
+    let enqueue_sliding = Queue.enqueue enqueue_sliding_queue in
+    let before = Queue.sent_token enqueue_sliding_queue in
+    ignore (run_ok rt (Queue.Enqueue.offer enqueue_sliding 1) : bool);
+    changed "enqueue sliding offer changes" enqueue_sliding_queue before;
+    let before = Queue.sent_token enqueue_sliding_queue in
+    Alcotest.(check (list int)) "enqueue sliding offer_all admitted" []
+      (run_ok rt (Queue.Enqueue.offer_all enqueue_sliding [ 2 ]));
+    changed "enqueue sliding offer_all changes" enqueue_sliding_queue before;
+    let before = Queue.sent_token enqueue_sliding_queue in
+    ignore (run_ok rt (Queue.Enqueue.send enqueue_sliding 3) : unit);
+    changed "enqueue sliding send changes" enqueue_sliding_queue before;
+    let before = Queue.sent_token enqueue_sliding_queue in
+    (match run_ok rt (Queue.Enqueue.try_offer enqueue_sliding 4) with
+    | `Sent -> ()
+    | _ -> Alcotest.fail "enqueue sliding try_offer was not admitted");
+    changed "enqueue sliding try_offer changes" enqueue_sliding_queue before;
+
+    let closed = Queue.unbounded () in
+    Queue.close closed;
+    let closed_token = Queue.sent_token closed in
+    expect_fail "closed offer" (( = ) `Closed) (B.run rt (Queue.offer closed 1));
+    stable "closed offer stable" closed closed_token;
+    expect_fail "closed offer_all" (( = ) `Closed)
+      (B.run rt (Queue.offer_all closed [ 1; 2 ]));
+    stable "closed offer_all stable" closed closed_token;
+    (match run_ok rt (Queue.try_offer closed 1) with
+    | `Closed -> ()
+    | _ -> Alcotest.fail "closed try_offer did not report closed");
+    stable "closed try_offer stable" closed closed_token;
+    expect_fail "closed send" (( = ) `Closed) (B.run rt (Queue.send closed 1));
+    stable "closed send stable" closed closed_token;
+    let enqueue_closed = Queue.enqueue closed in
+    expect_fail "closed enqueue offer" (( = ) `Closed)
+      (B.run rt (Queue.Enqueue.offer enqueue_closed 1));
+    stable "closed enqueue offer stable" closed closed_token;
+    expect_fail "closed enqueue offer_all" (( = ) `Closed)
+      (B.run rt (Queue.Enqueue.offer_all enqueue_closed [ 1 ]));
+    stable "closed enqueue offer_all stable" closed closed_token;
+    expect_fail "closed enqueue send" (( = ) `Closed)
+      (B.run rt (Queue.Enqueue.send enqueue_closed 1));
+    stable "closed enqueue send stable" closed closed_token;
+    (match run_ok rt (Queue.Enqueue.try_offer enqueue_closed 1) with
+    | `Closed -> ()
+    | _ -> Alcotest.fail "closed enqueue try_offer did not report closed");
+    stable "closed enqueue try_offer stable" closed closed_token
+
+  let test_queue_offer_all_partial_leftovers_ordered () =
+    B.with_runtime @@ fun _ctx rt ->
+    let queue = Queue.dropping ~capacity:2 () in
+    Alcotest.(check (list int)) "ordered leftovers" [ 3; 4 ]
+      (run_ok rt (Queue.offer_all queue [ 1; 2; 3; 4 ]));
+    Alcotest.(check (list int)) "ordered admissions" [ 1; 2 ]
+      (run_ok rt (Queue.take_all queue))
+
   let test_queue_sliding_keeps_latest_capacity () =
     B.with_runtime @@ fun _ctx rt ->
     let q = Queue.sliding ~capacity:2 () in
@@ -497,15 +726,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (run_ok rt (Queue.take_all q))
 
   let test_queue_bounded_capacity_rejects_non_positive () =
-    Alcotest.check_raises "dropping zero"
-      (Invalid_argument "Eta.Queue.dropping: capacity must be > 0")
-      (fun () ->
-        ignore (Queue.dropping ~capacity:0 ()));
-    Alcotest.check_raises "backpressure zero"
-      (Invalid_argument "Eta.Queue.bounded: capacity must be > 0")
-      (fun () ->
-        ignore
-          (Queue.bounded ~capacity:0 ()))
+    let check constructor name value =
+      Alcotest.check_raises
+        (Printf.sprintf "%s capacity %d" name value)
+        (Invalid_argument (Printf.sprintf "Eta.Queue.%s: capacity must be > 0" name))
+        (fun () -> ignore (constructor ~capacity:value ()))
+    in
+    List.iter
+      (fun value ->
+        check Queue.bounded "bounded" value;
+        check Queue.dropping "dropping" value;
+        check Queue.sliding "sliding" value)
+      [ 0; -1 ]
 
   let test_channel_try_send_try_recv () =
     B.with_runtime @@ fun _ctx rt ->
@@ -1584,6 +1816,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_queue_offer_unbounded_create_and_alias;
           Alcotest.test_case "named constructors and views" `Quick
             test_queue_named_constructors_and_views;
+          Alcotest.test_case "sent token changes only on admission" `Quick
+            test_queue_sent_token_changes_only_on_admission;
+          Alcotest.test_case "offer_all partial leftovers ordered" `Quick
+            test_queue_offer_all_partial_leftovers_ordered;
           Alcotest.test_case "sliding keeps latest capacity" `Quick
             test_queue_sliding_keeps_latest_capacity;
           Alcotest.test_case "logical size tracks waiters" `Quick

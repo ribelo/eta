@@ -2,12 +2,14 @@
 
 ## Recommendation
 
-**PROMOTE the policy and mli-anchored suite.** The
-census now separates 73 exact mli-stated claims from two prose-pending schedule
-model claims. Fifty-three deterministic qcheck properties cover those claims;
-qcheck remains test-only. Four prior footguns are closed; the schedule-prose gap
-and broader future census expansion stay explicit rather than being counted as
-covered provenance.
+**PROMOTE the scoped policy and mli-anchored suite.** Five modules are declared
+inventory-complete: 99 stated claims have direct qcheck coverage and 101 external
+registry rows point to existing named executable suites. Twenty-three exact
+historical gap clusters are dated and owned rather than omitted. Two schedule
+model claims remain visibly prose-pending. Sixty-three deterministic qcheck
+properties cover the direct class; qcheck remains test-only. The rule is
+prospective across every `.mli`: new or changed law-bearing prose must add its
+test and registry row in the same change, with no new-debt escape hatch.
 
 ## Observation equivalence
 
@@ -29,22 +31,23 @@ scheduler deadlines are excluded.
 
 ## Inventory coverage
 
-`review/LAWS.md` is the authoritative one-claim-per-row table: exact normative
-span → exact qcheck property → provenance class. Summary:
+`review/LAWS.md` is the authoritative one-claim-per-row registry: exact
+normative span → exact qcheck property or verified external named test →
+provenance class. Summary:
 
-| Mli | Mli-stated claims | Prose-pending model claims | Distinct properties |
+| Mli | Direct qcheck claims | Registered external rows | Model claims |
 | --- | ---: | ---: | ---: |
-| `effect.mli` | 48 | 0 | 34 |
-| `schedule.mli` | 6 | 2 | 7 |
-| `channel.mli` | 7 | 0 | 3 |
-| `queue.mli` | 7 | 0 | 4 |
-| `semaphore.mli` | 5 | 0 | 5 |
-| **Total** | **73** | **2** | **53** |
+| `effect.mli` | 48 | 84 | 0 |
+| `schedule.mli` | 6 | 3 | 2 |
+| `channel.mli` | 12 | 0 | 0 |
+| `queue.mli` | 16 | 14 | 0 |
+| `semaphore.mli` | 17 | 0 | 0 |
+| **Total covered rows** | **99** | **101** | **2** |
 
 The seven algebraic/error equations were promoted into short normative
 `effect.mli` prose. The two schedule bootstrap laws remain executable but are
 explicitly model/prose-pending because their valid public domains need separate
-review. All 53 properties pass 50 deterministic generated inputs each.
+review. All 63 properties pass 50 deterministic generated inputs each.
 
 ## Refinements and counterexamples
 
@@ -67,11 +70,14 @@ tested.
   `program` fixed test portability without changing a law.
 
 The schedule rows remain bootstrap model laws requested by E22 because current
-constructor declarations do not state those semantics. FG-E22-001 therefore
-remains open. FG-E22-002 through FG-E22-005 are closed by direct properties for
+constructor declarations do not state those semantics. FG-E22-001 is dated
+model-prose debt with an owner and deadline. FG-E22-002 through FG-E22-005 are
+closed by direct properties for
 `all`/`all_settled`, scope exits/nesting, Channel sender cancellation, and
-Semaphore bracket/abort semantics. FG-E22-006 explicitly tracks broader
-normative-prose migration outside the review-target clusters.
+Semaphore bracket/abort semantics. FG-E22-006 is closed by exact named-suite
+registrations. Retrospective migration outside the five declared modules is
+partitioned into dated, owned D-E22-001 through D-E22-005 rather than an
+open-ended “next tranche.”
 
 ## Red team and review
 
@@ -106,6 +112,26 @@ Strict re-review held once more on combined `bind_error` claims, Queue shutdown
 idempotence, and bracket cleanup-failure composition. Separate direct properties
 and one-claim rows closed all three; final independent verdict: **READY**.
 
+Follow-up 2 scopes the promise honestly. The repository no longer claims that
+all historical `.mli` prose already has qcheck coverage. The five named census
+modules have a complete map through direct qcheck rows, exact registrations of
+existing runtime/backend tests, or explicit dated historical gaps; outside them,
+the same-change rule has teeth for all future edits and bounded retrospective
+work is dated and owned.
+
+The three requested anti-vacuity fixes are direct: `race` uses two finite tagged
+producers in both completion directions; `par` uses two ranked failures plus a
+pending cleanup sibling in both failure directions; and `Drop` generates nesting
+depth, interceptor position, record body, and attribute shapes, then predicts
+the exact executed prefix, skipped suffix, and absent sink. The Drop review
+finding demonstrates that the fixed-example prohibition rejects nominal
+50-case repetition.
+
+Strict follow-up-2 review repeatedly held on omitted claims and overbroad test
+pointers. The final map distinguishes 200 covered rows from 23 exact dated claim
+clusters and gives every external row a named executable source. Final
+independent verdict: **READY**.
+
 ## Dependency boundary
 
 `qcheck` appears only in `test/laws/dune` and Nix development/test provisioning.
@@ -118,7 +144,7 @@ OxCaml and mainline shells expose qcheck 0.91.
 | Command | Result |
 | --- | --- |
 | `nix develop -c dune build @install` | PASS |
-| `nix develop -c dune runtest --force` | PASS (53 properties / 2,650 generated qcheck inputs) |
+| `nix develop -c dune runtest --force` | PASS (63 properties / 3,150 generated qcheck inputs) |
 | `nix develop -c eta-oxcaml-test-shipped` | PASS (explicitly includes `test/laws`) |
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline @install` | PASS |
 | `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force` | PASS, native OCaml 5.4 |

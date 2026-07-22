@@ -126,15 +126,29 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok () -> Alcotest.fail "expected typed failure");
     Alcotest.(check bool) "released" true !released
 
-  let test_daemon_drains_acquire_release_finalizer () =
+  let test_daemon_drain_waits_for_pending_finalizer () =
     B.with_runtime @@ fun _ctx rt ->
+    let started, started_resolver = B.create_promise () in
+    let release, release_resolver = B.create_promise () in
+    let completed = Atomic.make false in
     let released = Atomic.make false in
     let daemon_body =
       E.acquire_release ~acquire:E.unit
         ~release:(fun () -> E.sync (fun () -> Atomic.set released true))
+      |> E.bind (fun () ->
+             E.sync (fun () -> B.resolve started_resolver ())
+             |> E.bind (fun () -> B.await_effect release)
+             |> E.bind (fun () ->
+                    E.sync (fun () -> Atomic.set completed true)))
     in
     run_ok rt (E.daemon daemon_body);
+    ignore (B.await started : unit);
+    Alcotest.(check bool) "daemon pending" false (Atomic.get completed);
+    Alcotest.(check bool) "finalizer pending" false (Atomic.get released);
+    B.resolve release_resolver ();
+    Alcotest.(check bool) "work pending before drain" false (Atomic.get completed);
     B.drain rt;
+    Alcotest.(check bool) "daemon completed" true (Atomic.get completed);
     Alcotest.(check bool) "released" true (Atomic.get released)
 
   let test_daemon_failure_logs_diagnostic () =
@@ -801,8 +815,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_acquire_release_root_scope_runs_finalizer;
           Alcotest.test_case "acquire release root failure finalizer" `Quick
             test_acquire_release_root_scope_runs_finalizer_on_failure;
-          Alcotest.test_case "daemon drains acquire release finalizer" `Quick
-            test_daemon_drains_acquire_release_finalizer;
+          Alcotest.test_case "daemon drain waits pending finalizer" `Quick
+            test_daemon_drain_waits_for_pending_finalizer;
           Alcotest.test_case "daemon failure logs diagnostic" `Quick
             test_daemon_failure_logs_diagnostic;
           Alcotest.test_case "daemon interrupt stays quiet" `Quick

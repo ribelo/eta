@@ -55,3 +55,21 @@ monotonicity. For the attack example, `requested_length = 3` and `delays = []`,
 so the coverage predicate is `0 = 3`, which is false; monotonicity is never
 accepted as evidence. Every valid generated schedule must produce the complete
 requested `Continue` prefix before its values are compared.
+
+## Attack: generated label, fixed Drop program
+
+The first `Drop` property accepted 50 generated integers as `_tag` and ignored
+every one. All cases executed the same two-interceptor program with `Drop` always
+outermost. The qcheck count therefore advertised variance that did not exist;
+middle/inner placement, deeper nesting, replacement records, and attributes
+could regress without producing a counterexample.
+
+## Verdict: REJECTED BY THE POLICY ITSELF
+
+The fixed-example clause in `AGENTS.md` applies even when a property has a
+generator and reports 50 passes. The live generator now varies nesting on both
+sides of `Drop`, the exact Drop position, record body, and attribute shapes. Its
+model derives the exact executed prefix, skipped suffix, and sink outcome from
+that generated input. Removing the Drop short-circuit or moving it one position
+therefore falsifies a generated expectation instead of passing the same example
+again.

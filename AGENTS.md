@@ -185,25 +185,36 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
-Every law stated in an `.mli` must have a named qcheck property. **Law-bearing
-prose** is any normative behavioral or algebraic claim about operation
-equivalence, result/error propagation, ordering, cardinality, lifecycle,
-cancellation, idempotence, bounds/fairness, dynamic-scope restoration/isolation,
-or observer/interceptor sequencing. Usage advice and examples are not laws
-unless they make such a claim.
+The executable-law registry is
+`.scratch/research/dx/e22/review/LAWS.md`. **Law-bearing prose** is any normative
+behavioral or algebraic claim about operation equivalence, result/error
+propagation, ordering, cardinality, lifecycle, cancellation, idempotence,
+bounds/fairness, dynamic-scope restoration/isolation, or observer/interceptor
+sequencing. Usage advice and examples are not laws unless they make such a
+claim.
 
-When adding or changing law-bearing prose, update
-`.scratch/research/dx/e22/review/LAWS.md` and
-`test/laws/law_properties.ml` in the same change. The census separates
-`.mli`-stated laws from prose-pending model laws; each `.mli` law gets one row per
-claim, an exact normative source span, and an exact property name. A property
-must state its observation boundary and generated class, execute every side of
-an equation, and prove the discriminating coverage its claim needs (for example
-exact counts, all documented exits/branches, or an observed out-of-order
-completion). Effects with no legitimate background work must also finish with
-an available empty fiber census. Fixed examples, self-comparison, truncated
-prefixes, or generated inputs that never reach the distinguishing case do not
-satisfy this policy; failures must print the counterexample.
+`effect.mli`, `schedule.mli`, `channel.mli`, `queue.mli`, and `semaphore.mli`
+are census-complete modules: every law-bearing claim in them must have one row
+per claim, an exact normative source span, and an explicit coverage status. Use
+a named qcheck property in `test/laws/` for generated laws. When an existing
+runtime or platform protocol already has authoritative coverage, register the
+exact named executable test and source pointer instead of duplicating it.
+Historical uncovered claims must be explicit dated debt with an owner and
+follow-up; omission and open-ended debt are forbidden. The registry keeps direct
+qcheck laws, registered external suites, dated debt, and prose-pending model laws
+visibly separate.
+
+For every `.mli`, adding or changing law-bearing prose requires its named test
+(a qcheck property or registered executable suite) and registry row in the same
+change; new debt is not an allowed substitute. Existing uncovered prose must be
+listed as dated debt with an owner and follow-up; open-ended debt is not valid.
+A property must state its observation boundary and generated class, execute
+every side of an equation, and prove the discriminating coverage its claim needs
+(for example exact counts, all documented exits/branches, or an observed
+out-of-order completion). Effects with no legitimate background work must also
+finish with an available empty fiber census. Fixed examples, self-comparison,
+truncated prefixes, or generated inputs that never reach the distinguishing case
+do not satisfy this policy; failures must print the counterexample.
 
 The HTTP interop, adversarial, conformance, and benchmark suite lives under
 `http-testsuite/` and is reachable via `dune build @interop`,

@@ -229,6 +229,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok false -> Alcotest.fail "background did not start"
     | Exit.Ok true -> Alcotest.fail "background cleanup failure was hidden"
 
+  let test_effect_with_background_cancels_child_after_use_failure () =
+    B.with_test_clock @@ fun _ctx clock rt ->
+    let finalizer_ran = ref false in
+    let background =
+      E.acquire_release ~acquire:E.unit
+        ~release:(fun () -> E.sync (fun () -> finalizer_ran := true))
+      |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
+    in
+    let program =
+      E.with_background background (fun () ->
+          wait_for_sleepers_effect clock 1 |> E.bind (fun () -> E.fail `Use_failed))
+    in
+    (match B.run rt program with
+    | Exit.Error (Cause.Fail `Use_failed) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "unexpected with_background failure: %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "failing use unexpectedly succeeded");
+    Alcotest.(check bool) "background finalizer ran" true !finalizer_ran
+
   let test_supervisor_threshold_failure () =
     B.with_runtime @@ fun _ctx rt ->
     let program =
@@ -324,6 +344,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_with_background_cancels_child;
           Alcotest.test_case "with_background reports cleanup failure" `Quick
             test_effect_with_background_reports_child_cleanup_failure;
+          Alcotest.test_case "with_background cancels child after use failure"
+            `Quick test_effect_with_background_cancels_child_after_use_failure;
           Alcotest.test_case "threshold failure" `Quick
             test_supervisor_threshold_failure;
           Alcotest.test_case "records multiple failures" `Quick

@@ -161,6 +161,12 @@ let blueprint =
 let fn = QCheck.make ~print:string_of_fn ~shrink:shrink_fn gen_fn
 let bounded_int = QCheck.int_range (-20) 20
 let positive = QCheck.int_range 1 8
+let negative = QCheck.int_neg
+
+let nonpositive =
+  QCheck.oneof_weighted ~print:string_of_int
+    [ (1, QCheck.always ~print:string_of_int 0); (4, negative) ]
+
 let affine = QCheck.(pair (int_range (-3) 3) bounded_int)
 let apply_affine (scale, offset) value = (scale * value) + offset
 
@@ -215,6 +221,11 @@ let equivalent ok error left right =
       (Run.pp pp_int pp_int) left (Run.pp pp_int pp_int) right
 
 let no_pending outcome = outcome.Run.pending_fibers = Some []
+let raises_invalid_argument f =
+  match f () with
+  | exception Invalid_argument _ -> true
+  | _ -> false
+
 let log_bodies outcome = List.map (fun record -> record.Eta.Logger.body) outcome.Run.logs
 let count_log body outcome =
   List.fold_left
@@ -427,16 +438,54 @@ let property_par_pair_order =
 
 let property_par_fail_fast =
   QCheck.Test.make
-    ~name:"par fail-fast cancels pending sibling and waits for observable finalizer"
+    ~name:"par first observed failure cancels sibling tree and awaits cleanup"
     ~count QCheck.(pair bounded_int positive)
-    (fun (error, delay) ->
-      let finalizer = Printf.sprintf "par-finalizer:%d" error in
-      let sibling = E.finally (E.log_info finalizer) E.never in
-      let failing = E.delay (Eta.Duration.ms delay) (E.fail error) in
-      let outcome = run (E.discard (E.par sibling failing)) in
-      outcome.exit = Eta.Exit.Error (Eta.Cause.Fail error)
-      && count_log finalizer outcome = 1
-      && no_pending outcome)
+    (fun (first_error, first_delay) ->
+      let first_delay = max 1 first_delay in
+      let second_error = first_error + 1 in
+      let pending_release = "par-release:pending" in
+      let execute left_first =
+        let left_delay = first_delay + if left_first then 0 else 1 in
+        let right_delay = first_delay + if left_first then 1 else 0 in
+        let left_event = Printf.sprintf "par-failure:left:%d" first_error in
+        let right_event = Printf.sprintf "par-failure:right:%d" second_error in
+        let left_release = "par-release:left-failure" in
+        let right_release = "par-release:right-failure" in
+        let fail_at delay event error release =
+          E.finally (E.log_info release)
+            (E.delay (Eta.Duration.ms delay)
+               (E.bind (fun () -> E.fail error) (E.log_info event)))
+        in
+        let left = fail_at left_delay left_event first_error left_release in
+        let right = fail_at right_delay right_event second_error right_release in
+        let pending = E.finally (E.log_info pending_release) E.never in
+        let outcome =
+          run (E.discard (E.par left (E.par right pending)))
+        in
+        let winner_error, winner_event, loser_event =
+          if left_first then (first_error, left_event, right_event)
+          else (second_error, right_event, left_event)
+        in
+        let ok =
+          (match outcome.exit with
+          | Eta.Exit.Error cause -> Eta.Cause.failures cause = [ winner_error ]
+          | Eta.Exit.Ok () -> false)
+          && count_log winner_event outcome = 1
+          && count_log loser_event outcome = 0
+          && count_log left_release outcome = 1
+          && count_log right_release outcome = 1
+          && count_log pending_release outcome = 1
+          && no_pending outcome
+        in
+        if ok then true
+        else
+          QCheck.Test.fail_reportf "left_first=%b logs=%s outcome:@.%a" left_first
+            (String.concat "," (log_bodies outcome))
+            (Run.pp (fun fmt () -> Format.pp_print_string fmt "()")
+               Format.pp_print_int)
+            outcome
+      in
+      execute true && execute false)
 
 let property_map_par_order =
   QCheck.Test.make
@@ -621,6 +670,33 @@ let property_all_settled_input_order_and_capture =
           && log_bodies outcome = [ "all-settled-complete:success" ]
           && no_pending outcome
       | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false)
+
+let property_race_first_value =
+  QCheck.Test.make
+    ~name:"race returns the actual first distinctly tagged finite producer"
+    ~count QCheck.(triple bounded_int bounded_int positive)
+    (fun (left_value, right_value, first_delay) ->
+      let execute left_first =
+        let left_delay = first_delay + if left_first then 0 else 1 in
+        let right_delay = first_delay + if left_first then 1 else 0 in
+        let left_event = "race-complete:left" in
+        let right_event = "race-complete:right" in
+        let left =
+          complete_after ~delay:left_delay ~event:left_event (`Left left_value)
+        in
+        let right =
+          complete_after ~delay:right_delay ~event:right_event (`Right right_value)
+        in
+        let outcome = run (E.race [ left; right ]) in
+        let expected_exit, expected_event =
+          if left_first then (Eta.Exit.Ok (`Left left_value), left_event)
+          else (Eta.Exit.Ok (`Right right_value), right_event)
+        in
+        outcome.exit = expected_exit
+        && log_bodies outcome = [ expected_event ]
+        && no_pending outcome
+      in
+      execute true && execute false)
 
 let property_race_loser_cancellation =
   QCheck.Test.make
@@ -904,6 +980,63 @@ let property_channel_blocked_sender_fifo =
       && outcome.exit = Eta.Exit.Ok (initial :: blocked_values)
       && no_pending outcome)
 
+let property_channel_capacity_validation =
+  QCheck.Test.make
+    ~name:"Channel create rejects every generated nonpositive capacity and accepts positive capacity"
+    ~count QCheck.(pair nonpositive positive)
+    (fun (invalid_capacity, valid_capacity) ->
+      let rejected =
+        raises_invalid_argument (fun () ->
+            Eta.Channel.create ~capacity:invalid_capacity ())
+      in
+      let channel = Eta.Channel.create ~capacity:valid_capacity () in
+      let outcome = run (Eta.Channel.try_recv channel) in
+      rejected && outcome.exit = Eta.Exit.Ok `Empty && no_pending outcome)
+
+let property_channel_blocking_boundaries =
+  QCheck.Test.make
+    ~name:"Channel send waits while full and recv waits while empty until the opposite operation commits"
+    ~count QCheck.(pair positive bounded_int)
+    (fun (capacity, value) ->
+      let full_channel = Eta.Channel.create ~capacity () in
+      let sender_waiting = ref false in
+      let fill =
+        List.init capacity (fun index -> Eta.Channel.send full_channel index)
+        |> E.concat
+      in
+      let blocked_sender = Eta.Channel.send full_channel value in
+      let make_space =
+        yields 1
+          (E.bind
+             (fun () -> E.discard (Eta.Channel.recv full_channel))
+             (E.sync (fun () ->
+                  sender_waiting :=
+                    (Eta.Channel.stats full_channel).waiting_senders = 1)))
+      in
+      let full_outcome =
+        run (E.bind (fun () -> E.par blocked_sender make_space) fill)
+      in
+      let empty_channel = Eta.Channel.create ~capacity () in
+      let receiver_waiting = ref false in
+      let blocked_receiver = Eta.Channel.recv empty_channel in
+      let provide_value =
+        yields 1
+          (E.bind
+             (fun () -> Eta.Channel.send empty_channel value)
+             (E.sync (fun () ->
+                  receiver_waiting :=
+                    (Eta.Channel.stats empty_channel).waiting_receivers = 1)))
+      in
+      let empty_outcome = run (E.par blocked_receiver provide_value) in
+      !sender_waiting
+      && full_outcome.exit = Eta.Exit.Ok ((), ())
+      && (Eta.Channel.stats full_channel).depth = capacity
+      && no_pending full_outcome
+      && !receiver_waiting
+      && empty_outcome.exit = Eta.Exit.Ok (value, ())
+      && (Eta.Channel.stats empty_channel).depth = 0
+      && no_pending empty_outcome)
+
 let property_channel_blocked_sender_cancellation =
   QCheck.Test.make
     ~name:"Channel blocked-sender cancellation removes waiter increments counter and consumes no value"
@@ -941,6 +1074,64 @@ let property_channel_blocked_sender_cancellation =
           && received = initial
           && no_pending outcome
       | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false)
+
+let property_channel_try_boundaries =
+  QCheck.Test.make
+    ~name:"Channel try_send and try_recv return exact no-wait empty full item and close boundaries"
+    ~count QCheck.(pair bool bounded_int)
+    (fun (error_close, value) ->
+      let capacity_validation =
+        raises_invalid_argument (fun () -> Eta.Channel.create ~capacity:0 ())
+        && raises_invalid_argument (fun () ->
+               Eta.Channel.create ~capacity:(-1) ())
+      in
+      let channel = Eta.Channel.create ~capacity:1 () in
+      let close () =
+        if error_close then Eta.Channel.close_with_error channel "channel-error"
+        else Eta.Channel.close channel
+      in
+      let program =
+        E.bind
+          (fun initially_empty ->
+            E.bind
+              (fun sent ->
+                E.bind
+                  (fun full ->
+                    E.bind
+                      (fun item ->
+                        E.bind
+                          (fun empty_again ->
+                            E.bind
+                              (fun () ->
+                                E.bind
+                                  (fun closed_send ->
+                                    E.map
+                                      (fun closed_recv ->
+                                        ( initially_empty,
+                                          sent,
+                                          full,
+                                          item,
+                                          empty_again,
+                                          closed_send,
+                                          closed_recv ))
+                                      (Eta.Channel.try_recv channel))
+                                  (Eta.Channel.try_send channel (value + 2)))
+                              (E.sync close))
+                          (Eta.Channel.try_recv channel))
+                      (Eta.Channel.try_recv channel))
+                  (Eta.Channel.try_send channel (value + 1)))
+              (Eta.Channel.try_send channel value))
+          (Eta.Channel.try_recv channel)
+      in
+      let close_result =
+        if error_close then `Closed_with_error "channel-error" else `Closed
+      in
+      let outcome = run program in
+      capacity_validation
+      && outcome.exit
+      = Eta.Exit.Ok
+          (`Empty, `Sent, `Full, `Item value, `Empty, close_result, close_result)
+      && no_pending outcome)
 
 let property_channel_close =
   QCheck.Test.make ~name:"Channel graceful close fence/drain/reason ordering" ~count
@@ -1046,6 +1237,56 @@ let property_channel_close =
       && wake_receiver ()
       && wake_sender ())
 
+let property_channel_close_effect_wrappers =
+  QCheck.Test.make
+    ~name:"Channel close effect wrappers have the same fence drain and reason as direct close"
+    ~count QCheck.(pair bool (list_size (Gen.int_range 0 6) bounded_int))
+    (fun (error_close, values) ->
+      let execute effectful =
+        let channel =
+          Eta.Channel.create ~capacity:(max 1 (List.length values)) ()
+        in
+        let close =
+          match (error_close, effectful) with
+          | false, false -> E.sync (fun () -> Eta.Channel.close channel)
+          | false, true -> Eta.Channel.close_effect channel
+          | true, false ->
+              E.sync (fun () ->
+                  Eta.Channel.close_with_error channel "channel-error")
+          | true, true ->
+              Eta.Channel.close_with_error_effect channel "channel-error"
+        in
+        let rec drain remaining acc =
+          if remaining = 0 then E.pure (List.rev acc)
+          else
+            E.bind (fun value -> drain (remaining - 1) (value :: acc))
+              (Eta.Channel.recv channel)
+        in
+        run
+          (E.bind
+             (fun () ->
+               E.bind
+                 (fun () ->
+                   E.bind
+                     (fun drained ->
+                       E.bind
+                         (fun recv_reason ->
+                           E.map
+                             (fun send_reason ->
+                               (drained, recv_reason, send_reason))
+                             (Eta.Channel.try_send channel 901))
+                         (Eta.Channel.try_recv channel))
+                     (drain (List.length values) []))
+                 close)
+             (List.map (Eta.Channel.send channel) values |> E.concat))
+      in
+      let direct = execute false in
+      let effectful = execute true in
+      direct.exit = effectful.exit
+      && direct.events = effectful.events
+      && no_pending direct
+      && no_pending effectful)
+
 let property_semaphore_cancellation =
   QCheck.Test.make
     ~name:"Semaphore waiting-cancellation safety/no permit consumption" ~count
@@ -1108,10 +1349,142 @@ let property_semaphore_fifo_wake =
       && Eta.Semaphore.available semaphore = 1
       && no_pending outcome)
 
+let property_semaphore_validation_atomicity_and_non_barging =
+  QCheck.Test.make
+    ~name:"Semaphore validates bounds and try_acquire atomically decrements without barging queued waiters"
+    ~count QCheck.(quad (int_range 2 8) (int_range 1 8) nonpositive positive)
+    (fun (capacity, generated_request, invalid_nonpositive, excess) ->
+      let requested = min capacity generated_request in
+      let invalid_over_capacity = capacity + excess in
+      let semaphore = Eta.Semaphore.make ~permits:capacity in
+      let creation_validation =
+        raises_invalid_argument (fun () ->
+            Eta.Semaphore.make ~permits:invalid_nonpositive)
+      in
+      let request_validation =
+        raises_invalid_argument (fun () ->
+            ignore
+              (Eta.Semaphore.try_acquire semaphore invalid_nonpositive : bool))
+        && raises_invalid_argument (fun () ->
+               ignore
+                 (Eta.Semaphore.try_acquire semaphore invalid_over_capacity
+                   : bool))
+        && raises_invalid_argument (fun () ->
+               ignore (Eta.Semaphore.acquire semaphore invalid_nonpositive))
+        && raises_invalid_argument (fun () ->
+               ignore
+                 (Eta.Semaphore.acquire semaphore invalid_over_capacity))
+      in
+      let release_validation =
+        raises_invalid_argument (fun () ->
+            Eta.Semaphore.release semaphore invalid_nonpositive)
+        && raises_invalid_argument (fun () ->
+               Eta.Semaphore.release semaphore excess)
+        && Eta.Semaphore.available semaphore = capacity
+      in
+      let atomic_outcome =
+        run
+          (E.sync (fun () ->
+               let acquired = Eta.Semaphore.try_acquire semaphore requested in
+               let after_acquire = Eta.Semaphore.available semaphore in
+               Eta.Semaphore.release semaphore requested;
+               (acquired, after_acquire, Eta.Semaphore.available semaphore)))
+      in
+      let queued = Eta.Semaphore.make ~permits:capacity in
+      let held = Eta.Semaphore.try_acquire queued capacity in
+      let waiter =
+        E.bind
+          (fun () -> E.sync (fun () -> Eta.Semaphore.release queued capacity))
+          (Eta.Semaphore.acquire queued capacity)
+      in
+      let controller =
+        yields 1
+          (E.sync (fun () ->
+               let waiting = Eta.Semaphore.waiting queued in
+               Eta.Semaphore.release queued (capacity - 1);
+               let available_before_try = Eta.Semaphore.available queued in
+               let barged = Eta.Semaphore.try_acquire queued 1 in
+               let available_after_try = Eta.Semaphore.available queued in
+               Eta.Semaphore.release queued 1;
+               (waiting, available_before_try, barged, available_after_try)))
+      in
+      let non_barging_outcome = run (E.par waiter controller) in
+      creation_validation
+      && request_validation
+      && release_validation
+      && atomic_outcome.exit
+         = Eta.Exit.Ok (true, capacity - requested, capacity)
+      && no_pending atomic_outcome
+      && held
+      && non_barging_outcome.exit
+         = Eta.Exit.Ok ((), (1, capacity - 1, false, capacity - 1))
+      && Eta.Semaphore.available queued = capacity
+      && Eta.Semaphore.waiting queued = 0
+      && no_pending non_barging_outcome)
+
 let permit_request = QCheck.(pair (int_range 1 8) (int_range 1 8))
 
 let valid_permit_request (capacity, requested) =
   (capacity, min capacity requested)
+
+let property_semaphore_with_permits_or_abort_validation_and_counters =
+  QCheck.Test.make
+    ~name:"Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters"
+    ~count
+    QCheck.(quad (int_range 1 8) nonpositive positive bounded_int)
+    (fun (capacity, invalid_nonpositive, excess, value) ->
+      let invalid_over_capacity = capacity + excess in
+      let semaphore = Eta.Semaphore.make ~permits:capacity in
+      let invalid request =
+        raises_invalid_argument (fun () ->
+            Eta.Semaphore.with_permits_or_abort semaphore request ~abort:E.never
+              (fun () -> E.pure value))
+      in
+      let invalid_ok =
+        invalid invalid_nonpositive
+        && invalid invalid_over_capacity
+        && Eta.Semaphore.available semaphore = capacity
+        && Eta.Semaphore.waiting semaphore = 0
+        && Eta.Semaphore.cancelled_waiters semaphore = 0
+      in
+      let acquired_outcome =
+        run
+          (Eta.Semaphore.with_permits_or_abort semaphore capacity ~abort:E.never
+             (fun () ->
+               E.sync (fun () ->
+                   ( value,
+                     Eta.Semaphore.available semaphore,
+                     Eta.Semaphore.waiting semaphore,
+                     Eta.Semaphore.cancelled_waiters semaphore ))))
+      in
+      let acquired_ok =
+        acquired_outcome.exit = Eta.Exit.Ok (Some (value, 0, 0, 0))
+        && Eta.Semaphore.available semaphore = capacity
+        && Eta.Semaphore.waiting semaphore = 0
+        && Eta.Semaphore.cancelled_waiters semaphore = 0
+        && no_pending acquired_outcome
+      in
+      let aborted = Eta.Semaphore.make ~permits:capacity in
+      let held = Eta.Semaphore.try_acquire aborted capacity in
+      let aborted_outcome =
+        run
+          (Eta.Semaphore.with_permits_or_abort aborted capacity
+             ~abort:(E.delay (Eta.Duration.ms 1) (E.pure value))
+             (fun () -> E.pure value))
+      in
+      let aborted_ok =
+        held
+        && aborted_outcome.exit = Eta.Exit.Ok None
+        && Eta.Semaphore.available aborted = 0
+        && Eta.Semaphore.waiting aborted = 0
+        && Eta.Semaphore.cancelled_waiters aborted = 1
+        && no_pending aborted_outcome
+      in
+      Eta.Semaphore.release aborted capacity;
+      invalid_ok && acquired_ok && aborted_ok
+      && Eta.Semaphore.available aborted = capacity
+      && Eta.Semaphore.waiting aborted = 0
+      && Eta.Semaphore.cancelled_waiters aborted = 1)
 
 let property_semaphore_with_permits_release_all_exits =
   QCheck.Test.make
@@ -1262,22 +1635,111 @@ let close_reason =
     ~shrink:(function Error -> QCheck.Iter.return Clean | Clean -> QCheck.Iter.empty)
     QCheck.Gen.(oneof_list [ Clean; Error ])
 
+let queue_close_result = function
+  | Clean -> `Closed
+  | Error -> `Closed_with_error "first"
+
+let queue_future_operations_are_closed queue reason =
+  let close_result = queue_close_result reason in
+  let enqueue = Eta.Queue.enqueue queue in
+  let dequeue = Eta.Queue.dequeue queue in
+  let failed_with_close = function
+    | Eta.Exit.Error (Eta.Cause.Fail actual) -> actual = close_result
+    | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false
+  in
+  [
+    E.map failed_with_close (E.to_exit (Eta.Queue.offer queue 901));
+    E.map failed_with_close (E.to_exit (Eta.Queue.offer_all queue [ 902; 903 ]));
+    E.map failed_with_close (E.to_exit (Eta.Queue.send queue 904));
+    E.map (( = ) close_result) (Eta.Queue.try_offer queue 905);
+    E.map failed_with_close (E.to_exit (Eta.Queue.take queue));
+    E.map (( = ) close_result) (Eta.Queue.poll queue);
+    E.map failed_with_close (E.to_exit (Eta.Queue.take_all queue));
+    E.map failed_with_close (E.to_exit (Eta.Queue.take_up_to queue ~max:0));
+    E.map failed_with_close (E.to_exit (Eta.Queue.take_up_to queue ~max:3));
+    E.map failed_with_close
+      (E.to_exit (Eta.Queue.Enqueue.offer enqueue 911));
+    E.map failed_with_close
+      (E.to_exit (Eta.Queue.Enqueue.offer_all enqueue [ 912; 913 ]));
+    E.map failed_with_close
+      (E.to_exit (Eta.Queue.Enqueue.send enqueue 914));
+    E.map (( = ) close_result) (Eta.Queue.Enqueue.try_offer enqueue 915);
+    E.map failed_with_close (E.to_exit (Eta.Queue.Dequeue.take dequeue));
+    E.map (( = ) close_result) (Eta.Queue.Dequeue.poll dequeue);
+    E.map failed_with_close (E.to_exit (Eta.Queue.Dequeue.take_all dequeue));
+    E.map failed_with_close
+      (E.to_exit (Eta.Queue.Dequeue.take_up_to dequeue ~max:0));
+    E.map failed_with_close
+      (E.to_exit (Eta.Queue.Dequeue.take_up_to dequeue ~max:3));
+  ]
+  |> E.all |> E.map (List.for_all Fun.id)
+
+let property_queue_transition_effect_wrappers =
+  QCheck.Test.make
+    ~name:"Queue combined and view close or shutdown effect wrappers equal direct transitions"
+    ~count QCheck.(pair close_reason positive)
+    (fun (reason, capacity) ->
+      let run_transition make_queue transition expected_reason =
+        let queue = make_queue () in
+        run
+          (E.bind
+             (fun () ->
+               E.map
+                 (fun closed -> (closed, Eta.Queue.stats queue))
+                 (queue_future_operations_are_closed queue expected_reason))
+             (transition queue))
+      in
+      let same make_queue direct effectful expected_reason =
+        let left = run_transition make_queue direct expected_reason in
+        let right = run_transition make_queue effectful expected_reason in
+        left.exit = right.exit
+        && left.events = right.events
+        && no_pending left && no_pending right
+      in
+      let direct_close queue =
+        E.sync (fun () ->
+            match reason with
+            | Clean -> Eta.Queue.close queue
+            | Error -> Eta.Queue.close_with_error queue "first")
+      in
+      let effect_close queue =
+        match reason with
+        | Clean -> Eta.Queue.close_effect queue
+        | Error -> Eta.Queue.close_with_error_effect queue "first"
+      in
+      let direct_shutdown queue = E.sync (fun () -> Eta.Queue.shutdown queue) in
+      let effect_shutdown queue = Eta.Queue.shutdown_effect queue in
+      let direct_enqueue_shutdown queue =
+        let enqueue = Eta.Queue.enqueue queue in
+        E.sync (fun () -> Eta.Queue.Enqueue.shutdown enqueue)
+      in
+      let effect_enqueue_shutdown queue =
+        Eta.Queue.Enqueue.shutdown_effect (Eta.Queue.enqueue queue)
+      in
+      let direct_dequeue_shutdown queue =
+        let dequeue = Eta.Queue.dequeue queue in
+        E.sync (fun () -> Eta.Queue.Dequeue.shutdown dequeue)
+      in
+      let effect_dequeue_shutdown queue =
+        Eta.Queue.Dequeue.shutdown_effect (Eta.Queue.dequeue queue)
+      in
+      List.for_all
+        (fun make_queue ->
+          same make_queue direct_close effect_close reason
+          && same make_queue direct_shutdown effect_shutdown Clean
+          && same make_queue direct_enqueue_shutdown effect_enqueue_shutdown Clean
+          && same make_queue direct_dequeue_shutdown effect_dequeue_shutdown Clean)
+        [
+          Eta.Queue.unbounded;
+          (fun () -> Eta.Queue.bounded ~capacity ());
+          (fun () -> Eta.Queue.dropping ~capacity ());
+          (fun () -> Eta.Queue.sliding ~capacity ());
+        ])
+
 let property_queue_close =
   QCheck.Test.make ~name:"Queue graceful close/error ordering" ~count
     QCheck.(pair close_reason (list_size (Gen.int_range 0 6) bounded_int))
     (fun (reason, values) ->
-      let expected =
-        match reason with
-        | Clean ->
-            Eta.Exit.Ok
-              (values, `Closed, `Closed, Eta.Exit.Error (Eta.Cause.Fail `Closed))
-        | Error ->
-            Eta.Exit.Ok
-              ( values,
-                `Closed_with_error "first",
-                `Closed_with_error "first",
-                Eta.Exit.Error (Eta.Cause.Fail (`Closed_with_error "first")) )
-      in
       let run_mode make_queue =
         let queue = make_queue () in
         let sends = List.map (Eta.Queue.send queue) values |> E.concat in
@@ -1302,22 +1764,15 @@ let property_queue_close =
               E.bind
                 (fun () ->
                   E.bind
-                    (fun rejected ->
-                      E.bind
-                        (fun drained ->
-                          E.bind
-                            (fun after ->
-                              E.map
-                                (fun fenced -> (drained, after, fenced, rejected))
-                                (Eta.Queue.try_offer queue 999))
-                            (Eta.Queue.poll queue))
-                        (drain (List.length values) []))
-                    (E.to_exit (Eta.Queue.send queue 998)))
+                    (fun drained ->
+                      E.map (fun fenced -> (drained, fenced))
+                        (queue_future_operations_are_closed queue reason))
+                    (drain (List.length values) []))
                 (E.sync close))
             sends
         in
         let outcome = run program in
-        outcome.exit = expected && no_pending outcome
+        outcome.exit = Eta.Exit.Ok (values, true) && no_pending outcome
       in
       let capacity = max 1 (List.length values) in
       List.for_all run_mode
@@ -1332,56 +1787,201 @@ let property_queue_shutdown =
   QCheck.Test.make
     ~name:"Queue shutdown immediately drops buffered values and closes future operations"
     ~count
-    QCheck.(pair (int_range 0 3) (list_size (Gen.int_range 1 6) bounded_int))
-    (fun (mode, values) ->
+    QCheck.(list_size (Gen.int_range 1 6) bounded_int)
+    (fun values ->
       let capacity = List.length values in
-      let queue =
-        match mode with
-        | 0 -> Eta.Queue.unbounded ()
-        | 1 -> Eta.Queue.bounded ~capacity ()
-        | 2 -> Eta.Queue.dropping ~capacity ()
-        | _ -> Eta.Queue.sliding ~capacity ()
+      let run_mode make_queue =
+        let queue = make_queue () in
+        let program =
+          E.bind
+            (fun () ->
+              E.bind
+                (fun () ->
+                  E.bind
+                    (fun () -> queue_future_operations_are_closed queue Clean)
+                    (Eta.Queue.await_shutdown queue))
+                (E.sync (fun () ->
+                     Eta.Queue.shutdown queue;
+                     Eta.Queue.shutdown queue)))
+            (List.map (Eta.Queue.send queue) values |> E.concat)
+        in
+        let outcome = run program in
+        let stats = Eta.Queue.stats queue in
+        outcome.exit = Eta.Exit.Ok true
+        && stats.shutdown
+        && stats.closed
+        && stats.depth = 0
+        && stats.sent = List.length values
+        && stats.dropped = List.length values
+        && Eta.Queue.is_shutdown queue
+        && no_pending outcome
       in
-      let program =
-        E.bind
-          (fun () ->
-            E.bind
-              (fun () ->
-                E.bind
-                  (fun () ->
-                    E.bind
-                      (fun polled ->
-                        E.bind
-                          (fun offered ->
-                            E.bind
-                              (fun taken ->
-                                E.map
-                                  (fun sent -> (polled, offered, taken, sent))
-                                  (E.to_exit (Eta.Queue.send queue 998)))
-                              (E.to_exit (Eta.Queue.take queue)))
-                          (Eta.Queue.try_offer queue 999))
-                      (Eta.Queue.poll queue))
-                  (Eta.Queue.await_shutdown queue))
-              (E.sync (fun () ->
-                   Eta.Queue.shutdown queue;
-                   Eta.Queue.shutdown queue)))
-          (List.map (Eta.Queue.send queue) values |> E.concat)
+      List.for_all run_mode
+        [
+          Eta.Queue.unbounded;
+          (fun () -> Eta.Queue.bounded ~capacity ());
+          (fun () -> Eta.Queue.dropping ~capacity ());
+          (fun () -> Eta.Queue.sliding ~capacity ());
+        ])
+
+let property_queue_take_up_to_bounds =
+  QCheck.Test.make
+    ~name:"Queue take_up_to validates negative max and drains exactly zero or up to generated max"
+    ~count
+    QCheck.(triple (list_size (Gen.int_range 0 6) bounded_int) (int_range 0 8) negative)
+    (fun (values, max_count, invalid_max) ->
+      let rec split remaining prefix suffix =
+        if remaining = 0 then (List.rev prefix, suffix)
+        else
+          match suffix with
+          | [] -> (List.rev prefix, [])
+          | value :: rest -> split (remaining - 1) (value :: prefix) rest
       in
-      let outcome = run program in
-      let stats = Eta.Queue.stats queue in
-      outcome.exit
-      = Eta.Exit.Ok
-          ( `Closed,
-            `Closed,
-            Eta.Exit.Error (Eta.Cause.Fail `Closed),
-            Eta.Exit.Error (Eta.Cause.Fail `Closed) )
-      && stats.shutdown
-      && stats.closed
-      && stats.depth = 0
-      && stats.sent = List.length values
-      && stats.dropped = List.length values
-      && Eta.Queue.is_shutdown queue
-      && no_pending outcome)
+      let expected_taken, expected_rest = split max_count [] values in
+      let capacity = max 1 (List.length values) in
+      let run_mode make_queue =
+        let queue = make_queue () in
+        let invalid =
+          raises_invalid_argument (fun () ->
+              ignore (Eta.Queue.take_up_to queue ~max:invalid_max))
+        in
+        let program =
+          E.bind
+            (fun () ->
+              E.bind
+                (fun zero ->
+                  E.bind
+                    (fun taken ->
+                      E.map (fun rest -> (zero, taken, rest))
+                        (Eta.Queue.take_all queue))
+                    (Eta.Queue.take_up_to queue ~max:max_count))
+                (Eta.Queue.take_up_to queue ~max:0))
+            (List.map (Eta.Queue.send queue) values |> E.concat)
+        in
+        let outcome = run program in
+        invalid
+        && outcome.exit = Eta.Exit.Ok ([], expected_taken, expected_rest)
+        && no_pending outcome
+      in
+      List.for_all run_mode
+        [
+          Eta.Queue.unbounded;
+          (fun () -> Eta.Queue.bounded ~capacity ());
+          (fun () -> Eta.Queue.dropping ~capacity ());
+          (fun () -> Eta.Queue.sliding ~capacity ());
+        ])
+
+let property_queue_logical_size_and_queries =
+  QCheck.Test.make
+    ~name:"Queue stats size formula and empty full shutdown queries match buffered and waiting pressure"
+    ~count QCheck.(pair (int_range 1 4) (int_range 1 4))
+    (fun (capacity, waiter_count) ->
+      let formula stats =
+        stats.Eta.Queue.size
+        = stats.depth - stats.waiting_receivers + stats.waiting_senders
+      in
+      let initial_modes =
+        [
+          (Eta.Queue.unbounded (), None);
+          (Eta.Queue.bounded ~capacity (), Some capacity);
+          (Eta.Queue.dropping ~capacity (), Some capacity);
+          (Eta.Queue.sliding ~capacity (), Some capacity);
+        ]
+        |> List.for_all (fun (queue, expected_capacity) ->
+               let outcome =
+                 run
+                   (E.sync (fun () ->
+                        let stats = Eta.Queue.stats queue in
+                        ( stats,
+                          Eta.Queue.capacity queue,
+                          Eta.Queue.size queue,
+                          Eta.Queue.is_empty queue,
+                          Eta.Queue.is_full queue,
+                          Eta.Queue.is_shutdown queue )))
+               in
+               match outcome.exit with
+               | Eta.Exit.Ok (stats, actual_capacity, size, empty, full, shutdown) ->
+                   formula stats
+                   && actual_capacity = expected_capacity
+                   && size = 0 && empty && not full && not shutdown
+                   && no_pending outcome
+               | Eta.Exit.Error _ -> false)
+      in
+      let consumer_queue = Eta.Queue.bounded ~capacity () in
+      let consumer_snapshot = ref None in
+      let consumers =
+        List.init waiter_count (fun _ -> E.discard (Eta.Queue.take consumer_queue))
+      in
+      let stop_consumers =
+        yields 1
+          (E.sync (fun () ->
+               consumer_snapshot :=
+                 Some
+                   ( Eta.Queue.stats consumer_queue,
+                     Eta.Queue.size consumer_queue,
+                     Eta.Queue.is_empty consumer_queue,
+                     Eta.Queue.is_full consumer_queue );
+               Eta.Queue.shutdown consumer_queue))
+      in
+      let consumer_outcome = run (E.all_settled (consumers @ [ stop_consumers ])) in
+      let consumers_ok =
+        match !consumer_snapshot with
+        | Some (stats, size, empty, full) ->
+            formula stats
+            && stats.depth = 0
+            && stats.waiting_receivers = waiter_count
+            && stats.waiting_senders = 0
+            && size = -waiter_count && empty && not full
+            && Eta.Queue.is_shutdown consumer_queue
+            && consumer_outcome.exit
+               = Eta.Exit.Ok
+                   (List.init waiter_count (fun _ ->
+                        Result.Error (Eta.Cause.Fail `Closed))
+                   @ [ Result.Ok () ])
+            && no_pending consumer_outcome
+        | None -> false
+      in
+      let producer_queue = Eta.Queue.bounded ~capacity () in
+      let producer_snapshot = ref None in
+      let producers =
+        List.init waiter_count (fun index ->
+            E.discard (Eta.Queue.offer producer_queue (capacity + index)))
+      in
+      let stop_producers =
+        yields 1
+          (E.sync (fun () ->
+               producer_snapshot :=
+                 Some
+                   ( Eta.Queue.stats producer_queue,
+                     Eta.Queue.size producer_queue,
+                     Eta.Queue.is_empty producer_queue,
+                     Eta.Queue.is_full producer_queue );
+               Eta.Queue.shutdown producer_queue))
+      in
+      let producer_outcome =
+        run
+          (E.bind
+             (fun () -> E.all_settled (producers @ [ stop_producers ]))
+             (List.init capacity (Eta.Queue.send producer_queue) |> E.concat))
+      in
+      let producers_ok =
+        match !producer_snapshot with
+        | Some (stats, size, empty, full) ->
+            formula stats
+            && stats.depth = capacity
+            && stats.waiting_receivers = 0
+            && stats.waiting_senders = waiter_count
+            && size = capacity + waiter_count && not empty && full
+            && Eta.Queue.is_shutdown producer_queue
+            && producer_outcome.exit
+               = Eta.Exit.Ok
+                   (List.init waiter_count (fun _ ->
+                        Result.Error (Eta.Cause.Fail `Closed))
+                   @ [ Result.Ok () ])
+            && no_pending producer_outcome
+        | None -> false
+      in
+      initial_modes && consumers_ok && producers_ok)
 
 let property_queue_shutdown_idempotence =
   QCheck.Test.make
@@ -2126,30 +2726,95 @@ let property_nested_log_interceptor_order =
          = [ Printf.sprintf "intercepted:outer:%d:inner" tag ]
       && no_pending outcome)
 
+let short_int_list = QCheck.(list_size (Gen.int_range 0 3) bounded_int)
+let log_interceptor_shape = QCheck.(pair bounded_int short_int_list)
+
+let log_interceptor_shapes =
+  QCheck.(list_size (Gen.int_range 0 3) log_interceptor_shape)
+
+let log_drop_case =
+  QCheck.(quad bounded_int short_int_list log_interceptor_shapes log_interceptor_shapes)
+
 let property_log_interceptor_drop =
   QCheck.Test.make
-    ~name:"outer log interceptor Drop skips inner interceptors and the sink" ~count
-    bounded_int (fun _tag ->
-      let outer_calls = ref 0 in
-      let inner_calls = ref 0 in
-      let outer _record =
-        incr outer_calls;
-        E.Drop
+    ~name:"log interceptor Drop executes exactly its generated outer prefix and skips its suffix and sink"
+    ~count log_drop_case
+    (fun (body_shape, initial_attr_shapes, outer_shapes, inner_shapes) ->
+      let drop_position = List.length outer_shapes in
+      let interceptor_shapes = outer_shapes @ [ (0, []) ] @ inner_shapes in
+      let depth = List.length interceptor_shapes in
+      let calls = Array.make depth 0 in
+      let records_seen = ref [] in
+      let attrs label values =
+        List.mapi
+          (fun index value ->
+            (Printf.sprintf "%s-%d" label index, string_of_int value))
+          values
       in
-      let inner _record =
-        incr inner_calls;
-        E.Keep
+      let initial_body = Printf.sprintf "body:%d" body_shape in
+      let initial_attrs = attrs "initial" initial_attr_shapes in
+      let interceptors =
+        List.mapi
+          (fun position (body_shape, attr_shapes) record ->
+            calls.(position) <- calls.(position) + 1;
+            records_seen :=
+              !records_seen @ [ (record.Eta.Logger.body, record.attrs) ];
+            if position = drop_position then E.Drop
+            else
+              E.Replace
+                {
+                  record with
+                  Eta.Logger.body =
+                    record.body ^ Printf.sprintf ":interceptor:%d" body_shape;
+                  attrs =
+                    record.attrs
+                    @ attrs (Printf.sprintf "interceptor-%d" position) attr_shapes;
+                })
+          interceptor_shapes
       in
-      let outcome =
-        run
-          (E.intercept_log outer
-             (E.intercept_log inner (E.log_info "dropped")))
+      let program =
+        List.fold_right E.intercept_log interceptors
+          (E.log_info ~attrs:initial_attrs initial_body)
       in
-      !outer_calls = 1
-      && !inner_calls = 0
+      let outcome = run program in
+      let rec expected_model position body attrs_seen =
+        if position = depth then ([], Some (body, attrs_seen))
+        else
+          let current = (body, attrs_seen) in
+          if position = drop_position then ([ current ], None)
+          else
+            let body_shape, attr_shapes =
+              List.nth interceptor_shapes position
+            in
+            let suffix_seen, sink =
+              expected_model (position + 1)
+                (body ^ Printf.sprintf ":interceptor:%d" body_shape)
+                (attrs_seen
+                @ attrs (Printf.sprintf "interceptor-%d" position) attr_shapes)
+            in
+            (current :: suffix_seen, sink)
+      in
+      let expected_seen, expected_sink =
+        expected_model 0 initial_body initial_attrs
+      in
+      let expected_calls =
+        Array.init depth (fun position ->
+            if position <= drop_position then 1 else 0)
+      in
+      let sink_matches =
+        match (expected_sink, outcome.logs) with
+        | None, [] -> true
+        | Some (body, attrs), [ record ] ->
+            record.Eta.Logger.body = body && record.attrs = attrs
+        | None, _ | Some _, _ -> false
+      in
+      Array.to_list calls = Array.to_list expected_calls
+      && !records_seen = expected_seen
       && outcome.exit = Eta.Exit.Ok ()
-      && outcome.logs = []
-      && outcome.events = []
+      && sink_matches
+      && (match (expected_sink, outcome.events) with
+         | None, [] | Some _, [ Run.Log _ ] -> true
+         | None, _ | Some _, _ -> false)
       && no_pending outcome)
 
 let laws =
@@ -2171,6 +2836,7 @@ let laws =
     property_all_input_order;
     property_all_fail_fast;
     property_all_settled_input_order_and_capture;
+    property_race_first_value;
     property_race_loser_cancellation;
     property_finally_exactly_once;
     property_finally_cleanup_failure_after_success;
@@ -2182,15 +2848,24 @@ let laws =
     property_with_resource_release_failure_after_success;
     property_acquire_use_release_failure_suppressed;
     property_channel_blocked_sender_fifo;
+    property_channel_capacity_validation;
+    property_channel_blocking_boundaries;
     property_channel_blocked_sender_cancellation;
+    property_channel_try_boundaries;
     property_channel_close;
+    property_channel_close_effect_wrappers;
     property_semaphore_cancellation;
     property_semaphore_fifo_wake;
+    property_semaphore_validation_atomicity_and_non_barging;
+    property_semaphore_with_permits_or_abort_validation_and_counters;
     property_semaphore_with_permits_release_all_exits;
     property_semaphore_with_permits_or_abort_choice;
     property_semaphore_with_permits_or_abort_release_all_exits;
+    property_queue_transition_effect_wrappers;
     property_queue_close;
     property_queue_shutdown;
+    property_queue_take_up_to_bounds;
+    property_queue_logical_size_and_queries;
     property_queue_shutdown_idempotence;
     property_queue_shutdown_wakes_blocked_operations;
     property_schedule_monotone;

@@ -28,3 +28,10 @@ Review `LAWS.md` as a model document, not merely as a test checklist.
    an ordering test? If so, reject it as vacuous.
 10. Are any corrected boundaries missing from the public mli prose? A prose bug
     needs its counterexample recorded before it is fixed.
+11. For every R-row, does the exact displayed test name exist and directly
+    discriminate the cited claim, or is the registry inferring coverage from a
+    nearby suite? Reject helper-only and unnamed pointers.
+12. Is the scope statement honest: five census-complete modules today,
+    repository-wide same-change enforcement prospectively, and dated/owned
+    retrospective debt elsewhere—without wording that implies all historical
+    public interfaces are already covered?

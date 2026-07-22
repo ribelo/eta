@@ -345,3 +345,79 @@ nix develop .#mainline -c dune build --build-dir=_build-mainline @install
 The full native law run executes 53 named properties × 50 deterministic inputs
 = 2,650 generated qcheck inputs. Recommendation remains PROMOTE, with
 FG-E22-001 and FG-E22-006 explicitly open rather than laundered as coverage.
+
+### V-DX-E22-012 — Follow-up 2 policy scope and discrimination
+
+Status: FIX-FORWARD pending full gates.
+
+Round-two review exposed an inconsistent promotion claim: “every law in every
+mli already has qcheck” could not coexist with FG-E22-006's admitted historical
+inventory gap. The oracle's two honest resolutions were (1) finish a complete
+retrospective census for every public interface before promotion, or (2) scope
+the bootstrap to modules it can make complete while keeping a repository-wide
+prospective same-change rule. E22 chooses (2). The bootstrap deliverable is five
+census-complete modules; claiming the entire historical repository would turn
+an ongoing policy into false evidence.
+
+Within `effect.mli`, `schedule.mli`, `channel.mli`, `queue.mli`, and
+`semaphore.mli`, every inventoried claim now has an explicit status: direct
+qcheck, verified named runtime/backend test, or exact dated historical debt.
+Existing E13 async, conditional/error, selective cleanup, background/daemon,
+and Queue admission suites are registered rather than duplicated. Previously
+uncovered callback-defect, failing-use background cancellation, all bounded
+Queue capacity validation, and sent-token admission claims received named
+tests. New or changed law-bearing prose in any `.mli` still requires its test
+and registry row in the same change; new debt is forbidden. Historical gaps
+inside the five-module inventory are CD-E22-001 through CD-E22-023.
+Retrospective migration outside those modules is explicitly partitioned, dated,
+and owned as D-E22-001 through D-E22-005; no open-ended footgun is presented as
+coverage.
+
+The three direct property findings were fixed on their discriminating axis.
+`race` now has two finite distinctly tagged producers and asserts the actual
+first value in both completion directions, separate from loser resource cleanup.
+`par` now races two ranked failures plus a pending cleanup child, asserts the
+first observed typed cause in both directions, and awaits every finalizer.
+`Drop` now generates nesting, Drop position, body, and attribute shapes and
+models the exact executed prefix, skipped suffix, and sink result. The old
+ignored `_tag` case is recorded as an anti-vacuity self-catch: 50 executions of
+one fixed example do not satisfy the policy.
+
+### V-DX-E22-013 — Complete map, strict review, and gates
+
+Status: ACCEPT / PROMOTE SCOPED POLICY.
+
+Strict review rejected the first “census-complete” wording because a full mli
+sweep found historical claims beyond the requested async/conditional/cleanup/
+background/Queue clusters. The fix did not hide those claims or pretend nearby
+helpers were tests. `LAWS.md` now records 99 direct stated-claim rows backed by
+63 qcheck properties, 101 external named-suite rows, two model laws, and 23
+exact dated/owned historical claim-debt clusters. External module migration is
+separately partitioned as D-E22-001 through D-E22-005.
+
+This chooses the only internally consistent reading of follow-up 2's two policy
+requirements: the five-module **inventory** is complete and every status is
+visible; executable retrospective gaps use the explicitly permitted dated-debt
+path. “No debt” remains absolute for new or changed prose, so the prospective
+same-change rule keeps its teeth. Calling historical debt covered would have
+optimized the count rather than policy integrity.
+
+Review also drove direct generated invalid-domain coverage, combined plus
+producer/consumer Queue-view matrices, Channel blocking/wrapper laws, Semaphore
+counter/validation laws, exact selective cleanup tests, pending daemon drain,
+ordered partial `offer_all`, comprehensive sent-token admission paths, and
+post-commit Queue resolver-failure tests. After all registrations and exact debt
+spans were reconciled, independent review returned **READY**.
+
+All follow-up 2 gates passed:
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+```
+
+The law executable runs 63 named properties × 50 deterministic inputs = 3,150
+generated qcheck inputs on both supported native compiler tracks.
