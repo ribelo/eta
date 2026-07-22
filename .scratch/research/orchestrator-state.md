@@ -9,7 +9,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
 - In flight: **E22 — law-property test policy (qcheck)**
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e22`
   - Branch: `research/dx-e22-law-properties`
-  - Stage: being staged
+  - Stage: predictions sealed (V-DX-E22-001); objective.md written; awaiting executor
 - Done: **Phases A–D complete.** Phase D synthesis V-DX-PHASE-D landed
   (`e510aa3a`): 7 promotes, kills honored (E12 manifest, E11
   finalizer_events, E20 option-repr), five durable laws.
@@ -66,4 +66,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-22 — Phase D synthesis; staging E22
+- Last update: 2026-07-22 — Phase D synthesis landed; E22 staged
