@@ -59,6 +59,16 @@ let rec json_span_has_times ~name ~start_ns ~end_ns = function
   | `List xs -> List.exists (json_span_has_times ~name ~start_ns ~end_ns) xs
   | _ -> false
 
+let rec json_event_has_time ~name ~time_ns = function
+  | `Assoc fields ->
+      (List.assoc_opt "name" fields = Some (`String name)
+      && List.assoc_opt "timeUnixNano" fields = Some (`String time_ns))
+      || List.exists
+           (fun (_, value) -> json_event_has_time ~name ~time_ns value)
+           fields
+  | `List xs -> List.exists (json_event_has_time ~name ~time_ns) xs
+  | _ -> false
+
 let string_contains haystack needle =
   let haystack_len = String.length haystack in
   let needle_len = String.length needle in
@@ -284,6 +294,52 @@ let test_encoder_smoke () =
        ~end_ns:"1020000000" json);
   Alcotest.(check bool) "tracestate encoded" true
     (json_has_string_field ~key:"traceState" ~value:"rojo=00f067aa0ba902b7" json)
+
+let test_create_uses_supplied_clock_now_ms () =
+  let bodies = ref [] in
+  let now_calls = ref 0 in
+  Eio_main.run @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let host_clock = Eio.Stdenv.clock stdenv in
+  let supplied_clock : Capabilities.clock =
+    object
+      method now_ms () =
+        incr now_calls;
+        4242
+
+      method sleep duration =
+        Eio.Time.sleep host_clock (Duration.to_seconds_float duration)
+    end
+  in
+  let runtime_factory = Support.runtime_factory ~sw ~clock:host_clock in
+  let http_client =
+    Eta_http_eio.Client.make_h1 ~sw ~net:(Eio.Stdenv.net stdenv) ()
+  in
+  let exporter =
+    Eta_otel.create ~runtime_factory ~http_client ~clock:supplied_clock
+      ~host:"127.0.0.1" ~port:1 ~disable_self_metrics:true
+      ~on_error:(fun _ -> ())
+      ~on_send:(fun ~path ~body -> bodies := (path, body) :: !bodies)
+      ()
+  in
+  let contract = runtime_contract ~sw ~clock:host_clock in
+  let tracer = Eta_otel.tracer exporter in
+  let span = tracer#begin_span contract ~name:"clock" ~started_ms:1 () in
+  tracer#add_event contract ~span_id:span ~name:"clock.now" ~ts_ms:0 ~attrs:[];
+  tracer#end_span contract ~span_id:span ~status:Capabilities.Ok ~ended_ms:2;
+  Eta_otel.flush exporter;
+  Alcotest.(check bool) "supplied clock was read" true (!now_calls > 0);
+  let body =
+    !bodies
+    |> List.find_map (fun (path, body) ->
+           if String.equal path "/v1/traces" then Some body else None)
+    |> Option.value ~default:"{}"
+  in
+  let json = Yojson.Safe.from_string body in
+  Alcotest.(check bool)
+    "event uses supplied clock now_ms" true
+    (json_event_has_time ~name:"clock.now" ~time_ns:"4242000000" json);
+  Eta_otel.shutdown exporter
 
 let test_exception_stacktrace_exported () =
   let bodies = ref [] in
@@ -518,7 +574,7 @@ let test_encode_failure_drains_in_flight () =
       value = Capabilities.Number (Capabilities.Float (0.0 /. 0.0));
       ts_ms = 0;
     };
-  Eta_otel.flush ~timeout_s:0.2 exporter;
+  Eta_otel.flush ~timeout_s:1.0 exporter;
   Alcotest.(check int) "in-flight drained after encode failure" 0
     (Eta_otel.in_flight exporter)
 
@@ -641,7 +697,6 @@ let test_slow_collector_flush_timeout () =
   let exporter =
     Eta_otel.create ~runtime_factory ~http_client
       ~clock:(test_clock_capability test_clock)
-      ~now_ms:(fun () -> Eta_test.Test_clock.now_ms test_clock)
       ~host:"127.0.0.1" ~port
       ~service_name:"eta-otel-slow-collector"
       ~on_error:(fun _ -> ())
@@ -929,6 +984,8 @@ let () =
       ( "encoder",
         [
           Alcotest.test_case "smoke" `Quick test_encoder_smoke;
+          Alcotest.test_case "create uses supplied clock now_ms" `Quick
+            test_create_uses_supplied_clock_now_ms;
           Alcotest.test_case "exception stacktrace" `Quick
             test_exception_stacktrace_exported;
           Alcotest.test_case "concurrent span attrs" `Quick

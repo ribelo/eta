@@ -147,6 +147,30 @@ let test_expert_custom_effect_uses_runtime_contract () =
   in
   Direct.run rt eff |> check_exit_ok Alcotest.int "expert result" 15
 
+let test_expert_clock_observes_scoped_override () =
+  Direct_runtime.now := 10;
+  let rt = Direct.create () in
+  let expert_now =
+    Effect.Expert.make ~capabilities:[ `Clock ] ~leaf_name:"test.expert-now" @@ fun context ->
+    let contract = Effect.Expert.contract context in
+    Exit.Ok (contract.Runtime_contract.now_ms ())
+  in
+  let override : Capabilities.clock =
+    object
+      method now_ms () = 99
+      method sleep _ = ()
+    end
+  in
+  let program =
+    Effect.with_clock override expert_now
+    |> Effect.bind (fun inside ->
+           Effect.map (fun outside -> (inside, outside)) expert_now)
+  in
+  Direct.run rt program
+  |> check_exit_ok
+       Alcotest.(pair int int)
+       "expert scoped/base clock" (99, 10)
+
 let check_foreign_token_rejected name f =
   match f () with
   | () -> Alcotest.failf "%s: expected foreign token rejection" name
@@ -325,6 +349,8 @@ let tests =
           test_direct_runtime_preserves_task_context;
         Alcotest.test_case "expert custom effect uses runtime contract" `Quick
           test_expert_custom_effect_uses_runtime_contract;
+        Alcotest.test_case "expert clock observes scoped override" `Quick
+          test_expert_clock_observes_scoped_override;
         Alcotest.test_case "erased tokens reject foreign runtime contract" `Quick
           test_erased_tokens_reject_foreign_runtime_contract;
         Alcotest.test_case "erased contract rejects cross-domain use" `Quick

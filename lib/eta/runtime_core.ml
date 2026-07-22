@@ -119,8 +119,17 @@ let create_with_contract ~contract ?sleep ?now_ms ?tracer
       method sleep duration = sleep duration
     end
   in
+  let scoped_clock () =
+    Option.value
+      (contract.Runtime_contract.local_get clock_override)
+      ~default:clock
+  in
   let contract =
-    { contract with Runtime_contract.sleep = sleep; now_ms = now_ms }
+    {
+      contract with
+      Runtime_contract.sleep = (fun duration -> (scoped_clock ())#sleep duration);
+      now_ms = (fun () -> (scoped_clock ())#now_ms ());
+    }
   in
   let random =
     match random with

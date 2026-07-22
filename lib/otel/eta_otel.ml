@@ -157,7 +157,6 @@ let render_http_status status body =
 type t = {
   http_client : Eta_http.Client.t;
   clock : Eta.Capabilities.clock;
-  now_ms : unit -> int;
   config : export_config;
   queue : span Mailbox.t;
   log_queue : Eta.Capabilities.log_record Mailbox.t;
@@ -225,9 +224,9 @@ let fiber_state contract t =
 let ms_to_ns ms = Metric_aggregation.ms_to_ns_saturating ms
 
 let now_ns t =
-  ms_to_ns (t.now_ms ())
+  ms_to_ns (t.clock#now_ms ())
 
-let now_ms t = t.now_ms ()
+let now_ms t = t.clock#now_ms ()
 
 (* ------------------------------------------------------------------ *)
 (* Eta exporter programs                                               *)
@@ -655,7 +654,8 @@ let debug_on_send ~path ~body =
 
 type runtime_factory = Eta.Capabilities.tracer -> unit Eta.Runtime.t
 
-let default_now_ms () = int_of_float (Unix.gettimeofday () *. 1000.0)
+let default_now_ms () =
+  Int64.to_int (Int64.div (Mtime_clock.elapsed_ns ()) 1_000_000L)
 
 let default_clock : Eta.Capabilities.clock =
   object
@@ -666,7 +666,7 @@ let default_clock : Eta.Capabilities.clock =
   end
 
 let create ~runtime_factory ?flush_runtime_factory ?http_client
-    ?(clock = default_clock) ?(now_ms = default_now_ms)
+    ?(clock = default_clock)
     ?(host = "127.0.0.1") ?(port = 4318)
     ?(traces_path = "/v1/traces") ?(logs_path = "/v1/logs")
     ?(metrics_path = "/v1/metrics") ?self_metrics_path
@@ -735,7 +735,6 @@ let create ~runtime_factory ?flush_runtime_factory ?http_client
     {
       http_client;
       clock;
-      now_ms;
       config;
       queue = Mailbox.create ~capacity:queue_capacity ();
       log_queue = Mailbox.create ~capacity:queue_capacity ();

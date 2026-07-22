@@ -42,7 +42,10 @@ type trace_context = {
   baggage : (string * string) list;
 }
 
-(** Information about an active span surfaced through {!tracer.inspect}. *)
+(** Information about an active span surfaced through {!tracer.inspect}.
+    Cross-tracer propagation uses these identifiers only when both form a valid
+    W3C context. If either identifier is empty or malformed, Eta treats the span
+    as untracked and falls back to the ambient trace context. *)
 type span_info = {
   trace_id : string;  (** Hex 32 chars; empty if the tracer does not track. *)
   span_id : string;  (** Hex 16 chars; empty if the tracer does not track. *)

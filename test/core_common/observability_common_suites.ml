@@ -910,6 +910,49 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (B.run rt (Effect.named "custom.noop" Effect.unit));
     Alcotest.(check int) "custom tracer enabled" 1 !spans_started
 
+  let empty_id_tracer : Capabilities.tracer =
+    object
+      method with_task_context : 'a. Runtime_contract.t -> (unit -> 'a) -> 'a =
+        fun _ f -> f ()
+
+      method begin_span _ ?parent_id:_ ?external_parent:_ ?trace_id:_
+          ?trace_flags:_ ?trace_state:_ ?baggage:_ ?kind:_ ~name:_
+          ~started_ms:_ () =
+        1
+
+      method end_span _ ~span_id:_ ~status:_ ~ended_ms:_ = ()
+      method add_attr _ ~key:_ ~value:_ = ()
+      method add_attr_to _ ~span_id:_ ~key:_ ~value:_ = ()
+      method add_event _ ~span_id:_ ~name:_ ~ts_ms:_ ~attrs:_ = ()
+      method add_link _ _ = ()
+      method add_link_to _ ~span_id:_ _ = ()
+
+      method inspect _ ~span_id:_ =
+        Some
+          {
+            Capabilities.trace_id = "";
+            span_id = "";
+            name = "untracked";
+            trace_flags = 1;
+            trace_state = [];
+            baggage = [];
+          }
+    end
+
+  let test_scoped_tracer_empty_ids_use_ambient_parent () =
+    B.with_custom_tracer_runtime empty_id_tracer @@ fun _ctx rt ->
+    let inner = Tracer.in_memory () in
+    let program =
+      Effect.named "outer"
+        (Effect.with_tracer (Tracer.as_capability inner)
+           (Effect.named "inner" Effect.unit))
+    in
+    run_ok rt program;
+    let span = only_span inner in
+    Alcotest.(check bool)
+      "untracked outer span does not manufacture external parent" true
+      (Option.is_none span.external_parent)
+
   let test_observability_suppress_observability () =
     B.with_observed_runtime @@ fun _ctx rt tracer logger meter ->
     let hidden =
@@ -1319,6 +1362,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_intercept_metric_drop_short_circuits;
           Alcotest.test_case "custom noop tracer is explicitly enabled" `Quick
             test_observability_custom_noop_tracer_is_explicitly_enabled;
+          Alcotest.test_case "empty tracer ids use ambient parent" `Quick
+            test_scoped_tracer_empty_ids_use_ambient_parent;
           Alcotest.test_case "suppress observability" `Quick
             test_observability_suppress_observability;
           Alcotest.test_case "trace context extract inject" `Quick

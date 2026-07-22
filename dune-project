@@ -395,6 +395,7 @@
   eta
   eta_stream
   eta_http
+  (mtime (>= 2.0))
   (yojson (>= 2.0))))
 
 (package

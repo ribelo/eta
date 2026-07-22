@@ -16,7 +16,6 @@ val create :
   ?flush_runtime_factory:runtime_factory ->
   ?http_client:Eta_http.Client.t ->
   ?clock:Eta.Capabilities.clock ->
-  ?now_ms:(unit -> int) ->
   ?host:string ->
   ?port:int ->
   ?traces_path:string ->
@@ -40,8 +39,11 @@ val create :
     [runtime_factory] and is used for blocking [flush] and [shutdown].
     [http_client] defaults to {!Eta_http.Client.make_runtime}, so the exporter
     uses the current runtime's eta-http service unless a caller supplies a
-    dedicated client. [queue_capacity] bounds each signal mailbox and defaults
-    to 1024. [headers] are merged into every outbound OTLP/HTTP request.
+    dedicated client. [clock] is the one monotonic clock pair used for exporter
+    timestamps and waits; its [now_ms] is elapsed runtime time, not wall time.
+    The default uses the platform monotonic clock. [queue_capacity] bounds each
+    signal mailbox and defaults to 1024. [headers] are merged into every
+    outbound OTLP/HTTP request.
 
     Self-metrics are exported to [self_metrics_path], which defaults to
     [metrics_path]. Set [disable_self_metrics] to [true] when the collector does

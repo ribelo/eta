@@ -368,6 +368,35 @@ let test_intercept_log_parity done_ =
               (Format.asprintf "jsoo intercept failed: %a"
                  (Eta.Cause.pp pp_err) cause)))
 
+let test_expert_clock_observes_scoped_override done_ =
+  let clock value : Eta.Capabilities.clock =
+    object
+      method now_ms () = value
+      method sleep _duration = ()
+    end
+  in
+  let runtime = Eta_jsoo.Runtime.create ~now_ms:(fun () -> 11) () in
+  let expert_now =
+    Eta.Effect.Expert.make ~capabilities:[ `Clock ] @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    Eta.Exit.Ok (contract.Eta.Runtime_contract.now_ms ())
+  in
+  let open Eta.Syntax in
+  let program =
+    let* inside = Eta.Effect.with_clock (clock 22) expert_now in
+    let+ outside = expert_now in
+    (inside, outside)
+  in
+  Eta_jsoo.Runtime.run runtime program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok (22, 11) -> ()
+        | Eta.Exit.Ok _ -> fail "expert contract ignored scoped/base clock"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "expert scoped clock failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
 let tests =
   [
     ("delay", test_delay);
@@ -384,6 +413,8 @@ let tests =
     ("daemon drain", test_daemon_drain);
     ("scoped clock and logger parity", test_scoped_clock_and_logger_parity);
     ("intercept_log parity", test_intercept_log_parity);
+    ( "expert clock observes scoped override",
+      test_expert_clock_observes_scoped_override );
   ]
 
 let rec run_tests = function

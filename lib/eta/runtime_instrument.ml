@@ -19,13 +19,9 @@ let random_trace_id random =
   loop ()
 
 let trace_context_of_span_info (info : Capabilities.span_info) =
-  {
-    Capabilities.trace_id = info.trace_id;
-    span_id = info.span_id;
-    trace_flags = info.trace_flags;
-    trace_state = info.trace_state;
-    baggage = info.baggage;
-  }
+  Trace_context.make ~trace_id:info.trace_id ~span_id:info.span_id
+    ~trace_flags:info.trace_flags ~trace_state:info.trace_state
+    ~baggage:info.baggage ()
 
 let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
   let contract = runtime.contract in
@@ -68,7 +64,7 @@ let with_span ~runtime ~error_renderer ~fail_key ~kind ~name ~attrs body =
     let parent_context =
       match parent with
       | Some { RObs.info = Some info; _ } ->
-          Some (trace_context_of_span_info info)
+          trace_context_of_span_info info
       | Some { info = None; _ } | None -> None
     in
     let external_parent =

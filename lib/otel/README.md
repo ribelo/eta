@@ -131,8 +131,7 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 | ----------------- | ---------------- | -------------------------------------------- |
 | `~runtime_factory`| required         | `Eta.Capabilities.tracer -> unit Eta.Runtime.t` |
 | `~http_client`    | runtime client   | `Eta_http.Client.t` for OTLP POSTs           |
-| `~clock`          | optional         | `Eta.Capabilities.clock` for timestamps      |
-| `~now_ms`         | optional         | wall-clock source in milliseconds            |
+| `~clock`          | optional         | one monotonic clock pair for timestamps and waits |
 | `~host`           | `"127.0.0.1"`    | OTLP collector host                          |
 | `~port`           | `4318`           | OTLP/HTTP port                               |
 | `~traces_path`    | `"/v1/traces"`   | OTLP traces endpoint                         |
@@ -147,6 +146,10 @@ context and reinjected on outbound boundaries; it is not an OTLP span field.
 | `~scope_name`     | `"eta"`        | OTel instrumentation scope name              |
 | `~queue_capacity` | `1024`           | bounded mailbox capacity per signal          |
 | `~on_error`       | prints to stderr | callback for non-fatal export errors         |
+
+The clock's `now_ms` is elapsed runtime time, not wall/civil time, and `sleep`
+must use the same monotonic time base. The default uses the platform monotonic
+clock. Supplying `~clock` replaces both operations as one pair.
 | `~on_send`        | no-op            | test hook called before each HTTP POST       |
 
 The exporter starts one Eta runtime daemon through `runtime_factory`. That

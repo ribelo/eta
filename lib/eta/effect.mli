@@ -678,8 +678,9 @@ val with_clock : Capabilities.clock -> ('a, 'err) t -> ('a, 'err) t
     inherit it at fork without join-merge. Success, typed failure, defect, or
     interruption restores it. Innermost wins; [par] siblings are isolated.
     Leaves capture it at call time; in-flight sleeps are unchanged. Daemons keep it after scope exit.
-    This governs clock reads/sleeps and their users:
-    delay, timed, timeout, retry/repeat, timestamps, and span timing.
+    This governs clock reads/sleeps, including the [now_ms] and [sleep] fields
+    exposed to {!Expert.contract}, and their users: delay, timed, timeout,
+    retry/repeat, timestamps, and span timing.
 
     {[ Effect.with_clock (Eta_test.Test_clock.as_capability clock) program ]} *)
 

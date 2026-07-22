@@ -96,7 +96,10 @@ type t = {
     [sleep] must suspend on the same monotonic time base. Eta timers,
     schedules, timeouts, and elapsed-time measurements assume these operations
     are one clock pair; mixing a wall-clock [now_ms] with a relative monotonic
-    sleeper makes clock-jump behavior undefined.
+    sleeper makes clock-jump behavior undefined. Contracts exposed through
+    [Effect.Expert.contract] select the active fiber-local [Effect.with_clock]
+    override for both operations, then return to the base pair outside its
+    scope.
 
     [fresh] advances a counter owned by this runtime instance. It must return a
     strictly increasing, duplicate-free sequence under the backend's concurrent
