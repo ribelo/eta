@@ -18,7 +18,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     test (fun () -> completed := true);
     Alcotest.(check bool) "test completed" true !completed
 
-  let test_cross_domain_callbacks_settle_once () =
+  let test_cross_domain_callback_vs_callback_settles_once () =
     B.with_runtime @@ fun _context runtime ->
     for trial = 1 to 32 do
       let domains = ref [] in
@@ -49,8 +49,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ( "Effect async",
         List.map test_case Shared.tests
         @ [
-            Alcotest.test_case "async cross-domain callbacks settle once" `Quick
-              test_cross_domain_callbacks_settle_once;
+            Alcotest.test_case
+              "async cross-domain callback-vs-callback settles once" `Quick
+              test_cross_domain_callback_vs_callback_settles_once;
           ] );
     ]
 end

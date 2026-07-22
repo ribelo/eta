@@ -111,8 +111,9 @@ val async :
   register:((('a, 'err) Exit.t -> unit) -> (unit, 'err) t option) ->
   ('a, 'err) t
 (** Bridge one callback registration into Eta. [register resume] runs once when
-    interpreted. The first [resume exit] wins; later calls are dropped. It may
-    resolve synchronously before [register] returns without deadlocking.
+    interpreted. Registration is cancellation-protected until it returns, so it
+    must return promptly. The first [resume exit] wins; later calls are dropped.
+    It may resolve synchronously before [register] returns without deadlocking.
     The optional returned effect is the canceler. If interruption wins while
     pending, Eta runs it at most once and uninterruptibly; it never runs after
     resolution wins. Interruption waits, so the canceler must terminate.

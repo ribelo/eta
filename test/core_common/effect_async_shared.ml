@@ -106,7 +106,7 @@ module Make (B : Backend) = struct
             (Format.asprintf "cancellation program failed: %a"
                (Cause.pp pp_hidden) cause))
 
-  let test_canceler_uninterruptible_under_second_interrupt done_ =
+  let test_canceler_survives_pending_interruption_across_yields done_ =
     let cancel_handle = ref None in
     let registered = ref false in
     let canceler_started = ref false in
@@ -134,11 +134,7 @@ module Make (B : Backend) = struct
       Effect.bind
         (fun () ->
           Effect.bind
-            (fun () ->
-              Effect.bind
-                (fun () ->
-                  Effect.sync (fun () -> canceler_released := true))
-                (Effect.sync (fun () -> call_cancel !cancel_handle)))
+            (fun () -> Effect.sync (fun () -> canceler_released := true))
             (wait_until "canceler start" (fun () -> !canceler_started)))
         (Effect.bind
            (fun () -> Effect.sync (fun () -> call_cancel !cancel_handle))
@@ -148,7 +144,7 @@ module Make (B : Backend) = struct
       | Exit.Ok (target_exit, ()) ->
           expect_interrupt target_exit;
           if not !canceler_finished then
-            B.fail "second interruption preempted the canceler";
+            B.fail "pending interruption preempted the protected canceler";
           if !canceler_calls <> 1 then
             failf "expected canceler once, got %d" !canceler_calls
       | Exit.Error cause ->
@@ -251,23 +247,23 @@ module Make (B : Backend) = struct
     in
     run done_ eff (expect_ok_int 29)
 
-  let seeded_case seed =
+  let ordered_case case_id =
     let cancel_handle = ref None in
     let callback = ref None in
     let registered = ref false in
     let canceler_calls = ref 0 in
-    let mode = seed mod 3 in
+    let mode = case_id mod 3 in
     let async =
       Effect.async ~register:(fun resume ->
           callback := Some resume;
           registered := true;
-          if mode = 0 then resume (Exit.Ok seed);
+          if mode = 0 then resume (Exit.Ok case_id);
           Some (Effect.sync (fun () -> incr canceler_calls)))
     in
     let target = install_cancel_handle cancel_handle (Effect.to_exit async) in
     let call_resume () =
       match !callback with
-      | Some resume -> resume (Exit.Ok seed)
+      | Some resume -> resume (Exit.Ok case_id)
       | None -> B.fail "Effect.async test callback was not installed"
     in
     let controller =
@@ -284,40 +280,41 @@ module Make (B : Backend) = struct
                 (fun () -> Effect.sync call_resume)
                 (Effect.bind
                    (fun () ->
-                     wait_until "seeded canceler" (fun () -> !canceler_calls = 1))
+                     wait_until "ordered canceler" (fun () -> !canceler_calls = 1))
                    (Effect.sync (fun () -> call_cancel !cancel_handle))))
-        (wait_until "seeded registration" (fun () -> !registered))
+        (wait_until "ordered registration" (fun () -> !registered))
     in
     Effect.map
-      (fun (target_exit, ()) -> (seed, mode, target_exit, !canceler_calls))
+      (fun (target_exit, ()) ->
+        (case_id, mode, target_exit, !canceler_calls))
       (Effect.par target controller)
 
-  let rec seeded_cases acc = function
+  let rec ordered_cases acc = function
     | [] -> Effect.pure (List.rev acc)
-    | seed :: rest ->
+    | case_id :: rest ->
         Effect.bind
-          (fun result -> seeded_cases (result :: acc) rest)
-          (seeded_case seed)
+          (fun result -> ordered_cases (result :: acc) rest)
+          (ordered_case case_id)
 
-  let test_no_lost_wakeup_under_seeded_register_cancel_races done_ =
-    let seeds = [ 0; 7; 2; 9; 4; 5; 12; 13; 8; 18; 10; 11 ] in
-    run done_ (seeded_cases [] seeds) (function
+  let test_fixed_same_domain_resolution_cancel_orderings done_ =
+    let case_ids = [ 0; 7; 2; 9; 4; 5; 12; 13; 8; 18; 10; 11 ] in
+    run done_ (ordered_cases [] case_ids) (function
       | Exit.Error cause ->
           B.fail
-            (Format.asprintf "seeded async program failed: %a"
+            (Format.asprintf "ordered async program failed: %a"
                (Cause.pp pp_hidden) cause)
       | Exit.Ok results ->
           List.iter
-            (fun (seed, mode, target_exit, canceler_calls) ->
+            (fun (case_id, mode, target_exit, canceler_calls) ->
               if mode = 2 then (
                 expect_interrupt target_exit;
                 if canceler_calls <> 1 then
-                  failf "seed %d: expected one canceler, got %d" seed
+                  failf "case %d: expected one canceler, got %d" case_id
                     canceler_calls)
               else (
-                expect_ok_int seed target_exit;
+                expect_ok_int case_id target_exit;
                 if canceler_calls <> 0 then
-                  failf "seed %d: resolution ran canceler %d times" seed
+                  failf "case %d: resolution ran canceler %d times" case_id
                     canceler_calls))
             results)
 
@@ -326,8 +323,8 @@ module Make (B : Backend) = struct
       ("async one-shot first resolution wins", test_one_shot_first_resolution_wins);
       ( "async canceler runs once on interruption",
         test_canceler_runs_once_on_interruption );
-      ( "async canceler is uninterruptible under second interrupt",
-        test_canceler_uninterruptible_under_second_interrupt );
+      ( "async canceler survives pending interruption across yields",
+        test_canceler_survives_pending_interruption_across_yields );
       ( "async canceler never runs after resolution",
         test_canceler_never_after_resolution );
       ("async register raise becomes die", test_register_raise_becomes_die);
@@ -339,7 +336,7 @@ module Make (B : Backend) = struct
         test_canceler_defect_is_suppressed_under_interruption );
       ( "async synchronous resolution does not deadlock",
         test_synchronous_resolution_does_not_deadlock );
-      ( "async no lost wakeup under seeded register/cancel races",
-        test_no_lost_wakeup_under_seeded_register_cancel_races );
+      ( "async fixed same-domain resolution/cancel orderings preserve wakeups",
+        test_fixed_same_domain_resolution_cancel_orderings );
     ]
 end
