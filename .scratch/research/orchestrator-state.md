@@ -6,7 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E13 — `Effect.async`: the missing algebra leaf**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e13`
+  - Branch: `research/dx-e13-effect-async`
+  - Stage: predictions sealed (V-DX-E13-001); objective.md written; awaiting executor
 - Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
   flagship) · E20 promoted (`6deb7694`, as E20b) · E12 promoted
   (`dbd51ff6`) · **E11 promoted** (`41f9eac9`; finalizer_events killed
@@ -58,4 +61,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-21 — E11 promoted
+- Last update: 2026-07-19 — E13 launched
