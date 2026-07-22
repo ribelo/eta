@@ -75,8 +75,14 @@ module Private : sig
   type 'a resolver
 
   val create_promise : unit -> 'a promise * 'a resolver
+  val pending_subscriptions : 'a promise -> int
+  (** Number of active subscription records retained by an unsettled promise. *)
+
   val resolve : 'a resolver -> 'a -> unit
   val reject : 'a resolver -> exn -> unit
   val await : ?on_cancel:(unit -> unit) -> 'a promise -> 'a
-  (** Await an Eta_jsoo promise from inside an Eta_jsoo runtime fiber. *)
+  (** Await an Eta_jsoo promise from inside an Eta_jsoo runtime fiber.
+
+      Cancellation removes the promise subscription before [on_cancel] runs.
+      If [on_cancel] raises, its exception resumes the waiter as a defect. *)
 end

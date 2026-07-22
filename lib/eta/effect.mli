@@ -107,6 +107,24 @@ val sync_option : if_none:'err -> (unit -> 'a option) -> ('a, 'err) t
     channel and are not handled by {!bind_error}. Runtime cancellation
     exceptions remain interruption. *)
 
+val async :
+  register:((('a, 'err) Exit.t -> unit) -> (unit, 'err) t option) ->
+  ('a, 'err) t
+(** Bridge one callback registration into Eta. [register resume] runs once when
+    interpreted. Registration is cancellation-protected until it returns, so it
+    must return promptly. The first [resume exit] wins; later calls are dropped.
+    It may resolve synchronously before [register] returns without deadlocking.
+    The optional returned effect is the canceler. If interruption wins while
+    pending, Eta runs it at most once and uninterruptibly; it never runs after
+    resolution wins. Interruption waits, so the canceler must terminate.
+    Failure is a finalizer diagnostic suppressed under the interruption.
+    An exception raised by [register] follows ordinary capture as {!Cause.Die}
+    and wins even if [resume] was called synchronously first.
+    A runtime one-shot promise latches resolution before parking and queues a
+    parked resume, so registration-to-parking wakeups cannot be lost.
+    On js_of_ocaml this is the same one-shot protocol under CPS; [register]
+    must loudly check required host capabilities. Eta installs no host polyfills. *)
+
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.
 

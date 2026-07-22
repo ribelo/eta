@@ -13,6 +13,20 @@ let set_exit_code code =
 
 let fail message = failwith message
 let pp_err fmt _ = Format.pp_print_string fmt "<err>"
+let suite_completed = ref false
+
+let () =
+  let process = Unsafe.get Unsafe.global "process" in
+  Unsafe.meth_call process "on"
+    [|
+      Unsafe.inject (Js.string "beforeExit");
+      Unsafe.inject
+        (Js.wrap_callback (fun _code ->
+             if not !suite_completed then (
+               set_exit_code 1;
+               log "eta_jsoo failed: test chain did not reach completion")));
+    |]
+  |> ignore
 
 let finish done_ f value =
   try
@@ -90,19 +104,49 @@ let test_timeout_releases_resource done_ =
            expect_fail (( = ) `Timeout) result;
            if not !released then fail "resource was not released"))
 
-let test_await_cancel_hook done_ =
+let test_await_cancellation_removes_promise_subscription done_ =
   let cancel_called = ref false in
+  let subscriptions_seen_by_cancel_hook = ref (-1) in
   let never, _resolver = Eta_jsoo.Private.create_promise () in
   let body =
     Eta.Effect.sync (fun () ->
-        Eta_jsoo.Private.await ~on_cancel:(fun () -> cancel_called := true)
+        Eta_jsoo.Private.await
+          ~on_cancel:(fun () ->
+            cancel_called := true;
+            subscriptions_seen_by_cancel_hook :=
+              Eta_jsoo.Private.pending_subscriptions never)
           never)
   in
   run (Eta.Effect.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout body)
     ~on_result:
       (finish done_ (fun result ->
            expect_fail (( = ) `Timeout) result;
-           if not !cancel_called then fail "cancel hook was not called"))
+           if not !cancel_called then fail "cancel hook was not called";
+           if !subscriptions_seen_by_cancel_hook <> 0 then
+             fail "cancel hook ran before promise unsubscription";
+           if Eta_jsoo.Private.pending_subscriptions never <> 0 then
+             fail "canceled await remained subscribed to its promise"))
+
+let test_throwing_await_cancel_hook_does_not_strand_fiber done_ =
+  let never, _resolver = Eta_jsoo.Private.create_promise () in
+  let body =
+    Eta.Effect.sync (fun () ->
+        Eta_jsoo.Private.await
+          ~on_cancel:(fun () -> failwith "await cancel hook failed")
+          never)
+  in
+  run (Eta.Effect.timeout_as (Eta.Duration.ms 5) ~on_timeout:`Timeout body)
+    ~on_result:
+      (finish done_ (fun result ->
+           if Eta_jsoo.Private.pending_subscriptions never <> 0 then
+             fail "throwing cancel hook retained its promise subscription";
+           match result with
+           | Eta.Exit.Error cause when Eta.Cause.defects cause <> [] -> ()
+           | Eta.Exit.Error cause ->
+               fail
+                 (Format.asprintf "expected cancel hook defect, got %a"
+                    (Eta.Cause.pp pp_err) cause)
+           | Eta.Exit.Ok _ -> fail "expected cancel hook defect, got Ok"))
 
 let test_runtime_locals_cross_fork done_ =
   let local = Runtime_contract.create_local () in
@@ -397,12 +441,22 @@ let test_expert_clock_observes_scoped_override done_ =
               (Format.asprintf "expert scoped clock failed: %a"
                  (Eta.Cause.pp pp_err) cause)))
 
+module Async_shared =
+  Eta_effect_async_shared_tests.Effect_async_shared.Make (struct
+    let run = run
+    let complete ~done_ check = finish done_ (fun () -> check ()) ()
+    let fail = fail
+  end)
+
 let tests =
   [
     ("delay", test_delay);
     ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
     ("timeout releases resource", test_timeout_releases_resource);
-    ("await cancel hook", test_await_cancel_hook);
+    ( "await cancellation removes promise subscription",
+      test_await_cancellation_removes_promise_subscription );
+    ( "throwing await cancel hook does not strand fiber",
+      test_throwing_await_cancel_hook_does_not_strand_fiber );
     ("runtime locals cross fork", test_runtime_locals_cross_fork);
     ("runtime stream fifo", test_runtime_stream_fifo);
     ("runtime resolve wakes live waiter", test_runtime_resolve_wakes_live_waiter);
@@ -416,9 +470,12 @@ let tests =
     ( "expert clock observes scoped override",
       test_expert_clock_observes_scoped_override );
   ]
+  @ Async_shared.tests
 
 let rec run_tests = function
-  | [] -> log "eta_jsoo ok"
+  | [] ->
+      suite_completed := true;
+      log "eta_jsoo ok"
   | (name, test) :: rest ->
       test (fun () ->
           log ("ok: " ^ name);

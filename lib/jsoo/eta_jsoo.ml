@@ -76,8 +76,13 @@ and fiber = {
   mutable fiber_protect_depth : int;
 }
 
+and 'a promise_subscription = {
+  mutable subscription_active : bool;
+  subscription_callback : ('a, exn) result -> unit;
+}
+
 and 'a promise_state =
-  | Pending of (('a, exn) result -> unit) list
+  | Pending of 'a promise_subscription list
   | Settled of ('a, exn) result
 
 and 'a promise = {
@@ -175,18 +180,44 @@ let copy_locals locals =
   copy
 
 let subscribe promise callback =
+  let subscription =
+    { subscription_active = true; subscription_callback = callback }
+  in
+  let unsubscribe () =
+    if subscription.subscription_active then (
+      subscription.subscription_active <- false;
+      match promise.state with
+      | Pending subscriptions ->
+          promise.state <-
+            Pending
+              (List.filter
+                 (fun candidate -> candidate != subscription)
+                 subscriptions)
+      | Settled _ -> ())
+  in
   match promise.state with
-  | Pending callbacks -> promise.state <- Pending (callback :: callbacks)
-  | Settled result -> schedule (fun () -> callback result)
+  | Pending subscriptions ->
+      promise.state <- Pending (subscription :: subscriptions);
+      unsubscribe
+  | Settled result ->
+      schedule (fun () ->
+          if subscription.subscription_active then (
+            subscription.subscription_active <- false;
+            subscription.subscription_callback result));
+      unsubscribe
 
 let settle_once promise result =
   match promise.state with
   | Settled _ -> invalid_arg "Eta_jsoo.Promise.resolve: already resolved"
-  | Pending callbacks ->
+  | Pending subscriptions ->
       promise.state <- Settled result;
       List.iter
-        (fun callback -> schedule (fun () -> callback result))
-        (List.rev callbacks)
+        (fun subscription ->
+          schedule (fun () ->
+              if subscription.subscription_active then (
+                subscription.subscription_active <- false;
+                subscription.subscription_callback result)))
+        (List.rev subscriptions)
 
 let resolve_once promise value = settle_once promise (Ok value)
 let reject_once promise exn = settle_once promise (Error exn)
@@ -194,6 +225,9 @@ let reject_once promise exn = settle_once promise (Error exn)
 let create_promise () =
   let cell = { state = Pending [] } in
   (cell, cell)
+
+let pending_subscriptions promise =
+  match promise.state with Pending callbacks -> List.length callbacks | Settled _ -> 0
 
 let run_continuation fiber continue =
   schedule (fun () -> with_current fiber continue)
@@ -207,20 +241,29 @@ let handle_effect fiber =
           (fun continuation ->
             let resumed = ref false in
             let cancel_cleanup = ref (fun () -> ()) in
+            let subscription_cleanup = ref (fun () -> ()) in
             let resume run =
               if not !resumed then (
                 resumed := true;
                 !cancel_cleanup ();
+                !subscription_cleanup ();
                 run_continuation fiber run)
             in
+            subscription_cleanup :=
+              subscribe promise (function
+                | Ok value -> resume (fun () -> continue continuation value)
+                | Error exn -> resume (fun () -> discontinue continuation exn));
             if fiber.fiber_protect_depth = 0 then
               cancel_cleanup :=
                 add_cancel_waiter fiber.fiber_cancel (fun reason ->
-                    Option.iter (fun hook -> hook ()) on_cancel;
-                    resume (fun () -> discontinue continuation (Cancelled reason)));
-            subscribe promise (function
-              | Ok value -> resume (fun () -> continue continuation value)
-              | Error exn -> resume (fun () -> discontinue continuation exn)))
+                    !subscription_cleanup ();
+                    let discontinuation =
+                      match Option.iter (fun hook -> hook ()) on_cancel with
+                      | () -> Cancelled reason
+                      | exception exn -> exn
+                    in
+                    resume (fun () ->
+                        discontinue continuation discontinuation)))
     | _ -> None
   in
   handler
@@ -559,6 +602,7 @@ module Private = struct
   type nonrec 'a resolver = 'a resolver
 
   let create_promise = create_promise
+  let pending_subscriptions = pending_subscriptions
   let resolve = resolve_once
   let reject = reject_once
   let await = await
@@ -628,9 +672,11 @@ let run_eta_jsoo root body =
   promise
 
 let subscribe_or_raise promise ~on_result =
-  subscribe promise (function
-    | Ok value -> on_result value
-    | Error exn -> raise exn)
+  ignore
+    (subscribe promise (function
+      | Ok value -> on_result value
+      | Error exn -> raise exn)
+      : unit -> unit)
 
 module Runtime = struct
   type 'err t = 'err Eta.Runtime.t
