@@ -95,6 +95,7 @@ Concurrency, observability, and data primitives in the root package:
 | `Sampler` | Trace sampling policies: always-on, always-off, ratio, parent-based. |
 | `Log_level` | Severity levels for log records. |
 | `Random` | Deterministic random helpers over `Capabilities.random`. |
+| `Promise` | Backend-neutral one-shot result with cancellation-safe broadcast wait. |
 | `Queue` | Same-domain unbounded FIFO with close/error fences. |
 | `Channel` | Same-domain bounded channel with backpressure. |
 | `Pubsub` | Same-domain scoped broadcast hub with explicit overflow policy. |
@@ -407,17 +408,22 @@ body returns or fails. Its failures are not awaited by `with_background`; report
 them through an owned queue, promise, log, or use `Supervisor.scoped` when the
 body must observe child failure.
 
-## Eio Concurrency Data
+## Concurrency Data
 
-Use Eio data primitives directly for local coordination:
+Choose the smallest primitive that owns the required portability or lifecycle:
 
 | Need | Use |
 | --- | --- |
 | Bounded producer/consumer queue | `Eio.Stream` |
-| One-shot signal or shared result | `Eio.Promise` |
+| Backend-neutral one-shot signal or shared result | `Eta.Promise` |
 | Countdown or wait-for-condition | `Eio.Condition` with `Eio.Mutex` |
 | Eta-owned FIFO with close/error fences | `Eta.Queue` or `Eta.Channel` |
 | Scoped broadcast with drop/backpressure policy | `Eta.Pubsub` |
+
+Use `Eta.Promise` when the same one-shot coordination must run on native and
+js_of_ocaml backends. `Eio.Promise` remains the right direct primitive for
+Eio-only code; this wrapper is a portability fence, not a takeover of local Eio
+coordination.
 
 `Pubsub` uses a shared hub buffer with scoped subscriptions. Published messages
 are admitted once at the hub, then retained until current subscribers receive

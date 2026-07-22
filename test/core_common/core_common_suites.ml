@@ -11,6 +11,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Effect_uninterruptible_common_suites.Make (B)
   module Observability_suites = Observability_common_suites.Make (B)
   module Pool_suites = Pool_common_suites.Make (B)
+  module Promise_suites = Promise_common_suites.Make (B)
   module Properties_suites = Properties_common_suites.Make (B)
   module Resource_suites = Resource_common_suites.Make (B)
   module Stress_suites = Stress_common_suites.Make (B)
@@ -1755,6 +1756,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
      @ Stress_suites.tests
      @ Upstream_invariants_suites.tests
      @ Pool_suites.tests
+     @ Promise_suites.tests
      @ Resource_suites.tests
      @ Supervisor_suites.tests
 end
