@@ -3009,3 +3009,157 @@ kill gate unfired ✓.
 **Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
 branch pushed; worktree removed; objective archived. **Phase D is complete**
 (E26, E19, E20, E12, E11, E13, E14). Phase synthesis V-DX-PHASE-D follows.
+
+---
+
+## V-DX-PHASE-D — 2026-07-22 — phase synthesis: Phase D (runtime & model)
+
+**Evidence summary.** Seven experiments, seven promotes, two scoped kills,
+one contract held-then-redesigned, one migration held:
+- E26 (`fresh`, `dfe5f904`): runtime-owned monotonic counter + `fresh_named`;
+  per-runtime uniqueness with the trap documented AND executable-tested
+  (cross-runtime collision is a test). Kill gate evaluated, unfired —
+  steelmanned DIY rejected: a library operation owns
+  ownership/isolation/reset/determinism once. Review 2 on cold scope
+  misread (mli disarms) → F6 watch.
+- E19 (`with_clock/random/logger/tracer`, `42d6a4d2`, flagship): four
+  scoped capability overrides over `local_with_binding`; 13-case edge
+  matrix green (restore ×4 exits, fork-inherit, `par` isolation,
+  innermost-wins, daemon retention, jsoo parity); doc budget 29 lines
+  across 4 vals — inside the sealed ≤30 kill-gate budget. Review: scoped
+  4 vs runtime assembly 3; the old form's mixed real/fake footgun
+  surfaced unprompted. **Retro found Expert leaves bypassing
+  `with_clock`** → E19b (`77975e31`): call-time selectors, W3C id
+  validation, otel monotonic clock — fences closed on both substrates.
+- E20 (`intercept_log/metric`, `6deb7694` as E20b): the phase's defining
+  story. Original option-repr contract **held on measurement** —
+  "no allocation when identity" was *impossible* in the `option`
+  representation (+1,048,571 minor words/100k, stddev 0, orchestrator
+  reproduction). Redesigned as E20b: `Keep | Drop | Replace` makes the
+  representation free by construction; the residual (+10.5 words/record)
+  proven by a control measurement to be the *shared scoped-stage lookup*
+  (`annotate_logs` costs the same) — gate re-evaluation promoted on the
+  honest contract: zero cost when no interceptor installed, scoped-stage
+  cost when installed, transform adds nothing. F7 registered for the
+  scoped-stage cost (benefits ALL scoped stages). Review: intercept 4 vs
+  wrapper 3; metric 4 vs 1 (reviewer found a latent bug in the old-style
+  snippet). Executor recommended against its own branch on evidence —
+  protocol honor.
+- E12 (`audit`/`describe`, `dbd51ff6`): two-part as pre-registered. API
+  promoted — `capability_footprint` with `preserve` inheritance, 168-
+  blueprint properties (poisoned clock, silent logger), 11 describe
+  snapshots, 7 `Eta_test` assertions, tutorial 5/5 with `<bind …>`
+  credited. **Manifest role KILLED (gate fired)**: the 54-example golden
+  shows mechanically-correct-humanly-misleading flags exactly at dynamic
+  continuations (`cli_business` all-false despite retry; probes report no
+  concurrency) — preserved as E17's entry-gate evidence, not shipped.
+  **Retro found concat discarding child footprints** (audit unsound) →
+  fixed `d95cef58`.
+- E11 (`Eta_test.run`, `41f9eac9`): 7-field golden outcome record;
+  six canonical scenarios ×2 replay equality; accounting-neutrality
+  two-rung (36 legacy cases unchanged through the decorated contract;
+  exit corpus diagnostically equal). **Scoped kill: `finalizer_events`** —
+  per-finalizer observation requires a production seam; zero-cost gate
+  honored; the printer says "unavailable (failures remain in exit)"
+  instead of faking a journal. Review: Run 4 vs assembly 1 — the old
+  form's evidence proven CIRCULAR cold (advance clock by [10;20;40],
+  assert 70; a broken 10/20/30 policy still passes). F8: golden "where"
+  rated 3.
+- E13 (`Effect.async`, `0930c5c5`): the missing algebra leaf; six
+  guarantees × both substrates; atomic linearization; atomic `Resolved`
+  payload (executor's honest correction of its sealed re-await guess).
+  Review found the jsoo retention leak (MEDIUM) — fixed pre-merge
+  (removable subscriptions), same oracle re-closed. First full run under
+  the V-DX-AMEND-3 review model.
+- E14 (`Eta.Promise`, `6eb4417e`): 3 vals, 17-line mli, 70-line
+  implementation; first-commit ordering; correctness review CORRECT with
+  a full attack list and **zero rework rounds**; prediction clean sweep —
+  the cleanest run of the programme. `Eta_test.Async` migration held
+  with evidence (eta_test is intentionally eio-flavored; `await` is
+  effectful).
+
+**What Phase D teaches (the durable laws).**
+1. **Contracts that promise cost must be measured, never asserted.** The
+   `option` representation made E20's fast path unimplementable as
+   written; the watchlist caught it; the control measurement re-planted
+   the goalposts in the right field. (Extends T5/T6 into performance.)
+2. **Static claims die at dynamic continuations — honest boundaries beat
+   total claims.** E12's manifest died where continuations build
+   operations; the API was promoted *with* its boundary (`<bind …>`,
+   documented property class); E11 printed "unavailable" rather than
+   faking a journal. A boundary stated in the mli is a feature; a total
+   claim that fails silently is a bug.
+3. **Fiber-local scoped semantics is a real general substrate — and only
+   as good as its fences.** E19 proved the pattern (inherit/restore/
+   innermost/isolated); E20 composed on it; the retro found the Expert
+   bypass; E19b closed it via call-time selectors. Every new escape
+   hatch must name its fence at birth.
+4. **Two-substrate contracts converge when the mechanism is shared.**
+   E13/E14 each shipped ONE implementation over `Runtime_contract` — no
+   backend branches, no polyfills — and the residual bugs were substrate
+   hygiene (jsoo retention), caught by review, fixed pre-merge. The
+   both-substrates gate (T10) earns its keep.
+5. **Small surfaces with hard guarantees beat big surfaces.** E14: 3
+   vals, zero rework. E13: 1 val, six guarantees, one rework. The phase's
+   complexity lives in the runtime, not the API — the mission statement.
+
+**Wrong predictions and lessons.**
+- Orchestrator: E26 ratings 4–5 → 2 (scope misread — the call site can't
+  carry scope, same class as F4); E19 "clock does not exist" (pre-existed
+  sleep-only — grep-pattern miss, census was +1 method); E20 "noise-level
+  fast path" (**the phase's most important miss** — a cost-as-contract
+  claim I sealed believing implementable); E12 "manifest kill gate NOT
+  fired" (**fired** — I over-trusted static claims the same way the
+  manifest did); E11 `finalizer_events` lands → killed on the seam;
+  W6 line-count win mispriced (the real win was evidence soundness);
+  E13 none material; E14 clean sweep. Pattern of the phase: I
+  under-price *mechanism-revealing* evidence (allocation, static/dynamic
+  boundary, scope misreading) and over-trust contracts that assert what
+  they cannot enforce.
+- Executors: E20's executor recommended against its own branch; E12's
+  shared the manifest miss; E19's missed its W6-reduction seal (40% →
+  22.6%); otherwise accurate, honestly scored.
+- The plan: E20's fast-path promise was unimplementable as written (the
+  one-pager's own cost claim was the defect — process caught it); E12's
+  manifest gate pre-registered the right kill; E13/E14 one-pagers were
+  exact. Process over prophet, again.
+
+**Rubber-stamp audit (§4.5.3).** Phase D kills/holds: E20 option-repr
+contract (held → redesigned on measurement), E12 manifest role (killed),
+E11 `finalizer_events` (killed), `Eta_test.Async` migration (held),
+retro verdicts in-phase: E19 + E20/E12 initial should-not-have-merged
+(all resolved fix-forward). The phase's biggest win (E20b) exists
+BECAUSE a contract failed on evidence. Not rubber-stamping.
+
+**Protocol-compliance self-audit.** Predictions dual-sealed for all
+seven + E20b/E19b/E7b, commit-verified. Branch discipline: three early
+violations (V-DX-E12-001a/002a, E11-001a), root-fixed with the
+temp-worktree rule — zero since. Review protocol changed mid-phase
+(V-DX-AMEND-3): snippet theater retired; PR-style correctness reviews +
+the full retro (V-DX-RETRO) — E13/E14 ran fully under the new model and
+showed the difference (one MEDIUM found pre-merge; one clean CORRECT).
+Master-stays-green held through every merge.
+
+**Plan adjustments adopted for Phase E.** (1) **E24b** (hook ownership:
+policy vs driver) — context complete (E19/E20 machinery + E13/E14
+contract-promise semantics); scheduled in the Phase E queue after E22.
+(2) **E17 entry gate**: E12's killed-manifest golden IS the registered
+evidence that static preflight cannot see dynamic-continuation bugs;
+whether those are "real integration bugs" justifying phantom rows is
+E17's measurement, decided at its gate. (3) Retry cause-alignment
+(registered at E24's oracle consultation) — small standalone, after
+E24b. (4) New F-items: F6 (fresh scope misread — watch), F7 (scoped-
+stage active cost — runtime-instrument territory), F8 (golden "where").
+
+**Spot-check list (promotes resting on [agent-sim] evidence).** All
+seven Phase D promotes carry the flag — but note the retro series
+(V-DX-RETRO) already gave every pre-E13 case a fresh PR-style review,
+and E13/E14 had adversarial correctness reviews by design. Recommended
+first reads: E19's mli (the flagship contract + E19b's fences), E20b's
+watchlist bench row (the control measurement), E12's killed-manifest
+golden (the honest boundary), E11's circular-evidence catch.
+
+**Phase E queue (final).** E22 (law-property policy) → E24b (hook
+ownership decision) → retry cause-alignment → E15 (interruptible) →
+E16 (Reader race) → E21 (resumable probe) → E17 (gated; evidence
+registered) → E18 (simulation). Master green at `15a498ca`.
