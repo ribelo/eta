@@ -12,8 +12,33 @@ Guiding star: *`Effect` is `Result` with concurrency and spans — `map`/
 channels.* Every conclusion here is judged by whether it moved Eta toward
 that sentence.
 
-**Status:** Phases A–C complete (A: 3 promoted · B: 4 promoted, 2 killed ·
-C: 3 promoted, 2 held). Phase D: E26, E19, E20, E12 promoted.
+**Status:** Phases A–D complete (A: 3 promoted · B: 4 promoted, 2 killed ·
+C: 3 promoted, 2 held · D: 7 promoted, 2 scoped kills, 1 hold-then-redesign).
+
+## Phase D synthesis (2026-07-22)
+
+The runtime & model phase delivered the scoped-semantics substrate and the
+two substrate-bridging leaves. Its durable laws:
+
+1. **Cost contracts are measured, never asserted** — E20's
+   allocation-free fast path was unimplementable as written; the watchlist
+   caught it, `Keep|Drop|Replace` made it true by construction, and a
+   control measurement showed the residual is the shared scoped-stage
+   machinery, not the transform.
+2. **Honest boundaries beat total claims** — E12's audit API states where
+   static preflight dies (dynamic continuations); E11's printer says
+   "unavailable" instead of faking a journal. A stated boundary is a
+   feature.
+3. **A scoped-semantics substrate is only as good as its fences** — E19
+   proved fiber-local override semantics; the retro found the Expert
+   bypass; E19b closed it with call-time selectors.
+4. **Two-substrate contracts converge on shared mechanisms** — E13/E14
+   shipped one implementation each over `Runtime_contract`, no backend
+   branches, no polyfills.
+5. **Small surfaces with hard guarantees** — E14: 3 vals, 17-line mli,
+   zero rework rounds. Complexity lives in the runtime, not the API.
+
+Full evidence: V-DX-PHASE-D in the journal.
 
 ## E12 — `Effect.audit` / `Effect.describe` (promoted 2026-07-21; manifest role killed)
 
