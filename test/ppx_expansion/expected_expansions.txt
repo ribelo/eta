@@ -88,8 +88,11 @@ include
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
 ===== h_override.ml =====
-let pp_string fmt value = Format.fprintf fmt "quoted(%s)" value
-type err = [ `Custom of string [@eta.render pp_string]][@@deriving eta_error]
+type payload = {
+  code: int }
+let pp_payload fmt payload = Format.fprintf fmt "payload(%d)" payload.code
+type err = [ `Custom of payload [@eta.render pp_payload]][@@deriving
+                                                           eta_error]
 include
   struct
     let _ = fun (_ : err) -> ()
@@ -97,7 +100,7 @@ include
       fun __eta_fmt__001_ __eta_error__002_ ->
         match __eta_error__002_ with
         | `Custom __eta_value__003_ ->
-            Format.fprintf __eta_fmt__001_ "custom:%a" pp_string
+            Format.fprintf __eta_fmt__001_ "custom:%a" pp_payload
               __eta_value__003_
     let _ = pp_err
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
@@ -118,3 +121,15 @@ let _ =
   Eta.Effect.fn __POS__ __FUNCTION__
     (Eta.Effect.named "db.find"
        (Eta.Effect.sync_result (fun () -> Db.find db id)))
+===== a_missing_override.ml (rejected) =====
+[%%ocaml.error
+  "eta_error: payload of tag `Custom in type err is unsupported; supported built-ins are string, int, int64, float, and bool; add [@eta.render My_type.pp] to this tag or write pp_err manually"]
+type payload = {
+  code: int }
+type err = [ `Custom of payload ][@@deriving eta_error]
+File "rejections/a_missing_override.ml", line 3, characters 24-31:
+3 | type err = [ `Custom of payload ] [@@deriving eta_error]
+                            ^^^^^^^
+Error: eta_error: payload of tag `Custom in type err is unsupported;
+       supported built-ins are string, int, int64, float, and bool; add
+       [@eta.render My_type.pp] to this tag or write pp_err manually

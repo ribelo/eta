@@ -1,7 +1,5 @@
 open Eta
 
-type error = [ `Impossible ] [@@deriving eta_error]
-
 let render_send = function
   | `Sent -> "sent"
   | `Full -> "full"
@@ -68,6 +66,6 @@ let () =
       | _ ->
           Format.eprintf "channel probe produced unexpected state@.";
           exit 1)
-  | Exit.Error cause ->
-      Format.eprintf "channel probe failed: %a@." (Cause.pp pp_error) cause;
+  | Exit.Error _ ->
+      Format.eprintf "channel probe failed@.";
       exit 1

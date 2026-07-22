@@ -1,5 +1,7 @@
-let pp_string fmt value = Format.fprintf fmt "quoted(%s)" value
+type payload = { code : int }
+
+let pp_payload fmt payload = Format.fprintf fmt "payload(%d)" payload.code
 
 type err =
-  [ `Custom of string [@eta.render pp_string] ]
+  [ `Custom of payload [@eta.render pp_payload] ]
 [@@deriving eta_error]
