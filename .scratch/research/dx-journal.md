@@ -2914,3 +2914,48 @@ guarantee: canceler-uninterruptibility under the CPS jsoo scheduler — if
 anything holds, it is that, per the one-pager's both-substrates gate. Kill
 risk low. Gates: native trio green; mainline jsoo suite green with the new
 `async` tests on both backends.
+
+---
+
+## V-DX-E14-001 — 2026-07-22 — research/dx-e14-eta-promise — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E14-002. Entry gate:
+**met** — E13 promoted (the second-substrate pull for a one-shot cell).
+
+**Current facts (measured).** `Runtime_contract` already owns the hard
+semantics: `create_promise`/`resolve_promise`/`await_promise` with
+cross-domain wake discipline and, verbatim, "cancellation of an awaiting
+fiber must not make later resolution fail; resolving after a waiter has
+been cancelled still succeeds and leaves the promise settled". jsoo has
+E13's removable subscriptions (waiter-removal machinery). Leakage:
+`README.md` Eio-primitives table points "one-shot signal or shared result"
+at `Eio.Promise`; `Eta_test.Async.promise = 'a Eio.Promise.t` (public test
+API pinned to native); ~15 native test/example sites (fine, native-only).
+
+**Design predictions.**
+- `Eta.Promise` is a thin Eta-level wrapper over the contract promise:
+  pure `create`, `await` as an Effect leaf, `resolve` taking an
+  `('a, 'err) Exit.t` and returning `bool` (false on repeat).
+- Cancellation-safe `await` comes from the contract guarantee (native) and
+  E13's removable subscriptions (jsoo) — cancelled waiter never consumes
+  the resolution; remaining waiters still wake.
+- Scope/boundary close interrupts remaining awaiters via the ordinary
+  scope/cancellation path — no new machinery, documented.
+- Edge to specify: `resolve` after scope close / on an
+  interrupted-awaiter promise still succeeds (contract line: "leaves the
+  promise settled").
+
+**Review (predicted).** The jsoo fiber-coordination task (impossible today
+without `Expert`) becomes ~10 lines; rated ≥ 4 vs. the Expert version.
+Census: concurrency cluster +1 module (3 vals). Footguns +0.
+
+**Migration (predicted).** README table row changes to `Eta.Promise` with
+the fence note ("`Eio.Promise` remains right for Eio-only code");
+`Eta_test.Async` migration assessed with a documented decision (migrate if
+compatible with the jsoo test track; eta_test is native-flavored so hold
+is possible). Native test files keep `Eio.Promise` — out of scope.
+
+**Outcome (predicted).** Promote. Risk LOW-MED: the substrate semantics
+were proven by E13; the new surface is 3 vals. Kill gate (backends cannot
+share cancel-and-close semantics) does not fire — the contract layer
+already specifies them.
