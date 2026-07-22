@@ -276,3 +276,72 @@ nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --f
 
 Recommendation: promote the policy and initial suite. Keep FG-E22-001 through
 FG-E22-005 visible until the bootstrap grows into a complete prose census.
+
+### V-DX-E22-010 — Follow-up 1 policy-integrity review
+
+Status: FIX-FORWARD.
+
+A second independent review found six promotion blockers. The old 22-row table
+mixed equations absent from prose with mli-stated contracts and deferred obvious
+normative claims. Schedule monotonicity accepted an empty/one-element prefix;
+clock restoration accepted any value except the override; algebraic equality
+discarded fiber census; concurrency ordering never proved out-of-order
+completion; and the report misstated the generator and exit-kind class.
+
+The census was rebuilt rather than relabeled. Monad/error equations were added
+as short normative `effect.mli` prose. `review/LAWS.md` now has separate
+mli-stated and model/prose-pending sections, one claim per row, exact source
+spans, and exact property names: 73 mli claims plus two schedule model claims.
+The sweep added direct properties for `all`, `all_settled`, map-par fail-fast and
+bounds, cleanup composition, scope exits/nesting, Channel FIFO/cancellation,
+Queue shutdown state/wakeups, Semaphore FIFO/brackets/abort, nested capability
+overrides, log pipeline/Drop order, and existing schedule-driver prose. The
+suite now has 53 unique named properties.
+
+The direct schedule vacuity is preserved in `redteam/vacuous-property.md`: an
+early `Done` previously produced `[]`, for which monotonicity was trivially true.
+The live property now requires the exact requested prefix length first. General
+equivalence rejects either outcome unless its census is `Some []`. Clock
+restoration compares exact outer time and log timestamp (zero, or one after the
+driven timeout). `par` and `map_par` execute and observe both completion
+directions before checking input-ordered results.
+
+Generator correction: the algebraic class has four base leaves and six
+recursive forms after making `Delay` a genuine recursive wrapper. It has no
+defect or owned-cancellation leaves; separate lifecycle matrices cover success,
+typed failure, defect, and cancellation.
+
+Footgun re-triage: FG-E22-002 through FG-E22-005 are closed by direct census
+rows/properties. FG-E22-001 remains open and explicit because monotone schedule
+domains and `recurs` count are executable model laws but not yet normative
+schedule prose. FG-E22-006 tracks broader normative-prose migration outside the
+review-target clusters rather than pretending this bounded follow-up exhausted
+every public module.
+
+### V-DX-E22-011 — Follow-up review and gates
+
+Status: ACCEPT / PROMOTE.
+
+Strict independent review initially held the follow-up on three residual census
+defects: `bind_error` combined several claims without interruption/finalizer
+evidence, Queue shutdown idempotence lacked a row/direct state assertion, and
+the lexical bracket cited cleanup-failure composition without exercising an
+actual bracket. The suite added separate first-typed/once and uncatchable-cause
+properties, repeated-shutdown state/counter/reason equality, and actual
+`with_resource`/`acquire_use_release` finalizer/suppression properties. The
+census now resolves 73 mli-stated claim rows plus two model rows to 53 unique
+properties. Re-review returned **READY** with no remaining must-fix issue.
+
+All follow-up gates passed:
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+```
+
+The full native law run executes 53 named properties × 50 deterministic inputs
+= 2,650 generated qcheck inputs. Recommendation remains PROMOTE, with
+FG-E22-001 and FG-E22-006 explicitly open rather than laundered as coverage.

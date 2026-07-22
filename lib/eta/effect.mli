@@ -147,7 +147,12 @@ val die_message : string -> ('a, 'err) t
 
 val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
 (** Transform the success value of an effect. In application code, the mapping
-    operator from {!Syntax} is usually the more readable spelling. *)
+    operator from {!Syntax} is usually the more readable spelling.
+
+    For total pure functions, [map] obeys identity and composition under Eta's
+    observable exit and event behavior:
+    [map Fun.id eff = eff], and
+    [map f (map g eff) = map (fun value -> f (g value)) eff]. *)
 
 val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
 (** Primitive dependent sequencing.
@@ -155,7 +160,12 @@ val bind : ('a -> ('b, 'err) t) -> ('a, 'err) t -> ('b, 'err) t
     This is the operation behind the sequencing operator from {!Syntax}. Prefer
     syntax operators in
     user-facing workflows; use [bind] directly for combinators, generated code,
-    or code where pipeline style is materially clearer. *)
+    or code where pipeline style is materially clearer.
+
+    For total continuations, [pure] and [bind] obey left identity, right
+    identity, and associativity under Eta's observable exit and event behavior:
+    [bind f (pure value) = f value], [bind pure eff = eff], and
+    [bind g (bind f eff) = bind (fun value -> bind g (f value)) eff]. *)
 
 val ( >>= ) : ('a, 'err) t -> ('a -> ('b, 'err) t) -> ('b, 'err) t
 (** Infix spelling of {!bind}. It is kept for advanced/library code; examples
@@ -241,7 +251,10 @@ val bind_error :
     If any uncatchable defect, interruption, or finalizer diagnostic remains,
     the handler is not invoked and the eff stays failed with those diagnostics.
     If only typed failures remain, the handler runs once with the first typed
-    failure in cause order. Use [all_settled] when every branch outcome matters. *)
+    failure in cause order. Use [all_settled] when every branch outcome matters.
+
+    Left identity holds for the typed channel:
+    [bind_error handler (fail error) = handler error]. *)
 
 val catch_some :
   ('err -> ('a, 'err) t option) -> ('a, 'err) t -> ('a, 'err) t
@@ -262,7 +275,11 @@ val fold :
     [fold ~ok ~error eff] maps success with [ok] and catchable typed failure
     with [error], succeeding with the pure result. Defects, interruption, and
     finalizer diagnostics are not folded. If [ok] or [error] raises, the
-    exception is an unchecked defect. *)
+    exception is an unchecked defect.
+
+    For total pure functions it is coherent with [map] and [bind_error]:
+    [fold ~ok ~error eff =
+     bind_error (fun err -> pure (error err)) (map ok eff)]. *)
 
 val or_else : (unit -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Recover from any typed failure with a lazy fallback effect.

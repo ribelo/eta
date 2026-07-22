@@ -185,12 +185,25 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
-Every law stated in an `.mli` must have a named qcheck property. When adding or
-changing law-bearing prose, add the property to `test/laws/law_properties.ml`
-and update the one-line-per-law census in
-`.scratch/research/dx/e22/review/LAWS.md` in the same change. State the
-observation boundary and generated input class explicitly; a fixed example or a
-property that compares one expression with itself does not satisfy this policy.
+Every law stated in an `.mli` must have a named qcheck property. **Law-bearing
+prose** is any normative behavioral or algebraic claim about operation
+equivalence, result/error propagation, ordering, cardinality, lifecycle,
+cancellation, idempotence, bounds/fairness, dynamic-scope restoration/isolation,
+or observer/interceptor sequencing. Usage advice and examples are not laws
+unless they make such a claim.
+
+When adding or changing law-bearing prose, update
+`.scratch/research/dx/e22/review/LAWS.md` and
+`test/laws/law_properties.ml` in the same change. The census separates
+`.mli`-stated laws from prose-pending model laws; each `.mli` law gets one row per
+claim, an exact normative source span, and an exact property name. A property
+must state its observation boundary and generated class, execute every side of
+an equation, and prove the discriminating coverage its claim needs (for example
+exact counts, all documented exits/branches, or an observed out-of-order
+completion). Effects with no legitimate background work must also finish with
+an available empty fiber census. Fixed examples, self-comparison, truncated
+prefixes, or generated inputs that never reach the distinguishing case do not
+satisfy this policy; failures must print the counterexample.
 
 The HTTP interop, adversarial, conformance, and benchmark suite lives under
 `http-testsuite/` and is reachable via `dune build @interop`,

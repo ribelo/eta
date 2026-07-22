@@ -2,60 +2,55 @@
 
 ## Recommendation
 
-**PROMOTE the policy and initial 22-law suite.** The bootstrap inventory is
-covered by deterministic qcheck properties on both supported native compilers,
-qcheck remains test-only, and the repository gates pass. Five review-discovered
-inventory/documentation gaps are tracked as follow-up footguns rather than
-hidden by the bootstrap count.
+**PROMOTE the policy and mli-anchored suite.** The
+census now separates 73 exact mli-stated claims from two prose-pending schedule
+model claims. Fifty-three deterministic qcheck properties cover those claims;
+qcheck remains test-only. Four prior footguns are closed; the schedule-prose gap
+and broader future census expansion stay explicit rather than being counted as
+covered provenance.
 
 ## Observation equivalence
 
 Algebraic laws compare fresh `Eta_test.Run.run` outcomes made with the same
 explicit seed. Equality is diagnostically normalized `Exit.t` plus the complete
 ordered `Run.event` stream. Duplicate category projections (`logs`, `spans`,
-`metrics`, `sleeps`) and the fiber-census field are removed from general
-equality; cancellation laws instead require the census to be available and
-empty as a side-condition.
+`metrics`, `sleeps`) are removed from normalized equality only after both
+outcomes prove `pending_fibers = Some []`; the algebraic class has no legitimate
+background work.
 
-The generated class is finite depth-three immutable blueprints from five base
-leaves and five recursive forms, total printable enumerated continuations,
-bounded concurrency/primitive traces, valid schedule parameters, and explicit
-owned cancellation of any `never`. Arbitrary `sync`, external I/O, shared
-mutation, unbounded programs, and scheduler deadlines are excluded.
+The algebraic generated class is finite depth-three immutable blueprints from
+four base leaves (`Pure`, `Fail`, `Log`, `Yield`) and six recursive forms (`Map`,
+`Bind`, `Bind_error`, `Fold`, `Finally`, `Delay`), plus total printable
+enumerated continuations. It contains no defect or owned-cancellation leaf;
+separate lifecycle matrices cover success, typed failure, defect, and
+cancellation. Concurrency/primitive traces and schedule parameters are bounded.
+Arbitrary `sync`, external I/O, shared mutation, unbounded programs, and
+scheduler deadlines are excluded.
 
 ## Inventory coverage
 
-| # | Law | Qcheck property | Status |
-| ---: | --- | --- | --- |
-| 1 | map identity | `map identity` | PASS |
-| 2 | map composition | `map composition` | PASS |
-| 3 | bind associativity | `bind associativity` | PASS |
-| 4 | bind left identity | `pure/bind left identity` | PASS |
-| 5 | bind right identity | `pure/bind right identity` | PASS |
-| 6 | bind_error left identity | `bind_error left identity` | PASS |
-| 7 | fold coherence | `fold coherence with map/bind_error` | PASS |
-| 8 | par pair order | `par pair input order` | PASS |
-| 9 | par fail-fast | `par fail-fast cancels pending sibling and waits for observable finalizer` | PASS |
-| 10 | map_par order | `map_par input order across interleavings` | PASS |
-| 11 | race loser cancellation | `race pending-loser cancellation` | PASS |
-| 12 | finally exactly once/all exits | `finally exactly once across success/typed-failure/defect/cancellation exit kinds` | PASS |
-| 13 | scope LIFO | `scope reverse acquisition/release order` | PASS |
-| 14 | with_resource release/all exits | `with_resource release across success/typed-failure/defect/cancellation exit kinds` | PASS |
-| 15 | Channel close fence | `Channel graceful close fence/drain/reason ordering` | PASS |
-| 16 | Semaphore cancellation safety | `Semaphore waiting-cancellation safety/no permit consumption` | PASS |
-| 17 | Queue close/error ordering | `Queue graceful close/error ordering` | PASS |
-| 18 | schedule monotone delays | `monotone delay sequences for valid exponential/fibonacci/linear schedules` | PASS |
-| 19 | recurs step count | `recurs n step count` | PASS |
-| 20 | override restoration/all exits | `dynamic override restoration across each exit kind` | PASS |
-| 21 | override sibling isolation | `override sibling isolation under par` | PASS |
-| 22 | log pipeline order | `log pipeline order filter -> attrs -> transform -> sink` | PASS |
+`review/LAWS.md` is the authoritative one-claim-per-row table: exact normative
+span → exact qcheck property → provenance class. Summary:
 
-`review/LAWS.md` is the tracked one-line-per-law source/census document. Actual
-split: Effect 17, Schedule 2, Channel 1, Queue 1, Semaphore 1; total 22.
+| Mli | Mli-stated claims | Prose-pending model claims | Distinct properties |
+| --- | ---: | ---: | ---: |
+| `effect.mli` | 48 | 0 | 34 |
+| `schedule.mli` | 6 | 2 | 7 |
+| `channel.mli` | 7 | 0 | 3 |
+| `queue.mli` | 7 | 0 | 4 |
+| `semaphore.mli` | 5 | 0 | 5 |
+| **Total** | **73** | **2** | **53** |
+
+The seven algebraic/error equations were promoted into short normative
+`effect.mli` prose. The two schedule bootstrap laws remain executable but are
+explicitly model/prose-pending because their valid public domains need separate
+review. All 53 properties pass 50 deterministic generated inputs each.
 
 ## Refinements and counterexamples
 
-No production mli wording proved false, so no mli was edited.
+No prior production mli wording proved false. `effect.mli` was edited only to
+state the previously prose-pending monad/error-channel equations that E22 already
+tested.
 
 - Fail-fast/loser cancellation is asserted after the combinator completes and
   cancellation-protected cleanup has emitted exactly once; no scheduler
@@ -71,11 +66,12 @@ No production mli wording proved false, so no mli was edited.
 - Upstream OCaml 5.4 rejected `effect` as a local binding keyword; renaming it
   `program` fixed test portability without changing a law.
 
-The schedule rows are bootstrap model laws requested by E22, but current
-`schedule.mli` declarations do not state their semantics in prose. This and four
-existing prose clusters omitted by the initial 22 are tracked as FG-E22-001
-through FG-E22-005 in `review/LAWS.md`. The sealed +0 footgun prediction was
-therefore wrong: actual tracked follow-up delta is **+5**.
+The schedule rows remain bootstrap model laws requested by E22 because current
+constructor declarations do not state those semantics. FG-E22-001 therefore
+remains open. FG-E22-002 through FG-E22-005 are closed by direct properties for
+`all`/`all_settled`, scope exits/nesting, Channel sender cancellation, and
+Semaphore bracket/abort semantics. FG-E22-006 explicitly tracks broader
+normative-prose migration outside the review-target clusters.
 
 ## Red team and review
 
@@ -98,6 +94,18 @@ tracer are matrixed; Channel waiters, all Queue modes, and every valid generated
 Semaphore request are exercised. Independent re-review returned **READY** with
 no remaining must-fix finding.
 
+Follow-up review then found six policy-integrity failures. The direct truncated-
+schedule vacuity is documented in `redteam/vacuous-property.md`; exact schedule
+length, exact outer-clock values, empty algebraic census, and both observable
+completion directions are now hard assertions. The census was rebuilt from
+normative spans and expanded through concurrency, cleanup, primitive, nested
+override, interceptor, and schedule-driver claims rather than relabeling the
+old 22 rows.
+
+Strict re-review held once more on combined `bind_error` claims, Queue shutdown
+idempotence, and bracket cleanup-failure composition. Separate direct properties
+and one-claim rows closed all three; final independent verdict: **READY**.
+
 ## Dependency boundary
 
 `qcheck` appears only in `test/laws/dune` and Nix development/test provisioning.
@@ -110,7 +118,7 @@ OxCaml and mainline shells expose qcheck 0.91.
 | Command | Result |
 | --- | --- |
 | `nix develop -c dune build @install` | PASS |
-| `nix develop -c dune runtest --force` | PASS (includes 22 laws / 1,100 qcheck inputs) |
+| `nix develop -c dune runtest --force` | PASS (53 properties / 2,650 generated qcheck inputs) |
 | `nix develop -c eta-oxcaml-test-shipped` | PASS (explicitly includes `test/laws`) |
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline @install` | PASS |
 | `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force` | PASS, native OCaml 5.4 |

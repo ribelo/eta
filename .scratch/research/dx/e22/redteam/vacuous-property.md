@@ -33,3 +33,25 @@ There is no honest generic runtime detector for semantic vacuity: a deliberately
 malicious author can disguise `true`. The final gate is readable one-line law
 inventory plus maintainer review, not a claim that qcheck itself proves a test is
 meaningful.
+
+## Attack: truncated schedule prefix
+
+The original monotonic-delay property accepted an early [`None`] from
+`Schedule.next` and then checked:
+
+```ocaml
+monotone [] = true
+monotone [ only_delay ] = true
+```
+
+A regression that made every schedule terminate immediately therefore passed
+all generated cases without producing a delay. This is direct semantic vacuity,
+not merely weak generation.
+
+## Verdict: REJECTED BY THE LIVE ASSERTION
+
+The live property now checks `List.length delays = requested_length` before
+monotonicity. For the attack example, `requested_length = 3` and `delays = []`,
+so the coverage predicate is `0 = 3`, which is false; monotonicity is never
+accepted as evidence. Every valid generated schedule must produce the complete
+requested `Continue` prefix before its values are compared.
