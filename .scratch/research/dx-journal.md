@@ -2842,7 +2842,7 @@ verified by the orchestrator before any fix.
 | E4 | promote-with-reservations | **pp_compact spoofable** (leaf text counterfeits composites); self-referential snapshots; "Total" claim false | fixed `42ac4cd8` |
 | E5 | promote-with-reservations | CI-gating overstated; compiler unpinned; Pubsub/Pool unprobed; wide-table fix incomplete; promote hint broken; stray file | fixed `2b7d6315` |
 | E6 | **keep-killed** | parallel recipe poorly surfaced; Expert bridge unlabeled | docs `dcfc7c44` |
-| E7 | **should-not-have-merged** (as shipped) | **no signature generator** (P1, probe-verified); escape hatch untested; contract overstated; slop examples | **E7b staged** |
+| E7 | should-not-have-merged → **resolved** | no signature generator (P1, probe-verified); escape hatch untested; contract overstated; slop examples | **E7b merged `d4edcafa`** — sig generator + all findings fixed |
 | E8 | promote-with-reservations | slop sugar conversions ×3; nonstring negative test malformed | fixed `eb915f68` |
 | E9 | **hold-confirmed** | none | stands |
 | E9b | promote-with-reservations | "never correctness" overreach (hang risk); right side invisible to introspection; and+ laws untested; api-dx summary wrong | fixed `29f1a9c7` |
@@ -2855,8 +2855,8 @@ verified by the orchestrator before any fix.
 
 **Tally:** 1 clean promote · 12 promote-with-reservations (11 resolved by
 fix commits + sync_option accepted by human decision) · 4 initial
-should-not-have-merged (E7→E7b, E19→E19b in flight; E20/E12 fixed) ·
-2 keep-killed · 2 hold-confirmed. **14 fix commits** landed from the
+should-not-have-merged (E7 resolved via E7b `d4edcafa`; E19→E19b in
+flight; E20/E12 fixed) · 2 keep-killed · 2 hold-confirmed. **14 fix commits** landed from the
 series plus F3's rename.
 
 **Meta-finding (the user's vindication).** The retired snippet-theater
