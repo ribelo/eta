@@ -2871,3 +2871,46 @@ state *as shipped*, not the experiment's value — each became a fix-forward
 rather than a revert, because the underlying designs were sound and the
 defects were local. The one downgrade (E20) shows the retro series is not
 rubber-stamping itself either.
+
+---
+
+## V-DX-E13-001 — 2026-07-19 — research/dx-e13-effect-async — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E13-002.
+
+**Current facts (measured).** No public constructor for callback-shaped
+effects exists; application code must drop to `Effect.Expert.make`
+(53 call lines repo-wide — all lib uses are runtime-package shapes needing
+contract services/scopes/instrumentation, none are migration candidates for
+a public `async`). The runtime-internal cancel-registration machinery
+exists (`eta_signal_timer.run_cancellable` via `Runtime_contract.cancel_sub`)
+but is Expert-only. jsoo runtime: `lib/jsoo/eta_jsoo.ml` (667 lines),
+CPS-based.
+
+**Design predictions.**
+- No-lost-wakeup + sync-resolve-no-deadlock force a *queued-resume* design:
+  a resume call during registration is recorded and delivered only after
+  the fiber is fully parked. A direct continuation call from `register`
+  deadlocks or re-enters.
+- One-shot resolution is enforced by a resolved cell (first `Exit.t` wins;
+  later calls dropped, documented).
+- Canceler runs at most once, uninterruptibly, only on interruption, and
+  only while unresolved; after resolution it is dead.
+- `register` raising → `Cause.Die` through the ordinary capture path.
+
+**Teach-back (predicted).** Canceler contract answered correctly from the
+mli alone: "runs at most once, uninterruptibly, on interruption only,
+never after a resolution."
+
+**Review (predicted).** jsoo `addEventListener` wrap via `async` rated ≥ 4;
+the `Expert.make` version rated ≥ 3 (contract + services boilerplate
+visible). Census: construct cluster +1 (`async`); Expert surface unchanged;
+zero lib migrations (Expert uses are service/scope shapes, out of scope).
+Footguns: +0 (documented edges: one-shot resume; canceler must not block
+indefinitely).
+
+**Outcome (predicted).** Promote with both substrates green. Highest-risk
+guarantee: canceler-uninterruptibility under the CPS jsoo scheduler — if
+anything holds, it is that, per the one-pager's both-substrates gate. Kill
+risk low. Gates: native trio green; mainline jsoo suite green with the new
+`async` tests on both backends.
