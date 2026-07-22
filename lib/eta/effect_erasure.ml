@@ -9,3 +9,8 @@ let public_sync ~leaf_name ~footprint t sync_fn =
   effect_to_public
     (Effect_core.sync_frame ~leaf_name ~footprint (fun frame ->
            sync_fn frame.Effect_core.runtime.Runtime_core.contract t))
+
+let public_runtime ~leaf_name ~footprint t run =
+  effect_to_public
+    (Effect_core.make ~leaf_name ~footprint (fun frame ->
+         run frame.Effect_core.runtime.Runtime_core.contract t))

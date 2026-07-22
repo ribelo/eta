@@ -98,3 +98,116 @@ checked against its implementation, callers, and the jsoo test track.
 Kill if one shared implementation cannot make scope cancellation remove a
 waiter without consuming settlement on either backend, or if faithful `Exit.t`
 delivery requires backend-specific interpreters/polyfills.
+
+---
+
+# Implementation and evidence follow-up
+
+## Implemented slice
+
+The implementation matches candidate A and the sealed mechanism. `Promise.t`
+owns a `Sync_lock`-protected `Pending waiters | Settled exit` state. Every
+pending awaiter owns a promise/resolver pair from its active runtime contract.
+The winning resolution stores the full exit under the lock, detaches all
+waiters, then wakes them through their own contracts. `Effect_erasure` gained
+one internal `public_runtime` bridge so the public module can define custom core
+leaves without exposing or consuming `Effect.Expert`.
+
+Cancellation catches only runtime-recognized cancellation. It reacquires the
+cell lock: pending state removes that waiter and re-raises interruption; settled
+state returns the authoritative exit. A non-cancellation backend defect removes
+the pending waiter and propagates normally. No backend-specific Promise code,
+new runtime-contract field, polling loop, timer, daemon, fallback, or polyfill
+was added.
+
+## Focused evidence
+
+The six programs in `test/core_common/promise_shared.ml` are instantiated
+unchanged for native Eio and Node CPS:
+
+- `promise one-shot first exit preserved`;
+- `promise three waiters wake`;
+- `promise cancelled waiter does not consume`;
+- `promise boundary close interrupts waiter`;
+- `promise resolution before cancellation still delivers`;
+- `promise error and defect exit fidelity`.
+
+Both focused commands passed. The Node runner reached its `eta_jsoo ok`
+completion sentinel. The resolution-first race is a deterministic ordering, not
+simultaneous cross-domain stress; cancellation-first is forced by waiting for
+the cancelled waiter to complete before resolution. Together they prove both
+semantic winners on both substrates.
+
+Review fixtures `coord-old.ml` and `coord-new.ml` each type-check against the
+local built interface (the required hyphenated filenames produce only OCaml's
+bad-module-name warning). They are 14 and 16 lines respectively.
+
+## `Eta_test.Async` decision
+
+**HOLD; do not migrate.** `eta_test` deliberately links `eta_eio`, `eio`, and
+`eio_main`. Its `Async.fork_run`, `await`, `unresolved`, and `yield` are host-test
+helpers that fork and block synchronously outside an Eta effect evaluation.
+`Eta.Promise.await` is effectful and requires an active Eta runtime; substituting
+it would change those helper contracts rather than remove a transparent type
+leak. The jsoo Promise track instead links the portable shared suite directly
+and does not link `eta_test`. This matches the sealed prediction and the scope
+fence against migrating native-only tests.
+
+## Census and footguns
+
+| Census | Before | Predicted | Actual | Delta |
+| --- | ---: | ---: | ---: | ---: |
+| Root `lib/eta/*.mli` files | 28 | 29 | 29 | **+1** |
+| Concurrency/data cluster modules | 12 | 13 | 13 | **+1** |
+| `Promise` public values | 0 | 3 | 3 | **+3** |
+| New footguns | 0 | 0 | 0 | **+0** |
+
+The documented edges are not counted as new footguns: any holder may attempt
+resolution; losing attempts return `false`; cancellation and resolution follow
+first-commit ordering; and an owning cancellation boundary removes waiters but
+does not close the cell.
+
+## Red-team and review outcomes
+
+All four red-team attacks were refused with shared executable evidence; details
+are in `redteam/VERDICTS.md`. Independent API review first found three evidence
+clarity gaps. The MLI now states cancellation/resolution ordering,
+`coord-new.ml` checks its resolution result loudly, and the manifest records
+focused outcomes. Re-review ratings are 5/5 for call-site improvement, 5/5 for
+MLI cancellation clarity, and 5/5 for two-substrate confidence, matching or
+exceeding sealed predictions.
+
+Hypothesis ledger result:
+
+- **A. One public core wrapper: ACCEPTED.**
+- **B. Separate backend modules: DOMINATED.** Shared implementation and tests
+  passed unchanged.
+- **C. Keep applications on Expert/naked Eio: REJECTED for portable code.** The
+  review fixture exposes runtime context, scope, contract, resolver, fork, park,
+  and exit plumbing. Naked `Eio.Promise` remains accepted for Eio-only code.
+
+## Exact gates
+
+All required commands passed on the final implementation, with every mainline
+command using `_build-mainline`:
+
+```text
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/cache_jsoo test/signal_jsoo --force
+```
+
+The mainline test gate repeated the repository's pre-existing two
+integer-overflow warnings; all requested suites completed successfully.
+
+## Deviations and remaining uncertainty
+
+No contract or scope deviation. The checkout was initially registered by Git at
+`/tmp/Eta-dx-e14` while the assigned path contained only `objective.md`; it was
+moved with `git worktree move` to the objective's required path before changes.
+The suite does not claim simultaneous cross-domain cancellation stress because
+contract cancellation is owner-domain-only and jsoo is single-domain. Nor does
+the public MLI claim cross-runtime/domain sharing. The linearized
+cancellation-first and resolution-first orders are the portable proof.

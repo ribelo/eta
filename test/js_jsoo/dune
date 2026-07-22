@@ -3,7 +3,12 @@
  (enabled_if
   (<> %{ocaml_version} 5.2.0+ox))
  (modes js)
- (libraries eta eta_jsoo eta_effect_async_shared_tests js_of_ocaml)
+ (libraries
+  eta
+  eta_jsoo
+  eta_effect_async_shared_tests
+  eta_promise_shared_tests
+  js_of_ocaml)
  (js_of_ocaml
   (flags --effects=cps)))
 

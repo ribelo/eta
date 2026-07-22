@@ -28,6 +28,9 @@ Use ordinary OCaml at the boundary and lift into Eta deliberately:
 - `Effect.async` for one callback-shaped host operation such as an event,
   timer, promise, or C completion callback. Return its optional interruption
   canceler from registration; do not open-code runtime promises or cancellation.
+- `Eta.Promise` when multiple Eta fibers need to share one backend-neutral
+  one-shot `Exit.t`. It owns repeated-resolution visibility, broadcast wakeup,
+  and cancelled-waiter cleanup.
 - `Effect.flatten_result` for hand-rolled pipelines after any effect that
   succeeds with a `result` (not only the sync leaf).
 - `Effect.yield` when an Eta workflow should cooperatively yield to the active
@@ -75,6 +78,16 @@ hooks. If a wrapper only needs “register callback, optionally unregister on
 interruption,” touching `Expert.context` is the wrong boundary: use `async`.
 Neither API makes blocking registration safe; move blocking work to
 `Eta_blocking` instead.
+
+### One-shot coordination: `Promise`, `async`, or `Eio.Promise`?
+
+Use `Eta.Promise` for an Eta-owned one-shot result shared by fibers when the code
+must remain portable across native and js_of_ocaml runtimes. Use `Effect.async`
+to adapt one callback registration into one Eta effect; it owns the registration
+canceler, while `Promise` instead allows any holder to attempt resolution and
+wakes every waiter. Use `Eio.Promise` directly when the code and its lifetime are
+intentionally Eio-only. Do not wrap Eio-only local coordination merely to remove
+the Eio name; the portability fence is the reason for `Eta.Promise`.
 
 Use ordinary OCaml for application services:
 
