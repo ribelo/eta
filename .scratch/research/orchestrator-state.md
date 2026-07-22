@@ -6,9 +6,13 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
-- Done (Phase D, cont.): **E14 promoted** (`Eta.Promise`; CORRECT review,
-  zero rework rounds; Async hold-with-evidence). **Phase D complete.**
+- In flight: **E22 — law-property test policy (qcheck)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e22`
+  - Branch: `research/dx-e22-law-properties`
+  - Stage: being staged
+- Done: **Phases A–D complete.** Phase D synthesis V-DX-PHASE-D landed
+  (`e510aa3a`): 7 promotes, kills honored (E12 manifest, E11
+  finalizer_events, E20 option-repr), five durable laws.
 - Done (Phase D, cont.): **E13 promoted** (`async`; correctness-reviewed,
   jsoo retention leak found + fixed pre-merge; oracle-closed)
 - Done (Phase D): E26 promoted (`dfe5f904`) · E19 promoted (`42d6a4d2`,
@@ -35,7 +39,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **Phase D synthesis** (V-DX-PHASE-D) → Phase E (E22 flex, E15, E16, E21, E17 gated, E18) + registered backlog (E24b; retry cause-alignment; F-items)
+- Queue: E22 → **E24b** (hook ownership; context complete) → retry cause-alignment → E15 → E16 → E21 → E17 (gated; E12 evidence registered) → E18
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -62,4 +66,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-22 — E14 promoted; Phase D complete
+- Last update: 2026-07-22 — Phase D synthesis; staging E22
