@@ -257,6 +257,100 @@ let sync_frame ?leaf_name ?(footprint = no_footprint) f =
 let sync f = sync_frame (fun _frame -> f ())
 let yield = sync_frame (fun frame -> fiber_yield frame)
 
+type ('a, 'err) async_state =
+  | Async_pending
+  | Async_resolved of ('a, 'err) Exit.t
+  | Async_interrupt_claimed
+  | Async_closed
+
+let run_async_canceler frame canceler =
+  let outcome = ref None in
+  let raised = ref None in
+  (try
+     frame.runtime.contract.Runtime_contract.protect (fun () ->
+         outcome := Some (run_scope frame canceler))
+   with exn ->
+     match !outcome with
+     | Some _ when Runtime_core.is_cancellation frame.runtime.contract exn -> ()
+     | Some _ | None -> raised := Some exn);
+  let render cause = Cause.finalizer_of_cause (render_error frame) cause in
+  match (!raised, !outcome) with
+  | Some exn, _ ->
+      Some
+        (render
+           (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn))
+  | None, Some (Exit.Error cause) -> Some (render cause)
+  | None, Some (Exit.Ok ()) -> None
+  | None, None ->
+      invalid_arg "Effect.async: canceler protection returned no outcome"
+
+let async ~register =
+  make ~leaf_name:"Effect.async" ~footprint:concurrency_footprint @@ fun frame ->
+  let contract = frame.runtime.contract in
+  let promise, resolver = contract.Runtime_contract.create_promise () in
+  let state = Atomic.make Async_pending in
+  let resume exit =
+    if
+      Atomic.compare_and_set state Async_pending (Async_resolved exit)
+    then contract.Runtime_contract.resolve_promise resolver exit
+  in
+  let close () =
+    ignore (Atomic.compare_and_set state Async_pending Async_closed)
+  in
+  let on_interruption canceler exn =
+    if
+      Atomic.compare_and_set state Async_pending Async_interrupt_claimed
+    then
+      match canceler with
+      | None -> raise exn
+      | Some canceler -> (
+          match run_async_canceler frame canceler with
+          | None -> raise exn
+          | Some finalizer ->
+              let reason =
+                match Runtime_core.cancellation_reason contract exn with
+                | Some reason -> reason
+                | None -> assert false
+              in
+              error
+                (Cause.suppressed
+                   ~primary:(frame.interrupt_of_cancel reason)
+                   ~finalizer))
+    else
+      match Atomic.get state with
+      | Async_resolved exit -> exit
+      | Async_interrupt_claimed | Async_closed -> raise exn
+      | Async_pending -> assert false
+  in
+  let registered = ref None in
+  try
+    contract.Runtime_contract.cancel_sub @@ fun _cancel_context ->
+    let interrupted_during_register =
+      try
+        contract.Runtime_contract.protect (fun () ->
+            registered := Some (register resume));
+        None
+      with exn when Runtime_core.is_cancellation contract exn ->
+        let canceler = Option.join !registered in
+        Some (on_interruption canceler exn)
+    in
+    match interrupted_during_register with
+    | Some exit -> exit
+    | None ->
+        let canceler =
+          match !registered with
+          | Some canceler -> canceler
+          | None -> invalid_arg "Effect.async: register returned no outcome"
+        in
+        (try contract.Runtime_contract.await_promise promise with
+        | exn when Runtime_core.is_cancellation contract exn ->
+            on_interruption canceler exn)
+  with
+  | exn when Runtime_core.is_cancellation contract exn -> raise exn
+  | exn ->
+      close ();
+      exit_of_exn frame exn
+
 let never : 'a 'err. ('a, 'err) t =
   Custom
     {

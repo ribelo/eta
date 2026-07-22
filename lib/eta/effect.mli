@@ -113,15 +113,16 @@ val async :
 (** Bridge one callback registration into Eta. [register resume] runs once when
     interpreted. The first [resume exit] wins; later calls are dropped. It may
     resolve synchronously before [register] returns without deadlocking.
-    The optional returned effect is the canceler. Interruption claims it at most
-    once, runs it uninterruptibly on interruption only, and never runs it after
-    resolution wins. Interruption waits for it, so a canceler must not block
-    indefinitely; failures use Eta's protected-cleanup diagnostics.
-    An exception raised by [register] follows ordinary capture as {!Cause.Die}.
+    The optional returned effect is the canceler. If interruption wins while
+    pending, Eta runs it at most once and uninterruptibly; it never runs after
+    resolution wins. Interruption waits, so the canceler must terminate.
+    Failure is a finalizer diagnostic suppressed under the interruption.
+    An exception raised by [register] follows ordinary capture as {!Cause.Die}
+    and wins even if [resume] was called synchronously first.
     A runtime one-shot promise latches resolution before parking and queues a
     parked resume, so registration-to-parking wakeups cannot be lost.
-    On js_of_ocaml this is the same CPS-promise protocol; [register] must check
-    required host capabilities loudly. Eta never installs host polyfills. *)
+    On js_of_ocaml this is the same one-shot protocol under CPS; [register]
+    must loudly check required host capabilities. Eta installs no host polyfills. *)
 
 val yield : (unit, 'err) t
 (** Cooperatively yield the current Eta fiber to the active runtime backend.

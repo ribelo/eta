@@ -1,3 +1,9 @@
 (library
  (name eta_core_common_tests)
- (libraries eta eta_runtime_common_tests alcotest))
+ (modules (:standard \ effect_async_shared))
+ (libraries eta eta_effect_async_shared_tests eta_runtime_common_tests alcotest))
+
+(library
+ (name eta_effect_async_shared_tests)
+ (modules effect_async_shared)
+ (libraries eta))

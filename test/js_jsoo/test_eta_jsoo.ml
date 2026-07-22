@@ -13,6 +13,20 @@ let set_exit_code code =
 
 let fail message = failwith message
 let pp_err fmt _ = Format.pp_print_string fmt "<err>"
+let suite_completed = ref false
+
+let () =
+  let process = Unsafe.get Unsafe.global "process" in
+  Unsafe.meth_call process "on"
+    [|
+      Unsafe.inject (Js.string "beforeExit");
+      Unsafe.inject
+        (Js.wrap_callback (fun _code ->
+             if not !suite_completed then (
+               set_exit_code 1;
+               log "eta_jsoo failed: test chain did not reach completion")));
+    |]
+  |> ignore
 
 let finish done_ f value =
   try
@@ -397,6 +411,13 @@ let test_expert_clock_observes_scoped_override done_ =
               (Format.asprintf "expert scoped clock failed: %a"
                  (Eta.Cause.pp pp_err) cause)))
 
+module Async_shared =
+  Eta_effect_async_shared_tests.Effect_async_shared.Make (struct
+    let run = run
+    let complete ~done_ check = finish done_ (fun () -> check ()) ()
+    let fail = fail
+  end)
+
 let tests =
   [
     ("delay", test_delay);
@@ -416,9 +437,12 @@ let tests =
     ( "expert clock observes scoped override",
       test_expert_clock_observes_scoped_override );
   ]
+  @ Async_shared.tests
 
 let rec run_tests = function
-  | [] -> log "eta_jsoo ok"
+  | [] ->
+      suite_completed := true;
+      log "eta_jsoo ok"
   | (name, test) :: rest ->
       test (fun () ->
           log ("ok: " ^ name);
