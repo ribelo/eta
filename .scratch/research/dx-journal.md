@@ -3163,3 +3163,50 @@ golden (the honest boundary), E11's circular-evidence catch.
 ownership decision) → retry cause-alignment → E15 (interruptible) →
 E16 (Reader race) → E21 (resumable probe) → E17 (gated; evidence
 registered) → E18 (simulation). Master green at `15a498ca`.
+
+---
+
+## V-DX-E22-001 — 2026-07-22 — research/dx-e22-law-properties — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E22-002. (E22 runs first
+in Phase E per the plan's "any time after Phase A" flexibility.)
+
+**Current facts (measured).** qcheck is absent from the repo — a new
+test-only dependency (boundary: test packages only, never `eta` core;
+the Nix flake's package set must expose it — nixpkgs carries it; if the
+flake needs an addition, that is part of the work). E11's `Eta_test.Run`
+golden record + deterministic test runtime exist — the natural engine for
+running generated blueprints. E19/E20 are promoted, so their laws
+(override restore, sibling isolation, intercept order) are in the
+inventory per the one-pager.
+
+**Design predictions.**
+- The hard problem is the observation equivalence: laws hold "for all
+  generated effects" only modulo an observable equality (Exit +
+  ordered events via `Eta_test.Run`), never internals. Predict the
+  executor states it as exactly that, with determinism via seeded
+  test runtime.
+- Inventory size: ~20–25 laws across the one-pager's seven clusters
+  (monad-ish, error channel, concurrency, lifecycle, primitives,
+  schedules, E19/E20).
+- 1–2 laws will need refinement during implementation (a statement too
+  strong as first written — e.g. bind associativity under interruption,
+  or a schedule law that only holds modulo jitter seeding). Recorded
+  honestly; that IS the exercise paying off.
+- A real pre-existing violation found by the suite: low probability
+  (~15%) but non-zero — the concurrency/finalizer laws are the
+  candidates. If found, it becomes a named bug, not a papered-over
+  property.
+
+**Census/footguns (predicted).** No API change (test-only).
+Laws-per-mli becomes a tracked number: predict `effect.mli` ~15–20
+statable laws, `schedule.mli` ~3, channel/queue/semaphore ~4–6.
+Footguns +0; the policy paragraph lands in AGENTS.md.
+
+**Review (predicted).** Maintainer-grade: the law list reads like the
+model — the reviewer should reconstruct Eta's semantics from the
+inventory alone. Rating ≥ 4. Gaps found become footgun entries.
+
+**Outcome (predicted).** Promote when the initial inventory is covered
+and the policy paragraph lands. Risk low; the main threat is flake/
+dependency friction, not semantics.
