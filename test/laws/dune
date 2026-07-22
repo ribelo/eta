@@ -1,0 +1,6 @@
+(test
+ (name law_properties)
+ (libraries eta eta_test alcotest qcheck qcheck-core.runner)
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

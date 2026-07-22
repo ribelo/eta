@@ -185,6 +185,13 @@ changing runtime interpretation or typed failures.
 
 Run `nix develop -c dune runtest --force` before handing off changes.
 
+Every law stated in an `.mli` must have a named qcheck property. When adding or
+changing law-bearing prose, add the property to `test/laws/law_properties.ml`
+and update the one-line-per-law census in
+`.scratch/research/dx/e22/review/LAWS.md` in the same change. State the
+observation boundary and generated input class explicitly; a fixed example or a
+property that compares one expression with itself does not satisfy this policy.
+
 The HTTP interop, adversarial, conformance, and benchmark suite lives under
 `http-testsuite/` and is reachable via `dune build @interop`,
 `dune build @cve-regress`, `dune build @h2spec`, `dune build @http-bench`,

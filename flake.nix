@@ -240,6 +240,7 @@
                 opam pin add --kind=git "$package" "$eta_url" --no-action --yes
               done
 
+              opam install qcheck --yes
               opam install "''${package_args[@]}" --assume-depexts --yes
 
               echo "Eta packages installed into OPAM switch: $switch_name"
@@ -352,6 +353,7 @@
                 lib/ppx \
                 test/redacted_eio \
                 test/eta \
+                test/laws \
                 test/ai/core \
                 test/ai/anthropic \
                 test/ai/openai_compat \
@@ -386,6 +388,7 @@
                 drivers/eta_turso \
                 lib/stream \
                 lib/ppx \
+                test/laws \
                 test/ai/openai_codex \
                 test/ai/moonshot \
                 test/ai/kimi_coding \
@@ -605,6 +608,7 @@
               ocamlPackages.js_of_ocaml
               ocamlPackages.js_of_ocaml-ppx
               ocamlPackages.alcotest
+              ocamlPackages.qcheck
               ocamlPackages.angstrom
               ocamlPackages.base64
               ocamlPackages.bigstringaf
