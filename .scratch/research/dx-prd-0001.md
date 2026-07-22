@@ -1583,7 +1583,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E11 | Eta_test.run golden record | D | L | med | **promoted** (finalizer_events killed) 2026-07-21 | SC | research/dx-e11-test-run | V-DX-E11-001..002 |
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
-| E14 | Eta.Promise | D | M | med | proposed (hold-gated) | | | |
+| E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
 | E22 | Law-property policy | E (flex) | M | low | proposed | | | |
 | E15 | interruptible / restore | E | M | high | proposed | | | |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |

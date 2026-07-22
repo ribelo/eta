@@ -31,7 +31,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E11 | Eta_test.run golden record | D | L | med | **promoted** (finalizer_events killed) 2026-07-21 | SC | research/dx-e11-test-run | V-DX-E11-001..002 |
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
-| E14 | Eta.Promise | D | M | med | proposed (hold-gated) | | | |
+| E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
 | E22 | Law-property policy | E (flex) | M | low | proposed | | | |
 | E15 | interruptible / restore | E | M | high | proposed | | | |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
@@ -2959,3 +2959,53 @@ is possible). Native test files keep `Eio.Promise` — out of scope.
 were proven by E13; the new surface is 3 vals. Kill gate (backends cannot
 share cancel-and-close semantics) does not fire — the contract layer
 already specifies them.
+
+---
+
+## V-DX-E14-002 — 2026-07-22 — research/dx-e14-eta-promise — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge; mainline `_build-mainline` `@install` +
+`test/js_jsoo`/`test/cache_jsoo`/`test/signal_jsoo` green. Oracle
+independently ran the jsoo suite (all six Promise cases + the E13
+removable-subscription regression).
+
+**Contract.** `Eta.Promise` exactly as the one-pager: `create`/`await`/
+`resolve` with one-shot broadcast, cancellation-safe `await` (removed
+waiter never consumes; first-commit ordering under the cell lock),
+boundary-close interruption via ordinary cancellation, cell usable
+afterward, full `Exit.t` fidelity (typed failures and defects keep their
+cause). Mechanism: `Sync_lock` cell (`Pending waiters | Settled exit`),
+per-waiter contract promises, wake via each waiter's own contract after
+lock release. 70-line implementation, 17-line mli.
+
+**Correctness review** (fresh oracle, adversarial): **CORRECT** — clean
+verdict with a full attack list: lock discipline, first-commit race,
+snapshot-before-wake, multi-resolver linearization, wake-loop exception
+safety, non-cancellation cleanup, jsoo synchronous unlink, bridge
+footprint. First experiment since the protocol began with **zero rework
+rounds**.
+
+**Taste assessment** (orchestrator): the three-way decision rule
+(`Eta.Promise` portable one-shot / `Effect.async` one callback registration
+/ `Eio.Promise` deliberately-Eio-only) is the DX payload, with the
+anti-overuse line ("do not wrap Eio-only coordination merely to remove the
+Eio name — the portability fence is the reason"). coord-old (Expert.make
+plumbing) vs coord-new (create + syntax + par) is the mission made code.
+Census +1 module/+3 vals verified. Footguns +0.
+
+**`Eta_test.Async`: HOLD with evidence** — eta_test is intentionally
+eio-flavored; `Async` forks/awaits host fibers synchronously outside an Eta
+effect; `Promise.await` is effectful and would require a runtime. Documented
+in the executor's report. The jsoo track consumes the portable suite
+directly.
+
+**Prediction scoring (orchestrator, V-DX-E14-001): clean sweep.** Thin
+wrapper ✓; cancellation-safety from contract guarantee + E13 subscriptions
+✓; ordinary-path scope close ✓; resolve-after-close specified ✓; census
+✓; footguns ✓; README row + fence ✓; Async hold-with-evidence ✓; promote,
+kill gate unfired ✓.
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objective archived. **Phase D is complete**
+(E26, E19, E20, E12, E11, E13, E14). Phase synthesis V-DX-PHASE-D follows.
