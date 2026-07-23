@@ -3,7 +3,10 @@
 
 type ('input, 'output, 'hook) t
 (** A schedule consumes values of ['input] and produces ['output] values while
-    deciding whether to continue and how long to wait before the next step. *)
+    deciding whether to continue and how long to wait before the next step.
+    Schedule policy owns ['hook] values and their deterministic structural
+    order; a driver owns their interpretation and resumption through
+    {!step_plan} or {!step_with_hooks}. *)
 
 type no_hook = |
 (** Marker for schedules that have no effectful tap hooks and can be stepped
@@ -69,17 +72,20 @@ val tap_input :
   ('input -> 'hook) ->
   ('input, 'output, 'hook) t ->
   ('input, 'output, 'hook) t
-(** Run an effectful hook before each inner schedule step. Eta's effect
-    drivers instantiate ['hook] as [(unit, _) Effect.t]; if the hook fails,
-    the inner schedule state is not advanced. *)
+(** Place an effectful hook before each inner schedule step. Eta's effect
+    drivers instantiate ['hook] as [(unit, _) Effect.t]. If interpretation
+    fails or is cancelled, the driver must abandon the continuation and retain
+    its original driver; the inner step has not been evaluated. *)
 
 val tap_output :
   ('output -> 'hook) ->
   ('input, 'output, 'hook) t ->
   ('input, 'output, 'hook) t
-(** Run an effectful hook after each inner schedule step produces an output,
+(** Place an effectful hook after each inner schedule step computes an output,
     including terminal [Done] outputs. Eta's effect drivers instantiate
-    ['hook] as [(unit, _) Effect.t]. *)
+    ['hook] as [(unit, _) Effect.t]. The decision and next driver remain
+    unpublished until interpretation succeeds. On failure or cancellation,
+    retrying the original driver recomputes the inner output. *)
 
 val jittered :
   ?min:float ->
@@ -87,6 +93,8 @@ val jittered :
   ('input, 'output, 'hook) t ->
   ('input, 'output, 'hook) t
 val named : string -> ('input, 'output, 'hook) t -> ('input, 'output, 'hook) t
+(** Attach a label used by {!pp}. Naming does not change stepping or hook order
+    and does not itself emit logs, spans, or metrics. *)
 
 val pp : Format.formatter -> ('input, 'output, 'hook) t -> unit
 
@@ -104,14 +112,23 @@ type ('input, 'output, 'hook) step =
   | Complete of
       ('input, 'output) decision * ('input, 'output, 'hook) driver
   | Hook of 'hook * (unit -> ('input, 'output, 'hook) step)
-(** Suspended schedule step. Callers that drive effectful taps can run [Hook]
-    values in their own effect system and resume only after the hook succeeds. *)
+(** Suspended schedule step and custom-driver contract. [Hook] continuations are
+    ordinary non-linear functions: the type does not enforce single use. A
+    driver must interpret hooks in their delivered order and, after each hook
+    succeeds, invoke its continuation exactly once. If interpretation is
+    cancelled or fails, or if a continuation raises, the driver must abandon
+    the plan and retain the driver passed to {!step_plan}. [Complete] is the only
+    publication of a decision and next driver, after the whole plan completes.
+    Effects from earlier successful hooks are not rolled back and can repeat if
+    the original driver is retried. *)
 
 val step_plan :
   now_ms:int ->
   input:'input ->
   ('input, 'output, 'hook) driver ->
   ('input, 'output, 'hook) step
+(** Build one suspended step for interpretation under the custom-driver
+    contract described by the [step] type. *)
 
 val step_with_hooks :
   run_hook:('hook -> unit) ->
@@ -119,8 +136,11 @@ val step_with_hooks :
   input:'input ->
   ('input, 'output, 'hook) driver ->
   ('input, 'output) decision * ('input, 'output, 'hook) driver
-(** Step a schedule with an explicit hook interpreter. Effect drivers pass an
-    interpreter that runs hook effects in the current Eta runtime. *)
+(** Step a schedule with an explicit synchronous hook interpreter. A normal
+    return from [run_hook] is success; this function then resumes once. If the
+    interpreter or a continuation raises, no decision or next driver is
+    returned. Effect drivers pass an interpreter that runs hook effects in the
+    current Eta runtime. *)
 
 val step :
   now_ms:int ->

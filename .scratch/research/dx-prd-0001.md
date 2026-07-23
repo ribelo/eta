@@ -1694,6 +1694,17 @@ human can audit the journal at any wave boundary — it is written for that.
   that people already read correctly.
 - **`Mutable_ref` name — kept.** "Named Atomic" is honest; `Atomic` alone
   would oversell.
+- **Slimming `Schedule.t` to two parameters — selected through DX-E24b candidate
+  D (deletion proposal).** The initial A/B/C comparison correctly found that
+  policy ownership is required *if structural taps remain*: top-level driver
+  observers cannot see branch/phase-local handoff events, and structural
+  observers restore policy-owned placement. Follow-up review added the omitted
+  deletion baseline. With zero production/example tap producers and an adequate
+  ordinary recipe for common attempt logging, D now proposes deleting taps, the
+  hook channel, and all three interpreters. Exact structural observation is the
+  explicit capability loss. Evidence: `V-DX-E24B-006`/`007`,
+  `.scratch/research/dx/e24b/report.md`, and
+  `.scratch/research/dx/e24b/review/DELETION_PROPOSAL.md`.
 
 ## Appendix A — Rubrics
 
