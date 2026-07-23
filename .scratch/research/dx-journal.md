@@ -3490,3 +3490,49 @@ recipe can't express).
 
 **Phase E queue:** retry cause-alignment → E15 → E16 → E21 → E17
 (gated) → E18.
+
+---
+
+## V-DX-E24D-001 — 2026-07-23 — research/dx-e24d-retry-cause-alignment — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E24D-002. Registered at
+E24's oracle consultation (V-DX-E24-003): "should `retry` adopt
+`retry_or_else`'s catchable typed-cause semantics?" — documented as a
+current limitation, never canonized. Also resolves (or splits) E22 debt
+row CD-E22-006.
+
+**Current facts (measured).** `retry` (effect_schedule.ml): matches only
+`Exit.Error (Cause.Fail err)` — composites pass through unretried.
+`retry_or_else`: `stripped_uncatchable` → `first_typed_failure` →
+predicate — the standard `bind_error` catchability boundary. The
+divergence is invisible to users unless a retried effect produces
+composite causes (concurrency inside the attempt).
+
+**Design predictions.**
+- The divergence is accidental (implementation order; `retry` predates
+  the shared catchability helpers), not an intentional contract.
+- **Verdict: align.** `retry` adopts the shared boundary: retry
+  composites whose primary tree has typed failures and no uncatchable
+  diagnostics (defects, interruption, finalizer failures still refuse),
+  using the first typed failure in cause order for the predicate and
+  schedule input.
+- Terminal-cause semantics (the experiment's real decision point): on
+  predicate-rejection or schedule exhaustion, aligned `retry` should
+  return the ORIGINAL composite cause (preserving all failures), not
+  collapse to the first `Fail` — matching `catch_some`'s
+  preserve-exactly ethos. Predict: preserve-original.
+- Blast radius: behavior changes ONLY for attempts producing composite
+  typed causes — previously silent fail-fast, now retried; users likely
+  read the old behavior as a bug. No signature change. CHANGELOG entry
+  (semantic change).
+- mli: the "Current limitation" paragraph replaced by the shared
+  boundary statement (same as `bind_error`/`retry_or_else`).
+- E22: new properties — predicate sees first typed failure of a
+  composite; composites carrying uncatchable parts are NOT retried;
+  terminal rejection preserves the original composite cause. CD-E22-006
+  closed or split with remainder.
+- Risk: low-med. Outcome: promote.
+
+**Review (predicted).** Oracle audit of the alignment (does the shared
+boundary actually hold; is original-cause preservation right; any
+behavioral surprise in the retry suite's existing cases).
