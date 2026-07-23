@@ -3591,3 +3591,53 @@ owner: Eta scheduling maintainers).
 
 **Phase E queue:** E15 (interruptible) → E16 (Reader race) → E21
 (resumable probe) → E17 (gated) → E18 (simulation).
+
+---
+
+## V-DX-E15-001 — 2026-07-23 — research/dx-e15-interruptible — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E15-002. HIGH RISK
+(cancellation semantics); the kill gate is real: "promote only with the
+checkpoint list published and laws green on both substrates; kill if the
+semantics cannot be stated within the doc budget."
+
+**Substrate facts (measured).** `uninterruptible eff` =
+`contract.protect (fun () -> eval frame eff)`. Native backend: `protect`
+maps to `Eio.Cancel.protect` (identity without a fiber context) — Eio
+has NO un-protect primitive; but `cancel_sub` creates a linked
+sub-context (E13's async used it to deliver synthetic interruption), so
+restore MAY be implementable as protect-outside + cancel_sub-inside +
+run unprotected on the sub — IF Eio propagates parent cancellation into
+sub-contexts created inside a protected region. That "if" is the
+experiment's central unknown. jsoo backend: `fiber_protect_depth : int`
+— a depth counter checked at delivery (`cancel_reason <> None &&
+protect_depth = 0`); restore is trivially a depth decrement with
+re-raise on exit.
+
+**Predictions.**
+- jsoo: restore via protect-depth decrement — straightforward; the
+  mask-stack laws compose as depth arithmetic.
+- native: the cancel_sub-inside-protect construction works (~65%
+  confidence). If Eio does NOT propagate into subs under protection,
+  options are contract-level mask machinery (heavy — likely violates
+  the doc budget) or KILL. Promote probability ~60%.
+- The checkpoint inventory (today implicit: `yield`, `sleep`,
+  `await_promise`, channel/queue/semaphore waits, blocking awaits)
+  becomes documented API — landed REGARDLESS of the combinator's fate
+  (the one-pager's guaranteed DX win).
+- `interruptible` inside a finalizer: **NO** (ZIO's answer; finalizers
+  already run under protection; restoring there invites re-entrant
+  cancellation of cleanup). Recorded with reason in the mli.
+- Mask-stack laws: `uninterruptible (interruptible (uninterruptible e))`
+  ≡ `uninterruptible e`; delivery at most once; no lost wakeup when
+  cancel races mask entry — proven as properties on both backends.
+- Doc budget: ≤ ~12 mli lines for the combinator + the checkpoint list.
+  If the semantics need more, kill per the gate.
+- Census: lifecycle cluster +1 (`interruptible`); the checkpoint list is
+  docs, not API surface. Footguns: +0 if the mask model composes
+  cleanly; the nested-mask reading is the risk (users must learn
+  "innermost wins", same lesson as E19's overrides).
+
+**Review (predicted).** P-Maint-grade: a real uninterruptible accept
+loop with an interruptible blocking accept, written against the
+combinator, reads correctly; red-team loses no cancellation.
