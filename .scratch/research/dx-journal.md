@@ -32,7 +32,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
 | E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
-| E22 | Law-property policy | E (flex) | M | low | proposed | | | |
+| E22 | Law-property policy | E (flex) | M | low | **promoted** 2026-07-23 | | research/dx-e22-law-properties | V-DX-E22-001..002 |
 | E15 | interruptible / restore | E | M | high | proposed | | | |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
 | E21 | Resumable probe (.scratch) | E | S | contained | proposed (expected kill) | | | |
@@ -3210,3 +3210,66 @@ inventory alone. Rating ≥ 4. Gaps found become footgun entries.
 **Outcome (predicted).** Promote when the initial inventory is covered
 and the policy paragraph lands. Risk low; the main threat is flake/
 dependency friction, not semantics.
+
+---
+
+## V-DX-E22-002 — 2026-07-23 — research/dx-e22-law-properties — phase: results + decision
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on master
+after the `--no-ff` merge; mainline `_build-mainline` `@install` +
+`test/laws` green (63 properties / 3,150 inputs). Oracle independently ran
+`test/laws` + `test/core_eio` (569) in round three.
+
+**Delivered.** The policy "every law in an mli has a test" is now real and
+enforceable: AGENTS.md defines law-bearing prose (normative behavioral/
+algebraic claims; usage advice excluded), requires same-change coverage
+for any new/changed mli law with NO debt escape hatch, and lists the
+anti-vacuity shapes (fixed examples, self-comparison, truncated prefixes,
+never-reaching-distinguishing-case). `LAWS.md` is an honest census: five
+inventory-complete modules (effect/schedule/channel/queue/semaphore) —
+99 direct claim rows × 63 qcheck properties, 101 registered external-suite
+rows (verified real: async guarantees, `on_exit`/`on_error`/`on_interrupt`,
+background lifecycle, Queue admission), 23 dated-debt rows, nothing
+open-ended. `effect.mli` gained the normative algebraic equations (scoped
+to total pure functions/continuations, observable-equivalence wording).
+qcheck stayed test-only (verified: absent from dune-project/*.opam/
+installable stanzas).
+
+**Review history (three oracle rounds — the most rework yet).**
+Round 1: INCORRECT, 6 findings (census provenance, schedule vacuity,
+clock-restoration inequality, dropped fiber-census side condition,
+unproven out-of-order completion, class-doc mismatch). Rework 1.
+Round 2: 5/6 closed, finding 1 open + 4 fresh (policy-vs-debt
+inconsistency, Drop fixed-example, race first-vs-only-value, par
+first-failure). Rework 2 (policy scoped honestly — orchestrator decision
+taking the oracle's offered resolution: census modules complete, external
+suites registered, prospective rule with teeth).
+Round 3: **CORRECT-WITH-RESERVATIONS** — all items closed; registrations
+sampled and verified; reservations: readily-coverable dated debts should
+be prioritized (CD-E22-004/022/023 named), compound registry rows
+(R82–R93) should split on next census touch. Both recorded as follow-ups,
+not blockers.
+
+**Executor process credit:** self-reported its own sealed footgun
+prediction as wrong (+5, not +0) before any orchestrator involvement;
+survived an internal HOLD→fix→READY round pre-report; two orchestrator
+rework rounds handled cleanly.
+
+**Prediction scoring (orchestrator, V-DX-E22-001).** Hits: observation
+equivalence (Exit + ordered events via `Eta_test.Run`); initial inventory
+coverage; no mli prose proved false (the mli GAINED prose — a different
+class than predicted "prose bugs"); promote outcome; qcheck test-only.
+Misses: "1–2 laws need refinement" (actual: 10 findings across three
+rounds, mostly suite/policy-structural — big under-estimate); "real
+pre-existing violation ~15%" (none found — good news); "footguns +0"
+(restructured into registered/dated tracking); "main risk is dependency
+friction" (it was semantic, not dependency).
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objectives archived (incl. both
+follow-ups). **Follow-ups:** F-E22-a — prioritize readily-coverable dated
+debts (CD-E22-004/022/023 named by the oracle); F-E22-b — split compound
+registry rows on next census touch.
+
+**Next in the Phase E queue:** E24b (hook ownership: policy vs driver —
+context complete after E19/E20/E13/E14).

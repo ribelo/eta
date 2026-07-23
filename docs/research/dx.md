@@ -40,6 +40,28 @@ two substrate-bridging leaves. Its durable laws:
 
 Full evidence: V-DX-PHASE-D in the journal.
 
+## E22 — Law-property policy (promoted 2026-07-23)
+
+**Every law in an mli has a test** is now repository policy with teeth:
+AGENTS.md defines law-bearing prose precisely, requires same-change
+coverage for any new or changed mli law (no debt escape hatch), and lists
+the anti-vacuity shapes. The census (`LAWS.md`) is honest: five
+inventory-complete modules — 99 direct claims × 63 qcheck properties, 101
+registered external-suite rows (verified real), 23 dated-debt rows,
+nothing open-ended. `effect.mli` now states its algebraic equations
+(scoped, observable-equivalence wording).
+
+The durable lesson is the review arc: three oracle rounds — INCORRECT
+(census provenance unsound, a vacuous schedule property, four more) →
+INCORRECT (policy-vs-debt inconsistency, three weaker-cousin properties) →
+CORRECT-WITH-RESERVATIONS. The first delivery was unrecognizably weaker
+than what promoted. A test suite's claims need the same adversarial
+scrutiny as code — vacuous properties are worse than missing ones because
+they fake the model's safety net.
+
+Provenance: `.scratch/research/dx/e22/`, V-DX-E22-001..002, branch
+`research/dx-e22-law-properties`.
+
 ## E12 — `Effect.audit` / `Effect.describe` (promoted 2026-07-21; manifest role killed)
 
 The blueprint is now inspectable: `audit` reports names + six capability

@@ -1584,7 +1584,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E12 | audit / describe | D | M | low | **promoted** (API; manifest role killed) 2026-07-21 | SC | research/dx-e12-audit-describe | V-DX-E12-001..002a |
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
 | E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
-| E22 | Law-property policy | E (flex) | M | low | proposed | | | |
+| E22 | Law-property policy | E (flex) | M | low | **promoted** 2026-07-23 | | research/dx-e22-law-properties | V-DX-E22-001..002 |
 | E15 | interruptible / restore | E | M | high | proposed | | | |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
 | E21 | Resumable probe (.scratch) | E | S | contained | proposed (expected kill) | | | |
