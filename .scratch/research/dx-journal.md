@@ -15,6 +15,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion proposed → E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
 | E24c | Hook-channel deletion | E | M | med | **promoted** 2026-07-23 | | research/dx-e24c-hook-deletion | V-DX-E24C-001..002 |
+| E24d | Retry cause-alignment | E | S | low-med | **promoted** 2026-07-23 | | research/dx-e24d-retry-cause-alignment | V-DX-E24D-001..006 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18/20 (sync_option reversal by human authority) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..004 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
@@ -3536,3 +3537,57 @@ composite causes (concurrency inside the attempt).
 **Review (predicted).** Oracle audit of the alignment (does the shared
 boundary actually hold; is original-cause preservation right; any
 behavioral surprise in the retry suite's existing cases).
+
+---
+
+## V-DX-E24D-006 — 2026-07-23 — research/dx-e24d-retry-cause-alignment — phase: results + decision
+
+(Executor's branch journal owns V-DX-E24D-002..-005; this is the
+orchestrator's results entry. ID-space note for future objectives:
+executor evidence entries should use the skill's V-X form, not the
+programme sequence.)
+
+**The decision.** The `retry`/`retry_or_else` cause divergence is
+**accidental**, proven with commit evidence: `retry` predates the shared
+catchability helpers (`69adecfa` introduced them to fix composite
+recovery; `bbe54cd9` added `retry_or_else` using them from day one;
+`02efcaa5` colocated without aligning; `365f7b01` documented the
+difference as "current limitation" without canonizing it). **Verdict:
+align.** `retry` now shares the identical boundary
+(`stripped_uncatchable` → `first_typed_failure`): composite typed causes
+are retried, defects/interruption/finalizer diagnostics refuse, predicate
++ schedule see the first typed failure in cause order. Terminal paths
+preserve the ORIGINAL cause (rejection, exhaustion, uncatchable, and —
+after review — empty composites), because `retry` keeps the error type
+and collapsing would lose diagnostics.
+
+**Gates** (orchestrator re-run): native trio green in worktree AND on
+master after the `--no-ff` merge; mainline `test/laws` green.
+
+**Review** (fresh oracle): CORRECT-WITH-RESERVATIONS → one MEDIUM
+(empty-composite `invalid_arg` introduced a new failure mode against the
+repo's actual `Cause.t` invariants — flipped to pass-through, the
+conservative same-error answer) + one LOW (stale E22 spans). Rework
+verified, final verdict **CORRECT** (571 core tests green). Oracle
+independently confirmed: boundary identical across all three combinators
+incl. `Suppressed` and nested composites; terminal returns the LATEST
+attempt's cause; blast radius zero in production code.
+
+**Prediction scoring (orchestrator, V-DX-E24D-001): full sweep.**
+Divergence accidental ✓; align ✓; preserve-original terminal ✓;
+blast-radius shape (behavior change only for composite typed causes; no
+production caller) ✓; mli limitation replaced ✓; E22 properties +
+CD-E22-006 split (retry half closed; narrower `retry_or_else` failure-
+paths row remains) ✓; CHANGELOG entry ✓; low-med risk, promote ✓.
+Unpredicted: the empty-composite edge (executor's `invalid_arg`, flipped
+to pass-through by review) — the class of edge that only adversarial
+review sees.
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objectives archived. The E24
+consultation's registered semantic decision is now CLOSED. CD-E22-006
+narrows to `retry_or_else` callback/fallback failure paths (dated,
+owner: Eta scheduling maintainers).
+
+**Phase E queue:** E15 (interruptible) → E16 (Reader race) → E21
+(resumable probe) → E17 (gated) → E18 (simulation).
