@@ -47,3 +47,31 @@ nix develop .#mainline -c sh -eu -c '
   at the protection exit still delivers it.
 
 Captured outputs and the resulting matrix are recorded in `../phase0.md`.
+
+## Restored native accept-loop victim
+
+`accept_loop_victim.ml` is the review packet's canonical victim. It blocks the
+current Eta fiber in a real loopback `Eio.Net.accept`, wraps only the accept in
+`Effect.interruptible`, and keeps the surrounding operation
+`Effect.uninterruptible`. Cancelling the exact Eta synthetic context must wake
+the accept and produce one interruption:
+
+```sh
+prefix="$(mktemp -d)"
+trap 'rm -rf "$prefix"' EXIT
+nix develop -c sh -eu -c '
+  prefix="$1"
+  dune build @install
+  dune install --prefix "$prefix"
+  OCAMLPATH="$prefix/lib${OCAMLPATH:+:$OCAMLPATH}" \
+    dune exec --root .scratch/research/dx/e15/probes \
+      ./accept_loop_victim.exe
+' sh "$prefix"
+```
+
+Expected completion sentinels:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```

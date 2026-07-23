@@ -2,7 +2,11 @@
 
 ## `Effect.interruptible`
 
-Status: **KILLED on the current substrates**.
+Status: **REVIVED by Follow-up 1; reopening prerequisite satisfied**.
+
+The historical kill below required an exact-context same-fiber restore. Follow-up
+1 found and independently reproduced Eio's hidden switch restoration operation.
+E15 resumed with that operation isolated in one private backend module.
 
 Do not reopen the combinator until the native runtime can restore or observe the
 exact cancellation context outside `Eio.Cancel.protect`, including an enclosing
@@ -20,3 +24,7 @@ Acceptable reopening evidence is one of:
 Any revival must rerun the committed Phase 0 probes, publish one shared
 innermost-wins model, retain the checkpoint list, keep finalizers protected, and
 add the named native and jsoo mask/race laws before exposing the API.
+
+All of those revival conditions are addressed in `report.md`. The remaining
+parking-lot item is the human-owned request for Eio to expose the same-fiber
+restore operation publicly; external issue filing is outside programme scope.

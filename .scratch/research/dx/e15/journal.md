@@ -194,3 +194,126 @@ sentinels were reached.
 **E15 KILLED: Eio exposes no restore or arbitrary-parent cancellation observer;
 scope-only relays lose cancellation of Eta synthetic sub-contexts and can strand
 a blocked interruptible point.**
+
+## Follow-up 1 — kill rejected, experiment resumed
+
+The orchestrator rejected the kill with an independently reproduced hidden Eio
+construction. This entry is append-only: the earlier reasoning remains above as
+the record of the killed-then-resumed experiment.
+
+### Explicit corrections
+
+1. **“No restore” was false.** Eio's hidden core switch `run_in` operation moves
+   the current fiber into a target switch cancellation context and back.
+2. **“Every synthetic sub-context must be redesigned” was false.** Creating a
+   mask-entry switch under the exact current context before protection preserves
+   the cancellation edge from an enclosing Eta `cancel_sub`.
+3. **“Private-context move unavailable” was false.** It is unavailable in the
+   public Eio API inspected during Phase 0, but present in the hidden switch
+   implementation.
+4. The Phase 0 native matrix remains correct. It killed `protect + sub` and the
+   relay construction, not the same-fiber switch construction.
+
+### Verified model
+
+Native mask entry creates `R` under exact current context `C`, then enters
+protected child `P`. Restoration runs the same fiber in `R`, checks pending
+cancellation on entry through the switch operation, preserves callback
+exceptions/backtraces across the unit-returning boundary, and explicitly checks
+after successful callback work before moving back to `P`.
+
+jsoo saves the current protection depth, sets it to zero, checks cancellation at
+entry, runs the callback, checks after successful work, and restores the saved
+depth with `Fun.protect`.
+
+The Eta layer installs each mask restore in a runtime-local binding. The binding
+states are `Restore`, `Restored`, and boxed `Restoration_forbidden`:
+
+- no binding: `interruptible` is identity;
+- `Restore`: bind `Restored` and invoke the backend restore;
+- `Restored`: repeated `interruptible` is identity;
+- `Restoration_forbidden`: cleanup remains protected;
+- nested `uninterruptible`: install a fresh restore unless cleanup has forbidden
+  restoration, so the innermost mask wins.
+
+Only `lib/eio/eta_eio_mask.ml` depends on the hidden Eio switch module. This is
+an isolated internal-API dependency pinned to the repository's Eio version and
+must be revalidated on upgrades. Upstream exposure is a human-owned external
+follow-up.
+
+### Finalizer decision
+
+The sealed **NO** prediction stands. `Effect_resource.run_cleanup`, registered
+runtime finalizers, and asynchronous cancelers establish restoration-forbidden
+state before their existing protection when they inherit an active restore.
+They do not pay for an extra binding when no restore exists. Shared native/jsoo
+tests prove both `finally` cleanup and registered finalizers stay blocked until
+explicitly released after parent cancellation.
+
+### Adversarial reconciliation
+
+| Construction/edge | Outcome against the real model |
+| --- | --- |
+| `protect + cancel_sub` | Still refused; Phase 0 proves it is not restore. |
+| Scope/fork relay | Still refused; exact synthetic-parent cancellation is lost. |
+| Cancel before restore entry | Entry check raises on both backends. |
+| Cancel around mask entry | Eight generated scheduler staggers all terminate with one interruption. |
+| Cancel during restored block | Pending promise and real Eio accept are woken. |
+| Cancel at restored checkpoint | Both backends deliver. |
+| Cancel in synchronous tail before restore exit | Successful-exit check delivers. |
+| Nested masks | Exact inner synthetic-context cancellation reaches only the innermost restore target and wakes it. |
+| Duplicate cancel | Exact single `Cause.Interrupt`; finalizer executes once. |
+| Repeated restore | Dynamic `Restored` marker makes it identity. |
+| Fork/identity concern | No fork exists; Signal lane nested re-entry keeps the same fiber ID. |
+| Finalizer escape | Refused by boxed restoration-forbidden binding. |
+
+No uneliminated lost-wakeup construction remains under the same-domain runtime
+contract. After the successful-exit check there is no suspension point at which
+same-domain cancellation can interleave before the native move back or the jsoo
+depth restoration.
+
+### Revised prediction scoring
+
+The original score claiming zero contradictions is superseded.
+
+| Prediction | Revised score | Finding |
+| --- | --- | --- |
+| Eio `protect` is a subtree barrier | Exact | Phase 0 probe still stands. |
+| Explicit descendant cancellation escapes protection | Exact | Phase 0 probe still stands. |
+| Eio old-parent cancellation stays pending | Exact | Phase 0 probe still stands. |
+| jsoo depth composition and zero-depth delivery | Exact | Probe and implementation laws pass. |
+| jsoo can express innermost-wins | Exact | Shipped depth save/zero/restore mapping. |
+| Native needs a backend restore operation rather than `sub` | Exact | One new contract mask operation uses hidden `run_in`. |
+| Finalizers must not restore | Exact | Two shared cleanup tests pass per backend. |
+| Entry/exit boundaries carry lost-wakeup pressure | Exact | Entry, checkpoint, and successful-exit tests pass. |
+| Checkpoint inventory | Strengthened | Real accept victim confirms service-I/O restoration. |
+| Delivery winner pressure | Strengthened | Duplicate cancel and race corpus prove one delivery. |
+| Predicted kill if probes found no existing restore | Contradicted | The search missed the hidden same-fiber primitive. |
+
+Revised score: **8 exact, 2 strengthened, 1 contradicted**. The contradiction is
+the reason E15 resumed.
+
+
+### Resumed final gates
+
+The final implementation and review bundle passed the complete prescribed set:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline \
+  test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force        PASS
+```
+
+Mainline repeated the repository's two existing integer-overflow warnings while
+compiling JS; the requested Node suites reached their completion sentinels. The
+separately built real Eio accept-loop victim printed:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+**E15 READY FOR REVIEW**

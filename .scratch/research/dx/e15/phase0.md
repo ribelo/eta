@@ -185,3 +185,48 @@ the cancellation surface rather than implement one small mask operation.
 mapping; native Eio has no honest restore on the existing substrate, and the
 relay construction has an uneliminated lost wakeup for exact-parent synthetic
 cancellation. The kill criteria require stopping here.
+
+## Follow-up 1 — gate correction and verified construction
+
+The preceding Phase 0 probe results remain true, but the gate conclusion was
+wrong. They reject `protect` plus descendant `sub` and the scope-relay fallback;
+they do not reject Eio's hidden same-fiber switch operation.
+
+Independent review found and the orchestrator reproduced Eio's hidden core
+switch `run_in` operation. A mask-entry switch created before `Cancel.protect`
+retains the exact current parent cancellation path:
+
+```text
+C  exact current context
+└─ R  mask-entry switch
+   └─ P  protected context
+```
+
+Moving the current fiber from `P` into `R` makes cancellation propagate from
+`C` and wake a blocked operation without a fork. The independent output was:
+
+```text
+restore-during-block: DELIVERED
+restore-pending-entry: RAISED
+```
+
+The resumed implementation also checks the restored context after a successful
+callback, closing the cancel-between-tail-and-exit edge. Its real loopback accept
+victim produces:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+Corrections to V-DX-E15-004:
+
+- “no restore primitive” was false: the hidden switch implementation provides
+  the needed current-fiber move;
+- “every synthetic sub-context must be redesigned” was false: creating `R`
+  inside the exact current synthetic context preserves its cancellation path;
+- “private-context move unavailable” was false for Eio's hidden implementation.
+
+The scope-relay lost wakeup remains a valid rejection of that relay. It is not a
+lost wakeup in the `run_in` construction. The Phase 0 gate is therefore
+**REOPENED** and admits the Phase 1/2 implementation recorded in `report.md`.

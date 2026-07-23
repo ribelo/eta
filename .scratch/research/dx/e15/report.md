@@ -2,183 +2,242 @@
 
 Branch: `research/dx-e15-interruptible`
 
-Recommendation: **KILL**.
+Recommendation: **READY FOR REVIEW**.
 
-## V-DX-E15-005 — Decision
+## V-DX-E15-005 — Decision and resumed history
 
-`Effect.interruptible` is not added. Eio's protected cancellation context is a
-propagation barrier, and a `Cancel.sub` beneath it remains protected from the
-context that the proposed combinator must restore. The current Eta/Eio contract
-cannot subscribe a restored child to the exact old context.
+DX-E15 ships `Effect.interruptible`. The original kill correctly rejected
+`Cancel.protect` plus a descendant `Cancel.sub` and every scope/fork relay, but
+incorrectly concluded that native Eio had no exact-context restore. Follow-up 1
+supplied and independently reproduced a hidden same-fiber Eio switch operation.
+The resumed implementation uses that operation through one private native
+adapter and exposes only a backend-neutral mask operation to Eta core.
 
-The precise inexpressibility is:
+The implementation now meets the one-pager gates:
 
-> A scope-only relay cannot observe explicit cancellation of an enclosing Eta
-> synthetic `cancel_sub`. That cancellation stops at `Eio.Cancel.protect`, so a
-> proposed interruptible descendant can remain blocked forever. Eliminating the
-> lost wakeup requires an Eio restore/observer primitive or a redesign of Eta's
-> cancellation handles and every synthetic sub-context.
+- one mask model is stated within the public-interface budget;
+- the cancellation-checkpoint list is published;
+- native Eio and js_of_ocaml run the same named adversarial suite;
+- mask-stack, at-most-once, and no-lost-wakeup claims have named evidence;
+- finalizers, registered finalizers, and asynchronous cancelers forbid
+  restoration;
+- the canonical blocking accept victim is interrupted without changing fiber
+  identity.
 
-This fires two honored kill criteria: an uneliminated lost-wakeup construction,
-and native contract machinery that cannot remain a small mask operation shared
-with jsoo.
+## V-DX-E15-006 — Phase 0 substrate truth and correction
 
-## V-DX-E15-006 — Phase 0 substrate truth
+The committed Phase 0 probes remain valid. `probes/native_probe.ml` prints:
 
-The executable sources, reproduction commands, full outputs, and matrices are
-in `probes/` and `phase0.md`.
+```text
+native parent->protect->sub: blocked_wait=returned protect=returned next_check=cancelled
+native explicit-sub-cancel: escaped-protect=yes
+native nested-protect: inner=returned outer=returned next_check=cancelled
+native probe: PASS
+```
 
-Native Eio assertions establish:
+`probes/jsoo_probe.ml` prints:
 
-- parent cancellation does not cross `Cancel.protect` into a `Cancel.sub`
-  descendant, even while that descendant blocks on a promise;
-- explicit cancellation of the descendant does raise through protection;
-- nested protections return normally, and Eio sees the pending old-parent
-  cancellation at the next check after the outer return.
+```text
+jsoo nested-protect: depth=2 returned; depth=1 returned; depth=0 cancelled
+jsoo pending-parent->protected-sub: child-wait=returned; protect-exit=cancelled
+jsoo probe: PASS
+```
 
-jsoo CPS assertions establish:
+These results prove that an Eio protected context is a propagation barrier and
+that a `sub` created below it is not a restore. They also prove that jsoo keeps
+cancellation pending at positive protection depth and delivers when the depth
+returns to zero. The exact matrices and commands are in `phase0.md`.
 
-- cancellation remains pending at protection depths two and one;
-- returning protection to depth zero checks and raises the pending reason;
-- a sub created under positive protection after parent cancellation is not
-  seeded with that reason, but returning to the parent at depth zero raises.
+The kill gate, not the observations, was wrong. A mask-entry Eio switch created
+under the exact current context before protection gives this tree:
 
-Both probes print `PASS` and use a Node completion sentinel for the CPS case.
+```text
+C  exact current cancellation context
+└─ R  mask-entry switch context
+   └─ P  protected context
+```
 
-## V-DX-E15-007 — Checkpoint documentation
+The hidden Eio core switch restore moves the current fiber from `P` to `R` and
+back. Cancellation propagating `C → R` can therefore wake a blocked restored
+operation while still stopping at `P`. The orchestrator's independent probe
+reported `restore-during-block: DELIVERED` and
+`restore-pending-entry: RAISED`. The implementation's accept victim and shared
+suite reproduce both behaviors through the public combinator.
 
-The required checkpoint list is published in `docs/api-dx.md` under
-“Cancellation Checkpoints.” `phase0.md` contains the source-level inventory and
-backend matrix.
+## V-DX-E15-007 — Contract and checkpoint documentation
 
-It covers explicit yield and positive sleeps, pending promises and async park,
-blocking channel/queue/pubsub/semaphore paths, structured-concurrency and
-package-internal waits, native Eio service waits, and JS host awaits. It also
-records non-checkpoints and the resolved-promise fast-path difference: Eio can
-return an already-resolved promise without checking cancellation, while jsoo
-checks before its await.
+The runtime contract adds one operation:
 
-This documentation is the durable DX result even though the combinator is
-killed.
+```ocaml
+val with_cancel_mask : (cancellation_restore -> 'a) -> 'a
+```
 
-## V-DX-E15-008 — Candidate mask model and backend mapping
+It enters a fresh cancellation mask and supplies same-fiber restoration to its
+parent context. Restoration checks pending cancellation at entry and after a
+successfully returned callback. Core Eta stores the restoration in an existing
+runtime-local dynamic binding.
 
-The candidate user model itself is short:
+The nine-line `Effect.interruptible` contract states identity outside a mask,
+innermost-wins stacking, entry/checkpoint/successful-exit delivery,
+at-most-once observation, and the finalizer prohibition.
 
-- masks are dynamically nested and the innermost mask wins;
-- `interruptible` outside a mask is identity;
-- inside `uninterruptible`, it restores parent cancellation only at documented
-  checkpoints;
-- a nested `uninterruptible` masks again;
-- finalizers never restore cancellation.
+`docs/api-dx.md` publishes the required checkpoint inventory. It covers explicit
+yield, positive sleeps, unresolved promises and async park, blocking
+channel/queue/pubsub/semaphore paths, structured-concurrency waits, native Eio
+service waits, and JS host awaits. It also records immediate non-checkpoints and
+the settled-promise backend difference.
 
-jsoo can map this model locally by saving a positive protection depth, making
-the effective depth zero for the interruptible body, and restoring the saved
-depth. A nested protection increments from zero and therefore wins.
+## V-DX-E15-008 — Shared mask model and backend mapping
 
-Native Eio has no corresponding mapping. `Cancel.protect` changes the fiber's
-current context to a protected child. `Cancel.sub` can only create another child
-of that protected context. Inspection can detect an already-cancelled old
-context, but it cannot wake a service operation when cancellation arrives after
-the inspection.
+The shared dynamic model is:
 
-A watcher attached to `Runtime_contract.scope` is insufficient because the
-exact current parent can be a separately cancelled synthetic context. Adding a
-watcher to every synthetic context changes `cancel_sub`, `cancel`, blocking,
-supervisor, signal, and async cancellation machinery. That is a cancellation-
-surface redesign, not the smallest E15 change, and still differs fundamentally
-from jsoo's depth mapping.
+- outside a mask, `interruptible e` is `e`;
+- `uninterruptible` installs a restoration for its parent cancellation context;
+- `interruptible` invokes the nearest restoration and marks the dynamic region
+  restored, so repeated `interruptible` is identity;
+- a nested `uninterruptible` installs a fresh restoration and wins;
+- cleanup establishes `Restoration_forbidden`, which a nested mask preserves.
 
-The two backends therefore cannot implement one stated model on their current
-substrates.
+Native Eio creates `R` before entering `Cancel.protect`. Its private adapter is
+the only repository implementation file that names the hidden Eio module. The
+adapter captures callback values or exceptions plus raw backtraces across the
+unit-returning same-fiber move, checks cancellation after successful callback
+work, and moves back to the protected context. Eio is pinned by the repository;
+upgrades must revalidate this internal dependency.
+
+The jsoo backend saves the current `fiber_protect_depth`, sets it to zero,
+checks cancellation, runs the callback, checks successful exit, and restores
+the saved depth with `Fun.protect`. It retains the same `fiber_cancel` and fiber
+identity. Nested protection increments from zero and therefore masks again.
 
 ## V-DX-E15-009 — Finalizer answer
 
-**No.** A revived `interruptible` must not restore cancellation in a finalizer.
+**No: restoration is forbidden in cleanup.** Allowing an inherited restoration
+to escape protection would permit re-entrant cancellation to abort cleanup whose
+completion Eta already promises to await.
 
-`Runtime_core.run_finalizers` and `Effect_resource.run_cleanup` deliberately run
-cleanup under `Runtime_contract.protect`. Cleanup is already executing because
-an exit—possibly cancellation—must settle. Restoring parent cancellation would
-permit re-entrant cancellation to abort that cleanup and invalidate Eta's
-finalizer/suppressed-cause guarantees. This agrees with the sealed prediction
-and ZIO's answer.
+`Effect_resource.run_cleanup`, registered runtime finalizers, and asynchronous
+cancelers bind `Restoration_forbidden` before their existing protection whenever
+an active restore is inherited. No extra binding is installed when no restore
+exists. The marker has a boxed payload so it cannot alias another runtime-local
+variant after representation erasure.
 
-No finalizer behavior changes on this branch.
+Shared tests on both backends prove that `interruptible` in `finally` cleanup and
+in a registered finalizer remains protected until an explicit release. Existing
+async-canceler protection uses the same helper.
 
-## V-DX-E15-010 — Laws and race corpus
+## V-DX-E15-010 — Laws and named evidence
 
-No law-bearing `Effect.interruptible` interface is added, so no E22 registry row
-or property is claimed green. Phase 2 correctly did not run after the Phase 0
-kill gate.
+The E22 registry in `.scratch/research/dx/e22/review/LAWS.md` adds two direct
+QCheck properties and six registered shared-suite claim clusters.
 
-The Phase 0 executable assertions are named in source:
+| Claim | Named evidence | Native Eio | jsoo |
+| --- | --- | --- | --- |
+| Outside-mask identity | `interruptible outside a mask is identity for generated finite effects`; `interruptible outside a mask is identity` | PASS | PASS |
+| Inner mask supersedes outer restore | `uninterruptible interruptible uninterruptible equals uninterruptible for generated finite effects`; `interruptible mask-stack law inner uninterruptible wins` | PASS | PASS |
+| Innermost restoration wins | `interruptible nested mask innermost restore wins` | PASS | PASS |
+| Repeated restore is identity | `repeated interruptible in restored region is identity` | PASS | PASS |
+| Pending entry is delivered | `interruptible pending cancellation raises at restore entry` | PASS | PASS |
+| Restored checkpoint/block is woken | `interruptible cancel at restored checkpoint is delivered`; `interruptible cancel during restored block wakes waiter` | PASS | PASS |
+| Successful-exit edge is checked | `interruptible cancel between restore and exit hits successful boundary` | PASS | PASS |
+| Entry races lose no wakeup | `interruptible generated cancel-mask-entry races lose no wakeup` | PASS | PASS |
+| Delivery is at most once | `interruptible duplicate cancel delivers once` | PASS | PASS |
+| Finalizers cannot restore | `interruptible is forbidden in finalizers`; `interruptible is forbidden in registered finalizers` | PASS | PASS |
 
-- native: `parent_cancel_during_sub`,
-  `explicit_sub_cancel_escapes_protect`, and
-  `nested_protect_parent_cancel`;
-- jsoo: `nested_protect_probe` and `sub_after_pending_probe`.
+The two QCheck properties execute both sides of each equation for generated
+finite success/failure effect blueprints. Cancellation discrimination and all
+race-sensitive claims use the same shared test definitions on both backends.
 
-The required future property/race corpus remains parked, not falsely reported as
-implemented:
+## V-DX-E15-011 — Race corpus
 
-| Corpus case | Current outcome |
+| Required race | Executable construction | Result on both backends |
+| --- | --- | --- |
+| Cancel during mask entry | Eight target/controller yield staggers around handle installation and entry | One interruption; no hang or lost wakeup |
+| Cancel before restore entry | Cancel while masked, then enter `interruptible` | Entry raises |
+| Cancel at checkpoint | Cancel a restored yield loop | Checkpoint raises |
+| Cancel during restored block | Cancel an unresolved restored promise wait | Wait wakes and raises |
+| Nested masks | Cancel an exact synthetic context enclosing the inner mask | Innermost restore wakes; outer model remains intact |
+| Cancel between restore and exit | Cancel synchronously in the restored tail | Successful-exit check raises |
+| Duplicate cancel | Cancel the exact context twice | One interrupt cause; finalizer runs once |
+
+The runtime contract is same-domain except for explicitly designated wakeups.
+After the successful-exit check, neither backend has a suspension point before
+restoring the protected state, so same-domain cancellation cannot interleave in
+that final interval.
+
+## V-DX-E15-012 — Red-team outcomes
+
+| Attack | Outcome against the implemented model |
 | --- | --- |
-| cancel-during-mask-entry | Entry snapshots cannot cover cancellation arriving during a later blocked native wait. |
-| cancel-at-checkpoint | jsoo depth zero can deliver; native descendant remains behind the protected barrier. |
-| nested masks / innermost wins | Locally expressible in jsoo; no native restore mapping. |
-| cancel-between-restore-and-exit | Scope relay can miss exact-parent synthetic cancellation; exit inspection cannot wake the already-blocked operation. |
-| delivery at most once | Existing backend waits have winner protocols, but no shared restore exists on which to prove the new law. |
+| `protect` plus descendant `cancel_sub` | Refused; the Phase 0 probe proves the barrier. |
+| Scope/fork cancellation relay | Refused; it loses exact synthetic-parent cancellation and changes fiber identity. |
+| Entry/exit snapshots without restoring context | Refused; they cannot wake a blocked native service operation. |
+| Pending cancellation before restore | Delivered by native switch entry and jsoo entry check. |
+| Cancellation during restored synchronous tail | Delivered by both successful-exit checks. |
+| Nested restoration accidentally selects outer mask | Refused by exact inner synthetic-context cancellation test. |
+| Repeated restoration moves twice | Refused by the dynamic `Restored` marker. |
+| Cleanup uses inherited restore | Refused by boxed `Restoration_forbidden`. |
+| Fork breaks reentrant ownership | No fork exists; Signal lane re-entry observes the same fiber ID before, during, and after restoration. |
 
-## V-DX-E15-011 — Red-team outcomes
+No lost-wakeup construction remains against the implemented same-fiber model.
 
-| Attack | Outcome |
-| --- | --- |
-| `protect` plus inner `cancel_sub` | Refused by both probes as a restore. |
-| Check cancellation only at interruptible entry/exit | Loses cancellation arriving while a native service await is blocked. |
-| Relay cancellation from the Eta scope | Loses explicit cancellation of a nested synthetic parent while the scope stays live. |
-| Add a relay to every synthetic context | Requires the forbidden adjacent cancellation-surface redesign. |
-| Poll the old context | Cannot interrupt arbitrary blocking Eio operations and adds fallback latency. |
-| Use Eio private context APIs | They expose inspection/current suspension hooks, not moving the running fiber or attaching a watcher to an arbitrary old context. |
+## V-DX-E15-013 — Review packet
 
-The scope-relay row is the uneliminated lost-wakeup kill input.
+`probes/accept_loop_victim.ml` runs a real loopback `Eio.Net.accept` inside
+`Effect.uninterruptible`, wrapping only the accept in `Effect.interruptible`.
+Cancellation targets the exact enclosing Eta synthetic context. Its completion
+sentinels are:
 
-## V-DX-E15-012 — Census and footguns
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+`QUESTIONS.md` answers the review question “inside `uninterruptible`, when can
+this fiber be cancelled?”, documents same-fiber identity and cleanup behavior,
+and points reviewers to the shared suites. `docs/api-dx.md` contains the durable
+mask model and checkpoint list. The Signal lane test is the fork-identity
+adversary.
+
+## V-DX-E15-014 — Census and footgun delta
 
 | Census | Before | After | Delta |
 | --- | ---: | ---: | ---: |
-| Top-level `Effect.interruptible` declarations | 0 | 0 | 0 |
-| Runtime-contract mask operations | 0 | 0 | 0 |
-| Production implementation lines | 0 | 0 | 0 |
+| Public `Effect.interruptible` declarations | 0 | 1 | +1 |
+| Runtime-contract mask operations | 0 | 1 | +1 |
+| Backend mask implementations | 0 | 2 | +2 |
+| Private native hidden-module adapters | 0 | 1 | +1 |
+| Shared named adversarial cases | 0 | 12 | +12, run on each backend |
+| Direct QCheck mask properties | 0 | 2 | +2 |
 | Published cancellation-checkpoint sections | 0 | 1 | +1 |
-| Committed backend probe executables | 0 | 2 | +2 |
-| New public footguns | 0 | 0 | 0 |
+| Committed probe/review executables | 0 | 3 | +3 |
 
-The inventory makes two existing substrate edges visible rather than adding
-footguns: settled-promise checkpoint behavior differs, and Eio protection does
-not check its old parent on exit.
+The public footgun is explicit: `interruptible` is useful only around genuine
+checkpoints inside a dynamic mask; it does not make synchronous work
+preemptible. Restoration in cleanup is deliberately unavailable. The remaining
+maintenance risk is the one isolated native internal-API dependency, documented
+in that adapter, the journal, `QUESTIONS.md`, and `PARKING_LOT.md`.
 
-## V-DX-E15-013 — Prediction scoring
+## V-DX-E15-015 — Prediction scoring
 
-The sealed journal predicted all decisive outcomes:
+The original journal remains append-only, including the rejected kill. Revised
+scoring is **8 exact, 2 strengthened, 1 contradicted**:
 
-- exact: Eio's protected-subtree barrier, explicit descendant cancellation
-  escaping, and pending old-parent delivery at the next check;
-- exact: jsoo depth composition and delivery when depth returns to zero;
-- exact: jsoo's local innermost-wins mapping is expressible;
-- exact: native requires relay/new cancellation machinery and fires the kill;
-- exact: finalizers must not restore cancellation;
-- exact: cancel-during-entry/exit is the lost-wakeup pressure point.
+- exact: Eio's protected-subtree barrier, explicit descendant cancellation,
+  pending old-parent behavior, jsoo depth composition, jsoo innermost-wins,
+  need for a native restore operation, finalizer prohibition, and entry/exit
+  race pressure;
+- strengthened: the checkpoint inventory and delivery-winner pressure;
+- contradicted: the predicted kill after the search missed Eio's hidden
+  same-fiber restore.
 
-Two checkpoint details were additional evidence rather than sealed predictions:
-the settled Eio promise fast path does not check cancellation, and jsoo protects
-a full runtime-stream add. No prediction was contradicted.
+The correction is material and explicit: “no restore”, “every synthetic
+sub-context must be redesigned”, and “private context move unavailable” were
+false. The Phase 0 observations only killed the wrong constructions.
 
-Score: **8 exact, 2 strengthened by additional evidence, 0 contradicted**.
+## V-DX-E15-016 — Gates and recommendation
 
-## V-DX-E15-014 — Gates and recommendation
-
-The Phase 0 native and jsoo probes pass. The complete prescribed gates were also
-run on the final documentation/kill bundle:
+The resumed bundle passed every prescribed gate:
 
 | Command | Result |
 | --- | --- |
@@ -188,13 +247,11 @@ run on the final documentation/kill bundle:
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline @install` | PASS |
 | `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force` | PASS |
 
-The mainline compiler emitted the repository's existing two integer-overflow
-warnings while compiling JS. All requested Node suites reached their completion
-sentinels. These baseline gates prove the kill bundle does not regress the
-repository; they do not imply law coverage for an API that was not added.
+The mainline JS compiler repeated the repository's two existing integer-overflow
+warnings; all requested Node completion sentinels were reached. The separately
+built native accept-loop victim also printed `INTERRUPTED` and `PASS`.
 
-The parking-lot prerequisites are in `PARKING_LOT.md`.
+The implementation satisfies the one-pager and Follow-up 1 without widening
+cancellation semantics beyond the single mask operation.
 
-**E15 KILLED: Eio exposes no restore or arbitrary-parent cancellation observer;
-scope-only relays lose cancellation of Eta synthetic sub-contexts and can strand
-a blocked interruptible point.**
+**E15 READY FOR REVIEW**
