@@ -84,7 +84,7 @@ type cancellation_restoration =
   | Restoration_forbidden of unit
 
 let cancellation_restoration : cancellation_restoration Runtime_contract.local =
-  Runtime_contract.create_local ()
+  Runtime_contract.create_local ~inheritance:Fiber_local ()
 
 type 'err t = {
   clock : Capabilities.clock;

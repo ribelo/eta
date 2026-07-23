@@ -296,8 +296,9 @@ module Make (B : Backend) = struct
     in
     run done_ (Effect.par target controller) expect_target_interrupt
 
-  let test_duplicate_cancel_delivers_once done_ =
-    let cancel_handle = ref None in
+  let test_competing_cancellation_sources_deliver_once done_ =
+    let outer_cancel_handle = ref None in
+    let inner_cancel_handle = ref None in
     let blocked = ref false in
     let finalizer_calls = ref 0 in
     let restored =
@@ -311,18 +312,20 @@ module Make (B : Backend) = struct
       |> Effect.uninterruptible
     in
     let target =
-      install_cancel_handle cancel_handle (Effect.to_exit target_body)
+      install_cancel_handle outer_cancel_handle
+        (install_cancel_handle inner_cancel_handle (Effect.to_exit target_body))
     in
     let controller =
-      let* () = wait_until "duplicate-cancel block" (fun () -> !blocked) in
-      Effect.sync (fun () ->
-          call_cancel !cancel_handle;
-          call_cancel !cancel_handle)
+      let* () = wait_until "competing-cancel block" (fun () -> !blocked) in
+      Effect.par
+        (Effect.sync (fun () -> call_cancel !outer_cancel_handle))
+        (Effect.sync (fun () -> call_cancel !inner_cancel_handle))
+      |> Effect.discard
     in
     run done_ (Effect.par target controller) (fun result ->
         expect_target_interrupt result;
         if !finalizer_calls <> 1 then
-          failf "duplicate cancellation ran finalizer %d times" !finalizer_calls)
+          failf "competing cancellation ran finalizer %d times" !finalizer_calls)
 
   let test_finalizer_cannot_restore_enclosing_mask done_ =
     let cancel_handle = ref None in
@@ -412,6 +415,118 @@ module Make (B : Backend) = struct
         if not !finalizer_finished then
           B.fail "protected registered finalizer did not finish")
 
+  let test_mask_covers_forked_children done_ =
+    let cancel_handle = ref None in
+    let child_started = ref false in
+    let child_released = ref false in
+    let child_settled = ref false in
+    let child_finished = ref false in
+    let observed_masked = ref false in
+    let child =
+      let body =
+        let* () = Effect.sync (fun () -> child_started := true) in
+        let* () = wait_until "masked child release" (fun () -> !child_released) in
+        Effect.sync (fun () -> child_finished := true)
+      in
+      Effect.finally (Effect.sync (fun () -> child_settled := true)) body
+    in
+    let target_body =
+      let* _ = Effect.uninterruptible (Effect.par child Effect.unit) in
+      Effect.yield
+    in
+    let target =
+      install_cancel_handle cancel_handle (Effect.to_exit target_body)
+    in
+    let controller =
+      let* () = wait_until "masked child start" (fun () -> !child_started) in
+      let* () = Effect.sync (fun () -> call_cancel !cancel_handle) in
+      let* () = pause 3 in
+      Effect.sync (fun () ->
+          observed_masked := not !child_settled;
+          child_released := true)
+    in
+    run done_ (Effect.par target controller) (fun result ->
+        expect_target_interrupt result;
+        if not !observed_masked then
+          B.fail "child forked inside mask was interrupted by default";
+        if not !child_finished then B.fail "masked child did not finish")
+
+  let test_daemon_drops_restore_binding_after_mask done_ =
+    let daemon_released = ref false in
+    let daemon_result = ref None in
+    let daemon =
+      let* () = wait_until "masked daemon release" (fun () -> !daemon_released) in
+      let* result = Effect.to_exit (Effect.interruptible (Effect.pure 42)) in
+      Effect.sync (fun () -> daemon_result := Some result)
+    in
+    let program =
+      let* () = Effect.uninterruptible (Effect.daemon daemon) in
+      let* () = Effect.sync (fun () -> daemon_released := true) in
+      let+ () =
+        wait_until "masked daemon result" (fun () -> Option.is_some !daemon_result)
+      in
+      Option.get !daemon_result
+    in
+    run done_ program (function
+      | Exit.Ok (Exit.Ok 42) -> ()
+      | Exit.Ok (Exit.Ok value) -> failf "masked daemon returned %d" value
+      | Exit.Ok (Exit.Error cause) ->
+          B.fail
+            (Format.asprintf "masked daemon retained restore binding: %a"
+               (Cause.pp pp_hidden) cause)
+      | Exit.Error cause ->
+          B.fail
+            (Format.asprintf "masked daemon controller failed: %a"
+               (Cause.pp pp_hidden) cause))
+
+  let test_daemon_drops_cleanup_forbidden_binding done_ =
+    let daemon_cancel_handle = ref None in
+    let daemon_blocked = ref false in
+    let daemon_result = ref None in
+    let restored =
+      let* () = Effect.sync (fun () -> daemon_blocked := true) in
+      wait_until ~attempts:50 "cleanup daemon cancellation" (fun () -> false)
+    in
+    let daemon =
+      let target =
+        Effect.uninterruptible (Effect.interruptible restored)
+        |> Effect.to_exit
+        |> install_cancel_handle daemon_cancel_handle
+      in
+      let* result = target in
+      Effect.sync (fun () -> daemon_result := Some result)
+    in
+    let program =
+      let* () =
+        Effect.uninterruptible (Effect.finally (Effect.daemon daemon) Effect.unit)
+      in
+      let* () = wait_until "cleanup daemon block" (fun () -> !daemon_blocked) in
+      let* () = Effect.sync (fun () -> call_cancel !daemon_cancel_handle) in
+      let+ () =
+        wait_until "cleanup daemon result" (fun () -> Option.is_some !daemon_result)
+      in
+      Option.get !daemon_result
+    in
+    run done_ program (function
+      | Exit.Ok daemon_exit -> expect_interrupt daemon_exit
+      | Exit.Error cause ->
+          B.fail
+            (Format.asprintf "cleanup daemon controller failed: %a"
+               (Cause.pp pp_hidden) cause))
+
+  let test_forked_interruptible_child_preserves_fail_fast done_ =
+    let program =
+      Effect.uninterruptible
+        (Effect.par (Effect.interruptible Effect.never) (Effect.fail `Boom))
+    in
+    run done_ program (function
+      | Exit.Error (Cause.Fail `Boom) -> ()
+      | Exit.Error cause ->
+          B.fail
+            (Format.asprintf "expected Fail Boom, got %a"
+               (Cause.pp pp_hidden) cause)
+      | Exit.Ok _ -> B.fail "forked interruptible child unexpectedly succeeded")
+
   let tests =
     [
       ("interruptible outside a mask is identity", test_outside_mask_is_identity);
@@ -431,11 +546,19 @@ module Make (B : Backend) = struct
         test_mask_stack_law_inner_uninterruptible_wins );
       ( "interruptible nested mask innermost restore wins",
         test_nested_mask_innermost_restore_wins );
-      ( "interruptible duplicate cancel delivers once",
-        test_duplicate_cancel_delivers_once );
+      ( "interruptible competing cancellation sources deliver once",
+        test_competing_cancellation_sources_deliver_once );
       ( "interruptible is forbidden in finalizers",
         test_finalizer_cannot_restore_enclosing_mask );
       ( "interruptible is forbidden in registered finalizers",
         test_registered_finalizer_cannot_restore_enclosing_mask );
+      ( "forked interruptible child preserves fail-fast",
+        test_forked_interruptible_child_preserves_fail_fast );
+      ( "cancellation mask covers forked children",
+        test_mask_covers_forked_children );
+      ( "daemon drops restore binding after mask",
+        test_daemon_drops_restore_binding_after_mask );
+      ( "daemon drops cleanup-forbidden binding",
+        test_daemon_drops_cleanup_forbidden_binding );
     ]
 end

@@ -246,8 +246,8 @@ val interruptible : ('a, 'err) t -> ('a, 'err) t
     this is identity. Pending interruption is delivered at entry, at successful
     exit, or by a cancellation checkpoint in the wrapped eff, at most once.
 
-    Finalizers and [finally] cleanup remain protected: this combinator cannot
-    restore cancellation while they run. *)
+    Finalizers and [finally] stay protected. Restoration is fiber-local;
+    children forked inside a mask remain masked. *)
 
 val bind_error :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t

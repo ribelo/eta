@@ -19,6 +19,9 @@ type 'a resolver
 type 'a stream
 (** Runtime-owned bounded stream used for internal result handoff. *)
 
+type local_inheritance = Inherit | Fiber_local
+(** Fork-inheritance policy for a runtime-local binding. *)
+
 type 'a local
 (** Runtime-local binding key. Backends decide whether this maps to fiber-local,
     task-local, or another scoped context mechanism. *)
@@ -233,8 +236,9 @@ end
     runtime domain. Worker callbacks are represented explicitly by
     [with_worker_context]; they must not call Eta graph APIs directly. *)
 
-val create_local : unit -> 'a local
-(** Create a runtime-local key. *)
+val create_local : ?inheritance:local_inheritance -> unit -> 'a local
+(** Create a runtime-local key. [Inherit] is the default; [Fiber_local] bindings
+    are absent in forked children and daemons. *)
 
 val create_service_key : unit -> 'a service_key
 (** Create a typed runtime-service key. *)
@@ -259,6 +263,7 @@ val of_runtime : (module RUNTIME) -> t
 module Backend : sig
   val local_id : 'a local -> int
   val local_binding_value : 'a local -> local_binding -> 'a option
+  val local_binding_is_fork_inherited : local_binding -> bool
   val service_key_id : 'a service_key -> int
   val service_value : 'a service_key -> service -> 'a option
 end

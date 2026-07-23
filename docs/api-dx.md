@@ -235,6 +235,15 @@ identity. Restoration moves the current runtime fiber; it does not fork, so
 fiber identity, runtime-local bindings, tracing, and fiber-reentrant protocols
 are preserved.
 
+Masks cover children, but restoration is fiber-local. A child forked inside
+`uninterruptible` inherits the mask through cancellation-context lineage on
+native Eio and protection depth on js_of_ocaml; it does not inherit its parent's
+restore closure. Therefore `interruptible` in that child is identity and the
+child remains masked against parent cancellation. Direct failure of the child's
+own structured scope still interrupts it, preserving fail-fast. Daemons inherit
+neither restoration nor cleanup-forbidden state and start independently
+unmasked.
+
 Masks stack and the innermost mask wins. In particular,
 `uninterruptible (interruptible (uninterruptible body))` has the cancellation
 behavior of `uninterruptible body`: the inner mask supersedes the outer

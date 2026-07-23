@@ -36,7 +36,11 @@ type cancel_context =
 type 'a promise = Promise of (promise_token, 'a) Erased_token.t
 type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
 type 'a stream = Stream of (stream_token, 'a) Erased_token.t
-type 'a local = 'a Type.Id.t
+type local_inheritance = Inherit | Fiber_local
+type 'a local = {
+  local_key : 'a Type.Id.t;
+  local_inheritance : local_inheritance;
+}
 type cancellation_restore = { restore : 'a. (unit -> 'a) -> 'a }
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
@@ -119,9 +123,9 @@ module type RUNTIME = sig
 end
 
 let next_local = Atomic.make 0
-let create_local () =
+let create_local ?(inheritance = Inherit) () =
   ignore (Atomic.fetch_and_add next_local 1);
-  Type.Id.make ()
+  { local_key = Type.Id.make (); local_inheritance = inheritance }
 
 let next_service_key = Atomic.make 0
 let create_service_key () =
@@ -148,12 +152,15 @@ let in_registered_worker_context () =
     (Atomic.get worker_context_probes)
 
 module Backend = struct
-  let local_id local = Type.Id.uid local
+  let local_id local = Type.Id.uid local.local_key
   let local_binding_value : type a. a local -> local_binding -> a option =
    fun local (Local_binding (stored_local, value)) ->
-    match Type.Id.provably_equal local stored_local with
+    match Type.Id.provably_equal local.local_key stored_local.local_key with
     | Some Type.Equal -> Some value
     | None -> None
+
+  let local_binding_is_fork_inherited (Local_binding (local, _)) =
+    local.local_inheritance = Inherit
 
   let service_key_id key = Type.Id.uid key
   let service_value : type a. a service_key -> service -> a option =

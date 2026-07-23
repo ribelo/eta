@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **103 mli-stated claims**, **2 prose-pending model claims**,
-**106 registered external claim clusters**, and **64 unique named qcheck properties** in
+**109 registered external claim clusters**, and **64 unique named qcheck properties** in
 `test/laws/law_properties.ml`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -236,12 +236,15 @@ qcheck optics.
 | R99 | `timeout_as` follows timeout ownership/cancellation/finalizer boundaries and maps only its own expiry to the supplied typed error. | `lib/eta/effect.mli:498-502` | `timeout_as exact error row`; `timeout_as maps delayed eff`; `timeout_as nested maps outer timeout`; `timeout_as preserves simultaneous failure`; `timeout_as preserves cancelled finalizer` — `test/core_common/effect_resource_timeout_common_suites.ml:873-882` |
 | R100 | `repeat` evaluates once before stepping, follows schedule delays and outputs, and interruption stops the loop. | `lib/eta/effect.mli:503-515` | `repeat schedule`; `repeat recurs zero runs body once`; `repeat passes successful values to schedule`; `repeat schedule uses virtual delays`; `repeat fixed cadence differs from spaced`; `repeat fixed overrun has no pileup`; `repeat timeout interrupts loop` — `test/core_common/effect_retry_repeat_common_suites.ml:1134-1147` |
 | R101 | `forever` repeats successes and stops on typed failure, defect, interruption/timeout, or finalizer diagnostic without succeeding. | `lib/eta/effect.mli:517-523` | `forever repeats until timeout`; `forever stops on typed failure`; `forever stops on defect`; `forever stops on finalizer diagnostic` — `test/core_common/effect_retry_repeat_common_suites.ml:1148-1155` |
-| R102 | Inside a dynamic mask, `interruptible` restores parent cancellation at a blocking checkpoint. | `lib/eta/effect.mli:243-247` | `interruptible cancel during restored block wakes waiter`; `interruptible cancel at restored checkpoint is delivered` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:99-152,420-425` |
-| R103 | Cancellation-mask nesting is innermost-wins on both backends. | `lib/eta/effect.mli:243-247` | `interruptible mask-stack law inner uninterruptible wins`; `interruptible nested mask innermost restore wins` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:220-297,430-433` |
-| R104 | Pending interruption is delivered at restoration entry and at the successful-exit edge, with generated entry races losing no wakeup. | `lib/eta/effect.mli:246-247` | `interruptible pending cancellation raises at restore entry`; `interruptible cancel between restore and exit hits successful boundary`; `interruptible generated cancel-mask-entry races lose no wakeup` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:78-97,154-218,418-429` |
-| R105 | One cancellation is observed at most once by an interruptible region. | `lib/eta/effect.mli:246-247` | `interruptible duplicate cancel delivers once` — shared definition and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:299-325,434-435` |
-| R106 | Repeated `interruptible` inside an already-restored region is identity. | `lib/eta/effect.mli:243-247` | `repeated interruptible in restored region is identity` — shared definition and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:117-134,422-423` |
-| R107 | `interruptible` cannot restore cancellation from `finally` cleanup or a registered finalizer. | `lib/eta/effect.mli:249-250` | `interruptible is forbidden in finalizers`; `interruptible is forbidden in registered finalizers` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:327-413,436-439` |
+| R102 | Inside a dynamic mask, `interruptible` restores parent cancellation at a blocking checkpoint. | `lib/eta/effect.mli:243-247` | `interruptible cancel during restored block wakes waiter`; `interruptible cancel at restored checkpoint is delivered` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:99-152,531-536` |
+| R103 | Cancellation-mask nesting is innermost-wins on both backends. | `lib/eta/effect.mli:243-247` | `interruptible mask-stack law inner uninterruptible wins`; `interruptible nested mask innermost restore wins` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:220-297,541-544` |
+| R104 | Pending interruption is delivered at restoration entry and at the successful-exit edge, with generated entry races losing no wakeup. | `lib/eta/effect.mli:246-247` | `interruptible pending cancellation raises at restore entry`; `interruptible cancel between restore and exit hits successful boundary`; `interruptible generated cancel-mask-entry races lose no wakeup` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:78-97,154-218,529-540` |
+| R105 | One cancellation is observed at most once by an interruptible region. | `lib/eta/effect.mli:246-247` | `interruptible competing cancellation sources deliver once` — shared definition and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:299-328,545-546` |
+| R106 | Repeated `interruptible` inside an already-restored region is identity. | `lib/eta/effect.mli:243-247` | `repeated interruptible in restored region is identity` — shared definition and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:117-134,533-534` |
+| R107 | `interruptible` cannot restore cancellation from `finally` cleanup or a registered finalizer. | `lib/eta/effect.mli:249-250` | `interruptible is forbidden in finalizers`; `interruptible is forbidden in registered finalizers` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:330-416,547-550` |
+| R108 | Cancellation masks cover forked children, while restoration remains fiber-local and structured fail-fast still interrupts the child scope. | `lib/eta/effect.mli:249-250` | `cancellation mask covers forked children`; `forked interruptible child preserves fail-fast` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:418-452,513-524,551-554` |
+| R109 | Restoration and cleanup-forbidden state do not outlive their owning fiber through daemons. | `lib/eta/effect.mli:249-250` | `daemon drops restore binding after mask`; `daemon drops cleanup-forbidden binding` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:454-511,555-558` |
+| R110 | Default runtime locals cross forks, while `Fiber_local` bindings are absent in forked children and daemons. | `lib/eta/runtime_contract.mli:239-241` | `runtime contract local inheritance kinds` — native `test/runtime_common/runtime_common_suites.ml:892-931,1271-1272`; jsoo `test/js_jsoo/test_eta_jsoo.ml:171-212,518-519` |
 
 ## Model laws (prose pending)
 
@@ -258,12 +261,13 @@ valid constructor domains; until then their provenance is explicit.
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/eta/effect.mli` | 50 | 90 | 0 | 140 |
+| `lib/eta/effect.mli` | 50 | 92 | 0 | 142 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
-| **Total covered** | **103** | **106** | **2** | **209** |
+| `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
+| **Total covered** | **103** | **109** | **2** | **212** |
 
 The executable contains 64 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

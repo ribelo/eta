@@ -66,6 +66,7 @@ type scope = {
   mutable scope_children : unit promise list;
   mutable scope_failures : (exn * Printexc.raw_backtrace) list;
   mutable scope_failure : (exn * Printexc.raw_backtrace) option;
+  mutable scope_failure_waiters : cancel_waiter list;
 }
 
 and fiber = {
@@ -74,6 +75,9 @@ and fiber = {
   mutable fiber_cancel : cancel_context;
   mutable fiber_locals : local_context;
   mutable fiber_protect_depth : int;
+  (* An inherited mask defers ancestor cancellation, but a direct failure of the
+     structured scope that owns this fiber must still preserve fail-fast. *)
+  mutable fiber_scope_failure_interruptible : bool;
 }
 
 and 'a promise_subscription = {
@@ -158,9 +162,22 @@ let remove_cancel_child parent child =
     List.filter (fun candidate -> candidate.cancel_id <> child.cancel_id)
       parent.cancel_children
 
+let scope_failure_reason scope =
+  match scope.scope_failure with
+  | Some (reason, _) -> Some reason
+  | None -> (
+      match scope.scope_failures with
+      | (reason, _) :: _ -> Some reason
+      | [] -> None)
+
 let check_cancel fiber =
   match (fiber.fiber_cancel.cancel_reason, fiber.fiber_protect_depth) with
   | Some reason, 0 -> raise (Cancelled reason)
+  | _, depth
+    when depth > 0 && fiber.fiber_scope_failure_interruptible -> (
+      match scope_failure_reason fiber.fiber_scope with
+      | Some reason -> raise (Cancelled reason)
+      | None -> ())
   | _ -> ()
 
 let add_cancel_waiter context wake =
@@ -174,10 +191,40 @@ let add_cancel_waiter context wake =
       context.cancel_waiters <- waiter :: context.cancel_waiters;
       fun () -> waiter.cancel_waiter_active <- false
 
-let copy_locals locals =
+let copy_locals ?(fork = false) locals =
   let copy = Hashtbl.create (Hashtbl.length locals) in
-  Hashtbl.iter (fun key value -> Hashtbl.replace copy key value) locals;
+  Hashtbl.iter
+    (fun key bindings ->
+      let bindings =
+        if fork then
+          List.filter Runtime_contract.Backend.local_binding_is_fork_inherited
+            bindings
+        else bindings
+      in
+      if bindings <> [] then Hashtbl.replace copy key bindings)
+    locals;
   copy
+
+let add_scope_failure_waiter scope wake =
+  let waiter = { cancel_waiter_active = true; cancel_waiter_wake = wake } in
+  match scope_failure_reason scope with
+  | Some reason ->
+      waiter.cancel_waiter_active <- false;
+      wake reason;
+      fun () -> ()
+  | None ->
+      scope.scope_failure_waiters <- waiter :: scope.scope_failure_waiters;
+      fun () -> waiter.cancel_waiter_active <- false
+
+let wake_scope_failure_waiters scope reason =
+  let waiters = scope.scope_failure_waiters in
+  scope.scope_failure_waiters <- [];
+  List.iter
+    (fun waiter ->
+      if waiter.cancel_waiter_active then (
+        waiter.cancel_waiter_active <- false;
+        waiter.cancel_waiter_wake reason))
+    waiters
 
 let subscribe promise callback =
   let subscription =
@@ -253,17 +300,21 @@ let handle_effect fiber =
               subscribe promise (function
                 | Ok value -> resume (fun () -> continue continuation value)
                 | Error exn -> resume (fun () -> discontinue continuation exn));
-            if fiber.fiber_protect_depth = 0 then
-              cancel_cleanup :=
-                add_cancel_waiter fiber.fiber_cancel (fun reason ->
-                    !subscription_cleanup ();
-                    let discontinuation =
-                      match Option.iter (fun hook -> hook ()) on_cancel with
-                      | () -> Cancelled reason
-                      | exception exn -> exn
-                    in
-                    resume (fun () ->
-                        discontinue continuation discontinuation)))
+            let cancel reason =
+              !subscription_cleanup ();
+              let discontinuation =
+                match Option.iter (fun hook -> hook ()) on_cancel with
+                | () -> Cancelled reason
+                | exception exn -> exn
+              in
+              resume (fun () -> discontinue continuation discontinuation)
+            in
+            cancel_cleanup :=
+              if fiber.fiber_protect_depth = 0 then
+                add_cancel_waiter fiber.fiber_cancel cancel
+              else if fiber.fiber_scope_failure_interruptible then
+                add_scope_failure_waiter fiber.fiber_scope cancel
+              else fun () -> ())
     | _ -> None
   in
   handler
@@ -296,14 +347,23 @@ let protect_impl ~check_after f =
   match !current_fiber with
   | None -> f ()
   | Some fiber ->
+      let previous_scope_failure_interruptible =
+        fiber.fiber_scope_failure_interruptible
+      in
       fiber.fiber_protect_depth <- fiber.fiber_protect_depth + 1;
+      fiber.fiber_scope_failure_interruptible <- false;
+      let restore () =
+        fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1;
+        fiber.fiber_scope_failure_interruptible <-
+          previous_scope_failure_interruptible
+      in
       match f () with
       | value ->
-          fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1;
+          restore ();
           if check_after then check_cancel fiber;
           value
       | exception exn ->
-          fiber.fiber_protect_depth <- fiber.fiber_protect_depth - 1;
+          restore ();
           raise exn
 
 let protect f = protect_impl ~check_after:true f
@@ -344,6 +404,7 @@ let new_scope ?name parent_cancel =
     scope_children = [];
     scope_failures = [];
     scope_failure = None;
+    scope_failure_waiters = [];
   }
 
 let root_scope =
@@ -355,15 +416,18 @@ let root_scope =
     scope_children = [];
     scope_failures = [];
     scope_failure = None;
+    scope_failure_waiters = [];
   }
 
 let record_scope_failure scope exn bt =
-  scope.scope_failures <- (exn, bt) :: scope.scope_failures
+  scope.scope_failures <- (exn, bt) :: scope.scope_failures;
+  wake_scope_failure_waiters scope exn
 
 let fail_scope ?bt scope exn =
   let bt = Option.value bt ~default:(Printexc.get_raw_backtrace ()) in
   if Option.is_none scope.scope_failure then
     scope.scope_failure <- Some (exn, bt);
+  wake_scope_failure_waiters scope exn;
   cancel_context scope.scope_cancel exn
 
 let raise_scope_failures = function
@@ -379,14 +443,15 @@ let raise_scope_cancellation scope =
       | Some reason -> raise (Cancelled reason)
       | None -> raise (Cancelled Exit))
 
-let spawn_fiber ?(daemon = false) ~scope ~locals body =
+let spawn_fiber ?(daemon = false) ~scope ~locals ~protect_depth body =
   let fiber =
     {
       fiber_id = fresh_id ();
       fiber_scope = scope;
       fiber_cancel = scope.scope_cancel;
       fiber_locals = locals;
-      fiber_protect_depth = 0;
+      fiber_protect_depth = protect_depth;
+      fiber_scope_failure_interruptible = not daemon;
     }
   in
   let promise, resolver = create_promise () in
@@ -406,13 +471,15 @@ let spawn_fiber ?(daemon = false) ~scope ~locals body =
 let fork scope body =
   let parent = current () in
   ignore
-    (spawn_fiber ~scope ~locals:(copy_locals parent.fiber_locals) body
+    (spawn_fiber ~scope ~locals:(copy_locals ~fork:true parent.fiber_locals)
+       ~protect_depth:parent.fiber_protect_depth body
       : unit promise)
 
 let fork_daemon scope body =
   let parent = current () in
   ignore
-    (spawn_fiber ~daemon:true ~scope ~locals:(copy_locals parent.fiber_locals)
+    (spawn_fiber ~daemon:true ~scope
+       ~locals:(copy_locals ~fork:true parent.fiber_locals) ~protect_depth:0
        (fun () -> ignore (body ()))
       : unit promise)
 
@@ -426,8 +493,12 @@ let run_scope ?name body =
   let child_scope = new_scope ?name fiber.fiber_cancel in
   let previous_scope = fiber.fiber_scope in
   let previous_cancel = fiber.fiber_cancel in
+  let previous_scope_failure_interruptible =
+    fiber.fiber_scope_failure_interruptible
+  in
   fiber.fiber_scope <- child_scope;
   fiber.fiber_cancel <- child_scope.scope_cancel;
+  fiber.fiber_scope_failure_interruptible <- true;
   let body_result =
     try Ok (body child_scope) with
     | Cancelled _ as exn -> Error (exn, Printexc.get_raw_backtrace ())
@@ -441,6 +512,8 @@ let run_scope ?name body =
   remove_cancel_child previous_cancel child_scope.scope_cancel;
   fiber.fiber_scope <- previous_scope;
   fiber.fiber_cancel <- previous_cancel;
+  fiber.fiber_scope_failure_interruptible <-
+    previous_scope_failure_interruptible;
   match (body_result, List.rev child_scope.scope_failures) with
   | Ok value, [] -> (
       match child_scope.scope_cancel.cancel_reason with
@@ -473,8 +546,13 @@ let check () = check_cancel (current ())
 let await_cancel () =
   let fiber = current () in
   let promise, resolver = create_promise () in
+  let wake reason = resolve_once resolver reason in
   let cleanup =
-    add_cancel_waiter fiber.fiber_cancel (fun reason -> resolve_once resolver reason)
+    if fiber.fiber_protect_depth = 0 then
+      add_cancel_waiter fiber.fiber_cancel wake
+    else if fiber.fiber_scope_failure_interruptible then
+      add_scope_failure_waiter fiber.fiber_scope wake
+    else fun () -> ()
   in
   let reason = await ~on_cancel:cleanup promise in
   raise (Cancelled reason)
@@ -683,6 +761,7 @@ let run_eta_jsoo root body =
       fiber_cancel = root.scope_cancel;
       fiber_locals = Hashtbl.create 8;
       fiber_protect_depth = 0;
+      fiber_scope_failure_interruptible = false;
     }
   in
   let finish = function
