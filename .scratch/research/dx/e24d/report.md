@@ -48,8 +48,9 @@ uncatchable typed leaves cannot always be retained.
   the source cause on every terminal path.
 - `lib/eta/effect.mli`: the bare-only limitation is replaced by the shared
   boundary and exact terminal-preservation contract.
-- Four named shared-suite tests cover first-failure predicate/schedule input,
-  buried uncatchables, rejection preservation, and exhaustion preservation.
+- Five named shared-suite tests cover first-failure predicate/schedule input,
+  buried uncatchables, rejection preservation, exhaustion preservation, and raw
+  empty-composite passthrough.
 - Existing bare-failure tests remain unchanged and green.
 
 Focused red/green evidence (V-DX-E24D-003): before the implementation, the new
@@ -64,7 +65,7 @@ caller outside the combinator implementation.
 - The existing retry/repeat shared suite uses bare `Effect.fail` causes or
   explicitly uncatchable defect/interruption/finalizer exits. Those behaviors
   are unchanged; the only typed composites in that suite were the existing
-  `retry_or_else` case and the four new `retry` cases.
+  `retry_or_else` case and the five new `retry` cases.
 - The generic property suite retries an always-successful effect. Stress suites
   generate bare typed failures. Both remain semantically unchanged.
 - Three examples and two runtime benchmarks use ordinary bare typed failures.
@@ -73,11 +74,9 @@ caller outside the combinator implementation.
 - API-DX, adapter, and test-runtime call sites likewise use success or bare typed
   failures; full gates confirm they remain green.
 
-The only additional edge is a raw `Cause.Sequential []` or `Concurrent []`
-constructed by bypassing the rejecting smart constructors. It now follows the
-shared boundary's empty-composite invariant and becomes a captured
-`Invalid_argument` defect. This is a malformed-cause follow-up, not a reason to
-split retry semantics again.
+A raw `Cause.Sequential []` or `Concurrent []` passes through unchanged,
+matching the shared boundary's no-typed-failure rule. The public variants permit
+this shape even though the smart constructors reject empty lists.
 
 ## E22 registration
 

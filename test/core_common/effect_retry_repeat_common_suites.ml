@@ -1191,6 +1191,35 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_or_else_skips_uncatchable_causes;
           Alcotest.test_case "retry_or_else virtual delays" `Quick
             test_effect_retry_or_else_uses_virtual_delays;
+          Alcotest.test_case "retry empty composite passes through" `Quick
+            (fun () ->
+              B.with_runtime @@ fun _ctx rt ->
+              let cause : string Cause.t = Cause.Sequential [] in
+              let cause_testable =
+                Alcotest.testable (Cause.pp Format.pp_print_string)
+                  (Cause.equal String.equal)
+              in
+              let predicate_calls = ref 0 in
+              let schedule_calls = ref 0 in
+              let schedule =
+                Schedule.recur_until (fun _ ->
+                    incr schedule_calls;
+                    false)
+              in
+              let eff =
+                effect_error_cause cause
+                |> Effect.retry ~schedule
+                     ~while_:(fun _ ->
+                       incr predicate_calls;
+                       true)
+              in
+              (match B.run rt eff with
+              | Exit.Error actual ->
+                  Alcotest.check cause_testable "original empty cause" cause
+                    actual
+              | Exit.Ok _ -> Alcotest.fail "empty composite unexpectedly succeeded");
+              Alcotest.(check int) "predicate skipped" 0 !predicate_calls;
+              Alcotest.(check int) "schedule skipped" 0 !schedule_calls);
         ] );
     ]
 end

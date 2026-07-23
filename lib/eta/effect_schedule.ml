@@ -55,7 +55,7 @@ let retry ~schedule ~while_ eff =
                       loop ()
                   | Sch.Done _, _ -> error cause)
               | Some _ -> error cause
-              | None -> invalid_arg "Effect.retry: empty composite cause"))
+              | None -> error cause))
     in
     loop ()
   with exn -> exit_of_exn frame exn

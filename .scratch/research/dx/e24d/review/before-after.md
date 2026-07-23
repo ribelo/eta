@@ -12,7 +12,7 @@
 | Composite containing defect | Return original composite; no retry | Unchanged; shared boundary refuses and preserves it |
 | Composite containing interruption | Return original composite; no retry | Unchanged; shared boundary refuses and preserves it |
 | Suppressed/finalizer diagnostic | Return original cause; no retry | Unchanged; shared boundary refuses and preserves it |
-| Raw empty composite variant | Return the empty cause | Shared-boundary invariant failure becomes a captured `Invalid_argument` defect; smart constructors already reject empties |
+| Raw empty composite variant | Return the empty cause | Unchanged; no typed failure means no policy and the original cause passes through |
 
 The behavior change is limited to typed-only composites: policy is now
 consulted and may cause retries. Selection of the first failure is a policy

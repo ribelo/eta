@@ -423,9 +423,9 @@ val retry :
     that recipe.
 
     For composites, [retry] has the same catchability boundary as {!bind_error}
-    and {!retry_or_else}: it uses the first typed failure in cause order without
-    defects, interruption, or finalizer diagnostics. Rejection preserves its
-    source; exhaustion preserves the complete terminal cause; uncatchable exits preserve source. *)
+    and {!retry_or_else}: it uses the first typed failure when present and no
+    uncatchable diagnostic exists. Causes without typed failures, rejected causes,
+    and uncatchable exits preserve their source; exhaustion preserves the complete terminal cause. *)
 
 val retry_or_else :
   schedule:('err1, 'schedule_out) Schedule.t ->

@@ -86,3 +86,29 @@ nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --f
 ```
 
 Prediction score: 7/7 HIT. Recommendation: promote.
+
+### Follow-up 1 — V-DX-E24D-006
+
+The CORRECT-WITH-RESERVATIONS findings were accepted.
+
+- `retry` now returns an empty raw composite unchanged when
+  `first_typed_failure` returns `None`; predicate and schedule policy are not
+  invoked. Named test: `retry empty composite passes through`.
+- R94, R100, and R101 now point to the verified registration spans
+  `1158-1159`, `1134-1147`, and `1148-1155`. R79-R82 were rechecked; R81 now
+  registers the no-typed-failure passthrough test at `1194-1222`.
+- The report and before/after matrix no longer call raw empty composites
+  malformed; they record passthrough as the shared no-typed-failure rule.
+
+Focused `test/core_eio` passed all 571 tests. Follow-up gates:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS on rerun
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force PASS
+```
+
+The first full-suite attempt had two unrelated SQL pool timing/finalizer
+failures (`Eta_sql` cases 15 and 22); no SQL files changed, and the exact forced
+full-suite rerun passed.
