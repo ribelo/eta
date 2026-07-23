@@ -54,6 +54,7 @@ let with_hooked_runtime f =
     let fresh = Base.fresh
     let sleep = Base.sleep
     let protect = Base.protect
+    let with_cancel_mask = Base.with_cancel_mask
     let run_scope = Base.run_scope
     let fail_scope = Base.fail_scope
     let fork = Base.fork
@@ -234,6 +235,49 @@ let test_acquisitions_stay_on_owner_domain () =
   Alcotest.(check int) "observed lane acquisitions" 3
     (List.length !acquired_domains)
 
+let test_interruptible_restore_preserves_reentrant_lane_fiber () =
+  let lane = Lane.create () in
+  let nested_reentered = ref false in
+  let restored_id = ref None in
+  let current_fiber_id =
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
+      ~leaf_name:"eta_signal_lane.current_fiber_id" @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    Eta.Exit.Ok (contract.Eta.Runtime_contract.current_fiber_id ())
+  in
+  let outer_lane =
+    lane_effect
+      ~after_acquired:(fun () ->
+        Eta.Effect.bind
+          (fun id ->
+            Eta.Effect.bind
+              (fun () -> lane_effect lane (fun _access -> nested_reentered := true))
+              (Eta.Effect.sync (fun () -> restored_id := Some id)))
+          current_fiber_id)
+      lane (fun _access -> ())
+  in
+  let program =
+    Eta.Effect.bind
+      (fun before_id ->
+        Eta.Effect.bind
+          (fun () ->
+            Eta.Effect.map
+              (fun after_id ->
+                ( before_id,
+                  Option.value !restored_id ~default:(-1),
+                  after_id ))
+              current_fiber_id)
+          (Eta.Effect.uninterruptible
+             (Eta.Effect.interruptible outer_lane)))
+      current_fiber_id
+  in
+  let before_id, restored_id, after_id =
+    expect_effect_ok "interruptible lane identity" program
+  in
+  Alcotest.(check bool) "nested lane reentered" true !nested_reentered;
+  Alcotest.(check int) "restore kept current fiber" before_id restored_id;
+  Alcotest.(check int) "mask exit kept current fiber" before_id after_id
+
 let test_generated_waiter_cancellation_never_double_grants () =
   List.iter
     (fun seed ->
@@ -332,6 +376,9 @@ let () =
             test_granted_waiter_survives_resolver_failure;
           Alcotest.test_case "acquisitions stay on owner domain" `Quick
             test_acquisitions_stay_on_owner_domain;
+          Alcotest.test_case
+            "interruptible restore preserves reentrant lane fiber" `Quick
+            test_interruptible_restore_preserves_reentrant_lane_fiber;
           Alcotest.test_case "generated waiter cancellation never double grants"
             `Quick test_generated_waiter_cancellation_never_double_grants;
         ] );

@@ -2,4 +2,5 @@
  (name eta_eio)
  (public_name eta_eio)
  (synopsis "Eio runtime backend for Eta")
+ (private_modules eta_eio_mask)
  (libraries eta eta_blocking eio eio.unix cstruct unix threads))

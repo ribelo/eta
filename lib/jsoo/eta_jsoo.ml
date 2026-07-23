@@ -309,6 +309,26 @@ let protect_impl ~check_after f =
 let protect f = protect_impl ~check_after:true f
 let protect_without_check f = protect_impl ~check_after:false f
 
+let restore_cancellation f =
+  let fiber = current () in
+  let previous_depth = fiber.fiber_protect_depth in
+  fiber.fiber_protect_depth <- 0;
+  Fun.protect
+    ~finally:(fun () -> fiber.fiber_protect_depth <- previous_depth)
+    (fun () ->
+      check_cancel fiber;
+      let value = f () in
+      check_cancel fiber;
+      value)
+
+let with_cancel_mask body =
+  protect (fun () ->
+      body
+        {
+          Runtime_contract.restore =
+            (fun f -> restore_cancellation f);
+        })
+
 let new_scope ?name parent_cancel =
   let cancel = create_cancel_context () in
   let propagate =
@@ -627,6 +647,7 @@ let runtime () =
         !fresh_counter)
     let sleep = sleep
     let protect = protect
+    let with_cancel_mask = with_cancel_mask
     let run_scope = run_scope
     let fail_scope = fail_scope
     let fork = fork

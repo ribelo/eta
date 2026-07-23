@@ -240,6 +240,15 @@ val uninterruptible : ('a, 'err) t -> ('a, 'err) t
     This maps to backend cancellation protection. It does not turn
     interruption into a typed failure, and it does not catch defects. *)
 
+val interruptible : ('a, 'err) t -> ('a, 'err) t
+(** Re-enable parent cancellation within a dynamically enclosing
+    {!uninterruptible}. Masks stack: the innermost mask wins, and outside a mask
+    this is identity. Pending interruption is delivered at entry, at successful
+    exit, or by a cancellation checkpoint in the wrapped eff, at most once.
+
+    Finalizers and [finally] cleanup remain protected: this combinator cannot
+    restore cancellation while they run. *)
+
 val bind_error :
   ('err1 -> ('a, 'err2) t) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Bind over the typed error channel (data-last, pipeline-friendly).

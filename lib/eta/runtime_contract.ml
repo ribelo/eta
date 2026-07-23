@@ -37,6 +37,7 @@ type 'a promise = Promise of (promise_token, 'a) Erased_token.t
 type 'a resolver = Resolver of (resolver_token, 'a) Erased_token.t
 type 'a stream = Stream of (stream_token, 'a) Erased_token.t
 type 'a local = 'a Type.Id.t
+type cancellation_restore = { restore : 'a. (unit -> 'a) -> 'a }
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 type 'a service_key = 'a Type.Id.t
 type service = Service : 'a service_key * 'a -> service
@@ -47,6 +48,7 @@ type t = {
   fresh : unit -> int;
   sleep : Duration.t -> unit;
   protect : 'a. (unit -> 'a) -> 'a;
+  with_cancel_mask : 'a. (cancellation_restore -> 'a) -> 'a;
   run_scope : 'a. ?name:string -> (scope -> 'a) -> 'a;
   fail_scope : ?bt:Printexc.raw_backtrace -> scope -> exn -> unit;
   fork : scope -> (unit -> unit) -> unit;
@@ -89,6 +91,7 @@ module type RUNTIME = sig
   val fresh : unit -> int
   val sleep : Duration.t -> unit
   val protect : (unit -> 'a) -> 'a
+  val with_cancel_mask : (cancellation_restore -> 'a) -> 'a
   val run_scope : ?name:string -> (scope -> 'a) -> 'a
   val fail_scope : ?bt:Printexc.raw_backtrace -> scope -> exn -> unit
   val fork : scope -> (unit -> unit) -> unit
@@ -219,6 +222,12 @@ let of_runtime (module R : RUNTIME) =
         R.protect @@ fun () ->
         ensure_owner_domain ();
         f ());
+    with_cancel_mask =
+      (fun f ->
+        ensure_runtime_operation ();
+        R.with_cancel_mask @@ fun restore ->
+        ensure_owner_domain ();
+        f restore);
     run_scope =
       (fun ?name f ->
         ensure_runtime_operation ();

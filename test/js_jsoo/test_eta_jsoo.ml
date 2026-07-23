@@ -448,6 +448,13 @@ module Async_shared =
     let fail = fail
   end)
 
+module Interruptible_shared =
+  Eta_effect_interruptible_shared_tests.Effect_interruptible_shared.Make (struct
+    let run = run
+    let complete ~done_ check = finish done_ (fun () -> check ()) ()
+    let fail = fail
+  end)
+
 module Promise_shared =
   Eta_promise_shared_tests.Promise_shared.Make (struct
     let run = run
@@ -478,6 +485,7 @@ let tests =
       test_expert_clock_observes_scoped_override );
   ]
   @ Async_shared.tests
+  @ Interruptible_shared.tests
   @ Promise_shared.tests
 
 let rec run_tests = function

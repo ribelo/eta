@@ -23,6 +23,12 @@ type 'a local
 (** Runtime-local binding key. Backends decide whether this maps to fiber-local,
     task-local, or another scoped context mechanism. *)
 
+type cancellation_restore = {
+  restore : 'a. (unit -> 'a) -> 'a;
+}
+(** Same-fiber restoration to the parent cancellation context captured when a
+    cancellation mask was entered. *)
+
 type local_binding = Local_binding : 'a local * 'a -> local_binding
 (** Packed runtime-local binding. Runtime backends use this to transport
     local values without erasing the value independently from its key. *)
@@ -41,6 +47,7 @@ type t = {
   fresh : unit -> int;
   sleep : Duration.t -> unit;
   protect : 'a. (unit -> 'a) -> 'a;
+  with_cancel_mask : 'a. (cancellation_restore -> 'a) -> 'a;
   run_scope : 'a. ?name:string -> (scope -> 'a) -> 'a;
   fail_scope : ?bt:Printexc.raw_backtrace -> scope -> exn -> unit;
   fork : scope -> (unit -> unit) -> unit;
@@ -83,8 +90,9 @@ type t = {
     [with_fiber_identity],
     contract operations must be called on the domain that created the erased
     contract, and callbacks supplied to [run_scope], [fork], [fork_daemon],
-    [protect], [cancel_sub], and [local_with_binding] must resume on that same
-    domain. Cross-domain contract use raises [Invalid_argument].
+    [protect], [with_cancel_mask], [cancel_sub], and [local_with_binding] must
+    resume on that same domain. Cross-domain contract use raises
+    [Invalid_argument].
 
     [resolve_promise] is the explicit cross-domain wake operation. Eta-owned
     queues may store resolvers created by waiters on different domains and
@@ -150,6 +158,11 @@ module type RUNTIME = sig
   (** Run [f] with parent cancellation deferred. If cancellation is pending
       when [f] returns, the backend should surface it before returning to
       ordinary interruptible execution. *)
+
+  val with_cancel_mask : (cancellation_restore -> 'a) -> 'a
+  (** Run under a fresh cancellation mask and expose its same-fiber parent
+      restoration. A pending cancellation must be checked at restoration entry
+      and after a successfully restored callback. *)
 
   val run_scope : ?name:string -> (scope -> 'a) -> 'a
   (** Run [f] in a child scope and wait for finite children before returning.

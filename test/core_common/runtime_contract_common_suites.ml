@@ -14,6 +14,13 @@ module Direct_runtime = struct
   let fresh () = Atomic.fetch_and_add fresh_counter 1 + 1
   let sleep duration = now := !now + Duration.to_ms duration
   let protect f = f ()
+  let with_cancel_mask f =
+    protect (fun () ->
+        f
+          {
+            Runtime_contract.restore =
+              (fun (type a) (body : unit -> a) -> body ());
+          })
   let run_scope ?name:_ f = f ()
   let fail_scope ?bt:_ () exn = raise exn
   let fork () f = f ()
@@ -281,6 +288,8 @@ let test_erased_runtime_contract_rejects_foreign_domain_operations () =
       ignore (contract.Runtime_contract.stream_take stream : int));
   check_foreign "stream_take_nonblocking" (fun () ->
       ignore (contract.Runtime_contract.stream_take_nonblocking stream : int option));
+  check_foreign "with_cancel_mask" (fun () ->
+      contract.Runtime_contract.with_cancel_mask (fun _restore -> ()));
   check_foreign "cancel_sub" (fun () ->
       contract.Runtime_contract.cancel_sub (fun _ -> ()));
   check_foreign "local_get" (fun () ->
@@ -304,6 +313,13 @@ module Foreign_callback_runtime = struct
 
   let run_callback_on_foreign_domain f = run_in_domain f
   let protect f = run_callback_on_foreign_domain f
+  let with_cancel_mask f =
+    run_callback_on_foreign_domain (fun () ->
+        f
+          {
+            Runtime_contract.restore =
+              (fun (type a) (body : unit -> a) -> body ());
+          })
   let run_scope ?name:_ f = run_callback_on_foreign_domain (fun () -> f ())
   let fork () f = run_callback_on_foreign_domain f
 
@@ -321,6 +337,8 @@ let test_erased_runtime_contract_rejects_backend_foreign_domain_callbacks () =
   in
   expect_runtime_contract_domain_rejection "protect callback" (fun () ->
       contract.Runtime_contract.protect (fun () -> ()));
+  expect_runtime_contract_domain_rejection "cancel mask callback" (fun () ->
+      contract.Runtime_contract.with_cancel_mask (fun _restore -> ()));
   expect_runtime_contract_domain_rejection "run_scope callback" (fun () ->
       contract.Runtime_contract.run_scope (fun _ -> ()));
   expect_runtime_contract_domain_rejection "fork callback" (fun () ->

@@ -2771,6 +2771,27 @@ let property_log_interceptor_drop =
          | None, _ | Some _, _ -> false)
       && no_pending outcome)
 
+let property_interruptible_outside_mask_identity =
+  QCheck.Test.make
+    ~name:"interruptible outside a mask is identity for generated finite effects"
+    ~count blueprint (fun body ->
+      let program = effect_of body in
+      equivalent Alcotest.int Alcotest.int
+        (run (E.interruptible program))
+        (run program))
+
+let property_interruptible_mask_stack =
+  QCheck.Test.make
+    ~name:
+      "uninterruptible interruptible uninterruptible equals uninterruptible for generated finite effects"
+    ~count blueprint (fun body ->
+      let program = effect_of body in
+      let stacked =
+        E.uninterruptible (E.interruptible (E.uninterruptible program))
+      in
+      equivalent Alcotest.int Alcotest.int (run stacked)
+        (run (E.uninterruptible program)))
+
 let laws =
   [
     property_map_identity;
@@ -2835,6 +2856,8 @@ let laws =
     property_log_pipeline;
     property_nested_log_interceptor_order;
     property_log_interceptor_drop;
+    property_interruptible_outside_mask_identity;
+    property_interruptible_mask_stack;
   ]
 
 let () =

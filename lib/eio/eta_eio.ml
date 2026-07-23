@@ -280,6 +280,7 @@ let runtime_with_host host ~sw ~clock:raw_clock =
       if seconds > 0.0 then Time.sleep clock seconds
 
     let protect = protect
+    let with_cancel_mask = Eta_eio_mask.with_cancel_mask
     let run_scope = Switch.run
     let fail_scope = Switch.fail
     let fork scope f =

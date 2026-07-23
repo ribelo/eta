@@ -5,6 +5,7 @@ open Effect_core
 
 let run_cleanup frame cleanup =
   try
+    Runtime_core.with_restoration_forbidden frame.runtime @@ fun () ->
     frame.runtime.contract.Runtime_contract.protect @@ fun () ->
     match run_scope frame (cleanup ()) with
     | Exit.Ok () -> None
