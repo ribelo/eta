@@ -94,3 +94,49 @@ the protection exists to guarantee. The predicted answer matches ZIO: **no**.
 - Delivery must be claimed once when cancellation races a successful wake; any
   design that can both return the wake result and later replay the same
   cancellation as a second delivery fails the gate.
+
+## Phase 0 findings
+
+### Executed substrate truth
+
+Both assertion-bearing probes pass. Exact commands and outputs are in
+`phase0.md`.
+
+- Native confirmed predictions 1–3. Parent cancellation stops at
+  `Cancel.protect` and does not reach a `Cancel.sub` below it. The blocked wait
+  returns, `protect` returns, and the old parent's cancellation is raised only
+  by the following explicit check. Explicitly cancelling the inner sub raises
+  through protection.
+- jsoo confirmed prediction 4. Cancellation remains pending at depths two and
+  one; returning the outer protection to depth zero raises immediately.
+- jsoo exposed an additional edge: a sub created under positive protection
+  after its parent is already cancelled is intentionally not seeded with that
+  reason (`propagate:false`). Its protected wait returns; restoring the parent
+  and depth zero then raises.
+
+### Restore constructions red-teamed
+
+1. **`protect` + `cancel_sub`: refused.** Both probes show that a child made
+   under protection is not a restoration of the context outside it.
+2. **Entry/exit snapshots: refused.** A snapshot can see cancellation already
+   pending, but cannot wake a network accept or promise wait when cancellation
+   arrives after the snapshot.
+3. **Scope relay: loses exact-parent cancellation.** Contract forks attach to a
+   scope, while Eta cancellation can target a nested synthetic `cancel_sub`
+   without cancelling that scope. Eio propagation stops at the protected
+   context; the relay remains asleep and the proposed restored child remains
+   blocked.
+4. **One relay per synthetic context: out of scope and not small.** It requires
+   changing the representation/behavior of `cancel_sub`, `cancel`, and every
+   synthetic user, exactly the adjacent cancellation-surface redesign forbidden
+   by the scope fence.
+5. **Polling: refused.** It neither cancels arbitrary Eio service awaits nor
+   states one checkpoint model, and would add latency/fallback behavior.
+6. **Eio private-context move: unavailable.** Inspection is exposed, but the
+   operations needed to attach to an arbitrary old context or move the running
+   fiber are not.
+
+The exact lost-wakeup construction is recorded in `phase0.md`. It cannot be
+eliminated with the current contract. The Phase 0 gate therefore fires the kill
+criterion before public docs, implementation, or law-bearing API prose is
+introduced.
