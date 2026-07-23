@@ -422,9 +422,10 @@ val retry :
     as terminal decisions and policy-generated outputs are not observable by
     that recipe.
 
-    Current limitation: unlike {!retry_or_else}, [retry] only retries a bare
-    [Cause.Fail err]. Composite typed causes are not retried. Defects,
-    interruption, and finalizer diagnostics are not retried. *)
+    For composites, [retry] has the same catchability boundary as {!bind_error}
+    and {!retry_or_else}: it uses the first typed failure when present and no
+    uncatchable diagnostic exists. Causes without typed failures, rejected causes,
+    and uncatchable exits preserve their source; exhaustion preserves the complete terminal cause. *)
 
 val retry_or_else :
   schedule:('err1, 'schedule_out) Schedule.t ->
@@ -443,9 +444,8 @@ val retry_or_else :
     schedule step. For composite causes, [retry_or_else] follows {!bind_error}:
     it handles only causes whose primary tree contains typed failures and no
     uncatchable defects, interruption, or finalizer diagnostics, and it uses the
-    first typed failure in cause order. This composite-cause behavior currently
-    differs from the bare-[Cause.Fail] limitation of {!retry}. Uncatchable
-    diagnostics are not retried and do not run [or_else].
+    first typed failure in cause order. Uncatchable diagnostics are not retried
+    and do not run [or_else].
 
     To observe every attempt, including the initial one, instrument the source
     effect itself before passing it to [retry_or_else]. This does not expose

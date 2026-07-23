@@ -9,6 +9,14 @@
   `Some` succeeds, `None` is the typed `if_none` failure, ordinary exceptions
   stay defects (`Cause.Die`) and are not handled by `bind_error`.
 
+### Changed
+
+- `Effect.retry` now retries catchable typed-failure composites using the first
+  typed failure in cause order, matching `bind_error` and `retry_or_else`.
+  Callers whose effects produce such composites may now see predicate and
+  schedule steps where retry previously stopped silently; rejected or exhausted
+  retries preserve the complete original cause so no sibling failure is lost.
+
 ## Idiom pass (2026-07-18) — breaking
 
 One batched breaking pass over the public surface, aligning Eta with OCaml
