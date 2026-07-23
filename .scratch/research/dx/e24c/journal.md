@@ -1,0 +1,65 @@
+# DX-E24c execution journal
+
+## V-DX-E24C-001 — sealed predictions
+
+### Reversal gate
+
+`redteam/d-surface.sh` and an independent `rg` census found zero shipped,
+non-test producers of `Schedule.tap_input` or `Schedule.tap_output`. The only
+matches under `lib/` are the two Schedule API definitions themselves. The
+deletion demand gate therefore remains open.
+
+### Migration-size prediction
+
+- Production/API migration: the Schedule implementation and interface, three
+  operation drivers, the Stream implementation/interface, HTTP retry
+  implementation/interface, and the eight public operation signatures.
+- Test/evidence migration: remove the 25 tap constructions and the obsolete C
+  and `no_hook` probes, retain operation behavior with focused no-tap
+  replacements, add one old-surface compile-negative fixture and one direct
+  two-parameter-driver positive fixture, and perform the exact E22 census
+  surgery.
+- Documentation/research migration: update Schedule recipes and status prose,
+  then add the required review packet and report. I expect roughly 20–30 files
+  to change, dominated by mechanical type-arity and fixture deletion rather
+  than new code.
+
+### Engine-rewrite prediction
+
+Replace the suspended interpreter with direct structural recursion:
+`step_state` and `step_phase` return `(decision * state/phase)` directly. Each
+combinator steps children in the existing left-to-right order and constructs
+the same metadata, phase, and next state. `and_then` retains its same-step
+handoff from a terminal left phase into the right phase. `step` publishes the
+new driver directly, and `next` remains a projection over `step`.
+
+No compatibility layer, replacement hook protocol, callback API, or new public
+surface will be introduced.
+
+### Hardest-law prediction
+
+The highest-risk surviving laws are structural composition (`both`, `either`,
+and especially same-step `and_then` handoff), followed by metadata continuity
+across terminal/active phases. `modify_delay`, `while_output`, and `jittered`
+are mechanically simpler but sensitive to preserving callback/random-draw
+timing and `Continue`-only delay transformation. `named` should become a small
+proof that only `pp` changes while stepping remains identical.
+
+### Census and footgun prediction
+
+| Metric | Before | Predicted after |
+| --- | ---: | ---: |
+| `Schedule.t` parameters | 3 | 2 |
+| `Schedule.driver` parameters | 3 | 2 |
+| public tap values | 2 | 0 |
+| suspended protocol values (`step_plan`, `step_with_hooks`) | 2 | 0 |
+| direct protocol values (`step`, `next`) | 2, restricted | 2, generalized |
+| hook-accepting public operations | 8 | 0 |
+| production hook interpreters | 3 | 0 |
+
+The Schedule concept cluster should lose hooks, suspension, interpretation,
+resume/publication discipline, and `no_hook`, while retaining policy, driver,
+decision, metadata, composition, and direct stepping. Predicted footgun delta:
+**−1 / +0**: remove the non-linear suspended-hook publication/failure protocol
+without adding a replacement hazard.
+
