@@ -477,9 +477,9 @@ and step_state :
   | Driver_and_then_first (left, right_schedule) -> (
       let left_decision, left_state = step_state random ~now_ms ~input left in
       match left_decision with
-      | Continue _ ->
-          let right_state = state_of_schedule right_schedule in
-          step_state random ~now_ms ~input (Driver_and_then_second right_state)
+      | Continue metadata ->
+          ( Continue { metadata with output = First_phase metadata.output },
+            Driver_and_then_first (left_state, right_schedule) )
       | Done _ ->
           let right_state = state_of_schedule right_schedule in
           step_state random ~now_ms ~input (Driver_and_then_second right_state))
