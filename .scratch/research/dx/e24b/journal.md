@@ -407,3 +407,248 @@ and `@doc` all pass. The first docs attempt correctly failed because `odoc` was
 absent; installing official `odoc` 3.2.1 inside `nix develop` and rerunning made
 the gate pass, with only existing warnings in `capabilities.mli` and
 `random.mli`. Exact commands are in `report.md`.
+
+---
+
+## Follow-up 1 — candidate D and the suspended-driver contract
+
+### Trigger, question, and proof obligations
+
+The decision review rated the original packet **SOUND-WITH-RESERVATIONS**. It
+accepted A's ownership result only under the untested premise that structural
+taps should exist. This entry admits the omitted boring baseline:
+
+- **D — delete `tap_input`/`tap_output` and the hook channel; document ordinary
+  process-observation recipes.**
+
+This entry is additive and supersedes verdict strength below; it does not rewrite
+the historical A/B/C evidence.
+
+| Obligation | Evidence required | Result | Status |
+| --- | --- | --- | --- |
+| D1: exact deletion surface | Executable baseline/current census | 12 pre-E24b test constructions / 4 files; 2 vals; 1 Hook; 2 suspended entry points; 8 ternary operations; 2 no-hook HTTP signatures; 6 public promises; 3 interpreters | Proven by `redteam/d-surface.sh` |
+| D2: ordinary recipe | Positive executable attempt-observation fixture | Custom retry logs all attempts around direct `Schedule.step` | Proven by `redteam/d_recipe.ml` |
+| D3: recipe limit | Negative structural fixture | Same recipe sees only outer `Second_phase`; left terminal/right-entry events are absent | Proven by D fixture plus `policy_sequence.ml` |
+| D4: resume lifecycle | Characterize success, abandonment, multiple use, hook/resume failure, partial effects, retry | Non-linear closure duplicates tentative evaluation; only `Complete` publishes; original driver retry replays prior effects | Proven by two fixed-shape laws and existing abandonment law |
+| D5: wrapper/telemetry rows | Executable inside/outside wrapper order and named observations | All requested rows discriminated; no automatic telemetry | Proven by wrapper fixed-shape law |
+| D6: demand | Find shipped/example producer or concrete structural adoption | None in repository; external adoption remains unknown | No current retention signal |
+
+### Candidate D surface and capability delta
+
+The executable census establishes that D is not B under another name. It removes
+the entire channel rather than moving hooks:
+
+| Surface | Current | D |
+| --- | ---: | ---: |
+| `Schedule.t` / driver parameters | 3 | 2 |
+| Tap vals | 2 | 0 |
+| Public Hook constructors | 1 | 0 |
+| Suspended stepping entry points | 2 | 0 |
+| Hook-accepting effectful operations | 8 | 0 |
+| Production hook interpreters | 3 | 0 |
+| Explicit no-hook HTTP annotations | 2 | 0 |
+| Explicit tap-behavior prose promises | 6 | 0 |
+
+At the sealed-prediction baseline, all 12 tap constructions are in four test
+files: Effect 7, Resource 1, Stream 2, laws 2. The original ownership table added
+6, this follow-up's suspension/wrapper tables add 6, and output-cancellation
+integration adds 1, so the evidence tree now contains 25. Neither `lib/` nor
+shipped examples construct a tap. `Eta_js` is a re-export, not a producer or
+interpreter.
+
+Capability after D is deliberately weaker. The named integration `retry attempts
+can be observed without schedule taps` proves an application can instrument the
+source Effect to log every retry attempt; users can wrap `Resource.auto`'s `load`;
+put `Stream.tap_error` on the source before retry, instrument that source, or use
+element `tap`; and wrap direct `Schedule.step` in a custom driver. Resource/Stream
+recipes are partial guidance rather than parity fixtures. The quality is 4/5 for
+Effect/custom
+attempt-level observation and 2/5 for Resource/Stream because initial loads,
+non-emitted terminal values, and empty repetition boundaries differ. No ordinary
+recipe recovers branch/phase-local events from one composed step; exact parity is
+0/5. D accepts that loss.
+
+Demand evidence and behavior evidence are separated. The 8 consumers, 6 prose
+promises, and tests prove a coherent extension point. They do not prove a user.
+The retention signal would be one shipped non-test producer, a concrete external
+use requiring schedule-local rather than operation-local placement, or an
+observability integration whose telemetry cannot use process instrumentation.
+No such signal is present. Under the project's “public only for demonstrated
+behavior” bar, the absence encountered the original A falsifier; this follow-up
+folds rather than reframing it again.
+
+### Suspension and observability additions
+
+“Inside” is `wrapper (tap base)`; “outside” is `tap (wrapper base)`.
+
+| Row | Executable result | Contract consequence |
+| --- | --- | --- |
+| Successful resume | `step_with_hooks` interprets then resumes once | Custom driver must do the same in delivered order |
+| Abandonment | Dropping a `Hook` leaves the original immutable driver at attempt one | Publish nothing; retain original |
+| Multiple invocation | Calling one public resume closure twice returns two equivalent attempt-one `Complete` values and runs tentative modifier logic twice | Closure is not statically linear; multiple use violates driver contract |
+| Hook failure | Every one of six fixed positions throws before a decision/next driver is returned | Abandon plan and retain original |
+| Resume exception | A successful input hook followed by a raising `while_output` predicate leaves no result | Same abandonment rule applies to continuation exceptions |
+| Partial effects | Successful hook prefix remains visible after later failure | No rollback |
+| Retry | Original driver emits the full hook trace again; prior successful effects therefore repeat | Hooks must be idempotent if caller retries, or caller owns duplicate effects |
+| Tap asymmetry | Failed `tap_input` leaves inner modifier count 0; failed `tap_output` leaves it 1. Successful retry ends at 1 vs 2 | Input precedes evaluation; output follows tentative computation but precedes publication |
+| Cancellation | Existing Effect integrations preserve interruption for input and output taps and never reach a retry attempt | Generic contract treats cancellation as interpretation failure; Resource/Stream-specific cancellation is not separately tested |
+| `modify_delay` inside/outside | On tested `Continue` paths when the modifier runs: input tap is always before it; output tap inside is before it and outside is after | Structural placement controls post-step order |
+| `while_output` inside/outside | On tested `Continue` paths when the predicate runs: input tap is always before it; output tap inside is before it and outside is after | Structural position determines predicate-vs-hook order |
+| `jittered` inside/outside | On tested `Continue` paths when a draw runs: input tap is before it in both positions; output tap inside is before it and outside is after | Random capability ordering is structural and executable |
+| `named` | Named and plain traces/decisions match; only `pp` gains `Named(..., label)` | Name is display-only |
+| Telemetry | Fresh Eta_test outcome has no logs, spans, or metrics from stepping/naming | Hooks may emit their own telemetry; Schedule does not |
+
+The ownership law is now named honestly as a **fixed-shape ownership table** with
+bounded payload variance. Every payload still executes all six failure positions;
+it additionally retains the exact successful prefix before failure. The two new
+properties also state their public observation boundary and generated class.
+
+### Revised hypothesis ledger
+
+| Candidate | Strongest case | Disconfirming evidence | Status |
+| --- | --- | --- | --- |
+| A — policy-owned hooks | Exact structural order and arbitrary typed interpreters through one plan | Zero production/example producers | **CONDITIONAL** — correct if taps exist |
+| B — driver observers | Familiar top-level lifecycle and attempt callbacks | Top-level observers cannot represent branch/phase-local placement; structural observers can only by restoring policy-owned placement | **REJECTED AS TAP PARITY**; ordinary recipes survive |
+| C — seam redesign | Correctly identifies interpretation as the seam | Tested existential fails; packaged interpreter and aliases add surface | **TESTED VARIANTS REJECTED**; broader family unproven |
+| D — deletion | Removes actual protocol/signature surface; common attempt recipe works | Exact structural observation becomes inexpressible | **ACCEPTED AS FOLLOW-UP PROPOSAL** |
+
+### Verdict diary
+
+#### V-DX-E24B-006 — Delete structural taps and the hook channel
+
+Status: **ACCEPT AS A FOLLOW-UP PROPOSAL**.
+
+Decision: propose changing `Schedule.t`/driver to two parameters and removing the
+two taps, `no_hook`, public/internal suspension machinery, `step_plan`,
+`step_with_hooks`, three production interpreters, and hook threading from all
+eight operations while generalizing direct `step` and `next`. All 25 current tap
+constructions and E22 M65–M67/M95–M112/R96/R102 are in the deletion slice. The
+exact slice and post-deletion recipes are in `review/DELETION_PROPOSAL.md`.
+
+Evidence: executable D surface census; positive attempt recipe; negative
+`and_then` structural control; zero shipped/example producers.
+
+Counterevidence considered: structural taps are coherent, completely typed,
+covered across all three production interpreter families, and strictly more
+expressive than operation wrappers. External adoption is unknown.
+
+Remaining uncertainty: this repository cannot observe downstream use. D gives up
+a real capability, not dead implementation branches.
+
+Recommendation for production: run the deletion as a separate cross-cutting
+change with no shim. Until then, retain the exact current contract.
+
+Rationale: behavior tests and public acceptance do not establish demand. The
+common use case does not need schedule-local placement, while the unique use case
+has no producer.
+
+Confidence: **Medium**. Surface and in-repository demand are high-confidence;
+external demand is unknown.
+
+Would change if: a shipped producer, concrete external structural use, or
+schedule-local observability integration appears before implementation.
+
+#### V-DX-E24B-007 — Supersede permanent A and narrow B/C
+
+Status: **ACCEPT**; supersedes the strength and scope of V-DX-E24B-002/003/004.
+
+Decision: V-DX-E24B-002 remains correct only as “A is the ownership model if
+structural taps are kept”; its permanent-retention conclusion is withdrawn.
+V-DX-E24B-003 applies specifically to **top-level** driver observers; structural
+observers are possible only by restoring policy-owned placement. V-DX-E24B-004
+rejects only the tested C variants because they fail or add surface; it no longer
+claims the broad C family is dominated.
+
+Evidence: D's positive and negative controls distinguish feature necessity from
+ownership correctness. The original A/B/C fixtures remain valid within their
+actual scope.
+
+Counterevidence considered: A still wins every row where structural parity is a
+requirement.
+
+Remaining uncertainty: an untested C design or new demand could make A the final
+product choice again.
+
+Recommendation for production: use the conditional/narrow wording everywhere in
+the current review packet and parking lot.
+
+Rationale: expanding the hypothesis space changes the product verdict without
+invalidating the architecture evidence.
+
+Confidence: **High** for the wording correction; **Medium** for D over A as the
+product choice.
+
+Would change if: executable evidence invalidates the D recipe/surface or supplies
+the retention demand signal.
+
+#### V-DX-E24B-008 — Current suspended-driver contract
+
+Status: **ACCEPT**.
+
+Decision: while hooks remain public, document deterministic delivery, success
+then exactly-once resume, failure/cancellation abandonment, `Complete`-only
+publication, no rollback/replay, input/output failure asymmetry, and `named`
+telemetry transparency.
+
+Evidence: renamed ownership table, new suspension table, new wrapper table,
+existing abandonment property, and actual Effect input/output interruption
+integrations. E22 registers M97–M112 and R102.
+
+Counterevidence considered: the resume closure's OCaml type is non-linear, so the
+exactly-once obligation is documented and tested by characterization rather than
+mechanically enforced.
+
+Remaining uncertainty: cancellation during Resource/Stream hook interpretation
+is supported by their Effect.bind interpreter shape but lacks a driver-specific
+cancellation test.
+
+Recommendation for production: keep the prose and laws until D lands; delete
+them with the protocol rather than carrying obsolete compatibility surface.
+
+Rationale: a public custom-driver seam must state how to avoid duplicate effects
+and premature state publication.
+
+Confidence: **High** for core behavior and Effect cancellation; **Medium** for the
+untested driver-specific cancellation paths.
+
+Would change if: a production interpreter publishes a driver before plan
+completion or resumes after failed/cancelled interpretation.
+
+### Implementation and focused evidence
+
+Runtime implementation remains unchanged. `schedule.mli` now states the current
+contract; `law_properties.ml` registers 66 properties; E22 counts 117 direct
+claims and 102 external clusters; the parking lot selects D rather than calling
+two-parameter Schedule permanently killed. D probes are part of `run-all.sh`.
+
+Focused laws (66 properties), `@doc`, and the complete red-team packet pass. The
+required native/mainline final gates are recorded in an append-only verification
+addendum after final review.
+
+### Final verification addendum
+
+Independent review first found missing output-tap cancellation, coarse E22 claim
+clusters, an incomplete deletion slice, overbroad wrapper/telemetry wording, and
+recipe evidence that covered only a custom loop. The final tree adds actual
+input/output interruption integrations, the real no-tap Effect retry recipe,
+one-claim M97–M112 rows, exact internal/`next` deletion work, Continue-only
+wrapper qualifiers, and telemetry-silent rather than hook-telemetry-equivalence
+wording. The final independent content verdict is **CONTENT READY**.
+
+All required commands pass on the final code/test/interface tree:
+
+```text
+.scratch/research/dx/e24b/redteam/run-all.sh
+nix develop -c dune runtest test/laws --force             # 66 properties
+nix develop -c dune runtest test/core_eio --force         # 571 tests
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force
+nix develop -c dune build @doc
+```
+
+No runtime implementation changed. Current prose/tests agree on A's interim
+driver contract, while the product verdict and parking lot agree on D as the
+separate deletion proposal.

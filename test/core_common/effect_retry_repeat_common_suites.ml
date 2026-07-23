@@ -578,6 +578,48 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected tap interruption");
     Alcotest.(check int) "source attempted once" 1 !attempts
 
+  let test_schedule_tap_output_interruption_is_preserved () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let schedule =
+      Schedule.recurs 1
+      |> Schedule.tap_output (fun _ -> runtime_interrupt_effect ())
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () -> Effect.fail `Again)
+    in
+    (match
+       B.run rt
+         (Effect.retry ~schedule:schedule ~while_:(fun `Again -> true) attempt)
+     with
+    | Exit.Error (Cause.Interrupt None) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected output-tap interruption, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected output-tap interruption");
+    Alcotest.(check int) "source attempted once" 1 !attempts
+
+  let test_retry_attempt_observation_recipe_without_schedule_taps () =
+    B.with_runtime @@ fun _ctx rt ->
+    let attempts = ref 0 in
+    let observed = ref [] in
+    let attempt =
+      Effect.sync (fun () ->
+          incr attempts;
+          observed := !attempts :: !observed;
+          !attempts)
+      |> Effect.bind (fun attempt ->
+             if attempt < 3 then Effect.fail `Again else Effect.pure attempt)
+    in
+    Alcotest.(check int) "retry result" 3
+      (run_ok rt
+         (Effect.retry ~schedule:(Schedule.recurs 2)
+            ~while_:(fun `Again -> true)
+            attempt));
+    Alcotest.(check (list int)) "all attempts observed" [ 1; 2; 3 ]
+      (List.rev !observed)
+
   let test_effect_retry_fibonacci_schedule_uses_virtual_delays () =
     B.with_test_clock @@ fun ctx clock rt ->
     let attempts = ref 0 in
@@ -1072,6 +1114,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_schedule_tap_callback_exception_is_defect;
           Alcotest.test_case "schedule tap interruption is preserved" `Quick
             test_schedule_tap_interruption_is_preserved;
+          Alcotest.test_case "schedule tap_output interruption is preserved"
+            `Quick test_schedule_tap_output_interruption_is_preserved;
+          Alcotest.test_case
+            "retry attempts can be observed without schedule taps" `Quick
+            test_retry_attempt_observation_recipe_without_schedule_taps;
           Alcotest.test_case "retry uses fibonacci virtual delays" `Quick
             test_effect_retry_fibonacci_schedule_uses_virtual_delays;
           Alcotest.test_case "retry uses windowed boundaries" `Quick

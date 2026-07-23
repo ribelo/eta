@@ -13,8 +13,8 @@ does **not** claim retrospective coverage of every other public interface. The
 prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
-Direct qcheck census: **101 mli-stated claims**, **2 prose-pending model claims**,
-**101 registered external claim clusters**, and **64 unique named qcheck properties** in
+Direct qcheck census: **117 mli-stated claims**, **2 prose-pending model claims**,
+**102 registered external claim clusters**, and **66 unique named qcheck properties** in
 `test/laws/law_properties.ml`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -89,12 +89,12 @@ separately below and are not silently counted as qcheck coverage.
 | M60 | `with_permits` releases held permits after success, typed failure, and cancellation. | `lib/eta/semaphore.mli:37-40` | `Semaphore.with_permits releases on success typed failure defect and cancellation` |
 | M61 | `with_permits_or_abort` returns `Some` after acquisition/body and `None` when abort wins without running the body. | `lib/eta/semaphore.mli:42-51` | `Semaphore.with_permits_or_abort returns Some for acquisition and None for abort` |
 | M62 | `with_permits_or_abort` releases permits on success, typed failure, defect, abort, cancellation, and outer result discard. | `lib/eta/semaphore.mli:53-55` | `Semaphore.with_permits_or_abort releases on success failure defect abort and cancellation` |
-| M63 | Terminal `Done` schedule metadata has exactly zero delay. | `lib/eta/schedule.mli:24-26` | `Schedule terminal Done metadata delay is exactly Duration.zero` |
-| M64 | `and_then` tags first-phase outputs before second-phase outputs. | `lib/eta/schedule.mli:32-36` | `Schedule.and_then tags every first phase output before every second phase output` |
-| M65 | `tap_input` runs its hook before each inner schedule step. | `lib/eta/schedule.mli:70-76` | `Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state` |
-| M66 | A failed or abandoned `tap_input` hook does not advance inner schedule state. | `lib/eta/schedule.mli:74-76` | `Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state` |
-| M67 | `tap_output` runs after every produced output, including terminal `Done`. | `lib/eta/schedule.mli:78-84` | `Schedule.tap_output runs after every produced output including terminal Done` |
-| M68 | `next` returns `Some metadata` exactly for `Continue` and `None` for terminal `Done`. | `lib/eta/schedule.mli:135-142` | `Schedule.next returns Some exactly for Continue and None exactly for terminal Done` |
+| M63 | Terminal `Done` schedule metadata has exactly zero delay. | `lib/eta/schedule.mli:25-27` | `Schedule terminal Done metadata delay is exactly Duration.zero` |
+| M64 | `and_then` tags first-phase outputs before second-phase outputs. | `lib/eta/schedule.mli:33-37` | `Schedule.and_then tags every first phase output before every second phase output` |
+| M65 | `tap_input` places its hook before each inner schedule step. | `lib/eta/schedule.mli:71-78` | `Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state` |
+| M66 | A failed, cancelled, or abandoned `tap_input` hook leaves its inner step unevaluated and requires the original driver. | `lib/eta/schedule.mli:75-78` | `Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state`; `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry`; cancellation is registered by R102 |
+| M67 | `tap_output` places its hook after every computed output, including terminal `Done`. | `lib/eta/schedule.mli:80-88` | `Schedule.tap_output runs after every produced output including terminal Done` |
+| M68 | `next` returns `Some metadata` exactly for `Continue` and `None` for terminal `Done`. | `lib/eta/schedule.mli:153-160` | `Schedule.next returns Some exactly for Continue and None exactly for terminal Done` |
 | M69 | Channel creation rejects every nonpositive capacity. | `lib/eta/channel.mli:35-38` | `Channel create rejects every generated nonpositive capacity and accepts positive capacity` |
 | M70 | Channel `try_send`/`try_recv` return immediately with exact empty, full, item, and close-boundary results. | `lib/eta/channel.mli:56-60` | `Channel try_send and try_recv return exact no-wait empty full item and close boundaries` |
 | M71 | Queue `stats.size` and `size` equal `depth - waiting_receivers + waiting_senders`. | `lib/eta/queue.mli:47-51,95-97` | `Queue stats size formula and empty full shutdown queries match buffered and waiting pressure` |
@@ -121,8 +121,24 @@ separately below and are not silently counted as qcheck coverage.
 | M92 | `available` reports the exact current permit count. | `lib/eta/semaphore.mli:58-59` | `Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters` |
 | M93 | `waiting` reports the exact current blocked-fiber count. | `lib/eta/semaphore.mli:61-62` | `Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters` |
 | M94 | `cancelled_waiters` reports the cumulative cancelled-waiter count. | `lib/eta/semaphore.mli:64-65` | `Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters` |
-| M95 | Schedule policy determines hook values and their structural order in a composed step. | `lib/eta/schedule.mli:4-8` | `Schedule policy hook order survives and_then and step_with_hooks publishes only after interpreter success` |
-| M96 | Drivers interpret policy-emitted hook values through `step_plan` or `step_with_hooks`. | `lib/eta/schedule.mli:4-8,105-125` | `Schedule policy hook order survives and_then and step_with_hooks publishes only after interpreter success` |
+| M95 | Schedule policy determines hook values and their deterministic structural order in a composed step. | `lib/eta/schedule.mli:4-9` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure` |
+| M96 | Drivers interpret and resume policy-emitted hook values through `step_plan` or `step_with_hooks`. | `lib/eta/schedule.mli:4-9,111-143` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure` |
+| M97 | A public `Hook` continuation is an ordinary non-linear closure; its type does not enforce single use. | `lib/eta/schedule.mli:111-116` | `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M98 | After successful interpretation, a custom driver invokes that hook's continuation exactly once. | `lib/eta/schedule.mli:115-118` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure`; `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M99 | Failed/cancelled interpretation or a raising continuation abandons the plan while retaining the original driver. | `lib/eta/schedule.mli:118-123,139-143` | `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry`; cancellation is registered by R102 |
+| M100 | `Complete` is the only publication of a decision and next driver, and appears only after the whole plan completes. | `lib/eta/schedule.mli:115-123,139-143` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure` |
+| M101 | Successful hook effects before a later failure are not rolled back. | `lib/eta/schedule.mli:121-123` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure`; `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M102 | Retrying the original driver can repeat hook effects that succeeded in the abandoned plan. | `lib/eta/schedule.mli:121-123` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure`; `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M103 | `tap_output` computes its inner output before its hook is interpreted. | `lib/eta/schedule.mli:80-88` | `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M104 | A `tap_output` decision and next driver remain unpublished until interpretation succeeds. | `lib/eta/schedule.mli:84-88` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure`; `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry` |
+| M105 | After `tap_output` interpretation failure/cancellation, retrying the original driver recomputes the inner output. | `lib/eta/schedule.mli:84-88` | `Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry`; cancellation is registered by R102 |
+| M106 | `Schedule.named label` adds `label` to `Schedule.pp` output. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M107 | `Schedule.named` does not change stepping decisions. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M108 | `Schedule.named` does not change hook order. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M109 | `Schedule.named` does not itself emit logs. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M110 | `Schedule.named` does not itself emit spans. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M111 | `Schedule.named` does not itself emit metrics. | `lib/eta/schedule.mli:95-97` | `Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry` |
+| M112 | A custom driver interprets hooks in the deterministic order delivered by the suspended plan. | `lib/eta/schedule.mli:115-118` | `Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure` |
 
 ## Registered external named suites
 
@@ -227,14 +243,15 @@ qcheck optics.
 | R91 | Registered log Keep/Replace/Drop/order/fiber-local/error paths and level helpers match their documented pipeline behavior. | `lib/eta/effect.mli:951-1003` | M42–M44 properties; `intercept_log order and redaction`; `intercept_log drop short-circuits`; `intercept_log with_logger both orders`; `intercept_log raise becomes defect`; `intercept_log is fiber-local`; `log carries active span ids`; `annotate_logs merges per-call attrs`; `minimum log level drops lower records`; `log level helpers` — `test/core_common/observability_common_suites.ml:1327-1360`; `test/otel_common/logger_common_suites.ml:97-98` |
 | R92 | Registered metric interception and counter/gauge/frequency/histogram/summary/timer helpers emit the documented measurements. | `lib/eta/effect.mli:1009-1090` | `intercept_metric enriches subtree`; `intercept_metric drop short-circuits`; `counter cumulative latest`; `counter monotonic sums`; `gauge latest`; `frequency counts categories`; `histogram explicit buckets`; `summary quantiles`; `timer records elapsed histogram` — `test/core_common/observability_common_suites.ml:1359-1362`; `test/otel_common/metrics_common_suites.ml:302-314` |
 | R93 | `fn`, `collect_names`, and audit flags follow registered location/attribute/name/order/visible-union behavior. | `lib/eta/effect.mli:1128-1162` | `fn records location`; `annotate_all and fn attrs`; `collect_names`; `audit declared leaves and preserve union`; `audit does not force bind continuation`; `expert audit declarations and inheritance` — `test/core_common/observability_common_suites.ml:1280-1282`; `test/core_common/effect_common_suites.ml:3561-3567` |
-| R94 | A `Continue` metadata delay is the sleep before retry recurrence. | `lib/eta/schedule.mli:24-25` | `retry schedule uses virtual delays` — `test/core_common/effect_retry_repeat_common_suites.ml:1061-1062` |
-| R95 | Starting a jittered schedule draws from the supplied random capability. | `lib/eta/schedule.mli:97-103` | `jittered uses random capability` — `test/core_common/duration_schedule_common_suites.ml:613-614` |
-| R96 | Suspended Hook, resume-without-advance, and current-Eta-runtime driver hook behavior are executable. | `lib/eta/schedule.mli:105-110,124-125` | M65/M66/M95/M96 properties; Effect: `schedule tap_input runs before inner step`; `schedule tap_output runs on continue and done`; `schedule tap failure stops retry without sleep`; `schedule tap callback exception is defect`; `schedule tap interruption is preserved` — `test/core_common/effect_retry_repeat_common_suites.ml:1063-1074`; Resource: `auto runs effectful schedule tap` — `test/core_common/resource_common_suites.ml:383-384`; Stream: `schedule throttles elements and taps inputs`; `schedule tap failure fails stream` — `test/stream_common/stream_common_suites.ml:1468-1469,1482-1483` |
+| R94 | A `Continue` metadata delay is the sleep before retry recurrence. | `lib/eta/schedule.mli:25-26` | `retry schedule uses virtual delays` — `test/core_common/effect_retry_repeat_common_suites.ml:1061-1062` |
+| R95 | Starting a jittered schedule draws from the supplied random capability. | `lib/eta/schedule.mli:103-109` | `jittered uses random capability` — `test/core_common/duration_schedule_common_suites.ml:613-614` |
+| R96 | Suspended Hook, resume-without-advance, and current-Eta-runtime driver hook behavior are executable. | `lib/eta/schedule.mli:71-88,111-143` | M65/M66/M95–M100 properties; Effect: `schedule tap_input runs before inner step`; `schedule tap_output runs on continue and done`; `schedule tap failure stops retry without sleep`; `schedule tap callback exception is defect` — `test/core_common/effect_retry_repeat_common_suites.ml:1063-1072`; Resource: `auto runs effectful schedule tap` — `test/core_common/resource_common_suites.ml:383-384`; Stream: `schedule throttles elements and taps inputs`; `schedule tap failure fails stream` — `test/stream_common/stream_common_suites.ml:1468-1469,1482-1483` |
 | R97 | Queue cross-domain use and sender/receiver owner-domain resumption are executable. | `lib/eta/queue.mli:19-20` | `allows cross-domain sync use`; `backpressure sender wakeup stays on owner domain`; `receiver wakeup stays on owner domain`; `foreign try_offer wakes owner receiver` — `test/eta/run.ml:91-104` |
 | R98 | Queue `take`, `poll`, and `take_all` blocking/no-wait/item/order semantics are executable. | `lib/eta/queue.mli:143-154` | `recv waits instead of empty`; `send recv close`; `try_recv wakes interrupted admission`; `backpressure try_offer reports full`; `take_all and take_up_to drain` — `test/eta/run.ml:118-119,141-142`; `test/core_common/core_common_suites.ml:1806-1807,1835-1836,1845-1846` |
 | R99 | `timeout_as` follows timeout ownership/cancellation/finalizer boundaries and maps only its own expiry to the supplied typed error. | `lib/eta/effect.mli:485-489` | `timeout_as exact error row`; `timeout_as maps delayed eff`; `timeout_as nested maps outer timeout`; `timeout_as preserves simultaneous failure`; `timeout_as preserves cancelled finalizer` — `test/core_common/effect_resource_timeout_common_suites.ml:873-882` |
 | R100 | `repeat` evaluates once before stepping, follows schedule delays/outputs, and stops on tap failure or interruption. | `lib/eta/effect.mli:490-501` | `repeat schedule`; `repeat recurs zero runs body once`; `repeat schedule uses virtual delays`; `repeat fixed cadence differs from spaced`; `repeat fixed overrun has no pileup`; `repeat timeout interrupts loop`; `schedule tap failure stops repeat` — `test/core_common/effect_retry_repeat_common_suites.ml:1039-1050,1069-1070` |
 | R101 | `forever` repeats successes and stops on typed failure, defect, interruption/timeout, or finalizer diagnostic without succeeding. | `lib/eta/effect.mli:503-509` | `forever repeats until timeout`; `forever stops on typed failure`; `forever stops on defect`; `forever stops on finalizer diagnostic` — `test/core_common/effect_retry_repeat_common_suites.ml:1051-1058` |
+| R102 | Eta's shared Effect hook interpreter preserves cancellation without publishing/resuming the suspended plan for both input and output taps. | `lib/eta/schedule.mli:75-78,84-88,115-123`; `lib/eta/effect.mli:418-450` | `schedule tap interruption is preserved`; `schedule tap_output interruption is preserved` — `test/core_common/effect_retry_repeat_common_suites.ml:559-602,1115-1118`; shared interpreter `lib/eta/effect_schedule.ml:5-10` serves retry/retry_or_else/repeat |
 
 ## Model laws (prose pending)
 
@@ -244,21 +261,21 @@ valid constructor domains; until then their provenance is explicit.
 
 | ID | Model claim | Declaration location | Named qcheck property | Prose status |
 | --- | --- | --- | --- | --- |
-| P01 | Valid exponential, fibonacci, and nonnegative linear schedules produce exactly the requested prefix of nondecreasing delays. | `lib/eta/schedule.mli:38-45` | `monotone delay sequences for valid exponential/fibonacci/linear schedules` | PENDING (`FG-E22-001`) |
-| P02 | `recurs n` emits exactly `n` `Continue` steps before `Done`. | `lib/eta/schedule.mli:24-30,38,127-142` | `recurs n step count` | PENDING (`FG-E22-001`) |
+| P01 | Valid exponential, fibonacci, and nonnegative linear schedules produce exactly the requested prefix of nondecreasing delays. | `lib/eta/schedule.mli:39-46` | `monotone delay sequences for valid exponential/fibonacci/linear schedules` | PENDING (`FG-E22-001`) |
+| P02 | `recurs n` emits exactly `n` `Continue` steps before `Done`. | `lib/eta/schedule.mli:25-31,39,145-160` | `recurs n step count` | PENDING (`FG-E22-001`) |
 
 ## Census totals
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
 | `lib/eta/effect.mli` | 48 | 84 | 0 | 132 |
-| `lib/eta/schedule.mli` | 8 | 3 | 2 | 11 |
+| `lib/eta/schedule.mli` | 24 | 4 | 2 | 28 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
-| **Total covered** | **101** | **101** | **2** | **202** |
+| **Total covered** | **117** | **102** | **2** | **219** |
 
-The executable contains 64 unique properties in total. Matrix properties cover
+The executable contains 66 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
 assertion in that named property.
 
@@ -284,7 +301,7 @@ No new or changed prose may use this table as an escape from same-change testing
 | CD-E22-012 | Remaining tracing edges: default span kind, lazy annotation/enabled checks, no-span events, composite result attrs, external-parent equivalence, tracestate/current-context absence — `effect.mli:758-762,859-930`. | Eta observability maintainers; extend trace-context suite; **2026-09-15**. |
 | CD-E22-013 | Metric interceptor raise, raw/batched/lazy update behavior, runtime-without-meter behavior, and timer success/defect/interruption/finalizer preservation — `effect.mli:1009-1114`. | Eta metrics maintainers; extend metric matrix; **2026-09-15**. |
 | CD-E22-014 | `fn ~error_pp`, all continuation boundaries for `collect_names`, and named deterministic `describe` snapshot contracts — `effect.mli:1128-1172`. | Eta introspection maintainers; name snapshot executable and add continuation matrix; **2026-09-15**. |
-| CD-E22-015 | Portable-runtime worker-safe random requirement for jitter — `schedule.mli:101-103`. | Eta scheduling maintainers; add worker-domain capability test; **2026-09-15**. |
+| CD-E22-015 | Portable-runtime worker-safe random requirement for jitter — `schedule.mli:107-109`. | Eta scheduling maintainers; add worker-domain capability test; **2026-09-15**. |
 | CD-E22-016 | Queue payload non-copy/caller representation responsibility — `queue.mli:20-22`. | Eta queue maintainers; classify as non-executable ownership guidance or add identity/cross-domain test; **2026-08-31**. |
 | CD-E22-017 | Documented interceptor allocation/fast-path claims — `effect.mli:952-955,967-969,1012-1014`. | Eta performance maintainers; add allocation gate or remove normative performance prose; **2026-09-30**. |
 | CD-E22-018 | `Effect.Expert` capability declarations, inherited-child footprint, background implication, and helper/runtime-contract semantics — `effect.mli:781-843`. | Eta runtime-extension maintainers; add named Expert contract matrix; **2026-09-15**. |

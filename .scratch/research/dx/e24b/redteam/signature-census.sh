@@ -51,9 +51,9 @@ mapfile -t current_tap_calls < <(
 current_tap_files=$(
   printf '%s\n' "${current_tap_calls[@]}" | cut -d: -f1 | sort -u | wc -l
 )
-test "${#current_tap_calls[@]}" -eq 18
+test "${#current_tap_calls[@]}" -eq 25
 test "$current_tap_files" -eq 4
-printf 'post-E24b tap constructor calls=%d files=%d\n' \
+printf 'post-follow-up tap constructor calls=%d files=%d\n' \
   "${#current_tap_calls[@]}" "$current_tap_files"
 
 cat <<'EOF'
