@@ -38,11 +38,13 @@ module Stream : sig
   val from_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
   val fail : 'err -> ('a, 'err) t
   val from_schedule :
-    (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    (unit, 'out) Eta.Schedule.t ->
     ('out, 'err) t
   (** Emit each continuing output of [schedule]. Each continuing step sleeps
       for its computed delay before emitting its output; the terminal [Done]
-      output is not emitted. Schedule tap failures fail the stream normally. *)
+      output is not emitted. Apply {!tap} to observe emitted values. This does
+      not expose the terminal non-emitted schedule output or other
+      schedule-local boundaries. *)
 
   val map : ('a -> 'b) -> ('a, 'err) t -> ('b, 'err) t
   val map_effect :
@@ -112,29 +114,37 @@ module Stream : sig
       @raise Invalid_argument if the index would exceed [max_int]. *)
 
   val schedule :
-    ('a, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('a, 'out) Eta.Schedule.t ->
     ('a, 'err) t ->
     ('a, 'err) t
   (** Emit upstream values while [schedule] continues. Each upstream value is
       passed to the schedule as input. A continuing step emits the value and
       sleeps for its delay before the next value is processed; a terminal step
-      stops the stream without emitting that value. *)
+      stops the stream without emitting that value. Apply {!tap} to the result
+      to observe emitted values; the terminal non-emitted input/output and
+      other schedule-local boundaries remain unavailable. *)
 
   val repeat :
-    (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    (unit, 'out) Eta.Schedule.t ->
     ('a, 'err) t ->
     ('a, 'err) t
   (** Run the whole source stream once, then repeat it for every continuing
       schedule step. Each continuing step sleeps before the next repetition.
-      Source or schedule tap failures fail the stream normally. *)
+      Apply {!tap} to observe emitted values or instrument the source directly
+      to observe its evaluations. Neither recipe exposes empty repetitions,
+      terminal schedule exhaustion, or other schedule-local boundaries. *)
 
   val retry :
-    ('err, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t ->
+    ('err, 'out) Eta.Schedule.t ->
     ('a, 'err) t ->
     ('a, 'err) t
   (** Retry the whole source stream when it fails with a typed error and
       [schedule] continues. Elements emitted before a failure remain emitted.
-      If the schedule is exhausted, the final typed stream error is preserved. *)
+      If the schedule is exhausted, the final typed stream error is preserved.
+      Apply {!tap_error} to the source before [retry], or instrument the source
+      directly, to observe each typed failure; a [tap_error] outside [retry]
+      sees only the final failure. These recipes do not expose terminal
+      non-emitted schedule input/output or other schedule-local boundaries. *)
 
   val timeout : Eta.Duration.t -> ('a, 'err) t -> ('a, 'err) t
   (** End the stream cleanly if the next emitted value does not arrive within

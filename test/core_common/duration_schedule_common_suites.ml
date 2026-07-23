@@ -188,6 +188,20 @@ let test_schedule_outputs_and_done_decision () =
       Alcotest.(check dur) "done delay" Duration.zero metadata.delay
   | Schedule.Continue _, _ -> Alcotest.fail "expected done decision"
 
+let direct_step ~now_ms ~input
+    (driver : ('input, 'output) Schedule.driver) =
+  Schedule.step ~now_ms ~input driver
+
+let test_two_parameter_direct_driver () =
+  let driver : (string, int) Schedule.driver =
+    Schedule.start (Schedule.recurs 1)
+  in
+  match direct_step ~now_ms:12 ~input:"attempt" driver with
+  | Schedule.Continue metadata, _ ->
+      Alcotest.(check string) "input" "attempt" metadata.input;
+      Alcotest.(check int) "output" 0 metadata.output
+  | Schedule.Done _, _ -> Alcotest.fail "expected direct driver to continue"
+
 let test_schedule_elapsed_accumulates_from_first_step () =
   let driver = Schedule.start Schedule.elapsed in
   let metadata, driver = next_continue ~now_ms:100 driver in
@@ -588,6 +602,8 @@ let tests =
         Alcotest.test_case "windowed" `Quick test_windowed;
         Alcotest.test_case "outputs and done decision" `Quick
           test_schedule_outputs_and_done_decision;
+        Alcotest.test_case "two-parameter direct driver" `Quick
+          test_two_parameter_direct_driver;
         Alcotest.test_case "elapsed accumulates from first step" `Quick
           test_schedule_elapsed_accumulates_from_first_step;
         Alcotest.test_case "during stops after bound" `Quick

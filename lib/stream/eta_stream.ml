@@ -22,7 +22,7 @@ module Stream = struct
     | From_effect : ('a, 'err) Eta.Effect.t -> ('a, 'err) t
     | Fail : 'err -> ('a, 'err) t
     | From_schedule :
-        (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        (unit, 'out) Eta.Schedule.t
         -> ('out, 'err) t
     | Map : ('a, 'err) t * ('a -> 'b) -> ('b, 'err) t
     | Map_effect :
@@ -45,15 +45,15 @@ module Stream = struct
         -> ('c, 'err) t
     | Zip_with_index : ('a, 'err) t -> ('a * int, 'err) t
     | Schedule :
-        ('a, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        ('a, 'out) Eta.Schedule.t
         * ('a, 'err) t
         -> ('a, 'err) t
     | Repeat :
-        (unit, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        (unit, 'out) Eta.Schedule.t
         * ('a, 'err) t
         -> ('a, 'err) t
     | Retry :
-        ('err, 'out, (unit, 'err) Eta.Effect.t) Eta.Schedule.t
+        ('err, 'out) Eta.Schedule.t
         * ('a, 'err) t
         -> ('a, 'err) t
     | Timeout : Eta.Duration.t * ('a, 'err) t -> ('a, 'err) t
@@ -265,16 +265,9 @@ let rec drain_channel channel =
        | `Item _ -> drain_channel channel
        | `Empty | `Closed | `Closed_with_error _ -> Eta.Effect.unit)
 
-let rec drive_schedule_step = function
-  | Eta.Schedule.Complete (decision, driver) ->
-      Eta.Effect.pure (decision, driver)
-  | Eta.Schedule.Hook (hook, resume) ->
-      hook |> Eta.Effect.bind (fun () -> drive_schedule_step (resume ()))
-
 let schedule_step ~input driver =
-  Eta.Effect.bind
-    (fun now_ms ->
-      Eta.Schedule.step_plan ~now_ms ~input driver |> drive_schedule_step)
+  Eta.Effect.map
+    (fun now_ms -> Eta.Schedule.step ~now_ms ~input driver)
     Eta.Effect.now_ms
 
 let make_file_error ~operation ~path cause =
@@ -845,7 +838,7 @@ and fold_stream :
 
 and fold_from_schedule :
     type err acc out.
-    (unit, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (unit, out) Eta.Schedule.t ->
     acc ->
     (acc, out, err) folder ->
     (acc * bool, err) Eta.Effect.t =
@@ -866,7 +859,7 @@ fun schedule acc folder ->
 
 and fold_schedule :
     type err acc a out.
-    (a, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (a, out) Eta.Schedule.t ->
     (a, err) Stream.t ->
     acc ->
     (acc, a, err) folder ->
@@ -897,7 +890,7 @@ fun schedule inner acc folder ->
 
 and fold_repeat :
     type err acc a out.
-    (unit, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (unit, out) Eta.Schedule.t ->
     (a, err) Stream.t ->
     acc ->
     (acc, a, err) folder ->
@@ -919,7 +912,7 @@ fun schedule inner acc folder ->
 
 and fold_retry :
     type err acc a out.
-    (err, out, (unit, err) Eta.Effect.t) Eta.Schedule.t ->
+    (err, out) Eta.Schedule.t ->
     (a, err) Stream.t ->
     acc ->
     (acc, a, err) folder ->

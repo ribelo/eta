@@ -37,6 +37,8 @@ let () =
             `Quick test_retry_after_timeout_cancels_before_next_attempt;
           Alcotest.test_case "far-future Retry-After date is capped" `Quick
             test_retry_after_far_future_date_is_capped;
+          Alcotest.test_case "two-parameter schedule HTTP signatures" `Quick
+            test_two_parameter_schedule_http_signatures;
           Alcotest.test_case "lowercase GET is not default retryable" `Quick
             test_lowercase_get_is_not_default_retryable;
         ] );

@@ -429,11 +429,11 @@ bag. Runtime services remain the optional-package hook for backend-attached
 capabilities such as blocking pools or HTTP clients; they are not a general
 application dependency-injection channel.
 
-`Schedule` is not replaced by recursive retry loops or ad hoc sleep calls. It
-owns retry/repeat policy description, bounded recurrence, composition,
-exponential and linear backoff, deterministic jitter through the runtime random
-capability, effectful input/output taps, and a stateful driver for interpreters.
-Use
+`Schedule` is not replaced by recursive retry loops or ad hoc sleep calls. Its
+two-parameter type [('input, 'output) Schedule.t] owns retry/repeat policy
+description, bounded recurrence, composition, exponential and linear backoff,
+deterministic jitter through the runtime random capability, and a stateful
+driver for interpreters. Use
 `Effect.retry ~schedule:policy ~while_:retryable effect` instead of spelling
 retry lifecycle in application code. `retry` currently retries only a bare
 `Cause.Fail`; it does not inspect composite typed causes.
@@ -448,10 +448,48 @@ failure is rejected before a step, and the latest or terminal output after
 steps have run.
 
 `Effect.repeat ~schedule:policy effect` is not replaced by hand-written recursion over
-`Schedule.start` and `Schedule.next`. The manual shape is useful for interpreters, but
-`Schedule.next` applies only to hook-free schedules; application code should
-describe a scheduled unit effect and let Eta drive the policy, taps, sleeps,
-cancellation, and iteration failure behavior.
+`Schedule.start` and `Schedule.next`. The manual shape is useful for
+interpreters; every schedule can be stepped directly after the hook channel's
+deletion. Application code should describe a scheduled unit effect and let Eta
+drive the policy, sleeps, cancellation, and iteration failure behavior.
+
+### Observing scheduled work
+
+Observe the operation, not the schedule policy:
+
+- For `Effect.retry`, `retry_or_else`, and `repeat`, instrument the source effect
+  before passing it to the operation. This sees every source attempt, including
+  the initial attempt.
+- For `Resource.auto`, instrument `load`. Use an application-owned counter when
+  seed and refresh loads need different labels.
+- For `Stream.retry`, put `Stream.tap_error` on the source before `Stream.retry`,
+  or instrument the source directly. A `tap_error` outside `retry` sees only the
+  final failure. For `Stream.repeat`, instrument the source or use `Stream.tap`
+  to observe emitted values. For `Stream.schedule` and `Stream.from_schedule`,
+  use `Stream.tap` to observe emitted values.
+- In a custom interpreter, observe immediately around `Schedule.step`.
+
+For example, put attempt observation inside the source effect so failures and
+the initial attempt are visible:
+
+```ocaml
+let attempts = ref 0 in
+let observed = ref [] in
+let request =
+  Effect.sync (fun () ->
+      incr attempts;
+      observed := !attempts :: !observed)
+  |> Effect.bind (fun () -> request_once)
+in
+Effect.retry ~schedule:(Schedule.recurs 2) ~while_:retryable request
+```
+
+These recipes are intentionally **not parity replacements for schedule taps**.
+They cannot observe schedule-local boundaries: terminal non-emitted
+inputs/outputs, policy-generated outputs, policy evaluation before driver-state
+publication, hook failure or cancellation as an advancement veto, or
+branch/phase-local events inside one composed step. Eta deleted that capability
+because no shipped producer or external adoption demonstrated demand for it.
 
 `Duration` is not replaced by raw millisecond integers or seconds floats. The
 typed value keeps unit conversion, non-negative clamping, bounded arithmetic,

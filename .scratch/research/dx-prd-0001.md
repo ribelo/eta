@@ -1565,7 +1565,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** 2026-07-18 | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** 2026-07-18 (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
-| E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion proposed → E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
+| E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion implemented by E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** 2026-07-18 | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18/20 (sync_option reversal by human authority) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..004 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
@@ -1695,15 +1695,17 @@ human can audit the journal at any wave boundary — it is written for that.
   that people already read correctly.
 - **`Mutable_ref` name — kept.** "Named Atomic" is honest; `Atomic` alone
   would oversell.
-- **Slimming `Schedule.t` to two parameters — selected through DX-E24b candidate
-  D (deletion proposal).** The initial A/B/C comparison correctly found that
+- **Slimming `Schedule.t` to two parameters — implemented by DX-E24c after
+  selection through DX-E24b candidate D.** The initial A/B/C comparison
+  correctly found that
   policy ownership is required *if structural taps remain*: top-level driver
   observers cannot see branch/phase-local handoff events, and structural
   observers restore policy-owned placement. Follow-up review added the omitted
   deletion baseline. With zero production/example tap producers and an adequate
-  ordinary recipe for common attempt logging, D now proposes deleting taps, the
-  hook channel, and all three interpreters. Exact structural observation is the
-  explicit capability loss. Evidence: `V-DX-E24B-006`/`007`,
+  ordinary recipe for common attempt logging, D selected deletion of taps, the
+  hook channel, and all three interpreters; E24c carried out that deletion with
+  no compatibility path. Exact structural observation is the explicit
+  capability loss. Evidence: `V-DX-E24B-006`/`007`,
   `.scratch/research/dx/e24b/report.md`, and
   `.scratch/research/dx/e24b/review/DELETION_PROPOSAL.md`.
 

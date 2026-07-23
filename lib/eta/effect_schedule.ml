@@ -2,12 +2,8 @@ open Effect_core
 
 module Sch = Schedule
 
-let run_schedule_hook frame hook =
-  let (_ : unit) = run_to_value frame hook in
-  ()
-
-let[@inline always] step_schedule clock run_hook input driver =
-  Sch.step_with_hooks ~run_hook ~now_ms:(clock#now_ms ()) ~input !driver
+let[@inline always] step_schedule clock input driver =
+  Sch.step ~now_ms:(clock#now_ms ()) ~input !driver
 
 let repeat ~schedule eff =
   preserve ~leaf_name:"Effect.repeat"
@@ -17,9 +13,8 @@ let repeat ~schedule eff =
     let random = Runtime_core.current_random frame.runtime in
     let run_iteration () = run_scope frame eff in
     let driver = ref (Sch.start ~random schedule) in
-    let run_hook = run_schedule_hook frame in
     let rec loop input =
-      match step_schedule clock run_hook input driver with
+      match step_schedule clock input driver with
       | Sch.Done metadata, _ -> ok metadata.output
       | Sch.Continue metadata, next_driver -> (
           driver := next_driver;
@@ -43,13 +38,12 @@ let retry ~schedule ~while_ eff =
     let clock = Runtime_core.current_clock frame.runtime in
     let random = Runtime_core.current_random frame.runtime in
     let driver = ref (Sch.start ~random schedule) in
-    let run_hook = run_schedule_hook frame in
     let run_attempt () = run_scope frame eff in
     let rec loop () =
       match run_attempt () with
       | Exit.Ok _ as ok -> ok
       | Exit.Error (Cause.Fail err) when while_ err -> (
-          match step_schedule clock run_hook err driver with
+          match step_schedule clock err driver with
           | Sch.Continue metadata, next_driver ->
               driver := next_driver;
               clock#sleep metadata.delay;
@@ -67,7 +61,6 @@ let retry_or_else ~schedule ~while_ ~or_else eff =
     let clock = Runtime_core.current_clock frame.runtime in
     let random = Runtime_core.current_random frame.runtime in
     let driver = ref (Sch.start ~random schedule) in
-    let run_hook = run_schedule_hook frame in
     let last_output = ref None in
     let run_attempt () = run_scope frame eff in
     let rec loop () =
@@ -80,7 +73,7 @@ let retry_or_else ~schedule ~while_ ~or_else eff =
               match first_typed_failure cause with
               | Some err ->
                   if while_ err then
-                    match step_schedule clock run_hook err driver with
+                    match step_schedule clock err driver with
                     | Sch.Continue metadata, next_driver ->
                         driver := next_driver;
                         last_output := Some metadata.output;

@@ -40,7 +40,7 @@ two substrate-bridging leaves. Its durable laws:
 
 Full evidence: V-DX-PHASE-D in the journal.
 
-## E24b — Schedule-hook ownership (promoted 2026-07-23; deletion proposed)
+## E24b/E24c — Schedule-hook ownership closed by deletion (2026-07-23)
 
 The question Phase A opened — is `Schedule.t`'s third parameter
 load-bearing or the library's ugliest public type? — is decided, and the
@@ -50,8 +50,10 @@ them through the suspended step; branch-local composition events prove
 it). But zero production code constructs a tap, the common observation
 case has a better ordinary recipe (instrument the source — it even sees
 the initial attempt taps miss), and the unique structural capability has
-no demonstrated demand. **The hook channel is marked for deletion** (E24c)
-with an honest loss statement (all schedule-local effect boundaries) and a
+no demonstrated demand. **E24c implemented the deletion**: `Schedule.t` and
+its driver now have two parameters, every schedule uses direct stepping, and
+the tap constructors, suspended-step protocol, and `no_hook` marker are gone.
+The decision keeps an honest loss statement (all schedule-local effect boundaries) and a
 falsifiable reversal gate: a shipped non-test producer, external adoption
 needing schedule-local effects, or an integration the ordinary recipe
 can't express.
@@ -60,7 +62,9 @@ The durable lesson: a decision experiment's hypothesis space must include
 "delete the feature" — the first verdict ("retain permanently") survived
 one review round and still fell to the baseline that was never written
 down. Provenance: `.scratch/research/dx/e24b/`, V-DX-E24B-001..002, branch
-`research/dx-e24b-hook-ownership`.
+`research/dx-e24b-hook-ownership`; implementation packet:
+`.scratch/research/dx/e24c/review/` on
+`research/dx-e24c-hook-deletion`.
 
 ## E22 — Law-property policy (promoted 2026-07-23)
 
@@ -334,11 +338,11 @@ Two findings changed the plan en route, and are the real conclusions:
    `retry_or_else`: composite causes) — now documented in the mli as a
    *current limitation*, with alignment deferred to a registered decision.
 
-`Schedule.t` slimming is **held**: `Resource.auto` and `Eta_stream` (×4)
-publicly drive hook-bearing schedules, and `Schedule.step_plan` is public —
-so hook ownership (policy vs. driver) is an architectural question, not a
-rename. Registered as experiment **E24b** with "keep hooks permanently" as
-a live outcome.
+`Schedule.t` slimming was held here for the ownership experiment because
+`Resource.auto` and `Eta_stream` (×4) drove hook-bearing schedules and
+`Schedule.step_plan` was public. E24b later selected deletion after finding no
+shipped tap producers, and E24c implemented the two-parameter schedule and
+direct driver described above.
 
 Evidence: parity suite incl. default-cap-8 proven with 9 inputs;
 construction-time `Invalid_argument` red-team; independent review rated the

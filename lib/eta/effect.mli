@@ -411,21 +411,23 @@ val tap_defect :
     fails normally from the observer path. *)
 
 val retry :
-  schedule:('err, 'schedule_out, (unit, 'err) t) Schedule.t ->
+  schedule:('err, 'schedule_out) Schedule.t ->
   while_:('err -> bool) ->
   ('a, 'err) t ->
   ('a, 'err) t
 (** Retry an effect while the schedule continues and [while_] accepts the
-    typed failure. The typed failure is passed to the schedule as input.
-    Schedule taps run in the current Eta runtime; tap failures fail the retry
-    normally through the same typed channel.
+    typed failure. The typed failure is passed to the schedule as input. To
+    observe every attempt, including the initial one, instrument the source
+    effect itself before passing it to [retry]. Schedule-local boundaries such
+    as terminal decisions and policy-generated outputs are not observable by
+    that recipe.
 
     Current limitation: unlike {!retry_or_else}, [retry] only retries a bare
     [Cause.Fail err]. Composite typed causes are not retried. Defects,
     interruption, and finalizer diagnostics are not retried. *)
 
 val retry_or_else :
-  schedule:('err1, 'schedule_out, (unit, 'err2) t) Schedule.t ->
+  schedule:('err1, 'schedule_out) Schedule.t ->
   while_:('err1 -> bool) ->
   or_else:('err1 -> 'schedule_out option -> ('a, 'err2) t) ->
   ('a, 'err1) t ->
@@ -445,9 +447,11 @@ val retry_or_else :
     differs from the bare-[Cause.Fail] limitation of {!retry}. Uncatchable
     diagnostics are not retried and do not run [or_else].
 
-    Schedule taps run in the current Eta runtime. Tap failures and [or_else]
-    failures become the result normally; the original typed failure is not
-    suppressed or reported as a finalizer diagnostic. *)
+    To observe every attempt, including the initial one, instrument the source
+    effect itself before passing it to [retry_or_else]. This does not expose
+    schedule-local boundaries. [or_else] failures become the result normally;
+    the original typed failure is not suppressed or reported as a finalizer
+    diagnostic. *)
 
 val now_ms : (int, 'err) t
 (** Read the active monotonic runtime clock in milliseconds. This is runtime
@@ -488,7 +492,7 @@ val timeout_as :
 (** Like {!timeout}, but fails with [on_timeout] instead of widening the error
     row with raw Timeout. *)
 val repeat :
-  schedule:('a, 'output, (unit, 'err) t) Schedule.t ->
+  schedule:('a, 'output) Schedule.t ->
   ('a, 'err) t ->
   ('output, 'err) t
 (** Repeat a successful effect according to [schedule].
@@ -496,9 +500,10 @@ val repeat :
     The source effect is evaluated once before the schedule is stepped. Each
     successful value is passed to the schedule as input. When the schedule
     continues, Eta sleeps for the step delay and runs the source again. When the
-    schedule is done, [repeat] succeeds with the schedule output. Schedule taps
-    run in the current Eta runtime; tap failures fail [repeat] normally through
-    the same typed channel. The first source failure stops the loop. *)
+    schedule is done, [repeat] succeeds with the schedule output. To observe
+    every source evaluation, including the initial one, instrument the source
+    effect itself before passing it to [repeat]. This does not expose
+    schedule-local boundaries. The first source failure stops the loop. *)
 
 val forever : ('a, 'err) t -> ('b, 'err) t
 (** Repeat an effect forever, discarding every successful value.

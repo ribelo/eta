@@ -13,7 +13,7 @@ val auto :
   ?on_error:('err -> unit) ->
   load:('a, 'err) Effect.t ->
   ?random:Capabilities.random ->
-  schedule:(unit, 'schedule_out, (unit, 'err) Effect.t) Schedule.t ->
+  schedule:(unit, 'schedule_out) Schedule.t ->
   unit ->
   (('a, 'err) t, 'err) Effect.t
 (** Load once to seed the resource, then refresh it in a runtime-owned
@@ -24,9 +24,12 @@ val auto :
     recorded as [Cause.Fail err]. Loader defects are recorded as [Cause.Die _]
     and do not stop later refresh attempts. If [on_error] raises while handling
     a typed loader failure, that callback defect is recorded as an additional
-    [Cause.Die _] and the refresh loop continues. Effectful schedule taps run
-    in the refresh daemon; tap failures fail that schedule-driving effect
-    normally rather than being recorded as refresh failures. *)
+    [Cause.Die _] and the refresh loop continues.
+
+    Instrument [load] to observe load attempts; use an application-owned
+    counter when seed and refresh attempts need distinct labels. This observes
+    loads, not terminal schedule exhaustion or other schedule-local
+    boundaries. *)
 
 val get : ('a, 'err) t -> ('a, 'err) Effect.t
 val refresh : ('a, 'err) t -> (unit, 'err) Effect.t

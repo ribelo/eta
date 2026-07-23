@@ -33,6 +33,19 @@ File "cases/ppx_sync_nonstring.ml", line 1, characters 19-22:
                        ^^^
 Error: expected [%eta.sync "name" body]
 exit=2
+===== schedule_tap_input_negative.ml =====
+File "cases/schedule_tap_input_negative.ml", line 3, characters 8-26:
+3 | let _ = Schedule.tap_input
+            ^^^^^^^^^^^^^^^^^^
+Error: Unbound value "Schedule.tap_input"
+exit=2
+===== schedule_ternary_negative.ml =====
+File "cases/schedule_ternary_negative.ml", line 3, characters 20-48:
+3 | let _old_schedule : (unit, int, unit) Schedule.t = Schedule.recurs 1
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The type constructor "Schedule.t" expects 2 argument(s),
+       but is here applied to 3 argument(s)
+exit=2
 ===== sql_attr_payload.ml =====
 File "cases/sql_attr_payload.ml", line 1, characters 37-56:
 1 | [%%eta.sql.table type t = { id : int [@primary_key true] }]
