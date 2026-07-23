@@ -203,3 +203,32 @@ the body and return that.
 **Fix 2.** If the resource must outlive one callback, acquire it under a
 wider `Effect.with_scope` (or keep it pooled and re-borrow per use) instead
 of smuggling the handle out of the bracket.
+
+## 9. `Unbound value "Schedule.tap_input"` / `"Schedule.t" expects 2 argument(s), but is here applied to 3`
+
+```
+Error: Unbound value "Schedule.tap_input"
+Error: The type constructor "Schedule.t" expects 2 argument(s),
+       but is here applied to 3 argument(s)
+```
+
+**What you tried.** `Schedule.tap_input` / `Schedule.tap_output`,
+`Schedule.step_plan`, `Schedule.step_with_hooks`, `Schedule.no_hook`, or a
+three-parameter `('input, 'output, 'hook) Schedule.t` type annotation.
+
+**Why Eta forbids it.** The schedule-hook channel was deleted (DX-E24b/c,
+evidence: no production producer existed; the common observation case has a
+better ordinary recipe). `Schedule.t` now takes two parameters —
+`('input, 'output)` — and drivers step with `Schedule.step` / `next`
+directly.
+
+**Fix 1.** To observe retries/repeats, instrument the source effect before
+passing it to `Effect.retry` / `Effect.repeat` — this also sees the initial
+attempt, which taps never could. For `Resource.auto`, instrument `load`;
+for streams, `Stream.tap_error` on the source before `Stream.retry` or
+`Stream.tap` for emissions. For a custom driver, log around
+`Schedule.step` calls.
+**Fix 2.** Drop the third type parameter and migrate from `step_plan` /
+`step_with_hooks` to direct `Schedule.step` / `next`. Schedule-local effect
+boundaries (terminal output observation, policy outputs as values,
+advancement veto) no longer exist by design; see `docs/api-dx.md`.
