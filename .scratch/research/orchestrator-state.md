@@ -6,7 +6,10 @@ the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
 per-experiment loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E24b — Schedule-hook ownership: policy vs driver (decision)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e24b`
+  - Branch: `research/dx-e24b-hook-ownership`
+  - Stage: predictions sealed (V-DX-E24B-001); objective.md written; awaiting executor
 - Done (Phase E): **E22 promoted** (law-property policy; 3 oracle rounds,
   10 findings closed; 63 properties, 5 census-complete modules)
 - Done: **Phases A–D complete.** Phase D synthesis V-DX-PHASE-D landed
@@ -38,7 +41,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **E24b** (hook ownership: policy vs driver — context complete) → retry cause-alignment → E15 → E16 → E21 → E17 (gated) → E18
+- Queue: retry cause-alignment → E15 (interruptible) → E16 (Reader race) → E21 (resumable probe) → E17 (gated; E12 evidence registered) → E18 (simulation)
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -65,4 +68,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-23 — E22 promoted
+- Last update: 2026-07-23 — E24b staged
