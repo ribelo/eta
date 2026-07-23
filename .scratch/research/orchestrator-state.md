@@ -1,9 +1,11 @@
 # Orchestrator state — DX-PRD-0001
 
 Updated at every transition. Resume protocol for any future orchestrator
-session: read this file, the tail of `.scratch/research/dx-journal.md`, and
-the dashboard in `.scratch/research/dx-prd-0001.md` §6, then continue the
-per-experiment loop (plan §4.2 as amended by Amendment 1).
+session: read this file, **`docs/research/dx-ledger.md`** (the programme
+map: what / rationale / decision / decision rationale), the tail of
+`.scratch/research/dx-journal.md`, and the dashboard in
+`.scratch/research/dx-prd-0001.md` §6, then continue the per-experiment
+loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
 - In flight: **E15 — `Effect.interruptible` (HIGH RISK, cancellation semantics)**
@@ -49,7 +51,7 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: E16 (Reader race) → E21 (resumable probe) → E17 (gated) → E18 (simulation)
+- Queue: E15 (in flight) → **E27** logf (human pre-approved) → **E30** from_js_promise (human pre-approved) → E28 (all-vs-map_par audit) → E29 (par ergonomics) → E31 (eta.trace trigger) → E32 (fold recheck) → E16 → E21 → E17 (gated) → E18 → end: golden tutorials, model.md, law-census extension. Proposed (undecided): E33 (why-8 bench). Full map: `docs/research/dx-ledger.md`
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -76,4 +78,4 @@ per-experiment loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-23 — E15 staged
+- Last update: 2026-07-23 — DX ledger created; new candidates queued

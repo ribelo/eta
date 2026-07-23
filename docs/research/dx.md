@@ -1,6 +1,10 @@
 # Eta DX research — conclusions
 
-Curated, durable conclusions of the DX-PRD-0001 programme
+Curated, durable conclusions of the DX-PRD-0001 programme. For the
+complete programme map (what / rationale / decision / decision rationale
+for every experiment, kill, hold, and queued item), see
+`docs/research/dx-ledger.md`. Curated, durable conclusions of the
+DX-PRD-0001 programme
 (`.scratch/research/dx-prd-0001.md`). This document exists so that a year
 from now anyone can answer "why is the API shaped like this?" without living
 memory. Protocol records (predictions, gates, ratings, decisions) live in
