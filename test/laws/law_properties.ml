@@ -2245,6 +2245,141 @@ let property_schedule_and_then_phase_tags =
       && outcome.events = []
       && no_pending outcome)
 
+type schedule_ownership_hook =
+  | Outer_input of int
+  | Left_input of int
+  | Left_output of int
+  | Right_input of int
+  | Right_output of int
+  | Outer_first_output of int
+  | Outer_second_output of int
+
+exception Schedule_hook_failure
+
+let ownership_schedule () =
+  let left =
+    Eta.Schedule.recurs 0
+    |> Eta.Schedule.tap_output (fun output -> Left_output output)
+    |> Eta.Schedule.tap_input (fun input -> Left_input input)
+  in
+  let right =
+    Eta.Schedule.recurs 0
+    |> Eta.Schedule.tap_output (fun output -> Right_output output)
+    |> Eta.Schedule.tap_input (fun input -> Right_input input)
+  in
+  Eta.Schedule.and_then left right
+  |> Eta.Schedule.tap_input (fun input -> Outer_input input)
+  |> Eta.Schedule.tap_output (function
+       | Eta.Schedule.First_phase output -> Outer_first_output output
+       | Eta.Schedule.Second_phase output -> Outer_second_output output)
+
+let expected_ownership_hooks input =
+  [
+    Outer_input input;
+    Left_input input;
+    Left_output 0;
+    Right_input input;
+    Right_output 0;
+    Outer_second_output 0;
+  ]
+
+let ownership_decision_is_terminal input = function
+  | Eta.Schedule.Done metadata ->
+      metadata.input = input
+      && metadata.output = Eta.Schedule.Second_phase 0
+      && metadata.attempt = 1
+  | Eta.Schedule.Continue _ -> false
+
+(* Observation boundary: the ordered hook values and final decision from one
+   public step whose [and_then] left phase terminates into its right phase.
+   Generated class: every bounded integer input; all six hook-failure positions
+   are exercised for every generated input. *)
+let property_schedule_policy_hook_order_and_driver_interpretation =
+  QCheck.Test.make
+    ~name:"Schedule policy hook order survives and_then and step_with_hooks publishes only after interpreter success"
+    ~count bounded_int (fun input ->
+      let observe () =
+        let initial = Eta.Schedule.start (ownership_schedule ()) in
+        let rec drain_plan hooks = function
+          | Eta.Schedule.Hook (hook, resume) ->
+              drain_plan (hook :: hooks) (resume ())
+          | Eta.Schedule.Complete (decision, _) ->
+              (List.rev hooks, decision)
+        in
+        let planned_hooks, planned_decision =
+          Eta.Schedule.step_plan ~now_ms:0 ~input initial |> drain_plan []
+        in
+        let interpreted_hooks = ref [] in
+        let interpreted_decision, _ =
+          Eta.Schedule.step_with_hooks
+            ~run_hook:(fun hook ->
+              interpreted_hooks := hook :: !interpreted_hooks)
+            ~now_ms:0 ~input initial
+        in
+        let failure_results =
+          List.init 6 (fun failure_index ->
+              let failed_initial = Eta.Schedule.start (ownership_schedule ()) in
+              let calls = ref 0 in
+              let failed =
+                try
+                  ignore
+                    (Eta.Schedule.step_with_hooks
+                       ~run_hook:(fun _ ->
+                         let index = !calls in
+                         incr calls;
+                         if index = failure_index then
+                           raise Schedule_hook_failure)
+                       ~now_ms:0 ~input failed_initial);
+                  false
+                with Schedule_hook_failure -> true
+              in
+              let retry_hooks = ref [] in
+              let retry_decision, _ =
+                Eta.Schedule.step_with_hooks
+                  ~run_hook:(fun hook -> retry_hooks := hook :: !retry_hooks)
+                  ~now_ms:0 ~input failed_initial
+              in
+              ( failure_index,
+                failed,
+                !calls,
+                List.rev !retry_hooks,
+                retry_decision ))
+        in
+        ( planned_hooks,
+          planned_decision,
+          List.rev !interpreted_hooks,
+          interpreted_decision,
+          failure_results )
+      in
+      let expected = expected_ownership_hooks input in
+      let outcome = run (E.sync observe) in
+      match outcome.exit with
+      | Eta.Exit.Error _ -> false
+      | Eta.Exit.Ok
+          ( planned_hooks,
+            planned_decision,
+            interpreted_hooks,
+            interpreted_decision,
+            failure_results ) ->
+          planned_hooks = expected
+          && interpreted_hooks = expected
+          && ownership_decision_is_terminal input planned_decision
+          && ownership_decision_is_terminal input interpreted_decision
+          && List.for_all
+               (fun
+                 ( failure_index,
+                   failed,
+                   failure_calls,
+                   retry_hooks,
+                   retry_decision ) ->
+                 failed
+                 && failure_calls = failure_index + 1
+                 && retry_hooks = expected
+                 && ownership_decision_is_terminal input retry_decision)
+               failure_results
+          && outcome.events = []
+          && no_pending outcome)
+
 let property_schedule_tap_input_order_and_retry_state =
   QCheck.Test.make
     ~name:"Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state"
@@ -2871,6 +3006,7 @@ let laws =
     property_schedule_monotone;
     property_schedule_done_delay_zero;
     property_schedule_and_then_phase_tags;
+    property_schedule_policy_hook_order_and_driver_interpretation;
     property_schedule_tap_input_order_and_retry_state;
     property_schedule_tap_output_includes_done;
     property_schedule_next_continue_only;

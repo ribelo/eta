@@ -3,7 +3,9 @@
 
 type ('input, 'output, 'hook) t
 (** A schedule consumes values of ['input] and produces ['output] values while
-    deciding whether to continue and how long to wait before the next step. *)
+    deciding whether to continue and how long to wait before the next step.
+    Schedule policy owns ['hook] values and their structural order; a driver
+    owns their interpretation through {!step_plan} or {!step_with_hooks}. *)
 
 type no_hook = |
 (** Marker for schedules that have no effectful tap hooks and can be stepped

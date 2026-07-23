@@ -1694,6 +1694,13 @@ human can audit the journal at any wave boundary — it is written for that.
   that people already read correctly.
 - **`Mutable_ref` name — kept.** "Named Atomic" is honest; `Atomic` alone
   would oversell.
+- **Slimming `Schedule.t` to two parameters — killed by DX-E24b.** Policy-owned
+  hook values preserve branch- and phase-local ordering: one `and_then` step can
+  expose a terminal left hook and first right hook that top-level driver
+  observers cannot see. Moving observation to the eight effectful driver
+  signatures would duplicate contracts and still lose that structural placement
+  unless it recreated the suspended `step_plan` seam. Evidence:
+  `V-DX-E24B-002` and `.scratch/research/dx/e24b/report.md`.
 
 ## Appendix A — Rubrics
 
