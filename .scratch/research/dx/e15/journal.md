@@ -140,3 +140,57 @@ The exact lost-wakeup construction is recorded in `phase0.md`. It cannot be
 eliminated with the current contract. The Phase 0 gate therefore fires the kill
 criterion before public docs, implementation, or law-bearing API prose is
 introduced.
+
+## Final decision
+
+### Finalizer answer
+
+Confirmed **NO**. `Runtime_core.run_finalizers` and
+`Effect_resource.run_cleanup` protect cleanup deliberately. Restoring parent
+cancellation inside cleanup would permit re-entrant cancellation to abort the
+work that Eta is already obliged to settle and would undermine finalizer cause
+composition.
+
+### Prediction reconciliation
+
+| Prediction | Score | Finding |
+| --- | --- | --- |
+| Eio protected subtree blocks parent propagation into inner sub | Exact | Native blocked-promise probe returned normally. |
+| Explicit inner-sub cancellation escapes protection | Exact | Native yield raised the child reason through `protect`. |
+| Eio old-parent cancellation waits for a later check | Exact | Both protections returned; following `Fiber.check` raised. |
+| jsoo depth two/one suppresses and depth zero delivers | Exact | CPS probe produced exactly that trace. |
+| jsoo can locally express innermost-wins | Exact at substrate level | Saving/resetting effective depth has the required local mapping; no API was implemented. |
+| Native needs relay/new machinery and should kill if not simple | Exact | Exact-parent synthetic cancellation defeats a scope relay. |
+| Finalizers must not restore | Exact | Both finalizer paths are protected in source. |
+| Entry/exit boundaries contain the lost-wakeup pressure | Exact | A snapshot cannot wake a later blocked service operation. |
+| Checkpoint list categories | Strengthened | Settled Eio promises and full jsoo stream adds add backend caveats. |
+| Delivery winner pressure | Strengthened | Existing waits have winner protocols, but there is no valid restore on which to prove the new law. |
+
+Score: **8 exact, 2 strengthened, 0 contradicted**.
+
+### Kill verdict
+
+The API, runtime contract, and production implementation remain unchanged. The
+checkpoint list, executable probe record, report, and parking-lot prerequisites
+land as the DX result.
+
+### Final verification
+
+All exact assignment gates pass on the final worktree:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline \
+  test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force        PASS
+```
+
+The separate native and CPS Phase 0 probes also pass. Mainline repeated the two
+existing integer-overflow warnings during JS compilation; all Node completion
+sentinels were reached.
+
+**E15 KILLED: Eio exposes no restore or arbitrary-parent cancellation observer;
+scope-only relays lose cancellation of Eta synthetic sub-contexts and can strand
+a blocked interruptible point.**

@@ -176,6 +176,56 @@ Use named helpers at common boundaries:
   handlers.
 - `Eta_blocking.run_result` for blocking leaves with expected typed failures.
 
+## Cancellation Checkpoints
+
+Eta cancellation is cooperative. A checkpoint is a call that checks an
+already-cancelled runtime context or installs a cancellation wakeup while it is
+blocked. Pure effect composition and ordinary synchronous OCaml code do not
+poll for cancellation between expressions.
+
+The portable checkpoint list is:
+
+- `Effect.yield`;
+- positive `Effect.sleep` and the sleep before `Effect.delay` with the default
+  live runtime clocks, including timer waits used by timeout, retry, repeat,
+  schedules, and resource refresh; a custom clock inherits its own sleep
+  semantics;
+- a pending `Eta.Promise.await`, the pending park in `Effect.async`, and
+  `Effect.never`;
+- blocking handoff paths: full `Channel.send`, empty `Channel.recv`, full
+  backpressure `Queue.offer`/`send`, empty `Queue.take`,
+  `Queue.await_shutdown`, full backpressure `Pubsub.publish`, empty
+  `Pubsub.recv`, and waiting `Semaphore.acquire`;
+- actual coordination waits in parallel/race/supervisor/background operations,
+  pool slot/shutdown handling, cache load coalescing, signal graph lanes,
+  stream draining, and `Eta_blocking` admission or result waits.
+
+Only the blocking path is a checkpoint. Immediate/nonblocking operations such
+as `Channel.try_send`/`try_recv`, `Queue.try_offer`/`poll`,
+`Pubsub.try_recv`, snapshots, a non-positive live-backend sleep, and an
+immediately available handoff do not become checkpoints because a sibling path
+can block.
+
+Backend services inherit their backend's checkpoints. Native Eio operations are
+cancellable where they block: accept/connect, flow reads and writes, unresolved
+Eio promises, empty/full Eio streams, mutex/condition waits, positive clock
+sleeps, TLS/HTTP waits, and the owner wait for a system-thread job. JS host
+operations are cancellable while their `Eta_jsoo.Private.await` or
+`Effect.async` continuation is pending and use the supplied host cancellation
+hook, if any. Immediate I/O is not a checkpoint.
+
+Do not use an already-settled promise as a portable explicit checkpoint: Eio's
+resolved `Promise.await` fast path returns without checking cancellation, while
+the js_of_ocaml await path checks before observing the settled result. Use
+`Effect.yield` when an explicit portable checkpoint is required. A backend
+operation that wins its wakeup race may return its committed result; pending
+cancellation remains visible to a later checkpoint.
+
+`Effect.async` registration is protected through return, and its interruption
+canceler is protected while Eta waits for it. Eta finalizers and `Effect.finally`
+cleanup also run under cancellation protection. Those cleanup regions may
+block, but they do not restore parent cancellation.
+
 ## What The Examples Prove
 
 The guarded gate in `test/api_dx/api_dx_examples.ml` covers resource workflow,
