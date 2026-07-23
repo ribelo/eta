@@ -8,6 +8,11 @@ entry. Cancellation arriving while the restored body is blocked wakes that
 checkpoint. Cancellation made pending by successful synchronous tail work is
 raised at the restored region's successful exit edge.
 
+Restoration listens to both the mask-entry parent and the fiber's current
+cancellation context when it enters `interruptible`. Therefore a same-fiber
+`cancel_sub` created inside the mask remains able to cancel a restored block;
+the first cancellation source wins and delivery is at most once.
+
 A nested `Effect.uninterruptible` masks again and installs the restoration that
 its own nested `Effect.interruptible` will use. Outside a mask,
 `Effect.interruptible` is identity.
@@ -20,9 +25,10 @@ still interrupts it, preserving fail-fast.
 ## Does restoration fork?
 
 No. Both backends keep the same runtime fiber identity. The native backend moves
-the current Eio fiber into the mask-entry switch context and back. The CPS
-backend changes only the current fiber's effective protection depth. The Signal
-lane re-entry test proves a fiber-owned protocol remains reentrant. The restore
+the current Eio fiber into the mask-entry switch context and back while a scoped
+daemon relays cancellation from the entry-time current context. The CPS backend
+changes only the current fiber's effective protection depth. The Signal lane
+re-entry test proves a fiber-owned protocol remains reentrant. The restore
 binding is never copied into a child or daemon.
 
 ## What do daemons inherit from a mask?
@@ -40,10 +46,10 @@ enclosing mask.
 
 ## What implementation risk remains?
 
-The native adapter relies on a hidden Eio implementation module in one private
-Eta backend module. Eio is pinned in this repository, but every Eio upgrade must
-revalidate the same-fiber move and switch-boundary behavior. Upstream exposure
-of the primitive is a human-owned external follow-up.
+The native adapter relies on hidden Eio switch and cancellation operations in
+one private Eta backend module. Eio is pinned in this repository, but every Eio
+upgrade must revalidate the same-fiber move, relay, and switch-boundary behavior.
+Upstream exposure of the needed primitives is a human-owned external follow-up.
 
 ## What should reviewers run?
 

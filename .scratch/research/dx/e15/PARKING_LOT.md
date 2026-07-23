@@ -2,7 +2,8 @@
 
 ## `Effect.interruptible`
 
-Status: **REVIVED by Follow-up 1; fork model corrected by Follow-up 2**.
+Status: **REVIVED by Follow-up 1; fork model corrected by Follow-up 2;
+same-fiber descendant restoration corrected by Follow-up 3**.
 
 The historical kill below required an exact-context same-fiber restore. Follow-up
 1 found and independently reproduced Eio's hidden switch restoration operation.
@@ -25,9 +26,13 @@ Any revival must rerun the committed Phase 0 probes, publish one shared
 innermost-wins model, retain the checkpoint list, keep finalizers protected, and
 add the named native and jsoo mask/race laws before exposing the API.
 
-All of those revival conditions are addressed in `report.md`. The remaining
-parking-lot item is the human-owned request for Eio to expose the same-fiber
-restore operation publicly; external issue filing is outside programme scope.
+All of those revival conditions are addressed in `report.md`. Follow-up 3 adds
+a scoped observer only as a supplement to exact same-fiber restoration: it
+relays cancellation of the entry-time current descendant context into the
+mask-entry switch, while `run_in` still observes the mask-entry parent directly.
+The remaining parking-lot item is the human-owned request for Eio to expose the
+required switch/cancellation operations publicly; external issue filing is
+outside programme scope.
 
 
 ## Child restoration across a parent mask
@@ -40,4 +45,5 @@ must listen to both parent cancellation at the mask-entry context `R` and direct
 fail-fast cancellation of the child's own context `Q`, select exactly one
 winner, and avoid lost wakeups across entry, blocking, and exit. Revisit only
 with a backend-neutral multi-context observation primitive and adversarial proof
-on both substrates.
+on both substrates. Follow-up 3 solves the distinct same-fiber descendant
+topology; it does not make restoration fork-inheritable.

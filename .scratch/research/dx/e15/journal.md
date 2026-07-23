@@ -422,3 +422,96 @@ accept-loop-victim: PASS
 ```
 
 **E15 READY FOR REVIEW**
+
+## Follow-up 3 — restoration needs both ears
+
+The reviewer found a same-fiber descendant topology that Follow-up 2 did not
+cover:
+
+```text
+C → R → P → S
+```
+
+`R` is the mask-entry restore switch, `P` is the protected context, and `S` is
+an Eta `cancel_sub` created inside the masked body before a nested
+`Expert.eval (interruptible ...)`. Native `run_in R` moved the current fiber
+away from `S`, so direct cancellation of `S` found no registered fiber. jsoo
+kept the fiber in `S` while setting its effective protection depth to zero and
+therefore already had the correct behavior.
+
+### Reproduced before the fix
+
+The new descendant-context regression hung on native under the external bound:
+
+```text
+nix develop -c timeout 5s dune exec test/core_eio/run.exe -- \
+  test '^Effect interruptible$' 16
+repro-exit=124
+```
+
+The Signal lane regression also failed before changing its depth-local policy:
+
+```text
+nix develop -c timeout 10s dune exec \
+  test/signal/lane/test_eta_signal_lane.exe -- test '^lane$' 6
+fork while lane held waits: FAIL
+```
+
+A child forked while its parent held the lane inherited positive depth and used
+that depth as re-entry evidence, bypassing admission despite having a different
+fiber identity.
+
+### Corrected both-ears model
+
+**A restore listens to the mask-entry parent `R` and the entry-time current
+context `S`; the first cancellation wins and delivery is at most once.**
+
+The native adapter now creates a scoped daemon relay while the current context is
+still `S`, then moves the calling fiber to `R` with `run_in`. Cancellation of
+`S` wakes the relay and forwards the reason to `R`; cancellation of `R` or its
+parent reaches the restored fiber directly. Eio cancellation is idempotent, and
+the scoped relay is disabled and stopped when restoration exits. A switch check
+after a successful restored callback closes the race where `S` is cancelled
+immediately before relay teardown.
+
+The public contract adds the both-ears sentence without exceeding its roughly
+twelve-line budget. The implementation cost is confined to the existing private
+native adapter and adds no runtime-contract operation.
+
+Three shared native/jsoo regressions name the descendant source, the mask-parent
+source through the same topology, and the production-real signal-timer shape
+with both sources competing while a finalizer counts at-most-once delivery.
+
+### Signal lane decision
+
+Cross-fiber lane re-entry is not intended. `graph_lane_depth_local` now uses the
+contract's `Fiber_local` inheritance policy. Same-fiber nested `Expert.eval`
+still sees positive depth and remains reentrant, while a forked child sees zero
+depth and waits behind the held lane. The named fork-while-held regression also
+proves that cancelling the waiting child does not enter the lane.
+
+### Follow-up 3 final gates
+
+The corrected implementation and evidence passed the complete prescribed set:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline \
+  test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force        PASS
+```
+
+Mainline repeated the repository's two existing integer-overflow warnings while
+compiling JS; all requested Node completion sentinels were reached. Targeted
+verification also ran all nineteen shared interruptible cases on native, the
+full shared jsoo adapter, and the fork-while-lane-held case. The separately built
+native accept-loop victim printed:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+**E15 READY FOR REVIEW**

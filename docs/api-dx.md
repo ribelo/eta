@@ -235,6 +235,12 @@ identity. Restoration moves the current runtime fiber; it does not fork, so
 fiber identity, runtime-local bindings, tracing, and fiber-reentrant protocols
 are preserved.
 
+Restoration listens to both the mask-entry parent and the entry-time current
+cancellation context. This matters when same-fiber code creates a descendant
+`cancel_sub` inside the mask before entering `interruptible`: cancellation of
+either context wakes a restored block, the first cancellation wins, and delivery
+is observed at most once.
+
 Masks cover children, but restoration is fiber-local. A child forked inside
 `uninterruptible` inherits the mask through cancellation-context lineage on
 native Eio and protection depth on js_of_ocaml; it does not inherit its parent's
