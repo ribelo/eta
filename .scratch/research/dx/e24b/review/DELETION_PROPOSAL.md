@@ -6,8 +6,9 @@ Delete structural schedule taps and the hook channel in a dedicated follow-up.
 This supersedes the earlier “permanent” retention conclusion. A remains the
 correct ownership model while the feature exists, but the repository has no
 production, example, or documentation recipe that constructs a tap. The common
-attempt-level observation story has an ordinary-code recipe; the unique
-branch-local capability has no demonstrated demand.
+attempt-level observation story has an ordinary-code recipe. D accepts losing
+all schedule-local effect boundaries, with branch/phase-local events as the
+strongest example; none of those boundaries has demonstrated production demand.
 
 This packet is a proposal, not the deletion implementation. DX-E24b follow-up 1
 changes only the current contract prose/tests and records the deletion plan.
@@ -32,11 +33,23 @@ changes only the current contract prose/tests and records the deletion plan.
 6. Remove all 25 current tap constructions: the 12 pre-E24b behavior fixtures,
    6 original ownership-table constructions, 6 follow-up suspension/wrapper
    constructions, and the output-cancellation integration. Replace only
-   operation-level behaviors still required. Delete E22 M65–M67, M95–M112,
-   R96/R102, and the tap-specific portions of R80/R100; recensus any surviving
-   retry/repeat claims.
+   operation-level behaviors still required. Delete E22 M65–M67, M95–M105,
+   M112, R96, and R102; split/rewrite the tap-specific portions of R80/R100.
+   Preserve M106/M107/M109–M111 for surviving `Schedule.named`, remove M108's
+   hook-order claim, and replace the tap-based combined property with a small
+   no-hook `named` property. Preserve M68 (`next`), R94 (`Continue` delay), and
+   R95 (`jittered` random), then recensus.
 7. Update `Eta_js` through its existing Schedule re-export; no separate JS
    implementation exists.
+8. Change the non-tap ternary annotation in
+   `test/core_common/properties_common_suites.ml:12` to the two-parameter type.
+9. Rework or remove the old C fixtures (`c_hide_hook_negative.ml`,
+   `c_pack_interpreter_positive.ml`) and `no_hook` positive/negative fixtures,
+   including their runners, so `redteam/run-all.sh` remains meaningful after
+   deletion.
+10. Update the durable status summary in `docs/research/dx.md`: when deletion
+    lands, it must no longer describe E24b as a pending permanent-retention
+    question.
 
 `redteam/d-surface.sh` asserts these surface facts. No compatibility shim or
 deprecation path is proposed.
@@ -61,8 +74,13 @@ deprecation path is proposed.
 
 Rating: **good (4/5)** for “log every Effect attempt”; **partial (2/5)** across
 Resource/Stream because seed, emission, and schedule-step boundaries differ;
-**no parity (0/5)** for branch/phase-local events within one composed step. D
-accepts the last loss rather than rebuilding a structural observer protocol.
+**no parity (0/5)** for all schedule-local effect boundaries. Deletion removes
+top-level terminal `Done` observation, access to policy-generated outputs such as
+delay-series values, effects at the policy-evaluation/driver-publication
+boundary, hook failure/cancellation as an advancement veto, and arbitrary
+custom-effect-system interpretation through `step_plan`. Branch/phase-local
+events within one composed step are the strongest example, not the whole loss.
+D accepts every listed loss because none has demonstrated production demand.
 Resource/Stream recipes are guidance inferred from their current public
 operations, not compile-checked parity fixtures in this packet.
 
@@ -73,8 +91,9 @@ Reconsider before implementation only if evidence supplies at least one of:
 - a shipped non-test Eta producer of `tap_input`/`tap_output`;
 - a concrete external adoption report with code requiring schedule-local rather
   than process-level observation; or
-- an observability integration whose spans/logs/metrics require branch- or
-  phase-local schedule events and cannot use the ordinary operation recipe.
+- any demonstrated schedule-local effect requirement with no ordinary recipe,
+  including terminal-output handling, policy-output access, a failure/cancellation
+  advancement veto, custom-effect-system interpretation, or observability.
 
 Tests of the feature, public signatures that merely accept it, and existing API
 prose are behavior evidence, not demand evidence. None of the demand signals is

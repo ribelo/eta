@@ -652,3 +652,72 @@ nix develop -c dune build @doc
 No runtime implementation changed. Current prose/tests agree on A's interim
 driver contract, while the product verdict and parking lot agree on D as the
 separate deletion proposal.
+
+---
+
+## Follow-up 2 — deletion-proposal execution corrections
+
+### V-DX-E24B-009 — Correct the D implementation brief
+
+Status: **ACCEPT**. D remains the selected deletion proposal; this entry corrects
+what the implementation experiment must remove, preserve, and treat as evidence.
+
+1. **Accepted loss:** deletion removes **all schedule-local effect boundaries**,
+   not only branch/phase-local events. The loss includes top-level terminal
+   `Done` observation, policy-generated outputs such as delay-series values,
+   effects at policy evaluation/driver publication, hook failure/cancellation as
+   an advancement veto, and arbitrary custom-effect-system interpretation through
+   `step_plan`. Branch/phase-local observation is the strongest example. Every
+   listed boundary has zero demonstrated production demand; that is why D still
+   holds despite the broader 0/5 loss.
+2. **Correct E22 slice:** delete M65–M67, M95–M105, M112, R96, and R102; split or
+   rewrite tap-specific R80/R100. Preserve M68/R94/R95. `Schedule.named` survives:
+   preserve M106/M107/M109–M111, remove M108's hook-order claim, and replace the
+   tap-based combined property with a small no-hook `named` property.
+3. **Wider reversal gate:** any demonstrated schedule-local effect requirement
+   without an ordinary recipe can reverse D. This includes terminal-output
+   handling, policy-output access, advancement veto, custom-effect-system
+   interpretation, and observability; it is not limited to telemetry demand.
+4. **Ancillary work:** update the non-tap ternary annotation at
+   `test/core_common/properties_common_suites.ml:12`; rework/remove the old C and
+   `no_hook` fixtures and runners so `redteam/run-all.sh` remains meaningful; and
+   update `docs/research/dx.md` when deletion lands so the durable summary no
+   longer presents E24b as a pending permanent-retention question.
+
+Evidence: the re-audit upheld D as SOUND and reported these as proposal-document
+corrections, not reasons to reopen the verdict. `review/DELETION_PROPOSAL.md` is
+now the corrected execution brief; `report.md` carries the same loss, demand,
+E22, and ancillary boundaries.
+
+Counterevidence considered: losing advancement veto and custom interpretation is
+more consequential than losing telemetry. No production requirement currently
+uses either boundary.
+
+Remaining uncertainty: downstream use remains unobservable from this repository;
+the widened demand gate is intentionally capable of reversing D before
+implementation.
+
+Recommendation for production: execute only the corrected slice. In particular,
+do not delete surviving `Schedule.named`, `next`, `Continue` delay, or jitter
+random laws as collateral cleanup.
+
+Confidence: **High** that the proposal now enumerates the known implementation
+surface; **Medium** on product demand for the same external-adoption reason as
+V-DX-E24B-006.
+
+Would change if: any widened demand-gate condition is demonstrated before the
+implementation experiment lands.
+
+### Verification
+
+Follow-up 2 changed research documents only. The required unchanged-tree gates
+all pass:
+
+```text
+.scratch/research/dx/e24b/redteam/run-all.sh
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force
+```

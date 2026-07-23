@@ -7,8 +7,9 @@ while structural taps exist: schedule policy places hook values and drivers
 interpret/resume them. That conditional architecture result does not establish
 that Eta should keep the feature. There are zero production/example tap
 producers, and the common “log every attempt” story has an ordinary operation
-wrapper. The unique branch/phase-local capability is coherent but has no
-demonstrated demand. The earlier word **permanent** is withdrawn.
+wrapper. All schedule-local effect boundaries are coherent but have no
+demonstrated production demand; branch/phase-local events are only the strongest
+example of the accepted loss. The earlier word **permanent** is withdrawn.
 
 This follow-up does not implement the cross-cutting deletion. It adds the exact
 proposal in `review/DELETION_PROPOSAL.md` and makes the current custom-driver
@@ -38,8 +39,8 @@ HTTP signatures. This is meaningful surface reduction rather than a rename.
 | Log every Effect retry/repeat attempt | Instrument the source effect | 4/5 | Schedule output/phase hooks |
 | Observe `Resource.auto` refreshes | Instrument `load`; application counter distinguishes seed/refresh | 2/5 | Terminal schedule step and a clean schedule-only boundary |
 | Observe Stream retry/schedule | Put `Stream.tap_error` on the source before retry, instrument the source, or use `Stream.tap` | 2/5 | Terminal non-emitted input/output and empty-repeat boundaries |
-| Observe a custom driver | Log around direct `Schedule.step` | 4/5 top-level | Branch/phase-local events inside one composed step |
-| Preserve exact structural taps | No ordinary recipe | 0/5 | The feature is deliberately deleted |
+| Observe a custom driver | Log around direct `Schedule.step` | 4/5 top-level | Schedule-local effect boundaries and arbitrary effect-system interpretation |
+| Preserve any schedule-local effect boundary | No ordinary recipe | 0/5 | The feature is deliberately deleted |
 
 The named integration `retry attempts can be observed without schedule taps`
 executes the real Effect recipe. `redteam/d_recipe.ml` executes the equivalent
@@ -47,11 +48,20 @@ custom-driver recipe; its negative control confirms that the left terminal and
 right-entry events within one `and_then` step are unavailable. Resource/Stream
 recipes remain explicitly partial guidance, not parity fixtures in this packet.
 
+The 0/5 loss includes top-level terminal `Done` observation, policy-generated
+outputs such as delay-series values, effects at policy evaluation/driver
+publication, failure or cancellation as an advancement veto, and arbitrary
+custom-effect-system interpretation through `step_plan`. Branch/phase-local
+events are the strongest example. Each boundary lacks demonstrated production
+demand; that absence, not a claim that the loss is telemetry-only, makes D hold.
+
 The demand finding is direct: no shipped package, example, or non-test code
 constructs a tap. Public signatures and tests prove behavior, not demand. D
 would be reversed before implementation by a shipped producer, concrete external
-adoption requiring schedule-local placement, or an observability integration
-that cannot use operation-level instrumentation. None exists in-repository.
+adoption requiring schedule-local placement, or any schedule-local effect
+requirement with no ordinary recipe (including terminal handling, policy output,
+advancement veto, custom interpretation, or observability). None exists
+in-repository.
 
 ## Complete suspension and observability matrix
 
@@ -100,6 +110,16 @@ actual Effect cancellation. The two new properties are explicitly strong
 fixed-shape tables with generated payload/seed variance, not generated-shape
 laws.
 
+The deletion implementation must delete M65–M67, M95–M105, M112, R96, and R102;
+split/rewrite tap-specific R80/R100; and preserve M68/R94/R95. `Schedule.named`
+survives: preserve M106/M107/M109–M111, remove only M108's hook-order claim, and
+replace the tap-based combined property with a small no-hook `named` property.
+
+Ancillary implementation work includes the non-tap ternary annotation at
+`test/core_common/properties_common_suites.ml:12`; disposition of the old C and
+`no_hook` fixtures/runners so `redteam/run-all.sh` remains meaningful; and the
+durable status summary in `docs/research/dx.md`, updated when deletion lands.
+
 ## Surface and footgun deltas
 
 | Metric | Before follow-up | Current contract | D proposal |
@@ -124,7 +144,7 @@ asymmetry. D then removes the protocol rather than retaining those footguns.
 | A — policy hooks | Only tested model with exact structural composition and arbitrary driver interpretation | Zero production/example demand | **CONDITIONAL: correct while feature exists** |
 | B — driver observers | Simple operation-local attempt callbacks | Top-level observers cannot match structural placement; restoring placement recreates policy ownership | **REJECTED as tap parity; ordinary recipes retained** |
 | C — seam redesign | Correctly focuses on interpretation boundary | Tested variants fail or add surface; broader C family remains untested | **TESTED VARIANTS REJECTED, not universally dominated** |
-| D — delete | Largest real surface reduction; common attempt recipe works | Exact structural observation becomes inexpressible | **ACCEPTED AS FOLLOW-UP PROPOSAL** |
+| D — delete | Largest real surface reduction; common attempt recipe works | Every schedule-local effect boundary becomes inexpressible | **ACCEPTED AS FOLLOW-UP PROPOSAL** |
 
 The decisive criterion is demonstrated demand, not migration cost: repository
 policy permits public surface only for behavior users actually need. Current
@@ -170,6 +190,9 @@ PASS — 66 properties
 nix develop -c dune build @doc
 PASS — existing unrelated odoc warnings remain
 ```
+
+Follow-up 2 is document-only; its required native trio, mainline
+`@install`/`test/laws`, and red-team script were rerun unchanged and pass.
 
 Independent review found and closed missing output-cancellation coverage,
 coarse E22 claim clustering, incomplete deletion internals/`next`, overbroad
