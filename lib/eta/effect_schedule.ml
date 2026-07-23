@@ -42,14 +42,20 @@ let retry ~schedule ~while_ eff =
     let rec loop () =
       match run_attempt () with
       | Exit.Ok _ as ok -> ok
-      | Exit.Error (Cause.Fail err) when while_ err -> (
-          match step_schedule clock err driver with
-          | Sch.Continue metadata, next_driver ->
-              driver := next_driver;
-              clock#sleep metadata.delay;
-              loop ()
-          | Sch.Done _, _ -> error (Cause.Fail err))
-      | Exit.Error _ as err -> err
+      | Exit.Error cause -> (
+          match stripped_uncatchable cause with
+          | Some _ -> error cause
+          | None -> (
+              match first_typed_failure cause with
+              | Some err when while_ err -> (
+                  match step_schedule clock err driver with
+                  | Sch.Continue metadata, next_driver ->
+                      driver := next_driver;
+                      clock#sleep metadata.delay;
+                      loop ()
+                  | Sch.Done _, _ -> error cause)
+              | Some _ -> error cause
+              | None -> invalid_arg "Effect.retry: empty composite cause"))
     in
     loop ()
   with exn -> exit_of_exn frame exn

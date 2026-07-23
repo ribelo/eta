@@ -151,6 +151,180 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected terminal typed failure");
     Alcotest.(check int) "schedule stopped on second failure" 2 !attempts
 
+  let test_effect_retry_composite_passes_first_typed_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let error_testable =
+      Alcotest.testable
+        (fun fmt -> function
+          | `First -> Format.pp_print_string fmt "First"
+          | `Second -> Format.pp_print_string fmt "Second")
+        ( = )
+    in
+    let cause : [ `First | `Second ] Cause.t =
+      Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
+    in
+    let attempts = ref 0 in
+    let predicate_seen = ref [] in
+    let schedule_seen = ref [] in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () ->
+             if !attempts = 1 then effect_error_cause cause
+             else Effect.pure "ok")
+    in
+    let schedule =
+      Schedule.recur_until (fun err ->
+          schedule_seen := err :: !schedule_seen;
+          false)
+    in
+    let result =
+      Effect.retry ~schedule
+        ~while_:(fun err ->
+          predicate_seen := err :: !predicate_seen;
+          true)
+        attempt
+      |> run_ok rt
+    in
+    Alcotest.(check string) "retry result" "ok" result;
+    Alcotest.(check int) "initial plus retry" 2 !attempts;
+    Alcotest.(check (list error_testable))
+      "predicate saw first typed failure" [ `First ] (List.rev !predicate_seen);
+    Alcotest.(check (list error_testable))
+      "schedule saw first typed failure" [ `First ] (List.rev !schedule_seen)
+
+  let test_effect_retry_skips_composite_uncatchable_causes () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pp_error fmt `Typed = Format.pp_print_string fmt "Typed" in
+    let cause_testable =
+      Alcotest.testable (Cause.pp pp_error) (Cause.equal ( = ))
+    in
+    let check_uncatchable label cause =
+      let attempts = ref 0 in
+      let predicate_calls = ref 0 in
+      let schedule_calls = ref 0 in
+      let attempt =
+        Effect.sync (fun () -> incr attempts)
+        |> Effect.bind (fun () -> effect_error_cause cause)
+      in
+      let schedule =
+        Schedule.recur_until (fun _ ->
+            incr schedule_calls;
+            false)
+      in
+      let eff =
+        Effect.retry ~schedule
+          ~while_:(fun `Typed ->
+            incr predicate_calls;
+            true)
+          attempt
+      in
+      (match B.run rt eff with
+      | Exit.Error actual ->
+          Alcotest.check cause_testable (label ^ " preserved") cause actual
+      | Exit.Ok _ -> Alcotest.failf "%s unexpectedly succeeded" label);
+      Alcotest.(check int) (label ^ " not retried") 1 !attempts;
+      Alcotest.(check int) (label ^ " predicate skipped") 0 !predicate_calls;
+      Alcotest.(check int) (label ^ " schedule skipped") 0 !schedule_calls
+    in
+    let defect = Failure "buried retry defect" in
+    check_uncatchable "defect composite"
+      (Cause.Concurrent [ Cause.Fail `Typed; Cause.die defect ]);
+    check_uncatchable "interrupt composite"
+      (Cause.Sequential [ Cause.Fail `Typed; Cause.interrupt ]);
+    check_uncatchable "finalizer composite"
+      (Cause.suppressed ~primary:(Cause.Fail `Typed)
+         ~finalizer:(Cause.Finalizer.Fail "cleanup"))
+
+  let test_effect_retry_composite_rejection_preserves_original_cause () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pp_error fmt = function
+      | `First -> Format.pp_print_string fmt "First"
+      | `Second -> Format.pp_print_string fmt "Second"
+    in
+    let cause_testable =
+      Alcotest.testable (Cause.pp pp_error) (Cause.equal ( = ))
+    in
+    let cause : [ `First | `Second ] Cause.t =
+      Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
+    in
+    let predicate_seen = ref [] in
+    let schedule_calls = ref 0 in
+    let schedule =
+      Schedule.recur_until (fun _ ->
+          incr schedule_calls;
+          false)
+    in
+    let eff =
+      effect_error_cause cause
+      |> Effect.retry ~schedule
+           ~while_:(fun err ->
+             predicate_seen := err :: !predicate_seen;
+             false)
+    in
+    (match B.run rt eff with
+    | Exit.Error actual ->
+        Alcotest.check cause_testable "original composite cause" cause actual
+    | Exit.Ok _ -> Alcotest.fail "rejected composite unexpectedly succeeded");
+    Alcotest.(check (list string))
+      "predicate inspected first failure" [ "First" ]
+      (List.rev_map
+         (function `First -> "First" | `Second -> "Second")
+         !predicate_seen);
+    Alcotest.(check int) "schedule not stepped" 0 !schedule_calls
+
+  let test_effect_retry_composite_exhaustion_preserves_original_cause () =
+    B.with_runtime @@ fun _ctx rt ->
+    let pp_error fmt = function
+      | `First -> Format.pp_print_string fmt "First"
+      | `Second -> Format.pp_print_string fmt "Second"
+    in
+    let cause_testable =
+      Alcotest.testable (Cause.pp pp_error) (Cause.equal ( = ))
+    in
+    let first_cause : [ `First | `Second ] Cause.t =
+      Cause.Sequential [ Cause.Fail `First; Cause.Fail `Second ]
+    in
+    let terminal_cause : [ `First | `Second ] Cause.t =
+      Cause.Concurrent [ Cause.Fail `Second; Cause.Fail `First ]
+    in
+    let attempts = ref 0 in
+    let predicate_seen = ref [] in
+    let schedule_seen = ref [] in
+    let schedule =
+      Schedule.recur_until (fun err ->
+          schedule_seen := err :: !schedule_seen;
+          err = `Second)
+    in
+    let attempt =
+      Effect.sync (fun () -> incr attempts)
+      |> Effect.bind (fun () ->
+             effect_error_cause
+               (if !attempts = 1 then first_cause else terminal_cause))
+    in
+    let eff =
+      attempt
+      |> Effect.retry ~schedule
+           ~while_:(fun err ->
+             predicate_seen := err :: !predicate_seen;
+             true)
+    in
+    (match B.run rt eff with
+    | Exit.Error actual ->
+        Alcotest.check cause_testable "terminal composite cause" terminal_cause
+          actual
+    | Exit.Ok _ -> Alcotest.fail "exhausted composite unexpectedly succeeded");
+    Alcotest.(check int) "initial plus retry" 2 !attempts;
+    let seen = Alcotest.(list string) in
+    let names =
+      List.rev_map (function `First -> "First" | `Second -> "Second")
+    in
+    Alcotest.check seen "predicate inspected each first failure"
+      [ "First"; "Second" ]
+      (names !predicate_seen);
+    Alcotest.check seen "schedule received each first failure"
+      [ "First"; "Second" ]
+      (names !schedule_seen)
+
   let test_effect_retry_does_not_catch_defects () =
     B.with_runtime @@ fun _ctx rt ->
     let attempts = ref 0 in
@@ -941,6 +1115,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_effect_retry_recurs_attempts_initial_plus_retries;
           Alcotest.test_case "retry passes typed failures to schedule" `Quick
             test_effect_retry_passes_typed_failures_to_schedule;
+          Alcotest.test_case "retry composite passes first typed failure" `Quick
+            test_effect_retry_composite_passes_first_typed_failure;
+          Alcotest.test_case "retry skips composite uncatchable causes" `Quick
+            test_effect_retry_skips_composite_uncatchable_causes;
+          Alcotest.test_case
+            "retry composite rejection preserves original cause" `Quick
+            test_effect_retry_composite_rejection_preserves_original_cause;
+          Alcotest.test_case
+            "retry composite exhaustion preserves original cause" `Quick
+            test_effect_retry_composite_exhaustion_preserves_original_cause;
           Alcotest.test_case "retry does not catch defects" `Quick
             test_effect_retry_does_not_catch_defects;
           Alcotest.test_case "retry does not retry cancellation" `Quick
