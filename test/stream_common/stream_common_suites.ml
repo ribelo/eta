@@ -400,19 +400,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          Alcotest.(list (pair int int))
          "schedule outputs" [ (0, 0); (1, 1); (2, 2) ]
 
-  let test_schedule_throttles_elements_and_taps_inputs () =
+  let test_schedule_throttles_elements () =
     B.with_test_clock @@ fun ctx clock rt ->
     B.set_clock clock 0;
-    let tapped = ref [] in
     let emitted = ref [] in
-    let schedule =
-      Eta.Schedule.spaced (Eta.Duration.ms 10)
-      |> Eta.Schedule.tap_input (fun value ->
-             Eta.Effect.sync (fun () -> tapped := value :: !tapped))
-    in
     let stream =
       Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
-      |> Eta_stream.Stream.schedule schedule
+      |> Eta_stream.Stream.schedule
+           (Eta.Schedule.spaced (Eta.Duration.ms 10))
       |> Eta_stream.Stream.map_effect (fun value ->
              Eta.Effect.now_ms
              |> Eta.Effect.map (fun now_ms ->
@@ -421,21 +416,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let result = B.fork_run ctx rt (Eta_stream.run_collect stream) in
     wait_for_sleepers clock 1;
-    Alcotest.(check (list int)) "first tap" [ 1 ] (List.rev !tapped);
     Alcotest.(check (list (pair int int)))
       "first emitted immediately" [ (1, 0) ] (List.rev !emitted);
     B.adjust_clock clock (Eta.Duration.ms 10);
     wait_for_sleepers clock 1;
-    Alcotest.(check (list int)) "second tap" [ 1; 2 ]
-      (List.rev !tapped);
     Alcotest.(check (list (pair int int)))
       "second emitted after delay" [ (1, 0); (2, 10) ]
       (List.rev !emitted);
     B.adjust_clock clock (Eta.Duration.ms 10);
     B.await result
     |> check_ok Alcotest.(list int) "scheduled values" [ 1; 2; 3 ];
-    Alcotest.(check (list int)) "all inputs tapped" [ 1; 2; 3 ]
-      (List.rev !tapped);
     Alcotest.(check (list (pair int int)))
       "emission times" [ (1, 0); (2, 10); (3, 20) ]
       (List.rev !emitted)
@@ -553,32 +543,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     Alcotest.(check (list int))
       "prefixes" [ 1; 2 ] (run_ok rt (Eta_stream.run_collect stream))
-
-  let test_schedule_tap_failure_fails_stream () =
-    B.with_runtime @@ fun _ctx rt ->
-    let seen = ref [] in
-    let schedule =
-      Eta.Schedule.forever
-      |> Eta.Schedule.tap_input (fun value ->
-             if value = 2 then Eta.Effect.fail `Tap_failed
-             else Eta.Effect.unit)
-    in
-    let stream =
-      Eta_stream.Stream.from_iterable [ 1; 2; 3 ]
-      |> Eta_stream.Stream.schedule schedule
-      |> Eta_stream.Stream.tap (fun value ->
-             Eta.Effect.sync (fun () -> seen := value :: !seen))
-    in
-    (match B.run rt (Eta_stream.run_collect stream) with
-    | Eta.Exit.Error (Eta.Cause.Fail `Tap_failed) -> ()
-    | Eta.Exit.Ok values ->
-        Alcotest.failf "schedule tap failure unexpectedly succeeded with %d values"
-          (List.length values)
-    | Eta.Exit.Error cause ->
-        Alcotest.failf "unexpected schedule tap failure cause: %a"
-          (Eta.Cause.pp pp_hidden) cause);
-    Alcotest.(check (list int)) "emitted before tap failure" [ 1 ]
-      (List.rev !seen)
 
   let test_repeat_take_stops_before_schedule_sleep () =
     B.with_test_clock @@ fun ctx clock rt ->
@@ -1465,8 +1429,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_zip_with_index_order;
           Alcotest.test_case "from_schedule delays and emits outputs" `Quick
             test_from_schedule_delays_and_outputs;
-          Alcotest.test_case "schedule throttles elements and taps inputs"
-            `Quick test_schedule_throttles_elements_and_taps_inputs;
+          Alcotest.test_case "schedule throttles elements" `Quick
+            test_schedule_throttles_elements;
           Alcotest.test_case "schedule done stops before value" `Quick
             test_schedule_done_stops_before_value;
           Alcotest.test_case "repeat repeats whole stream" `Quick
@@ -1479,8 +1443,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_retry_exhaustion_preserves_final_error;
           Alcotest.test_case "retry preserves emitted prefixes" `Quick
             test_retry_preserves_emitted_prefixes;
-          Alcotest.test_case "schedule tap failure fails stream" `Quick
-            test_schedule_tap_failure_fails_stream;
           Alcotest.test_case "repeat take stops before schedule sleep" `Quick
             test_repeat_take_stops_before_schedule_sleep;
           Alcotest.test_case "timeout emits values before duration" `Quick

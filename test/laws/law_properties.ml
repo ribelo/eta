@@ -2245,589 +2245,6 @@ let property_schedule_and_then_phase_tags =
       && outcome.events = []
       && no_pending outcome)
 
-type schedule_ownership_hook =
-  | Outer_input of int
-  | Left_input of int
-  | Left_output of int
-  | Right_input of int
-  | Right_output of int
-  | Outer_first_output of int
-  | Outer_second_output of int
-
-exception Schedule_hook_failure
-
-let ownership_schedule () =
-  let left =
-    Eta.Schedule.recurs 0
-    |> Eta.Schedule.tap_output (fun output -> Left_output output)
-    |> Eta.Schedule.tap_input (fun input -> Left_input input)
-  in
-  let right =
-    Eta.Schedule.recurs 0
-    |> Eta.Schedule.tap_output (fun output -> Right_output output)
-    |> Eta.Schedule.tap_input (fun input -> Right_input input)
-  in
-  Eta.Schedule.and_then left right
-  |> Eta.Schedule.tap_input (fun input -> Outer_input input)
-  |> Eta.Schedule.tap_output (function
-       | Eta.Schedule.First_phase output -> Outer_first_output output
-       | Eta.Schedule.Second_phase output -> Outer_second_output output)
-
-let expected_ownership_hooks input =
-  [
-    Outer_input input;
-    Left_input input;
-    Left_output 0;
-    Right_input input;
-    Right_output 0;
-    Outer_second_output 0;
-  ]
-
-let ownership_decision_is_terminal input = function
-  | Eta.Schedule.Done metadata ->
-      metadata.input = input
-      && metadata.output = Eta.Schedule.Second_phase 0
-      && metadata.attempt = 1
-  | Eta.Schedule.Continue _ -> false
-
-(* Strong fixed-shape table, not a generated-shape law. Observation boundary:
-   ordered hook values and the final decision from one public step whose
-   [and_then] left phase terminates into its right phase. Generated class: every
-   bounded integer payload; all six hook-failure positions are exercised for
-   every generated payload. *)
-let property_schedule_policy_hook_order_and_driver_interpretation =
-  QCheck.Test.make
-    ~name:"Schedule fixed-shape ownership table preserves and_then hook order and withholds publication on failure"
-    ~count bounded_int (fun input ->
-      let observe () =
-        let initial = Eta.Schedule.start (ownership_schedule ()) in
-        let rec drain_plan hooks = function
-          | Eta.Schedule.Hook (hook, resume) ->
-              drain_plan (hook :: hooks) (resume ())
-          | Eta.Schedule.Complete (decision, _) ->
-              (List.rev hooks, decision)
-        in
-        let planned_hooks, planned_decision =
-          Eta.Schedule.step_plan ~now_ms:0 ~input initial |> drain_plan []
-        in
-        let interpreted_hooks = ref [] in
-        let interpreted_decision, _ =
-          Eta.Schedule.step_with_hooks
-            ~run_hook:(fun hook ->
-              interpreted_hooks := hook :: !interpreted_hooks)
-            ~now_ms:0 ~input initial
-        in
-        let failure_results =
-          List.init 6 (fun failure_index ->
-              let failed_initial = Eta.Schedule.start (ownership_schedule ()) in
-              let calls = ref 0 in
-              let successful_hooks = ref [] in
-              let failed =
-                try
-                  ignore
-                    (Eta.Schedule.step_with_hooks
-                       ~run_hook:(fun hook ->
-                         let index = !calls in
-                         incr calls;
-                         if index = failure_index then
-                           raise Schedule_hook_failure
-                         else successful_hooks := hook :: !successful_hooks)
-                       ~now_ms:0 ~input failed_initial);
-                  false
-                with Schedule_hook_failure -> true
-              in
-              let retry_hooks = ref [] in
-              let retry_decision, _ =
-                Eta.Schedule.step_with_hooks
-                  ~run_hook:(fun hook -> retry_hooks := hook :: !retry_hooks)
-                  ~now_ms:0 ~input failed_initial
-              in
-              ( failure_index,
-                failed,
-                !calls,
-                List.rev !successful_hooks,
-                List.rev !retry_hooks,
-                retry_decision ))
-        in
-        ( planned_hooks,
-          planned_decision,
-          List.rev !interpreted_hooks,
-          interpreted_decision,
-          failure_results )
-      in
-      let expected = expected_ownership_hooks input in
-      let outcome = run (E.sync observe) in
-      match outcome.exit with
-      | Eta.Exit.Error _ -> false
-      | Eta.Exit.Ok
-          ( planned_hooks,
-            planned_decision,
-            interpreted_hooks,
-            interpreted_decision,
-            failure_results ) ->
-          planned_hooks = expected
-          && interpreted_hooks = expected
-          && ownership_decision_is_terminal input planned_decision
-          && ownership_decision_is_terminal input interpreted_decision
-          && List.for_all
-               (fun
-                 ( failure_index,
-                   failed,
-                   failure_calls,
-                   successful_hooks,
-                   retry_hooks,
-                   retry_decision ) ->
-                 failed
-                 && failure_calls = failure_index + 1
-                 && successful_hooks
-                    = List.filteri
-                        (fun index _ -> index < failure_index)
-                        expected
-                 && retry_hooks = expected
-                 && ownership_decision_is_terminal input retry_decision)
-               failure_results
-          && outcome.events = []
-          && no_pending outcome)
-
-exception Schedule_resume_failure
-
-type schedule_suspension_event =
-  | Replay_hook of int
-  | Resume_callback
-
-let schedule_continue_attempt_one input = function
-  | Eta.Schedule.Continue metadata ->
-      metadata.input = input && metadata.output = 0 && metadata.attempt = 1
-  | Eta.Schedule.Done _ -> false
-
-(* Strong fixed-shape table with generated payloads. Observation boundary:
-   [step_plan] and [step_with_hooks] called with the same original immutable
-   driver. It characterizes the public closure's non-linearity (which the driver
-   contract forbids callers to exploit), resume exceptions, retry replay, and
-   the tap-input/output failure asymmetry. Generated class: every bounded
-   integer payload; schedule topology is fixed. *)
-let property_schedule_suspended_driver_contract_table =
-  QCheck.Test.make
-    ~name:"Schedule fixed-shape suspension table exposes non-linear resume failure replay and tap asymmetry"
-    ~count bounded_int (fun input ->
-      let observe () =
-        let double_resume_evaluations = ref 0 in
-        let double_resume_schedule =
-          Eta.Schedule.recurs 1
-          |> Eta.Schedule.modify_delay (fun _ delay ->
-                 incr double_resume_evaluations;
-                 delay)
-          |> Eta.Schedule.tap_input (fun _ -> ())
-        in
-        let double_resume_result =
-          let initial = Eta.Schedule.start double_resume_schedule in
-          match Eta.Schedule.step_plan ~now_ms:0 ~input initial with
-          | Eta.Schedule.Complete _ -> None
-          | Eta.Schedule.Hook ((), resume) -> (
-              match (resume (), resume ()) with
-              | Eta.Schedule.Complete (first, _), Eta.Schedule.Complete (second, _) ->
-                  Some (first, second)
-              | Eta.Schedule.Hook _, _ | _, Eta.Schedule.Hook _ -> None)
-        in
-
-        let replay_events = ref [] in
-        let replay_schedule =
-          Eta.Schedule.recurs 1
-          |> Eta.Schedule.while_output (fun _ ->
-                 replay_events := Resume_callback :: !replay_events;
-                 raise Schedule_resume_failure)
-          |> Eta.Schedule.tap_input (fun seen -> Replay_hook seen)
-        in
-        let replay_initial = Eta.Schedule.start replay_schedule in
-        let run_replay () =
-          try
-            ignore
-              (Eta.Schedule.step_with_hooks
-                 ~run_hook:(fun hook ->
-                   replay_events := hook :: !replay_events)
-                 ~now_ms:0 ~input replay_initial);
-            false
-          with Schedule_resume_failure -> true
-        in
-        let first_resume_failed = run_replay () in
-        let second_resume_failed = run_replay () in
-
-        let tap_input_inner_evaluations = ref 0 in
-        let tap_input_schedule =
-          Eta.Schedule.recurs 1
-          |> Eta.Schedule.modify_delay (fun _ delay ->
-                 incr tap_input_inner_evaluations;
-                 delay)
-          |> Eta.Schedule.tap_input (fun _ -> ())
-        in
-        let tap_input_initial = Eta.Schedule.start tap_input_schedule in
-        let tap_input_failed =
-          try
-            ignore
-              (Eta.Schedule.step_with_hooks
-                 ~run_hook:(fun () -> raise Schedule_hook_failure)
-                 ~now_ms:0 ~input tap_input_initial);
-            false
-          with Schedule_hook_failure -> true
-        in
-        let tap_input_count_after_failure = !tap_input_inner_evaluations in
-        let tap_input_retry, _ =
-          Eta.Schedule.step_with_hooks ~run_hook:Fun.id ~now_ms:0 ~input
-            tap_input_initial
-        in
-
-        let tap_output_inner_evaluations = ref 0 in
-        let tap_output_schedule =
-          Eta.Schedule.recurs 1
-          |> Eta.Schedule.modify_delay (fun _ delay ->
-                 incr tap_output_inner_evaluations;
-                 delay)
-          |> Eta.Schedule.tap_output (fun _ -> ())
-        in
-        let tap_output_initial = Eta.Schedule.start tap_output_schedule in
-        let tap_output_failed =
-          try
-            ignore
-              (Eta.Schedule.step_with_hooks
-                 ~run_hook:(fun () -> raise Schedule_hook_failure)
-                 ~now_ms:0 ~input tap_output_initial);
-            false
-          with Schedule_hook_failure -> true
-        in
-        let tap_output_count_after_failure = !tap_output_inner_evaluations in
-        let tap_output_retry, _ =
-          Eta.Schedule.step_with_hooks ~run_hook:Fun.id ~now_ms:0 ~input
-            tap_output_initial
-        in
-        ( double_resume_result,
-          !double_resume_evaluations,
-          first_resume_failed,
-          second_resume_failed,
-          List.rev !replay_events,
-          tap_input_failed,
-          tap_input_count_after_failure,
-          !tap_input_inner_evaluations,
-          tap_input_retry,
-          tap_output_failed,
-          tap_output_count_after_failure,
-          !tap_output_inner_evaluations,
-          tap_output_retry )
-      in
-      let outcome = run (E.sync observe) in
-      match outcome.exit with
-      | Eta.Exit.Error _ -> false
-      | Eta.Exit.Ok
-          ( double_resume_result,
-            double_resume_evaluations,
-            first_resume_failed,
-            second_resume_failed,
-            replay_events,
-            tap_input_failed,
-            tap_input_count_after_failure,
-            tap_input_count_after_retry,
-            tap_input_retry,
-            tap_output_failed,
-            tap_output_count_after_failure,
-            tap_output_count_after_retry,
-            tap_output_retry ) ->
-          (match double_resume_result with
-          | Some (first, second) ->
-              schedule_continue_attempt_one input first
-              && schedule_continue_attempt_one input second
-          | None -> false)
-          && double_resume_evaluations = 2
-          && first_resume_failed
-          && second_resume_failed
-          && replay_events
-             = [
-                 Replay_hook input;
-                 Resume_callback;
-                 Replay_hook input;
-                 Resume_callback;
-               ]
-          && tap_input_failed
-          && tap_input_count_after_failure = 0
-          && tap_input_count_after_retry = 1
-          && schedule_continue_attempt_one input tap_input_retry
-          && tap_output_failed
-          && tap_output_count_after_failure = 1
-          && tap_output_count_after_retry = 2
-          && schedule_continue_attempt_one input tap_output_retry
-          && outcome.events = []
-          && no_pending outcome)
-
-type schedule_wrapper_event = Tap | Modify_delay | While_output
-
-let push event events = events := event :: !events
-
-let traced_tap_input events schedule =
-  schedule |> Eta.Schedule.tap_input (fun _ -> fun () -> push Tap events)
-
-let traced_tap_output events schedule =
-  schedule |> Eta.Schedule.tap_output (fun _ -> fun () -> push Tap events)
-
-let traced_modify_delay events schedule =
-  schedule
-  |> Eta.Schedule.modify_delay (fun _ delay ->
-         push Modify_delay events;
-         delay)
-
-let traced_while_output events schedule =
-  schedule
-  |> Eta.Schedule.while_output (fun _ ->
-         push While_output events;
-         true)
-
-let schedule_decision_snapshot = function
-  | Eta.Schedule.Continue metadata ->
-      (`Continue, metadata.input, metadata.output, metadata.attempt)
-  | Eta.Schedule.Done metadata ->
-      (`Done, metadata.input, metadata.output, metadata.attempt)
-
-(* Fixed wrapper shapes with generated payload/seed variance. The test observes
-   callback/hook order at the public stepping seam; it does not claim generated
-   schedule topology. *)
-let property_schedule_wrapper_hook_order_and_named_transparency_table =
-  QCheck.Test.make
-    ~name:"Schedule fixed-shape wrapper table orders hooks and Schedule.named emits no telemetry"
-    ~count QCheck.(pair bounded_int nat_small) (fun (input, seed) ->
-      let observe () =
-        let run_order_case ~tap ~wrapper ~tap_inside =
-          let events = ref [] in
-          let base = Eta.Schedule.recurs 1 in
-          let schedule =
-            if tap_inside then wrapper events (tap events base)
-            else tap events (wrapper events base)
-          in
-          let decision, _ =
-            Eta.Schedule.step_with_hooks ~run_hook:(fun hook -> hook ())
-              ~now_ms:0 ~input (Eta.Schedule.start schedule)
-          in
-          (List.rev !events, schedule_decision_snapshot decision)
-        in
-        let wrapper_orders =
-          [
-            run_order_case ~tap:traced_tap_input
-              ~wrapper:traced_modify_delay ~tap_inside:true;
-            run_order_case ~tap:traced_tap_input
-              ~wrapper:traced_modify_delay ~tap_inside:false;
-            run_order_case ~tap:traced_tap_output
-              ~wrapper:traced_modify_delay ~tap_inside:true;
-            run_order_case ~tap:traced_tap_output
-              ~wrapper:traced_modify_delay ~tap_inside:false;
-            run_order_case ~tap:traced_tap_input
-              ~wrapper:traced_while_output ~tap_inside:true;
-            run_order_case ~tap:traced_tap_input
-              ~wrapper:traced_while_output ~tap_inside:false;
-            run_order_case ~tap:traced_tap_output
-              ~wrapper:traced_while_output ~tap_inside:true;
-            run_order_case ~tap:traced_tap_output
-              ~wrapper:traced_while_output ~tap_inside:false;
-          ]
-        in
-        let reference_random = Eta.Capabilities.random_of_seed seed in
-        let first_random = Eta.Capabilities.random_float reference_random 1.0 in
-        let second_random = Eta.Capabilities.random_float reference_random 1.0 in
-        let third_random = Eta.Capabilities.random_float reference_random 1.0 in
-        let run_jitter_case ~tap ~tap_inside =
-          let random = Eta.Capabilities.random_of_seed seed in
-          let hook_sample = ref None in
-          let tap schedule =
-            tap
-              (fun _ ->
-                fun () ->
-                  hook_sample :=
-                    Some (Eta.Capabilities.random_float random 1.0))
-              schedule
-          in
-          let base = Eta.Schedule.spaced (Eta.Duration.ms 10) in
-          let schedule =
-            if tap_inside then Eta.Schedule.jittered (tap base)
-            else tap (Eta.Schedule.jittered base)
-          in
-          let decision, _ =
-            Eta.Schedule.step_with_hooks ~run_hook:(fun hook -> hook ())
-              ~now_ms:0 ~input (Eta.Schedule.start ~random schedule)
-          in
-          ( !hook_sample,
-            Eta.Capabilities.random_float random 1.0,
-            schedule_decision_snapshot decision )
-        in
-        let jitter_orders =
-          [
-            run_jitter_case ~tap:Eta.Schedule.tap_input ~tap_inside:true;
-            run_jitter_case ~tap:Eta.Schedule.tap_input ~tap_inside:false;
-            run_jitter_case ~tap:Eta.Schedule.tap_output ~tap_inside:true;
-            run_jitter_case ~tap:Eta.Schedule.tap_output ~tap_inside:false;
-          ]
-        in
-        let run_named_case named =
-          let events = ref [] in
-          let plain =
-            Eta.Schedule.recurs 1 |> traced_tap_input events
-            |> traced_tap_output events
-          in
-          let schedule = if named then Eta.Schedule.named "followup" plain else plain in
-          let rendered = Format.asprintf "%a" Eta.Schedule.pp schedule in
-          let decision, _ =
-            Eta.Schedule.step_with_hooks ~run_hook:(fun hook -> hook ())
-              ~now_ms:0 ~input (Eta.Schedule.start schedule)
-          in
-          (List.rev !events, schedule_decision_snapshot decision, rendered)
-        in
-        ( wrapper_orders,
-          (first_random, second_random, third_random),
-          jitter_orders,
-          run_named_case false,
-          run_named_case true )
-      in
-      let outcome = run (E.sync observe) in
-      match outcome.exit with
-      | Eta.Exit.Error _ -> false
-      | Eta.Exit.Ok
-          ( wrapper_orders,
-            (first_random, second_random, third_random),
-            jitter_orders,
-            (plain_events, plain_decision, plain_pp),
-            (named_events, named_decision, named_pp) ) ->
-          List.map fst wrapper_orders
-          = [
-              [ Tap; Modify_delay ];
-              [ Tap; Modify_delay ];
-              [ Tap; Modify_delay ];
-              [ Modify_delay; Tap ];
-              [ Tap; While_output ];
-              [ Tap; While_output ];
-              [ Tap; While_output ];
-              [ While_output; Tap ];
-            ]
-          && List.for_all
-               (fun (_, decision) ->
-                 decision = (`Continue, input, 0, 1))
-               wrapper_orders
-          && first_random <> second_random
-          && (match jitter_orders with
-             | [
-              (Some input_inside, input_inside_after, _);
-              (Some input_outside, input_outside_after, _);
-              (Some output_inside, output_inside_after, _);
-              (Some output_outside, output_outside_after, _);
-             ] ->
-                 input_inside = first_random
-                 && input_outside = first_random
-                 && output_inside = first_random
-                 && output_outside = second_random
-                 && input_inside_after = third_random
-                 && input_outside_after = third_random
-                 && output_inside_after = third_random
-                 && output_outside_after = third_random
-             | _ -> false)
-          && plain_events = [ Tap; Tap ]
-          && named_events = plain_events
-          && named_decision = plain_decision
-          && plain_decision = (`Continue, input, 0, 1)
-          && named_pp = Printf.sprintf "Named(%s, %S)" plain_pp "followup"
-          && outcome.logs = []
-          && outcome.spans = []
-          && outcome.metrics = []
-          && outcome.events = []
-          && no_pending outcome)
-
-let property_schedule_tap_input_order_and_retry_state =
-  QCheck.Test.make
-    ~name:"Schedule.tap_input precedes each step and abandoned Hook retry preserves driver state"
-    ~count QCheck.(pair (int_range 0 8) bounded_int)
-    (fun (recurrences, input_base) ->
-      let observe () =
-        let schedule =
-          Eta.Schedule.recurs recurrences
-          |> Eta.Schedule.tap_input Fun.id
-        in
-        let initial = Eta.Schedule.start schedule in
-        match Eta.Schedule.step_plan ~now_ms:0 ~input:input_base initial with
-        | Eta.Schedule.Complete _ -> None
-        | Eta.Schedule.Hook (abandoned_hook, _abandoned_resume) ->
-            let rec drive output_index driver acc =
-              let input = input_base + output_index + 1 in
-              match Eta.Schedule.step_plan ~now_ms:output_index ~input driver with
-              | Eta.Schedule.Complete _ -> None
-              | Eta.Schedule.Hook (hook, resume) -> (
-                  let acc = `Input_hook hook :: acc in
-                  match resume () with
-                  | Eta.Schedule.Hook _ -> None
-                  | Eta.Schedule.Complete (decision, next) ->
-                      let metadata, status =
-                        match decision with
-                        | Eta.Schedule.Continue metadata -> (metadata, `Continue)
-                        | Eta.Schedule.Done metadata -> (metadata, `Done)
-                      in
-                      let acc =
-                        `Inner_step
-                          ( metadata.input,
-                            metadata.output,
-                            metadata.attempt,
-                            status )
-                        :: acc
-                      in
-                      if status = `Done then Some (List.rev acc)
-                      else drive (output_index + 1) next acc)
-            in
-            drive 0 initial [ `Abandoned_hook abandoned_hook ]
-      in
-      let expected =
-        `Abandoned_hook input_base
-        :: List.concat_map
-             (fun output ->
-               let input = input_base + output + 1 in
-               let status = if output < recurrences then `Continue else `Done in
-               [
-                 `Input_hook input;
-                 `Inner_step (input, output, output + 1, status);
-               ])
-             (List.init (recurrences + 1) Fun.id)
-      in
-      let outcome = run (E.sync observe) in
-      outcome.exit = Eta.Exit.Ok (Some expected)
-      && outcome.events = []
-      && no_pending outcome)
-
-let property_schedule_tap_output_includes_done =
-  QCheck.Test.make
-    ~name:"Schedule.tap_output runs after every produced output including terminal Done"
-    ~count QCheck.(int_range 0 8) (fun recurrences ->
-      let observe () =
-        let schedule =
-          Eta.Schedule.recurs recurrences
-          |> Eta.Schedule.tap_output Fun.id
-        in
-        let rec loop driver acc =
-          match Eta.Schedule.step_plan ~now_ms:0 ~input:() driver with
-          | Eta.Schedule.Complete _ -> None
-          | Eta.Schedule.Hook (hook_output, resume) -> (
-              match resume () with
-              | Eta.Schedule.Hook _ -> None
-              | Eta.Schedule.Complete (decision, next) ->
-                  let metadata, status =
-                    match decision with
-                    | Eta.Schedule.Continue metadata -> (metadata, `Continue)
-                    | Eta.Schedule.Done metadata -> (metadata, `Done)
-                  in
-                  let acc = (hook_output, metadata.output, status) :: acc in
-                  if status = `Done then Some (List.rev acc) else loop next acc)
-        in
-        loop (Eta.Schedule.start schedule) []
-      in
-      let expected =
-        List.init (recurrences + 1) (fun output ->
-            ( output,
-              output,
-              if output < recurrences then `Continue else `Done ))
-      in
-      let outcome = run (E.sync observe) in
-      outcome.exit = Eta.Exit.Ok (Some expected)
-      && outcome.events = []
-      && no_pending outcome)
-
 let schedule_metadata_equal left right =
   left.Eta.Schedule.input = right.Eta.Schedule.input
   && left.output = right.output
@@ -2837,6 +2254,52 @@ let schedule_metadata_equal left right =
   && Eta.Duration.equal left.elapsed right.elapsed
   && Eta.Duration.equal left.elapsed_since_previous right.elapsed_since_previous
   && Eta.Duration.equal left.delay right.delay
+
+let schedule_decision_equal left right =
+  match (left, right) with
+  | Eta.Schedule.Continue left, Eta.Schedule.Continue right
+  | Eta.Schedule.Done left, Eta.Schedule.Done right ->
+      schedule_metadata_equal left right
+  | Eta.Schedule.Continue _, Eta.Schedule.Done _
+  | Eta.Schedule.Done _, Eta.Schedule.Continue _ ->
+      false
+
+(* Observation boundary: [pp], one direct step, and Eta runtime telemetry.
+   Generated class: bounded inputs and finite recurrence counts. Both the plain
+   and named schedules are independently started and stepped. *)
+let property_schedule_named_is_display_only =
+  QCheck.Test.make
+    ~name:"Schedule.named changes only pp and emits no logs spans or metrics"
+    ~count QCheck.(pair bounded_int (int_range 0 8))
+    (fun (input, recurrences) ->
+      let observe () =
+        let label = "law-label" in
+        let plain = Eta.Schedule.recurs recurrences in
+        let named = Eta.Schedule.named label plain in
+        let plain_pp = Format.asprintf "%a" Eta.Schedule.pp plain in
+        let named_pp = Format.asprintf "%a" Eta.Schedule.pp named in
+        let plain_decision, _ =
+          Eta.Schedule.step ~now_ms:17 ~input (Eta.Schedule.start plain)
+        in
+        let named_decision, _ =
+          Eta.Schedule.step ~now_ms:17 ~input (Eta.Schedule.start named)
+        in
+        ( plain_pp,
+          named_pp,
+          label,
+          schedule_decision_equal plain_decision named_decision )
+      in
+      let outcome = run (E.sync observe) in
+      match outcome.exit with
+      | Eta.Exit.Error _ -> false
+      | Eta.Exit.Ok (plain_pp, named_pp, label, same_decision) ->
+          same_decision
+          && named_pp = Printf.sprintf "Named(%s, %S)" plain_pp label
+          && outcome.logs = []
+          && outcome.spans = []
+          && outcome.metrics = []
+          && outcome.events = []
+          && no_pending outcome)
 
 let property_schedule_next_continue_only =
   QCheck.Test.make
@@ -3359,11 +2822,7 @@ let laws =
     property_schedule_monotone;
     property_schedule_done_delay_zero;
     property_schedule_and_then_phase_tags;
-    property_schedule_policy_hook_order_and_driver_interpretation;
-    property_schedule_suspended_driver_contract_table;
-    property_schedule_wrapper_hook_order_and_named_transparency_table;
-    property_schedule_tap_input_order_and_retry_state;
-    property_schedule_tap_output_includes_done;
+    property_schedule_named_is_display_only;
     property_schedule_next_continue_only;
     property_recurs_count;
     property_override_restoration;

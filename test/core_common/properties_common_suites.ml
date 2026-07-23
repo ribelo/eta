@@ -9,7 +9,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   type law_err = [ `E0 | `E1 | `Neg | `Retry | `Release | `Timeout ]
   type packed_law_schedule =
     | Pack :
-        (law_err, 'output, (unit, law_err) Effect.t) Schedule.t
+        (law_err, 'output) Schedule.t
         -> packed_law_schedule
 
   let pp_law_err fmt = function
