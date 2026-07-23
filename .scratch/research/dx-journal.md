@@ -3385,3 +3385,44 @@ proposal (`.scratch/research/dx/e24b/review/DELETION_PROPOSAL.md`) is its
 execution brief: exact 7-step slice + ancillaries, E22 census surgery,
 recipe guidance updates, falsifiable reversal gate. Next in the Phase E
 queue, before retry cause-alignment.
+
+---
+
+## V-DX-E24C-001 — 2026-07-23 — research/dx-e24c-hook-deletion — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E24C-002. Executes
+`.scratch/research/dx/e24b/review/DELETION_PROPOSAL.md` (review-corrected).
+
+**Surface (measured).** 30 `Schedule.t`/`driver` mentions repo-wide; 33
+suspended-machinery lines inside the 649-line `schedule.ml`; tap
+constructions in 3 test files (+schedule); `no_hook` in schedule +
+`lib/http/client/retry.ml(i)`. The 8 public operations to retype:
+`retry`/`retry_or_else`/`repeat`, `Resource.auto`, `Eta_stream` ×4.
+
+**Predictions.**
+- Migration: 25–40 files. Mechanical except ONE substantive part:
+  removing the internal suspended engine
+  (`suspended`/`Return`/`Run_hook`/`bind_suspended`/`map_suspended`/
+  `run_suspended`) while preserving every schedule law — the 66 E22
+  properties (`and_then` composition minus hooks, `jittered` randomness,
+  `named` pp/stepping/telemetry, monotone delays, `recurs` counts) are
+  the safety net; any engine mistake fails them loudly.
+- Census: `Schedule.t` params 3 → 2; tap vals 2 → 0;
+  `step_plan`/`step_with_hooks` deleted, `step`/`next` generalized to all
+  drivers; Schedule cluster loses the hook-channel concept (−1); 8
+  public signatures simplified. Footguns −1/+0 (the unexplained third
+  parameter).
+- Reversal-gate pre-check: zero non-test tap producers (re-verified at
+  start by the census script).
+- Compile-negative: ternary schedule type + tap usage fails compilation
+  (cram-style negative test); positive 2-param custom-driver fixture
+  compiles.
+- Review: `retry`'s 2-param signature reads materially cleaner; the
+  ordinary recipe (instrument the source) documented in api-dx where the
+  tap promises were removed.
+- Outcome: promote. Risk points: (1) engine rewrite law preservation;
+  (2) stream's 4 internal schedule constructors + 4 fold functions;
+  (3) HTTP `packed_schedule` unwinding; (4) E22 census surgery
+  correctness (the oracle-corrected slice: delete M65–M67, M95–M105,
+  M112, R96, R102; split/rewrite R80/R100; preserve M68, R94, R95,
+  M106–M111 with a no-hook `named` replacement property).
