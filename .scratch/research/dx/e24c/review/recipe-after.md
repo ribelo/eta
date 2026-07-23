@@ -8,6 +8,7 @@ schedule policy.
 | `Effect.retry` / `retry_or_else` / `repeat` | Instrument the source effect before passing it to the operation. | Every source attempt, including the initial attempt. |
 | `Resource.auto` | Instrument `load`; use an application counter to distinguish seed and refresh loads. | Loads, not terminal schedule exhaustion. |
 | `Stream.retry` | Put `Stream.tap_error` on the source before `retry`, or instrument the source. | Each source failure; an outside tap sees only the final failure. |
+| `Stream.repeat` | Instrument the source or apply `Stream.tap` to the repeated stream. | Source evaluations or emitted values, not empty repetitions or schedule exhaustion. |
 | `Stream.schedule` / `from_schedule` | Use `Stream.tap` on the resulting stream. | Emitted values only. |
 | Custom driver | Observe immediately around direct `Schedule.step`. | Top-level input and decision only. |
 
@@ -18,7 +19,7 @@ let request =
   Effect.sync (fun () ->
       incr attempts;
       observed := !attempts :: !observed)
-  |> Effect.seq request_once
+  |> Effect.bind (fun () -> request_once)
 in
 Effect.retry ~schedule:(Schedule.recurs 2) ~while_:retryable request
 ```

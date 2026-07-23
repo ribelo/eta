@@ -2264,9 +2264,9 @@ let schedule_decision_equal left right =
   | Eta.Schedule.Done _, Eta.Schedule.Continue _ ->
       false
 
-(* Observation boundary: [pp], one direct step, and Eta runtime telemetry.
-   Generated class: bounded inputs and finite recurrence counts. Both the plain
-   and named schedules are independently started and stepped. *)
+(* Observation boundary: [pp], the full direct-step trace through terminal
+   [Done], and Eta runtime telemetry. Generated class: bounded inputs and finite
+   recurrence counts. Both schedules are independently started and advanced. *)
 let property_schedule_named_is_display_only =
   QCheck.Test.make
     ~name:"Schedule.named changes only pp and emits no logs spans or metrics"
@@ -2278,22 +2278,25 @@ let property_schedule_named_is_display_only =
         let named = Eta.Schedule.named label plain in
         let plain_pp = Format.asprintf "%a" Eta.Schedule.pp plain in
         let named_pp = Format.asprintf "%a" Eta.Schedule.pp named in
-        let plain_decision, _ =
-          Eta.Schedule.step ~now_ms:17 ~input (Eta.Schedule.start plain)
+        let rec trace now_ms driver acc =
+          match Eta.Schedule.step ~now_ms ~input driver with
+          | (Eta.Schedule.Continue _ as decision), next ->
+              trace (now_ms + 1) next (decision :: acc)
+          | (Eta.Schedule.Done _ as decision), _ -> List.rev (decision :: acc)
         in
-        let named_decision, _ =
-          Eta.Schedule.step ~now_ms:17 ~input (Eta.Schedule.start named)
+        let plain_trace = trace 17 (Eta.Schedule.start plain) [] in
+        let named_trace = trace 17 (Eta.Schedule.start named) [] in
+        let same_trace =
+          List.length plain_trace = List.length named_trace
+          && List.for_all2 schedule_decision_equal plain_trace named_trace
         in
-        ( plain_pp,
-          named_pp,
-          label,
-          schedule_decision_equal plain_decision named_decision )
+        (plain_pp, named_pp, label, same_trace)
       in
       let outcome = run (E.sync observe) in
       match outcome.exit with
       | Eta.Exit.Error _ -> false
-      | Eta.Exit.Ok (plain_pp, named_pp, label, same_decision) ->
-          same_decision
+      | Eta.Exit.Ok (plain_pp, named_pp, label, same_trace) ->
+          same_trace
           && named_pp = Printf.sprintf "Named(%s, %S)" plain_pp label
           && outcome.logs = []
           && outcome.spans = []

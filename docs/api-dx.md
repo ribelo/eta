@@ -464,8 +464,9 @@ Observe the operation, not the schedule policy:
   seed and refresh loads need different labels.
 - For `Stream.retry`, put `Stream.tap_error` on the source before `Stream.retry`,
   or instrument the source directly. A `tap_error` outside `retry` sees only the
-  final failure. For `Stream.schedule` and `Stream.from_schedule`, use
-  `Stream.tap` to observe emitted values.
+  final failure. For `Stream.repeat`, instrument the source or use `Stream.tap`
+  to observe emitted values. For `Stream.schedule` and `Stream.from_schedule`,
+  use `Stream.tap` to observe emitted values.
 - In a custom interpreter, observe immediately around `Schedule.step`.
 
 For example, put attempt observation inside the source effect so failures and
@@ -478,7 +479,7 @@ let request =
   Effect.sync (fun () ->
       incr attempts;
       observed := !attempts :: !observed)
-  |> Effect.seq request_once
+  |> Effect.bind (fun () -> request_once)
 in
 Effect.retry ~schedule:(Schedule.recurs 2) ~while_:retryable request
 ```
