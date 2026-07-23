@@ -1,0 +1,5 @@
+(library
+ (name eta_schema_yojson)
+ (public_name eta_schema_yojson)
+ (synopsis "Yojson adapter for eta_schema")
+ (libraries eta_schema yojson))

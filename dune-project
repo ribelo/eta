@@ -361,6 +361,16 @@
   eta))
 
 (package
+ (name eta_schema_yojson)
+ (synopsis "Yojson adapter for eta_schema")
+ (description
+  "eta_schema_yojson binds eta_schema codecs to Yojson.Safe values.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta_schema
+  (yojson (>= 2.0))))
+
+(package
  (name eta_test)
  (synopsis "Testing helpers for Eta")
  (description
