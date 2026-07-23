@@ -72,3 +72,21 @@ named `Schedule.and_then tags every first phase output before every second phase
 output` property and shrank the counterexample to `(1, 0)`. Revert `f73e45f1`
 restored the good engine with no expectation changes. Evidence is committed in
 `redteam/e24c/invariant-break-output.txt`.
+
+## V-DX-E24C-003 — final actuals
+
+All six required Nix gates passed, including mainline `_build-mainline` laws and
+JS coverage. Both E24b and E24c red-team runners pass. The final census is:
+`Schedule.t`/driver 3→2 parameters, tap values 2→0, suspended entry points 2→0,
+hook-accepting operations 8→0, and production hook interpreters 3→0. E22 is
+101 direct claims, 100 external rows, 2 model claims, 201 covered rows, and 62
+named properties. The predicted footgun delta of −1/+0 is confirmed.
+
+The 20–30-file migration prediction missed high: the branch delta after initial
+handoff is 47 files because exact E22 span recensus, fixture placement, review
+artifacts, and historical red-team cleanup spread the mechanical deletion. The
+engine-risk prediction hit: `and_then` was the most sensitive invariant, and its
+named law rejected the committed mutation. No surviving semantic law changed.
+
+Recommendation: **PROMOTE / E24C READY FOR REVIEW**. Full details are in
+`report.md`.
