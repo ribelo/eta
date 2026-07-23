@@ -3273,3 +3273,56 @@ registry rows on next census touch.
 
 **Next in the Phase E queue:** E24b (hook ownership: policy vs driver —
 context complete after E19/E20/E13/E14).
+
+---
+
+## V-DX-E24B-001 — 2026-07-23 — research/dx-e24b-hook-ownership — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E24B-002. Registered at
+V-DX-E24-003 after the E24 oracle consultation; entry context now complete
+(E19/E20 scoped machinery, E13/E14 contract-promise semantics, E22 law
+discipline).
+
+**Current facts (measured).** Hook channel: `('input,'output,'hook)
+Schedule.t`, instantiated as `(unit,'err) Effect.t` hooks at every
+consumer. Taps are CONSTRUCTED only in tests (16 lines, 3 files); the
+channel is type-threaded through `retry`/`retry_or_else`/`repeat`,
+`Resource.auto`, `Eta_stream` ×4. Driver protocol: `start`; suspended
+`step = Complete | Hook of 'hook * (unit -> step)`; `step_plan`;
+`step_with_hooks` (explicit interpreter); `step`/`next` (no_hook-only);
+`no_hook`. Driving styles differ: the retry family uses
+`step_with_hooks`; `Resource.auto` (resource.ml:62-65) and `Eta_stream`
+(eta_stream.ml:271-277) hand-interpret `Hook` via `step_plan`. Tap
+semantics (from E24): `tap_input` pre-advancement; `tap_output`
+post-output incl. terminal `Done`; hook failure fails the driving effect
+(tap_input failure: state not advanced).
+
+**Design predictions.**
+- The semantics matrix will show pre/post-step ordering,
+  failure-to-advance, and terminal-Done observation are load-bearing and
+  subtle; per-driver observers would duplicate them across ≥6 call sites
+  with drift risk.
+- The suspended-step design is the load-bearing insight: ownership is
+  ALREADY split — policy carries hook VALUES, drivers INTERPRET. The
+  decision reframes from "policy vs driver" to "is this split right, and
+  is the third type parameter the right carrier".
+- **Predicted outcome: RETAIN hooks** — the slimming is killed
+  permanently — with refinements: (a) mli ownership prose replacing the
+  "hardest paragraph" with the ownership sentence (policy = values,
+  driver = interpretation via suspended step / `step_with_hooks`);
+  (b) E22-policy compliance: hook semantics are law-bearing prose →
+  registered test coverage; (c) parking-lot entry recording the slimming
+  as killed-by-evidence.
+- Live alternatives: driver-owned observers (~25% — if the matrix shows
+  only post-step observation is needed); a middle shape (~15% — keep the
+  channel but hide the third param from common signatures, e.g. retry/
+  repeat take `no_hook` schedules).
+
+**Review (predicted).** The decision record (inventory + matrix +
+cross-tab + verdict) is the review artifact; the oracle audits matrix
+completeness and whether the verdict follows from it. E22-policy: any mli
+prose changes need registered tests.
+
+**Outcome (predicted).** Promote the DECISION as the deliverable. Effort
+S–M; risk contained (research-first; implementation only as the verdict
+requires).
