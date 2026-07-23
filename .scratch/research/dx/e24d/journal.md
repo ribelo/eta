@@ -38,3 +38,51 @@ predictions remain as evidence and will be scored in the final report.
 ## Execution log
 
 No production edits preceded the sealed predictions commit.
+
+### History and verdict — V-DX-E24D-002
+
+`git log -p --follow lib/eta/effect_schedule.ml`, helper-origin searches, retry
+commit-message searches, and composite-retry diff searches found no intentional
+reason for the divergence. Narrow `retry` predates `69adecfa`'s shared boundary;
+`bbe54cd9` then introduced `retry_or_else` on that boundary. `365f7b01` called
+the difference a current limitation. Verdict: align.
+
+Terminal decision: selected typed failures drive policy, but rejection and
+exhaustion return the original cause. Uncatchable composites also remain exact.
+
+### Red/green implementation — V-DX-E24D-003
+
+Four named tests were added first. The focused Eio suite produced three expected
+failures under the old implementation: typed composites did not retry and
+neither terminal test observed policy. The buried-uncatchable test was already
+green, guarding against over-broadening.
+
+After `retry` adopted `stripped_uncatchable` plus `first_typed_failure`, the same
+focused suite passed all 570 tests. The mli, changelog, and E22 registry were
+updated in the same change. R79–R81 register the new tests; CD-E22-006 is now
+limited to the independent `retry_or_else` current-runtime failure matrix.
+
+### Red-team and review — V-DX-E24D-004
+
+The buried-defect, original-terminal-cause, and history-falsification checks all
+pass. Review artifacts contain the full before/after matrix and direct answers
+to the two assignment questions.
+
+Independent semantic review found no blocker. Its two low findings were applied:
+the exhaustion test now distinguishes an earlier composite from a differently
+ordered terminal composite, and the E22 cancellation row no longer claims more
+than the registered cancellation test proves.
+
+### Final gates — V-DX-E24D-005
+
+All required commands passed on the final tree:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/laws --force PASS
+```
+
+Prediction score: 7/7 HIT. Recommendation: promote.
