@@ -14,6 +14,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E23 | Error channel mirrors Result | A | M | low | **promoted** | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
 | E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion proposed → E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
+| E24c | Hook-channel deletion | E | M | med | **promoted** 2026-07-23 | | research/dx-e24c-hook-deletion | V-DX-E24C-001..002 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18/20 (sync_option reversal by human authority) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..004 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
@@ -3426,3 +3427,66 @@ constructions in 3 test files (+schedule); `no_hook` in schedule +
   correctness (the oracle-corrected slice: delete M65–M67, M95–M105,
   M112, R96, R102; split/rewrite R80/R100; preserve M68, R94, R95,
   M106–M111 with a no-hook `named` replacement property).
+
+---
+
+## V-DX-E24C-002 — 2026-07-23 — research/dx-e24c-hook-deletion — phase: results + decision
+
+**Gates** (orchestrator re-run): full native chain (`@install`, `runtest
+--force`, `eta-oxcaml-test-shipped`, `@doc`) AND mainline
+(`_build-mainline @install` + `test/laws`/`js_jsoo`/`cache_jsoo`/
+`signal_jsoo`) green in the worktree; native trio + `@doc` green on
+master after the merge. One transient chain failure during verification
+(dune lock after a mainline build; re-run with separated steps ALL-GREEN,
+no test failures in the log).
+
+**The deletion.** `Schedule.t`/`driver` 3 → 2 params (mli 140 → 100
+lines, ml 649 → 542). Taps, `no_hook`, suspended step type,
+`step_plan`/`step_with_hooks`, and the suspended engine deleted; direct
+`step`/`next` generalized. New engine: direct mutual recursion
+(`step_state`/`step_phase`/`step`). 8 public operations retyped; HTTP
+`no_hook` markers removed; `Eta_js` coherent through its re-export.
+
+**Engine preservation — the substantive question, answered three ways.**
+(1) The 62 surviving E22 properties green on both compilers, zero
+expectation changes outside the surgery rows. (2) The deliberate
+regression proof: a compiling `and_then` corruption (commit `22d43b25`)
+was caught by the named phase-order law (shrunk to `(1,0)`) and reverted
+— the safety net covers the NEW engine, not just the old. (3) Oracle
+semantic audit: `and_then` handoff exact (same-call, same `now_ms`/
+input), `both`/`either` max/min delay rules, wrapper nesting order,
+cached-terminal-metadata behavior, all eight driver paths, no residue.
+
+**E22 surgery** (oracle-corrected slice from E24b): removed M65–M67,
+M95–M105, M108, M112, R96, R102; R80/R100 restated to surviving
+behavior; M68/R94/R95 preserved; `Schedule.named`'s surviving claims
+covered by a new no-hook property comparing full plain/named driver
+traces. Registry: 117 → 101 direct claims, 66 → 62 properties.
+
+**Review** (fresh oracle): CORRECT-WITH-RESERVATIONS — one LOW: the
+`tap_input` compile-negative said `Unbound value` with no migration
+direction. Closed in the same landing: `docs/type-errors.md` entry 9
+quotes the snapshot output and gives both canonical fixes (instrument
+the source / direct `step`), authored by the orchestrator as merge
+curation (snapshot fixtures already on the branch).
+
+**Census/footguns:** params 3→2, tap vals 2→0, suspended stepping vals 0,
+8 operations binary, hook cluster deleted (hooks, suspension,
+interpretation/resumption, publication discipline, `no_hook`
+distinction). Footguns −1/+0 (the unexplained third parameter; the
+deleted non-linear resume protocol was itself a footgun cluster).
+Prediction scoring (V-DX-E24C-001): hits — surgery correctness, gate
+set, reversal-gate pre-check (zero producers), census, footguns,
+compile-negative + positive fixtures, promote; miss — file count
+(predicted 25–40, actual 48; evidence-file spread, same undercount
+direction as E23/E24).
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objective archived. The Phase A
+slimming question is now CLOSED by implementation: the parking-lot entry
+stands (deletion, reversal gate: shipped non-test producer / external
+adoption needing schedule-local effects / integration the ordinary
+recipe can't express).
+
+**Phase E queue:** retry cause-alignment → E15 → E16 → E21 → E17
+(gated) → E18.
