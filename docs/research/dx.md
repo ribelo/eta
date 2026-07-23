@@ -40,6 +40,28 @@ two substrate-bridging leaves. Its durable laws:
 
 Full evidence: V-DX-PHASE-D in the journal.
 
+## E24b — Schedule-hook ownership (promoted 2026-07-23; deletion proposed)
+
+The question Phase A opened — is `Schedule.t`'s third parameter
+load-bearing or the library's ugliest public type? — is decided, and the
+answer flipped twice on evidence. Architecturally, policy-owned hooks are
+correct *while they exist* (policy places hook values, drivers interpret
+them through the suspended step; branch-local composition events prove
+it). But zero production code constructs a tap, the common observation
+case has a better ordinary recipe (instrument the source — it even sees
+the initial attempt taps miss), and the unique structural capability has
+no demonstrated demand. **The hook channel is marked for deletion** (E24c)
+with an honest loss statement (all schedule-local effect boundaries) and a
+falsifiable reversal gate: a shipped non-test producer, external adoption
+needing schedule-local effects, or an integration the ordinary recipe
+can't express.
+
+The durable lesson: a decision experiment's hypothesis space must include
+"delete the feature" — the first verdict ("retain permanently") survived
+one review round and still fell to the baseline that was never written
+down. Provenance: `.scratch/research/dx/e24b/`, V-DX-E24B-001..002, branch
+`research/dx-e24b-hook-ownership`.
+
 ## E22 — Law-property policy (promoted 2026-07-23)
 
 **Every law in an mli has a test** is now repository policy with teeth:

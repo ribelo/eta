@@ -1565,6 +1565,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** 2026-07-18 | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** 2026-07-18 (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
+| E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion proposed → E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** 2026-07-18 | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18/20 (sync_option reversal by human authority) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..004 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** 2026-07-18 | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |

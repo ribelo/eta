@@ -13,6 +13,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 |----|-------|-------|--------|------|--------|----|--------|----------|
 | E23 | Error channel mirrors Result | A | M | low | **promoted** | SC | research/dx-e23-result-error-channel | V-DX-E23-001..002 |
 | E24 | Iteration mirrors List; slim Schedule | A | M | low-med | **promoted** (slimming held → E24b) | SC | research/dx-e24-iteration-mirrors-list | V-DX-E24-001..004 |
+| E24b | Schedule-hook ownership decision | E | S-M | contained | **promoted** 2026-07-23 (deletion proposed → E24c) | | research/dx-e24b-hook-ownership | V-DX-E24B-001..002 |
 | E25 | Family consistency renames | A | S-M | low | **promoted** | SC | research/dx-e25-family-consistency | V-DX-E25-001..002 |
 | E1 | sync_result / sync_option | B | S | low | **promoted** 2026-07-18/20 (sync_option reversal by human authority) | SC | research/dx-e1e2e3-hygiene | V-DX-E1-001..004 |
 | E2 | discard / ignore_errors | B | S | low | **promoted** | SC | research/dx-e1e2e3-hygiene | V-DX-E2-001..002 |
@@ -3326,3 +3327,61 @@ prose changes need registered tests.
 **Outcome (predicted).** Promote the DECISION as the deliverable. Effort
 S–M; risk contained (research-first; implementation only as the verdict
 requires).
+
+---
+
+## V-DX-E24B-002 — 2026-07-23 — research/dx-e24b-hook-ownership — phase: results + decision
+
+**The verdict flipped twice on evidence.** Phase A assumed "slim by
+replacing taps with observers". E24b's first verdict: RETAIN permanently —
+A (policy-owned hooks) is the correct ownership model (the `and_then`
+composition probe: 4 branch-local A hooks vs 2 top-level B observations).
+The decision audit then asked the question the objective's hypothesis
+space excluded: *should hooks exist at all?* (candidate D — the method's
+own "delete the feature" baseline, skipped by the orchestrator's framing).
+The D assessment found: zero production/example tap producers; the common
+"log every attempt" case has a BETTER ordinary recipe (instrument the
+source — 4/5, and it sees the initial attempt taps miss); the exotic loss
+(all schedule-local effect boundaries — terminal `Done` observation,
+policy-generated outputs, boundary effects, hook-failure advancement
+veto, `step_plan` custom interpretation — 0/5) accepted with a
+falsifiable demand gate for reversal. **Final: D wins as a deletion
+proposal; A remains the documented ownership contract while taps exist.**
+
+**Gates** (orchestrator re-run): native trio pass in worktree AND on
+master after the `--no-ff` merge; mainline `@install` + `test/laws` green
+(66 properties); red-team `run-all.sh` green (composition probe, C-seam
+fixtures, D surface census, D recipe with negative control).
+
+**Review history.** Round 1 (fresh oracle): SOUND-WITH-RESERVATIONS —
+HIGH: candidate D never evaluated; MEDIUM: B-wording, matrix gaps
+(suspension/replay/cancellation/wrapper/telemetry), driver-contract
+insufficiency; LOW: C-wording, law labeling. Rework 1 → verdict flipped
+to D. Round 2: SOUND-WITH-RESERVATIONS — all six closed; two MEDIUM
+errors in the proposal document (loss understated; E22 slice deleted
+surviving `Schedule.named` claims) + demand gate widening + ancillaries.
+Rework 2 (document-level). Round 3: **SOUND** — final.
+
+**Prediction scoring (orchestrator, V-DX-E24B-001).** Hits: the matrix
+shows pre/post-step ordering, failure-to-advance, terminal-Done are
+load-bearing and subtle (confirmed — it is why deletion costs something);
+the suspended-step split (policy = values, driver = interpretation) IS
+the load-bearing insight (A confirmed on exactly it); review audits
+matrix completeness and verdict-follows. **Miss, the important kind:**
+predicted RETAIN-permanently. A was architecturally correct and my miss
+wasn't semantic — it was framing: my hypothesis space excluded deletion,
+and when the oracle supplied it, the evidence flipped the verdict. Second
+experiment where an oracle consultation changed the architectural
+outcome (E24's `retry_or_else` was the first), and a pattern to watch:
+I over-trust existing capability (E20's fast path, E24b's hooks).
+
+**Decision: PROMOTE** the decision record + interim driver contract +
+E22 registrations + parking-lot entry. Merged `--no-ff`; master gates
+green; master + branch pushed; worktree removed; objectives archived
+(incl. both follow-ups).
+
+**Registered: E24c — the deletion implementation.** The corrected
+proposal (`.scratch/research/dx/e24b/review/DELETION_PROPOSAL.md`) is its
+execution brief: exact 7-step slice + ancillaries, E22 census surgery,
+recipe guidance updates, falsifiable reversal gate. Next in the Phase E
+queue, before retry cause-alignment.
