@@ -317,3 +317,108 @@ accept-loop-victim: PASS
 ```
 
 **E15 READY FOR REVIEW**
+
+## Follow-up 2 — fork inheritance verdict rejected
+
+The reviewer reproduced a critical deadlock and two backend/lifetime
+divergences. The Follow-up 1 implementation incorrectly stored the restore in a
+fork-inherited runtime local even though the closure belongs only to the fiber
+that entered the mask.
+
+### Reproduced before the fix
+
+The minimal native regression was added first and run under an external five
+second bound:
+
+```text
+nix develop -c timeout 5s dune exec test/core_eio/run.exe -- \
+  test '^Effect interruptible$' 12
+repro-exit=124
+```
+
+`uninterruptible (par (interruptible never) (fail `Boom))` hung exactly as
+reported. The child moved from its own fail-fast context `Q` into the inherited
+mask-entry restore context `R`; direct cancellation of `Q` could no longer wake
+it.
+
+Three additional pre-fix observations matched the review:
+
+- native daemon after mask exit: `Invalid_argument("Switch finished!")`;
+- native daemon forked during cleanup: cancellation stayed masked until the
+  bounded test body died;
+- jsoo child under `uninterruptible`: the mask-coverage regression reported
+  `child forked inside mask was interrupted by default`.
+
+The native mask-coverage regression already passed, confirming that native
+cancellation-context lineage—not inherited restore state—covers children.
+
+### Corrected model
+
+**Masks cover children; restoration is fiber-local.**
+
+The restoration key now uses the contract's `Fiber_local` inheritance kind.
+Native Eio filters such bindings at every ordinary and daemon fork while keeping
+all existing default-inherited runtime locals. jsoo does the same when copying
+locals. `Restore`, `Restored`, and `Restoration_forbidden` are consequently
+absent in every child and daemon.
+
+A structured child inherits mask state, not the restore closure. Native obtains
+that state from cancellation-context lineage. jsoo now copies the parent's
+protection depth into ordinary children; daemons start independently at depth
+zero. Verification found one additional substrate detail: inherited depth must
+not suppress direct failure of the child's own structured scope. The jsoo
+backend therefore keeps masked awaits subscribed to direct scope failure while
+continuing to defer ancestor cancellation. Internal cleanup protection disables
+that direct-failure subscription while it joins children.
+
+The critical construction now returns `Cause.Fail Boom` promptly on both backends:
+`interruptible` is identity in the forked child, parent cancellation remains
+masked, and fail-fast cancellation of `Q` still wakes the child.
+
+### Corrected adversarial corpus
+
+The shared native/jsoo suite now also names:
+
+- `forked interruptible child preserves fail-fast`;
+- `cancellation mask covers forked children`;
+- `daemon drops restore binding after mask`;
+- `daemon drops cleanup-forbidden binding`;
+- `interruptible competing cancellation sources deliver once`.
+
+The at-most-once case now races two distinct cancellation contexts rather than
+calling one idempotent handle twice. Contract-level native and jsoo tests prove
+that ordinary locals retain their historical fork inheritance while
+`Fiber_local` values are absent in children and daemons.
+
+### Out-of-scope child restoration
+
+A future child-restoring combinator cannot reuse its parent's restore closure.
+It must observe both parent cancellation at the mask-entry context `R` and
+direct fail-fast cancellation of the child's own context `Q`, with one winner
+and no lost wakeup. That multi-context observation problem is parked rather
+than implied by `Effect.interruptible`.
+
+### Follow-up 2 final gates
+
+The corrected implementation and review bundle passed the complete prescribed
+set:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline \
+  test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force        PASS
+```
+
+Mainline repeated the repository's two existing integer-overflow warnings while
+compiling JS; all requested Node completion sentinels were reached. The
+separately built native accept-loop victim printed:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+**E15 READY FOR REVIEW**
