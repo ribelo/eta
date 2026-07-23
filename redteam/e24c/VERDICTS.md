@@ -19,11 +19,11 @@ source, so it includes the initial attempt.
 
 ## C — laws detect an engine invariant break
 
-**Baseline PASS; destructive proof pending.** `INVARIANT_BREAK.md` confines
-the corruption to a disposable copy. `run-invariant-law.sh` first establishes a
-green baseline, then in `EXPECT_FAILURE=1` mode accepts only a failing law run
-that names the `Schedule.and_then` phase-order property. A compile failure does
-not count.
+**PASS.** Throwaway commit `22d43b25` made the direct engine enter the right
+phase on a continuing left decision. The engine compiled, and
+`EXPECT_FAILURE=1 run-invariant-law.sh` observed the named `Schedule.and_then`
+phase-order law fail and shrink to `(1, 0)`. Revert `f73e45f1` restored the good
+engine without changing tests or expectations.
 
 ## Runs in this workspace
 
@@ -33,5 +33,5 @@ not count.
   recipe.
 - `run-invariant-law.sh`: baseline PASS; 62 generated laws, including the named
   `Schedule.and_then` phase-order property.
-- Throwaway corrupted-engine run: not yet executed; follow
-  `INVARIANT_BREAK.md` after allocating a disposable copy.
+- Throwaway corrupted-engine run: PASS; see `INVARIANT_BREAK.md` and
+  `invariant-break-output.txt`.

@@ -1,0 +1,25 @@
+Throwaway commit: 22d43b25 test(schedule): break and_then invariant
+Mutation: on a continuing left decision, start Driver_and_then_second and skip
+the required First_phase output.
+
+Command:
+EXPECT_FAILURE=1 redteam/e24c/run-invariant-law.sh
+
+Compiled test result excerpt:
+
+[ ]    0    0    0    0 /   50     0.0s Schedule.and_then tags every first phase output before every second phase output
+[✗]    1    0    1    0 /   50     0.0s Schedule.and_then tags every first phase output before every second phase output
+
+--- Failure --------------------------------------------------------------------
+
+Test Schedule.and_then tags every first phase output before every second phase output failed (6 shrink steps):
+
+(1, 0)
+
+failure (2 tests failed, 0 tests errored, ran 62 tests)
+PASS: named and_then law rejected the throwaway invariant break
+
+The second failure was the surviving terminal-Done-delay law; the attack
+prematurely changed the composed schedule's terminal behavior as well.
+
+Revert commit: f73e45f1 Revert "test(schedule): break and_then invariant"

@@ -5,6 +5,5 @@ here=$(cd "$(dirname "$0")" && pwd)
 "$here/run-recipe.sh"
 "$here/run-invariant-law.sh"
 cat <<'OUT'
-PASS: non-destructive E24c red-team checks
-MANUAL: follow redteam/e24c/INVARIANT_BREAK.md for the throwaway corruption proof
+PASS: E24c red-team checks; committed invariant-break/revert evidence is recorded in INVARIANT_BREAK.md
 OUT

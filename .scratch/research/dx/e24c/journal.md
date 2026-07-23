@@ -63,3 +63,12 @@ decision, metadata, composition, and direct stepping. Predicted footgun delta:
 **−1 / +0**: remove the non-linear suspended-hook publication/failure protocol
 without adding a replacement hazard.
 
+## V-DX-E24C-002 — law safety-net attack
+
+After the direct engine and 62-law baseline passed, throwaway commit `22d43b25`
+made `and_then` enter its right phase on a continuing left decision. The engine
+compiled. `EXPECT_FAILURE=1 redteam/e24c/run-invariant-law.sh` then failed the
+named `Schedule.and_then tags every first phase output before every second phase
+output` property and shrank the counterexample to `(1, 0)`. Revert `f73e45f1`
+restored the good engine with no expectation changes. Evidence is committed in
+`redteam/e24c/invariant-break-output.txt`.
