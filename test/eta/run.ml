@@ -131,6 +131,9 @@ let () =
             test_queue_take_batch_admitted_sender_is_woken_even_if_resolver_raises;
           Alcotest.test_case "close wakeup retry" `Quick
             test_queue_close_senders_are_woken_even_if_resolver_raises;
+          Alcotest.test_case
+            "shutdown committed result survives wakeup failure" `Quick
+            test_queue_shutdown_committed_result_survives_wakeup_failure;
           Alcotest.test_case "unbounded offer never reports full" `Quick
             test_queue_unbounded_offer_never_reports_full;
           Alcotest.test_case "backpressure offer waits instead of full" `Quick

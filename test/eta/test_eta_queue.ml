@@ -657,6 +657,31 @@ let test_queue_close_senders_are_woken_even_if_resolver_raises () =
       Alcotest.failf "expected close error, got %a" (Cause.pp pp_hidden) cause
   | Exit.Ok value -> Alcotest.failf "unexpected value after close: %d" value)
 
+let test_queue_shutdown_committed_result_survives_wakeup_failure () =
+  let rt = Test_runtime.create () in
+  let queue = Queue.bounded ~capacity:1 () in
+  Alcotest.(check bool) "initial offer" true (run_ok rt (Queue.offer queue 1));
+  expect_blocked (Test_runtime.run rt (Queue.offer queue 2));
+  expect_blocked (Test_runtime.run rt (Queue.await_shutdown queue));
+  with_first_resolver_failure @@ fun resolve_attempts ->
+  Alcotest.(check unit) "shutdown returns committed result" ()
+    (Queue.shutdown queue);
+  Alcotest.(check int) "all shutdown wakeups resolved" 3 !resolve_attempts;
+  let stats = Queue.stats queue in
+  Alcotest.(check bool) "shutdown committed" true stats.Queue.shutdown;
+  Alcotest.(check int) "buffer dropped" 0 stats.Queue.depth;
+  Alcotest.(check int) "blocked sender removed" 0 stats.Queue.waiting_senders;
+  Alcotest.(check int) "dropped count committed" 1 stats.Queue.dropped;
+  Alcotest.(check unit) "await_shutdown observes commit" ()
+    (run_ok rt (Queue.await_shutdown queue));
+  (match Test_runtime.run rt (Queue.offer queue 3) with
+  | Exit.Error (Cause.Fail `Closed) -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "expected closed offer after shutdown, got %a"
+        (Cause.pp pp_hidden) cause
+  | Exit.Ok admitted ->
+      Alcotest.failf "offer after committed shutdown returned %b" admitted)
+
 let test_queue_unbounded_offer_never_reports_full () =
   let rt = Test_runtime.create () in
   let queue = Queue.unbounded () in
