@@ -6,6 +6,9 @@ let hooks =
   Lane.hooks ~note_waiter_enqueued:(fun () -> ())
     ~note_waiter_compaction:(fun () -> ())
 
+let lane_depth_local : int Eta.Runtime_contract.local =
+  Eta.Runtime_contract.create_local ~inheritance:Fiber_local ()
+
 let run_effect eff =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
@@ -96,7 +99,7 @@ let with_hooked_runtime f =
 
 let lane_effect ?(after_acquired = fun () -> Eta.Effect.unit) lane f =
   Lane.with_sync ~leaf_name:"eta_signal_lane.test"
-    ~depth_local:(Eta.Runtime_contract.create_local ())
+    ~depth_local:lane_depth_local
     ~ensure_context:(fun () -> ()) ~hooks ~after_acquired lane f
 
 let test_cancelled_compaction_policy () =
@@ -278,6 +281,36 @@ let test_interruptible_restore_preserves_reentrant_lane_fiber () =
   Alcotest.(check int) "restore kept current fiber" before_id restored_id;
   Alcotest.(check int) "mask exit kept current fiber" before_id after_id
 
+let test_fork_while_lane_held_waits () =
+  let lane = Lane.create () in
+  let child_entered = ref false in
+  let child_waited = ref false in
+  let child = lane_effect lane (fun _access -> child_entered := true) in
+  let after_acquired () =
+    Eta.Supervisor.scoped {
+      run =
+        (fun (type s) sup ->
+          let open Eta.Supervisor.Scope in
+          let* (child : (s, _, unit) Eta.Supervisor.child) =
+            start sup (lift child)
+          in
+          let* () = yield in
+          let* () = yield in
+          let* () = yield in
+          let* () =
+            lift
+              (Eta.Effect.sync (fun () ->
+                   child_waited := not !child_entered))
+          in
+          let* () = cancel child in
+          pure ());
+    }
+  in
+  expect_effect_ok "fork while lane held"
+    (lane_effect ~after_acquired lane (fun _access -> ()) : (unit, unit) Eta.Effect.t);
+  Alcotest.(check bool) "forked child waited behind lane" true !child_waited;
+  Alcotest.(check bool) "cancelled child did not enter lane" false !child_entered
+
 let test_generated_waiter_cancellation_never_double_grants () =
   List.iter
     (fun seed ->
@@ -379,6 +412,8 @@ let () =
           Alcotest.test_case
             "interruptible restore preserves reentrant lane fiber" `Quick
             test_interruptible_restore_preserves_reentrant_lane_fiber;
+          Alcotest.test_case "fork while lane held waits" `Quick
+            test_fork_while_lane_held_waits;
           Alcotest.test_case "generated waiter cancellation never double grants"
             `Quick test_generated_waiter_cancellation_never_double_grants;
         ] );

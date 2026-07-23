@@ -1,9 +1,11 @@
 (** Cancellation-mask restoration for the Eio backend.
 
-    This is Eta's single dependency on the hidden [Eio__core__Switch] module.
-    [run_in] moves the current fiber into the mask-entry switch context without
-    forking. Eio is pinned by this repository; an Eio upgrade must revalidate
-    this module against [Switch.run_in] and [Cancel.move_fiber_to]. *)
+    This is Eta's single implementation-file dependency on the hidden
+    [Eio__core__Switch] and [Eio__core__Cancel] modules. [run_in] moves the
+    current fiber into the mask-entry switch context without forking. A scoped
+    relay forwards cancellation of the entry-time current context to that
+    switch. Eio is pinned by this repository; an upgrade must revalidate this
+    module against [Switch.run_in], [Switch.cancel], and [Cancel.cancel]. *)
 
 type 'a outcome =
   | Returned of 'a
@@ -18,6 +20,18 @@ let unwrap = function
   | Returned value -> value
   | Raised (exn, bt) -> Printexc.raise_with_backtrace exn bt
 
+let with_entry_cancel_relay restore_switch f =
+  Eio.Switch.run ~name:"eta.interruptible.restore-relay" @@ fun relay_switch ->
+  let active = ref true in
+  Eio.Fiber.fork_daemon ~sw:relay_switch (fun () ->
+      try Eio.Fiber.await_cancel () with
+      | Eio.Cancel.Cancelled reason ->
+        if !active then
+          Eio__core__Cancel.cancel restore_switch.Eio__core__Switch.cancel
+            reason;
+        `Stop_daemon);
+  Fun.protect ~finally:(fun () -> active := false) (fun () -> f relay_switch)
+
 let restore switch f =
   let outcome = ref None in
   let run () =
@@ -30,7 +44,13 @@ let restore switch f =
              Eio.Fiber.check ();
              value))
   in
-  (match Eio__core__Switch.run_in switch run with
+  (match
+     with_entry_cancel_relay switch (fun relay_switch ->
+         Eio__core__Switch.run_in switch run;
+         match !outcome with
+         | Some (Returned _) -> Eio.Switch.check relay_switch
+         | Some (Raised _) | None -> ())
+   with
   | () -> ()
   | exception exn ->
       Printexc.raise_with_backtrace exn (Printexc.get_raw_backtrace ()));

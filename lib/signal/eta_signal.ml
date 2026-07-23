@@ -685,7 +685,7 @@ module Make (Observer_error : Observer_error) () = struct
   let ensure_graph_context () = Graph.ensure_context graph
 
   let graph_lane_depth_local : int Runtime_contract.local =
-    Runtime_contract.create_local ()
+    Runtime_contract.create_local ~inheritance:Fiber_local ()
 
   type graph_lane = Graph.lane_access
 

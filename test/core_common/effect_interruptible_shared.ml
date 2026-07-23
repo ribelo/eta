@@ -40,6 +40,14 @@ module Make (B : Backend) = struct
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context Exit);
     Effect.Expert.eval context eff
 
+  let nested_eval_with_cancel_handle slot eff =
+    Effect.Expert.make ~capabilities:[ `Concurrency ]
+      ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
+    let contract = Effect.Expert.contract context in
+    contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+    slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context Exit);
+    Effect.Expert.eval context eff
+
   let call_cancel = function
     | Some cancel -> cancel ()
     | None -> B.fail "Effect.interruptible test cancel handle was not installed"
@@ -527,6 +535,78 @@ module Make (B : Backend) = struct
                (Cause.pp pp_hidden) cause)
       | Exit.Ok _ -> B.fail "forked interruptible child unexpectedly succeeded")
 
+  let test_descendant_cancellation_wakes_restored_block done_ =
+    let descendant_cancel_handle = ref None in
+    let blocked = ref false in
+    let restored =
+      let* () = Effect.sync (fun () -> blocked := true) in
+      Effect.never
+    in
+    let target =
+      Effect.uninterruptible
+        (nested_eval_with_cancel_handle descendant_cancel_handle
+           (Effect.interruptible restored))
+      |> Effect.to_exit
+    in
+    let controller =
+      let* () = wait_until "descendant restored block" (fun () -> !blocked) in
+      Effect.sync (fun () -> call_cancel !descendant_cancel_handle)
+    in
+    run done_ (Effect.par target controller) expect_target_interrupt
+
+  let test_mask_parent_cancellation_crosses_descendant_context done_ =
+    let parent_cancel_handle = ref None in
+    let descendant_cancel_handle = ref None in
+    let blocked = ref false in
+    let restored =
+      let* () = Effect.sync (fun () -> blocked := true) in
+      Effect.never
+    in
+    let target =
+      Effect.uninterruptible
+        (nested_eval_with_cancel_handle descendant_cancel_handle
+           (Effect.interruptible restored))
+      |> Effect.to_exit
+      |> install_cancel_handle parent_cancel_handle
+    in
+    let controller =
+      let* () = wait_until "parent restored block" (fun () -> !blocked) in
+      Effect.sync (fun () -> call_cancel !parent_cancel_handle)
+    in
+    run done_ (Effect.par target controller) expect_target_interrupt
+
+  let test_signal_timer_shape_listens_to_both_sources_once done_ =
+    let parent_cancel_handle = ref None in
+    let descendant_cancel_handle = ref None in
+    let blocked = ref false in
+    let finalizer_calls = ref 0 in
+    let restored =
+      let* () = Effect.sync (fun () -> blocked := true) in
+      Effect.never
+    in
+    let target_body =
+      Effect.uninterruptible
+        (nested_eval_with_cancel_handle descendant_cancel_handle
+           (Effect.finally
+              (Effect.sync (fun () -> incr finalizer_calls))
+              (Effect.interruptible restored)))
+    in
+    let target =
+      install_cancel_handle parent_cancel_handle (Effect.to_exit target_body)
+    in
+    let controller =
+      let* () = wait_until "signal-timer restored block" (fun () -> !blocked) in
+      Effect.par
+        (Effect.sync (fun () -> call_cancel !parent_cancel_handle))
+        (Effect.sync (fun () -> call_cancel !descendant_cancel_handle))
+      |> Effect.discard
+    in
+    run done_ (Effect.par target controller) (fun result ->
+        expect_target_interrupt result;
+        if !finalizer_calls <> 1 then
+          failf "signal-timer cancellation ran finalizer %d times"
+            !finalizer_calls)
+
   let tests =
     [
       ("interruptible outside a mask is identity", test_outside_mask_is_identity);
@@ -560,5 +640,11 @@ module Make (B : Backend) = struct
         test_daemon_drops_restore_binding_after_mask );
       ( "daemon drops cleanup-forbidden binding",
         test_daemon_drops_cleanup_forbidden_binding );
+      ( "interruptible descendant cancellation wakes restored block",
+        test_descendant_cancellation_wakes_restored_block );
+      ( "interruptible mask-parent cancellation crosses descendant context",
+        test_mask_parent_cancellation_crosses_descendant_context );
+      ( "interruptible signal-timer shape listens to both sources once",
+        test_signal_timer_shape_listens_to_both_sources_once );
     ]
 end
