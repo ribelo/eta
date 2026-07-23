@@ -80,6 +80,16 @@ let test_retry_after_far_future_date_is_capped () =
         (Eta.Duration.to_ms Eta_http.Retry_policy.default_max_retry_after)
         (Eta.Duration.to_ms delay)
 
+let test_two_parameter_schedule_http_signatures () =
+  let schedule : (unit, int) Eta.Schedule.t = Eta.Schedule.recurs 1 in
+  let (_ : Eta_http.Retry_policy.t) =
+    Eta_http.Retry_policy.make ~schedule ()
+  in
+  let (_ : Eta_http.Retry_policy.t) =
+    Eta_http.Retry_policy.always ~schedule ()
+  in
+  ()
+
 let test_lowercase_get_is_not_default_retryable () =
   Alcotest.(check bool)
     "method classifier" false
