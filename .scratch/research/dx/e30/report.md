@@ -359,3 +359,64 @@ runtime observations; the unchecked success claim is registered honestly; and
 the Fetch taxonomy change is documented and tested. S1–S5 are closed, all six
 required gates pass, and the code, package metadata, registry, docs, journal,
 and report agree.
+
+## Follow-up 3 — R116 temporal discriminator (2026-07-24)
+
+### V-DX-E30-020 — Option choice
+
+Status: **OPTION A.2 ACCEPTED**.
+
+Option A.1 (marker set when `Runtime.run` returns) is invalid on this substrate:
+`run_eta_jsoo` deliberately schedules its body through `schedule`, which is
+`queueMicrotask` under Node (`lib/jsoo/eta_jsoo.ml:31-45,755-772`). The marker
+must still be false in the initiating synchronous stack.
+
+Option A.2 directly discriminates the MLI claim:
+
+1. `Runtime.run` queues runtime-body microtask **M1**.
+2. Before yielding, the test queues sentinel microtask **M2**.
+3. The shipped adapter calls the thenable's `then` inline during registration in
+   M1, so the thenable observes both callable handlers and sets its marker.
+4. M2 records that marker as true.
+5. A counterfactual adapter that deferred `meth_call promise "then"` from M1
+   would enqueue attachment as **M3**, behind M2; M2 would record false and the
+   final assertion would fail.
+
+The test additionally asserts the marker is false immediately after
+`Runtime.run`, validating the scheduler premise rather than assuming it.
+
+### V-DX-E30-021 — Executable and registry result
+
+Named test:
+
+```text
+eta_js from_js_promise attaches handlers in runtime body turn
+```
+
+Observed: immediate marker `false`; sentinel observation `Some true`; final Eta
+result `Ok 21`. The test passes under Node CPS.
+
+R116 now points only to this temporal test and the exact scheduler source. R117
+continues to point to the separate dual-order adversarial thenable test; first
+settlement and attachment timing are no longer conflated. Shifted pointers for
+R118–R126 were refreshed without changing their claims or totals.
+
+### V-DX-E30-022 — Follow-up 3 gates
+
+| Command | Result |
+| --- | --- |
+| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force` | PASS |
+| `nix develop -c dune build @install` | PASS |
+| `nix develop -c dune runtest --force` | PASS |
+| `nix develop -c eta-oxcaml-test-shipped` | PASS |
+
+The full mainline install, isolated `eta_http_js` package build, and HTTP suite
+are unaffected: this round changes only the Node test and registry pointers.
+
+### V-DX-E30-023 — Final recommendation
+
+**PROMOTE.** R116 now has a named executable that fails under deferred
+attachment and passes only when both handlers attach in the runtime body's
+registration turn. The public claim remains unchanged because it is now proven
+at the required discriminating observation boundary. All requested round-3
+gates pass.
