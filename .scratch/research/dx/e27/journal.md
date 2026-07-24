@@ -68,3 +68,21 @@ shared baseline.
 
 Recommendation prediction: **PROMOTE** if the named laws, allocation
 measurement, red-team probes, and all five Nix gates pass.
+
+## Evidence (post-seal)
+
+The compiler accepted the predicted encoding unchanged. `Format.kdprintf`
+captures the delayed printer and `Format.asprintf "%t"` invokes it inside the
+runtime admission branch. The six named laws pass on the shared Eio suite and
+are registered as R112–R115 in the E22 executable-law registry.
+
+The disabled allocation prediction passed exactly: filtered `log` and filtered
+`logf` both measured 2,097,146 minor words/100k. The enabled-delta range
+prediction failed: enabled `logf` measured 28,311,400 minor words/100k, a delta
+of 26,214,254 or 262.14254 words/emission. The raw result is preserved in
+`measurement/runtime-watchlist.txt`; the extra allocation is enabled-only
+`Format` work and does not weaken the disabled-path claim.
+
+All five required Nix gates passed. Red-team attacks passed, census matched
+the seal, and no undisclosed footgun emerged. Detailed evidence and the
+promotion recommendation are in `report.md`.

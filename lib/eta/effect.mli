@@ -997,6 +997,16 @@ val log :
     scoped {!with_minimum_log_level}, when one is active, are dropped before
     reaching the logger. *)
 
+val logf :
+  ?level:Capabilities.log_level ->
+  ?attrs:(string * string) list ->
+  ('a, Format.formatter, unit, (unit, 'err) t) format4 ->
+  'a
+(** Formatted {!log}; formatting runs once only after runtime level admission.
+    Arguments are eager: [logf "len %d" (Queue.length q)] evaluates the length
+    when built. Attributes and intercepts follow [log]; [Drop] occurs after
+    formatting. A raising printer becomes a defect through ordinary capture. *)
+
 val log_trace :
   ?attrs:(string * string) list -> string -> (unit, 'err) t
 (** Emit a structured log record at [Trace] level. *)

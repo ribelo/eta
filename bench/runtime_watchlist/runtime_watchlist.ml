@@ -16,6 +16,11 @@
      - overhead.eta.log.100k.identity_intercept
      - overhead.eta.log.100k.replace_intercept
 
+   DX-E27 adds deferred-format comparison rows:
+     - overhead.eta.log.100k.minimum_filtered
+     - overhead.eta.logf.100k.minimum_filtered
+     - overhead.eta.logf.100k.enabled
+
    Composite score is normalized against the v2 ship baselines so each
    contribution starts at 1.0. Lower is better. Use the @watchlist-bench alias
    for a small focused run while optimizing these rows. *)
@@ -62,6 +67,14 @@ let eta_fail_catch_loop n =
 
 let eta_log_loop n =
   let emit = Effect.log "watchlist" in
+  let rec build i acc =
+    if i = 0 then acc
+    else build (i - 1) (Effect.bind (fun () -> acc) emit)
+  in
+  build n Effect.unit
+
+let eta_logf_loop n =
+  let emit = Effect.logf ~level:Capabilities.Debug "watchlist %d" one in
   let rec build i acc =
     if i = 0 then acc
     else build (i - 1) (Effect.bind (fun () -> acc) emit)
@@ -115,6 +128,13 @@ let overhead_workloads rt =
   let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
   let eta_fail = eta_fail_catch_loop fail_n in
   let eta_logs = eta_log_loop log_n in
+  let eta_logs_filtered =
+    Effect.with_minimum_log_level Capabilities.Warn eta_logs
+  in
+  let eta_logfs = eta_logf_loop log_n in
+  let eta_logfs_filtered =
+    Effect.with_minimum_log_level Capabilities.Warn eta_logfs
+  in
   let eta_logs_intercepted =
     Effect.intercept_log (fun _record -> Effect.Keep) eta_logs
   in
@@ -131,6 +151,12 @@ let overhead_workloads rt =
         run_eta_int rt eta_fail);
     workload "overhead.eta.log.100k.no_intercept" (fun () ->
         run_eta_unit rt eta_logs);
+    workload "overhead.eta.log.100k.minimum_filtered" (fun () ->
+        run_eta_unit rt eta_logs_filtered);
+    workload "overhead.eta.logf.100k.minimum_filtered" (fun () ->
+        run_eta_unit rt eta_logfs_filtered);
+    workload "overhead.eta.logf.100k.enabled" (fun () ->
+        run_eta_unit rt eta_logfs);
     workload "overhead.eta.log.100k.identity_intercept" (fun () ->
         run_eta_unit rt eta_logs_intercepted);
     workload "overhead.eta.log.100k.replace_intercept" (fun () ->
