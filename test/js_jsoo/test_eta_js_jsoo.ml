@@ -365,6 +365,11 @@ let adversarial_thenable ~fulfill_first ~value ~reason ~handlers_seen =
   in
   Unsafe.obj [| ("then", Unsafe.inject then_) |]
 
+let queue_microtask f =
+  ignore
+    (Unsafe.fun_call (Unsafe.js_expr "queueMicrotask")
+       [| Unsafe.inject (Js.wrap_callback f) |])
+
 let test_from_js_promise_pending_resolves_after_registration done_ =
   let promise, js_resolve, _js_reject = deferred_promise () in
   let eff =
@@ -478,6 +483,31 @@ let test_from_js_promise_adversarial_thenable_first_settlement_wins done_ =
                 rejected_first)
              ~on_result:(finish done_ check_rejected))
          check_fulfilled)
+
+let test_from_js_promise_attaches_handlers_in_runtime_body_turn done_ =
+  let handlers_seen = ref false in
+  let handlers_seen_by_sentinel = ref None in
+  let thenable =
+    adversarial_thenable ~fulfill_first:true ~value:21
+      ~reason:(Js.string "late rejection") ~handlers_seen
+  in
+  run
+    (Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) thenable)
+    ~on_result:
+      (finish done_ (fun result ->
+           expect_ok_int "from_js_promise attach turn" 21 result;
+           match !handlers_seen_by_sentinel with
+           | Some true -> ()
+           | Some false ->
+               fail_test
+                 "from_js_promise attach turn: attachment was deferred"
+           | None ->
+               fail_test
+                 "from_js_promise attach turn: result beat sentinel"));
+  if !handlers_seen then
+    fail_test "from_js_promise attach turn: runtime body ran inline";
+  queue_microtask (fun () ->
+      handlers_seen_by_sentinel := Some !handlers_seen)
 
 let test_from_js_promise_interrupt_detaches done_ =
   let promise, js_resolve, _js_reject = deferred_promise () in
@@ -612,6 +642,8 @@ let tests =
       test_from_js_promise_raising_mapper_dies );
     ( "eta_js from_js_promise adversarial thenable first settlement wins",
       test_from_js_promise_adversarial_thenable_first_settlement_wins );
+    ( "eta_js from_js_promise attaches handlers in runtime body turn",
+      test_from_js_promise_attaches_handlers_in_runtime_body_turn );
     ( "eta_js from_js_promise interrupt detaches",
       test_from_js_promise_interrupt_detaches );
     ( "eta_js from_js_promise late rejection skips mapper",
