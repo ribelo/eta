@@ -220,3 +220,26 @@ will pass in addition to all five original gates and focused `test/js_jsoo
  test/http_js`. The likely risk is package-source pin ordering rather than code:
 `eta_js` must be present in the mainline pin set before Dune builds
 `eta_http_js`; `eta_jsoo` remains pinned because `eta_js` depends on it.
+
+## Follow-up 3 note — R116 discriminator (2026-07-24)
+
+**Choice: Option A.2, microtask-ordering sentinel.**
+
+Option A.1 is incompatible with the actual substrate: `run_eta_jsoo` queues the
+runtime body through `schedule` (`lib/jsoo/eta_jsoo.ml:755-772`), and under Node
+`schedule` is `queueMicrotask` (`lib/jsoo/eta_jsoo.ml:31-45`). Therefore the
+thenable's marker is correctly unset when `Runtime.run` returns to its caller;
+the runtime body has not executed yet.
+
+Option A.2 discriminates. Calling `Runtime.run` queues body microtask **M1**.
+The test then queues sentinel microtask **M2** before yielding to the host. With
+the shipped adapter, M1 calls the thenable's `then` inline during registration,
+so the attach marker is set before M2 observes it. A counterfactual adapter that
+queued `meth_call promise "then"` from M1 would enqueue attachment as **M3**,
+behind the already-queued M2; the sentinel would record `false`, and the named
+test would fail when the Eta result arrives.
+
+Prediction: the immediate post-`Runtime.run` marker is false (confirming deferred
+runtime-body scheduling), the M2 observation is true (proving attachment within
+M1), and the effect succeeds afterward. R116 will point only to this temporal
+observation; R117 remains on the dual-order adversarial thenable test.
