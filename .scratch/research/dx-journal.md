@@ -3919,3 +3919,43 @@ three follow-ups archived under `.scratch/research/objectives/`.
 **Follow-ups.** F-series unchanged. New watch: `from_js_promise` usage
 frequency in future JS code (candidate sugar/tracing trigger per the
 programme's frequency rule).
+
+---
+
+## V-DX-E28-001 — 2026-07-24 — research/dx-e28-all-vs-map-par — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Audit experiment: the deliverable is a
+decision with evidence, not an API change. Scored at V-DX-E28-002.
+
+**Measured pre-state (verified by orchestrator).** `all` fans out via
+`par_collect` over `List.map` — one fiber per effect, NO bound.
+`map_par` uses the worker pool, default cap 8. So today two public
+combinators differ in concurrency limit, and `all`'s mli says nothing
+about bounds. Usage: `Effect.all` 79 call lines, `map_par` 94.
+
+**Predictions.**
+- Origin: the bound difference is *accidental* — `all` predates the
+  worker-pool optimization that gave `for_each_par`→`map_par` its cap;
+  no commit will show `all`'s unboundedness as a deliberate design act.
+- Census outcome: >80% of `Effect.all` call sites pass small literal
+  lists (≤ 5 elements); `map_par` sites map collections; at most a
+  handful of pathological cases (large/dynamic list into `all`, or
+  2–3-element literal mapping into `map_par`).
+- Decision (predicted): **differentiate, keep both** — `all` = a known
+  handful of ready effects (unbounded by design; small n);
+  `map_par` = mapping a collection (bounded, default 8). No val deleted.
+  The `all` mli gains the bound sentence and the "which one" rule;
+  `docs/api-dx.md` concurrency section gets the one-obvious-way table.
+  Merge is rejected: `Promise.all` shape is the ecosystem's name for
+  ready-effects fan-out (same culture that kept `all_settled`), and
+  `map_par Fun.id` is not a spelling anyone should have to write.
+- Kill/escalate trigger (pre-registered): census finds `all` called with
+  large or dynamic lists in real (non-test) code — evidence that the
+  unbounded form is a live fork-bomb footgun → the audit escalates to
+  design options (bound `all` semantically, or merge) instead of docs.
+- Census: +0 vals; footguns −1 ("which do I reach for" ambiguity
+  contracted away) or +0 if steering already suffices.
+- Gates: native trio + mainline js suites stay green (docs-only delta
+  expected); review: PR-style oracle finds the contract crisp or names
+  why not.
+- Outcome: promote (as audit + docs).
