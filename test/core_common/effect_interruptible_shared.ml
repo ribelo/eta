@@ -32,25 +32,36 @@ module Make (B : Backend) = struct
       let* () = Effect.yield in
       wait_until ~attempts:(attempts - 1) label predicate
 
-  let install_cancel_handle slot eff =
+  let install_cancel_handle ?(reason = Exit) slot eff =
     Effect.Expert.make ~capabilities:[ `Concurrency ] ~inherit_:eff
       ~leaf_name:"test.interruptible.cancel-handle" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
-    slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context Exit);
+    slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
     Effect.Expert.eval context eff
 
-  let nested_eval_with_cancel_handle slot eff =
+  let nested_eval_with_cancel_handle ?(reason = Exit) slot eff =
     Effect.Expert.make ~capabilities:[ `Concurrency ]
       ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
-    slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context Exit);
+    slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
     Effect.Expert.eval context eff
 
   let call_cancel = function
     | Some cancel -> cancel ()
     | None -> B.fail "Effect.interruptible test cancel handle was not installed"
+
+  let never_observing_cancellation_reason blocked observed_reason =
+    Effect.Expert.make ~capabilities:[ `Concurrency ]
+      ~leaf_name:"test.interruptible.observe-cancellation-reason"
+    @@ fun context ->
+    let contract = Effect.Expert.contract context in
+    let promise, _resolver = contract.Runtime_contract.create_promise () in
+    blocked := true;
+    try contract.Runtime_contract.await_promise promise with exn ->
+      observed_reason := contract.Runtime_contract.cancellation_reason exn;
+      raise exn
 
   let expect_interrupt = function
     | Exit.Error (Cause.Interrupt _) -> ()
@@ -307,12 +318,12 @@ module Make (B : Backend) = struct
   let test_competing_cancellation_sources_deliver_once done_ =
     let outer_cancel_handle = ref None in
     let inner_cancel_handle = ref None in
+    let outer_reason = Failure "interruptible outer cancellation" in
+    let inner_reason = Failure "interruptible inner cancellation" in
+    let observed_reason = ref None in
     let blocked = ref false in
     let finalizer_calls = ref 0 in
-    let restored =
-      let* () = Effect.sync (fun () -> blocked := true) in
-      Effect.never
-    in
+    let restored = never_observing_cancellation_reason blocked observed_reason in
     let target_body =
       Effect.finally
         (Effect.sync (fun () -> incr finalizer_calls))
@@ -320,18 +331,24 @@ module Make (B : Backend) = struct
       |> Effect.uninterruptible
     in
     let target =
-      install_cancel_handle outer_cancel_handle
-        (install_cancel_handle inner_cancel_handle (Effect.to_exit target_body))
+      install_cancel_handle ~reason:outer_reason outer_cancel_handle
+        (install_cancel_handle ~reason:inner_reason inner_cancel_handle
+           (Effect.to_exit target_body))
     in
     let controller =
       let* () = wait_until "competing-cancel block" (fun () -> !blocked) in
-      Effect.par
-        (Effect.sync (fun () -> call_cancel !outer_cancel_handle))
-        (Effect.sync (fun () -> call_cancel !inner_cancel_handle))
-      |> Effect.discard
+      Effect.sync (fun () ->
+          call_cancel !inner_cancel_handle;
+          call_cancel !outer_cancel_handle)
     in
     run done_ (Effect.par target controller) (fun result ->
         expect_target_interrupt result;
+        (match !observed_reason with
+        | Some reason when reason == inner_reason -> ()
+        | Some reason ->
+          failf "competing cancellation observed later reason %s"
+            (Printexc.to_string reason)
+        | None -> B.fail "competing cancellation observed no reason");
         if !finalizer_calls <> 1 then
           failf "competing cancellation ran finalizer %d times" !finalizer_calls)
 
@@ -575,34 +592,41 @@ module Make (B : Backend) = struct
     in
     run done_ (Effect.par target controller) expect_target_interrupt
 
-  let test_signal_timer_shape_listens_to_both_sources_once done_ =
+  let test_signal_timer_shape_first_cancellation_call_wins_once done_ =
     let parent_cancel_handle = ref None in
     let descendant_cancel_handle = ref None in
+    let parent_reason = Failure "interruptible parent cancellation" in
+    let descendant_reason = Failure "interruptible descendant cancellation" in
+    let observed_reason = ref None in
     let blocked = ref false in
     let finalizer_calls = ref 0 in
-    let restored =
-      let* () = Effect.sync (fun () -> blocked := true) in
-      Effect.never
-    in
+    let restored = never_observing_cancellation_reason blocked observed_reason in
     let target_body =
       Effect.uninterruptible
-        (nested_eval_with_cancel_handle descendant_cancel_handle
+        (nested_eval_with_cancel_handle ~reason:descendant_reason
+           descendant_cancel_handle
            (Effect.finally
               (Effect.sync (fun () -> incr finalizer_calls))
               (Effect.interruptible restored)))
     in
     let target =
-      install_cancel_handle parent_cancel_handle (Effect.to_exit target_body)
+      install_cancel_handle ~reason:parent_reason parent_cancel_handle
+        (Effect.to_exit target_body)
     in
     let controller =
       let* () = wait_until "signal-timer restored block" (fun () -> !blocked) in
-      Effect.par
-        (Effect.sync (fun () -> call_cancel !parent_cancel_handle))
-        (Effect.sync (fun () -> call_cancel !descendant_cancel_handle))
-      |> Effect.discard
+      Effect.sync (fun () ->
+          call_cancel !descendant_cancel_handle;
+          call_cancel !parent_cancel_handle)
     in
     run done_ (Effect.par target controller) (fun result ->
         expect_target_interrupt result;
+        (match !observed_reason with
+        | Some reason when reason == descendant_reason -> ()
+        | Some reason ->
+          failf "signal-timer observed later cancellation reason %s"
+            (Printexc.to_string reason)
+        | None -> B.fail "signal-timer observed no cancellation reason");
         if !finalizer_calls <> 1 then
           failf "signal-timer cancellation ran finalizer %d times"
             !finalizer_calls)
@@ -626,7 +650,7 @@ module Make (B : Backend) = struct
         test_mask_stack_law_inner_uninterruptible_wins );
       ( "interruptible nested mask innermost restore wins",
         test_nested_mask_innermost_restore_wins );
-      ( "interruptible competing cancellation sources deliver once",
+      ( "interruptible first cancellation call wins and delivers once",
         test_competing_cancellation_sources_deliver_once );
       ( "interruptible is forbidden in finalizers",
         test_finalizer_cannot_restore_enclosing_mask );
@@ -644,7 +668,7 @@ module Make (B : Backend) = struct
         test_descendant_cancellation_wakes_restored_block );
       ( "interruptible mask-parent cancellation crosses descendant context",
         test_mask_parent_cancellation_crosses_descendant_context );
-      ( "interruptible signal-timer shape listens to both sources once",
-        test_signal_timer_shape_listens_to_both_sources_once );
+      ( "interruptible signal-timer first cancellation call wins once",
+        test_signal_timer_shape_first_cancellation_call_wins_once );
     ]
 end

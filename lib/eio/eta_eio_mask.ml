@@ -2,10 +2,11 @@
 
     This is Eta's single implementation-file dependency on the hidden
     [Eio__core__Switch] and [Eio__core__Cancel] modules. [run_in] moves the
-    current fiber into the mask-entry switch context without forking. A scoped
-    relay forwards cancellation of the entry-time current context to that
-    switch. Eio is pinned by this repository; an upgrade must revalidate this
-    module against [Switch.run_in], [Switch.cancel], and [Cancel.cancel]. *)
+    current fiber into the mask-entry switch context without forking. A
+    synthetic fiber context forwards cancellation of the entry-time current
+    context synchronously to that switch. Eio is pinned by this repository; an
+    upgrade must revalidate this module against [Switch.run_in], [Switch.cancel],
+    [Cancel.cancel], and [Cancel.Fiber_context]. *)
 
 type 'a outcome =
   | Returned of 'a
@@ -20,17 +21,22 @@ let unwrap = function
   | Returned value -> value
   | Raised (exn, bt) -> Printexc.raise_with_backtrace exn bt
 
-let with_entry_cancel_relay restore_switch f =
-  Eio.Switch.run ~name:"eta.interruptible.restore-relay" @@ fun relay_switch ->
-  let active = ref true in
-  Eio.Fiber.fork_daemon ~sw:relay_switch (fun () ->
-      try Eio.Fiber.await_cancel () with
+let with_entry_cancel_observer restore_switch f =
+  Eio.Fiber.check ();
+  let current = Effect.perform Eio__core__Cancel.Get_context in
+  let observer =
+    Eio__core__Cancel.Fiber_context.make
+      ~cc:(Eio__core__Cancel.Fiber_context.cancellation_context current)
+      ~vars:(Eio__core__Cancel.Fiber_context.get_vars ())
+  in
+  Eio__core__Cancel.Fiber_context.set_cancel_fn observer (fun exn ->
+      match exn with
       | Eio.Cancel.Cancelled reason ->
-        if !active then
-          Eio__core__Cancel.cancel restore_switch.Eio__core__Switch.cancel
-            reason;
-        `Stop_daemon);
-  Fun.protect ~finally:(fun () -> active := false) (fun () -> f relay_switch)
+        Eio__core__Cancel.cancel restore_switch.Eio__core__Switch.cancel reason
+      | _ -> assert false);
+  Fun.protect
+    ~finally:(fun () -> Eio__core__Cancel.Fiber_context.destroy observer)
+    f
 
 let restore switch f =
   let outcome = ref None in
@@ -45,11 +51,8 @@ let restore switch f =
              value))
   in
   (match
-     with_entry_cancel_relay switch (fun relay_switch ->
-         Eio__core__Switch.run_in switch run;
-         match !outcome with
-         | Some (Returned _) -> Eio.Switch.check relay_switch
-         | Some (Raised _) | None -> ())
+     with_entry_cancel_observer switch (fun () ->
+         Eio__core__Switch.run_in switch run)
    with
   | () -> ()
   | exception exn ->
