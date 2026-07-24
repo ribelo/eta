@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E27 — `Effect.logf` (deferred-format logging; human pre-approved)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e27`
-  - Branch: `research/dx-e27-logf`
-  - Stage: predictions sealed (V-DX-E27-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (queued candidates): **E27 promoted** (`logf`; format4 pitch
+  rejected on evidence → closure API; deferral complete + measured)
 - Done (Phase E, cont.): **E15 promoted** (`interruptible`; kill →
   kill-rejected → 4 review rounds → shipped; deepest experiment yet)
 - Done (Phase E, cont.): **E24d promoted** (retry aligned to the shared
@@ -53,7 +52,7 @@ loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **E27** logf (human pre-approved) → **E30** from_js_promise (human pre-approved) → E28 → E29 → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
+- Queue: **E30** from_js_promise (human pre-approved) → E28 (all-vs-map_par audit) → E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -80,4 +79,4 @@ loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-24 — E27 staged
+- Last update: 2026-07-24 — E27 promoted

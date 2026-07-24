@@ -350,7 +350,7 @@ evidence; every hold names its re-entry trigger.
   PR-style by fresh oracles; 14 fix commits; E7b/E19b reworks; the
   blind-snippet review protocol retired (V-DX-AMEND-3) in favor of
   PR-style correctness reviews + orchestrator taste assessment.
-- **Scoreboard:** 20 promoted · 7 killed cleanly (E3, E6-helpers,
+- **Scoreboard:** 22 promoted · 7 killed cleanly (E3, E6-helpers,
   `let%eta`, E11-finalizer_events, E12-manifest, E20-option-repr,
   sync_option-then-human-promoted) · 4 held (E9, E10-trace-trigger,
   Schedule-slimming→E24b, Async-migration) · 2 flips on review (E24b,

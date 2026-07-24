@@ -3746,3 +3746,60 @@ of that gate; composition is automatic.
 - Review: `logf "db.find %d" id` vs `log (sprintf "db.find %d" id)` —
   5 vs 3 (the idiom reads itself).
 - Outcome: promote. Risk low.
+
+---
+
+## V-DX-E27-002 — 2026-07-24 — research/dx-e27-logf — phase: results + decision
+
+**Shipped:** `Effect.logf : ?level -> ?attrs -> (Format.formatter -> unit)
+-> (unit, 'err) t` — deferred-format logging. The closure runs once per
+admitted interpretation, gated by runtime logging-enabled + scoped
+`with_minimum_log_level`; work AND arguments inside it are deferred;
+retention disclosed; composition through attrs/intercepts/sink per `log`;
+a raising printer is a defect via ordinary capture.
+
+**The shape flipped on evidence.** The sealed pitch was the Logs format4
+idiom (`logf "db.find %d" id`). The first implementation used
+`Format.kdprintf` — and the review proved its deferral partial:
+`CamlinternalFormat.make_printf` converts `%d`/`%f`/`%S`/padding EAGERLY
+at construction (million-width probe: ~1 MB before the printer ran);
+only `%a`/`%t` and output assembly are delayed. Worse, the evidence suite
+couldn't see it (benchmark reused one blueprint; invocation tests only
+used `%a`). Redesigned to the closure API: the deferral is syntactically
+visible (T2), complete (args inside deferred too), one contract sentence
+(T8), and composes with the E7 `pp` culture (`logf pp_db_find`). The
+rejected narrowed format4 mli text is preserved in the journal with
+reasons.
+
+**Review arc.** Round 1 (fresh oracle): INCORRECT — HIGH deferral
+partial + HIGH evidence blind spot + MEDIUM retention + LOW LAWS totals.
+Rework (closure API + per-emission measurement + `%d/%a/%t` invocation
+tests). Round 2: CORRECT-WITH-RESERVATIONS — HIGH closed, deferral
+complete and probed, retention disclosed AND weak-ref tested; two LOW
+precision items (mli: "once per admitted interpretation" + name the
+actual gate, since logger-owned filters run later and cannot suppress
+formatting; redteam count 596→598) — folded into the merge as
+orchestrator curation. Executor process note: one protocol hiccup
+(misread the orchestrator's inherited master sealing as a violation;
+stopped instead of guessing — disciplined; followup clarified;
+objective template updated).
+
+**Measured (E20's law):** filtered `logf` == filtered prebuilt
+construction exactly (2,097,146 → 5,242,866 minor words/100k after the
+redesign's corrected methodology); `%1000000d` adversarial case matches
+filtered construction — the deferral is real. Enabled formats once.
+
+**Prediction scoring (orchestrator, V-DX-E27-001).** Hits: deferred
+semantics with instrumented proof (landed across %d/%a/%t); allocation
+claim MEASURED; composition/Drop-after-format; raising printer →
+defect; eventf out of scope; census +1; promote (pre-approved). Misses,
+the important one: **the sealed format4 use-site shape and the "deferred
+formatting" claim** — falsified by the probe; the closure is the honest
+shape and my pitch was wrong. Also: the eager-args caveat became a
+STRONGER property than predicted (closure defers args inside).
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; objectives archived. Human pre-approval recorded; the
+shape change vs. the approved pitch reported with the veto window.
+
+**Next:** E30 (`Eta_js.from_js_promise`, human pre-approved).

@@ -1589,6 +1589,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E15 | interruptible / restore | E | M | high | **promoted** 2026-07-24 | | research/dx-e15-interruptible | V-DX-E15-001..002 |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
 | E21 | Resumable probe (.scratch) | E | S | contained | proposed (expected kill) | | | |
+| E27 | Deferred-format logging (logf) | E | S | low | **promoted** 2026-07-24 | | research/dx-e27-logf | V-DX-E27-001..002 |
 | E17 | Capability phantom rows | E | L | high | proposed (gated) | | | |
 | E18 | Simulation testing | E | L | med | proposed | | | |
 
