@@ -246,7 +246,8 @@ val interruptible : ('a, 'err) t -> ('a, 'err) t
     this is identity. Pending interruption is delivered at entry, at successful
     exit, or by a cancellation checkpoint in the wrapped eff, at most once.
     Restoration listens to both the mask-entry parent and the entry-time current
-    cancellation context; the first cancellation wins.
+    cancellation context. When they compete, the reason from the first
+    cancellation call executed wins.
 
     Finalizers and [finally] stay protected. Restoration is fiber-local;
     children forked inside a mask remain masked. *)

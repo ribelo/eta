@@ -14,8 +14,9 @@ Follow-up 2 then invalidated the first implementation: its restore binding was
 fork-inherited even though the closure belonged only to the masking fiber. The
 corrected implementation made all restoration state fiber-local. Follow-up 3
 found that `run_in` alone bypassed a same-fiber descendant cancellation context;
-the native adapter now supplements the exact restore with a scoped relay that
-observes that entry-time context.
+the native adapter supplemented the exact restore with a scoped relay. Follow-up
+4 found that asynchronous forwarding did not preserve cancellation-call order;
+the adapter now uses a synchronous Eio cancellation-function observer.
 
 The implementation now meets the one-pager gates:
 
@@ -30,7 +31,8 @@ The implementation now meets the one-pager gates:
 - masks cover children, restoration is fiber-local, and structured fail-fast
   remains prompt;
 - restoration listens to both the mask-entry parent and the same-fiber
-  entry-time current context, with one winning delivery;
+  entry-time current context; the first cancellation call executed supplies the
+  winning reason and delivery occurs once;
 - Signal lane re-entry depth is fiber-local, so a fork cannot bypass admission.
 
 ## V-DX-E15-006 — Phase 0 substrate truth and correction
@@ -81,8 +83,10 @@ C → R → P → S
 
 Here `S` is a same-fiber `cancel_sub` created inside the protected body. Moving
 the restored fiber from `S` to `R` made direct cancellation of `S` invisible.
-The corrected native adapter leaves a scoped observer under `S` while the
-calling fiber runs in `R`, so cancellation from either source remains visible.
+The corrected native adapter leaves a synthetic fiber context under `S` while
+the calling fiber runs in `R`, so cancellation from either source remains
+visible and descendant forwarding runs synchronously during Eio's cancellation
+tree walk.
 
 ## V-DX-E15-007 — Contract and checkpoint documentation
 
@@ -123,7 +127,8 @@ The shared dynamic model is:
 - `interruptible` invokes that fiber's nearest restoration and marks the dynamic
   region restored, so repeated `interruptible` is identity;
 - restoration listens to cancellation from the mask-entry parent and from the
-  same-fiber current context at restore entry; the first cancellation wins;
+  same-fiber current context at restore entry; the first cancellation call
+  executed supplies the winning reason;
 - a forked child inherits mask state but no restoration state, so its
   `interruptible` is identity;
 - direct failure of the child's own structured scope remains interruptible and
@@ -134,13 +139,24 @@ The shared dynamic model is:
 
 Native Eio creates `R` before entering `Cancel.protect`. Its private adapter is
 the only repository implementation file that names the hidden Eio switch and
-cancellation modules. At restore entry it creates a scoped daemon under the
-current context `S`, then captures callback values or exceptions plus raw
-backtraces across the unit-returning same-fiber move to `R`. Cancellation of
-`S` wakes the daemon and idempotently cancels `R`; cancellation of `R` reaches
-the calling fiber directly. The adapter checks the relay after successful work
-to close the teardown race. Eio is pinned by the repository; upgrades must
-revalidate these internal dependencies.
+cancellation modules. At restore entry it creates a synthetic fiber context
+under `S` and installs a cancel function, then captures callback values or
+exceptions plus raw backtraces across the unit-returning same-fiber move to `R`.
+Eio invokes that function synchronously during `Cancel.cancel`'s tree walk, so
+cancellation of `S` cancels `R` before the first cancellation call returns;
+cancellation of `R` reaches the calling fiber directly. Observer destruction is
+non-suspending. Eio is pinned by the repository; upgrades must revalidate these
+internal dependencies.
+
+The full native per-restore path performs an entry check; creates one synthetic
+fiber context (trace id plus one cancellation-list node); installs one cancel
+function; moves the calling fiber into `R` and back with `run_in`; checks the
+successful body exit; and synchronously removes the observer node. The
+mask-entry switch is paid once per mask, not per restore. Restoration no longer
+allocates a relay switch or daemon and has no shutdown scheduling cycle. The
+committed throughput probe measured 1.82–1.84 million successful
+restorations/second across five 100,000-iteration runs in the OxCaml Nix shell.
+This is a watchlist measurement, not a performance guarantee.
 
 The jsoo backend saves the current `fiber_protect_depth`, sets it to zero,
 checks cancellation, runs the callback, checks successful exit, and restores
@@ -150,7 +166,7 @@ its own structured scope, matching native `Q` fail-fast without treating
 ancestor cancellation as interruptible. Internal cleanup protection disables
 that scope-failure path while joining children. Because the same jsoo fiber
 remains in `S`, its existing cancellation subscription already listens to both
-sources; no jsoo relay is needed.
+sources; no jsoo observer is needed.
 
 ## V-DX-E15-009 — Finalizer answer
 
@@ -184,13 +200,13 @@ runtime-local inheritance contract.
 | Restored checkpoint/block is woken | `interruptible cancel at restored checkpoint is delivered`; `interruptible cancel during restored block wakes waiter` | PASS | PASS |
 | Successful-exit edge is checked | `interruptible cancel between restore and exit hits successful boundary` | PASS | PASS |
 | Entry races lose no wakeup | `interruptible generated cancel-mask-entry races lose no wakeup` | PASS | PASS |
-| Delivery is at most once | `interruptible competing cancellation sources deliver once` | PASS | PASS |
+| First cancellation call wins once | `interruptible first cancellation call wins and delivers once` | PASS | PASS |
 | Finalizers cannot restore | `interruptible is forbidden in finalizers`; `interruptible is forbidden in registered finalizers` | PASS | PASS |
 | Mask covers forked children | `cancellation mask covers forked children` | PASS | PASS |
 | Forked child preserves fail-fast | `forked interruptible child preserves fail-fast` | PASS | PASS |
 | Daemons discard restoration state | `daemon drops restore binding after mask`; `daemon drops cleanup-forbidden binding` | PASS | PASS |
 | Local inheritance kinds are distinct | `runtime contract local inheritance kinds` | PASS | PASS |
-| Restore listens to both same-fiber contexts | `interruptible descendant cancellation wakes restored block`; `interruptible mask-parent cancellation crosses descendant context`; `interruptible signal-timer shape listens to both sources once` | PASS | PASS |
+| Restore listens to both same-fiber contexts | `interruptible descendant cancellation wakes restored block`; `interruptible mask-parent cancellation crosses descendant context`; `interruptible signal-timer first cancellation call wins once` | PASS | PASS |
 
 The two QCheck properties execute both sides of each equation for generated
 finite success/failure effect blueprints. Cancellation discrimination and all
@@ -206,16 +222,18 @@ race-sensitive claims use the same shared test definitions on both backends.
 | Cancel during restored block | Cancel an unresolved restored promise wait | Wait wakes and raises |
 | Nested masks | Cancel an exact synthetic context enclosing the inner mask | Innermost restore wakes; outer model remains intact |
 | Cancel between restore and exit | Cancel synchronously in the restored tail | Successful-exit check raises |
-| Competing cancellation | Race distinct outer and inner cancellation contexts | One interrupt cause; finalizer runs once |
+| Competing cancellation | Cancel with distinguishable inner then outer reasons in consecutive calls | Inner reason wins; one interrupt cause; finalizer runs once |
 | Forked child fail-fast | Race masked `interruptible never` against a failing sibling | Prompt `Fail Boom`; child is interrupted through its own scope |
 | Same-fiber descendant cancellation | Create `cancel_sub` inside the mask, nested-eval a restored block, then cancel the descendant | Prompt interruption; no hang |
 | Mask-parent through descendant topology | Use the same `C → R → P → S` shape, then cancel above `R` | Prompt interruption; original restore purpose preserved |
-| Signal-timer competition | Race parent and descendant cancellation around `cancel_sub` + nested `Expert.eval` | One interrupt cause; finalizer runs once |
+| Signal-timer competition | Cancel descendant then parent with distinguishable reasons around `cancel_sub` + nested `Expert.eval` | Descendant reason wins; one interrupt cause; finalizer runs once |
 
 The runtime contract is same-domain except for explicitly designated wakeups.
-After the successful-exit check, neither backend has a suspension point before
-restoring the protected state, so same-domain cancellation cannot interleave in
-that final interval.
+The Follow-up 3 daemon implementation suspended while its relay switch shut down,
+so the earlier report's blanket no-suspension statement was imprecise. The
+Follow-up 4 observer removes that switch and daemon: neither backend now has a
+suspension point across the successful body check, `run_in` move back, observer
+removal, and return from the restored dynamic region.
 
 ## V-DX-E15-012 — Red-team outcomes
 
@@ -223,7 +241,8 @@ that final interval.
 | --- | --- |
 | `protect` plus descendant `cancel_sub` as restoration | Refused; the Phase 0 probe proves that it cannot observe the mask-entry parent. |
 | Scope/fork cancellation relay as a replacement for exact restore | Refused; it loses exact synthetic-parent cancellation and changes fiber identity. |
-| `run_in R` bypasses same-fiber descendant `S` | Reproduced as a native deadlock, then refused by a scoped `S → R` relay supplementing exact restore. |
+| `run_in R` bypasses same-fiber descendant `S` | Reproduced as a native deadlock, then refused by an `S → R` observer supplementing exact restore. |
+| Async `S → R` relay loses cancellation-call order | Reproduced with distinguishable reasons: descendant called first, parent reason observed. Replaced by a synchronous Eio cancel-function hook. |
 | Entry/exit snapshots without restoring context | Refused; they cannot wake a blocked native service operation. |
 | Pending cancellation before restore | Delivered by native switch entry and jsoo entry check. |
 | Cancellation during restored synchronous tail | Delivered by both successful-exit checks. |
@@ -233,7 +252,7 @@ that final interval.
 | Fork inherits a parent restore | Reproduced as a native deadlock, then refused by `Fiber_local` binding state. |
 | jsoo child starts at depth zero | Reproduced as premature interruption, then refused by depth inheritance. |
 | Daemon outlives restore/forbidden state | Reproduced as `Switch finished` and masked cancellation, then refused by fork filtering. |
-| Competing sources collapse to one handle | Replaced by distinct outer/inner cancellation contexts; one delivery remains. |
+| Competing sources collapse to one handle | Replaced by distinct contexts and reasons; the first cancellation call executed wins once. |
 | Fork breaks reentrant ownership | No restore fork exists; Signal lane re-entry observes the same fiber ID before, during, and after restoration. |
 | Fork inherits positive Signal lane depth | Reproduced as an admission bypass, then refused by making graph lane depth `Fiber_local`. |
 
@@ -258,6 +277,11 @@ accept-loop-victim: INTERRUPTED
 accept-loop-victim: PASS
 ```
 
+`probes/restore_throughput.ml` is the native hot-loop watchlist. It warms up
+10,000 restorations and times 100,000 successful
+`uninterruptible (interruptible unit)` regions. Five Follow-up 4 runs measured
+1.82–1.84 million restorations/second in the OxCaml Nix shell.
+
 `QUESTIONS.md` answers the review question “inside `uninterruptible`, when can
 this fiber be cancelled?”, documents same-fiber identity and cleanup behavior,
 and points reviewers to the shared suites. `docs/api-dx.md` contains the durable
@@ -276,7 +300,7 @@ identity adversary and the fork-inherited-depth admission adversary.
 | Runtime-local inheritance kinds | 0 | 2 | +2 |
 | Direct QCheck mask properties | 0 | 2 | +2 |
 | Published cancellation-checkpoint sections | 0 | 1 | +1 |
-| Committed probe/review executables | 0 | 3 | +3 |
+| Committed probe/review executables | 0 | 4 | +4 |
 
 The public footgun is explicit: `interruptible` is useful only around genuine
 checkpoints in the same fiber that entered a dynamic mask; it does not make
@@ -301,16 +325,17 @@ Follow-up 1 fork-inheritance error. Sealed prediction scoring remains **8 exact,
 - contradicted: the predicted kill after the search missed Eio's hidden
   same-fiber restore.
 
-The first contradiction remains the missed hidden restore. Follow-ups 2 and 3
-add post-prediction design errors rather than changing that sealed score:
-same-fiber restore was incorrectly assumed safe to fork-inherit, then `run_in`
-was incorrectly assumed to retain cancellation of a same-fiber descendant
-context. The corrected model makes ownership and both cancellation sources
-explicit and tests the invalidating constructions.
+The first contradiction remains the missed hidden restore. Follow-ups 2–4 add
+post-prediction design errors rather than changing that sealed score: same-fiber
+restore was incorrectly assumed safe to fork-inherit; `run_in` was incorrectly
+assumed to retain cancellation of a same-fiber descendant context; then an
+asynchronous relay was incorrectly claimed to preserve source ordering. The
+corrected model makes ownership, both sources, and cancellation-call ordering
+explicit and tests the invalidating constructions with distinguishable reasons.
 
 ## V-DX-E15-016 — Gates and recommendation
 
-The corrected Follow-up 3 bundle passed every prescribed gate:
+The corrected Follow-up 4 bundle passed every prescribed gate:
 
 | Command | Result |
 | --- | --- |
@@ -323,9 +348,10 @@ The corrected Follow-up 3 bundle passed every prescribed gate:
 Mainline repeated the repository's two existing integer-overflow warnings while
 compiling JS; every requested Node suite reached its completion sentinel. The
 separately built native accept-loop victim also printed `INTERRUPTED` and `PASS`.
-The implementation satisfies the one-pager and all three follow-ups with the
+The implementation satisfies the one-pager and all four follow-ups with the
 model: **masks cover children; restoration is fiber-local; restoration listens
-to the mask-entry parent and the same-fiber entry-time current context**. Signal
-lane depth is also fiber-local.
+to the mask-entry parent and the same-fiber entry-time current context; the
+first cancellation call executed supplies the winning reason**. Signal lane
+depth is also fiber-local.
 
 **E15 READY FOR REVIEW**

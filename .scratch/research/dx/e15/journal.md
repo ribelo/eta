@@ -515,3 +515,109 @@ accept-loop-victim: PASS
 ```
 
 **E15 READY FOR REVIEW**
+
+## Follow-up 4 — cancellation-call ordering and teardown cost
+
+Follow-up 3's asynchronous daemon relay delivered cancellation from both
+contexts, but it did not preserve the ordering sentence it published. If `S`
+was cancelled first and the mask parent second before the daemon ran, the parent
+cancelled `R` directly and its reason became observable.
+
+### Distinguishable-reason reproduction
+
+The signal-timer regression now catches the backend cancellation exception
+inside an `Expert` leaf before Eta intentionally erases its reason into
+`Cause.Interrupt`. It uses distinct descendant and parent `Failure` values and
+executes the two cancellation calls consecutively, descendant first. Before the
+fix, the tight native command was deterministically red:
+
+```text
+nix develop -c timeout 10s dune exec test/core_eio/run.exe -- \
+  test '^Effect interruptible$' 18
+FAIL: signal-timer observed later cancellation reason
+      Failure("interruptible parent cancellation")
+```
+
+The general competing-sources regression now also uses distinct inner and outer
+reasons, calls inner then outer without a yield, and asserts the inner reason in
+addition to one finalizer call.
+
+### Synchronous-hook evidence and resolution
+
+Eio's hidden cancellation machinery supports outcome **(a)**. In the pinned Eio
+source, `Cancel.cancel` first marks the cancellation subtree and snapshots its
+registered fiber contexts, then invokes every registered `cancel_fn` before the
+call returns. `Cancel.Fiber_context.make`, `set_cancel_fn`, and `destroy` provide
+registration and exact non-suspending lifetime management.
+
+At restore entry the native adapter now:
+
+1. checks pending cancellation in the current context `S`;
+2. creates a synthetic fiber context registered under `S`;
+3. installs a cancel function that synchronously cancels `R` with the same
+   reason;
+4. runs the calling fiber in `R` with `run_in`;
+5. destroys the synthetic context on every exit.
+
+The hook must not switch fibers and does not: nested `Cancel.cancel R` marks the
+tree and invokes cancellation functions synchronously. Eio cancellation is
+idempotent, so the reason from the first cancellation call executed is retained.
+The previously red native case and all nineteen shared cases pass; the same
+reason-ordering cases pass on jsoo.
+
+### Teardown and cost correction
+
+The Follow-up 3 report's claim that there was no suspension after the successful
+body check was imprecise for that implementation: `Switch.run` still cancelled
+and joined the daemon during teardown. The synchronous observer removes the
+relay switch, daemon fiber, and shutdown scheduling cycle. Current observer
+removal is a direct cancellation-list-node removal, so there is now no
+suspension between the body check, observer destruction, and restoration of the
+protected context.
+
+Native per-restore cost is one synthetic fiber context (including a trace id and
+one cancellation-list node), one cancel-function installation, and synchronous
+destruction. The committed `restore_throughput.ml` watchlist probe warms up
+10,000 restorations and times 100,000 successful
+`uninterruptible (interruptible unit)` regions. Five runs in the OxCaml Nix
+shell measured:
+
+```text
+1,835,501  1,830,359  1,829,289  1,820,966  1,844,850 restorations/second
+```
+
+Observed range: **1.82–1.84 million restorations/second**. This is evidence, not
+a performance gate.
+
+### Follow-up 4 final gates
+
+The synchronous-observer implementation and corrected evidence passed the full
+prescribed set:
+
+```text
+nix develop -c dune build @install                                      PASS
+nix develop -c dune runtest --force                                     PASS
+nix develop -c eta-oxcaml-test-shipped                                  PASS
+nix develop .#mainline -c dune build --build-dir=_build-mainline @install PASS
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline \
+  test/laws test/js_jsoo test/cache_jsoo test/signal_jsoo --force        PASS
+```
+
+Mainline repeated the repository's two existing integer-overflow warnings while
+compiling JS; every requested Node completion sentinel was reached. The
+separately built native accept-loop victim printed:
+
+```text
+accept-loop-victim: INTERRUPTED
+accept-loop-victim: PASS
+```
+
+**E15 READY FOR REVIEW**
+
+Cost-accounting clarification: the figure above isolates the new observer
+machinery. The full native path also performs the entry check, the `run_in` move
+to `R` and back, and the successful-body check; the mask-entry switch is paid
+once per mask rather than per restoration. There is no suspension across that
+check, move back, observer removal, and return from the restored dynamic region.
+
+**E15 READY FOR REVIEW**

@@ -75,3 +75,27 @@ Expected completion sentinels:
 accept-loop-victim: INTERRUPTED
 accept-loop-victim: PASS
 ```
+
+## Native restoration throughput watchlist
+
+`restore_throughput.ml` measures successful
+`uninterruptible (interruptible unit)` regions after a 10,000-iteration warmup.
+It is evidence, not a performance gate:
+
+```sh
+prefix="$(mktemp -d)"
+trap 'rm -rf "$prefix"' EXIT
+nix develop -c sh -eu -c '
+  prefix="$1"
+  dune build @install
+  dune install --prefix "$prefix"
+  OCAMLPATH="$prefix/lib${OCAMLPATH:+:$OCAMLPATH}" \
+    dune exec --root .scratch/research/dx/e15/probes \
+      ./restore_throughput.exe
+' sh "$prefix"
+```
+
+The Follow-up 4 synchronous-observer implementation measured 1.82–1.84 million
+restorations/second across five 100,000-iteration runs in the prescribed OxCaml
+Nix shell. Keep this probe on the watchlist when changing Eio internals or using
+`interruptible` in hot loops.

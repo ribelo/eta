@@ -3,7 +3,8 @@
 ## `Effect.interruptible`
 
 Status: **REVIVED by Follow-up 1; fork model corrected by Follow-up 2;
-same-fiber descendant restoration corrected by Follow-up 3**.
+same-fiber descendant restoration corrected by Follow-up 3; cancellation-call
+ordering corrected by Follow-up 4**.
 
 The historical kill below required an exact-context same-fiber restore. Follow-up
 1 found and independently reproduced Eio's hidden switch restoration operation.
@@ -26,12 +27,13 @@ Any revival must rerun the committed Phase 0 probes, publish one shared
 innermost-wins model, retain the checkpoint list, keep finalizers protected, and
 add the named native and jsoo mask/race laws before exposing the API.
 
-All of those revival conditions are addressed in `report.md`. Follow-up 3 adds
-a scoped observer only as a supplement to exact same-fiber restoration: it
-relays cancellation of the entry-time current descendant context into the
-mask-entry switch, while `run_in` still observes the mask-entry parent directly.
-The remaining parking-lot item is the human-owned request for Eio to expose the
-required switch/cancellation operations publicly; external issue filing is
+All of those revival conditions are addressed in `report.md`. Follow-up 3 added
+an asynchronous scoped observer as a supplement to exact restoration; Follow-up
+4 replaced it with a synthetic Eio fiber context whose cancellation function
+forwards synchronously. `run_in` observes the mask-entry parent directly, and
+the synchronous hook preserves cancellation-call ordering. The remaining
+parking-lot item is the human-owned request for Eio to expose the required
+switch/cancellation/fiber-context operations publicly; external issue filing is
 outside programme scope.
 
 
