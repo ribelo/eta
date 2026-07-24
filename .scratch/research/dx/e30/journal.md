@@ -137,3 +137,59 @@ guarantees cover every edge in this experiment's contract.
 | B. General form + string convenience variant | Fewer call-site characters | A second in-repo consumer with the same string policy | Only one consumer, with its own taxonomy | **Reject** (no usage evidence) |
 | C. Typed host-policy failure for non-thenable | ADR 0001 analogy | Show the bad value is a host-environment condition | Value exists; precondition violation is caller-side | **Reject** (defect is the honest shape) |
 | D. Phantom-typed `'a promise` input | Compile-time boundary assertion | Show call sites gain safety without extra coercions | Only producer yields `Unsafe.any`; phantom is decorative | **Reject** (no runtime content) |
+
+## Follow-up 1 micro-predictions (sealed 2026-07-24)
+
+This append-only section is sealed before R1–R6 implementation. It does not
+rewrite the original predictions; where review disproved prior evidence, the
+correction is explicit.
+
+### Review corrections accepted before rework
+
+- **R1 is a real semantic defect.** The original implementation executes
+  `on_reject` in a `Js.wrap_callback`. A raising mapper prevents `resume`, can
+  strand the Eta waiter, and rejects the ignored `.then` child promise. The
+  original report's broad no-hang/no-unhandled-rejection claim was wrong for
+  raising mappers.
+- **R2 is a vacuous test.** The original `deferred_promise` discarded the JS
+  reject callback. Its returned handle was always the fulfiller, so the test
+  named “reject after detach” fulfilled with `unit`; it proved neither late
+  rejection nor the unhandled-rejection claim. The original journal's test
+  prediction, report evidence row, and red-team auxiliary verdict overstated
+  the evidence.
+
+### R1–R6 sealed predictions
+
+| Finding | Predicted fix | Predicted executable result |
+| --- | --- | --- |
+| R1 mapper in host context | Resume only raw internal `` `Fulfilled`` / `` `Rejected`` settlements inside JS callbacks; decode rejection afterward through `Effect.sync` then `Effect.fail` | Raising mapper becomes `Cause.Die`; no hang or unhandled child rejection; mapper never runs after interruption |
+| R2 vacuous reject helper | Capture and expose both JS resolver and rejector | The late-reject test performs a real JS rejection and the process `unhandledRejection` sentinel stays silent |
+| R3 coverage | Add pending-success-after-registration, raising-mapper, mapper-not-run-after-detach, and explicit first-settlement tests | All named tests pass with the completion sentinel armed |
+| R4 contract | Replace “host computation keeps running” with precise Eta ownership: Eta does not cancel it; handlers remain attached; `on_cancel` may request host cancellation. State unchecked caller assertion for success type | Public signature unchanged; teach-back no longer implies abort is impossible |
+| R5 registry | Add one external-suite row per new `eta_js.mli` law, with exact spans and named Node tests | No unregistered new law-bearing prose remains |
+| R6 consumer | Change `eta_http_js` dependency from `eta_jsoo` to `eta_js`; implement `await_host_promise` with `Eta_js.from_js_promise` | Existing HTTP JS suite passes; direct private-promise bridge and `Host_promise_rejected` exception disappear |
+
+### Mechanism prediction
+
+The adapter's async leaf will produce a raw internal settlement:
+
+```ocaml
+[ `Fulfilled of 'a | `Rejected of Js.Unsafe.any ]
+```
+
+No caller function executes in either JS callback. `Effect.bind` runs only for
+the winning, still-attached settlement. Rejection mapping runs under
+`Effect.sync`, so mapper exceptions follow ordinary Eta capture as `Cause.Die`;
+interruption drops the continuation before mapping, leaving the counter at
+zero for late rejection. The internal variant cannot escape the implementation
+and the public signature remains unchanged.
+
+### Predicted deviations and risks
+
+- The prior report recommendation is suspended until all findings and all five
+  gates pass; the append-only rework report will supersede it.
+- `eta_http_js` migration should be mechanical because it already implements
+  the same `?on_cancel` and rejection mapping. The only anticipated compile
+  risk is polymorphic inference around the internal settlement variant.
+- Law rows will use the post-edit exact `eta_js.mli` line span and registered
+  Node test names rather than claiming qcheck coverage.
