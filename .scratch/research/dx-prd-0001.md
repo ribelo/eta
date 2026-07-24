@@ -1586,7 +1586,7 @@ after every experiment. Status: `proposed` / `in-progress` / `promoted` /
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
 | E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
 | E22 | Law-property policy | E (flex) | M | low | **promoted** 2026-07-23 | | research/dx-e22-law-properties | V-DX-E22-001..002 |
-| E15 | interruptible / restore | E | M | high | proposed | | | |
+| E15 | interruptible / restore | E | M | high | **promoted** 2026-07-24 | | research/dx-e15-interruptible | V-DX-E15-001..002 |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
 | E21 | Resumable probe (.scratch) | E | S | contained | proposed (expected kill) | | | |
 | E17 | Capability phantom rows | E | L | high | proposed (gated) | | | |

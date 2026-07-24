@@ -218,17 +218,25 @@ evidence; every hold names its re-entry trigger.
 
 ## In flight
 
-### E15 — `Effect.interruptible` — in flight (kill rejected, resumed)
-- What: restore cancellation inside `uninterruptible`.
-- Status: first kill verdict (Eio "inexpressible") REJECTED by audit —
-  `Eio__core__Switch.run_in` is a same-fiber restore primitive,
-  reproduced twice. Resumed on the mask-entry-switch construction;
-  ships against the internal API with isolation + pin + upstream
-  follow-up. Finalizers: no restore (3 independent confirmations).
+### E15 — `Effect.interruptible` — promoted 2026-07-24
+- What: restore cancellation inside `uninterruptible` (masks stack,
+  innermost wins; finalizers never restore).
+- Rationale: an uninterruptible accept loop or cleanup-that-awaits was
+  inexpressible without dodging the mask.
+- Decision rationale: shipped after the programme's deepest arc — a
+  rigorous kill, an evidence-based kill rejection
+  (`Eio__core__Switch.run_in` found + reproduced), and four review
+  rounds (fork-inheritance deadlock → fiber-local bindings; descendant
+  `cancel_sub` bypass → both-context relay; first-wins race →
+  synchronous observer). Model: masks cover children; restoration is
+  fiber-local; listens to mask-entry parent + entry-time context; first
+  cancellation call wins; at most once. Cost measured (~1.8M/sec).
+  Follow-ups: upstream `run_in` exposure (human files); child-restore
+  (R AND Q) registered as possible future experiment.
 
 ## Queued (decided, awaiting staging)
 
-### E27 — `Effect.logf` — human pre-approved
+### E27 — `Effect.logf` — human pre-approved (next)
 - What: Logs-style format4 logging; format only when the level is
   enabled.
 - Rationale: THE OCaml logging idiom (T11); allocation only when

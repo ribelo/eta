@@ -36,7 +36,7 @@ record. Durable curated conclusions land in `docs/research/dx.md`.
 | E13 | Effect.async | D | M-L | med | **promoted** 2026-07-22 | | research/dx-e13-effect-async | V-DX-E13-001..002 |
 | E14 | Eta.Promise | D | M | med | **promoted** 2026-07-22 | | research/dx-e14-eta-promise | V-DX-E14-001..002 |
 | E22 | Law-property policy | E (flex) | M | low | **promoted** 2026-07-23 | | research/dx-e22-law-properties | V-DX-E22-001..002 |
-| E15 | interruptible / restore | E | M | high | proposed | | | |
+| E15 | interruptible / restore | E | M | high | **promoted** 2026-07-24 | | research/dx-e15-interruptible | V-DX-E15-001..002 |
 | E16 | Reader validation race | E | S | low | proposed (expected kill) | | | |
 | E21 | Resumable probe (.scratch) | E | S | contained | proposed (expected kill) | | | |
 | E17 | Capability phantom rows | E | L | high | proposed (gated) | | | |
@@ -3641,3 +3641,66 @@ re-raise on exit.
 **Review (predicted).** P-Maint-grade: a real uninterruptible accept
 loop with an interruptible blocking accept, written against the
 combinator, reads correctly; red-team loses no cancellation.
+
+---
+
+## V-DX-E15-002 — 2026-07-24 — research/dx-e15-interruptible — phase: results + decision
+
+**The deepest experiment of the programme: one kill, one rejected kill,
+four review rounds, one shipped combinator.**
+
+**Arc.** (1) Phase 0 probes killed the cancel_sub construction rigorously
+(Eio's protected context is a propagation barrier). (2) Orchestrator
+audit with a fresh oracle **rejected the kill**: `Eio__core__Switch.run_in`
+is a same-fiber restore primitive — reproduced independently twice
+(`restore-during-block: DELIVERED`, `restore-pending-entry: RAISED`).
+(3) Resumed implementation → oracle INCORRECT: fork-inherited restore
+deadlocks `par` fail-fast (reproduced, exit=124) → rework: mask bindings
+fiber-local; jsoo propagates protect-depth to children; daemons
+independent. (4) Oracle INCORRECT: descendant `cancel_sub` inside the
+mask bypassed (reproduced hang; `eta_signal_timer` has the shape in
+production) → rework: both-context relay; Signal lane depth →
+Fiber_local. (5) Oracle INCORRECT: asynchronous relay loses
+first-cancellation-wins to the parent (reproduced `observed=parent`) →
+rework: synchronous `Cancel.Fiber_context` observer; "the first
+cancellation call executed wins." (6) Oracle CORRECT-WITH-RESERVATIONS:
+first-wins verified BOTH directions; observer audit clean (context
+binding, no leaks, nested-cancel safety); one LOW — journal's
+throughput-isolation claim overstated; corrected at merge.
+
+**The shipped model** (one paragraph): masks are dynamically nested and
+cover children; restoration is fiber-local; `interruptible` listens to
+the mask-entry parent and the entry-time current context; the first
+cancellation call executed wins; delivery at most once; finalizers never
+restore. Native: mask-entry switch + `run_in` + synchronous observer,
+isolated in `lib/eio/eta_eio_mask.ml` (only file naming
+`Eio__core__Switch`/`Eio__core__Cancel`; pin + revalidate-on-upgrade
+documented). jsoo: protect-depth save/restore with boundary checks.
+Contract: one `with_cancel_mask` operation; 9-line `interruptible` mli;
+checkpoint list published. Cost measured: ~1.8M restorations/sec
+(full-path watchlist).
+
+**Gates** (orchestrator re-run): full native chain + mainline
+(`_build-mainline @install` + laws/jsoo suites) green in worktree AND
+native trio on master after merge. Accept-loop victim: INTERRUPTED /
+PASS (real `Eio.Net.accept` inside a mask, restored and interrupted).
+
+**Prediction scoring (orchestrator, V-DX-E15-001).** Hits: jsoo depth
+restore straightforward; finalizer NO (three independent confirmations);
+checkpoint list landed; doc budget held; census +1 lifecycle; mask
+model composes (innermost wins). Misses: "promote ~60% / native
+construction ~65%" — right outcome (promote), wrong mechanism (I
+predicted the dead cancel_sub path; the live one was a hidden switch
+primitive); "kill risk is real" — fired, and the kill itself was
+wrong; the fork-inheritance flaw was in MY followup's underspecified
+binding instruction (executor and I both missed it; oracle round 3
+caught it).
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; objectives archived (objective + 4 follow-ups). E15
+produces the programme's most-cited process evidence: a rigorous kill,
+an evidence-based kill-rejection, and four adversarial rounds that each
+made the semantics more honest. **Follow-ups:** upstream `run_in`
+exposure (human files with Eio); hot-loop restoration cost is a
+watchlist number; "child-restore" (listening to R AND Q) registered as
+a possible future experiment with the multi-context problem stated.
