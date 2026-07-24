@@ -3959,3 +3959,63 @@ about bounds. Usage: `Effect.all` 79 call lines, `map_par` 94.
   expected); review: PR-style oracle finds the contract crisp or names
   why not.
 - Outcome: promote (as audit + docs).
+
+---
+
+## V-DX-E28-002 — 2026-07-25 — research/dx-e28-all-vs-map-par — phase: orchestrator decision (C3 resolved: unified admission)
+
+The audit escalated per its pre-registered trigger: one production site
+(`lib/js_stream/eta_js_stream.ml:76`, `map_effect`) maps an arbitrary
+stream chunk through unbounded `Effect.all`; 19/198 call sites are
+large/dynamic `all` (tests/benches at 6–128 children). Origin answer
+(executor, commit-cited): `all`'s unboundedness is inherited, never a
+deliberate contract — the perf commit capped only `for_each_par`.
+Compounding find: `docs/api-dx.md` actively mis-steers (recommends `all`
+for "dynamic homogeneous lists").
+
+**Decision after adversarial oracle consultation: Option A — unified
+admission.** `all` gains `?max_concurrent` (default 8, same policy as
+`map_par`), implemented on the shared worker machinery while PRESERVING
+`all`'s `concat_names`/`concurrent_footprint` introspection (prebuilt
+children are known at blueprint construction; `map_par` must not force
+its mapper — the differentiator that justifies both names). Full fan-out
+for barrier/coordinator shapes spells
+`~max_concurrent:(List.length xs)`. js_stream's `map_effect` migrates to
+`map_par`. The mis-steering docs are corrected.
+
+**Why not C (my sealed prediction).** Three legs broke: (1) ecosystem
+evidence actually supports unified admission (ZIO `collectAllPar =
+foreachPar identity`; Effect-TS `Effect.all` with concurrency option;
+JS `Promise.all` is not an admission point — hot promises); (2)
+"effects in hand vs. collection mapping" is provenance, not semantics —
+`all (List.map f xs)` becomes "effects in hand" one eta-expansion
+later, and users cannot see the difference at their own call sites;
+(3) C leaves an eta-expansion bypass around E24's default-8 safety
+contract — the traverse spelling evaporates the bound, and the
+js_stream site proves the spelling irresistible. The deadlock argument
+against A is real (bounded admission + interdependent children =
+scheduling deadlock) but currently theoretical — the census shows zero
+production cases of >8 interdependent children — and the exceptional
+barrier case is covered by the explicit full-fan-out escape hatch plus
+a documented warning.
+
+**Why not B.** Deletes a spelling 85 small-literal sites use correctly;
+its full-fan-out recipe has an edge bug (`~max_concurrent:(List.length
+[])` raises); and `all`'s richer introspection (vs. `map_par`'s
+blueprint-purity constraint) is real value B cannot keep.
+
+**Prediction scoring note.** Orchestrator V-DX-E28-001 predicted C1
+(differentiate, `all` unbounded by design): miss, flipped on
+consultation evidence. Executor's own census predictions also missed
+most buckets; origin prediction hit. The audit's job was to surface the
+decision; it did, with better data than either prediction set.
+
+**Guardrails (from the consultation, now contract).** Document
+omission = 8 and admission semantics in `all`'s mli; warn that children
+must not depend on work beyond the bound; document the full-fan-out
+recipe; tests — default peak 8, explicit full fan-out admitting nine
+barrier participants, input order, fail-fast, cancellation/finalizer
+parity, empty list, introspection names/footprints preserved; law
+registry rows; js_stream migration with mainline js gates; a
+semantics-change ledger enumerating tests whose concurrency behavior
+changes by design.
