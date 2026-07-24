@@ -9,6 +9,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   module Effect_async_suites = Effect_async_common_suites.Make (B)
   module Effect_uninterruptible_suites =
     Effect_uninterruptible_common_suites.Make (B)
+  module Effect_interruptible_suites =
+    Effect_interruptible_common_suites.Make (B)
   module Observability_suites = Observability_common_suites.Make (B)
   module Pool_suites = Pool_common_suites.Make (B)
   module Promise_suites = Promise_common_suites.Make (B)
@@ -1983,6 +1985,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
      @ Effect_resource_timeout_suites.tests
      @ Effect_async_suites.tests
      @ Effect_uninterruptible_suites.tests
+     @ Effect_interruptible_suites.tests
     @ String_helpers_common_suites.tests
      @ Log_level_common_suites.tests
      @ Runtime_contract_common_suites.tests

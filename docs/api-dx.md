@@ -176,6 +176,94 @@ Use named helpers at common boundaries:
   handlers.
 - `Eta_blocking.run_result` for blocking leaves with expected typed failures.
 
+## Cancellation Checkpoints
+
+Eta cancellation is cooperative. A checkpoint is a call that checks an
+already-cancelled runtime context or installs a cancellation wakeup while it is
+blocked. Pure effect composition and ordinary synchronous OCaml code do not
+poll for cancellation between expressions.
+
+The portable checkpoint list is:
+
+- `Effect.yield`;
+- positive `Effect.sleep` and the sleep before `Effect.delay` with the default
+  live runtime clocks, including timer waits used by timeout, retry, repeat,
+  schedules, and resource refresh; a custom clock inherits its own sleep
+  semantics;
+- a pending `Eta.Promise.await`, the pending park in `Effect.async`, and
+  `Effect.never`;
+- blocking handoff paths: full `Channel.send`, empty `Channel.recv`, full
+  backpressure `Queue.offer`/`send`, empty `Queue.take`,
+  `Queue.await_shutdown`, full backpressure `Pubsub.publish`, empty
+  `Pubsub.recv`, and waiting `Semaphore.acquire`;
+- actual coordination waits in parallel/race/supervisor/background operations,
+  pool slot/shutdown handling, cache load coalescing, signal graph lanes,
+  stream draining, and `Eta_blocking` admission or result waits.
+
+Only the blocking path is a checkpoint. Immediate/nonblocking operations such
+as `Channel.try_send`/`try_recv`, `Queue.try_offer`/`poll`,
+`Pubsub.try_recv`, snapshots, a non-positive live-backend sleep, and an
+immediately available handoff do not become checkpoints because a sibling path
+can block.
+
+Backend services inherit their backend's checkpoints. Native Eio operations are
+cancellable where they block: accept/connect, flow reads and writes, unresolved
+Eio promises, empty/full Eio streams, mutex/condition waits, positive clock
+sleeps, TLS/HTTP waits, and the owner wait for a system-thread job. JS host
+operations are cancellable while their `Eta_jsoo.Private.await` or
+`Effect.async` continuation is pending and use the supplied host cancellation
+hook, if any. Immediate I/O is not a checkpoint.
+
+Do not use an already-settled promise as a portable explicit checkpoint: Eio's
+resolved `Promise.await` fast path returns without checking cancellation, while
+the js_of_ocaml await path checks before observing the settled result. Use
+`Effect.yield` when an explicit portable checkpoint is required. A backend
+operation that wins its wakeup race may return its committed result; pending
+cancellation remains visible to a later checkpoint.
+
+`Effect.async` registration is protected through return, and its interruption
+canceler is protected while Eta waits for it. Eta finalizers and `Effect.finally`
+cleanup also run under cancellation protection. Those cleanup regions may
+block, but they do not restore parent cancellation.
+
+### Cancellation masks and restoration
+
+`Effect.uninterruptible body` defers parent cancellation for `body`.
+`Effect.interruptible blocked` restores the parent cancellation state of the
+dynamically nearest enclosing mask while `blocked` runs. Outside a mask it is
+identity. Restoration moves the current runtime fiber; it does not fork, so
+fiber identity, runtime-local bindings, tracing, and fiber-reentrant protocols
+are preserved.
+
+Restoration listens to both the mask-entry parent and the entry-time current
+cancellation context. This matters when same-fiber code creates a descendant
+`cancel_sub` inside the mask before entering `interruptible`: cancellation of
+either context wakes a restored block. When the sources compete, the reason from
+the first cancellation call executed wins, and delivery is observed at most
+once.
+
+Masks cover children, but restoration is fiber-local. A child forked inside
+`uninterruptible` inherits the mask through cancellation-context lineage on
+native Eio and protection depth on js_of_ocaml; it does not inherit its parent's
+restore closure. Therefore `interruptible` in that child is identity and the
+child remains masked against parent cancellation. Direct failure of the child's
+own structured scope still interrupts it, preserving fail-fast. Daemons inherit
+neither restoration nor cleanup-forbidden state and start independently
+unmasked.
+
+Masks stack and the innermost mask wins. In particular,
+`uninterruptible (interruptible (uninterruptible body))` has the cancellation
+behavior of `uninterruptible body`: the inner mask supersedes the outer
+restoration. Repeated `interruptible` inside an already restored region is
+identity. A cancellation already pending at restoration entry, one arriving at
+a checkpoint in the restored body, or one pending at its successful exit is
+delivered without a lost wakeup and is observed at most once.
+
+Restoration is forbidden while finalizers, `finally` cleanup, and asynchronous
+cancelers run. These cleanup paths stay protected even when inherited from an
+enclosing mask; allowing restoration there would permit re-entrant cancellation
+to abort cleanup whose completion Eta already promises to await.
+
 ## What The Examples Prove
 
 The guarded gate in `test/api_dx/api_dx_examples.ml` covers resource workflow,
@@ -720,8 +808,8 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `all`, `with_resource`, `with_scope`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
-| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
+| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `with_resource`, `with_scope`, `finally`, `with_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
+| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Diagnostic/preflight surface | `name`, `collect_names` |
 | Low-level or advanced surface | `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
 

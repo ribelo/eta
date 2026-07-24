@@ -168,6 +168,49 @@ let test_runtime_locals_cross_fork done_ =
   in
   run eff ~on_result:(finish done_ (expect_ok_int 42))
 
+let test_runtime_local_inheritance_kinds done_ =
+  let inherited = Runtime_contract.create_local () in
+  let fiber_local =
+    Runtime_contract.create_local ~inheritance:Fiber_local ()
+  in
+  let eff =
+    Eta.Effect.Expert.make ~capabilities:[ `Concurrency; `Background ]
+    @@ fun context ->
+    let contract = Eta.Effect.Expert.contract context in
+    let observe () =
+      ( contract.Runtime_contract.local_get inherited,
+        contract.Runtime_contract.local_get fiber_local )
+    in
+    let result =
+      contract.Runtime_contract.local_with_binding inherited 42 @@ fun () ->
+      contract.Runtime_contract.local_with_binding fiber_local 99 @@ fun () ->
+      let child =
+        contract.Runtime_contract.run_scope @@ fun sw ->
+        let promise, resolver = contract.Runtime_contract.create_promise () in
+        contract.Runtime_contract.fork sw (fun () ->
+            contract.Runtime_contract.resolve_promise resolver (observe ()));
+        contract.Runtime_contract.await_promise promise
+      in
+      let promise, resolver = contract.Runtime_contract.create_promise () in
+      contract.Runtime_contract.fork_daemon
+        contract.Runtime_contract.root_scope (fun () ->
+          contract.Runtime_contract.resolve_promise resolver (observe ());
+          `Stop_daemon);
+      let daemon = contract.Runtime_contract.await_promise promise in
+      (child, daemon)
+    in
+    Eta.Exit.Ok result
+  in
+  run eff
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok ((Some 42, None), (Some 42, None)) -> ()
+        | Eta.Exit.Ok _ -> fail "runtime local inheritance kinds diverged"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "local inheritance program failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
 let test_runtime_stream_fifo done_ =
   let eff =
     Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
@@ -448,6 +491,13 @@ module Async_shared =
     let fail = fail
   end)
 
+module Interruptible_shared =
+  Eta_effect_interruptible_shared_tests.Effect_interruptible_shared.Make (struct
+    let run = run
+    let complete ~done_ check = finish done_ (fun () -> check ()) ()
+    let fail = fail
+  end)
+
 module Promise_shared =
   Eta_promise_shared_tests.Promise_shared.Make (struct
     let run = run
@@ -465,6 +515,8 @@ let tests =
     ( "throwing await cancel hook does not strand fiber",
       test_throwing_await_cancel_hook_does_not_strand_fiber );
     ("runtime locals cross fork", test_runtime_locals_cross_fork);
+    ( "runtime local inheritance kinds",
+      test_runtime_local_inheritance_kinds );
     ("runtime stream fifo", test_runtime_stream_fifo);
     ("runtime resolve wakes live waiter", test_runtime_resolve_wakes_live_waiter);
     ( "runtime resolve after waiter cancellation",
@@ -478,6 +530,7 @@ let tests =
       test_expert_clock_observes_scoped_override );
   ]
   @ Async_shared.tests
+  @ Interruptible_shared.tests
   @ Promise_shared.tests
 
 let rec run_tests = function

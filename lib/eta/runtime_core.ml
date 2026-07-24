@@ -78,6 +78,14 @@ let logger_override : Capabilities.logger Runtime_contract.local =
 let tracer_override : Capabilities.tracer Runtime_contract.local =
   Runtime_contract.create_local ()
 
+type cancellation_restoration =
+  | Restore of Runtime_contract.cancellation_restore
+  | Restored
+  | Restoration_forbidden of unit
+
+let cancellation_restoration : cancellation_restoration Runtime_contract.local =
+  Runtime_contract.create_local ~inheritance:Fiber_local ()
+
 type 'err t = {
   clock : Capabilities.clock;
   capability_overrides_active : bool;
@@ -101,6 +109,14 @@ type 'err t = {
   active_waiters : drain_waiter list ref;
   default_fail_key : Typed_fail.key;
 }
+
+let with_restoration_forbidden runtime f =
+  let contract = runtime.contract in
+  match contract.Runtime_contract.local_get cancellation_restoration with
+  | None | Some (Restoration_forbidden _) -> f ()
+  | Some (Restore _ | Restored) ->
+      contract.Runtime_contract.local_with_binding cancellation_restoration
+        (Restoration_forbidden ()) f
 
 let create_with_contract ~contract ?sleep ?now_ms ?tracer
     ?(sampler = Sampler.always_on) ?(auto_instrument = false) ?logger ?meter
@@ -285,6 +301,7 @@ let run_finalizers ~runtime ~fail_key finalizers =
          finalizers (the common path for pure effects), skip it entirely — this
          avoids the cancel-context [Hashtbl] iteration that [protect] performs on
          every call, which is a top hotspot under per-request effect dispatch. *)
+      with_restoration_forbidden runtime @@ fun () ->
       runtime.contract.Runtime_contract.protect @@ fun () ->
       finalizers := [];
       fs

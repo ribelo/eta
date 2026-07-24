@@ -141,6 +141,7 @@ module Fiber_accounting = struct
       let fresh = Base.fresh
       let sleep = Base.sleep
       let protect = Base.protect
+      let with_cancel_mask = Base.with_cancel_mask
       let run_scope = Base.run_scope
       let fail_scope = Base.fail_scope
 

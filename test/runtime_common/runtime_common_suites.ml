@@ -889,6 +889,48 @@ module Make (B : Runtime_backend.S) = struct
     check_ok (Alcotest.pair Alcotest.int Alcotest.int) "stream fifo" (1, 2)
       (B.run rt stream_eff)
 
+  let test_runtime_contract_local_inheritance_kinds () =
+    B.with_runtime @@ fun _ctx rt ->
+    let inherited = Rc.create_local () in
+    let fiber_local = Rc.create_local ~inheritance:Fiber_local () in
+    let observe contract =
+      (contract.Rc.local_get inherited, contract.Rc.local_get fiber_local)
+    in
+    let eff =
+      E.Expert.make ~capabilities:[ `Concurrency; `Background ] @@ fun context ->
+      let contract = E.Expert.contract context in
+      let result =
+        contract.Rc.local_with_binding inherited 42 @@ fun () ->
+        contract.Rc.local_with_binding fiber_local 99 @@ fun () ->
+        let child =
+          contract.Rc.run_scope @@ fun sw ->
+          let promise, resolver = contract.Rc.create_promise () in
+          contract.Rc.fork sw (fun () ->
+              contract.Rc.resolve_promise resolver (observe contract));
+          contract.Rc.await_promise promise
+        in
+        let promise, resolver = contract.Rc.create_promise () in
+        contract.Rc.fork_daemon contract.Rc.root_scope (fun () ->
+            contract.Rc.resolve_promise resolver (observe contract);
+            `Stop_daemon);
+        let daemon = contract.Rc.await_promise promise in
+        (child, daemon)
+      in
+      Exit.Ok result
+    in
+    match B.run rt eff with
+    | Exit.Ok (child, daemon) ->
+        let expected = (Some 42, None) in
+        let observation =
+          Alcotest.pair (Alcotest.option Alcotest.int)
+            (Alcotest.option Alcotest.int)
+        in
+        Alcotest.check observation "child locals" expected child;
+        Alcotest.check observation "daemon locals" expected daemon
+    | Exit.Error cause ->
+        Alcotest.failf "local inheritance program failed: %a"
+          (Cause.pp pp_hidden) cause
+
   let test_runtime_contract_callbacks_stay_on_owner_domain () =
     B.with_runtime_contract @@ fun _ctx contract ->
     let owner = Domain.self () in
@@ -1227,6 +1269,8 @@ module Make (B : Runtime_backend.S) = struct
             test_supervisor_await_and_cancel;
           Alcotest.test_case "runtime contract locals and stream" `Quick
             test_runtime_contract_locals_and_stream;
+          Alcotest.test_case "runtime contract local inheritance kinds" `Quick
+            test_runtime_contract_local_inheritance_kinds;
           Alcotest.test_case "runtime contract callbacks stay on owner domain"
             `Quick test_runtime_contract_callbacks_stay_on_owner_domain;
           Alcotest.test_case "runtime contract resolve wakes live waiter" `Quick

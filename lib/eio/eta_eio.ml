@@ -248,6 +248,27 @@ let local_with_binding_with (module Fiber : Host.FIBER) local value f =
   try Fiber.with_binding local_context_key context f
   with Stdlib.Effect.Unhandled _ -> with_fiberless_context context f
 
+let fork_local_context context =
+  let child = Hashtbl.create (Hashtbl.length context) in
+  Hashtbl.iter
+    (fun id bindings ->
+      let inherited =
+        List.filter
+          Eta.Runtime_contract.Backend.local_binding_is_fork_inherited
+          bindings
+      in
+      if inherited <> [] then Hashtbl.replace child id inherited)
+    context;
+  child
+
+let with_fork_local_context_with (module Fiber : Host.FIBER) f =
+  match local_context (module Fiber) with
+  | None -> f ()
+  | Some context ->
+      let context = fork_local_context context in
+      (try Fiber.with_binding local_context_key context f
+       with Stdlib.Effect.Unhandled _ -> with_fiberless_context context f)
+
 let eio_fiber = (module Eio.Fiber : Host.FIBER)
 let local_get local = local_get_with eio_fiber local
 let local_with_binding local value f = local_with_binding_with eio_fiber local value f
@@ -280,14 +301,18 @@ let runtime_with_host host ~sw ~clock:raw_clock =
       if seconds > 0.0 then Time.sleep clock seconds
 
     let protect = protect
+    let with_cancel_mask = Eta_eio_mask.with_cancel_mask
     let run_scope = Switch.run
     let fail_scope = Switch.fail
     let fork scope f =
-      Fiber.fork ~sw:scope (fun () -> with_new_fiber_identity_with fiber f)
+      Fiber.fork ~sw:scope (fun () ->
+          with_fork_local_context_with fiber (fun () ->
+              with_new_fiber_identity_with fiber f))
 
     let fork_daemon scope f =
       Fiber.fork_daemon ~sw:scope (fun () ->
-          with_new_fiber_identity_with fiber f)
+          with_fork_local_context_with fiber (fun () ->
+              with_new_fiber_identity_with fiber f))
 
     let await_cancel () = Fiber.await_cancel ()
     let yield () = Fiber.yield ()

@@ -22,6 +22,13 @@ module Hooked_runtime = struct
   let fresh () = incr fresh_counter; !fresh_counter
   let sleep _ = ()
   let protect f = f ()
+  let with_cancel_mask f =
+    protect (fun () ->
+        f
+          {
+            Runtime_contract.restore =
+              (fun (type a) (body : unit -> a) -> body ());
+          })
   let run_scope ?name:_ f = f ()
   let fail_scope ?bt:_ () exn = raise exn
   let fork () f = f ()

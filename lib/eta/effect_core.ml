@@ -267,8 +267,9 @@ let run_async_canceler frame canceler =
   let outcome = ref None in
   let raised = ref None in
   (try
-     frame.runtime.contract.Runtime_contract.protect (fun () ->
-         outcome := Some (run_scope frame canceler))
+     Runtime_core.with_restoration_forbidden frame.runtime (fun () ->
+         frame.runtime.contract.Runtime_contract.protect (fun () ->
+             outcome := Some (run_scope frame canceler)))
    with exn ->
      match !outcome with
      | Some _ when Runtime_core.is_cancellation frame.runtime.contract exn -> ()
@@ -639,7 +640,34 @@ let timeout duration eff = timeout_as duration ~on_timeout:`Timeout eff
 
 let uninterruptible eff =
   preserve ~leaf_name:"Effect.uninterruptible" eff @@ fun frame ->
-  frame.runtime.contract.Runtime_contract.protect (fun () -> eval frame eff)
+  let contract = frame.runtime.contract in
+  contract.Runtime_contract.with_cancel_mask @@ fun restore ->
+  let binding =
+    match
+      contract.Runtime_contract.local_get
+        Runtime_core.cancellation_restoration
+    with
+    | Some (Runtime_core.Restoration_forbidden _) ->
+        Runtime_core.Restoration_forbidden ()
+    | Some (Runtime_core.Restore _ | Runtime_core.Restored) | None ->
+        Runtime_core.Restore restore
+  in
+  contract.Runtime_contract.local_with_binding
+    Runtime_core.cancellation_restoration binding (fun () -> eval frame eff)
+
+let interruptible eff =
+  preserve ~leaf_name:"Effect.interruptible" eff @@ fun frame ->
+  let contract = frame.runtime.contract in
+  match
+    contract.Runtime_contract.local_get Runtime_core.cancellation_restoration
+  with
+  | None | Some Runtime_core.Restored
+  | Some (Runtime_core.Restoration_forbidden _) ->
+      eval frame eff
+  | Some (Runtime_core.Restore restore) ->
+      contract.Runtime_contract.local_with_binding
+        Runtime_core.cancellation_restoration Runtime_core.Restored (fun () ->
+          restore.Runtime_contract.restore (fun () -> eval frame eff))
 
 let name eff = leaf_name eff
 let collect_names eff = names eff

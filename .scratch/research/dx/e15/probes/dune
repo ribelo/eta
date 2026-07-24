@@ -1,0 +1,18 @@
+(executable
+ (name native_probe)
+ (libraries eio_main))
+
+(executable
+ (name accept_loop_victim)
+ (libraries eta eta_eio eio_main))
+
+(executable
+ (name restore_throughput)
+ (libraries eta eta_eio eio_main))
+
+(executable
+ (name jsoo_probe)
+ (modes js)
+ (libraries eta eta_jsoo js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))

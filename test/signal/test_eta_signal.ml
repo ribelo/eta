@@ -212,6 +212,14 @@ module Cleanup_interrupt_runtime = struct
       raise Cleanup_interrupt);
     value
 
+  let with_cancel_mask f =
+    protect (fun () ->
+        f
+          {
+            Runtime_contract.restore =
+              (fun (type a) (body : unit -> a) -> body ());
+          })
+
   let run_scope ?name:_ f = f ()
   let fail_scope ?bt:_ () exn = raise exn
   let fork () f = f ()
@@ -316,6 +324,13 @@ module Make_isolated_sync_runtime () = struct
   let fresh () = incr fresh_counter; !fresh_counter
   let sleep _duration = ()
   let protect f = f ()
+  let with_cancel_mask f =
+    protect (fun () ->
+        f
+          {
+            Runtime_contract.restore =
+              (fun (type a) (body : unit -> a) -> body ());
+          })
   let run_scope ?name:_ f = f ()
   let fail_scope ?bt:_ () exn = raise exn
   let fork () f = f ()
@@ -3868,6 +3883,7 @@ let test_stream_bridge_consumer_wakeup_failure_does_not_fail_stabilize () =
     let fresh = Base.fresh
     let sleep duration = Eta_test.Test_clock.sleep clock duration
     let protect = Base.protect
+    let with_cancel_mask = Base.with_cancel_mask
     let run_scope = Base.run_scope
     let fail_scope = Base.fail_scope
     let fork = Base.fork
