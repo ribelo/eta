@@ -342,6 +342,29 @@ let deferred_promise () =
   in
   (promise, (fun value -> !resolve value), fun reason -> !reject reason)
 
+let adversarial_thenable ~fulfill_first ~value ~reason ~handlers_seen =
+  let then_ =
+    Js.wrap_callback (fun on_fulfilled on_rejected ->
+        handlers_seen :=
+          String.equal (Js.to_string (Js.typeof on_fulfilled)) "function"
+          && String.equal (Js.to_string (Js.typeof on_rejected)) "function";
+        let fulfill () =
+          ignore
+            (Unsafe.fun_call on_fulfilled [| Unsafe.inject value |])
+        in
+        let reject () =
+          ignore
+            (Unsafe.fun_call on_rejected [| Unsafe.inject reason |])
+        in
+        if fulfill_first then (
+          fulfill ();
+          reject ())
+        else (
+          reject ();
+          fulfill ()))
+  in
+  Unsafe.obj [| ("then", Unsafe.inject then_) |]
+
 let test_from_js_promise_pending_resolves_after_registration done_ =
   let promise, js_resolve, _js_reject = deferred_promise () in
   let eff =
@@ -408,21 +431,53 @@ let test_from_js_promise_raising_mapper_dies done_ =
         | Eta_js.Exit.Ok _ ->
             fail_test "from_js_promise raising mapper: expected Die"))
 
-let test_from_js_promise_first_settlement_wins done_ =
-  let promise, js_resolve, js_reject = deferred_promise () in
-  let eff =
-    Eta_js.Effect.par
-      (Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) promise)
-      (Eta_js.Effect.delay (Eta_js.Duration.ms 1)
-         (Eta_js.Effect.sync (fun () ->
-              js_resolve 11;
-              js_reject (Js.string "late");
-              js_resolve 12)))
-    |> Eta_js.Effect.map fst
+let test_from_js_promise_adversarial_thenable_first_settlement_wins done_ =
+  let fulfilled_handlers_seen = ref false in
+  let fulfilled_mapper_calls = ref 0 in
+  let fulfilled_first =
+    adversarial_thenable ~fulfill_first:true ~value:11
+      ~reason:(Js.string "late rejection")
+      ~handlers_seen:fulfilled_handlers_seen
   in
-  run eff
+  let rejected_handlers_seen = ref false in
+  let rejected_mapper_calls = ref 0 in
+  let rejected_first =
+    adversarial_thenable ~fulfill_first:false ~value:12
+      ~reason:(Js.string "winning rejection")
+      ~handlers_seen:rejected_handlers_seen
+  in
+  let check_fulfilled result =
+    expect_ok_int "from_js_promise fulfillment-first thenable" 11 result;
+    if not !fulfilled_handlers_seen then
+      fail_test "from_js_promise fulfillment-first: handlers were not functions";
+    if !fulfilled_mapper_calls <> 0 then
+      fail_test "from_js_promise fulfillment-first: losing mapper ran"
+  in
+  let check_rejected result =
+    expect_fail "from_js_promise rejection-first thenable" (( = ) `Rejected)
+      result;
+    if not !rejected_handlers_seen then
+      fail_test "from_js_promise rejection-first: handlers were not functions";
+    if !rejected_mapper_calls <> 1 then
+      fail_test "from_js_promise rejection-first: mapper did not run once"
+  in
+  run
+    (Eta_js.from_js_promise
+       ~on_reject:(fun _ ->
+         incr fulfilled_mapper_calls;
+         `Rejected)
+       fulfilled_first)
     ~on_result:
-      (finish done_ (expect_ok_int "from_js_promise first settlement" 11))
+      (finish
+         (fun () ->
+           run
+             (Eta_js.from_js_promise
+                ~on_reject:(fun _ ->
+                  incr rejected_mapper_calls;
+                  `Rejected)
+                rejected_first)
+             ~on_result:(finish done_ check_rejected))
+         check_fulfilled)
 
 let test_from_js_promise_interrupt_detaches done_ =
   let promise, js_resolve, _js_reject = deferred_promise () in
@@ -555,8 +610,8 @@ let tests =
       test_from_js_promise_non_error_rejection_fidelity );
     ( "eta_js from_js_promise raising mapper dies",
       test_from_js_promise_raising_mapper_dies );
-    ( "eta_js from_js_promise first settlement wins",
-      test_from_js_promise_first_settlement_wins );
+    ( "eta_js from_js_promise adversarial thenable first settlement wins",
+      test_from_js_promise_adversarial_thenable_first_settlement_wins );
     ( "eta_js from_js_promise interrupt detaches",
       test_from_js_promise_interrupt_detaches );
     ( "eta_js from_js_promise late rejection skips mapper",

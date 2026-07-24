@@ -260,7 +260,7 @@
             runtimeInputs = [ etaOpamInstall ];
             text = ''
               export ETA_OPAM_SWITCH="5.4.1"
-              export ETA_OPAM_PACKAGES="eta eta_http eta_jsoo eta_http_js"
+              export ETA_OPAM_PACKAGES="eta eta_http eta_jsoo eta_js eta_http_js"
               exec eta-opam-install "$@"
             '';
           };
@@ -634,6 +634,9 @@
 
             shellHook = ''
               export PKG_CONFIG_PATH="${nativePkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+              # Isolated `dune -p` gates consume Eta dependencies installed by
+              # this same Nix toolchain, never ABI-mixed packages from opam.
+              export OCAMLPATH="$HOME/.cache/eta/mainline-nix/lib:''${OCAMLPATH:-}"
               export ETA_DUCKDB_LIBRARY="${pkgs.duckdb.lib}/lib/libduckdb.so"
               export ETA_TURSO_LIBRARY="${tursoLibraryPath}"
               export ETA_LADYBUG_LIBRARY="${ladybugLibraryPath}"

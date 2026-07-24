@@ -92,6 +92,8 @@ cancellation: interruption detaches the Eta waiter while handlers stay attached,
 and Eta itself leaves the host work alone. Use `?on_cancel` to request
 host-specific cancellation — that hook is where an `AbortController.abort()`
 belongs. A non-thenable `promise` is a defect (`Cause.Die`), not a typed failure.
+Consequently, `eta_http_js` treats a host Fetch value that is not thenable as
+`Cause.Die`; genuine host-promise rejections still map to `Host_api_error`.
 
 ### One-shot coordination: `Promise`, `async`, or `Eio.Promise`?
 
