@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E30 — `Eta_js.from_js_promise`**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e30`
-  - Branch: `research/dx-e30-from-js-promise`
-  - Stage: predictions sealed (V-DX-E30-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (recent): **E30 promoted** (`7d0f462e`, three review rounds;
+  both gate tracks green on master)
 - Done (queued candidates): **E27 promoted** (`logf`; format4 pitch
   rejected on evidence → closure API; deferral complete + measured)
 - Done (Phase E, cont.): **E15 promoted** (`interruptible`; kill →
@@ -55,7 +54,7 @@ loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: **E30** from_js_promise (human pre-approved) → E28 (all-vs-map_par audit) → E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
+- Queue: E28 (all-vs-map_par audit) → E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -87,4 +86,4 @@ loop (plan §4.2 as amended by Amendment 1).
   experiment branch, and verify the branch base contains the predictions
   commit (E30 staging cut twice from stale/diverged local master; foreign
   schema commit needed temp-worktree merge `5ce0aa6e`)
-- Last update: 2026-07-24 — E30 launched
+- Last update: 2026-07-24 — E30 promoted

@@ -537,3 +537,31 @@ Evidence: error board rated before 2 / after 4, expansions 5,5
 migrated; zero hand-written telemetry printers remain. Provenance:
 `.scratch/research/dx/e7/`, V-DX-E7-001..002, branch
 `research/dx-e7-error-pp-deriver`.
+
+## E30 — `Eta_js.from_js_promise` (promoted 2026-07-24)
+
+One word for the jsoo track's most common interop shape:
+`from_js_promise ?on_cancel ~on_reject promise` awaits a host JS promise
+over `Effect.async`, inheriting its contract wholesale.
+
+The durable lessons are about *where user code runs*:
+
+1. **Never run user callbacks in host context.** The first implementation
+   mapped rejections inside the JS callback: a raising mapper escaped the
+   runtime, stranded the effect, and produced an unhandled host rejection.
+   The shipped shape transports raw settlement (`Fulfilled`/`Rejected`)
+   through `Effect.async` and maps inside Eta — a raising mapper becomes
+   `Cause.Die` via the ordinary capture path, and no user code runs after
+   interruption detaches the waiter.
+2. **Evidence beats sealed predictions.** Three orchestrator predictions
+   died on contact: js_of_ocaml has no `Js.Promise` binding (input is
+   `Js.Unsafe.any`); a live AbortController consumer justified
+   `?on_cancel`; non-thenable is a forged-boundary defect, not a typed
+   failure. Each override came with in-repo evidence, not preference.
+3. **Library dependency ≠ package dependency.** Migrating `eta_http_js`
+   onto the adapter updated `lib/http_js/dune` but initially not
+   `dune-project`/`.opam`/`flake.nix`; the isolated `-p` build caught it.
+   Mainline packages need the isolated-package gate.
+
+Provenance: `.scratch/research/dx/e30/`, V-DX-E30-001/002, branch
+`research/dx-e30-from-js-promise`, law rows R116–R126.

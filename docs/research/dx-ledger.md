@@ -246,13 +246,20 @@ evidence; every hold names its re-entry trigger.
   there even without tests." Experiment is about doing it sensibly
   (signature, allocation semantics, E20 composition), not whether.
 
-### E30 — `Eta_js.from_js_promise` — in flight (human pre-approved)
+### E30 — `Eta_js.from_js_promise` — promoted 2026-07-24
 - What: one adapter from a host JS `Promise` to `('a,'err) Effect.t`
   over `Effect.async`, with loud capability check (ADR 0001).
 - Rationale: the jsoo track lives on callbacks; this is its most common
   interop shape. E13's first public consumption.
 - Decision: human 2026-07-23 — "obvious and turbo necessary; I have
   decided that I want this." Experiment is about doing it sensibly.
+- Outcome: shipped as `from_js_promise ?on_cancel ~on_reject` — raw
+  settlement transported through `Effect.async`, rejection mapped in Eta
+  context (raising mapper → `Die`, mapper never runs post-interruption),
+  `?on_cancel` for host-cancellation requests, non-thenable → `Die` at
+  registration; `eta_http_js` migrated onto it; law rows R116–R126.
+  Three review rounds (host-context mapper defect → packaging defect →
+  R116 discrimination). V-DX-E30-001/002.
 
 ### E28 — `all` vs `map_par` T1 audit
 - What: are `all` and `map_par` two ways for one task? Engine census +

@@ -3849,3 +3849,73 @@ the rejection-mapper naming, detach-vs-abort documentation clarity.
 `Js.Promise` binding shape forces a different signature than predicted;
 (2) unhandled-rejection semantics of the JS engine surprise under
 interruption; (3) the loud-check's typed-vs-defect call flips on review.
+
+---
+
+## V-DX-E30-002 — 2026-07-24 — research/dx-e30-from-js-promise — phase: results + decision
+
+**Gates** (orchestrator re-run, final round): native trio pass in worktree
+and on master after merge (`7d0f462e`); mainline `@install` + `test/js_jsoo`
++ `test/http_js` + isolated `-p eta_http_js @install` all pass, in worktree
+and on master.
+
+**Review arc (three rounds, one reviewer of record).**
+- Round 1 (fresh oracle, PR-style): **should-not-have-merged** — `on_reject`
+  evaluated inside the JS callback: a raising mapper escapes through
+  `Js.wrap_callback`, never calls `resume` (effect pending forever), and
+  rejects the `.then` child promise. Plus: vacuous "reject after detach"
+  test (helper could only fulfill), missing law-registry rows, mli wording
+  outrunning the implementation. Verified independently before rework.
+- Round 2 (reviewer of record, via agent_send — corrected protocol after
+  an unnecessary fresh spawn, OPS note below): semantic fix confirmed;
+  found the http_js migration broke the shipped package
+  (`dune-project`/`.opam`/`flake.nix` omitted `eta_js`; isolated `-p` build
+  failed) + R116/R117 non-discriminating + R126 missing + undocumented
+  taxonomy change.
+- Round 3: S3 closed by a microtask-ordering sentinel test (discriminates
+  body-turn vs deferred attachment; scheduler premise premise-tested).
+- Final verdict: **approve**.
+
+**What shipped.** `Eta_js.from_js_promise ?on_cancel ~on_reject promise`:
+raw settlement transported through `Effect.async`, rejection mapped in Eta
+context (raising mapper → `Cause.Die`; mapper never runs after
+interruption); `?on_cancel` maps to the async canceler (live consumer:
+`start_fetch`'s AbortController); non-thenable → `Die` at registration.
+`eta_http_js` migrated onto it (−38/+4). Law rows R116–R126. 10 named
+adapter tests + process-level sentinels (`beforeExit`,
+`unhandledRejection`).
+
+**Prediction scoring (orchestrator, V-DX-E30-001) — worst set of the
+programme (5 hits, 6 misses).** Hits: rejection fidelity; sync-attach;
+census +1 / interop cluster; no native impact; promote outcome. Misses:
+`Js.Promise.t` input type (no such binding in js_of_ocaml 6.3.2 — the
+executor's first check, which I skipped); detach-only cancellation (live
+AbortController consumer found in-repo; `?on_cancel` shipped and
+validated); typed host-policy failure for non-thenables (defect upheld by
+review); no-http_js-migration (review demanded it); review
+"approve-with-reservations at worst" (first verdict was
+should-not-have-merged). Autopsy: I predicted API shapes without checking
+binding reality and trusted YAGNI instinct without searching for the
+consumer. Executor evidence beat orchestrator predictions three times;
+review beat both once. The method held.
+
+**Executor (mispicked model — natural experiment, per human's question).**
+Methodology above the bar (hypothesis ledger, falsification sentinels,
+honest self-scoring, evidence-based overrides of orchestrator
+predictions); first-draft code below the bar (one real semantic defect,
+one vacuous test presented as evidence, overstated claims); rework
+quality excellent (three rounds, each closed fully, append-only
+corrections). Net: strong executor for well-fenced contracts when the
+adversarial review is mandatory — which it is.
+
+**OPS note.** An unnecessary fresh oracle was spawned for the round-2
+verification (user correction): rework/verification rounds go to the
+reviewer of record via `agent_send`; fresh spawns only for fresh problems.
+
+**Decision: PROMOTE.** Merged `--no-ff` (`7d0f462e`); both gate tracks
+green on master; master + branch pushed; worktree removed; objective +
+three follow-ups archived under `.scratch/research/objectives/`.
+
+**Follow-ups.** F-series unchanged. New watch: `from_js_promise` usage
+frequency in future JS code (candidate sugar/tracing trigger per the
+programme's frequency rule).
