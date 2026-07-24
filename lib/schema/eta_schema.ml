@@ -667,7 +667,24 @@ module Eta_schema = struct
       object_fields;
     }
 
-  let union ~name alternatives ~equal =
+  type 'a union_case = {
+    decode_union_case : Json.t -> ('a, issue list) result;
+    encode_union_case : 'a -> (Json.t option, issue list) result;
+    union_case_schema : unit -> Json.t;
+  }
+
+  let union_case (type case) (schema : case t) ~inject ~project =
+    {
+      decode_union_case = (fun json -> Result.map inject (schema.decode json));
+      encode_union_case =
+        (fun value ->
+          match project value with
+          | None -> Ok None
+          | Some value -> Result.map Option.some (schema.encode value));
+      union_case_schema = schema.json_schema;
+    }
+
+  let union_from_cases ~name cases ~equal =
     let decode json =
       let rec loop errors = function
         | [] ->
@@ -675,24 +692,25 @@ module Eta_schema = struct
               (issue ~schema_name:name
                  ("No union alternative matched for " ^ name)
               :: List.rev errors)
-        | schema :: rest -> (
-            match schema.decode json with
+        | case :: rest -> (
+            match case.decode_union_case json with
             | Ok value -> Ok value
             | Error issues -> loop (List.rev_append issues errors) rest)
       in
-      loop [] alternatives
+      loop [] cases
     in
     let encode value =
       let rec loop = function
         | [] ->
             Error
               [ issue ~schema_name:name ("Cannot encode union " ^ name) ]
-        | schema :: rest -> (
-            match schema.encode value with
-            | Ok json -> Ok json
-            | Error _ -> loop rest)
+        | case :: rest -> (
+            match case.encode_union_case value with
+            | Ok None -> loop rest
+            | Ok (Some json) -> Ok json
+            | Error issues -> Error issues)
       in
-      loop alternatives
+      loop cases
     in
     {
       decode;
@@ -704,11 +722,30 @@ module Eta_schema = struct
             [
               ( "anyOf",
                 Json.Array
-                  (List.map (fun schema -> schema.json_schema ()) alternatives)
+                  (List.map (fun case -> case.union_case_schema ()) cases)
               );
             ]);
       object_fields = None;
     }
+
+  let union_cases ~name cases ~equal = union_from_cases ~name cases ~equal
+
+  let union ~name alternatives ~equal =
+    let cases =
+      List.map
+        (fun schema ->
+          {
+            decode_union_case = schema.decode;
+            encode_union_case =
+              (fun value ->
+                match schema.encode value with
+                | Ok json -> Ok (Some json)
+                | Error _ -> Ok None);
+            union_case_schema = schema.json_schema;
+          })
+        alternatives
+    in
+    union_from_cases ~name cases ~equal
 
   type 'record any_field = Any_field : ('record, 'a) field -> 'record any_field
 

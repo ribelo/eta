@@ -989,6 +989,32 @@ let test_dynamic_record_and_freeform_json () =
 
 type scalar = Boolean of bool | Text of string
 
+let test_untagged_union_cases () =
+  let boolean =
+    Eta_schema.union_case Eta_schema.bool ~inject:(fun value -> Boolean value)
+      ~project:(function Boolean value -> Some value | Text _ -> None)
+  in
+  let text =
+    Eta_schema.union_case Eta_schema.string ~inject:(fun value -> Text value)
+      ~project:(function Text value -> Some value | Boolean _ -> None)
+  in
+  let schema =
+    Eta_schema.union_cases ~name:"scalar_cases" [ boolean; text ]
+      ~equal:(fun left right -> left = right)
+  in
+  (match Eta_schema.decode_result schema (Json.Bool true) with
+  | Ok (Boolean true) -> ()
+  | Ok _ | Error _ -> failwith "union-case boolean decode failed");
+  (match Eta_schema.decode_result schema (Json.String "eta") with
+  | Ok (Text "eta") -> ()
+  | Ok _ | Error _ -> failwith "union-case text decode failed");
+  (match Eta_schema.encode_result schema (Text "eta") with
+  | Ok (Json.String "eta") -> ()
+  | Ok _ | Error _ -> failwith "union-case text encode failed");
+  match Eta_schema.json_schema schema with
+  | Json.Object [ ("anyOf", Json.Array [ _; _ ]) ] -> ()
+  | _ -> failwith "union-case schema must derive anyOf"
+
 let test_untagged_union_and_custom () =
   let boolean =
     Eta_schema.custom
@@ -1074,6 +1100,8 @@ let tests =
         Alcotest.test_case "empty record schema" `Quick test_empty_record_schema;
         Alcotest.test_case "dynamic record and freeform JSON" `Quick
           test_dynamic_record_and_freeform_json;
+        Alcotest.test_case "untagged union cases" `Quick
+          test_untagged_union_cases;
         Alcotest.test_case "untagged union and custom schema" `Quick
           test_untagged_union_and_custom;
       ] );
