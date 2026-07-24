@@ -997,6 +997,17 @@ val log :
     scoped {!with_minimum_log_level}, when one is active, are dropped before
     reaching the logger. *)
 
+val logf :
+  ?level:Capabilities.log_level ->
+  ?attrs:(string * string) list ->
+  (Format.formatter -> unit) ->
+  (unit, 'err) t
+(** Formatted {!log}; the formatter runs once, only after runtime level admission,
+    so work and arguments inside it are deferred (those evaluated before [logf]
+    remain eager). Its captured values are retained for the blueprint's lifetime.
+    Attributes and intercepts follow [log]; [Drop] occurs after formatting, and a
+    raise becomes a defect through ordinary capture. *)
+
 val log_trace :
   ?attrs:(string * string) list -> string -> (unit, 'err) t
 (** Emit a structured log record at [Trace] level. *)

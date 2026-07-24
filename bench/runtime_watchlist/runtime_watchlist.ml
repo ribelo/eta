@@ -16,6 +16,12 @@
      - overhead.eta.log.100k.identity_intercept
      - overhead.eta.log.100k.replace_intercept
 
+   DX-E27 adds deferred-format comparison rows:
+     - overhead.eta.log.100k.minimum_filtered
+     - overhead.eta.logf.100k.construct.minimum_filtered
+     - overhead.eta.logf.100k.construct.enabled
+     - overhead.eta.logf.100k.construct.minimum_filtered.width_1m
+
    Composite score is normalized against the v2 ship baselines so each
    contribution starts at 1.0. Lower is better. Use the @watchlist-bench alias
    for a small focused run while optimizing these rows. *)
@@ -68,6 +74,21 @@ let eta_log_loop n =
   in
   build n Effect.unit
 
+let eta_logf_construct_loop ~wide n =
+  let rec loop i =
+    if i = 0 then Effect.unit
+    else
+      let print =
+        if wide then fun fmt -> Format.fprintf fmt "%1000000d" i
+        else fun fmt -> Format.fprintf fmt "watchlist %d" i
+      in
+      Effect.bind (fun () -> loop (i - 1))
+        (Effect.logf ~level:Capabilities.Debug print)
+  in
+  (* Enter [loop] from a prebuilt node so all [logf] blueprints and their
+     captured formatter closures are constructed inside the measured run. *)
+  Effect.bind (fun () -> loop n) Effect.unit
+
 let bind_n = 100_000
 let fail_n = 100_000
 let log_n = 100_000
@@ -115,6 +136,17 @@ let overhead_workloads rt =
   let eta_bind = eta_bind_chain bind_n (Effect.pure 0) in
   let eta_fail = eta_fail_catch_loop fail_n in
   let eta_logs = eta_log_loop log_n in
+  let eta_logs_filtered =
+    Effect.with_minimum_log_level Capabilities.Warn eta_logs
+  in
+  let eta_logfs = eta_logf_construct_loop ~wide:false log_n in
+  let eta_logfs_filtered =
+    Effect.with_minimum_log_level Capabilities.Warn eta_logfs
+  in
+  let eta_logfs_wide_filtered =
+    Effect.with_minimum_log_level Capabilities.Warn
+      (eta_logf_construct_loop ~wide:true log_n)
+  in
   let eta_logs_intercepted =
     Effect.intercept_log (fun _record -> Effect.Keep) eta_logs
   in
@@ -131,6 +163,14 @@ let overhead_workloads rt =
         run_eta_int rt eta_fail);
     workload "overhead.eta.log.100k.no_intercept" (fun () ->
         run_eta_unit rt eta_logs);
+    workload "overhead.eta.log.100k.minimum_filtered" (fun () ->
+        run_eta_unit rt eta_logs_filtered);
+    workload "overhead.eta.logf.100k.construct.minimum_filtered" (fun () ->
+        run_eta_unit rt eta_logfs_filtered);
+    workload "overhead.eta.logf.100k.construct.enabled" (fun () ->
+        run_eta_unit rt eta_logfs);
+    workload "overhead.eta.logf.100k.construct.minimum_filtered.width_1m"
+      (fun () -> run_eta_unit rt eta_logfs_wide_filtered);
     workload "overhead.eta.log.100k.identity_intercept" (fun () ->
         run_eta_unit rt eta_logs_intercepted);
     workload "overhead.eta.log.100k.replace_intercept" (fun () ->

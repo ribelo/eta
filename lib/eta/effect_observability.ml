@@ -283,6 +283,34 @@ let intercept_log transform eff =
   RObs.with_log_interceptor frame.runtime.contract transform @@ fun () ->
   eval frame eff
 
+let emit_log frame logger level attrs body =
+  let scoped_attrs = RObs.current_log_attrs frame.runtime.contract in
+  let trace_id, span_id =
+    let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
+    if not tracing_enabled then ("", "")
+    else
+      match local_get frame RObs.active_span_key with
+      | None -> ("", "")
+      | Some active -> (
+          let current =
+            active.RObs.tracer#inspect frame.runtime.contract
+              ~span_id:active.span_id
+          in
+          match first_some current active.info with
+          | None -> ("", "")
+          | Some info -> (info.trace_id, info.span_id))
+  in
+  let clock = Runtime_core.current_clock frame.runtime in
+  RObs.emit_log frame.runtime.contract logger
+    {
+      Capabilities.level;
+      body;
+      ts_ms = clock#now_ms ();
+      attrs = scoped_attrs @ attrs;
+      trace_id;
+      span_id;
+    }
+
 let log ?(level = Capabilities.Info) ?(attrs = []) body =
   make ~leaf_name:"Effect.log"
     ~footprint:(footprint ~uses_clock:true ~emits_logs:true ()) @@ fun frame ->
@@ -293,33 +321,22 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
      match RObs.current_minimum_log_level frame.runtime.contract with
      | None -> true
      | Some minimum -> RObs.log_level_enabled ~minimum level
+   then emit_log frame logger level attrs body);
+  ok ()
+
+let logf ?(level = Capabilities.Info) ?(attrs = []) print =
+  make ~leaf_name:"Effect.logf"
+    ~footprint:(footprint ~uses_clock:true ~emits_logs:true ()) @@ fun frame ->
+  let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
+  (if
+     logging_enabled
+     &&
+     match RObs.current_minimum_log_level frame.runtime.contract with
+     | None -> true
+     | Some minimum -> RObs.log_level_enabled ~minimum level
    then
-    let scoped_attrs = RObs.current_log_attrs frame.runtime.contract in
-    let trace_id, span_id =
-      let tracing_enabled, _ = Runtime_core.current_tracer frame.runtime in
-      if not tracing_enabled then ("", "")
-      else
-        match local_get frame RObs.active_span_key with
-        | None -> ("", "")
-        | Some active -> (
-            let current =
-              active.RObs.tracer#inspect frame.runtime.contract
-                ~span_id:active.span_id
-            in
-            match first_some current active.info with
-            | None -> ("", "")
-            | Some info -> (info.trace_id, info.span_id))
-    in
-    let clock = Runtime_core.current_clock frame.runtime in
-    RObs.emit_log frame.runtime.contract logger
-      {
-        Capabilities.level;
-        body;
-        ts_ms = clock#now_ms ();
-        attrs = scoped_attrs @ attrs;
-        trace_id;
-        span_id;
-      });
+    let body = Format.asprintf "%t" print in
+    emit_log frame logger level attrs body);
   ok ()
 
 let log_trace ?attrs body = log ~level:Capabilities.Trace ?attrs body
