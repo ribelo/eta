@@ -133,6 +133,17 @@ module Eta_schema : sig
   val lazy_ : (unit -> 'a t) -> 'a t
   (** Recursive schema knot. *)
 
+  type 'a union_case
+
+  val union_case :
+    'case t ->
+    inject:('case -> 'a) ->
+    project:('a -> 'case option) ->
+    'a union_case
+
+  val union_cases :
+    name:string -> 'a union_case list -> equal:('a -> 'a -> bool) -> 'a t
+
   val union : name:string -> 'a t list -> equal:('a -> 'a -> bool) -> 'a t
   (** Untagged union tried in declaration order. The derived provider schema
       uses [anyOf]. *)
