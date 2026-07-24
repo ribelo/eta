@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E30 — `Eta_js.from_js_promise`**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e30`
+  - Branch: `research/dx-e30-from-js-promise`
+  - Stage: predictions sealed (V-DX-E30-001); objective.md written; awaiting executor
 - Done (queued candidates): **E27 promoted** (`logf`; format4 pitch
   rejected on evidence → closure API; deferral complete + measured)
 - Done (Phase E, cont.): **E15 promoted** (`interruptible`; kill →
@@ -79,4 +82,4 @@ loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
-- Last update: 2026-07-24 — E27 promoted
+- Last update: 2026-07-24 — E30 launched

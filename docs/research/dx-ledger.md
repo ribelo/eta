@@ -246,7 +246,7 @@ evidence; every hold names its re-entry trigger.
   there even without tests." Experiment is about doing it sensibly
   (signature, allocation semantics, E20 composition), not whether.
 
-### E30 — `Eta_js.from_js_promise` — human pre-approved
+### E30 — `Eta_js.from_js_promise` — in flight (human pre-approved)
 - What: one adapter from a host JS `Promise` to `('a,'err) Effect.t`
   over `Effect.async`, with loud capability check (ADR 0001).
 - Rationale: the jsoo track lives on callbacks; this is its most common
