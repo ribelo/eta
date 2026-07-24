@@ -82,4 +82,9 @@ loop (plan §4.2 as amended by Amendment 1).
   Verify the base before spawning, or re-base the agent's work.
 - RESOLVED 2026-07-21: erg-v1-ocaml54 integrated to master (`91441653`,
   26 linear commits, gates verified green, pushed)
+- OPS RULE 3 (staging order): after pushing bookkeeping from a temp
+  worktree, integrate/ff LOCAL master to origin/master BEFORE cutting the
+  experiment branch, and verify the branch base contains the predictions
+  commit (E30 staging cut twice from stale/diverged local master; foreign
+  schema commit needed temp-worktree merge `5ce0aa6e`)
 - Last update: 2026-07-24 — E30 launched
