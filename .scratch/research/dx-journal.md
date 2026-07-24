@@ -3704,3 +3704,45 @@ made the semantics more honest. **Follow-ups:** upstream `run_in`
 exposure (human files with Eio); hot-loop restoration cost is a
 watchlist number; "child-restore" (listening to R AND Q) registered as
 a possible future experiment with the multi-context problem stated.
+
+---
+
+## V-DX-E27-001 — 2026-07-24 — research/dx-e27-logf — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E27-002. Feature
+PRE-APPROVED by the human (2026-07-23: "necessary, useful, nice"); the
+experiment is about doing it sensibly, not whether. Parking-lot trigger
+("revisit after E20") met.
+
+**Current facts (measured).** `log : ?level -> ?attrs -> string ->
+(unit,'err) t` takes a fully-built string; its implementation already
+gates ALL record construction (scoped attrs, trace ids, timestamp) behind
+`logging_enabled && minimum-check` — so the deferred-format branch point
+exists and is exact. E20's intercept pipeline consumes records downstream
+of that gate; composition is automatic.
+
+**Design predictions.**
+- Use-site shape (the contract): `Effect.logf "db.find %d" id :
+  (unit, 'err) Effect.t` — the Logs `m` idiom. The exact format4
+  encoding is the executor's to settle with the compiler; the use-site
+  is what review judges.
+- Deferred semantics: the format and record are evaluated ONLY when the
+  effect runs AND the level passes the current minimum. Disabled level:
+  formatter not invoked (instrumented test), and the allocation claim is
+  MEASURED (E20's law: cost claims are numbers — a minor-words
+  comparison disabled-vs-enabled on the watchlist).
+- **Eager-args honesty (the subtlety that must reach the mli):**
+  `logf "len %d" (Queue.length q)` evaluates `Queue.length q` EAGERLY
+  at construction; only the FORMATTING (string building) is deferred.
+  Same rule as Logs. Documented in one sentence.
+- Composition: record flows through attrs-prepend → intercepts → sink
+  like `log`. An intercept `Drop` still drops AFTER formatting
+  (documented; matches Logs' report-processor order).
+- Raising `%a` printer → defect via the ordinary capture path.
+- `eventf` NOT in scope (frequency rule; registered as follow-up if
+  usage data shows events hot).
+- Census: logging cluster +1 (`logf`); `log` stays for pre-built
+  strings. Footguns: +0 with the eager-args caveat documented.
+- Review: `logf "db.find %d" id` vs `log (sprintf "db.find %d" id)` —
+  5 vs 3 (the idiom reads itself).
+- Outcome: promote. Risk low.
