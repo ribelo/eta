@@ -3803,3 +3803,49 @@ branch pushed; objectives archived. Human pre-approval recorded; the
 shape change vs. the approved pitch reported with the veto window.
 
 **Next:** E30 (`Eta_js.from_js_promise`, human pre-approved).
+
+---
+
+## V-DX-E30-001 — 2026-07-24 — research/dx-e30-from-js-promise — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Queued candidate, human pre-approved
+(ledger: "obvious and turbo necessary"); the experiment is about doing it
+sensibly. Scored at V-DX-E30-002.
+
+**Design predictions (the open questions the executor must settle with
+evidence).**
+- Signature: one general form —
+  `from_js_promise : on_reject:(<rejection type> -> 'err) -> 'a Js.Promise.t -> ('a, 'err) Effect.t`.
+  No variant soup, no rejection-less convenience in v1 (typed-failure
+  culture: the caller names the error mapping).
+- Cancellation: detach-only — interruption drops the waiter, the host
+  promise keeps running, later resolution is dropped silently. No
+  AbortController/`?on_cancel` hook in v1 (YAGNI until a consumer needs
+  it); recorded as a follow-up candidate for http_js's fetch lane.
+- Loud capability check: a non-thenable at register time fails as a typed
+  host-policy failure (ADR 0001: "missing Fetch is a loud typed failure"),
+  not a defect, not a hang.
+- Rejection fidelity: `Promise.reject(42)` (non-Error rejection) reaches
+  `on_reject` unchanged.
+- Late-attach edge: handlers attach synchronously during `register`
+  (registration is cancellation-protected until it returns), so no
+  unhandled-rejection window and no lost wakeup for already-settled
+  promises.
+
+**Census (predicted).** eta_js facade +1 val; new "interop" cluster founded
+at 1 (first member). Footguns +0/−0 (a missing-capability addition, not a
+trap change).
+
+**Migration/scope (predicted).** No native impact — native trio stays
+green by construction. Tests land in `test/js_jsoo` (JS-only; the
+shared-suite pattern does not apply). http_js internals NOT migrated in
+this experiment (scope discipline; follow-up candidate).
+
+**Review (predicted).** PR-style oracle review finds the diff
+approve-with-reservations at worst; predicted reservation candidates:
+the rejection-mapper naming, detach-vs-abort documentation clarity.
+
+**Outcome (predicted).** Promote. Risk register: (1) js_of_ocaml
+`Js.Promise` binding shape forces a different signature than predicted;
+(2) unhandled-rejection semantics of the JS engine surprise under
+interruption; (3) the loud-check's typed-vs-defect call flips on review.
