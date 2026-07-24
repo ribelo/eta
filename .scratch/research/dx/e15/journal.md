@@ -621,3 +621,11 @@ once per mask rather than per restoration. There is no suspension across that
 check, move back, observer removal, and return from the restored dynamic region.
 
 **E15 READY FOR REVIEW**
+
+---
+
+*Orchestrator note appended at merge (2026-07-24): the throughput
+figure's description above as "isolating the new observer machinery" is
+corrected per review — the probe is full-path evidence (mask entry,
+checks, run_in, observer operations, interpretation). The main report
+describes it accurately. Journal integrity otherwise unchanged.*
