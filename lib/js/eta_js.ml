@@ -23,3 +23,26 @@ module Trace_context = Eta.Trace_context
 module Jsoo_host = Eta_jsoo
 
 let version = "dev"
+
+let from_js_promise ?on_cancel ~on_reject promise =
+  let open Js_of_ocaml in
+  Effect.async ~register:(fun resume ->
+      let then_ = Js.Unsafe.get promise "then" in
+      if not (String.equal (Js.to_string (Js.typeof then_)) "function") then
+        invalid_arg "Eta_js.from_js_promise: expected a thenable";
+      let on_fulfilled =
+        Js.wrap_callback (fun value -> resume (Exit.Ok value))
+      in
+      let on_rejected =
+        Js.wrap_callback (fun reason ->
+            resume (Exit.Error (Cause.fail (on_reject reason))))
+      in
+      ignore
+        (Js.Unsafe.meth_call promise "then"
+           [|
+             Js.Unsafe.inject on_fulfilled;
+             Js.Unsafe.inject on_rejected;
+           |]);
+      match on_cancel with
+      | None -> None
+      | Some on_cancel -> Some (Effect.sync on_cancel))

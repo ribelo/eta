@@ -23,3 +23,16 @@ module Trace_context = Eta.Trace_context
 module Jsoo_host = Eta_jsoo
 
 val version : string
+
+val from_js_promise :
+  ?on_cancel:(unit -> unit) ->
+  on_reject:(Js_of_ocaml.Js.Unsafe.any -> 'err) ->
+  Js_of_ocaml.Js.Unsafe.any ->
+  ('a, 'err) Effect.t
+(** Await a host JavaScript promise, inheriting the {!Effect.async} contract:
+    handlers attach synchronously at registration and the first settlement
+    wins. Rejection fails with [on_reject] applied to the raw host rejection
+    value, unchanged even when it is not a JS [Error]. Interruption detaches
+    the waiter: [?on_cancel] runs at most once, later settlement is dropped
+    silently, and the host computation keeps running. A non-thenable [promise]
+    raises at registration ({!Cause.Die}). *)

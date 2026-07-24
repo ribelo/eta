@@ -79,6 +79,18 @@ interruption,” touching `Expert.context` is the wrong boundary: use `async`.
 Neither API makes blocking registration safe; move blocking work to
 `Eta_blocking` instead.
 
+### Wrapping a host JavaScript promise
+
+On the js_of_ocaml track, wrap a host promise with
+`Eta_js.from_js_promise ~on_reject promise`; do not hand-roll `Effect.async`
+registration at each call site. Name the rejection mapping yourself: JS
+rejection is untyped, so `on_reject` receives the raw host value
+(`Js.Unsafe.any`, unchanged even when it is not a JS `Error`) and returns your
+typed error. Host promises are not cancellable: interruption detaches the Eta
+waiter, drops any later settlement silently, and runs the optional `?on_cancel`
+hook once — that hook is where an `AbortController.abort()` belongs. A
+non-thenable `promise` is a defect (`Cause.Die`), not a typed failure.
+
 ### One-shot coordination: `Promise`, `async`, or `Eio.Promise`?
 
 Use `Eta.Promise` for an Eta-owned one-shot result shared by fibers when the code
