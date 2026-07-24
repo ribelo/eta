@@ -245,6 +245,27 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          (Effect.metric_counter ~name:"jobs" (Meter.Int 1)));
     check_audit "map_par" (audit ~has_concurrency:true ())
       (Effect.map_par (fun value -> Effect.pure value) [ () ]);
+    check_audit "all preserves child metadata"
+      (audit
+         ~names:
+           [
+             "clock-child";
+             "log-child";
+             "metric-child";
+             "resource-child";
+             "background-child";
+           ]
+         ~uses_clock:true ~emits_logs:true ~emits_metrics:true
+         ~has_concurrency:true ~has_resources:true ~has_background:true ())
+      (Effect.all
+         [
+           Effect.named "clock-child" (Effect.sleep Duration.zero);
+           Effect.named "log-child" (Effect.log "hello");
+           Effect.named "metric-child"
+             (Effect.metric_counter ~name:"jobs" (Meter.Int 1));
+           Effect.named "resource-child" (Effect.with_scope Effect.unit);
+           Effect.named "background-child" (Effect.daemon Effect.unit);
+         ]);
     check_audit "retry" (audit ~uses_clock:true ())
       (Effect.retry ~schedule:(Schedule.recurs 1) ~while_:(fun _ -> true)
          (Effect.fail "retry"));
@@ -2747,6 +2768,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     Alcotest.(check (list int)) "empty" [] (run_ok rt (Effect.all []))
 
+  let test_all_rejects_nonpositive_max () =
+    Alcotest.check_raises "zero max"
+      (Invalid_argument "Effect.all: max_concurrent must be > 0")
+      (fun () ->
+        ignore
+          (Effect.all ~max_concurrent:0 [] : (int list, _) Effect.t));
+    Alcotest.check_raises "negative max"
+      (Invalid_argument "Effect.all: max_concurrent must be > 0")
+      (fun () ->
+        ignore
+          (Effect.all ~max_concurrent:(-3) [ Effect.pure 1 ]
+            : (int list, _) Effect.t))
+
   let test_all_fail_fast () =
     B.with_runtime @@ fun _ctx rt ->
     let exit =
@@ -2883,6 +2917,88 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 30);
     check_exit_ok (Alcotest.list Alcotest.int) "input order" [ 1; 2; 3 ]
       (B.await promise)
+
+  let test_all_default_caps_concurrency_at_eight () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let active = ref 0 in
+    let max_seen = ref 0 in
+    let child value =
+      Effect.sync (fun () ->
+          incr active;
+          max_seen := max !max_seen !active)
+      |> Effect.bind (fun () ->
+             Effect.pure value
+             |> Effect.delay (Duration.ms 10)
+             |> Effect.tap (fun _ -> Effect.sync (fun () -> decr active)))
+    in
+    let inputs = List.init 9 (fun index -> index + 1) in
+    let promise =
+      B.fork_run ctx rt (Effect.all (List.map child inputs))
+    in
+    wait_for_sleepers clock 8;
+    Alcotest.(check int) "eight children admitted" 8 (B.sleeper_count clock);
+    Alcotest.(check int) "default peak concurrency" 8 !max_seen;
+    B.adjust_clock clock (Duration.ms 10);
+    wait_for_sleepers clock 1;
+    B.adjust_clock clock (Duration.ms 10);
+    check_exit_ok (Alcotest.list Alcotest.int) "results" inputs
+      (B.await promise);
+    Alcotest.(check int) "default remained capped" 8 !max_seen
+
+  let test_all_explicit_bound_admits_full_rendezvous () =
+    B.with_runtime @@ fun _ctx rt ->
+    let participants = 9 in
+    let admitted = ref 0 in
+    let rec await_everyone () =
+      Effect.sync (fun () -> !admitted = participants)
+      |> Effect.bind (function
+           | true -> Effect.unit
+           | false -> Effect.yield |> Effect.bind await_everyone)
+    in
+    let child value =
+      Effect.sync (fun () -> incr admitted)
+      |> Effect.bind (fun () -> await_everyone ())
+      |> Effect.map (fun () -> value)
+    in
+    let effects = List.init participants (fun index -> child index) in
+    Alcotest.(check (list int)) "all rendezvous participants"
+      (List.init participants Fun.id)
+      (run_ok rt (Effect.all ~max_concurrent:(List.length effects) effects));
+    Alcotest.(check int) "every participant admitted" participants !admitted
+
+  let test_all_bounded_fail_fast_never_admits_tail () =
+    B.with_runtime @@ fun ctx rt ->
+    let failure_ready, failure_ready_resolver = B.create_promise () in
+    let sibling_ready, sibling_ready_resolver = B.create_promise () in
+    let fail_gate, fail_gate_resolver = B.create_promise () in
+    let released = ref false in
+    let tail_started = ref false in
+    let failure =
+      Effect.sync (fun () -> B.resolve failure_ready_resolver ())
+      |> Effect.bind (fun () -> B.await_effect fail_gate)
+      |> Effect.bind (fun () -> Effect.fail "boom")
+    in
+    let sibling =
+      Effect.acquire_release
+        ~acquire:
+          (Effect.sync (fun () ->
+               B.resolve sibling_ready_resolver ();
+               ()))
+        ~release:(fun () -> Effect.sync (fun () -> released := true))
+      |> Effect.bind (fun () -> Effect.never)
+    in
+    let tail = Effect.sync (fun () -> tail_started := true) in
+    let promise =
+      B.fork_run ctx rt
+        (Effect.all ~max_concurrent:2 [ failure; sibling; tail; tail ])
+    in
+    ignore (B.await failure_ready : unit);
+    ignore (B.await sibling_ready : unit);
+    B.resolve fail_gate_resolver ();
+    check_exit_error string_cause "bounded all failure" (Cause.Fail "boom")
+      (B.await promise);
+    Alcotest.(check bool) "admitted sibling finalized" true !released;
+    Alcotest.(check bool) "unadmitted tail never started" false !tail_started
 
   let test_all_settled_preserves_input_order_with_out_of_order_completion () =
     B.with_test_clock @@ fun ctx clock rt ->
@@ -3779,6 +3895,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_all_collects_in_input_order;
           Alcotest.test_case "all empty returns empty list" `Quick
             test_all_empty_returns_empty_list;
+          Alcotest.test_case "all rejects nonpositive max" `Quick
+            test_all_rejects_nonpositive_max;
           Alcotest.test_case "all fail-fast" `Quick test_all_fail_fast;
           Alcotest.test_case "all_settled collects outcomes" `Quick
             test_all_settled_collects_successes_and_failures;
@@ -3815,6 +3933,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_par_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all preserves delayed input order" `Quick
             test_all_preserves_input_order_with_out_of_order_completion;
+          Alcotest.test_case "all default cap is eight" `Quick
+            test_all_default_caps_concurrency_at_eight;
+          Alcotest.test_case "all explicit bound admits full rendezvous" `Quick
+            test_all_explicit_bound_admits_full_rendezvous;
+          Alcotest.test_case "all bounded fail-fast never admits tail" `Quick
+            test_all_bounded_fail_fast_never_admits_tail;
           Alcotest.test_case "all bind_error recovers after sibling cancel" `Quick
             test_all_catch_recovers_typed_failure_after_sibling_cancel;
           Alcotest.test_case "all finalizer cancellation baseline" `Quick

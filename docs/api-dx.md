@@ -60,8 +60,23 @@ Use syntax operators rather than explicit bind in application code:
 - `and*` / `and+` for sequential product (strict left-to-right; nothing forked).
 - `Effect.par` for independent concurrent effects (explicit at the call site).
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
-- `Effect.all` for dynamic homogeneous lists of independent effects where
-  fail-fast collection is wanted.
+- `Effect.all` when the effects are already built and their static names and
+  capability footprints should remain visible to introspection.
+- `Effect.map_par` when a function should be mapped lazily over a collection.
+
+Both collection combinators use the same admission policy: at most eight child
+effects run concurrently by default, or the positive `~max_concurrent` supplied
+by the caller. Results retain input order and failure is fail-fast.
+
+| Task shape | Recommended form | Default admission |
+| --- | --- | --- |
+| Effects already in hand | `Effect.all effects` | 8 |
+| Function plus a collection | `Effect.map_par f inputs` | 8 |
+
+Admission is not a barrier. A child must not wait for an unadmitted sibling or
+the group deadlocks. For a nonempty barrier/coordinator shape that requires
+every prebuilt child to be admitted, make full fan-out explicit:
+`Effect.all ~max_concurrent:(List.length effects) effects`.
 
 ### Callback-shaped host APIs: `async` or `Expert.make`?
 
@@ -428,11 +443,15 @@ interruption, or finalizer diagnostics.
 `Effect.all` is not replaced by recursive `bind` / `map` loops over a list of
 effects. Use `and*` for a small fixed set of differently typed effects that must
 sequence left-to-right; use `Effect.par` for a fixed concurrent product;
-`Effect.map_par f inputs` when the workflow maps over inputs concurrently; and
-`all_settled` when every child outcome is needed instead of fail-fast
-collection. `map_par` collects in input order and starts at most eight mapper
-fibers by default; pass `~max_concurrent` for a different positive cap. Omission
-does not mean unbounded concurrency.
+`Effect.all effects` when homogeneous effects are already built;
+`Effect.map_par f inputs` when the workflow maps a function over a collection;
+and `all_settled` when every child outcome is needed instead of fail-fast
+collection. `all` and `map_par` both collect in input order and admit at most
+eight children by default; pass `~max_concurrent` for a different positive cap.
+Omission never means unbounded concurrency. A nonempty coordinator that needs
+every prebuilt effect admitted uses
+`Effect.all ~max_concurrent:(List.length effects) effects` and must make that
+full-fan-out requirement explicit at review.
 
 `Effect.acquire_release` and `Effect.with_scope` are not replaced by
 `Effect.with_resource`. They are needed for resources that intentionally live

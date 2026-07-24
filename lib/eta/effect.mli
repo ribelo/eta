@@ -208,10 +208,23 @@ val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
     parallelism. Use the optional [eta_par] package for worker-domain offload
     or explicit fork-join parallel algorithms. *)
 
-val all : ('a, 'err) t list -> ('a list, 'err) t
-(** Run effects concurrently, collecting results in input order.
-    Fail-fast: the first child failure cancels the others; the cause
-    of the first observed failure propagates. *)
+val all :
+  ?max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
+(** Run prebuilt effects concurrently, collecting results in input order.
+    Fail-fast: the first child failure cancels admitted siblings; the cause of
+    the first observed failure propagates.
+
+    At most [max_concurrent] children are admitted at once; omission means 8,
+    and fewer are admitted when the list is shorter. Children must not depend on
+    work beyond this bound: a child waiting on an unadmitted sibling deadlocks.
+    A nonempty barrier or coordinator shape that needs every child admitted can
+    request full fan-out with
+    [all ~max_concurrent:(List.length effects) effects].
+
+    Unlike {!map_par}, whose mapper is not forced while constructing the
+    blueprint, [all] receives prebuilt effects and aggregates their static names
+    and capability footprints for introspection.
+    @raise Invalid_argument if [max_concurrent <= 0]. *)
 
 val all_settled :
   ('a, 'err) t list -> (('a, 'err Cause.t) result list, 'outer_err) t

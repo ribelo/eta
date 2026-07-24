@@ -116,6 +116,48 @@ let tests =
            let s = String.concat ";" (List.map string_of_int actual) in
            fail "stream_flat_map" ("expected [1;1;2;2;3;3], got [" ^ s ^ "]")
        | _ -> fail "stream_flat_map" "expected ok"));
+    ("stream_map_effect_preserves_order_and_caps_admission",
+     fun done_ ->
+       let runtime = Runtime.create () in
+       let active = ref 0 in
+       let maximum = ref 0 in
+       let mapper_calls = ref 0 in
+       let map value =
+         incr mapper_calls;
+         Effect.sync (fun () ->
+             incr active;
+             maximum := max !maximum !active)
+         |> Effect.bind (fun () ->
+                Effect.delay (Duration.ms 1) (Effect.pure (value * 2)))
+         |> Effect.finally (Effect.sync (fun () -> decr active))
+       in
+       let inputs = List.init 12 (fun index -> index + 1) in
+       let stream = Stream.from_iterable inputs |> Stream.map_effect map in
+       check_equal_int "stream_map_effect lazy mapper" 0 !mapper_calls;
+       run_stream runtime stream done_ (function
+       | Exit.Ok actual ->
+           check_equal_list "stream_map_effect order"
+             (List.map (fun value -> value * 2) inputs) actual;
+           check_equal_int "stream_map_effect peak" 8 !maximum;
+           check_equal_int "stream_map_effect cleanup" 0 !active;
+           check_equal_int "stream_map_effect mapper calls" 12 !mapper_calls
+       | Exit.Error _ -> fail "stream_map_effect" "expected ok"));
+    ("stream_map_effect_preserves_typed_failure",
+     fun done_ ->
+       let runtime = Runtime.create () in
+       let stream =
+         Stream.from_iterable [ 1; 2; 3 ]
+         |> Stream.map_effect (function
+              | 2 -> Effect.fail `Boom
+              | value -> Effect.pure value)
+       in
+       run_stream runtime stream done_ (function
+       | Exit.Error (Cause.Fail `Boom) -> ()
+       | Exit.Error _ ->
+           fail "stream_map_effect_preserves_typed_failure"
+             "expected raw typed failure"
+       | Exit.Ok _ ->
+           fail "stream_map_effect_preserves_typed_failure" "expected error"));
     ("stream_fail_preserves_typed_error",
      fun done_ ->
        let runtime = Runtime.create () in
