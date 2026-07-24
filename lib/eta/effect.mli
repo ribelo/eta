@@ -1002,9 +1002,12 @@ val logf :
   ?attrs:(string * string) list ->
   (Format.formatter -> unit) ->
   (unit, 'err) t
-(** Formatted {!log}; the formatter runs once, only after runtime level admission,
-    so work and arguments inside it are deferred (those evaluated before [logf]
-    remain eager). Its captured values are retained for the blueprint's lifetime.
+(** Formatted {!log}; the formatter runs once per admitted interpretation,
+    gated by runtime logging-enabled and the scoped {!with_minimum_log_level} —
+    logger-owned filters such as {!Logger.with_min_level} run later and cannot
+    suppress formatting. Work and arguments inside the formatter are deferred
+    (those evaluated before [logf] remain eager). Its captured values are
+    retained for the blueprint's lifetime.
     Attributes and intercepts follow [log]; [Drop] occurs after formatting, and a
     raise becomes a defect through ordinary capture. *)
 

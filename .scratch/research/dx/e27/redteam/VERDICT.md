@@ -1,7 +1,7 @@
 # DX-E27 red-team verdict
 
 The adversarial cases are registered in the shared Observability suite and pass
-on the focused OxCaml/Eio run (596 tests total).
+on the focused OxCaml/Eio run (598 tests total).
 
 | Attack | Discriminator | Result |
 | --- | --- | --- |
