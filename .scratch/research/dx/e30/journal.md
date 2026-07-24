@@ -193,3 +193,30 @@ and the public signature remains unchanged.
   risk is polymorphic inference around the internal settlement variant.
 - Law rows will use the post-edit exact `eta_js.mli` line span and registered
   Node test names rather than claiming qcheck coverage.
+
+## Follow-up 2 micro-predictions (sealed 2026-07-24)
+
+This append-only section is sealed before S1–S5 implementation. It preserves
+both prior rounds and records the expected repair independently of the result.
+
+| Finding | Sealed prediction | Falsifying evidence |
+| --- | --- | --- |
+| S1 package metadata | `eta_http_js` replaces direct `eta_jsoo` with `eta_js` in `dune-project`; Dune regenerates the same dependency change in `eta_http_js.opam`; the mainline source-pin list adds `eta_js` while retaining `eta_jsoo` as `eta_js`'s package dependency | Exact `-p eta_http_js @install` still cannot resolve `eta_js` |
+| S2 non-discriminating native Promise | Replace the native-Promise first-wins case with adversarial thenables whose `then` invokes both callbacks synchronously, once fulfillment-first and once rejection-first; each order observes only its first branch and the losing rejection mapper never runs | Either second callback changes the Eta exit or loser-side mapper/callback state changes |
+| S3 synchronous-attach precision | The adversarial `then` records at invocation that both supplied arguments have JS type `function`; because it invokes them before returning, this directly observes both handlers at registration call time rather than merely before Node's unhandled-rejection deadline | Either argument is absent/non-callable, or `then` is not invoked during registration |
+| S4 unchecked success-type row | Add a registry row with a **static observation boundary**: the public signature's result `'a` is unconstrained by the `Js.Unsafe.any` input, and numeric pending/already-settled tests demonstrate the raw boundary without claiming runtime type validation | Signature gains a checked decoder or ties `'a` to a typed promise input |
+| S5 Fetch taxonomy | Document that migrated `eta_http_js` treats a non-thenable host return as `Cause.Die`, while actual promise rejection remains typed `Host_api_error` | Consumer still catches non-thenable as typed failure or docs imply it does |
+
+### Predicted gate outcome
+
+After package metadata regeneration, the exact new gate
+
+```sh
+nix develop .#mainline -c dune build --build-dir=_build-mainline \
+  -p eta_http_js @install
+```
+
+will pass in addition to all five original gates and focused `test/js_jsoo
+ test/http_js`. The likely risk is package-source pin ordering rather than code:
+`eta_js` must be present in the mainline pin set before Dune builds
+`eta_http_js`; `eta_jsoo` remains pinned because `eta_js` depends on it.
