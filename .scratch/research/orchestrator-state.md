@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E28 — `all` vs `map_par` T1 audit**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e28`
+  - Branch: `research/dx-e28-all-vs-map-par`
+  - Stage: predictions sealed (V-DX-E28-001); objective.md written; awaiting executor
 - Done (recent): **E30 promoted** (`7d0f462e`, three review rounds;
   both gate tracks green on master)
 - Done (queued candidates): **E27 promoted** (`logf`; format4 pitch
@@ -86,4 +89,4 @@ loop (plan §4.2 as amended by Amendment 1).
   experiment branch, and verify the branch base contains the predictions
   commit (E30 staging cut twice from stale/diverged local master; foreign
   schema commit needed temp-worktree merge `5ce0aa6e`)
-- Last update: 2026-07-24 — E30 promoted
+- Last update: 2026-07-24 — E28 launched

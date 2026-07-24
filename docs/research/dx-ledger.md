@@ -261,7 +261,7 @@ evidence; every hold names its re-entry trigger.
   Three review rounds (host-context mapper defect → packaging defect →
   R116 discrimination). V-DX-E30-001/002.
 
-### E28 — `all` vs `map_par` T1 audit
+### E28 — `all` vs `map_par` T1 audit — in flight
 - What: are `all` and `map_par` two ways for one task? Engine census +
   cold-read → merge or differentiate with a crisp contract.
 - Rationale: T1; if users can't say which to reach for, that's the
