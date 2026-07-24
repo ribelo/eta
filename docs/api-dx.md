@@ -79,6 +79,22 @@ interruption,” touching `Expert.context` is the wrong boundary: use `async`.
 Neither API makes blocking registration safe; move blocking work to
 `Eta_blocking` instead.
 
+### Wrapping a host JavaScript promise
+
+On the js_of_ocaml track, wrap a host promise with
+`Eta_js.from_js_promise ~on_reject promise`; do not hand-roll `Effect.async`
+registration at each call site. Name the rejection mapping yourself: JS
+rejection is untyped, so `on_reject` receives the raw host value
+(`Js.Unsafe.any`, unchanged even when it is not a JS `Error`) and returns your
+typed error. The resolved value crosses the same unsafe boundary, so its OCaml
+type is caller-asserted rather than checked. Host promises expose no generic
+cancellation: interruption detaches the Eta waiter while handlers stay attached,
+and Eta itself leaves the host work alone. Use `?on_cancel` to request
+host-specific cancellation — that hook is where an `AbortController.abort()`
+belongs. A non-thenable `promise` is a defect (`Cause.Die`), not a typed failure.
+Consequently, `eta_http_js` treats a host Fetch value that is not thenable as
+`Cause.Die`; genuine host-promise rejections still map to `Host_api_error`.
+
 ### One-shot coordination: `Promise`, `async`, or `Eio.Promise`?
 
 Use `Eta.Promise` for an Eta-owned one-shot result shared by fibers when the code

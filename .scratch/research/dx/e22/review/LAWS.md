@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **103 mli-stated claims**, **2 prose-pending model claims**,
-**114 registered external claim clusters**, and **64 unique named qcheck properties** in
+**125 registered external claim clusters**, and **64 unique named qcheck properties** in
 `test/laws/law_properties.ml`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -250,6 +250,17 @@ qcheck optics.
 | R113 | A `logf` blueprint retains values captured by its formatter for the blueprint's lifetime. | `lib/eta/effect.mli:1007` | `logf blueprint retains formatter captures` — `test/core_common/observability_common_suites.ml:1516-1517` |
 | R114 | `logf` composes through the ordinary attrs/interceptor pipeline, with `Drop` after formatting. | `lib/eta/effect.mli:1008-1009` | `logf composes attrs and intercepts`; `logf Drop occurs after formatting` — `test/core_common/observability_common_suites.ml:1508-1511` |
 | R115 | A raising `logf` formatter becomes a defect through ordinary capture. | `lib/eta/effect.mli:1008-1009` | `logf raising printer becomes defect` — `test/core_common/observability_common_suites.ml:1512-1513` |
+| R116 | `from_js_promise` attaches both settlement handlers synchronously during registration. | `lib/js/eta_js.mli:32-34` | `eta_js from_js_promise attaches handlers in runtime body turn` — `Runtime.run` queues body M1, the test queues sentinel M2 immediately afterward, and the thenable records both callable handlers inside M1; immediate post-run marker is false while M2 observes true. Deferring attachment from M1 would enqueue it behind M2 and fail — scheduler `lib/jsoo/eta_jsoo.ml:31-45,755-772`; test `test/js_jsoo/test_eta_js_jsoo.ml:345-370,487-510,645-646` |
+| R117 | The first host-promise settlement wins. | `lib/js/eta_js.mli:33-34` | `eta_js from_js_promise adversarial thenable first settlement wins` — adversarial synchronous thenables invoke both adapter callbacks in fulfillment/rejection and rejection/fulfillment orders; exit and exact mapper counts discriminate both winners — `test/js_jsoo/test_eta_js_jsoo.ml:345-366,439-485,643-644` |
+| R118 | Rejection applies `on_reject` to the unchanged raw host value, including non-`Error` values. | `lib/js/eta_js.mli:34-35` | `eta_js from_js_promise non-error rejection fidelity` — `test/js_jsoo/test_eta_js_jsoo.ml:408-418,639-640` |
+| R119 | A raising rejection mapper becomes a defect. | `lib/js/eta_js.mli:35` | `eta_js from_js_promise raising mapper dies` plus suite completion and `unhandledRejection` sentinels — `test/js_jsoo/test_eta_js_jsoo.ml:420-437,641-642` |
+| R120 | Interruption detaches the Eta waiter and drops later successful settlement. | `lib/js/eta_js.mli:36-37` | `eta_js from_js_promise interrupt detaches` — `test/js_jsoo/test_eta_js_jsoo.ml:512-549,647-648` |
+| R121 | Pending interruption runs `on_cancel` at most once. | `lib/js/eta_js.mli:36` | `eta_js from_js_promise interrupt detaches` — exact cancel-count assertion `test/js_jsoo/test_eta_js_jsoo.ml:512-549,647-648` |
+| R122 | A rejection mapper does not run for rejection after interruption detaches the waiter. | `lib/js/eta_js.mli:36-37` | `eta_js from_js_promise late rejection skips mapper` — exact zero-call assertion `test/js_jsoo/test_eta_js_jsoo.ml:551-588,649-650` |
+| R123 | Host handlers remain attached after Eta detaches and until host settlement. | `lib/js/eta_js.mli:37-38` | `eta_js from_js_promise late rejection skips mapper` plus suite `unhandledRejection` sentinel — `test/js_jsoo/test_eta_js_jsoo.ml:551-588,649-650` |
+| R124 | Eta does not itself cancel host work; `on_cancel` is the caller-owned host-cancellation request. | `lib/js/eta_js.mli:38-39` | `eta_js from_js_promise interrupt detaches` forces and observes host settlement after detach while asserting one hook call — `test/js_jsoo/test_eta_js_jsoo.ml:512-549,647-648`; Fetch hook integration `cancellation aborts fetch` — `test/http_js/run_http_js_tests.ml:367-397,726` |
+| R125 | A non-thenable raises during registration and becomes `Cause.Die`. | `lib/js/eta_js.mli:39-40` | `eta_js from_js_promise non-thenable dies` — `test/js_jsoo/test_eta_js_jsoo.ml:590-612,651-652`; migrated Fetch taxonomy `non-thenable fetch dies` — `test/http_js/run_http_js_tests.ml:485-500,730` |
+| R126 | The success type is asserted by the caller and is not checked by `from_js_promise`. | `lib/js/eta_js.mli:39` | **Static observation boundary:** signature `lib/js/eta_js.mli:27-31` leaves result `'a` unconstrained by the `Js.Unsafe.any` input; dynamic raw-boundary witnesses `eta_js from_js_promise pending resolves after registration` and `eta_js from_js_promise already settled` observe caller-selected `int` values without claiming runtime validation — `test/js_jsoo/test_eta_js_jsoo.ml:373-390,633-636` |
 
 ## Model laws (prose pending)
 
@@ -272,7 +283,8 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
 | `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
-| **Total covered** | **103** | **114** | **2** | **217** |
+| `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
+| **Total covered** | **103** | **125** | **2** | **228** |
 
 The executable contains 64 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

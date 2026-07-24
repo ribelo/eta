@@ -11,6 +11,29 @@ let set_exit_code code =
   Unsafe.set process "exitCode" code
 
 let fail_test message = failwith message
+let suite_completed = ref false
+
+let () =
+  let process = Unsafe.get Unsafe.global "process" in
+  Unsafe.meth_call process "on"
+    [|
+      Unsafe.inject (Js.string "beforeExit");
+      Unsafe.inject
+        (Js.wrap_callback (fun _code ->
+             if not !suite_completed then (
+               set_exit_code 1;
+               log "eta_js_jsoo failed: test chain did not reach completion")));
+    |]
+  |> ignore;
+  Unsafe.meth_call process "on"
+    [|
+      Unsafe.inject (Js.string "unhandledRejection");
+      Unsafe.inject
+        (Js.wrap_callback (fun _reason _promise ->
+             set_exit_code 1;
+             log "eta_js_jsoo failed: unhandled host promise rejection"));
+    |]
+  |> ignore
 let pp_err fmt _ = Format.pp_print_string fmt "<err>"
 let pp_cause cause = Format.asprintf "%a" (Eta_js.Cause.pp pp_err) cause
 
@@ -289,6 +312,305 @@ let test_supervisor_observes_failure done_ =
               (Printf.sprintf "supervisor: expected observed failure, got %s"
                  (pp_cause cause))))
 
+let promise_constructor () = Unsafe.get Unsafe.global "Promise"
+
+let resolved_promise value =
+  Unsafe.meth_call (promise_constructor ()) "resolve"
+    [| Unsafe.inject value |]
+
+let rejected_promise reason =
+  Unsafe.meth_call (promise_constructor ()) "reject"
+    [| Unsafe.inject reason |]
+
+let deferred_promise () =
+  let resolve = ref (fun _ -> ()) in
+  let reject = ref (fun _ -> ()) in
+  let promise =
+    Unsafe.new_obj (promise_constructor ())
+      [|
+        Unsafe.inject
+          (Js.wrap_callback (fun on_resolve on_reject ->
+               resolve :=
+                 fun value ->
+                   ignore
+                     (Unsafe.fun_call on_resolve [| Unsafe.inject value |]);
+               reject :=
+                 fun reason ->
+                   ignore
+                     (Unsafe.fun_call on_reject [| Unsafe.inject reason |])));
+      |]
+  in
+  (promise, (fun value -> !resolve value), fun reason -> !reject reason)
+
+let adversarial_thenable ~fulfill_first ~value ~reason ~handlers_seen =
+  let then_ =
+    Js.wrap_callback (fun on_fulfilled on_rejected ->
+        handlers_seen :=
+          String.equal (Js.to_string (Js.typeof on_fulfilled)) "function"
+          && String.equal (Js.to_string (Js.typeof on_rejected)) "function";
+        let fulfill () =
+          ignore
+            (Unsafe.fun_call on_fulfilled [| Unsafe.inject value |])
+        in
+        let reject () =
+          ignore
+            (Unsafe.fun_call on_rejected [| Unsafe.inject reason |])
+        in
+        if fulfill_first then (
+          fulfill ();
+          reject ())
+        else (
+          reject ();
+          fulfill ()))
+  in
+  Unsafe.obj [| ("then", Unsafe.inject then_) |]
+
+let queue_microtask f =
+  ignore
+    (Unsafe.fun_call (Unsafe.js_expr "queueMicrotask")
+       [| Unsafe.inject (Js.wrap_callback f) |])
+
+let test_from_js_promise_pending_resolves_after_registration done_ =
+  let promise, js_resolve, _js_reject = deferred_promise () in
+  let eff =
+    Eta_js.Effect.par
+      (Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) promise)
+      (Eta_js.Effect.delay (Eta_js.Duration.ms 1)
+         (Eta_js.Effect.sync (fun () -> js_resolve 42)))
+    |> Eta_js.Effect.map fst
+  in
+  run eff
+    ~on_result:(finish done_ (expect_ok_int "from_js_promise resolve" 42))
+
+let test_from_js_promise_already_settled done_ =
+  let promise = resolved_promise 7 in
+  run
+    (Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) promise)
+    ~on_result:
+      (finish done_ (expect_ok_int "from_js_promise already settled" 7))
+
+let test_from_js_promise_reject_maps_typed_failure done_ =
+  run
+    (Eta_js.Effect.sync (fun () ->
+         rejected_promise
+           (Unsafe.new_obj (Unsafe.get Unsafe.global "Error")
+              [| Unsafe.inject (Js.string "boom") |]))
+     |> Eta_js.Effect.bind (fun promise ->
+            Eta_js.from_js_promise
+              ~on_reject:(fun reason ->
+                `Message (Js.to_string (Unsafe.get reason "message")))
+              promise))
+    ~on_result:
+      (finish done_
+         (expect_fail "from_js_promise reject"
+            (( = ) (`Message "boom"))))
+
+let test_from_js_promise_non_error_rejection_fidelity done_ =
+  run
+    (Eta_js.Effect.sync (fun () -> rejected_promise 42)
+     |> Eta_js.Effect.bind (fun promise ->
+            Eta_js.from_js_promise
+              ~on_reject:(fun reason ->
+                `Code (Js.float_of_number (Unsafe.coerce reason)))
+              promise))
+    ~on_result:
+      (finish done_
+         (expect_fail "from_js_promise reject 42" (( = ) (`Code 42.0))))
+
+let test_from_js_promise_raising_mapper_dies done_ =
+  let eff =
+    Eta_js.Effect.sync (fun () -> rejected_promise (Js.string "boom"))
+    |> Eta_js.Effect.bind (fun promise ->
+           Eta_js.from_js_promise
+             ~on_reject:(fun _ -> failwith "mapper failed")
+             promise)
+  in
+  run eff
+    ~on_result:
+      (finish done_ (function
+        | Eta_js.Exit.Error cause when Eta_js.Cause.defects cause <> [] -> ()
+        | Eta_js.Exit.Error cause ->
+            fail_test
+              (Printf.sprintf "from_js_promise raising mapper: got %s"
+                 (pp_cause cause))
+        | Eta_js.Exit.Ok _ ->
+            fail_test "from_js_promise raising mapper: expected Die"))
+
+let test_from_js_promise_adversarial_thenable_first_settlement_wins done_ =
+  let fulfilled_handlers_seen = ref false in
+  let fulfilled_mapper_calls = ref 0 in
+  let fulfilled_first =
+    adversarial_thenable ~fulfill_first:true ~value:11
+      ~reason:(Js.string "late rejection")
+      ~handlers_seen:fulfilled_handlers_seen
+  in
+  let rejected_handlers_seen = ref false in
+  let rejected_mapper_calls = ref 0 in
+  let rejected_first =
+    adversarial_thenable ~fulfill_first:false ~value:12
+      ~reason:(Js.string "winning rejection")
+      ~handlers_seen:rejected_handlers_seen
+  in
+  let check_fulfilled result =
+    expect_ok_int "from_js_promise fulfillment-first thenable" 11 result;
+    if not !fulfilled_handlers_seen then
+      fail_test "from_js_promise fulfillment-first: handlers were not functions";
+    if !fulfilled_mapper_calls <> 0 then
+      fail_test "from_js_promise fulfillment-first: losing mapper ran"
+  in
+  let check_rejected result =
+    expect_fail "from_js_promise rejection-first thenable" (( = ) `Rejected)
+      result;
+    if not !rejected_handlers_seen then
+      fail_test "from_js_promise rejection-first: handlers were not functions";
+    if !rejected_mapper_calls <> 1 then
+      fail_test "from_js_promise rejection-first: mapper did not run once"
+  in
+  run
+    (Eta_js.from_js_promise
+       ~on_reject:(fun _ ->
+         incr fulfilled_mapper_calls;
+         `Rejected)
+       fulfilled_first)
+    ~on_result:
+      (finish
+         (fun () ->
+           run
+             (Eta_js.from_js_promise
+                ~on_reject:(fun _ ->
+                  incr rejected_mapper_calls;
+                  `Rejected)
+                rejected_first)
+             ~on_result:(finish done_ check_rejected))
+         check_fulfilled)
+
+let test_from_js_promise_attaches_handlers_in_runtime_body_turn done_ =
+  let handlers_seen = ref false in
+  let handlers_seen_by_sentinel = ref None in
+  let thenable =
+    adversarial_thenable ~fulfill_first:true ~value:21
+      ~reason:(Js.string "late rejection") ~handlers_seen
+  in
+  run
+    (Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) thenable)
+    ~on_result:
+      (finish done_ (fun result ->
+           expect_ok_int "from_js_promise attach turn" 21 result;
+           match !handlers_seen_by_sentinel with
+           | Some true -> ()
+           | Some false ->
+               fail_test
+                 "from_js_promise attach turn: attachment was deferred"
+           | None ->
+               fail_test
+                 "from_js_promise attach turn: result beat sentinel"));
+  if !handlers_seen then
+    fail_test "from_js_promise attach turn: runtime body ran inline";
+  queue_microtask (fun () ->
+      handlers_seen_by_sentinel := Some !handlers_seen)
+
+let test_from_js_promise_interrupt_detaches done_ =
+  let promise, js_resolve, _js_reject = deferred_promise () in
+  let cancel_count = ref 0 in
+  let awaited =
+    Eta_js.Effect.timeout_as (Eta_js.Duration.ms 5) ~on_timeout:`Timeout
+      (Eta_js.from_js_promise
+         ~on_cancel:(fun () -> incr cancel_count)
+         ~on_reject:(fun _ -> `Rejected)
+         promise)
+  in
+  let eff =
+    Eta_js.Effect.bind_error
+      (function
+        | `Timeout ->
+            (* The host promise settles after the waiter detached: the late
+               settlement must be dropped silently. *)
+            Eta_js.Effect.sync (fun () -> js_resolve 7)
+            |> Eta_js.Effect.bind (fun () ->
+                   Eta_js.Effect.delay (Eta_js.Duration.ms 10)
+                     (Eta_js.Effect.pure `Recovered))
+        | `Rejected -> Eta_js.Effect.fail `Unexpected)
+      awaited
+  in
+  run eff
+    ~on_result:
+      (finish done_ (function
+        | Eta_js.Exit.Ok `Recovered ->
+            if !cancel_count <> 1 then
+              fail_test
+                (Printf.sprintf
+                   "from_js_promise interrupt: on_cancel ran %d times"
+                   !cancel_count)
+        | Eta_js.Exit.Ok _ ->
+            fail_test "from_js_promise interrupt: unexpected success"
+        | Eta_js.Exit.Error cause ->
+            fail_test
+              (Printf.sprintf "from_js_promise interrupt: got %s"
+                 (pp_cause cause))))
+
+let test_from_js_promise_late_rejection_skips_mapper done_ =
+  let promise, _js_resolve, js_reject = deferred_promise () in
+  let mapper_calls = ref 0 in
+  let awaited =
+    Eta_js.Effect.timeout_as (Eta_js.Duration.ms 5) ~on_timeout:`Timeout
+      (Eta_js.from_js_promise
+         ~on_reject:(fun _ ->
+           incr mapper_calls;
+           `Rejected)
+         promise)
+  in
+  let eff =
+    Eta_js.Effect.bind_error
+      (function
+        | `Timeout ->
+            (* Rejection after detach must not surface as an unhandled host
+               rejection: the handlers stay attached. *)
+            Eta_js.Effect.sync (fun () -> js_reject (Js.string "late"))
+            |> Eta_js.Effect.bind (fun () ->
+                   Eta_js.Effect.delay (Eta_js.Duration.ms 10)
+                     (Eta_js.Effect.sync (fun () ->
+                          if !mapper_calls <> 0 then
+                            fail_test
+                              "from_js_promise detach reject: mapper ran";
+                          `Recovered)))
+        | `Rejected -> Eta_js.Effect.fail `Unexpected)
+      awaited
+  in
+  run eff
+    ~on_result:
+      (finish done_ (function
+        | Eta_js.Exit.Ok `Recovered -> ()
+        | Eta_js.Exit.Ok _ ->
+            fail_test "from_js_promise detach reject: unexpected success"
+        | Eta_js.Exit.Error cause ->
+            fail_test
+              (Printf.sprintf "from_js_promise detach reject: got %s"
+                 (pp_cause cause))))
+
+let test_from_js_promise_non_thenable_dies done_ =
+  let forged_without_then = Unsafe.obj [||] in
+  let forged_with_int_then =
+    Unsafe.obj [| ("then", Unsafe.inject 1) |]
+  in
+  let await_forged forged =
+    Eta_js.from_js_promise ~on_reject:(fun _ -> `Rejected) forged
+  in
+  let expect_die name = function
+    | Eta_js.Exit.Error cause when Eta_js.Cause.defects cause <> [] -> ()
+    | Eta_js.Exit.Error cause ->
+        fail_test
+          (Printf.sprintf "%s: expected Die, got %s" name (pp_cause cause))
+    | Eta_js.Exit.Ok _ -> fail_test (name ^ ": expected Die, got Ok")
+  in
+  run (await_forged forged_without_then)
+    ~on_result:
+      (finish
+         (fun () ->
+           run (await_forged forged_with_int_then)
+             ~on_result:
+               (finish done_ (expect_die "from_js_promise forged then")))
+         (expect_die "from_js_promise missing then"))
+
 let tests =
   [
     ("eta_js runtime delay", test_runtime_delay);
@@ -308,10 +630,32 @@ let tests =
     ("eta_js semaphore facade", test_semaphore_facade);
     ("eta_js pubsub facade", test_pubsub_facade);
     ("eta_js supervisor observes failure", test_supervisor_observes_failure);
+    ( "eta_js from_js_promise pending resolves after registration",
+      test_from_js_promise_pending_resolves_after_registration );
+    ( "eta_js from_js_promise already settled",
+      test_from_js_promise_already_settled );
+    ( "eta_js from_js_promise reject maps typed failure",
+      test_from_js_promise_reject_maps_typed_failure );
+    ( "eta_js from_js_promise non-error rejection fidelity",
+      test_from_js_promise_non_error_rejection_fidelity );
+    ( "eta_js from_js_promise raising mapper dies",
+      test_from_js_promise_raising_mapper_dies );
+    ( "eta_js from_js_promise adversarial thenable first settlement wins",
+      test_from_js_promise_adversarial_thenable_first_settlement_wins );
+    ( "eta_js from_js_promise attaches handlers in runtime body turn",
+      test_from_js_promise_attaches_handlers_in_runtime_body_turn );
+    ( "eta_js from_js_promise interrupt detaches",
+      test_from_js_promise_interrupt_detaches );
+    ( "eta_js from_js_promise late rejection skips mapper",
+      test_from_js_promise_late_rejection_skips_mapper );
+    ( "eta_js from_js_promise non-thenable dies",
+      test_from_js_promise_non_thenable_dies );
   ]
 
 let rec run_tests = function
-  | [] -> log "eta_js_jsoo ok"
+  | [] ->
+      suite_completed := true;
+      log "eta_js_jsoo ok"
   | (name, test) :: rest ->
       test (fun () ->
           log ("ok: " ^ name);

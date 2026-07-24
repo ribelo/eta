@@ -214,7 +214,7 @@
   (ocaml (>= 5.2.0))
   eta
   eta_http
-  eta_jsoo
+  eta_js
   (js_of_ocaml (>= 5.0))))
 
 (package

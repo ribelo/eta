@@ -482,6 +482,22 @@ let test_missing_host_apis done_ =
         (kind (is_host_api_unavailable "AbortController"))
         abort_error)
 
+let test_non_thenable_fetch_dies done_ =
+  let fetch =
+    Js.wrap_callback (fun _url _init -> Unsafe.obj [||])
+  in
+  let restore = install_global "fetch" fetch in
+  let client = Eta_http_js.Client.make () in
+  let eff =
+    H.Client.request client
+      (H.Request.make "GET" "https://example.test/non-thenable")
+  in
+  run_eta ~finally:restore eff done_ (function
+    | Eta.Exit.Error cause when Eta.Cause.defects cause <> [] -> ()
+    | Eta.Exit.Error cause ->
+        fail "non-thenable fetch" ("expected Die, got " ^ pp_cause cause)
+    | Eta.Exit.Ok _ -> fail "non-thenable fetch" "expected Die, got Ok")
+
 let install_read_error_fetch state =
   let factory =
     Unsafe.js_expr
@@ -711,6 +727,7 @@ let tests =
     ("validation failures", test_validation_failures);
     ("runtime unsupported options", test_runtime_unsupported_options);
     ("missing host APIs", test_missing_host_apis);
+    ("non-thenable fetch dies", test_non_thenable_fetch_dies);
     ("read error maps to host API error", test_read_error_maps_to_host_api_error);
     ("arrayBuffer fallback and cap", test_array_buffer_fallback_and_cap);
     ("opaque fetch response fails", test_opaque_fetch_response_fails);
