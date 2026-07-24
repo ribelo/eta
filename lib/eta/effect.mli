@@ -1000,12 +1000,13 @@ val log :
 val logf :
   ?level:Capabilities.log_level ->
   ?attrs:(string * string) list ->
-  ('a, Format.formatter, unit, (unit, 'err) t) format4 ->
-  'a
-(** Formatted {!log}; formatting runs once only after runtime level admission.
-    Arguments are eager: [logf "len %d" (Queue.length q)] evaluates the length
-    when built. Attributes and intercepts follow [log]; [Drop] occurs after
-    formatting. A raising printer becomes a defect through ordinary capture. *)
+  (Format.formatter -> unit) ->
+  (unit, 'err) t
+(** Formatted {!log}; the formatter runs once, only after runtime level admission,
+    so work and arguments inside it are deferred (those evaluated before [logf]
+    remain eager). Its captured values are retained for the blueprint's lifetime.
+    Attributes and intercepts follow [log]; [Drop] occurs after formatting, and a
+    raise becomes a defect through ordinary capture. *)
 
 val log_trace :
   ?attrs:(string * string) list -> string -> (unit, 'err) t

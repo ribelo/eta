@@ -86,3 +86,86 @@ of 26,214,254 or 262.14254 words/emission. The raw result is preserved in
 All five required Nix gates passed. Red-team attacks passed, census matched
 the seal, and no undisclosed footgun emerged. Detailed evidence and the
 promotion recommendation are in `report.md`.
+
+## Follow-up 2 — correction after review
+
+### The sealed claim was wrong
+
+The reviewer found that `Format.kdprintf` gives only partial deferral.
+`CamlinternalFormat.make_printf` performs built-in conversions such as `%d`,
+`%f`, `%S`, width, and precision while the variadic call is being applied.
+Only `%a`/`%t` printers and final output assembly remain delayed. Credit to the
+reviewer's discriminating probe: `"%1000000d"` allocated approximately 1 MB
+before the delayed printer was invoked.
+
+This corrects both sealed sources: the orchestrator's sealed complete-deferral
+claim and my independent prediction were wrong. My first evidence suite failed
+to see the error because every invocation counter used `%a`, the conversion
+that actually is delayed, while the allocation watchlist reused one prebuilt
+blueprint 100k times and therefore amortized construction away.
+
+### Shape decision: closure API
+
+The corrected surface is:
+
+```ocaml
+val logf :
+  ?level:Capabilities.log_level ->
+  ?attrs:(string * string) list ->
+  (Format.formatter -> unit) ->
+  (unit, 'err) t
+```
+
+The formatter closure itself is invoked inside runtime admission. Therefore
+built-in conversions, `%a`/`%t` printers, and argument-producing work written
+inside the closure are all deferred. Work performed before calling `logf`
+remains ordinary eager OCaml evaluation. The closure also retains captured
+values for the blueprint's lifetime; a permanently filtered long-lived
+blueprint therefore retains its captures, though it does not retain a formed
+body string or record unless admitted.
+
+The decision follows three review criteria:
+
+1. It provides honest, complete deferral; `format4` cannot because
+   `make_printf` is eager by design.
+2. T2: the wrong thing looks wrong. The closure makes the deferred boundary
+   visible, whereas the variadic format shape invited the false reading that
+   fooled both sealed authors and the first suite.
+3. T8: the closure's deferral contract is one sentence. The narrowed variadic
+   contract spends three caveat sentences explaining its split semantics.
+
+### Rejected alternative — exact proposed mli text
+
+```ocaml
+val logf :
+  ?level:Capabilities.log_level ->
+  ?attrs:(string * string) list ->
+  ('a, Format.formatter, unit, (unit, 'err) t) format4 ->
+  'a
+(** Formatted {!log}. [%a] and [%t] printers run only after runtime level
+    admission. Built-in conversions and ordinary arguments are evaluated when
+    the effect is built. Output assembly and record construction run after
+    admission. *)
+```
+
+Rejected: this is accurate but not complete deferral, invites the wrong mental
+model at the call site, and consumes the documentation budget on caveats for a
+semantic that the closure API expresses directly.
+
+### Corrected evidence
+
+Named tests now discriminate `%d`, `%a`, and `%t` under disabled and enabled
+admission, the million-width built-in case, inside-versus-outside work,
+retention, composition, Drop ordering, and defect capture.
+
+The corrected watchlist constructs every formatter closure and `logf` blueprint
+inside each 100k measured run:
+
+- filtered: 5,242,866 minor words/100k;
+- enabled: 33,554,300 minor words/100k;
+- enabled minus filtered: 28,311,434, or 283.11434 words/emission;
+- filtered `%1000000d`: 5,242,866 minor words/100k, exactly equal to ordinary
+  filtered construction, proving the million-character padding was not built.
+
+All five required Nix gates passed again after the closure redesign, including
+the separate `_build-mainline` build and laws run.

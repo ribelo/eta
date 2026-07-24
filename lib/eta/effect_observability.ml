@@ -324,23 +324,20 @@ let log ?(level = Capabilities.Info) ?(attrs = []) body =
    then emit_log frame logger level attrs body);
   ok ()
 
-let logf ?(level = Capabilities.Info) ?(attrs = []) fmt =
-  Format.kdprintf
-    (fun print ->
-      make ~leaf_name:"Effect.logf"
-        ~footprint:(footprint ~uses_clock:true ~emits_logs:true ()) @@ fun frame ->
-      let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
-      (if
-         logging_enabled
-         &&
-         match RObs.current_minimum_log_level frame.runtime.contract with
-         | None -> true
-         | Some minimum -> RObs.log_level_enabled ~minimum level
-       then
-        let body = Format.asprintf "%t" print in
-        emit_log frame logger level attrs body);
-      ok ())
-    fmt
+let logf ?(level = Capabilities.Info) ?(attrs = []) print =
+  make ~leaf_name:"Effect.logf"
+    ~footprint:(footprint ~uses_clock:true ~emits_logs:true ()) @@ fun frame ->
+  let logging_enabled, logger = Runtime_core.current_logger frame.runtime in
+  (if
+     logging_enabled
+     &&
+     match RObs.current_minimum_log_level frame.runtime.contract with
+     | None -> true
+     | Some minimum -> RObs.log_level_enabled ~minimum level
+   then
+    let body = Format.asprintf "%t" print in
+    emit_log frame logger level attrs body);
+  ok ()
 
 let log_trace ?attrs body = log ~level:Capabilities.Trace ?attrs body
 let log_debug ?attrs body = log ~level:Capabilities.Debug ?attrs body

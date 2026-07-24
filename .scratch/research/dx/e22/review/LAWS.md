@@ -246,10 +246,10 @@ qcheck optics.
 | R109 | Restoration and cleanup-forbidden state do not outlive their owning fiber through daemons. | `lib/eta/effect.mli:252-253` | `daemon drops restore binding after mask`; `daemon drops cleanup-forbidden binding` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:479-540,663-666` |
 | R110 | Default runtime locals cross forks, while `Fiber_local` bindings are absent in forked children and daemons. | `lib/eta/runtime_contract.mli:239-241` | `runtime contract local inheritance kinds` — native `test/runtime_common/runtime_common_suites.ml:892-931,1271-1272`; jsoo `test/js_jsoo/test_eta_jsoo.ml:171-212,518-519` |
 | R111 | Restoration listens to both the mask-entry parent and a same-fiber entry-time descendant cancellation context; the first cancellation call executed supplies the winning reason and delivery remains at most once. | `lib/eta/effect.mli:246-250` | `interruptible descendant cancellation wakes restored block`; `interruptible mask-parent cancellation crosses descendant context`; `interruptible signal-timer first cancellation call wins once` — shared definitions and native/jsoo registration `test/core_common/effect_interruptible_shared.ml:555-632,667-672` |
-| R112 | `logf` formats exactly once only after runtime logging and minimum-level admission. | `lib/eta/effect.mli:1005` | `logf disabled level does not invoke formatter`; `logf enabled formats exactly once` — `test/core_common/observability_common_suites.ml:1427-1430` |
-| R113 | Ordinary `logf` arguments are evaluated eagerly when the blueprint is constructed. | `lib/eta/effect.mli:1006-1007` | `logf arguments are eager at construction` — `test/core_common/observability_common_suites.ml:1437-1438` |
-| R114 | `logf` composes through the ordinary attrs/interceptor pipeline, with `Drop` after formatting. | `lib/eta/effect.mli:1007-1008` | `logf composes attrs and intercepts`; `logf Drop occurs after formatting` — `test/core_common/observability_common_suites.ml:1431-1434` |
-| R115 | A raising `logf` printer becomes a defect through ordinary capture. | `lib/eta/effect.mli:1008` | `logf raising printer becomes defect` — `test/core_common/observability_common_suites.ml:1435-1436` |
+| R112 | The `logf` formatter runs exactly once only after runtime admission; work inside it is deferred while prior work remains eager. | `lib/eta/effect.mli:1005-1007` | `logf disabled does not invoke builtin user or thunk formatters`; `logf enabled invokes builtin user and thunk exactly once`; `logf disabled defers million-width builtin conversion`; `logf work inside formatter is deferred` — `test/core_common/observability_common_suites.ml:1498-1507,1514-1515` |
+| R113 | A `logf` blueprint retains values captured by its formatter for the blueprint's lifetime. | `lib/eta/effect.mli:1007` | `logf blueprint retains formatter captures` — `test/core_common/observability_common_suites.ml:1516-1517` |
+| R114 | `logf` composes through the ordinary attrs/interceptor pipeline, with `Drop` after formatting. | `lib/eta/effect.mli:1008-1009` | `logf composes attrs and intercepts`; `logf Drop occurs after formatting` — `test/core_common/observability_common_suites.ml:1508-1511` |
+| R115 | A raising `logf` formatter becomes a defect through ordinary capture. | `lib/eta/effect.mli:1008-1009` | `logf raising printer becomes defect` — `test/core_common/observability_common_suites.ml:1512-1513` |
 
 ## Model laws (prose pending)
 
@@ -266,13 +266,13 @@ valid constructor domains; until then their provenance is explicit.
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/eta/effect.mli` | 50 | 93 | 0 | 143 |
+| `lib/eta/effect.mli` | 50 | 97 | 0 | 147 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
 | `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
-| **Total covered** | **103** | **110** | **2** | **213** |
+| **Total covered** | **103** | **114** | **2** | **217** |
 
 The executable contains 64 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

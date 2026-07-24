@@ -616,45 +616,88 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (log_attr "case" first)
     | [] -> Alcotest.fail "expected helper logs"
 
-  let test_logf_disabled_level_does_not_invoke_formatter () =
-    let formatter_calls = ref 0 in
+  let test_logf_disabled_does_not_invoke_builtin_user_or_thunk_formatters () =
+    let builtin_calls = ref 0 in
+    let user_calls = ref 0 in
+    let thunk_calls = ref 0 in
     let intercept_calls = ref 0 in
-    let print fmt value =
-      incr formatter_calls;
+    let builtin fmt =
+      incr builtin_calls;
+      Format.fprintf fmt "builtin %d" 7
+    in
+    let print_user fmt value =
+      incr user_calls;
       Format.pp_print_int fmt value
     in
-    let emit = Effect.logf ~level:Capabilities.Debug "hidden %a" print 7 in
-    (B.with_runtime @@ fun _ctx rt -> run_ok rt emit);
+    let user fmt = Format.fprintf fmt "user %a" print_user 8 in
+    let print_thunk fmt =
+      incr thunk_calls;
+      Format.pp_print_string fmt "thunk"
+    in
+    let thunk fmt = Format.fprintf fmt "value %t" print_thunk in
+    let program =
+      Effect.concat
+        (List.map
+           (Effect.logf ~level:Capabilities.Debug)
+           [ builtin; user; thunk ])
+    in
+    (B.with_runtime @@ fun _ctx rt -> run_ok rt program);
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let observe _record =
       incr intercept_calls;
       Effect.Keep
     in
     run_ok rt
-      (emit |> Effect.intercept_log observe
+      (program |> Effect.intercept_log observe
       |> Effect.with_minimum_log_level Capabilities.Warn);
-    Alcotest.(check int) "formatter calls" 0 !formatter_calls;
+    Alcotest.(check int) "builtin calls" 0 !builtin_calls;
+    Alcotest.(check int) "user printer calls" 0 !user_calls;
+    Alcotest.(check int) "thunk printer calls" 0 !thunk_calls;
     Alcotest.(check int) "intercept calls" 0 !intercept_calls;
     Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
 
-  let test_logf_enabled_formats_exactly_once () =
+  let test_logf_enabled_invokes_builtin_user_and_thunk_exactly_once () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
-    let formatter_calls = ref 0 in
-    let print fmt value =
-      incr formatter_calls;
+    let builtin_calls = ref 0 in
+    let user_calls = ref 0 in
+    let thunk_calls = ref 0 in
+    let builtin fmt =
+      incr builtin_calls;
+      Format.fprintf fmt "builtin %d" 7
+    in
+    let print_user fmt value =
+      incr user_calls;
       Format.pp_print_int fmt value
     in
-    run_ok rt (Effect.logf "db.find %a" print 42);
-    Alcotest.(check int) "formatter calls" 1 !formatter_calls;
-    Alcotest.(check string) "body" "db.find 42" (only_log logger).Logger.body
+    let user fmt = Format.fprintf fmt "user %a" print_user 8 in
+    let print_thunk fmt =
+      incr thunk_calls;
+      Format.pp_print_string fmt "thunk"
+    in
+    let thunk fmt = Format.fprintf fmt "value %t" print_thunk in
+    run_ok rt (Effect.concat (List.map Effect.logf [ builtin; user; thunk ]));
+    Alcotest.(check int) "builtin calls" 1 !builtin_calls;
+    Alcotest.(check int) "user printer calls" 1 !user_calls;
+    Alcotest.(check int) "thunk printer calls" 1 !thunk_calls;
+    Alcotest.(check (list string))
+      "bodies" [ "builtin 7"; "user 8"; "value thunk" ] (log_bodies logger)
+
+  let test_logf_disabled_defers_million_width_builtin_conversion () =
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    let formatter_calls = ref 0 in
+    let print fmt =
+      incr formatter_calls;
+      Format.fprintf fmt "%1000000d" 1
+    in
+    run_ok rt
+      (Effect.logf ~level:Capabilities.Debug print
+      |> Effect.with_minimum_log_level Capabilities.Warn);
+    Alcotest.(check int) "formatter calls" 0 !formatter_calls;
+    Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
 
   let test_logf_composes_attrs_and_intercepts () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let formatter_calls = ref 0 in
-    let print fmt value =
-      incr formatter_calls;
-      Format.pp_print_int fmt value
-    in
     let transform (record : Capabilities.log_record) =
       Alcotest.(check (list (pair string string)))
         "attrs before intercept"
@@ -663,7 +706,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.Replace { record with body = record.body ^ "!" }
     in
     let program =
-      Effect.logf ~attrs:[ ("table", "users") ] "retry %a" print 3
+      Effect.logf ~attrs:[ ("table", "users") ] (fun fmt ->
+          incr formatter_calls;
+          Format.fprintf fmt "retry %d" 3)
       |> Effect.annotate_logs [ ("request.id", "req-1") ]
       |> Effect.intercept_log transform
     in
@@ -675,12 +720,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_logf_drop_occurs_after_formatting () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let formatter_calls = ref 0 in
-    let print fmt value =
+    let print fmt =
       incr formatter_calls;
-      Format.pp_print_int fmt value
+      Format.fprintf fmt "secret %d" 1
     in
     let program =
-      Effect.logf "secret %a" print 1
+      Effect.logf print
       |> Effect.intercept_log (fun _record -> Effect.Drop)
     in
     run_ok rt program;
@@ -691,22 +736,48 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let exn = Failure "logf printer failed" in
     let print _fmt () = raise exn in
-    (match B.run rt (Effect.logf "broken %a" print ()) with
+    let write fmt = Format.fprintf fmt "broken %a" print () in
+    (match B.run rt (Effect.logf write) with
     | Exit.Error (Cause.Die die) ->
         Alcotest.(check bool) "same exception" true (die.exn == exn)
     | _ -> Alcotest.fail "expected printer exception to become Die");
     Alcotest.(check int) "sink calls" 0 (List.length (Logger.dump logger))
 
-  let test_logf_arguments_are_eager_at_construction () =
-    let argument_calls = ref 0 in
-    let argument () =
-      incr argument_calls;
+  let test_logf_work_inside_formatter_is_deferred () =
+    let inside_calls = ref 0 in
+    let outside_calls = ref 0 in
+    let outside () =
+      incr outside_calls;
       7
     in
-    let emit = Effect.logf "len %d" (argument ()) in
-    Alcotest.(check int) "before run" 1 !argument_calls;
+    let value = outside () in
+    let emit =
+      Effect.logf (fun fmt ->
+          incr inside_calls;
+          Format.fprintf fmt "len %d" value)
+    in
+    Alcotest.(check int) "outside before run" 1 !outside_calls;
+    Alcotest.(check int) "inside before run" 0 !inside_calls;
     (B.with_runtime @@ fun _ctx rt -> run_ok rt emit);
-    Alcotest.(check int) "after run" 1 !argument_calls
+    Alcotest.(check int) "inside after disabled run" 0 !inside_calls;
+    B.with_logger_runtime @@ fun _ctx rt logger ->
+    run_ok rt emit;
+    Alcotest.(check int) "inside after enabled run" 1 !inside_calls;
+    Alcotest.(check string) "body" "len 7" (only_log logger).Logger.body
+
+  let test_logf_blueprint_retains_formatter_captures () =
+    let make () =
+      let captured = ref 7 in
+      let weak = Weak.create 1 in
+      Weak.set weak 0 (Some captured);
+      let emit = Effect.logf (fun fmt -> Format.fprintf fmt "%d" !captured) in
+      (emit, weak)
+    in
+    let emit, weak = make () in
+    Gc.full_major ();
+    Alcotest.(check bool) "capture retained" true
+      (Option.is_some (Weak.get weak 0));
+    B.with_runtime @@ fun _ctx rt -> run_ok rt emit
 
   let test_observability_minimum_log_level_drops_lower () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
@@ -1424,18 +1495,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_observability_span_annotate_does_not_affect_logs;
           Alcotest.test_case "log level helpers" `Quick
             test_observability_log_level_helpers;
-          Alcotest.test_case "logf disabled level does not invoke formatter"
-            `Quick test_logf_disabled_level_does_not_invoke_formatter;
-          Alcotest.test_case "logf enabled formats exactly once" `Quick
-            test_logf_enabled_formats_exactly_once;
+          Alcotest.test_case
+            "logf disabled does not invoke builtin user or thunk formatters"
+            `Quick
+            test_logf_disabled_does_not_invoke_builtin_user_or_thunk_formatters;
+          Alcotest.test_case
+            "logf enabled invokes builtin user and thunk exactly once" `Quick
+            test_logf_enabled_invokes_builtin_user_and_thunk_exactly_once;
+          Alcotest.test_case
+            "logf disabled defers million-width builtin conversion" `Quick
+            test_logf_disabled_defers_million_width_builtin_conversion;
           Alcotest.test_case "logf composes attrs and intercepts" `Quick
             test_logf_composes_attrs_and_intercepts;
           Alcotest.test_case "logf Drop occurs after formatting" `Quick
             test_logf_drop_occurs_after_formatting;
           Alcotest.test_case "logf raising printer becomes defect" `Quick
             test_logf_raising_printer_becomes_defect;
-          Alcotest.test_case "logf arguments are eager at construction" `Quick
-            test_logf_arguments_are_eager_at_construction;
+          Alcotest.test_case "logf work inside formatter is deferred" `Quick
+            test_logf_work_inside_formatter_is_deferred;
+          Alcotest.test_case "logf blueprint retains formatter captures" `Quick
+            test_logf_blueprint_retains_formatter_captures;
           Alcotest.test_case "minimum log level drops lower records" `Quick
             test_observability_minimum_log_level_drops_lower;
           Alcotest.test_case "minimum log level allows equal and higher" `Quick
