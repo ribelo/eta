@@ -31,11 +31,10 @@ let from_js_promise ?on_cancel ~on_reject promise =
       if not (String.equal (Js.to_string (Js.typeof then_)) "function") then
         invalid_arg "Eta_js.from_js_promise: expected a thenable";
       let on_fulfilled =
-        Js.wrap_callback (fun value -> resume (Exit.Ok value))
+        Js.wrap_callback (fun value -> resume (Exit.Ok (`Fulfilled value)))
       in
       let on_rejected =
-        Js.wrap_callback (fun reason ->
-            resume (Exit.Error (Cause.fail (on_reject reason))))
+        Js.wrap_callback (fun reason -> resume (Exit.Ok (`Rejected reason)))
       in
       ignore
         (Js.Unsafe.meth_call promise "then"
@@ -46,3 +45,8 @@ let from_js_promise ?on_cancel ~on_reject promise =
       match on_cancel with
       | None -> None
       | Some on_cancel -> Some (Effect.sync on_cancel))
+  |> Effect.bind (function
+       | `Fulfilled value -> Effect.pure value
+       | `Rejected reason ->
+           Effect.sync (fun () -> on_reject reason)
+           |> Effect.bind Effect.fail)

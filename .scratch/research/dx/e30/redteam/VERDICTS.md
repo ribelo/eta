@@ -62,3 +62,39 @@ interruption detaches the waiter, the host promise is force-rejected. Because
 never removes them, the late rejection is still handled host-side; the
 `unhandledRejection` sentinel did not fire. A hand-rolled detach that removed
 or never attached the rejection handler would have tripped it.
+
+## Follow-up correction — 2026-07-24
+
+The earlier auxiliary verdict **“rejection after detach → unhandled rejection?
+HELD” was unsupported and is explicitly withdrawn as evidence**. The original
+`deferred_promise` helper ignored the JavaScript reject callback and returned
+only its fulfiller. The handle named `js_reject` therefore fulfilled with
+`unit`; that test was vacuous for late rejection, mapper suppression, and the
+`unhandledRejection` sentinel. The earlier prose remains above as the historical
+record, but its evidence claim is wrong.
+
+The corrected helper now exposes distinct resolver and rejector handles. The
+named test `eta_js from_js_promise late rejection skips mapper` interrupts a
+pending waiter, invokes the real host rejector with `"late"`, waits through the
+microtask turn, and asserts the mapper side-effect count remains exactly zero.
+The process `unhandledRejection` sentinel stays silent, proving that the raw JS
+rejection handler remains attached even though Eta dropped the detached
+continuation.
+
+Review also exposed a separate host-context attack omitted above: a raising
+`on_reject` used to strand the Eta waiter and reject the ignored `.then` child.
+The adapter now resumes raw `` `Rejected reason`` first and runs the mapper only
+under `Effect.sync` after `Effect.bind`. The named test
+`eta_js from_js_promise raising mapper dies` observes `Cause.Die`; both the
+completion and `unhandledRejection` sentinels remain clean. Verdict: **HELD after
+rework**.
+
+Focused evidence command:
+
+```sh
+nix develop .#mainline -c dune runtest \
+  --build-dir=_build-mainline test/js_jsoo test/http_js --force
+```
+
+Result: PASS, including the migrated Fetch consumer's `cancellation aborts
+fetch` integration test.

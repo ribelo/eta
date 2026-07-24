@@ -15,8 +15,6 @@ module Url = Eta_http.Core.Url
 let adapter = "eta_http_js"
 let default_max_buffered_request_body_bytes = Body.Stream.default_max_bytes
 
-exception Host_promise_rejected of string
-
 let js_typeof =
   Unsafe.js_expr "(function(value) { return typeof value; })"
 
@@ -189,41 +187,9 @@ let require_global_function request api =
          ("globalThis." ^ api ^ " is not available"))
 
 let await_host_promise ?on_cancel ?request ~api promise =
-  Eta.Effect.sync (fun () ->
-      let eta_promise, resolver = Eta_jsoo.Private.create_promise () in
-      let setup =
-        try
-          let on_fulfilled =
-            Js.wrap_callback (fun value ->
-                Eta_jsoo.Private.resolve resolver value)
-          in
-          let on_rejected =
-            Js.wrap_callback (fun reason ->
-                Eta_jsoo.Private.reject resolver
-                  (Host_promise_rejected (js_string reason)))
-          in
-          ignore
-            (Unsafe.meth_call promise "then"
-               [|
-                 Unsafe.inject on_fulfilled;
-                 Unsafe.inject on_rejected;
-               |]);
-          Ok ()
-        with exn -> Error (host_api_error ?request ~api (Printexc.to_string exn))
-      in
-      match setup with
-      | Error _ as error -> error
-      | Ok () -> (
-          try
-            let value =
-              match on_cancel with
-              | None -> Eta_jsoo.Private.await eta_promise
-              | Some on_cancel -> Eta_jsoo.Private.await ~on_cancel eta_promise
-            in
-            Ok value
-          with Host_promise_rejected message ->
-            Error (host_api_error ?request ~api message)))
-  |> Eta.Effect.flatten_result
+  Eta_js.from_js_promise ?on_cancel
+    ~on_reject:(fun reason -> host_api_error ?request ~api (js_string reason))
+    promise
 
 let call_host_promise ?on_cancel ?request ~api f =
   Eta.Effect.sync (fun () ->

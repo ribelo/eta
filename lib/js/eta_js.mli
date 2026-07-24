@@ -32,7 +32,9 @@ val from_js_promise :
 (** Await a host JavaScript promise, inheriting the {!Effect.async} contract:
     handlers attach synchronously at registration and the first settlement
     wins. Rejection fails with [on_reject] applied to the raw host rejection
-    value, unchanged even when it is not a JS [Error]. Interruption detaches
-    the waiter: [?on_cancel] runs at most once, later settlement is dropped
-    silently, and the host computation keeps running. A non-thenable [promise]
-    raises at registration ({!Cause.Die}). *)
+    value, unchanged even when it is not a JS [Error]; a raising mapper dies.
+    Interruption detaches the Eta waiter: [?on_cancel] runs at most once, the
+    mapper does not run for later rejection, and handlers stay attached until
+    settlement. Eta does not itself cancel the host computation; [?on_cancel]
+    may request that. The success type is caller-asserted and unchecked. A
+    non-thenable [promise] raises at registration ({!Cause.Die}). *)

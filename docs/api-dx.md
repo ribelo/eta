@@ -86,10 +86,12 @@ On the js_of_ocaml track, wrap a host promise with
 registration at each call site. Name the rejection mapping yourself: JS
 rejection is untyped, so `on_reject` receives the raw host value
 (`Js.Unsafe.any`, unchanged even when it is not a JS `Error`) and returns your
-typed error. Host promises are not cancellable: interruption detaches the Eta
-waiter, drops any later settlement silently, and runs the optional `?on_cancel`
-hook once — that hook is where an `AbortController.abort()` belongs. A
-non-thenable `promise` is a defect (`Cause.Die`), not a typed failure.
+typed error. The resolved value crosses the same unsafe boundary, so its OCaml
+type is caller-asserted rather than checked. Host promises expose no generic
+cancellation: interruption detaches the Eta waiter while handlers stay attached,
+and Eta itself leaves the host work alone. Use `?on_cancel` to request
+host-specific cancellation — that hook is where an `AbortController.abort()`
+belongs. A non-thenable `promise` is a defect (`Cause.Die`), not a typed failure.
 
 ### One-shot coordination: `Promise`, `async`, or `Eio.Promise`?
 
