@@ -565,3 +565,29 @@ The durable lessons are about *where user code runs*:
 
 Provenance: `.scratch/research/dx/e30/`, V-DX-E30-001/002, branch
 `research/dx-e30-from-js-promise`, law rows R116–R126.
+
+## E28 — Unified admission for `all` (promoted 2026-07-25)
+
+`Effect.all` and `Effect.map_par` now share one admission policy
+(`?max_concurrent`, default 8). The durable lessons:
+
+1. **"Unbounded by design" was an inherited accident.** History gave no
+   deliberate contract for `all`'s fork-per-effect fan-out — the perf
+   commit capped only the mapper. When a safety property is accidental,
+   uniformity beats archaeology.
+2. **The traverse spelling is irresistible.** `all (List.map f xs)` is
+   what users naturally write — production code did. A safety boundary
+   that one eta-expansion bypasses is no boundary; admission had to be
+   unified in the engine, not in the docs.
+3. **`all`'s real differentiator is introspection.** Prebuilt children
+   give static names and capability footprints; `map_par`'s mapper must
+   never be forced at blueprint time. That — not scheduling — is why
+   both names exist.
+4. **Hazard warnings must be precisely true and provably registered.**
+   "A child waiting on an unadmitted sibling deadlocks" was false as an
+   absolute; the shipped form names the all-admitted-workers-blocked
+   condition, with a bounded-barrier test that makes non-progress and
+   clean teardown observable.
+
+Provenance: `.scratch/research/dx/e28/`, V-DX-E28-001..003, branch
+`research/dx-e28-all-vs-map-par`, law rows M114–M118, R127–R130.

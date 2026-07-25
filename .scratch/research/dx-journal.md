@@ -4019,3 +4019,50 @@ parity, empty list, introspection names/footprints preserved; law
 registry rows; js_stream migration with mainline js gates; a
 semantics-change ledger enumerating tests whose concurrency behavior
 changes by design.
+
+---
+
+## V-DX-E28-003 — 2026-07-25 — research/dx-e28-all-vs-map-par — phase: results + decision
+
+**Gates** (orchestrator re-run, final round): native trio + mainline
+(`@install`, `test/js_jsoo`, `test/js_stream`, `test/http_js`,
+`test/laws`) pass in worktree and on master after merge (`2edda44b`).
+
+**Arc.** Audit → C3 escalation (pre-registered trigger fired on
+`lib/js_stream/eta_js_stream.ml:76`) → oracle consultation flipped the
+orchestrator's predicted C1 to **unified admission** (V-DX-E28-002) →
+implementation → review verdict should-not-have-merged (overstated
+deadlock claim + registry overclaim R127; orphaned `par_collect`;
+non-discriminating JS migration tests; hanging rendezvous) → one rework
+round → **approve** (all four findings closed with discriminating
+evidence; reviewer independently re-ran `test/laws` + `test/core_eio` +
+`test/js_stream`).
+
+**What shipped.** `Effect.all ?max_concurrent` (default 8) on the shared
+`collect_workers` machinery; `all` keeps static introspection
+(`concat_names`/`concurrent_footprint`) as the differentiator vs.
+`map_par`; precise mli warning (all-admitted-workers-blocked); full
+fan-out recipe `~max_concurrent:(List.length effects)`; js_stream's
+`map_effect` on `map_par`; docs task-shape table; `par_collect` deleted.
+Tests: default-peak-8 probes, watchdog-guarded 9-participant rendezvous
+(real barrier), bounded-barrier non-progress + clean-teardown test,
+discriminating JS mapper-laziness test (8 vs 12), qcheck laws for bound
+behavior; law rows M114–M118, R127–R130; semantics-change ledger with
+per-test justifications.
+
+**Prediction scoring (orchestrator, V-DX-E28-001).** Hits: origin
+(unboundedness inherited, not designed); footguns −1; gates; promote.
+Misses: census (>80% small-literal predicted; actual 42.9% + 19
+large/dynamic); "at most a handful of pathological cases" (19 + one
+production site); the C1 decision itself (flipped on consultation
+evidence — ecosystem precedent, provenance-vs-semantics, eta-expansion
+bypass). Executor audit-round predictions also missed most census
+buckets; follow-up micro-predictions 10/10.
+
+**Decision: PROMOTE.** Merged `--no-ff` (`2edda44b`); both gate tracks
+green on master; master + branch pushed; worktree removed; objective +
+two follow-ups archived.
+
+**Follow-ups.** None new. The unified admission rule ("admitted work
+must not depend on unadmitted work beyond the bound") is now part of the
+model and belongs in the eventual `model.md` end item.

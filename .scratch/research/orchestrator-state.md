@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E28 — `all` vs `map_par` T1 audit**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e28`
-  - Branch: `research/dx-e28-all-vs-map-par`
-  - Stage: C3 escalation resolved — unified admission (V-DX-E28-002); followup-1.md written; awaiting executor rework
+- In flight: nothing
+- Done (recent): **E28 promoted** (`2edda44b`, unified admission;
+  one rework round after review)
 - Done (recent): **E30 promoted** (`7d0f462e`, three review rounds;
   both gate tracks green on master)
 - Done (queued candidates): **E27 promoted** (`logf`; format4 pitch
@@ -57,7 +56,7 @@ loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: E28 (all-vs-map_par audit) → E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
+- Queue: E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -89,4 +88,4 @@ loop (plan §4.2 as amended by Amendment 1).
   experiment branch, and verify the branch base contains the predictions
   commit (E30 staging cut twice from stale/diverged local master; foreign
   schema commit needed temp-worktree merge `5ce0aa6e`)
-- Last update: 2026-07-25 — E28 C3 resolved, rework staged
+- Last update: 2026-07-25 — E28 promoted

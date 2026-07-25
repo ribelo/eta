@@ -261,12 +261,20 @@ evidence; every hold names its re-entry trigger.
   Three review rounds (host-context mapper defect → packaging defect →
   R116 discrimination). V-DX-E30-001/002.
 
-### E28 — `all` vs `map_par` T1 audit — in flight
+### E28 — `all` vs `map_par` T1 audit — promoted 2026-07-25
 - What: are `all` and `map_par` two ways for one task? Engine census +
   cold-read → merge or differentiate with a crisp contract.
 - Rationale: T1; if users can't say which to reach for, that's the
   disease E24 cured elsewhere.
 - Decision: queued by human 2026-07-23.
+- Outcome: **unified admission** — `all ?max_concurrent` (default 8)
+  shares the worker machinery with `map_par`; differentiation is input
+  shape (prebuilt effects + static introspection vs. lazy mapping), not
+  scheduling. C3 escalation (production dynamic `all` in js_stream) →
+  oracle consultation flipped the predicted C1 (ecosystem precedent,
+  provenance-is-not-semantics, eta-expansion bypass). js_stream migrated;
+  docs mis-steering corrected; deadlock warning made precise with
+  discriminating tests. V-DX-E28-001..003.
 
 ### E29 — Concurrent product ergonomics (`par3`/`par4`)
 - What: pleasant explicit concurrency for 3–4 effects (nested
