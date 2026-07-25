@@ -585,6 +585,127 @@ let property_map_par_max_concurrent =
            outcome.sleeps
       && no_pending outcome)
 
+let all_with_peak ?max_concurrent values =
+  let in_flight = ref 0 in
+  let maximum = ref 0 in
+  let child value =
+    let enter =
+      E.sync (fun () ->
+          incr in_flight;
+          maximum := max !maximum !in_flight)
+    in
+    let leave = E.sync (fun () -> decr in_flight) in
+    E.bind
+      (fun () -> E.finally leave (E.delay (Eta.Duration.ms 1) (E.pure value)))
+      enter
+  in
+  let children = List.map child values in
+  let outcome = run (E.all ?max_concurrent children) in
+  (outcome, !maximum, !in_flight)
+
+let property_all_max_concurrent =
+  QCheck.Test.make
+    ~name:"all never exceeds max_concurrent and reaches the bound when children suffice"
+    ~count
+    QCheck.(pair (list_size (Gen.int_range 1 12) bounded_int) (int_range 1 8))
+    (fun (values, requested_bound) ->
+      let outcome, maximum, in_flight =
+        all_with_peak ~max_concurrent:requested_bound values
+      in
+      let effective_bound = min requested_bound (List.length values) in
+      outcome.exit = Eta.Exit.Ok values
+      && maximum = effective_bound
+      && in_flight = 0
+      && List.length outcome.sleeps = List.length values
+      && no_pending outcome)
+
+let property_all_default_max_concurrent =
+  QCheck.Test.make
+    ~name:"all omission admits at most eight children and reaches eight when inputs suffice"
+    ~count QCheck.(list_size (Gen.int_range 9 12) bounded_int)
+    (fun values ->
+      let outcome, maximum, in_flight = all_with_peak values in
+      outcome.exit = Eta.Exit.Ok values
+      && maximum = 8
+      && in_flight = 0
+      && List.length outcome.sleeps = List.length values
+      && no_pending outcome)
+
+let property_all_rejects_nonpositive_max_concurrent =
+  QCheck.Test.make
+    ~name:"all rejects every generated nonpositive max_concurrent at construction"
+    ~count QCheck.(int_range (-100) 0) (fun max_concurrent ->
+      raises_invalid_argument (fun () ->
+          ignore
+            (E.all ~max_concurrent [ E.pure 1 ] : (int list, _) E.t)))
+
+let property_all_explicit_full_fan_out =
+  QCheck.Test.make
+    ~name:"all explicit length bound admits every generated rendezvous participant"
+    ~count QCheck.(int_range 1 12) (fun participants ->
+      let admitted = ref 0 in
+      let rec await_everyone () =
+        E.bind
+          (function
+            | true -> E.unit
+            | false -> E.bind await_everyone E.yield)
+          (E.sync (fun () -> !admitted = participants))
+      in
+      let child index =
+        E.bind
+          (fun () -> E.map (fun () -> index) (await_everyone ()))
+          (E.sync (fun () -> incr admitted))
+      in
+      let children = List.init participants child in
+      let outcome =
+        run
+          (E.all ~max_concurrent:(List.length children) children
+           |> E.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Watchdog)
+      in
+      outcome.exit = Eta.Exit.Ok (List.init participants Fun.id)
+      && !admitted = participants
+      && no_pending outcome)
+
+let property_all_omitted_bound_barrier_nonprogress =
+  QCheck.Test.make
+    ~name:
+      "all omitted bound cannot progress when every admitted worker awaits an unadmitted participant"
+    ~count:1 QCheck.unit (fun () ->
+      let participants = 9 in
+      let admitted = ref 0 in
+      let active = ref 0 in
+      let completed = ref 0 in
+      let checks = ref 0 in
+      let rec await_everyone () =
+        E.delay (Eta.Duration.ms 10) E.unit
+        |> E.bind (fun () ->
+               incr checks;
+               if !admitted = participants then (
+                 incr completed;
+                 E.unit)
+               else await_everyone ())
+      in
+      let child =
+        E.acquire_release
+          ~acquire:
+            (E.sync (fun () ->
+                 incr admitted;
+                 incr active))
+          ~release:(fun () -> E.sync (fun () -> decr active))
+        |> E.bind await_everyone
+      in
+      let outcome =
+        run
+          (E.all (List.init participants (fun _ -> child))
+           |> E.timeout_as (Eta.Duration.ms 15) ~on_timeout:`Watchdog)
+      in
+      outcome.exit = Eta.Exit.Error (Eta.Cause.Fail `Watchdog)
+      && !admitted = 8
+      && !checks = 8
+      && !completed = 0
+      && !active = 0
+      && no_pending outcome)
+
 let concurrent_values =
   QCheck.(pair (list_size (Gen.int_range 2 8) bounded_int) positive)
 
@@ -618,6 +739,7 @@ let property_all_fail_fast =
       let later_event = Printf.sprintf "all-failure:later:%d" later_error in
       let later_release = "all-release:later-failure" in
       let pending_release = "all-release:pending" in
+      let tail_event = "all-tail:unadmitted" in
       let fail_at delay event error =
         E.delay (Eta.Duration.ms delay)
           (E.bind (fun () -> E.fail error) (E.log_info event))
@@ -628,12 +750,19 @@ let property_all_fail_fast =
           (fail_at (first_delay + 1) later_event later_error)
       in
       let pending = E.finally (E.log_info pending_release) E.never in
-      let outcome = run (E.discard (E.all [ first; later; pending ])) in
+      let tail = E.log_info tail_event in
+      let outcome =
+        run
+          (E.discard
+             (E.all ~max_concurrent:3
+                [ first; later; pending; tail; tail ]))
+      in
       outcome.exit = Eta.Exit.Error (Eta.Cause.Fail first_error)
       && count_log first_event outcome = 1
       && count_log later_event outcome = 0
       && count_log later_release outcome = 1
       && count_log pending_release outcome = 1
+      && count_log tail_event outcome = 0
       && outcome.sleeps
          = [ Eta.Duration.ms first_delay; Eta.Duration.ms (first_delay + 1) ]
       && no_pending outcome)
@@ -2808,6 +2937,11 @@ let laws =
     property_map_par_order;
     property_map_par_fail_fast;
     property_map_par_max_concurrent;
+    property_all_max_concurrent;
+    property_all_default_max_concurrent;
+    property_all_rejects_nonpositive_max_concurrent;
+    property_all_explicit_full_fan_out;
+    property_all_omitted_bound_barrier_nonprogress;
     property_all_input_order;
     property_all_fail_fast;
     property_all_settled_input_order_and_capture;

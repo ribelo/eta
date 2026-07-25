@@ -73,7 +73,7 @@ module Stream = struct
       (function
         | Chunk xs ->
             Eta_js.Effect.map (fun ys -> Chunk ys)
-              (Eta_js.Effect.all (List.map f xs))
+              (Eta_js.Effect.map_par f xs)
         | Done -> Eta_js.Effect.pure Done
         | Error cause -> Eta_js.Effect.pure (Error cause))
       (source ())
