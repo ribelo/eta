@@ -73,9 +73,10 @@ by the caller. Results retain input order and failure is fail-fast.
 | Effects already in hand | `Effect.all effects` | 8 |
 | Function plus a collection | `Effect.map_par f inputs` | 8 |
 
-Admission is not a barrier. A child must not wait for an unadmitted sibling or
-the group deadlocks. For a nonempty barrier/coordinator shape that requires
-every prebuilt child to be admitted, make full fan-out explicit:
+Admission is not a barrier. When every admitted worker is blocked waiting on
+work that has not been admitted, the group cannot make progress. For a nonempty
+barrier/coordinator shape that requires every prebuilt child to be admitted,
+make full fan-out explicit:
 `Effect.all ~max_concurrent:(List.length effects) effects`.
 
 ### Callback-shaped host APIs: `async` or `Expert.make`?

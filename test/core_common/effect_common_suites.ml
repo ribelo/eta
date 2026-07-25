@@ -61,7 +61,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let expect_interrupted label = function
     | `Cancelled -> ()
-    | `Returned (Exit.Error (Cause.Interrupt _)) -> ()
+    | `Returned (Exit.Error cause) when Cause.is_interrupt_only cause -> ()
     | `Returned (Exit.Ok _) ->
         Alcotest.failf "%s: expected interruption, got Ok" label
     | `Returned (Exit.Error cause) ->
@@ -2946,7 +2946,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "default remained capped" 8 !max_seen
 
   let test_all_explicit_bound_admits_full_rendezvous () =
-    B.with_runtime @@ fun _ctx rt ->
+    B.with_test_clock @@ fun ctx clock rt ->
     let participants = 9 in
     let admitted = ref 0 in
     let rec await_everyone () =
@@ -2961,10 +2961,78 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Effect.map (fun () -> value)
     in
     let effects = List.init participants (fun index -> child index) in
-    Alcotest.(check (list int)) "all rendezvous participants"
-      (List.init participants Fun.id)
-      (run_ok rt (Effect.all ~max_concurrent:(List.length effects) effects));
+    let promise =
+      B.fork_run ctx rt
+        (Effect.all ~max_concurrent:(List.length effects) effects
+         |> Effect.timeout_as (Duration.ms 1) ~on_timeout:`Watchdog)
+    in
+    let rec await_or_advance attempts =
+      if B.is_resolved promise then ()
+      else if attempts = 0 then B.adjust_clock clock (Duration.ms 1)
+      else (
+        B.yield ();
+        await_or_advance (attempts - 1))
+    in
+    await_or_advance 40;
+    (match B.await promise with
+    | Exit.Ok values ->
+        Alcotest.(check (list int)) "all rendezvous participants"
+          (List.init participants Fun.id) values
+    | Exit.Error (Cause.Fail `Watchdog) ->
+        Alcotest.fail "all explicit full-fan-out rendezvous hit watchdog"
+    | Exit.Error cause ->
+        Alcotest.failf "all rendezvous failed: %a" (Cause.pp pp_hidden) cause);
     Alcotest.(check int) "every participant admitted" participants !admitted
+
+  let test_all_omitted_bound_stalls_when_all_workers_await_unadmitted () =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let participants = 9 in
+    let admitted = ref 0 in
+    let active = ref 0 in
+    let completed = ref 0 in
+    let checks = ref 0 in
+    let rec await_everyone () =
+      Effect.delay (Duration.ms 10) Effect.unit
+      |> Effect.bind (fun () ->
+             incr checks;
+             if !admitted = participants then (
+               incr completed;
+               Effect.unit)
+             else await_everyone ())
+    in
+    let child =
+      Effect.acquire_release
+        ~acquire:
+          (Effect.sync (fun () ->
+               incr admitted;
+               incr active))
+        ~release:(fun () -> Effect.sync (fun () -> decr active))
+      |> Effect.bind await_everyone
+    in
+    let fiber =
+      B.fork_run_cancelable ctx rt
+        (Effect.all (List.init participants (fun _ -> child)))
+    in
+    wait_for_sleepers clock 8;
+    Alcotest.(check int) "default admits exactly eight" 8 !admitted;
+    B.adjust_clock clock (Duration.ms 10);
+    let rec wait_for_checks attempts =
+      if !checks >= 8 then ()
+      else if attempts = 0 then
+        Alcotest.failf "expected eight blocked barrier checks, got %d" !checks
+      else (
+        B.yield ();
+        wait_for_checks (attempts - 1))
+    in
+    wait_for_checks 40;
+    Alcotest.(check int) "ninth remains unadmitted" 8 !admitted;
+    Alcotest.(check int) "no barrier participant completes" 0 !completed;
+    Alcotest.(check int) "all admitted workers remain blocked" 8 !active;
+    B.cancel_fiber fiber;
+    expect_interrupted "all omitted bound barrier" (B.await_cancelable fiber);
+    Alcotest.(check int) "all admitted children cleaned up" 0 !active;
+    Alcotest.(check int) "test clock has no pending sleepers" 0
+      (B.sleeper_count clock)
 
   let test_all_bounded_fail_fast_never_admits_tail () =
     B.with_runtime @@ fun ctx rt ->
@@ -3937,6 +4005,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_all_default_caps_concurrency_at_eight;
           Alcotest.test_case "all explicit bound admits full rendezvous" `Quick
             test_all_explicit_bound_admits_full_rendezvous;
+          Alcotest.test_case
+            "all omitted bound stalls when every worker awaits unadmitted" `Quick
+            test_all_omitted_bound_stalls_when_all_workers_await_unadmitted;
           Alcotest.test_case "all bounded fail-fast never admits tail" `Quick
             test_all_bounded_fail_fast_never_admits_tail;
           Alcotest.test_case "all bind_error recovers after sibling cancel" `Quick

@@ -658,10 +658,52 @@ let property_all_explicit_full_fan_out =
       in
       let children = List.init participants child in
       let outcome =
-        run (E.all ~max_concurrent:(List.length children) children)
+        run
+          (E.all ~max_concurrent:(List.length children) children
+           |> E.timeout_as (Eta.Duration.ms 1) ~on_timeout:`Watchdog)
       in
       outcome.exit = Eta.Exit.Ok (List.init participants Fun.id)
       && !admitted = participants
+      && no_pending outcome)
+
+let property_all_omitted_bound_barrier_nonprogress =
+  QCheck.Test.make
+    ~name:
+      "all omitted bound cannot progress when every admitted worker awaits an unadmitted participant"
+    ~count:1 QCheck.unit (fun () ->
+      let participants = 9 in
+      let admitted = ref 0 in
+      let active = ref 0 in
+      let completed = ref 0 in
+      let checks = ref 0 in
+      let rec await_everyone () =
+        E.delay (Eta.Duration.ms 10) E.unit
+        |> E.bind (fun () ->
+               incr checks;
+               if !admitted = participants then (
+                 incr completed;
+                 E.unit)
+               else await_everyone ())
+      in
+      let child =
+        E.acquire_release
+          ~acquire:
+            (E.sync (fun () ->
+                 incr admitted;
+                 incr active))
+          ~release:(fun () -> E.sync (fun () -> decr active))
+        |> E.bind await_everyone
+      in
+      let outcome =
+        run
+          (E.all (List.init participants (fun _ -> child))
+           |> E.timeout_as (Eta.Duration.ms 15) ~on_timeout:`Watchdog)
+      in
+      outcome.exit = Eta.Exit.Error (Eta.Cause.Fail `Watchdog)
+      && !admitted = 8
+      && !checks = 8
+      && !completed = 0
+      && !active = 0
       && no_pending outcome)
 
 let concurrent_values =
@@ -2899,6 +2941,7 @@ let laws =
     property_all_default_max_concurrent;
     property_all_rejects_nonpositive_max_concurrent;
     property_all_explicit_full_fan_out;
+    property_all_omitted_bound_barrier_nonprogress;
     property_all_input_order;
     property_all_fail_fast;
     property_all_settled_input_order_and_capture;

@@ -215,10 +215,10 @@ val all :
     the first observed failure propagates.
 
     At most [max_concurrent] children are admitted at once; omission means 8,
-    and fewer are admitted when the list is shorter. Children must not depend on
-    work beyond this bound: a child waiting on an unadmitted sibling deadlocks.
-    A nonempty barrier or coordinator shape that needs every child admitted can
-    request full fan-out with
+    and fewer are admitted when the list is shorter. When every admitted worker
+    is blocked waiting on work that has not been admitted, the group cannot make
+    progress. A nonempty barrier or coordinator shape that needs every child
+    admitted can request full fan-out with
     [all ~max_concurrent:(List.length effects) effects].
 
     Unlike {!map_par}, whose mapper is not forced while constructing the

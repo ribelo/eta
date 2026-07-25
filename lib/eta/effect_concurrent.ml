@@ -1,5 +1,6 @@
-(** Concurrent combinators: [par], [par_pair], [par_collect], [race], [all],
-    [all_settled], [map_par]. Internal: see Effect for the public surface. *)
+(** Concurrent combinators: [par], [par_pair], [race], [all], [all_settled],
+    [map_par]. Shared admission: [collect_workers]. Internal: see Effect for the
+    public surface. *)
 
 open Effect_core
 
@@ -83,17 +84,6 @@ let par_run_forks frame ~forks ~assemble =
   match List.rev (Atomic.get causes) with
   | [] -> ok (assemble ())
   | causes -> error (Cause.concurrent causes)
-
-let par_collect frame ~name tasks =
-  let n = List.length tasks in
-  let results = Array.make n None in
-  let forks =
-    List.mapi
-      (fun index task internal_cancel sw ->
-        results.(index) <- Some (task internal_cancel sw))
-      tasks
-  in
-  par_run_forks frame ~forks ~assemble:(fun () -> collect_results name results)
 
 let race_eval effects frame =
   match effects with

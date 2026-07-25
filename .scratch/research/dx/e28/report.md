@@ -208,8 +208,9 @@ by the census.
 | Obligation | Evidence |
 |---|---|
 | Default peak eight | `all default cap is eight` blocks nine children on the test clock and observes exactly eight admitted. |
-| Explicit full fan-out | `all explicit bound admits full rendezvous` uses nine participants that cannot complete until all nine are live, with `~max_concurrent:(List.length effects)`. |
-| Generated full fan-out | QCheck `all explicit length bound admits every generated rendezvous participant` covers nonempty sizes 1–12. |
+| Explicit full fan-out | `all explicit bound admits full rendezvous` uses nine participants that cannot complete until all nine are live, with `~max_concurrent:(List.length effects)` and a deterministic watchdog. |
+| Generated full fan-out | QCheck `all explicit length bound admits every generated rendezvous participant` covers nonempty sizes 1–12 behind a virtual-clock watchdog. |
+| All-workers-blocked hazard | `all omitted bound stalls when every worker awaits unadmitted` observes exactly eight live participants, advances the test clock without completing or admitting the ninth, then cancels and proves child/sleeper cleanup. QCheck `all omitted bound cannot progress when every admitted worker awaits an unadmitted participant` additionally records an exact empty fiber census. |
 | Configured/effective bound | QCheck `all never exceeds max_concurrent and reaches the bound when children suffice`. |
 | Omission means eight | QCheck `all omission admits at most eight children and reaches eight when inputs suffice`. |
 | Invalid construction | Alcotest `all rejects nonpositive max`; QCheck `all rejects every generated nonpositive max_concurrent at construction`. |
@@ -217,10 +218,10 @@ by the census.
 | Bounded fail-fast/finalizers | QCheck `all first observed failure cancels siblings and awaits their finalizers` now includes unadmitted tails; `all bounded fail-fast never admits tail` proves the admitted sibling finalizes and two tail effects never start. Existing cleanup baselines also pass. |
 | Empty input | Existing `all empty returns empty list` passes unchanged. |
 | Introspection | `audit declared leaves and preserve union` now includes five named `all` children discriminating clock, log, metric, resource, concurrency, and background footprints; describe snapshots remain green. |
-| JS stream behavior | Mainline `stream_map_effect_preserves_order_and_caps_admission` proves lazy mapper invocation, ordered values, exact peak eight, exact mapper count, and cleanup. |
+| JS stream behavior | Mainline `stream_map_effect_preserves_order_and_caps_admission` proves ordered values, exact peak eight, exact mapper count, and cleanup. `stream_map_effect_invokes_mapper_only_as_workers_admit` discriminates the migration by observing exactly eight mapper invocations while the first wave is blocked; the former `all (List.map f xs)` shape would observe twelve. |
 
 The law registry adds M114–M118 plus R127, R129, and R130, updates all shifted
-exact `effect.mli` spans and shared-suite pointers, and records 68 named QCheck
+exact `effect.mli` spans and shared-suite pointers, and records 69 named QCheck
 properties.
 
 ### V-DX-E28-09 — Semantics-change ledger
@@ -257,13 +258,28 @@ contract and now directly measures the unified policy.
    no longer bypasses admission. The DX table still recommends `map_par` for the
    function-plus-collection shape, while runtime safety is identical.
 
-2. **Interdependent barrier over eight:** omission would admit eight children
-   whose wait for the ninth prevents a worker from becoming available. The test
-   suite does not execute that deadlock. Instead, the positive nine-way
-   rendezvous proves the documented nonempty recipe works with an explicit
-   length bound. The mli states plainly that waiting on an unadmitted sibling
-   deadlocks, and both mli and DX guide place the full-fan-out recipe immediately
-   beside the warning. This is review-visible.
+2. **Interdependent barrier over eight:** omission admits eight children. When
+   all eight wait for the ninth, every admitted worker is blocked and no worker
+   can admit the ninth. The bounded-barrier test observes exactly that condition:
+   advancing the clock completes no participant and admits no more work, while
+   cancellation still leaves clean child, sleeper, and fiber censuses. The
+   positive nine-way rendezvous proves the adjacent explicit-length recipe.
+
+### V-DX-E28-12 — Follow-up 2 review rework
+
+- **W1:** the mli and DX guide now state only the all-workers-blocked hazard.
+  R127 matches that claim and points directly at the discriminating test-clock
+  and exact-census evidence rather than inferring deadlock from admission peaks.
+- **W2:** the orphaned `par_collect` helper was deleted and the module header now
+  advertises the shared `collect_workers` admission engine.
+- **W3:** the JS migration test observes eight mapper calls while eight effects
+  are blocked, then releases them and observes all twelve ordered results. This
+  fails under the former eager `all (List.map f xs)` construction.
+- **W4:** both fixed and generated full-fan-out rendezvous tests have watchdogs,
+  converting admission regressions into focused timeout failures.
+
+All four sealed Follow-up 2 micro-predictions hit their exact expected
+observations.
 
 ### V-DX-E28-11 — Prediction scoring
 
@@ -299,6 +315,7 @@ semantics decision rather than a misleading docs-only patch.
 | `nix develop .#mainline -c dune build --build-dir=_build-mainline @install` | PASS |
 | `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/js_stream test/http_js --force` | PASS (existing integer-overflow warnings only) |
 | `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_stream --force` | PASS after the final lazy-mapper assertion |
+| `nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo test/js_stream test/http_js test/laws --force` | PASS after Follow-up 2 |
 
 ### Final recommendation
 
