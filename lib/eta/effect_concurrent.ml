@@ -256,6 +256,77 @@ let par left right =
   make ~leaf_name:"Effect.par" ~names:(names left @ names right)
     ~footprint (par_eval left right)
 
+(** Fork [eff] as a child that publishes its exit to a fresh promise; the
+    returned [await] reads the published value once [par_run_forks] has
+    confirmed every child finished. A failing child raises through
+    {!exit_to_value} inside its fork, where [par_run_forks] aggregates the
+    cause and cancels the siblings, so [await] is only called for children
+    that actually published. *)
+let promise_fork frame eff =
+  let contract = frame.runtime.contract in
+  let result, resolver = contract.Runtime_contract.create_promise () in
+  let fork internal_cancel sw =
+    contract.Runtime_contract.resolve_promise resolver
+      (exit_to_value frame (run_child ~internal_cancel frame sw eff))
+  in
+  let await () = contract.Runtime_contract.await_promise result in
+  (fork, await)
+
+let par3_eval left middle right frame =
+  let left_fork, await_left = promise_fork frame left in
+  let middle_fork, await_middle = promise_fork frame middle in
+  let right_fork, await_right = promise_fork frame right in
+  match
+    par_run_forks frame
+      ~forks:[ left_fork; middle_fork; right_fork ]
+      ~assemble:(fun () -> (await_left (), await_middle (), await_right ()))
+  with
+  | Exit.Ok (left, middle, right) -> ok (left, middle, right)
+  | Exit.Error cause -> error cause
+
+let par3 left middle right =
+  (* Children are heterogeneous: names and footprints are folded one child
+     at a time rather than collected into a homogeneously typed list. *)
+  let child_names = names left @ names middle @ names right in
+  let footprint =
+    union_footprint
+      (union_footprint (capability_footprint left)
+         (union_footprint (capability_footprint middle)
+            (capability_footprint right)))
+      (footprint ~has_concurrency:true ())
+  in
+  make ~leaf_name:"Effect.par3" ~names:child_names ~footprint
+    (par3_eval left middle right)
+
+let par4_eval first second third fourth frame =
+  let first_fork, await_first = promise_fork frame first in
+  let second_fork, await_second = promise_fork frame second in
+  let third_fork, await_third = promise_fork frame third in
+  let fourth_fork, await_fourth = promise_fork frame fourth in
+  match
+    par_run_forks frame
+      ~forks:[ first_fork; second_fork; third_fork; fourth_fork ]
+      ~assemble:(fun () ->
+        (await_first (), await_second (), await_third (), await_fourth ()))
+  with
+  | Exit.Ok (first, second, third, fourth) -> ok (first, second, third, fourth)
+  | Exit.Error cause -> error cause
+
+let par4 first second third fourth =
+  let child_names =
+    names first @ names second @ names third @ names fourth
+  in
+  let footprint =
+    union_footprint
+      (union_footprint (capability_footprint first)
+         (union_footprint (capability_footprint second)
+            (union_footprint (capability_footprint third)
+               (capability_footprint fourth))))
+      (footprint ~has_concurrency:true ())
+  in
+  make ~leaf_name:"Effect.par4" ~names:child_names ~footprint
+    (par4_eval first second third fourth)
+
 let all_settled_eval effects frame =
   let results = Array.make (List.length effects) None in
   switch_run frame (fun sw ->

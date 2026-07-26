@@ -208,6 +208,29 @@ val par : ('a, 'err) t -> ('b, 'err) t -> ('a * 'b, 'err) t
     parallelism. Use the optional [eta_par] package for worker-domain offload
     or explicit fork-join parallel algorithms. *)
 
+val par3 :
+  ('a, 'err) t -> ('b, 'err) t -> ('c, 'err) t -> ('a * 'b * 'c, 'err) t
+(** Run three effects concurrently; collect all successes as a flat triple
+    in argument order, independent of completion order. Fail-fast like
+    {!par}: the first child failure cancels every sibling and the cause
+    propagates upward.
+
+    Arity cap is four: for five or more effects use {!all} for homogeneous
+    work or nested {!par} for heterogeneous products. *)
+
+val par4 :
+  ('a, 'err) t ->
+  ('b, 'err) t ->
+  ('c, 'err) t ->
+  ('d, 'err) t ->
+  ('a * 'b * 'c * 'd, 'err) t
+(** Run four effects concurrently; collect all successes as a flat quadruple
+    in argument order, independent of completion order. Fail-fast like
+    {!par}: the first child failure cancels every sibling and the cause
+    propagates upward.
+
+    This is the arity cap; see {!par3} for the beyond-four rule. *)
+
 val all :
   ?max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
 (** Run prebuilt effects concurrently, collecting results in input order.
