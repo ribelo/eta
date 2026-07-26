@@ -4568,3 +4568,33 @@ rule):** E35 → E36 → E37 → E38 → E39 (footprints before admission) →
 E40 → E42a (privacy before Resource) → E41 → E42b → E44 → E21 → E33 →
 E18 → E43 → end items (golden tutorials → model.md → law-census →
 **the `Eta.t` replacement**).
+
+---
+
+## V-DX-E35-001 — 2026-07-26 — research/dx-e35-stack-safety — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E35-002.
+
+**The question.** The interpreter descends recursively through `Map`/`Bind`
+(`eval inner`, then the continuation — verified, no trampoline, no
+explicit continuation stack). Is arbitrary composition stack-safe on
+either substrate?
+
+**Predictions (the probe's numbers).**
+- Native (OxCaml): sequential-bind chains FAIL before 1M steps —
+  predicted blow-up zone 100k–1M (8 MB default stack, tens-to-hundreds
+  of bytes per `eval` frame). Static deep `map` nesting and large
+  `concat` (statically nested binds via `List.fold_left`) fail in the
+  same zone or earlier. Dynamic short pipelines (typical user code)
+  pass, which is why nothing exploded in production.
+- jsoo: fails much earlier — predicted 10k–50k frames (JS stack is
+  ~10–20× smaller; every Eta primitive is CPS over it).
+- Verdict: trampoline/loop needed → the probe escalates to
+  implementation inside the same experiment (pre-registered). Design
+  constraint: the perf guard — `bench/runtime_watchlist` hot paths must
+  stay within noise of baseline (≤ ~5% or individually justified), and
+  both substrates implement the SAME semantics (T10).
+- If the probe surprises (passes 1M natively): the OCaml stack grew or
+  frames are smaller than estimated — the verdict becomes "safe up to
+  measured limits", the corpus becomes regression tests, and the jsoo
+  failure (which will still fire) decides alone.
