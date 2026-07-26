@@ -11,11 +11,11 @@ repo_dir=$(git -C "$probe_dir" rev-parse --show-toplevel)
 if [[ $(ocamlc -version) == 5.2.0+ox ]]; then
   repo_build="$repo_dir/_build"
   probe_build="$probe_dir/_build-ox"
-  targets="probe_native.exe probe_calibrate.exe"
+  targets="probe_native.exe probe_native.bc probe_calibrate.exe"
 else
   repo_build="$repo_dir/_build-mainline"
   probe_build="$probe_dir/_build"
-  targets="probe_native.exe probe_jsoo.bc.js probe_calibrate.exe probe_calibrate_js.bc.js"
+  targets="probe_native.exe probe_native.bc probe_jsoo.bc.js probe_calibrate.exe probe_calibrate_js.bc.js"
 fi
 
 dune build --root "$repo_dir" --build-dir="$repo_build" @install

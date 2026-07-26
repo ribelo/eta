@@ -18,6 +18,19 @@
   (setenv EIO_BACKEND posix
    (run %{test}))))
 
+;; DX-E35: bytecode stack-safety gate (eta.cma is a shipped artifact).
+(executable
+ (name run_stack_safety_byte)
+ (modules run_stack_safety_byte)
+ (modes byte)
+ (libraries eta eta_eio eio_main))
+
+(rule
+ (alias runtest)
+ (action
+  (setenv EIO_BACKEND posix
+   (run ./run_stack_safety_byte.bc))))
+
 (rule
  (alias runtest)
  (deps

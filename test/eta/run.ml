@@ -37,13 +37,13 @@ let () =
             test_effect_catch_preserves_concurrent_interrupt;
           Alcotest.test_case "stack safety: 1M dynamic binds" `Quick
             test_stack_safety_dynamic_bind;
-          Alcotest.test_case "stack safety: 100k static map nesting" `Quick
+          Alcotest.test_case "stack safety: 1M static map nesting" `Quick
             test_stack_safety_static_map;
-          Alcotest.test_case "stack safety: 100k concat" `Quick
+          Alcotest.test_case "stack safety: 1M concat" `Quick
             test_stack_safety_concat;
-          Alcotest.test_case "stack safety: 100k bind_error recovery" `Quick
+          Alcotest.test_case "stack safety: 1M bind_error recovery" `Quick
             test_stack_safety_bind_error;
-          Alcotest.test_case "stack safety: 100k deep cause trees" `Quick
+          Alcotest.test_case "stack safety: 1M deep cause trees" `Quick
             test_stack_safety_deep_cause_trees;
           Alcotest.test_case "drain does not busy wait" `Quick
             test_drain_does_not_busy_wait;

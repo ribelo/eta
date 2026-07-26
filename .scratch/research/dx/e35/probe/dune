@@ -7,6 +7,7 @@
 (executable
  (name probe_native)
  (modules probe_native)
+ (modes native byte)
  (libraries probe_common eta eta_eio eio_main))
 
 (executable

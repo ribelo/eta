@@ -351,12 +351,20 @@ let test_effect_catch_preserves_concurrent_interrupt () =
 (* ---------------------------------------------------------------- *)
 
 (* Promoted from the DX-E35 boundary probe; see
-   .scratch/research/dx/e35/probe/RESULTS.md. The interpreter descends
-   recursively through Map/Bind/Custom; on native these depths survive
-   because OCaml 5 fiber stacks grow on the heap. If evaluation ever
-   becomes stack-bounded again, these tests fail loudly instead of
-   silently truncating work: every check verifies the full semantic
-   result (exact value, exact handler count, exact leaf order). *)
+   .scratch/research/dx/e35/probe/RESULTS.md and report.md. The pinned
+   contract: the interpreter completes these compositions at depth 1M
+   under documented default runtime configurations on shipped
+   substrates — native/bytecode with the default OCaml [stack_limit]
+   (134,217,728 words = 1 GiB on 64-bit, measured on 5.4.1 and
+   5.2.0+ox) and js_of_ocaml --effects=cps. The guarantee is
+   configuration-dependent, not intrinsic: a user-selected
+   OCAMLRUNPARAM=l=<words> lowers the native bound and reopens
+   exhaustion; non-CPS js_of_ocaml is excluded by eta_jsoo.mli's own
+   --effects=cps requirement; a future bounded-stack substrate reopens
+   the question. Every check verifies the full semantic result — exact
+   value, exact execution count, exact handler count, every cause leaf
+   against its index — so skipped or reordered work fails as surely as
+   a stack overflow. *)
 
 let test_stack_safety_dynamic_bind () =
   with_test_clock @@ fun _sw _clock rt ->
@@ -377,7 +385,7 @@ let test_stack_safety_dynamic_bind () =
 
 let test_stack_safety_static_map () =
   with_test_clock @@ fun _sw _clock rt ->
-  let depth = 100_000 in
+  let depth = 1_000_000 in
   let rec build remaining acc =
     if remaining = 0 then acc
     else build (remaining - 1) (Effect.map (fun value -> value + 1) acc)
@@ -391,12 +399,17 @@ let test_stack_safety_static_map () =
 
 let test_stack_safety_concat () =
   with_test_clock @@ fun _sw _clock rt ->
-  let depth = 100_000 in
+  let depth = 1_000_000 in
+  let executed = ref 0 in
   let rec build remaining acc =
-    if remaining = 0 then acc else build (remaining - 1) (Effect.unit :: acc)
+    if remaining = 0 then acc
+    else
+      build (remaining - 1)
+        (Effect.sync (fun () -> incr executed) :: acc)
   in
   match Runtime.run rt (Effect.concat (build depth [])) with
-  | Exit.Ok () -> ()
+  | Exit.Ok () ->
+      Alcotest.(check int) "every concat effect executed" depth !executed
   | Exit.Error cause ->
       Alcotest.failf "deep concat failed: %a"
         (Cause.pp Format.pp_print_string)
@@ -404,7 +417,7 @@ let test_stack_safety_concat () =
 
 let test_stack_safety_bind_error () =
   with_test_clock @@ fun _sw _clock rt ->
-  let depth = 100_000 in
+  let depth = 1_000_000 in
   let handled = ref 0 in
   let recover (_ : string) =
     incr handled;
@@ -424,18 +437,23 @@ let test_stack_safety_bind_error () =
   | Exit.Ok _ -> Alcotest.fail "recovery chain lost the typed failure"
 
 let test_stack_safety_deep_cause_trees () =
-  let depth = 100_000 in
+  let depth = 1_000_000 in
   let check name combine =
     let cause = ref (Cause.fail 0) in
     for value = 1 to depth do
       cause := combine [ !cause; Cause.fail value ]
     done;
-    match Cause.failures !cause with
-    | first :: _ as failures ->
-        Alcotest.(check int) (name ^ " leaf count") (depth + 1)
-          (List.length failures);
-        Alcotest.(check int) (name ^ " left-to-right order") 0 first
-    | [] -> Alcotest.failf "%s produced no failures" name
+    let mismatches = ref 0 in
+    let rec check_leaf index = function
+      | [] ->
+          Alcotest.(check int) (name ^ " leaf count") (depth + 1) index
+      | leaf :: rest ->
+          if leaf <> index then incr mismatches;
+          check_leaf (index + 1) rest
+    in
+    check_leaf 0 (Cause.failures !cause);
+    Alcotest.(check int)
+      (name ^ " every leaf matches its index") 0 !mismatches
   in
   check "sequential" Cause.sequential;
   check "concurrent" Cause.concurrent

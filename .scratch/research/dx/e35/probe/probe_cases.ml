@@ -30,14 +30,6 @@ let expect_int expected = function
            (Cause.pp (fun fmt (_ : [ `Boom ]) -> Format.pp_print_string fmt "Boom"))
            cause)
 
-let expect_unit = function
-  | Exit.Ok () -> Ok ()
-  | Exit.Error cause ->
-      Error
-        (Format.asprintf "expected success, got %a"
-           (Cause.pp (fun fmt (_ : [ `Boom ]) -> Format.pp_print_string fmt "Boom"))
-           cause)
-
 let dynamic_bind depth =
   let rec next remaining value =
     if remaining = 0 then Effect.pure value
@@ -56,10 +48,27 @@ let static_map depth =
   Run (build depth (Effect.pure 0), expect_int depth)
 
 let concat depth =
+  let executed = ref 0 in
   let rec build remaining acc =
-    if remaining = 0 then acc else build (remaining - 1) (Effect.unit :: acc)
+    if remaining = 0 then acc
+    else
+      build (remaining - 1)
+        (Effect.sync (fun () -> incr executed) :: acc)
   in
-  Run (Effect.concat (build depth []), expect_unit)
+  let verify = function
+    | Exit.Ok () when !executed = depth -> Ok ()
+    | Exit.Ok () ->
+        Error
+          (Printf.sprintf "expected %d effect executions, observed %d" depth
+             !executed)
+    | Exit.Error cause ->
+        Error
+          (Format.asprintf "expected success, got %a"
+             (Cause.pp (fun fmt (_ : [ `Boom ]) ->
+                  Format.pp_print_string fmt "Boom"))
+             cause)
+  in
+  Run (Effect.concat (build depth []), verify)
 
 let bind_error depth =
   let handled = ref 0 in
@@ -92,14 +101,20 @@ let cause_tree combine depth () =
     cause := combine [ !cause; Cause.fail value ]
   done;
   let failures = Cause.failures !cause in
-  let expected = depth + 1 in
-  match (List.length failures, failures) with
-  | actual, first :: _ when actual = expected && first = 0 -> Ok ()
-  | actual, _ ->
-      Error
-        (Printf.sprintf
-           "expected %d failures in left-to-right order from zero, got %d"
-           expected actual)
+  let rec check index = function
+    | [] ->
+        if index = depth + 1 then Ok ()
+        else
+          Error
+            (Printf.sprintf "expected %d leaves, observed %d" (depth + 1) index)
+    | leaf :: rest ->
+        if leaf <> index then
+          Error
+            (Printf.sprintf "leaf at index %d: expected %d, got %d" index index
+               leaf)
+        else check (index + 1) rest
+  in
+  check 0 failures
 
 let prepare name depth =
   match check_depth depth with

@@ -5,8 +5,15 @@ set -uo pipefail
 
 probe_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 out=${1:-"$probe_dir/RESULTS.raw.txt"}
-backends=${E35_BACKENDS:-"native jsoo"}
+backends=${E35_BACKENDS:-"native byte jsoo"}
 export E35_TIMEOUT_SECONDS=${E35_TIMEOUT_SECONDS:-300}
+
+if [[ " $backends " == *" byte "* && -z ${E35_STUB_PATH:-} ]]; then
+  E35_STUB_PATH=$(for d in $(ocamlfind printconf path | tr ':' ' '); do
+    find "$d" -maxdepth 2 -name 'dll*.so' -printf '%h\n' 2>/dev/null
+  done | sort -u | paste -sd: -)
+  export E35_STUB_PATH
+fi
 
 : > "$out"
 for backend in $backends; do
