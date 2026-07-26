@@ -4294,3 +4294,46 @@ that teach.
   anyway?
 - Outcome: B promotes; if the misreading re-opens, A holds with the
   recheck as the record.
+
+---
+
+## V-DX-E32-002 — 2026-07-26 — research/dx-e32-fold-recheck — phase: results + decision (F2 CLOSED: verdict holds)
+
+**Census (executor, orchestrator-verified).** 26 textual occurrences / 10
+files; 24 genuine (2 scanner sentinels); 11 consumer-shaped; 6 of 10
+files in `examples/` (7 occurrences). Frequency gate for B: met
+(≥ ~20, consumer-shaped present).
+
+**The decisive naming gate: B fails.** Two independent reviews agree on
+substance: the name `recover` alone invites the exception-recovery
+reading; the contract merely corrects it. (1) Executor's blind review:
+strict-gate FAIL (0.9) — "prose corrects rather than prevents".
+(2) Orchestrator's cohort review (fresh oracle, unprimed material):
+correct selection behavior at decision time (did NOT reach for `recover`
+for a `failwith` defect), correct channel completion, rated 4 — but
+admitted "on first seeing the name, I briefly expected it might handle
+ordinary OCaml exceptions."
+
+**Why A holds despite the 4 rating and honest correction.** The
+programme's bar for a NEW NAME (T3/T11) is teaching correctly from the
+name alone: `bind_error` passed cold ("no exception analogue"); `recover`
+fails cold in two independent readings because OCaml's dominant recovery
+idiom is exception-catching. E20's progressive-disclosure precedent does
+not rescue it — its friendly special cases (`annotate_logs`,
+`with_minimum_log_level`) carry the channel in the name; `recover` does
+not. Mitigating observation recorded honestly: the invited bug is LOUD
+(defect → `Die` on first run), not silent — the mildest class — but it
+remains a bug the name invites, and `fold ~ok:Fun.id` invites none.
+
+**Prediction scoring (orchestrator, V-DX-E32-001).** Census 26/10 +
+examples concentration: hit. **Decision prediction B (~55%): MISS** —
+the gate-driven reading (executor's A + both reviews' substance) beat my
+prior; the F2-era assumption that progressive disclosure would carry
+`recover` did not survive the T3 bar. A's logic (name must not need
+correcting-from) is the sharper principle and is now on record. Executor:
+frequency predictions hit; its A recommendation upheld.
+
+**Decision: A — E23's verdict holds; `recover` stays deleted; F2
+CLOSED.** The 24-site noise is the accepted, honest price of a name that
+never needs a second look. Evidence record merged (docs-only branch);
+gates green; worktree removed; objective archived.

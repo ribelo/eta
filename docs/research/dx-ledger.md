@@ -301,11 +301,16 @@ evidence; every hold names its re-entry trigger.
   analysis: no structural need, E8 absorbs the boilerplate; cohort verdict
   NO-FIRE. V-DX-E31-001/002.
 
-### E32 — `fold ~ok:Fun.id` usage-data re-check — in flight
+### E32 — `fold ~ok:Fun.id` usage-data re-check — complete 2026-07-26 (verdict holds)
 - What: ~25 sites carry the noise. Does a shorthand earn its val, or
   does E23's verdict (one both-channel fold) hold?
 - Rationale: F2 watch item; one look with numbers. Sealed prediction:
   verdict holds.
+- Outcome: **A — verdict holds; `recover` stays deleted; F2 closed.**
+  24 genuine sites (11 consumer-shaped) met the frequency bar, but two
+  independent naming reviews found `recover` alone invites the
+  exception-recovery reading (contract merely corrects). T3/T11: a new
+  name must teach correctly from the name alone. V-DX-E32-001/002.
 - Decision: queued.
 
 ### E16 — `Reader` validation race

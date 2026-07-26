@@ -643,3 +643,29 @@ The durable lessons:
 3. **Eligibility matters more than counts.** "4 sites" sounds like
    demand until you look: all four are value bindings the sugar
    structurally cannot serve. Measure the shape, not the grep count.
+
+## E32 — The `recover` recheck: verdict holds (2026-07-26)
+
+F2's scheduled re-measure: 24 genuine `fold ~ok:Fun.id ~error:f` sites
+(11 consumer-shaped, most in `examples/`). Frequency alone would have
+earned the shorthand. What killed it was the name: two independent
+reviews found `recover` alone invites the exception-recovery reading —
+the contract corrects it, but a new name in this library must teach
+correctly from the name alone (T3/T11). `bind_error` passes that bar
+cold; `recover` fails it in both readings, because OCaml's dominant
+recovery idiom is exception-catching.
+
+Durable lessons:
+
+1. **"The contract corrects it" is not good enough for a name.**
+   Correct-at-selection is the floor; correct-from-the-name is the bar.
+   The noise (`~ok:Fun.id` at 24 sites) is the accepted price of never
+   needing a second look.
+2. **Watch items close with evidence, either way.** F2 was a real
+   possibility (R3 sanctions evidence reverts); the recheck was a real
+   measurement; the outcome stands on two independent reviews, not on
+   E23's sunk verdict.
+3. **Progressive disclosure requires channel-honest shorthands.**
+   E20's friendly special cases carry the channel in the name
+   (`annotate_logs`); a special case whose name drops the channel is
+   not disclosure, it's camouflage.
