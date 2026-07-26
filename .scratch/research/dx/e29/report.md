@@ -168,3 +168,43 @@ counts); keep `census.md`, `journal.md`, this report, and the red-team as
 the evidence record. No rename rescue.
 
 E29 READY FOR REVIEW
+
+## Follow-up 1 — promote verdict and pre-merge fixes
+
+The review returned **promote** (kill case weighed and rejected) with
+three mechanical pre-merge fixes. Sealed P5 (PROMOTE, ~55%) scores as a
+**hit**; all other sealed predictions scored above. Fixes applied in
+`27ca04c9`:
+
+- **M1 — stale LAWS.md census totals.** The per-module totals table now
+  matches the header: effect.mli direct claims 55 → 59, its covered
+  registry rows 155 → 159, total covered 108 → 112, covered registry rows
+  236 → 240, unique properties 69 → 73.
+- **M2 — fail-fast properties enumerate every winner position.**
+  `par_n_fail_fast_property` now generates only (error, base delay) and
+  deterministically executes all 3 (`par3`) / 4 (`par4`) winner positions
+  per run, so a position-specific regression cannot hide behind a lucky
+  seed. Property names and claim statements are unchanged; the registry
+  rows M119–M122 still cite them. Verified: `dune runtest test/laws
+  --force` — 73/73 pass.
+- **M3 — footprint audit discriminates every child position.** Each child
+  now carries a unique footprint-originating capability — `par3`:
+  resources/logs/metrics; `par4`: resources/logs/metrics/background — and
+  the test asserts the union, so a footprint flag dropped from any single
+  position fails. Verified in the shared suite (`par3/par4 audit
+  aggregates children`, both runtimes).
+
+Gates re-run on the final tree, all green:
+
+```sh
+nix develop -c dune build @install        # green
+nix develop -c dune runtest --force       # green
+nix develop -c eta-oxcaml-test-shipped    # green
+nix develop -c dune runtest test/laws --force  # green, 73/73
+```
+
+No design change, no new law-bearing prose, no scope-fence deviation.
+Journal note: `journal-followup-1.md`; the sealed `journal.md` is
+untouched.
+
+E29 READY FOR REVIEW
