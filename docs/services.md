@@ -140,6 +140,70 @@ build anonymous bags of services with repeated keys. If two handles have the
 same shape but different meaning, put them behind different module-owned types
 or different record fields.
 
+## Why No Environment Channel
+
+Applications pass dependencies as ordinary OCaml values because the
+alternatives were each built, measured, and found worse. The full record
+is `.scratch/research/envless-verdict-2026-07-26.md`; the four lines of
+evidence:
+
+1. **OxCaml portability (decisive).** Object-row environments are not
+   portable across domain boundaries; the env parameter was removed for
+   exactly this reason (`7417b03b`, V-Recovery-R2). Eta's
+   islands/portable direction is non-negotiable.
+2. **The components were survival-tested.** `provide`, `Layer`, and the
+   env row itself each got compiler-lab fixtures and each fell:
+   identical behavior without `provide` (and shorter), no material win
+   from restricted Layer merge, 2295-byte missing-capability errors at
+   20 modules vs. 689 for arguments.
+3. **The value restriction is structural.** Env-reading constructors
+   force the parameter non-covariant; reusable values then need
+   mandatory eta-expansion, and layer values cannot cross compilation
+   units — the entire Layer algebra becomes thunk-passing, which
+   destroys memoisation-by-identity.
+4. **Object-row keys are global names.** Across libraries they silently
+   collide and renames are breaking; nominal identity — the thing keys
+   were for — is what OCaml modules already provide.
+
+The in-repo `Reader` race (V-DX-E16) confirmed the same boundary at
+service level: value-passing won 4-0-1, with the caveat that the
+environment style strengthens with deeper graphs (~6+ dependencies
+threaded across many layers). If your application lives there, read on.
+
+## When Value-Passing Hurts: Composite Records
+
+The one place an environment channel beats plain arguments: a leaf five
+levels down gains a dependency, and every function on the path needs an
+edit. Measured in-repo: 1 file touched with env rows, ~4 with plain
+arguments, per leaf evolution.
+
+Do not solve that with a global type parameter. Solve it locally with a
+composite capability record per subsystem:
+
+```ocaml
+type billing_env = { db : Db.t; audit : Audit.t; metrics : Metrics.t }
+
+val charge : billing_env -> order -> (receipt, billing_err) Effect.t
+```
+
+- Introduce the record where a subsystem's dependency set is deep
+  (≥ ~4) *and* volatile (changes per quarter), not by default.
+- The record is a deliberate, local trade: you lose per-function
+  precision (functions see the bundle, not exactly what they use) and
+  gain signature stability (adding a dependency touches the record type
+  and its construction sites, not every intermediate signature).
+- Keep it nominal and subsystem-scoped. The failure mode to avoid is the
+  "one big env blob" for the whole application — that is the environment
+  parameter returning through the back door.
+- The DX lab's numbers: composite records give 88-byte hovers and ~2
+  touched files per leaf evolution, versus ~4 for plain arguments and
+  dense-row dumps for object rows.
+
+If even that is not enough — repeated ≥5-intermediate-file churn in a
+real application — that is one of the measured reopen conditions for the
+environment question (verdict §7). Bring the evidence; the door is
+closed, not welded shut.
+
 ## Decision
 
 Eta keeps service construction in normal OCaml and does not add a Layer or

@@ -23,6 +23,43 @@ and are passed explicitly where code needs them.
 
 See [Services Without Layer](services.md) for the project convention.
 
+### Why, with evidence
+
+This is a settled decision, resting on four independent evidence lines
+(full record: `.scratch/research/envless-verdict-2026-07-26.md`):
+
+1. **Portability (decisive).** Object-row environments are not portable
+   across OxCaml domain boundaries ("object kind was value mod global
+   many non_float, not value mod portable contended" — V-Recovery-R2).
+   The env parameter shipped after V-R10 was removed for exactly this
+   reason (`7417b03b`, 2026-05-22). Restoring it would kill the
+   islands/portable direction or force a second effect type.
+2. **Every R component was survival-tested and fell.** `provide` was
+   deleted after three with/without fixture pairs behaved identically
+   (and were shorter without it — V-RPv5); restricted `Layer` merge was
+   "not materially better than ordinary OCaml" (V-RLv5); at 20 modules /
+   30 capabilities, missing-capability row errors are 2295 bytes vs. 689
+   for ordinary arguments, hovers are dense rows, and every reusable
+   env-row value needs a thunk.
+3. **The value restriction is structural, not stylistic.** Any
+   env-reading constructor makes the env parameter non-covariant, so
+   reusable effect values get weak type variables (mandatory
+   eta-expansion), layer values cannot cross compilation units, and
+   memoisation-by-reference-identity dies.
+4. **Cross-library object-row keys are unsound.** Global structural
+   names: silent same-shape collisions, renames are breaking type
+   changes, and the adapter remedies recreate ordinary functor-based DI
+   at extra cost.
+
+The one genuine win of an env channel — a deep leaf gaining a dependency
+touches 1 file instead of ~4 — is real but bounded;
+[services.md](services.md) documents the composite-record recipe that
+absorbs it locally. The in-repo race (V-DX-E16, `Reader` vs.
+value-passing on one real service) went 4-0-1 for value-passing, with
+the boundary condition (deep graphs, ~6+ deps across layers) recorded.
+Reopen conditions are measurable and live in the verdict document §7;
+until one fires, this question is closed.
+
 ## Errors and Defects
 
 Typed failures are values produced by `Effect.fail`, `Effect.from_result`, or

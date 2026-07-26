@@ -348,7 +348,10 @@ Build service graphs with ordinary OCaml functions and keep resource lifetime
 inside `Effect.with_scope`.
 
 See [Services Without Layer](docs/services.md) for the project convention and
-failure modes.
+failure modes. Why no env channel: object-row environments are not portable
+across OxCaml domain boundaries, and every `Layer`/`provide`/env-row component
+was measured and found worse than ordinary OCaml (evidence:
+`docs/services.md` and `.scratch/research/envless-verdict-2026-07-26.md`).
 
 ## Supervised Concurrency
 
