@@ -505,8 +505,97 @@ module Promise_shared =
     let fail = fail
   end)
 
+(* Stack-safety regression corpus (DX-E35): bounded jsoo twin of the native
+   tests in test/eta/test_eta_effect_core.ml. Under --effects=cps the
+   interpreter's recursion is trampolined by the js_of_ocaml runtime; these
+   depths fail loudly if evaluation ever becomes JS-stack-bounded. *)
+
+let test_stack_safety_dynamic_bind done_ =
+  let depth = 100_000 in
+  let rec next remaining value =
+    if remaining = 0 then Eta.Effect.pure value
+    else
+      Eta.Effect.bind
+        (fun value -> next (remaining - 1) (value + 1))
+        (Eta.Effect.pure value)
+  in
+  run (next depth 0) ~on_result:(finish done_ (expect_ok_int depth))
+
+let test_stack_safety_static_map done_ =
+  let depth = 10_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.map (fun value -> value + 1) acc)
+  in
+  run (build depth (Eta.Effect.pure 0))
+    ~on_result:(finish done_ (expect_ok_int depth))
+
+let expect_ok_unit = function
+  | Eta.Exit.Ok () -> ()
+  | Eta.Exit.Error cause ->
+      fail
+        (Format.asprintf "expected Ok (), got %a" (Eta.Cause.pp pp_err) cause)
+
+let test_stack_safety_concat done_ =
+  let depth = 10_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.unit :: acc)
+  in
+  run (Eta.Effect.concat (build depth []))
+    ~on_result:(finish done_ expect_ok_unit)
+
+let test_stack_safety_bind_error done_ =
+  let depth = 10_000 in
+  let handled = ref 0 in
+  let recover (_ : string) =
+    incr handled;
+    Eta.Effect.fail "boom"
+  in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.bind_error recover acc)
+  in
+  run (build depth (Eta.Effect.fail "boom"))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Fail "boom") ->
+            if !handled <> depth then
+              fail
+                (Printf.sprintf "expected %d recovery runs, got %d" depth
+                   !handled)
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "unexpected cause: %a" (Eta.Cause.pp pp_err)
+                 cause)
+        | Eta.Exit.Ok _ -> fail "recovery chain lost the typed failure"))
+
+let test_stack_safety_deep_cause_trees done_ =
+  finish done_
+    (fun () ->
+      let depth = 10_000 in
+      let check combine =
+        let cause = ref (Eta.Cause.fail 0) in
+        for value = 1 to depth do
+          cause := combine [ !cause; Eta.Cause.fail value ]
+        done;
+        match Eta.Cause.failures !cause with
+        | first :: _ as failures ->
+            if List.length failures <> depth + 1 then fail "cause leaf count";
+            if first <> 0 then fail "cause left-to-right order"
+        | [] -> fail "no failures collected"
+      in
+      check Eta.Cause.sequential;
+      check Eta.Cause.concurrent)
+    ()
+
 let tests =
   [
+    ("stack safety: 100k dynamic binds", test_stack_safety_dynamic_bind);
+    ("stack safety: 10k static map nesting", test_stack_safety_static_map);
+    ("stack safety: 10k concat", test_stack_safety_concat);
+    ("stack safety: 10k bind_error recovery", test_stack_safety_bind_error);
+    ("stack safety: 10k deep cause trees", test_stack_safety_deep_cause_trees);
     ("delay", test_delay);
     ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
     ("timeout releases resource", test_timeout_releases_resource);

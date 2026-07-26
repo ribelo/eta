@@ -345,3 +345,97 @@ let test_effect_catch_preserves_concurrent_interrupt () =
       Alcotest.failf "expected concurrent interrupt, got %a"
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent interrupt"
+
+(* ---------------------------------------------------------------- *)
+(* Stack-safety regression corpus (DX-E35)                           *)
+(* ---------------------------------------------------------------- *)
+
+(* Promoted from the DX-E35 boundary probe; see
+   .scratch/research/dx/e35/probe/RESULTS.md. The interpreter descends
+   recursively through Map/Bind/Custom; on native these depths survive
+   because OCaml 5 fiber stacks grow on the heap. If evaluation ever
+   becomes stack-bounded again, these tests fail loudly instead of
+   silently truncating work: every check verifies the full semantic
+   result (exact value, exact handler count, exact leaf order). *)
+
+let test_stack_safety_dynamic_bind () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 1_000_000 in
+  let rec next remaining value =
+    if remaining = 0 then Effect.pure value
+    else
+      Effect.bind
+        (fun value -> next (remaining - 1) (value + 1))
+        (Effect.pure value)
+  in
+  match Runtime.run rt (next depth 0) with
+  | Exit.Ok value -> Alcotest.(check int) "every bind evaluated" depth value
+  | Exit.Error cause ->
+      Alcotest.failf "deep dynamic bind chain failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_static_map () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 100_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Effect.map (fun value -> value + 1) acc)
+  in
+  match Runtime.run rt (build depth (Effect.pure 0)) with
+  | Exit.Ok value -> Alcotest.(check int) "every map applied" depth value
+  | Exit.Error cause ->
+      Alcotest.failf "deep static map nesting failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_concat () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 100_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc else build (remaining - 1) (Effect.unit :: acc)
+  in
+  match Runtime.run rt (Effect.concat (build depth [])) with
+  | Exit.Ok () -> ()
+  | Exit.Error cause ->
+      Alcotest.failf "deep concat failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_bind_error () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 100_000 in
+  let handled = ref 0 in
+  let recover (_ : string) =
+    incr handled;
+    Effect.fail "boom"
+  in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Effect.bind_error recover acc)
+  in
+  match Runtime.run rt (build depth (Effect.fail "boom")) with
+  | Exit.Error (Cause.Fail "boom") ->
+      Alcotest.(check int) "every recovery level ran" depth !handled
+  | Exit.Error cause ->
+      Alcotest.failf "deep bind_error nesting failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+  | Exit.Ok _ -> Alcotest.fail "recovery chain lost the typed failure"
+
+let test_stack_safety_deep_cause_trees () =
+  let depth = 100_000 in
+  let check name combine =
+    let cause = ref (Cause.fail 0) in
+    for value = 1 to depth do
+      cause := combine [ !cause; Cause.fail value ]
+    done;
+    match Cause.failures !cause with
+    | first :: _ as failures ->
+        Alcotest.(check int) (name ^ " leaf count") (depth + 1)
+          (List.length failures);
+        Alcotest.(check int) (name ^ " left-to-right order") 0 first
+    | [] -> Alcotest.failf "%s produced no failures" name
+  in
+  check "sequential" Cause.sequential;
+  check "concurrent" Cause.concurrent
