@@ -7,6 +7,7 @@ if [[ $# -ne 3 ]]; then
 fi
 
 probe_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+build_dir=${E35_PROBE_BUILD_DIR:-"$probe_dir/_build"}
 backend=$1
 case_name=$2
 depth=$3
@@ -14,10 +15,10 @@ timeout_seconds=${E35_TIMEOUT_SECONDS:-180}
 
 case "$backend" in
   native)
-    command=("$probe_dir/_build/default/probe_native.exe" "$case_name" "$depth")
+    command=("$build_dir/default/probe_native.exe" "$case_name" "$depth")
     ;;
   jsoo)
-    command=(node "$probe_dir/_build/default/probe_jsoo.bc.js" "$case_name" "$depth")
+    command=(node "$build_dir/default/probe_jsoo.bc.js" "$case_name" "$depth")
     ;;
   *)
     echo "unknown backend: $backend" >&2
