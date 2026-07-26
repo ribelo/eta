@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E29 — Concurrent product ergonomics (`par3`/`par4`)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e29`
+  - Branch: `research/dx-e29-par-ergonomics`
+  - Stage: predictions sealed (V-DX-E29-001); objective.md written; awaiting executor
 - Done (recent): **E28 promoted** (`2edda44b`, unified admission;
   one rework round after review)
 - Done (recent): **E30 promoted** (`7d0f462e`, three review rounds;
@@ -88,4 +91,4 @@ loop (plan §4.2 as amended by Amendment 1).
   experiment branch, and verify the branch base contains the predictions
   commit (E30 staging cut twice from stale/diverged local master; foreign
   schema commit needed temp-worktree merge `5ce0aa6e`)
-- Last update: 2026-07-25 — E28 promoted
+- Last update: 2026-07-25 — E29 launched

@@ -276,7 +276,7 @@ evidence; every hold names its re-entry trigger.
   docs mis-steering corrected; deadlock warning made precise with
   discriminating tests. V-DX-E28-001..003.
 
-### E29 — Concurrent product ergonomics (`par3`/`par4`)
+### E29 — Concurrent product ergonomics (`par3`/`par4`) — in flight
 - What: pleasant explicit concurrency for 3–4 effects (nested
   `par (par a b) c` yields nested tuples).
 - Rationale: E9b made concurrency explicit; the explicit form should be
