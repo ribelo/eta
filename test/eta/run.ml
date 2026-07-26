@@ -35,6 +35,16 @@ let () =
             test_effect_timeout_cancellation_stays_on_owner_domain;
           Alcotest.test_case "catch preserves concurrent interrupt" `Quick
             test_effect_catch_preserves_concurrent_interrupt;
+          Alcotest.test_case "stack safety: 1M dynamic binds" `Quick
+            test_stack_safety_dynamic_bind;
+          Alcotest.test_case "stack safety: 1M static map nesting" `Quick
+            test_stack_safety_static_map;
+          Alcotest.test_case "stack safety: 1M concat" `Quick
+            test_stack_safety_concat;
+          Alcotest.test_case "stack safety: 1M bind_error recovery" `Quick
+            test_stack_safety_bind_error;
+          Alcotest.test_case "stack safety: 1M deep cause trees" `Quick
+            test_stack_safety_deep_cause_trees;
           Alcotest.test_case "drain does not busy wait" `Quick
             test_drain_does_not_busy_wait;
           Alcotest.test_case "retry preserves structured exception causes"

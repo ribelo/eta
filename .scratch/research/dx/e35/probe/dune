@@ -1,0 +1,34 @@
+(library
+ (name probe_common)
+ (modules probe_cases probe_output)
+ (wrapped false)
+ (libraries eta))
+
+(executable
+ (name probe_native)
+ (modules probe_native)
+ (modes native byte)
+ (libraries probe_common eta eta_eio eio_main))
+
+(executable
+ (name probe_jsoo)
+ (modules probe_jsoo)
+ (modes js)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (libraries probe_common eta eta_jsoo js_of_ocaml)
+ (js_of_ocaml
+  (flags --effects=cps)))
+
+(executable
+ (name probe_calibrate)
+ (modules probe_calibrate))
+
+(executable
+ (name probe_calibrate_js)
+ (modules probe_calibrate_js)
+ (modes js)
+ (enabled_if
+  (<> %{ocaml_version} 5.2.0+ox))
+ (js_of_ocaml
+  (flags --effects=cps)))

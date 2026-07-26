@@ -1,0 +1,8 @@
+RESULT case=dynamic_bind depth=10000000 status=PASS mode=none
+RESULT case=dynamic_bind depth=10000000 status=PASS mode=none
+RESULT case=static_map depth=3000000 status=PASS mode=none
+RESULT case=static_map depth=3000000 status=PASS mode=none
+RESULT case=cause_sequential depth=3000000 status=PASS mode=none
+RESULT case=cause_sequential depth=3000000 status=PASS mode=none
+RESULT case=bind_error depth=3000000 status=PASS mode=none
+RESULT case=bind_error depth=3000000 status=PASS mode=none

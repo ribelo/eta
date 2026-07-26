@@ -345,3 +345,115 @@ let test_effect_catch_preserves_concurrent_interrupt () =
       Alcotest.failf "expected concurrent interrupt, got %a"
         (Cause.pp Format.pp_print_string) cause
   | Exit.Ok _ -> Alcotest.fail "catch swallowed concurrent interrupt"
+
+(* ---------------------------------------------------------------- *)
+(* Stack-safety regression corpus (DX-E35)                           *)
+(* ---------------------------------------------------------------- *)
+
+(* Promoted from the DX-E35 boundary probe; see
+   .scratch/research/dx/e35/probe/RESULTS.md and report.md. The pinned
+   contract: the interpreter completes these compositions at depth 1M
+   under documented default runtime configurations on shipped
+   substrates — native/bytecode with the default OCaml [stack_limit]
+   (134,217,728 words = 1 GiB on 64-bit, measured on 5.4.1 and
+   5.2.0+ox) and js_of_ocaml --effects=cps. The guarantee is
+   configuration-dependent, not intrinsic: a user-selected
+   OCAMLRUNPARAM=l=<words> lowers the native bound and reopens
+   exhaustion; non-CPS js_of_ocaml is excluded by eta_jsoo.mli's own
+   --effects=cps requirement; a future bounded-stack substrate reopens
+   the question. Every check verifies the full semantic result — exact
+   value, exact execution count, exact handler count, every cause leaf
+   against its index — so skipped or reordered work fails as surely as
+   a stack overflow. *)
+
+let test_stack_safety_dynamic_bind () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 1_000_000 in
+  let rec next remaining value =
+    if remaining = 0 then Effect.pure value
+    else
+      Effect.bind
+        (fun value -> next (remaining - 1) (value + 1))
+        (Effect.pure value)
+  in
+  match Runtime.run rt (next depth 0) with
+  | Exit.Ok value -> Alcotest.(check int) "every bind evaluated" depth value
+  | Exit.Error cause ->
+      Alcotest.failf "deep dynamic bind chain failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_static_map () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 1_000_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Effect.map (fun value -> value + 1) acc)
+  in
+  match Runtime.run rt (build depth (Effect.pure 0)) with
+  | Exit.Ok value -> Alcotest.(check int) "every map applied" depth value
+  | Exit.Error cause ->
+      Alcotest.failf "deep static map nesting failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_concat () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 1_000_000 in
+  let executed = ref 0 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else
+      build (remaining - 1)
+        (Effect.sync (fun () -> incr executed) :: acc)
+  in
+  match Runtime.run rt (Effect.concat (build depth [])) with
+  | Exit.Ok () ->
+      Alcotest.(check int) "every concat effect executed" depth !executed
+  | Exit.Error cause ->
+      Alcotest.failf "deep concat failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+
+let test_stack_safety_bind_error () =
+  with_test_clock @@ fun _sw _clock rt ->
+  let depth = 1_000_000 in
+  let handled = ref 0 in
+  let recover (_ : string) =
+    incr handled;
+    Effect.fail "boom"
+  in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Effect.bind_error recover acc)
+  in
+  match Runtime.run rt (build depth (Effect.fail "boom")) with
+  | Exit.Error (Cause.Fail "boom") ->
+      Alcotest.(check int) "every recovery level ran" depth !handled
+  | Exit.Error cause ->
+      Alcotest.failf "deep bind_error nesting failed: %a"
+        (Cause.pp Format.pp_print_string)
+        cause
+  | Exit.Ok _ -> Alcotest.fail "recovery chain lost the typed failure"
+
+let test_stack_safety_deep_cause_trees () =
+  let depth = 1_000_000 in
+  let check name combine =
+    let cause = ref (Cause.fail 0) in
+    for value = 1 to depth do
+      cause := combine [ !cause; Cause.fail value ]
+    done;
+    let mismatches = ref 0 in
+    let rec check_leaf index = function
+      | [] ->
+          Alcotest.(check int) (name ^ " leaf count") (depth + 1) index
+      | leaf :: rest ->
+          if leaf <> index then incr mismatches;
+          check_leaf (index + 1) rest
+    in
+    check_leaf 0 (Cause.failures !cause);
+    Alcotest.(check int)
+      (name ^ " every leaf matches its index") 0 !mismatches
+  in
+  check "sequential" Cause.sequential;
+  check "concurrent" Cause.concurrent

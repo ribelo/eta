@@ -505,8 +505,119 @@ module Promise_shared =
     let fail = fail
   end)
 
+(* Stack-safety regression corpus (DX-E35): bounded jsoo twin of the native
+   tests in test/eta/test_eta_effect_core.ml, pinning the same measured
+   contract: these compositions complete at depth 1M under the documented
+   default configuration — js_of_ocaml --effects=cps, which eta_jsoo.mli
+   itself requires. The whole interpreter [eval] is CPS-transformed because
+   its branches and callbacks are effect-capable, so its recursion rides
+   jsoo's trampoline (caml_exact_trampoline_cps_call / caml_stack_check_depth
+   in the generated JS) instead of the JS call stack. The guarantee is
+   configuration-dependent, not intrinsic: a non-CPS jsoo build or a future
+   bounded-stack substrate reopens the question. *)
+
+let test_stack_safety_dynamic_bind done_ =
+  let depth = 1_000_000 in
+  let rec next remaining value =
+    if remaining = 0 then Eta.Effect.pure value
+    else
+      Eta.Effect.bind
+        (fun value -> next (remaining - 1) (value + 1))
+        (Eta.Effect.pure value)
+  in
+  run (next depth 0) ~on_result:(finish done_ (expect_ok_int depth))
+
+let test_stack_safety_static_map done_ =
+  let depth = 1_000_000 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.map (fun value -> value + 1) acc)
+  in
+  run (build depth (Eta.Effect.pure 0))
+    ~on_result:(finish done_ (expect_ok_int depth))
+
+let test_stack_safety_concat done_ =
+  let depth = 1_000_000 in
+  let executed = ref 0 in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else
+      build (remaining - 1)
+        (Eta.Effect.sync (fun () -> incr executed) :: acc)
+  in
+  run (Eta.Effect.concat (build depth []))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok () ->
+            if !executed <> depth then
+              fail
+                (Printf.sprintf "expected %d concat executions, got %d" depth
+                   !executed)
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "deep concat failed: %a" (Eta.Cause.pp pp_err)
+                 cause)))
+
+let test_stack_safety_bind_error done_ =
+  let depth = 1_000_000 in
+  let handled = ref 0 in
+  let recover (_ : string) =
+    incr handled;
+    Eta.Effect.fail "boom"
+  in
+  let rec build remaining acc =
+    if remaining = 0 then acc
+    else build (remaining - 1) (Eta.Effect.bind_error recover acc)
+  in
+  run (build depth (Eta.Effect.fail "boom"))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Fail "boom") ->
+            if !handled <> depth then
+              fail
+                (Printf.sprintf "expected %d recovery runs, got %d" depth
+                   !handled)
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "unexpected cause: %a" (Eta.Cause.pp pp_err)
+                 cause)
+        | Eta.Exit.Ok _ -> fail "recovery chain lost the typed failure"))
+
+let test_stack_safety_deep_cause_trees done_ =
+  finish done_
+    (fun () ->
+      let depth = 1_000_000 in
+      let check combine =
+        let cause = ref (Eta.Cause.fail 0) in
+        for value = 1 to depth do
+          cause := combine [ !cause; Eta.Cause.fail value ]
+        done;
+        let rec check_leaf index = function
+          | [] ->
+              if index <> depth + 1 then
+                fail
+                  (Printf.sprintf "expected %d leaves, got %d" (depth + 1)
+                     index)
+          | leaf :: rest ->
+              if leaf <> index then
+                fail
+                  (Printf.sprintf "leaf at index %d: expected %d, got %d"
+                     index index leaf);
+              check_leaf (index + 1) rest
+        in
+        check_leaf 0 (Eta.Cause.failures !cause)
+      in
+      check Eta.Cause.sequential;
+      check Eta.Cause.concurrent)
+    ()
+
 let tests =
   [
+    ("stack safety: 1M dynamic binds", test_stack_safety_dynamic_bind);
+    ("stack safety: 1M static map nesting", test_stack_safety_static_map);
+    ("stack safety: 1M concat", test_stack_safety_concat);
+    ("stack safety: 1M bind_error recovery", test_stack_safety_bind_error);
+    ("stack safety: 1M deep cause trees", test_stack_safety_deep_cause_trees);
     ("delay", test_delay);
     ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
     ("timeout releases resource", test_timeout_releases_resource);

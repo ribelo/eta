@@ -1,0 +1,26 @@
+# DX-E35 substrate calibration raw log (2026-07-26T20:10:21Z)
+# ulimit -s: 8192
+# node: v24.18.0
+# ocaml (mainline): Eta mainline OCaml comparison shell (nixpkgs ocamlPackages.ocaml 5.4.1)
+Use this for upstream OCaml compatibility work and benchmark comparison.
+5.4.1
+
+raw_js_recursion_limit=12513
+native CALIBRATE mode=tail depth=10000 status=PASS value=10000
+jsoo   CALIBRATE mode=tail depth=10000 status=PASS value=10000
+native CALIBRATE mode=tail depth=100000 status=PASS value=100000
+jsoo   CALIBRATE mode=tail depth=100000 status=PASS value=100000
+native CALIBRATE mode=tail depth=1000000 status=PASS value=1000000
+jsoo   CALIBRATE mode=tail depth=1000000 status=PASS value=1000000
+native CALIBRATE mode=nontail depth=10000 status=PASS value=10000
+jsoo   CALIBRATE mode=nontail depth=10000 status=FAIL exn=Stack overflow
+native CALIBRATE mode=nontail depth=100000 status=PASS value=100000
+jsoo   CALIBRATE mode=nontail depth=100000 status=FAIL exn=Stack overflow
+native CALIBRATE mode=nontail depth=1000000 status=PASS value=1000000
+jsoo   CALIBRATE mode=nontail depth=1000000 status=FAIL exn=Stack overflow
+
+# jsoo trampoline evidence in probe_jsoo.bc.js:
+caml_trampoline_cps_call=1112
+caml_exact_trampoline_cps_call=4640
+caml_trampoline_return=461
+caml_stack_check_depth=461

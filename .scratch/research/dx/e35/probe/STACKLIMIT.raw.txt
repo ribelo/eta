@@ -1,0 +1,19 @@
+# DX-E35 stack-limit evidence (2026-07-26T20:57:36Z)
+
+## Default Gc stack_limit (words), 64-bit:
+# mainline(5.4.1) stack_limit_words=134217728 word_size=64
+# oxcaml(5.2.0+ox) stack_limit_words=134217728 word_size=64
+
+## 134217728 words = 1 GiB (128 Mi words).
+
+## Reopening: user-selected OCAMLRUNPARAM=l=<words> lowers the bound.
+## static_map (mainline native) under reduced limits:
+OCAMLRUNPARAM=l=1000000  RESULT case=static_map depth=10000 status=PASS mode=none
+OCAMLRUNPARAM=l=1000000  RESULT case=static_map depth=100000 status=PASS mode=none
+OCAMLRUNPARAM=l=1000000  RESULT case=static_map depth=1000000 status=FAIL mode=stack_overflow detail=captured as an Eta defect
+OCAMLRUNPARAM=l=500000   RESULT case=static_map depth=10000 status=PASS mode=none
+OCAMLRUNPARAM=l=500000   RESULT case=static_map depth=100000 status=PASS mode=none
+OCAMLRUNPARAM=l=500000   RESULT case=static_map depth=1000000 status=FAIL mode=stack_overflow detail=captured as an Eta defect
+OCAMLRUNPARAM=l=100000   RESULT case=static_map depth=10000 status=PASS mode=none
+OCAMLRUNPARAM=l=100000   RESULT case=static_map depth=100000 status=FAIL mode=stack_overflow detail=captured as an Eta defect
+OCAMLRUNPARAM=l=100000   RESULT case=static_map depth=1000000 status=FAIL mode=stack_overflow detail=captured as an Eta defect
