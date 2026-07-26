@@ -4180,3 +4180,36 @@ branch pushed; worktree removed; objective + follow-up archived.
 **Follow-ups.** Watch item: par3/par4 adoption in downstream code (the
 consumption model says watch external usage, not this repo's census).
 Candidate input for the golden tutorials end item.
+
+---
+
+## V-DX-E31-001 — 2026-07-26 — research/dx-e31-eta-trace-trigger — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. E31 is a measurement + decision
+experiment: close E10 by evidence, not nostalgia. Scored at V-DX-E31-002.
+
+**Measured pre-state (verified).** `Effect.fn __POS__ __FUNCTION__` sites:
+**4 in 2 files** — DOWN from E10's census of 5 (E8's `[%eta.result]`
+absorbed part of the leaf demand). E10's state: technical work complete
+and proven (clean expansion, error locations 4–5/5 acceptable, `let rec`
+per-call spans, `.mli` invariance), held by its own gate; promote trigger
+verbatim: "Promote only if reviewers still ask after E7/E8."
+
+**Predictions.**
+- Census: 4 sites / 2 files confirmed (±1); all sugar-eligible in
+  principle.
+- Cohort verdict: reviewers do NOT ask for the sugar. Reasoning: E8
+  covers the common leaf case; 4 sites is furniture territory; the
+  2-line boilerplate is explicit and bearable at this frequency; the
+  consumption model (V-DX-PRINC-1) does not rescue it because there is
+  no structural forcing function — nothing promoted since E10 makes
+  function-level trace sugar MORE needed (E8 made it less).
+- Outcome: **trigger unfired → E10 closed as killed** (evidence recorded
+  in the parking lot). Not "hold forever": the programme's discipline is
+  that questions close. Census +0 vals; footguns +0.
+- Kill-resistance risk (~10%): the cohort weighs "E10's work is done and
+  proven" as a reason to land it anyway — the sunk-cost temptation. If
+  that lands the sugar, it must be recorded as a decision resting on
+  sunk cost, not demand — and I will score my own process a failure for
+  letting the cohort see the sunk cost. (The review packet must NOT
+  mention that the implementation already exists and is tested.)
