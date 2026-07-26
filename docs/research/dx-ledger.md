@@ -338,24 +338,65 @@ evidence; every hold names its re-entry trigger.
   doc money can't buy. Pre-registered kills (continuation machinery vs
   no-`catchAllCause`; scope escape; `Cause` honesty).
 
-### E17 — Runtime-capability phantom rows — **gated**
+### E17 — Runtime-capability phantom rows — **KILLED 2026-07-26**
 - What: `('a, 'err, 'caps) Effect.t` over a closed capability set
   (branch-only prototype).
-- Gate: E12 promoted ✓ + audit data showing bugs the preflight class
-  cannot catch (registered: the killed-manifest golden). Whether those
-  are "real integration bugs" is the experiment's measurement.
-- Decision: staged only after E16/E21, gate re-checked then.
-- Note (2026-07-26): the envless verdict's value-restriction and
-  row-cost evidence joins its gate packet — expected kill strengthened.
-  Its rows are phantom closed-set interpreter capabilities, a different
-  mechanism than the object rows the verdict rejects; entry gate
-  unchanged.
+- Kill rationale: three independent lines converged — the EOP audit's
+  no-effect-rows posture, E16's in-repo no-`R` evidence, and its own
+  entry gate never producing data (a gate that never fires is a kill by
+  evidence-of-absence). Recorded in V-DX-EOP-AUDIT.
 
 ### E18 — Deterministic simulation testing
 - What: seeded single-domain scheduler interleaving fibers at
   documented checkpoints; replay-identity.
 - Rationale: concurrency bugs should be found by the suite, not by
   luck. Promote when it finds its first real bug.
+
+## Hardening wave (EOP audit, 2026-07-26 — decided, awaiting staging)
+
+Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
+
+### E35 — Stack-safety probe (P0)
+- What: boundary corpus (million binds/maps/concat, deep recovery, deep
+  cause trees) on BOTH substrates; trampolined interpreter only on
+  measured failure.
+
+### E36 — Background failure semantics (P0)
+- What: split `with_background` semantics — fail-fast (death cancels
+  body) vs supervised (current, honestly named) vs best-effort.
+
+### E37 — Parallel-acquire ownership (P0)
+- What: one combinator — ownership transfer to parent scope + correct
+  partial-acquire cleanup. Correctness, not E6's killed ergonomics.
+
+### E38 — Finalizer diagnostics structure (P0-5)
+- What: `Finalizer.Fail of string` → structural payload (existential
+  with printer / diagnostic record); `'err` untouched.
+
+### E39 — E12 audit-slim race
+- What: remove vs. slim-and-rename (`visible_static_spine`) for
+  `audit`/footprints/`assert_pure_eff`; footprint-cost vs teaching-value.
+
+### E40 — `all` admission split
+- What: `all` unbounded (deadlock-immune), `all_bounded ~max_concurrent`,
+  `all_settled` aligned; `map_par` keeps documented default-8.
+
+### E41 — `Resource` → `Refreshable`
+- What: rename + move to eta_cache + lexical-first `with_auto`.
+
+### E42 — Hygiene batches (a/b)
+- a: daemon → SPI; `Expert` → unstable SPI namespace; supervisor
+  builders → private.
+- b: `ppx_sql` split; docs-level tiering; Mutable_ref purity; race
+  naming question.
+
+### E43 — Resilience package (API-completeness proof)
+- What: `eta_resilience` without Expert/SPI — circuit breaker, token
+  bucket, retry budget, hedged read, coalescing cache, lexical refresh.
+
+### E44 — Observability full split
+- What: `eta_observability` package; root keeps the interpreter's
+  minimal contract only.
 
 ## Proposed (no decision yet)
 
@@ -393,6 +434,10 @@ evidence; every hold names its re-entry trigger.
   using `describe`/`audit` output.
 - **Law-census extension** — otel/stream/http modules into the E22
   scope (ongoing-policy work).
+- **`Effect.t` → `Eta.t` full replacement** — NOT an alias: the final
+  public-contract change of the programme, executed last, after every
+  other surface has settled (human, 2026-07-26: "a very, very, very
+  strong change to the public contract").
 
 ## Follow-ups ledger (F-items)
 

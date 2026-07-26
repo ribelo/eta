@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: nothing (next: **E35 stack-safety probe**)
+- Wave: **EOP-audit hardening wave registered** (V-DX-EOP-AUDIT) —
+  E35 → E36 → E37 → E38 → E39 → E40 → E42a → E41 → E42b → E44 → E21 →
+  E33 → E18 → E43 → end items → `Effect.t`→`Eta.t` final replacement
 - Done (recent): **E16 KILLED — no-`R` boundary now rests on evidence**
   (value-passing 4-0-1; breaking condition documented: deep graphs,
   ~6+ deps across layers)

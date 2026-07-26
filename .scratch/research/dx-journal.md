@@ -4478,3 +4478,93 @@ undecided — the docs recipe landed first in `docs/services.md`.
 `docs/services.md` (why-no-R + composite-record recipe), `README.md`
 (one-line why + pointer), `docs/research/dx.md` (R-question
 conclusion).
+
+---
+
+## V-DX-EOP-AUDIT — 2026-07-26 — phase: external-audit adjudication (grill concluded)
+
+An external deep audit ("Eta wobec Effect-Oriented Programming", Polish;
+preserved verbatim at `.scratch/research/eop-audit-2026-07-26.md`) was
+adjudicated claim-by-claim in a four-round grill with the human. Its
+load-bearing factual claims were verified in-repo first (all accurate:
+`Finalizer.Fail of string`, `with_background` failure timing, 9–10
+public supervisor builders, public `daemon`, `assert_pure_eff`, SQL in
+`ppx_eta.ml`). Verdicts below; experiment numbers refer to the hardening
+wave now registered in the ledger.
+
+**ADOPTED — correctness gaps (the audit's real gift).**
+- Stack safety: no trampoline; interpreter recurses through Map/Bind →
+  **E35** (probe first: million binds/maps/concat/deep recovery/deep
+  cause trees, BOTH substrates; trampoline only on measured failure).
+- Background failure semantics: `with_background` controls lifetime,
+  not failure → **E36** (split: fail-fast vs supervised vs best-effort).
+- Parallel-acquire ownership: the documented "ownership bridge" is a
+  gap → **E37** (one combinator: ownership transfer + partial-acquire
+  cleanup; NOT E6's killed ergonomics — this is correctness).
+- Finalizer diagnostics: typed finalizer failures flattened to strings →
+  **E38** (existential payload with printer / diagnostic record; human
+  note: "I can't stand strings — an experiment is needed").
+- `all` admission: hidden default-8 can turn termination into deadlock →
+  **E40** — the audit's split, ADJUSTED: `all` unbounded (deadlock-immune
+  by construction), new `all_bounded ~max_concurrent`, `all_settled`
+  aligned; `map_par` keeps documented default-8 (its contract says
+  homogeneous independent tasks; the bound is measured performance).
+  Decisive evidence: (1) Finder — ZIO `foreachPar`/`collectAllPar`
+  defaults UNBOUNDED (parallelism FiberRef = None; bounds are regional,
+  explicit `withParallelism`); Effect-TS `Effect.all` defaults
+  SEQUENTIAL (concurrency opt-in); NEITHER ships a magic-number bounded
+  default; (2) asymmetry — a bounded default fails SILENTLY (deadlock),
+  an unbounded default fails LOUDLY (resource pressure); defaults must
+  fail loud. Orchestrator's earlier keep-default-8 lean withdrawn.
+- E12 audit/footprints/`assert_pure_eff` → **E39** race: remove vs.
+  slim-and-honest-rename (`visible_static_spine`), E16-style.
+- Mutable_ref CAS-retry purity (prose-only contract) + race naming →
+  E42b hygiene batch; race naming weakened to a review question (E3's
+  evidence: the ecosystem reads `race` fine).
+
+**ADOPTED — removals/surface diet.**
+- `daemon` → hidden SPI (zero app-shaped in-repo users; 6 subsystems
+  use it as machinery) — E42a.
+- `Expert` + runtime services → explicitly unstable SPI namespace
+  (~10 files / 6 packages; mechanism stays, honesty about status) — E42a.
+- Low-level supervisor builders → private — E42a.
+- `Resource` → `Refreshable` in eta_cache + lexical-first `auto` → **E41**.
+- `ppx_sql` split; docs-level tiering (core/batteries/integrations/labs)
+  — E42b.
+- Observability: FULL physical split (`eta_observability`) → **E44** —
+  upgraded from namespace-only per the human's principle: "we don't pick
+  the easiest option, we pick the most beautiful one."
+- Resilience package as API-completeness proof (circuit breaker, token
+  bucket, retry budget, hedged read, coalescing cache, lexical refresh
+  loop — built WITHOUT Expert/SPI; anything impossible without SPI is
+  evidence of a missing core primitive) → **E43**.
+
+**REJECTED / MODIFIED.**
+- Mandatory `~max_concurrent` for `all` — rejected on the same Finder
+  evidence (neither ecosystem forces bounds at call sites) + common-case
+  noise.
+- `race_success`/`race_first` rename — weakened to a review question
+  (E42b).
+- Public `fresh` removal — rejected; `fresh` kept and reframed as
+  runtime-owned correlation (span/fiber ids, deterministic test-runtime
+  reset — a property no app-side counter can give). Docs note the line.
+
+**RATIFIED.**
+- Non-goals (no `R`/`Layer`/`Tag`/`Context`/`provide`/locator/`FiberRef`/
+  `catchAllCause`/STM/Schedule-parity/algebraic-effects-framework) —
+  triple-confirmed (E16, envless verdict, this audit).
+- The audit's don't-bother-removing list (`tap`, `fold`, `to_result`,
+  `to_exit`, `filter_or_fail`, `when_`, `unless`).
+- **E17 (capability phantom rows) KILLED**: audit posture + E16's
+  in-repo no-`R` evidence + its entry gate never produced data — a gate
+  that never fires is a kill by evidence-of-absence.
+- `('a,'e) Eta.t`: NOT an alias — a full public-type replacement
+  `Effect.t` → `Eta.t` as the FINAL act of the programme (human's
+  explicit decision: "a very, very, very strong change to the public
+  contract"). Registered in the end-of-queue section.
+
+**Wave order (dependency-driven, per the human's no-stupid-blockers
+rule):** E35 → E36 → E37 → E38 → E39 (footprints before admission) →
+E40 → E42a (privacy before Resource) → E41 → E42b → E44 → E21 → E33 →
+E18 → E43 → end items (golden tutorials → model.md → law-census →
+**the `Eta.t` replacement**).
