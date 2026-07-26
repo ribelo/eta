@@ -4427,3 +4427,54 @@ in the race directory as provenance; no package changes. Evidence
 merged; gates green; worktree removed; objective archived. Parking-lot
 entry in the ledger records both the boundary and its breaking
 condition.
+
+---
+
+## V-DX-R-VERDICT — 2026-07-26 — adoption of the independent envless evaluation
+
+The human delivered an independent deep evaluation of the R-channel
+question (compiler labs under OCaml 5.2.0, journal archaeology):
+**KEEP ETA ENVLESS**, four independent evidence lines, two individually
+decisive. Preserved verbatim at
+`.scratch/research/envless-verdict-2026-07-26.md`.
+
+Orchestrator verification of load-bearing claims (all confirmed in-repo):
+removal commit `7417b03b` exists; `capabilities.mli` carries the
+portability scar; `.scratch/research/evidence/provide_survival/` exists;
+`V-Recovery-R2` and `V-Recovery-B0` journal entries exist.
+
+**What it adds to the DX record (all new):**
+1. The operative reason for the envless state is the OxCaml portability
+   boundary (V-Recovery-R2: objects non-portable), NOT the V-R5–V-R7
+   prose — restoring an object-row R kills the islands/portable
+   direction or forces the forbidden two-effect-types split. This, not
+   any DX argument, is the deepest answer to "why no R".
+2. The value-restriction structural analysis: env-reading constructors
+   force non-covariance → weak type variables → mandatory thunking →
+   Layer values can't cross compilation units → memoisation-by-identity
+   dies.
+3. Cross-library object-row keys are unsound as an ecosystem protocol.
+4. The one genuine R win (deep leaf evolution: 1 file vs ~4) is bounded
+   and absorbable locally via composite capability records.
+
+**Corrections/context for the record.** Its §3.4 ("cancel E16 as
+designed") was written pre-merge (evaluation base e3f3907f). E16
+completed with a kill (4-0-1) — it tested the C-level question (Reader
+wrapper) by design; this verdict supplies the B-level answer (central
+type). Outcomes and boundary conditions converge (deep graphs). E16's
+kill rests on measured race results, not on its sealed prior.
+
+**Queue impact.** E17 keeps its entry gate (its rows are phantom
+closed-set interpreter capabilities — a different mechanism than object
+rows); the verdict's VR/row-cost evidence joins its gate packet and
+strengthens the expected kill. E21/E18/E33 unaffected.
+
+**New backlog.** Falsification conditions (verdict §7) registered as the
+standing reopen criteria; envless-DAG-library registered under condition
+5; E34 candidate (composite-record standardization) registered as
+undecided — the docs recipe landed first in `docs/services.md`.
+
+**Docs updated.** `docs/zio-boundaries.md` (why-with-evidence),
+`docs/services.md` (why-no-R + composite-record recipe), `README.md`
+(one-line why + pointer), `docs/research/dx.md` (R-question
+conclusion).
