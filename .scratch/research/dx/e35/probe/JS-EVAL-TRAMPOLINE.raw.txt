@@ -1,0 +1,42 @@
+# DX-E35 jsoo mechanism evidence (2026-07-26T20:44:50Z)
+# Source: probe_jsoo.bc.js (js_of_ocaml --effects=cps, mainline shell)
+# Compiled body of Eta effect_core eval (jsoo-mangled: eval$), lines 50402-50431:
+
+   function eval$(frame, param, cont){
+    function a(param){
+     switch(param[0]){
+       case 0:
+        var value = param[1]; return cont([0, value]);
+       case 1:
+        var err = param[1]; return cont([1, [0, err]]);
+       case 2:
+        var eval$0 = param[1];
+        return caml_trampoline_cps_call2(eval$0, frame, cont);
+       case 3:
+        var f = param[2], inner = param[1];
+        return caml_exact_trampoline_cps_call
+                (eval$,
+                 frame,
+                 inner,
+                 function(err){
+                  if(0 !== err[0]) return cont(err);
+                  var value = err[1];
+                  return caml_trampoline_cps_call2
+                          (f, value, function(value){return cont([0, value]);});
+                 });
+       default:
+        var k = param[2], inner$0 = param[1];
+        return caml_exact_trampoline_cps_call
+                (eval$,
+                 frame,
+                 inner$0,
+                 function(err){
+                  if(0 !== err[0]) return cont(err);
+
+# Symbol census in probe_jsoo.bc.js:
+caml_trampoline_cps_call=1112
+caml_exact_trampoline_cps_call=4640
+caml_trampoline_cps_call2=646
+caml_exact_trampoline_cps_call2=0
+caml_trampoline_return=462
+caml_stack_check_depth=462

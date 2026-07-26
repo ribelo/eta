@@ -87,3 +87,41 @@ The final prediction is that all four stay within the assignment's approximate
 smallest semantics-preserving trampoline cannot meet that bar after bounded
 optimization, DX-E35 should be reported BLOCKED rather than shipping a slow
 core interpreter.
+
+---
+
+## Follow-up note — 2026-07-26 (post-review; sealed predictions above unchanged)
+
+The orchestrator accepted the verdict with six corrections (follow-up-1.md,
+uncommitted per protocol). The accepted guarantee statement is narrower than
+the one I first wrote: **stack-safe at 1M under documented default runtime
+configurations on shipped substrates (1 GiB default OCaml `stack_limit`
+native/bytecode, CPS jsoo); configuration-dependent, not intrinsic.** Applied:
+
+- C1: guarantee wording narrowed in `report.md`, `probe/RESULTS.md`, and both
+  promoted-test comment blocks; default limit measured (134,217,728 words =
+  1 GiB on 64-bit, both compilers) and the `OCAMLRUNPARAM=l=` reopener
+  demonstrated (`probe/STACKLIMIT.raw.txt`).
+- C2: `concat` now counts `Effect.sync` executions (exactly `depth`); cause
+  cases validate every leaf against its index — in the probe and both
+  promoted suites.
+- C3: promoted thresholds pinned to the full measured 1M on native,
+  bytecode, and jsoo (per-case 1M timings: native 10–198 ms, byte 52–361 ms,
+  jsoo 96 ms–1.5 s).
+- C4: bytecode added to the probe matrix (54 mainline + 36 OxCaml runs, all
+  PASS) and to the gates via `test/eta/run_stack_safety_byte.ml` on the
+  `runtest` alias.
+- C5: jsoo mechanism wording corrected — the whole `eval` is CPS-transformed
+  because its branches and callbacks are effect-capable; evidence cites the
+  compiled `eval$` trampoline call sites (`probe/JS-EVAL-TRAMPOLINE.raw.txt`).
+- C6: prediction autopsy completed in `report.md` — the mistake was which
+  stack (OCaml 5 heap fiber stacks, not the 8 MiB C stack) and which limit
+  (configurable `stack_limit`, 1 GiB default, not a fixed bound); the sealed
+  `Custom.eval`-not-CPS premise scored wrong; `dynamic_bind`'s tail-call
+  caveat recorded (its pass is not absorption evidence).
+
+Law-registry assessment: no new or changed law-bearing prose in any `.mli`,
+so no `LAWS.md` census row applies; the named tests are listed in
+`report.md` for the day the contract enters interface prose.
+
+All gates re-run green on the final tree. `E35 READY FOR REVIEW`.
