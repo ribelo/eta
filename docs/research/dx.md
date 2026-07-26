@@ -735,3 +735,31 @@ objects; a real cross-library ecosystem; a provide-forcing fixture; a
 service-graph forcing case; language-level VR relief. Until one fires:
 `('a, 'err) Effect.t`, ordinary dependencies, runtime-owned services,
 no R, no Layer, no provide.
+
+## E35 — Stack safety: established by measurement (2026-07-26)
+
+The EOP audit's deepest technical worry ("no hard stack-safety
+guarantee") is answered: the recursive interpreter (no trampoline) is
+absorbed by both substrates — OCaml 5's heap-grown fiber stacks (1 GiB
+default `stack_limit`) natively and in bytecode, and js_of_ocaml's
+`--effects=cps` trampoline under Node. Every boundary case passes at 1M
+(and 3M–10M beyond). No interpreter rewrite; the guarantee is pinned by
+full-1M regression tests on all three substrates with strong semantic
+checks.
+
+Durable lessons:
+
+1. **Measure before rewriting.** Both predictors (orchestrator and
+   executor) sealed "this will blow the stack" and were wrong — the
+   mistake was confusing the 8 MiB OS C stack with OCaml 5's heap-grown
+   fiber stacks, and not knowing the jsoo CPS trampoline exists. A
+   trampoline would have been built on a false mental model.
+2. **State guarantees with their boundary.** The honest form is "1M
+   under documented default configurations" — configuration-dependent
+   (`OCAMLRUNPARAM` reopens it), substrate-mediated, not intrinsic.
+   That is stronger than an unexamined absolute and cheaper than an
+   unneeded rewrite.
+3. **Calibration controls make depth claims credible.** A passing deep
+   test proves nothing unless something nearby dies on cue: plain JS
+   recursion dies at 12,513 frames on the same Node; raw non-tail
+   OCaml-under-jsoo dies at 10k. The deaths validate the passes.

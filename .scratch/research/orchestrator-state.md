@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E35 — Stack-safety probe (P0)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e35`
-  - Branch: `research/dx-e35-stack-safety`
-  - Stage: predictions sealed (V-DX-E35-001); objective.md written; awaiting executor
+- In flight: nothing (next: **E36 background failure semantics**)
+- Done (recent): **E35 promoted** (stack safety established: 1M under
+  documented defaults; no interpreter rewrite)
 - Wave: **EOP-audit hardening wave registered** (V-DX-EOP-AUDIT) —
   E35 → E36 → E37 → E38 → E39 → E40 → E42a → E41 → E42b → E44 → E21 →
   E33 → E18 → E43 → end items → `Effect.t`→`Eta.t` final replacement

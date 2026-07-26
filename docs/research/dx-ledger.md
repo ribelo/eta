@@ -356,10 +356,16 @@ evidence; every hold names its re-entry trigger.
 
 Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 
-### E35 — Stack-safety probe (P0) — in flight
+### E35 — Stack-safety probe (P0) — promoted 2026-07-26
 - What: boundary corpus (million binds/maps/concat, deep recovery, deep
   cause trees) on BOTH substrates; trampolined interpreter only on
   measured failure.
+- Outcome: **no rewrite needed.** Guarantee established and pinned:
+  1M under documented default configurations (1 GiB stack_limit
+  native/bytecode, CPS jsoo); configuration-dependent, not intrinsic
+  (OCAMLRUNPARAM reopener demonstrated). Mechanisms: heap-grown OCaml 5
+  fiber stacks + jsoo CPS trampoline. 1M regression tests on all three
+  substrates. V-DX-E35-001/002.
 
 ### E36 — Background failure semantics (P0)
 - What: split `with_background` semantics — fail-fast (death cancels

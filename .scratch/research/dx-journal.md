@@ -4598,3 +4598,61 @@ either substrate?
   frames are smaller than estimated — the verdict becomes "safe up to
   measured limits", the corpus becomes regression tests, and the jsoo
   failure (which will still fire) decides alone.
+
+---
+
+## V-DX-E35-002 — 2026-07-26 — research/dx-e35-stack-safety — phase: results + decision (hardening wave 1/14)
+
+**Verdict.** The EOP audit's §4.1 code-reading is confirmed (recursive
+interpreter, no trampoline, `concat` builds left-deep binds) — but the
+worry is not realized on any shipped substrate. Every corpus case
+(dynamic bind, static map, concat, bind_error chains, left-deep Cause
+trees) passes at 1M and beyond (3M–10M) on native OCaml 5.4.1, OxCaml
+5.2.0+ox, AND js_of_ocaml/Node. Orchestrator independently re-ran:
+1M native, 100k jsoo — PASS. **Phase 2 (trampolined interpreter) not
+triggered; the interpreter is untouched.**
+
+**The guarantee, stated precisely** (after review corrections):
+stack-safe at 1M under documented default configurations — native
+`stack_limit` = 1 GiB (134,217,728 words, measured on both compilers),
+bytecode, CPS jsoo. Configuration-dependent, NOT intrinsic:
+`OCAMLRUNPARAM=l=` reopener demonstrated (1M fails at l=1000000; 100k at
+l=100000, caught as an Eta defect). Non-CPS jsoo excluded by
+`eta_jsoo.mli`'s own requirement. Mechanisms: OCaml 5 heap-allocated
+growable fiber stacks (recursive `eval` grows into the heap); jsoo
+`--effects=cps` trampolines the whole CPS-transformed `eval` (compiled
+`eval$` trampoline call sites captured). `dynamic_bind` additionally
+tail-calls — its pass is tail-call evidence, not absorption evidence.
+
+**Evidence quality.** Semantic checks assert real work (exact values,
+exact handler counts, every leaf against its index, exactly-depth
+`Effect.sync` executions). Calibration controls on both substrates
+prove the depths are real (plain JS recursion dies at 12,513 frames;
+raw non-tail OCaml-under-jsoo dies at 10k as `Stack_overflow`).
+Promoted regression: full-1M thresholds on native, bytecode (new gate
+`test/eta/run_stack_safety_byte.ml`), and jsoo — a regression moving
+failure to 200k fails the suite.
+
+**Prediction autopsy (orchestrator V-DX-E35-001) — 0/3 on the
+mechanism.** Native-fails-100k–1M ✗, jsoo-fails-10k–50k ✗,
+Phase-2-triggered ✗. The mistake (shared with the executor's 2/12):
+confusing the 8 MiB OS C stack with OCaml 5's heap-grown fiber stacks
+(1 GiB default max), and not knowing `--effects=cps` trampolines whole
+CPS-transformed functions. The fixed-stack mental model died on both
+sides of the prediction ledger — the probe's entire value.
+
+**Review arc.** Fresh oracle: accept-with-conditions (six corrections:
+narrow the guarantee, strengthen two weak checks, pin thresholds to
+measured depths, add bytecode, fix jsoo mechanism wording, complete the
+autopsy). One rework round; reviewer of record: **APPROVE** (all six
+closed, independently re-run). Non-blocking nit noted: probe script
+comments predate the byte backend.
+
+**Decision: PROMOTE** (evidence + regression tests; no production code
+changed). Merged `--no-ff`; all gate tracks green on master; branch
+pushed; worktree removed; objective + follow-up archived.
+
+**Follow-ups.** None new. The audit's P0-1 is answered: the guarantee
+exists, is measured, and is pinned with its exact boundary documented.
+`model.md` end item should cite this entry for the interpreter's
+execution model.
