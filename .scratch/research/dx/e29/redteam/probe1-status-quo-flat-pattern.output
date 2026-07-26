@@ -1,0 +1,9 @@
+=== probe1-status-quo-flat-pattern ===
+File "probe1-status-quo-flat-pattern.ml", line 10, characters 2-66:
+10 |   Effect.par (Effect.par fetch_config fetch_profile) fetch_billing
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type "(('a * 'b) * 'c, 'd) Eta.Effect.t"
+       but an expression was expected of type
+         "(int * int * int, 'e) Eta.Effect.t"
+       Type "('a * 'b) * 'c" is not compatible with type "int * int * int"
+TYPE ERROR

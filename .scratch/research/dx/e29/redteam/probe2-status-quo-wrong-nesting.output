@@ -1,0 +1,9 @@
+=== probe2-status-quo-wrong-nesting ===
+File "probe2-status-quo-wrong-nesting.ml", line 11, characters 2-66:
+11 |   Effect.par fetch_config (Effect.par fetch_profile fetch_billing)
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type "((int * int) * ('a * 'b), 'c) Eta.Effect.t"
+       but an expression was expected of type
+         "((int * int) * int, 'd) Eta.Effect.t"
+       Type "'a * 'b" is not compatible with type "int"
+TYPE ERROR
