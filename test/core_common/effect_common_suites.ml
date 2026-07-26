@@ -2941,21 +2941,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Effect.par4 body (sibling 0) (sibling 1) (sibling 2)
 
   let test_par3_par4_audit_aggregates_children () =
+    (* Each child position carries a unique footprint-originating
+       capability, so a footprint dropped from any single position fails
+       the union assertion: resources from the first, logs from the
+       second, metrics from the third, background from the fourth. *)
     check_audit "par3"
-      (audit ~names:[ "a"; "b"; "c" ] ~uses_clock:true
-         ~has_concurrency:true ())
+      (audit ~names:[ "a"; "b"; "c" ] ~uses_clock:true ~emits_logs:true
+         ~emits_metrics:true ~has_concurrency:true ~has_resources:true ())
       (Effect.par3
-         (Effect.named "a" (Effect.sleep Duration.zero))
-         (Effect.named "b" (Effect.sync (fun () -> "b")))
-         (Effect.named "c" (Effect.pure 3.0)));
+         (Effect.named "a" (Effect.with_scope Effect.unit))
+         (Effect.named "b" (Effect.log "hello"))
+         (Effect.named "c" (Effect.metric_counter ~name:"jobs" (Meter.Int 1))));
     check_audit "par4"
       (audit ~names:[ "a"; "b"; "c"; "d" ] ~uses_clock:true
-         ~emits_logs:true ~has_concurrency:true ())
+         ~emits_logs:true ~emits_metrics:true ~has_concurrency:true
+         ~has_resources:true ~has_background:true ())
       (Effect.par4
-         (Effect.named "a" (Effect.sync (fun () -> 1)))
+         (Effect.named "a" (Effect.with_scope Effect.unit))
          (Effect.named "b" (Effect.log "hello"))
-         (Effect.named "c" (Effect.pure 3.0))
-         (Effect.named "d" (Effect.pure true)))
+         (Effect.named "c" (Effect.metric_counter ~name:"jobs" (Meter.Int 1)))
+         (Effect.named "d" (Effect.daemon Effect.unit)))
 
   let test_all_collects_in_input_order () =
     B.with_runtime @@ fun _ctx rt ->

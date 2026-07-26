@@ -289,16 +289,16 @@ valid constructor domains; until then their provenance is explicit.
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/eta/effect.mli` | 55 | 100 | 0 | 155 |
+| `lib/eta/effect.mli` | 59 | 100 | 0 | 159 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
 | `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
 | `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
-| **Total covered** | **108** | **128** | **2** | **236** |
+| **Total covered** | **112** | **128** | **2** | **240** |
 
-The executable contains 69 unique properties in total. Matrix properties cover
+The executable contains 73 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
 assertion in that named property.
 

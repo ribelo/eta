@@ -541,47 +541,60 @@ let property_par4_quadruple_order =
       execute true && execute false)
 
 (* Shared engine for the par3/par4 fail-fast properties: [arity] children
-   each fail after a delay under a [finally] release log; the generated
+   each fail after a delay under a [finally] release log; the checked
    winner fails one tick before every sibling, so its failure is the first
    observed and every sibling must be cancelled before its own failure
-   event while its release is still awaited and logged exactly once. *)
+   event while its release is still awaited and logged exactly once. The
+   generated dimension is (winner error, base delay); the winner position
+   is NOT generated — every run deterministically enumerates all [arity]
+   positions, so a regression at any single position cannot hide behind a
+   lucky seed. *)
 let par_n_fail_fast_property ~arity ~name make_product =
   QCheck.Test.make ~name ~count
-    QCheck.(triple (int_range 0 (arity - 1)) bounded_int positive)
-    (fun (winner, winner_error, base_delay) ->
+    QCheck.(pair bounded_int positive)
+    (fun (winner_error, base_delay) ->
       let base_delay = max 1 base_delay in
-      let child index =
-        let error = if index = winner then winner_error else winner_error + 1 + index in
-        let delay = if index = winner then base_delay else base_delay + 1 in
-        E.finally
-          (E.log_info (Printf.sprintf "par%d-release:%d" arity index))
-          (E.delay (Eta.Duration.ms delay)
-             (E.bind
-                (fun () -> E.fail error)
-                (E.log_info (Printf.sprintf "par%d-failure:%d" arity index))))
+      let execute winner =
+        let child index =
+          let error =
+            if index = winner then winner_error else winner_error + 1 + index
+          in
+          let delay = if index = winner then base_delay else base_delay + 1 in
+          E.finally
+            (E.log_info (Printf.sprintf "par%d-release:%d" arity index))
+            (E.delay (Eta.Duration.ms delay)
+               (E.bind
+                  (fun () -> E.fail error)
+                  (E.log_info (Printf.sprintf "par%d-failure:%d" arity index))))
+        in
+        let outcome = run (E.discard (make_product child)) in
+        let release index = Printf.sprintf "par%d-release:%d" arity index in
+        let failure_event index =
+          Printf.sprintf "par%d-failure:%d" arity index
+        in
+        let ok =
+          (match outcome.exit with
+          | Eta.Exit.Error cause ->
+              Eta.Cause.failures cause = [ winner_error ]
+          | Eta.Exit.Ok () -> false)
+          && count_log (failure_event winner) outcome = 1
+          && List.for_all
+               (fun index ->
+                 (index = winner
+                 || count_log (failure_event index) outcome = 0)
+                 && count_log (release index) outcome = 1)
+               (List.init arity Fun.id)
+          && no_pending outcome
+        in
+        if ok then true
+        else
+          QCheck.Test.fail_reportf "winner=%d logs=%s outcome:@.%a" winner
+            (String.concat "," (log_bodies outcome))
+            (Run.pp (fun fmt () -> Format.pp_print_string fmt "()")
+               Format.pp_print_int)
+            outcome
       in
-      let outcome = run (E.discard (make_product child)) in
-      let release index = Printf.sprintf "par%d-release:%d" arity index in
-      let failure_event index = Printf.sprintf "par%d-failure:%d" arity index in
-      let ok =
-        (match outcome.exit with
-        | Eta.Exit.Error cause -> Eta.Cause.failures cause = [ winner_error ]
-        | Eta.Exit.Ok () -> false)
-        && count_log (failure_event winner) outcome = 1
-        && List.for_all
-             (fun index ->
-               (index = winner || count_log (failure_event index) outcome = 0)
-               && count_log (release index) outcome = 1)
-             (List.init arity Fun.id)
-        && no_pending outcome
-      in
-      if ok then true
-      else
-        QCheck.Test.fail_reportf "winner=%d logs=%s outcome:@.%a" winner
-          (String.concat "," (log_bodies outcome))
-          (Run.pp (fun fmt () -> Format.pp_print_string fmt "()")
-             Format.pp_print_int)
-          outcome)
+      List.for_all execute (List.init arity Fun.id))
 
 let property_par3_fail_fast =
   par_n_fail_fast_property ~arity:3
