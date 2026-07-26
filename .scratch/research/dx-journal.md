@@ -4213,3 +4213,40 @@ verbatim: "Promote only if reviewers still ask after E7/E8."
   sunk cost, not demand — and I will score my own process a failure for
   letting the cohort see the sunk cost. (The review packet must NOT
   mention that the implementation already exists and is tested.)
+
+---
+
+## V-DX-E31-002 — 2026-07-26 — research/dx-e31-eta-trace-trigger — phase: results + decision (E10 CLOSED AS KILLED)
+
+**Measurement.** 4 `Effect.fn __POS__ __FUNCTION__` sites in 2 files
+(executor verified; orchestrator verified): 3 hand-written parity oracles
+for `[%eta.result]`, 1 direct test of `Effect.fn`'s contract — all local
+value bindings, **0 sugar-eligible, 0 consumer-shaped**. E10's fifth site
+was its own parity fixture on the hold branch.
+
+**Forcing-function analysis** (executor, 16 post-E10 experiments, cited
+one by one): none creates structural need; E8 (`[%eta.result]`) materially
+absorbs the motivating boilerplate; E7/E25 show the fixed wrapper cannot
+carry `~error_pp`/`~kind` configuration anyway. Consumption-model rescue
+(V-DX-PRINC-1) does not activate: no forcing function exists.
+
+**Cohort verdict** (fresh oracle, given ONLY the neutral cohort material —
+the sunk-cost shield held; it never learned an implementation exists):
+**NO-FIRE** — "the census contains no eligible consumer site or structural
+need, while `[%eta.result]` already covers the common boilerplate."
+
+**Trigger evaluation:** E10's promote trigger ("reviewers still ask after
+E7/E8") is **unfired**. Pre-registered outcome: **E10 closed as killed.**
+The hold branch `research/dx-e10-function-sugar` stays pushed as
+provenance; its technical record (feasibility proven, kill gate unfired)
+stands — feasibility was never the question.
+
+**Prediction scoring (orchestrator, V-DX-E31-001) — 6/6.** Census 4/2:
+hit. No forcing function / consumption model doesn't rescue: hit. Cohort
+NO-FIRE with the predicted reasoning: hit. Trigger unfired → E10 killed:
+hit. Kill-resistance risk did not materialize (sunk-cost shield worked):
+hit. Executor: 8/10, its two misses strengthening the verdict.
+
+**Decision: E31 complete (promote the measurement); E10 KILLED.**
+Merged `--no-ff` (evidence record); gates green; branch pushed; worktree
+removed; objective archived. Parking-lot entry added to the ledger.

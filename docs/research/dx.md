@@ -618,3 +618,28 @@ Durable lessons:
    registry: totals that match the rows, properties that enumerate every
    documented branch deterministically, and audit tests that
    discriminate every child position.
+
+## E31 / E10 — Function-level trace sugar: killed by evidence (2026-07-26)
+
+E10 (`let%eta` / `[@@eta.trace]`) was held pending its trigger: "promote
+only if reviewers still ask for it after E7/E8." E31 measured the answer:
+4 remaining `Effect.fn __POS__ __FUNCTION__` sites, all framework-test
+value bindings, **zero sugar-eligible, zero consumer-shaped**; a
+16-experiment forcing-function analysis showing nothing promoted since
+E10 makes definition-level sugar more needed — and E8's `[%eta.result]`
+actively absorbing the boilerplate that motivated it. The cohort, shown
+only the neutral material (never that a tested implementation existed),
+answered NO-FIRE.
+
+The durable lessons:
+
+1. **Questions must close.** "Hold by default" is a decision to revisit
+   with a measuring stick, not a shelf. E10's trigger was pre-registered;
+   E31 was the scheduled measurement; the kill is the system working.
+2. **Sunk cost must be invisible to the deciding review.** E10's
+   implementation was complete and proven — and that fact was withheld
+   from the cohort, because "it's already built" is not demand. The
+   verdict came back clean in nine seconds.
+3. **Eligibility matters more than counts.** "4 sites" sounds like
+   demand until you look: all four are value bindings the sugar
+   structurally cannot serve. Measure the shape, not the grep count.

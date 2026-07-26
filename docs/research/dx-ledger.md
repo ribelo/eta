@@ -114,11 +114,13 @@ evidence; every hold names its re-entry trigger.
 - Decision rationale: 0/6 dangerous misreadings; the race became
   unwriteable. Safety beats comprehension for lazy blueprints.
 
-### E10 — Function sugar — **`let%eta` killed; `[@@eta.trace]` pre-selected**
+### E10 — Function sugar — **KILLED 2026-07-26 (both spellings)**
 - What: definition-site tracing sugar.
 - Decision rationale: `let%eta` killed unanimously (names the library,
   not the intent). `[@@eta.trace]` validated (5×6) with a defined
-  promote trigger (real-app frequency) — measured by E31.
+  promote trigger (real-app frequency) — E31 measured it: 0 eligible
+  sites, 0 consumer-shaped, no forcing function across 16 experiments,
+  cohort NO-FIRE. Trigger unfired; question closed. V-DX-E31-001/002.
 
 ## Shipped — Phase D (runtime & model)
 
@@ -289,11 +291,15 @@ evidence; every hold names its re-entry trigger.
   E6 name-carries-strategy criterion. Three mechanical pre-merge fixes.
   V-DX-E29-001/002.
 
-### E31 — `[@@eta.trace]` promote-trigger measurement — in flight
+### E31 — `[@@eta.trace]` promote-trigger measurement — complete 2026-07-26
 - What: count real `Effect.fn __POS__ __FUNCTION__` sites; decide by
   E10's pre-registered trigger.
 - Rationale: close E10 by evidence, not nostalgia.
 - Decision: queued (pre-registered).
+- Outcome: **trigger unfired; E10 closed as killed.** 4 sites in 2 files,
+  0 sugar-eligible, 0 consumer-shaped; 16-experiment forcing-function
+  analysis: no structural need, E8 absorbs the boilerplate; cohort verdict
+  NO-FIRE. V-DX-E31-001/002.
 
 ### E32 — `fold ~ok:Fun.id` usage-data re-check
 - What: ~25 sites carry the noise. Does a shorthand earn its val, or
