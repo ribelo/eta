@@ -4066,3 +4066,41 @@ two follow-ups archived.
 **Follow-ups.** None new. The unified admission rule ("admitted work
 must not depend on unadmitted work beyond the bound") is now part of the
 model and belongs in the eventual `model.md` end item.
+
+---
+
+## V-DX-E29-001 — 2026-07-25 — research/dx-e29-par-ergonomics — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E29-002.
+
+**Measured pre-state.** Nested-`par` sites in repo: 2 (one test file,
+`test/core_common/promise_shared.ml`). `par : ('a,'err) t -> ('b,'err) t ->
+('a * 'b, 'err) t`, fail-fast, cancels sibling. E9b made `and*` sequential,
+so explicit `Effect.par` is THE user spelling for concurrent products —
+the 3–4-way pain is structurally forced downstream even where this repo's
+own code doesn't show it.
+
+**Predictions.**
+- Decision: **promote `par3` + `par4` as one concept** (flat concurrent
+  product, arity cap 4 — OCaml tuple practical limit, E6's with_3 cap
+  precedent). Justification rests on E9b's forcing function + the E6
+  standing criterion being satisfied (the name carries the strategy:
+  `par`), NOT on repo frequency (which is ~zero and must be reported
+  honestly as such).
+- Pre-registered kill gate: PR review finds flat tuples no clearer than
+  nested `par` + flattening map, or reads the pair as arity furniture
+  (sync_option/`with_2` pattern) → kill both. This is the experiment's
+  most likely death; probability ~35%.
+- Semantics (must be inherited, not re-designed): fail-fast cancels ALL
+  siblings on first failure; tuple order = argument order;
+  cancellation/finalizer parity with nested `par`; blueprint
+  names/footprints aggregate all children (like `all`, unlike a mapper).
+- Census: concurrency cluster +2 vals. Footguns +0 (nested-tuple
+  pattern-match wart is an annoyance, not a trap).
+- Tests: order; fail-fast from each position; sibling cancellation;
+  finalizer parity; blueprint metadata; law rows.
+- Review: PR-style oracle; predicted approve or
+  approve-with-reservations on the arity question.
+- Outcome: promote. If killed, the value is the recorded evidence that
+  E9b's explicit-concurrency ergonomics do NOT need arity sugar yet —
+  a real finding for the model doc.
