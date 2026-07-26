@@ -313,7 +313,7 @@ evidence; every hold names its re-entry trigger.
   name must teach correctly from the name alone. V-DX-E32-001/002.
 - Decision: queued.
 
-### E16 — `Reader` validation race
+### E16 — `Reader` validation race — in flight
 - What: build the rival (`Reader` module) and race it against
   value-passing on one real service.
 - Rationale: the no-`R` boundary should rest on in-repo evidence, not

@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E16 — `Reader` validation race (expected kill)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16`
+  - Branch: `research/dx-e16-reader-race`
+  - Stage: predictions sealed (V-DX-E16-001); objective.md written; awaiting executor
 - Done (recent): **E32 complete — verdict holds, `recover` stays
   deleted, F2 closed** (naming gate failed by two independent reviews)
 - Done (recent): **E31 complete — E10 KILLED** (trigger unfired, cohort
@@ -98,4 +101,4 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-26 — E32 complete; F2 closed
+- Last update: 2026-07-26 — E16 launched
