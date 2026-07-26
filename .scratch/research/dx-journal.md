@@ -4656,3 +4656,48 @@ pushed; worktree removed; objective + follow-up archived.
 exists, is measured, and is pinned with its exact boundary documented.
 `model.md` end item should cite this entry for the interpreter's
 execution model.
+
+---
+
+## V-DX-E36-001 — 2026-07-26 — research/dx-e36-background-semantics — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E36-002.
+
+**Measured pre-state (verified).** `with_background` starts the
+background as a supervisor child, then runs `use` under
+`finally (cancel child)` — a background failure during `use` is NOT
+propagated; it is only observed when `use` ends (the finalizer
+cancels/awaits). The mli says nothing about failure propagation. Usage:
+37 call-site lines, nearly all tests + 2 examples; http protocol
+readers use `daemon` instead (E42a's territory — this experiment does
+not migrate them; records the follow-up).
+
+**The design question.** The audit (§4.2): "lifetime is structured;
+failure propagation is not fail-fast" — and the most general name hides
+the weaker semantics.
+
+**Predictions.**
+- Split: `with_background` becomes **fail-fast** (background failure
+  cancels the body, cause propagates — `par`-like, first failure wins,
+  sibling cancellation semantics); current behavior preserved verbatim
+  as **`with_supervised_background`** (failure recorded in the
+  supervisor, observable via `failures`/`check`, body unaffected).
+  Rationale: fail-fast is the safer, less surprising default (T2) and
+  what the name reads as; the surprising semantics carries the marked
+  name. Breaking change, batched per idiom-pass discipline.
+- `with_best_effort_background`: killed in design — YAGNI
+  (`with_supervised_background` + `ignore_errors` on the background
+  covers it without a new name).
+- Census: +1 val (`with_supervised_background`); the fail-fast change
+  is a semantics change, not an addition. Footguns −1 ("background
+  death is invisible to the body" removed by construction).
+- Migration: most current test sites actually encode the CURRENT
+  (supervised) behavior and migrate to the new name mechanically;
+  `examples/background_lifecycle.ml` is the teaching site and should
+  show fail-fast.
+- Semantics edges to pin: fail-fast cancels the body with the
+  background's cause propagating (like `par`); body's own finalizers
+  run on that cancellation; if the body finishes first, current
+  cancel-and-await behavior is unchanged; interruption during
+  fail-fast behaves like `par`'s.
+- Review: PR-style oracle on the two contracts. Outcome: promote.
