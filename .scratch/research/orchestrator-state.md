@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E32 — `fold ~ok:Fun.id` usage-data re-check (F2)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e32`
+  - Branch: `research/dx-e32-fold-recheck`
+  - Stage: predictions sealed (V-DX-E32-001); objective.md written; awaiting executor
 - Done (recent): **E31 complete — E10 KILLED** (trigger unfired, cohort
   NO-FIRE; evidence record merged)
 - Done (recent): **E29 promoted** (`par3`/`par4`; review verdict promote,
@@ -96,4 +99,4 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-26 — E31 complete; E10 killed
+- Last update: 2026-07-26 — E32 launched

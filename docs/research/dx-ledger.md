@@ -301,7 +301,7 @@ evidence; every hold names its re-entry trigger.
   analysis: no structural need, E8 absorbs the boilerplate; cohort verdict
   NO-FIRE. V-DX-E31-001/002.
 
-### E32 — `fold ~ok:Fun.id` usage-data re-check
+### E32 — `fold ~ok:Fun.id` usage-data re-check — in flight
 - What: ~25 sites carry the noise. Does a shorthand earn its val, or
   does E23's verdict (one both-channel fold) hold?
 - Rationale: F2 watch item; one look with numbers. Sealed prediction:
