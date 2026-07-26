@@ -669,3 +669,30 @@ Durable lessons:
    E20's friendly special cases carry the channel in the name
    (`annotate_logs`); a special case whose name drops the channel is
    not disclosure, it's camouflage.
+
+## E16 — The no-`R` boundary, now with evidence (killed 2026-07-26)
+
+The `Reader` rival was built in its strongest form (~50-line optional
+module, `ask`/`local`/`map`/`bind`) and raced against value-passing on a
+real service. Value-passing won 4-0-1: fewer lines at real service
+depths, materially more local compiler errors (names the wrong field,
+not an incompatible whole record), less plumbing per added dependency,
+and a 5-vs-3 comprehension gap (implicit env function, two `Reader.run`
+boundaries, accessor-vs-local shadowing).
+
+The durable lessons:
+
+1. **The boundary holds — and its breaking condition is now documented.**
+   Both the builder and the reviewer independently said Reader's case
+   strengthens with deeper graphs (~6+ dependencies threaded across
+   layers). If Eta's consumers report parameter-threading pain at that
+   depth, E16's race is the reopening evidence — until then, no `R`.
+2. **A fair race needs a strong rival.** The Reader port used its
+   strongest form (parameter-free `program`, real `local` substitution)
+   and still lost; the kill is evidence, not a strawman. Its one real
+   win — a dependency-stable `program` signature — is on record as the
+   legitimate cost of value-passing.
+3. **Error locality is a design criterion.** The compiler naming
+   `bad.clock` with its expected type beat "whole record incompatible"
+   — the clearest single data point of the race, and it belongs in the
+   model doc's no-`R` rationale.

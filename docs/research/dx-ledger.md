@@ -313,11 +313,16 @@ evidence; every hold names its re-entry trigger.
   name must teach correctly from the name alone. V-DX-E32-001/002.
 - Decision: queued.
 
-### E16 — `Reader` validation race — in flight
+### E16 — `Reader` validation race — KILLED 2026-07-26 (boundary tested)
 - What: build the rival (`Reader` module) and race it against
   value-passing on one real service.
 - Rationale: the no-`R` boundary should rest on in-repo evidence, not
   taste. Expected kill — either way the boundary becomes *tested*.
+- Outcome: **KILL** — value-passing wins 4-0-1 (diff size, wrong-env
+  error locality, env-blob drift, comprehension 5 vs 3; inferred types
+  tie). Boundary condition documented: Reader's case strengthens with
+  deeper graphs / ~6+ deps across layers; it loses at Eta's service
+  depths. V-DX-E16-001/002.
 
 ### E21 — Resumable-failure probe
 - What: `.scratch`-only probe: can a typed-failed subtree be resumed

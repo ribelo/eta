@@ -4376,3 +4376,54 @@ optional module on the branch — core untouched by construction).
 dependencies where `Reader` genuinely clarifies (then promote as an
 optional package, never core). Census: +0 either way (optional module
 on branch, killed, or optional package, promoted). Footguns +0.
+
+---
+
+## V-DX-E16-002 — 2026-07-26 — research/dx-e16-reader-race — phase: results + decision (KILL — boundary tested)
+
+**The race.** `examples/service_composition.ml` ported twice
+(value-passing vs. `Reader`, ~50-line optional module under the race
+directory only, core untouched). Both ports compile, run, and produce
+identical results (`race/artifacts/focused-gate.log`). Steelman
+requirement met: the Reader port used parameter-free `program`, one
+provide boundary, Reader-native syntax, leaf accessors, and a real
+`local` substitution — its strongest form.
+
+**Score: value-passing 4, Reader 0, tie 1.**
+1. *Diff size:* Reader +8 service lines; removed 3 parameters from
+   `program` but did not recover the surrounding machinery. Value-passing.
+2. *Inferred types:* tie (Reader.t alias expands to an ordinary function;
+   bundle name vs. explicit deps — scored tie per the executor's
+   conditional rule).
+3. *Wrong-env errors:* value-passing names the wrong field
+   (`bad.clock`, expected type); Reader reports whole-record
+   incompatibility without localizing. Materially less local.
+   Value-passing.
+4. *Drift:* 4th dependency — value-passing touches signature + call
+   (2 plumbing sites); Reader touches env type + full construction +
+   accessor (3). Value-passing, narrowly — with honest counterevidence:
+   Reader's raw churn is lower and `program`'s signature stays stable
+   (its strongest result in the race).
+5. *Comprehension (orchestrator cohort):* value-passing 5, Reader 3.
+   Slower reads: implicit env function, `Reader.lift`, accessor vs.
+   local-binding shadowing, two `Reader.run` boundaries.
+
+**The boundary condition (the real finding).** Executor and reviewer
+independently converged on the same caveat: **Reader's case strengthens
+with deeper graphs** — the reviewer would choose Reader at ~6 deps
+across multiple layers ("earns its complexity only once dependency
+threading spreads"); the executor flags shallow-graph dominance as
+medium-confidence. The no-`R` boundary holds at Eta's service depths,
+and the exact condition where it would weaken is now documented.
+
+**Prediction scoring (orchestrator, V-DX-E16-001) — 7/8.** C1 hit; C2
+miss (tie, not a Reader loss — executor's conditional rule covered it);
+C3 hit; C4 hit (blob at 3 fields); C5 hit; steelman delivered: hit;
+kill: hit; +0/+0: hit. Executor: 3/4 on its criterion set.
+
+**Decision: KILL.** The no-`R` boundary rests on in-repo evidence
+(diff, errors, drift, ratings), not taste. The Reader module lives only
+in the race directory as provenance; no package changes. Evidence
+merged; gates green; worktree removed; objective archived. Parking-lot
+entry in the ledger records both the boundary and its breaking
+condition.

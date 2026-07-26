@@ -8,10 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E16 — `Reader` validation race (expected kill)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16`
-  - Branch: `research/dx-e16-reader-race`
-  - Stage: predictions sealed (V-DX-E16-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (recent): **E16 KILLED — no-`R` boundary now rests on evidence**
+  (value-passing 4-0-1; breaking condition documented: deep graphs,
+  ~6+ deps across layers)
 - Done (recent): **E32 complete — verdict holds, `recover` stays
   deleted, F2 closed** (naming gate failed by two independent reviews)
 - Done (recent): **E31 complete — E10 KILLED** (trigger unfired, cohort
@@ -65,7 +65,7 @@ loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
+- Queue: E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -101,4 +101,4 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-26 — E16 launched
+- Last update: 2026-07-26 — E16 killed; boundary tested
