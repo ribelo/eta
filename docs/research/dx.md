@@ -696,3 +696,42 @@ The durable lessons:
    `bad.clock` with its expected type beat "whole record incompatible"
    — the clearest single data point of the race, and it belongs in the
    model doc's no-`R` rationale.
+
+## The environment question, settled (2026-07-26)
+
+Why does Eta have no `R` channel, no `Layer`, no `provide`? Because each
+alternative was built, measured, and found worse — twice over: once in
+the project's own survival labs (2026-05) and once in an independent
+compiler-lab evaluation adopted 2026-07-26
+(`.scratch/research/envless-verdict-2026-07-26.md`).
+
+Four independent evidence lines, two individually decisive:
+
+1. **OxCaml portability (decisive).** Object-row environments are
+   non-portable across domain boundaries; the shipped env parameter was
+   removed for exactly this reason (`7417b03b`, V-Recovery-R2). An
+   object-row R either kills the islands/portable direction — Eta's
+   most distinctive engineering bet — or forces two effect types.
+2. **Survival-tested pillars.** `provide` deleted (identical behavior,
+   shorter without); restricted Layer merge "not materially better";
+   2295-byte missing-capability row errors at 20 modules vs. 689 for
+   arguments.
+3. **The value restriction is structural.** Env-reading constructors
+   force non-covariance → weak type variables → mandatory thunks →
+   Layer values can't cross compilation units → memoisation-by-identity
+   dies.
+4. **Cross-library object-row keys are unsound** — global names, silent
+   collisions, rename-is-breaking.
+
+Plus the DX programme's own race (V-DX-E16): `Reader` vs. value-passing
+on one real service went 4-0-1, with the boundary condition recorded
+(deep graphs, ~6+ deps across layers).
+
+The one genuine R win — deep leaf evolution touches 1 file instead of
+~4 — is absorbed locally by composite subsystem records
+(`docs/services.md`). Reopen conditions are measurable (verdict §7):
+real-application churn after composite records; OxCaml portable
+objects; a real cross-library ecosystem; a provide-forcing fixture; a
+service-graph forcing case; language-level VR relief. Until one fires:
+`('a, 'err) Effect.t`, ordinary dependencies, runtime-owned services,
+no R, no Layer, no provide.

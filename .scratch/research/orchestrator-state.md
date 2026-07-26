@@ -101,4 +101,9 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-26 — E16 killed; boundary tested
+- 2026-07-26: independent envless verdict ADOPTED
+  (.scratch/research/envless-verdict-2026-07-26.md). User-facing docs
+  updated (zio-boundaries, services, README); E17 note + E34/DAG
+  backlog registered in the ledger; falsification conditions (verdict
+  §7) are the standing R-reopen criteria.
+- Last update: 2026-07-26 — envless verdict adopted; docs updated

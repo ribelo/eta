@@ -323,6 +323,13 @@ evidence; every hold names its re-entry trigger.
   tie). Boundary condition documented: Reader's case strengthens with
   deeper graphs / ~6+ deps across layers; it loses at Eta's service
   depths. V-DX-E16-001/002.
+- B-level answer (central type): supplied 2026-07-26 by the independent
+  envless verdict (`.scratch/research/envless-verdict-2026-07-26.md`) —
+  convergent outcome and boundary condition. **Standing reopen
+  conditions** (verdict §7): real-app churn ≥5 intermediate-file edits
+  ×3/quarter after composite records; OxCaml portable objects; ≥5-lib
+  cross-library ecosystem; a provide-forcing fixture; a service-graph
+  forcing case; language-level VR relief.
 
 ### E21 — Resumable-failure probe
 - What: `.scratch`-only probe: can a typed-failed subtree be resumed
@@ -338,6 +345,11 @@ evidence; every hold names its re-entry trigger.
   cannot catch (registered: the killed-manifest golden). Whether those
   are "real integration bugs" is the experiment's measurement.
 - Decision: staged only after E16/E21, gate re-checked then.
+- Note (2026-07-26): the envless verdict's value-restriction and
+  row-cost evidence joins its gate packet — expected kill strengthened.
+  Its rows are phantom closed-set interpreter capabilities, a different
+  mechanism than the object rows the verdict rejects; entry gate
+  unchanged.
 
 ### E18 — Deterministic simulation testing
 - What: seeded single-domain scheduler interleaving fibers at
@@ -353,6 +365,25 @@ evidence; every hold names its re-entry trigger.
 - Rationale: the 8 is measured-once-years-ago; make the documented
   default a *measured* default.
 - Decision: proposed 2026-07-23; no decision recorded.
+
+### E34 — Composite capability records (undecided)
+- What: standardize the per-subsystem composite-record pattern for
+  deep+volatile dependency sets (the verdict's §5.5), if real use shows
+  the services.md recipe insufficient.
+- Rationale: absorbs the one genuine env-channel win (deep leaf
+  evolution: 1 file vs ~4) without a global type parameter.
+- Decision: registered 2026-07-26 by the envless verdict; docs recipe
+  landed first in `docs/services.md` ("When Value-Passing Hurts").
+  Upgrade to an experiment only on evidence the recipe under-serves.
+
+### Envless service-graph DAG library (triggered backlog)
+- What: Layer-style construction graphs as an ordinary library over
+  records of thunked constructors — parallel via `Effect.par`/`all`,
+  memoised by a keyed table owned by the application.
+- Trigger (verdict §7.5): an application whose boot graph needs
+  parallel construction, memoised shared subgraphs, and partial-failure
+  cleanup beyond what `with_scope` + `par` + a keyed thunk table
+  express cleanly. Evaluated *before* any R reopening.
 
 ## End of queue (approved for the very end)
 
