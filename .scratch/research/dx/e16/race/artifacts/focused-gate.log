@@ -1,0 +1,11 @@
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+race:alice@42,bob@42 both-released=true
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+fourth-dependency:both-audited=true
+Entering directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+Leaving directory '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race'
+local-redteam:alice@42,carol@42 both-released=true

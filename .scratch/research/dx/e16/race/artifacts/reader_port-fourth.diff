@@ -1,0 +1,22 @@
+diff --git a/.scratch/research/dx/e16/race/reader_port.ml b/.scratch/research/dx/e16/race/drift/reader_port_4.ml
+index aea14155..f1be9719 100644
+--- a/.scratch/research/dx/e16/race/reader_port.ml
++++ b/.scratch/research/dx/e16/race/drift/reader_port_4.ml
+@@ -13,0 +14 @@ type env = {
++  audit : string -> unit;
+@@ -44,0 +46 @@ let lookup db user_id = Reader.lift (User_db.lookup db user_id)
++let audit result env = Effect.sync (fun () -> env.audit result)
+@@ -51 +53,3 @@ let program =
+-  let+ second = lookup db users.second in
++  let* () = audit first in
++  let* second = lookup db users.second in
++  let+ () = audit second in
+@@ -57,0 +62 @@ let run () =
++  let audited = ref [] in
+@@ -62,0 +68 @@ let run () =
++      audit = (fun result -> audited := result :: !audited);
+@@ -67 +73,3 @@ let run () =
+-  | Exit.Ok result when !released -> result
++  | Exit.Ok ((first, second) as result)
++    when !released && List.rev !audited = [ first; second ] ->
++      result

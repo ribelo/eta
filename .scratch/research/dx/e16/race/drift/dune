@@ -1,0 +1,16 @@
+(library
+ (name value_passing_4)
+ (wrapped false)
+ (modules value_passing_4)
+ (libraries eta eta_eio eio_main))
+
+(library
+ (name reader_port_4)
+ (wrapped false)
+ (modules reader_port_4)
+ (libraries reader eta eta_eio eio_main))
+
+(executable
+ (name drift_main)
+ (modules drift_main)
+ (libraries value_passing_4 reader_port_4))

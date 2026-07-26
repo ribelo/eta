@@ -1,0 +1,6 @@
+# Comparable-port line census
+value_passing.ml total=55 nonblank_noncomment=45 service_before_run=33
+reader_port.ml total=70 nonblank_noncomment=58 service_before_run=41
+reader.ml total=18 nonblank_noncomment=14
+reader.mli total=46 nonblank_noncomment=22
+race_main.ml total=7 nonblank_noncomment=7
