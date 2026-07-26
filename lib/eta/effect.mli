@@ -691,9 +691,18 @@ val with_scope : ('a, 'err) t -> ('a, 'err) t
 
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
-(** Run [background] while [use] executes, then cancel the background child when
-    [use] returns or fails. This is the structured replacement for
-    daemon-shaped application work that does not need to expose a child handle. *)
+(** Run [background] while [use] executes. Fail-fast: if [background] fails
+    first, [use] is cancelled and awaited, its finalizers run, and the
+    background cause propagates, like {!par}'s sibling rule. If [use] finishes
+    first, [background] is cancelled and awaited. A racing background failure
+    and body completion are linearized by terminal-exit publication; the first
+    publication wins. *)
+
+val with_supervised_background :
+  ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t
+(** Run [background] as a supervised child while [use] executes. Background
+    failure is recorded by the supervisor and does not affect [use] before it
+    ends. When [use] returns or fails, the child is cancelled and awaited. *)
 
 val daemon : (unit, 'err) t -> (unit, 'err) t
 (** Start runtime-owned finite background work on the runtime's outer switch.

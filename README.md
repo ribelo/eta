@@ -407,9 +407,10 @@ This is the structured shape for daemon-like application work without using a
 runtime-owned daemon: accept loops scoped to a server lifetime, stream readers
 scoped to a handle, heartbeat/ticker loops scoped to a session, and resource
 readers scoped by `acquire_release`. The background child is cancelled when the
-body returns or fails. Its failures are not awaited by `with_background`; report
-them through an owned queue, promise, log, or use `Supervisor.scoped` when the
-body must observe child failure.
+body returns or fails. If the child fails first, `with_background` cancels the
+body and propagates the child's cause. Use `with_supervised_background` when
+child failure should be recorded without interrupting the body; suppress typed
+failures explicitly with `ignore_errors` when that work is best-effort.
 
 ## Concurrency Data
 

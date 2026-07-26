@@ -180,7 +180,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error cause ->
         Alcotest.failf "unexpected cancel failure: %a" (Cause.pp pp_hidden) cause
 
-  let test_effect_with_background_cancels_child () =
+  let test_effect_with_supervised_background_cancels_child () =
     B.with_test_clock @@ fun _ctx clock rt ->
     let finalizer_ran = ref false in
     let child_started = ref false in
@@ -194,7 +194,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
     let program =
-      E.with_background background (fun () ->
+      E.with_supervised_background background (fun () ->
           wait_for_sleepers_effect clock 1
           |> E.map (fun () -> !child_started))
     in
@@ -202,10 +202,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok true -> Alcotest.(check bool) "finalizer ran" true !finalizer_ran
     | Exit.Ok false -> Alcotest.fail "background did not start"
     | Exit.Error cause ->
-        Alcotest.failf "unexpected with_background failure: %a"
+        Alcotest.failf "unexpected with_supervised_background failure: %a"
           (Cause.pp pp_hidden) cause
 
-  let test_effect_with_background_reports_child_cleanup_failure () =
+  let test_effect_with_supervised_background_reports_child_cleanup_failure () =
     B.with_test_clock @@ fun _ctx clock rt ->
     let child_started = ref false in
     let background =
@@ -215,7 +215,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
     let program =
-      E.with_background background (fun () ->
+      E.with_supervised_background background (fun () ->
           wait_for_sleepers_effect clock 1 |> E.map (fun () -> !child_started))
     in
     match B.run rt program with
@@ -229,7 +229,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok false -> Alcotest.fail "background did not start"
     | Exit.Ok true -> Alcotest.fail "background cleanup failure was hidden"
 
-  let test_effect_with_background_cancels_child_after_use_failure () =
+  let test_effect_with_supervised_background_cancels_after_use_failure () =
     B.with_test_clock @@ fun _ctx clock rt ->
     let finalizer_ran = ref false in
     let background =
@@ -238,16 +238,188 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
     let program =
-      E.with_background background (fun () ->
+      E.with_supervised_background background (fun () ->
           wait_for_sleepers_effect clock 1 |> E.bind (fun () -> E.fail `Use_failed))
     in
     (match B.run rt program with
     | Exit.Error (Cause.Fail `Use_failed) -> ()
     | Exit.Error cause ->
-        Alcotest.failf "unexpected with_background failure: %a"
+        Alcotest.failf "unexpected with_supervised_background failure: %a"
           (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "failing use unexpectedly succeeded");
     Alcotest.(check bool) "background finalizer ran" true !finalizer_ran
+
+  let test_effect_with_background_typed_failure_cancels_use () =
+    B.with_runtime @@ fun ctx rt ->
+    let go, release = B.create_promise () in
+    let ready, mark_ready = B.create_promise () in
+    let body_finalizers = ref 0 in
+    let background =
+      B.await_effect go |> E.bind (fun () -> E.fail `Background_failed)
+    in
+    let use =
+      E.finally (E.sync (fun () -> incr body_finalizers))
+        (E.sync (fun () -> B.resolve mark_ready ())
+        |> E.bind (fun () -> E.never))
+    in
+    let promise =
+      B.fork_run ctx rt (E.with_background background (fun () -> use))
+    in
+    B.await ready;
+    B.resolve release ();
+    (match B.await promise with
+    | Exit.Error (Cause.Fail `Background_failed) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected background typed failure, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "background typed failure was hidden");
+    Alcotest.(check int) "body finalizer count" 1 !body_finalizers
+
+  let test_effect_with_background_defect_cancels_use () =
+    B.with_runtime @@ fun ctx rt ->
+    let go, release = B.create_promise () in
+    let ready, mark_ready = B.create_promise () in
+    let body_finalizers = ref 0 in
+    let defect = Failure "background defect" in
+    let background =
+      B.await_effect go |> E.bind (fun () -> E.sync (fun () -> raise defect))
+    in
+    let use =
+      E.finally (E.sync (fun () -> incr body_finalizers))
+        (E.sync (fun () -> B.resolve mark_ready ())
+        |> E.bind (fun () -> E.never))
+    in
+    let promise =
+      B.fork_run ctx rt (E.with_background background (fun () -> use))
+    in
+    B.await ready;
+    B.resolve release ();
+    (match B.await promise with
+    | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected background defect, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "background defect was hidden");
+    Alcotest.(check int) "body finalizer count" 1 !body_finalizers
+
+  let test_effect_with_background_body_exit_cancels_and_awaits () =
+    let run_case body expected =
+      B.with_test_clock @@ fun _ctx clock rt ->
+      let background_finalizers = ref 0 in
+      let background =
+        E.finally (E.sync (fun () -> incr background_finalizers))
+          (E.delay (Duration.ms 1_000) E.unit)
+      in
+      let program =
+        E.with_background background (fun () ->
+            wait_for_sleepers_effect clock 1 |> E.bind body)
+      in
+      (match (B.run rt program, expected) with
+      | Exit.Ok "ok", `Success -> ()
+      | Exit.Error (Cause.Fail `Use_failed), `Failure -> ()
+      | Exit.Error cause, _ ->
+          Alcotest.failf "unexpected body-first cause: %a" (Cause.pp pp_hidden)
+            cause
+      | Exit.Ok value, _ -> Alcotest.failf "unexpected body value: %s" value);
+      Alcotest.(check int)
+        "background finalizer count" 1 !background_finalizers
+    in
+    run_case (fun () -> E.pure "ok") `Success;
+    run_case (fun () -> E.fail `Use_failed) `Failure
+
+  let test_effect_with_background_body_interruption_matches_par () =
+    B.with_runtime @@ fun _ctx rt ->
+    let ready, mark_ready = B.create_promise () in
+    let background_finalizers = ref 0 in
+    let background =
+      E.finally (E.sync (fun () -> incr background_finalizers))
+        (E.sync (fun () -> B.resolve mark_ready ())
+        |> E.bind (fun () -> E.never))
+    in
+    let scoped = E.with_background background (fun () -> E.never) in
+    let controller = B.await_effect ready |> E.bind (fun () -> E.fail `Stop) in
+    (match B.run rt (E.discard (E.par scoped controller)) with
+    | Exit.Error (Cause.Fail `Stop) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected par interruption shape, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "interrupted background scope succeeded");
+    Alcotest.(check int)
+      "background finalizer count" 1 !background_finalizers
+
+  let test_effect_with_supervised_background_failure_does_not_cancel_use () =
+    B.with_runtime @@ fun ctx rt ->
+    let go, release = B.create_promise () in
+    let body_started, mark_started = B.create_promise () in
+    let body_finished, finish_body = B.create_promise () in
+    let body_completed = ref false in
+    let background =
+      B.await_effect go |> E.bind (fun () -> E.fail `Background_failed)
+    in
+    let use =
+      E.sync (fun () -> B.resolve mark_started ())
+      |> E.bind (fun () -> B.await_effect body_finished)
+      |> E.map (fun () -> body_completed := true)
+    in
+    let promise =
+      B.fork_run ctx rt
+        (E.with_supervised_background background (fun () -> use))
+    in
+    B.await body_started;
+    B.resolve release ();
+    B.yield ();
+    Alcotest.(check bool) "body still running" false !body_completed;
+    B.resolve finish_body ();
+    (match B.await promise with
+    | Exit.Error (Cause.Finalizer _) -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected supervised cleanup diagnostic, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok () -> Alcotest.fail "supervised child failure was hidden at cleanup");
+    Alcotest.(check bool) "body completed" true !body_completed
+
+  let test_effect_with_background_same_release_has_one_winner () =
+    B.with_runtime @@ fun ctx rt ->
+    let go, release = B.create_promise () in
+    let ready = B.create_stream 2 in
+    let published = B.create_stream 2 in
+    let body_finalizers = ref 0 in
+    let background_finalizers = ref 0 in
+    let background =
+      E.finally (E.sync (fun () -> incr background_finalizers))
+        (E.sync (fun () -> B.stream_add ready `Background)
+        |> E.bind (fun () -> B.await_effect go)
+        |> E.bind (fun () ->
+               E.sync (fun () -> B.stream_add published `Background))
+        |> E.bind (fun () -> E.fail `Background_failed))
+    in
+    let use =
+      E.finally (E.sync (fun () -> incr body_finalizers))
+        (E.sync (fun () -> B.stream_add ready `Body)
+        |> E.bind (fun () -> B.await_effect go)
+        |> E.bind (fun () -> E.sync (fun () -> B.stream_add published `Body)))
+    in
+    let promise =
+      B.fork_run ctx rt (E.with_background background (fun () -> use))
+    in
+    ignore (B.stream_take ready : [ `Background | `Body ]);
+    ignore (B.stream_take ready : [ `Background | `Body ]);
+    B.resolve release ();
+    let first = B.stream_take published in
+    (match (first, B.await promise) with
+    | `Background, Exit.Error (Cause.Fail `Background_failed) -> ()
+    | `Body, Exit.Ok () -> ()
+    | `Body, Exit.Error (Cause.Finalizer finalizer)
+      when finalizer_contains "<typed failure>" finalizer ->
+        ()
+    | first, Exit.Error cause ->
+        Alcotest.failf "first=%s, unexpected same-release cause: %a"
+          (match first with `Background -> "background" | `Body -> "body")
+          (Cause.pp pp_hidden) cause
+    | `Background, Exit.Ok () ->
+        Alcotest.fail "published background failure lost to body success");
+    Alcotest.(check int) "body finalized once" 1 !body_finalizers;
+    Alcotest.(check int) "background finalized once" 1 !background_finalizers
 
   let test_supervisor_threshold_failure () =
     B.with_runtime @@ fun _ctx rt ->
@@ -340,12 +512,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_supervisor_cancel_runs_finalizer;
           Alcotest.test_case "cancel waits for finalizer" `Quick
             test_supervisor_cancel_waits_for_finalizer;
-          Alcotest.test_case "with_background cancels child" `Quick
-            test_effect_with_background_cancels_child;
-          Alcotest.test_case "with_background reports cleanup failure" `Quick
-            test_effect_with_background_reports_child_cleanup_failure;
-          Alcotest.test_case "with_background cancels child after use failure"
-            `Quick test_effect_with_background_cancels_child_after_use_failure;
+          Alcotest.test_case "with_supervised_background cancels child" `Quick
+            test_effect_with_supervised_background_cancels_child;
+          Alcotest.test_case
+            "with_supervised_background reports cleanup failure" `Quick
+            test_effect_with_supervised_background_reports_child_cleanup_failure;
+          Alcotest.test_case
+            "with_supervised_background cancels child after use failure" `Quick
+            test_effect_with_supervised_background_cancels_after_use_failure;
+          Alcotest.test_case
+            "with_background typed failure cancels use and awaits finalizers"
+            `Quick test_effect_with_background_typed_failure_cancels_use;
+          Alcotest.test_case
+            "with_background defect cancels use and awaits finalizers" `Quick
+            test_effect_with_background_defect_cancels_use;
+          Alcotest.test_case
+            "with_background body success or failure cancels and awaits child"
+            `Quick test_effect_with_background_body_exit_cancels_and_awaits;
+          Alcotest.test_case
+            "with_background body interruption matches par cause shape" `Quick
+            test_effect_with_background_body_interruption_matches_par;
+          Alcotest.test_case
+            "with_supervised_background failure does not cancel use" `Quick
+            test_effect_with_supervised_background_failure_does_not_cancel_use;
+          Alcotest.test_case
+            "with_background same-release exits choose one winner once"
+            `Quick
+            test_effect_with_background_same_release_has_one_winner;
           Alcotest.test_case "threshold failure" `Quick
             test_supervisor_threshold_failure;
           Alcotest.test_case "records multiple failures" `Quick

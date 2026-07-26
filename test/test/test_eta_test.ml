@@ -1070,7 +1070,10 @@ let test_audit_assertions_accept_matching_blueprints () =
   assert_no_resources
     (Eta.Effect.par Eta.Effect.unit Eta.Effect.unit |> Eta.Effect.discard);
   assert_no_background
-    (Eta.Effect.with_background Eta.Effect.unit (fun () -> Eta.Effect.unit))
+    (Eta.Effect.with_background Eta.Effect.unit (fun () -> Eta.Effect.unit));
+  assert_no_background
+    (Eta.Effect.with_supervised_background Eta.Effect.unit (fun () ->
+         Eta.Effect.unit))
 
 let () =
   Alcotest.run "eta-test"

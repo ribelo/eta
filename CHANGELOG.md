@@ -4,6 +4,9 @@
 
 ### Added
 
+- `Effect.with_supervised_background`, preserving the former supervised
+  `with_background` behavior for lexical child work whose failure must not
+  interrupt the body.
 - OpenAI Responses encoding now projects mixed text and image function-call
   outputs using the provider's structured `function_call_output.output` content
   array; legacy Chat Completions continues to reject tool-result media with a
@@ -15,6 +18,11 @@
 
 ### Changed
 
+- **Breaking:** `Effect.with_background` is now fail-fast. A background typed
+  failure or defect cancels and awaits the body and propagates its cause, like
+  `Effect.par`; body completion still cancels and awaits the background. Move
+  callers that require the old delayed-observation behavior to
+  `Effect.with_supervised_background`.
 - `Effect.retry` now retries catchable typed-failure composites using the first
   typed failure in cause order, matching `bind_error` and `retry_or_else`.
   Callers whose effects produce such composites may now see predicate and
