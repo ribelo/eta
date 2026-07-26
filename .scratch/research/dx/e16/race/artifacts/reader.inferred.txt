@@ -1,0 +1,27 @@
+path "/home/ribelo/projects/ribelo/ocaml/Eta-dx-e16/.scratch/research/dx/e16/race" does not contain a 'flake.nix', searching up
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+type error = [ `Closed | `Invalid_user of string ]
+type clock = { now_ms : unit -> int; }
+type users = { first : string; second : string; }
+type env = { clock : clock; released : bool ref; users : users; }
+val pp_error : Format.formatter -> error -> unit
+module User_db :
+  sig
+    type t = { clock : clock; released : bool ref; }
+    val open_ : clock -> bool ref -> (t, 'a) Eta.Effect.t
+    val close : t -> (unit, 'a) Eta.Effect.t
+    val lookup :
+      t ->
+      String.t ->
+      (string, [> `Closed | `Invalid_user of string ]) Eta.Effect.t
+  end
+val with_user_db :
+  (User_db.t -> env -> ('a, 'b) Eta.Effect.t) -> env -> ('a, 'b) Eta.Effect.t
+val users : (env, users, [ `Closed | `Invalid_user of string ]) Reader.t
+val lookup :
+  User_db.t ->
+  String.t -> ('a, string, [> `Closed | `Invalid_user of string ]) Reader.t
+val program :
+  env ->
+  (string * string, [ `Closed | `Invalid_user of string ]) Eta.Effect.t
+val run : unit -> string * string

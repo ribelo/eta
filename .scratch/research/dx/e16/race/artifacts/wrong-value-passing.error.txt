@@ -1,0 +1,6 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File ".scratch/research/dx/e16/race/negative/wrong_value_passing.ml", line 17, characters 32-41:
+17 | let _must_not_compile = program bad.clock bad.released bad.users
+                                     ^^^^^^^^^
+Error: This expression has type "wrong_clock"
+       but an expression was expected of type "Value_passing.clock"

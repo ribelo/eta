@@ -1,0 +1,1 @@
+local-redteam:alice@42,carol@42 both-released=true

@@ -1,0 +1,16 @@
+(library
+ (name local_value)
+ (wrapped false)
+ (modules local_value)
+ (libraries value_passing eta))
+
+(library
+ (name local_reader)
+ (wrapped false)
+ (modules local_reader)
+ (libraries reader_port reader eta))
+
+(executable
+ (name local_main)
+ (modules local_main)
+ (libraries local_value local_reader value_passing reader_port reader eta eta_eio eio_main))

@@ -1,0 +1,52 @@
+diff --git a/.scratch/research/dx/e16/race/value_passing.ml b/.scratch/research/dx/e16/race/reader_port.ml
+index bda2f685..aea14155 100644
+--- a/.scratch/research/dx/e16/race/value_passing.ml
++++ b/.scratch/research/dx/e16/race/reader_port.ml
+@@ -9,0 +10,6 @@ type users = { first : string; second : string }
++type env = {
++  clock : clock;
++  released : bool ref;
++  users : users;
++}
++
+@@ -33,3 +39,6 @@ end
+-let with_user_db clock released =
+-  Effect.with_resource ~acquire:(User_db.open_ clock released)
+-    ~release:User_db.close
++let with_user_db body env =
++  Effect.with_resource ~acquire:(User_db.open_ env.clock env.released)
++    ~release:User_db.close (fun db -> Reader.run env (body db))
++
++let users = Reader.map (fun env -> env.users) Reader.ask
++let lookup db user_id = Reader.lift (User_db.lookup db user_id)
+@@ -37,5 +46,6 @@ let with_user_db clock released =
+-let program clock released users =
+-  let open Syntax in
+-  let@ db = with_user_db clock released in
+-  let* first = User_db.lookup db users.first in
+-  let+ second = User_db.lookup db users.second in
++let program =
++  let open Reader.Syntax in
++  with_user_db @@ fun db ->
++  let* users = users in
++  let* first = lookup db users.first in
++  let+ second = lookup db users.second in
+@@ -48,2 +58,7 @@ let run () =
+-  let clock = { now_ms = (fun () -> 42) } in
+-  let users = { first = "alice"; second = "bob" } in
++  let env =
++    {
++      clock = { now_ms = (fun () -> 42) };
++      released;
++      users = { first = "alice"; second = "bob" };
++    }
++  in
+@@ -51 +66 @@ let run () =
+-  match Eta_eio.Runtime.run rt (program clock released users) with
++  match Eta_eio.Runtime.run rt (Reader.run env program) with
+@@ -53 +68 @@ let run () =
+-  | Exit.Ok _ -> failwith "value-passing port did not release the database"
++  | Exit.Ok _ -> failwith "Reader port did not release the database"
+@@ -55 +70 @@ let run () =
+-      failwith (Format.asprintf "value-passing failed: %a" (Cause.pp pp_error) cause)
++      failwith (Format.asprintf "Reader failed: %a" (Cause.pp pp_error) cause)

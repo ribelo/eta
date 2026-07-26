@@ -1,0 +1,21 @@
+(library
+ (name reader)
+ (modules reader)
+ (libraries eta))
+
+(library
+ (name value_passing)
+ (wrapped false)
+ (modules value_passing)
+ (libraries eta eta_eio eio_main))
+
+(library
+ (name reader_port)
+ (wrapped false)
+ (modules reader_port)
+ (libraries reader eta eta_eio eio_main))
+
+(executable
+ (name race_main)
+ (modules race_main)
+ (libraries value_passing reader_port))

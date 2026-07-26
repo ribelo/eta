@@ -1,0 +1,10 @@
+Focused scratch race: PASS
+  nix develop -c dune build --root .scratch/research/dx/e16/race race_main.exe drift/drift_main.exe redteam/local_main.exe
+  nix develop -c dune exec --root .scratch/research/dx/e16/race ./race_main.exe
+  nix develop -c dune exec --root .scratch/research/dx/e16/race ./drift/drift_main.exe
+  nix develop -c dune exec --root .scratch/research/dx/e16/race ./redteam/local_main.exe
+
+Required gates:
+  PASS  nix develop -c dune build @install
+  PASS  nix develop -c dune runtest --force
+  PASS  nix develop -c eta-oxcaml-test-shipped

@@ -1,0 +1,13 @@
+# Reader.local red-team cost
+value-passing modified subtree:
+  - 1 record-update binding for the modified users value
+  - 1 lookup consumes that ordinary value
+  - no helper is needed to delay dependency selection
+
+Reader modified subtree:
+  - 1 Reader.local call
+  - 1 nested env record update (env plus users)
+  - 1 Reader helper (4 nonblank lines) is needed so users is selected inside,
+    rather than before, the local subtree
+  - the override must surround dependency selection; local cannot alter the
+    users value or User_db handle after either has already been captured

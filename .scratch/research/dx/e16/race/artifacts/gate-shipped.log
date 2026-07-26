@@ -1,0 +1,282 @@
+Testing `eta-ai-moonshot-eio'.
+This run has ID `LX75XTHP'.
+
+  [OK]          moonshot          0   credential strict safe.
+  [OK]          moonshot          1   catalog thinking metadata.
+  [OK]          moonshot          2   reasoning levels.
+  [OK]          moonshot          3   chat and reasoning stream.
+  [OK]          moonshot          4   cache usage.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/ai/moonshot/_build/_tests/eta-ai-moonshot-eio'.
+Test Successful in 0.001s. 5 tests run.
+Testing `eta-ai-openai-codex-eio'.
+This run has ID `G5BYB4NG'.
+
+  [OK]          openai-codex          0   pkce and callback validation.
+  [OK]          openai-codex          1   credential codecs without raw secrets.
+  [OK]          openai-codex          2   token account and headers.
+  [OK]          openai-codex          3   models catalog.
+  [OK]          openai-codex          4   reasoning levels.
+  [OK]          openai-codex          5   responses disable server storage.
+  [OK]          openai-codex          6   exchange effect.
+  [OK]          openai-codex          7   extra headers and malformed expires.
+  [OK]          openai-codex          8   oauth error code.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/ai/openai_codex/_build/_tests/eta-ai-openai-codex-eio'.
+Test Successful in 0.002s. 9 tests run.
+Testing `eta-ai-kimi-coding-eio'.
+This run has ID `QJEQU9PX'.
+
+  [OK]          kimi-coding          0   credentials strict safe.
+  [OK]          kimi-coding          1   device oauth outcomes.
+  [OK]          kimi-coding          2   messages headers and stream.
+  [OK]          kimi-coding          3   catalog and chat reasoning.
+  [OK]          kimi-coding          4   chat cache usage.
+  [OK]          kimi-coding          5   reasoning levels.
+  [OK]          kimi-coding          6   identity requires product.
+  [OK]          kimi-coding          7   protocol and poll errors.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/ai/kimi_coding/_build/_tests/eta-ai-kimi-coding-eio'.
+Test Successful in 0.002s. 8 tests run.
+Testing `eta-schema-test-eio-shared'.
+This run has ID `37VYSJJO'.
+
+  [OK]          Expect          0   decode ok.
+  [OK]          Expect          1   encode ok.
+  [OK]          Expect          2   decode error.
+  [OK]          Expect          3   encode error.
+  [OK]          Expect          4   roundtrip json.
+  [OK]          Expect          5   eff subset policy.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/schema_test_eio/_build/_tests/eta-schema-test-eio-shared'.
+Test Successful in 0.002s. 6 tests run.
+Testing `eta-schema-eio-shared'.
+This run has ID `MG43UYYO'.
+
+  [OK]          Eta_schema          0   config roundtrip.
+  [OK]          Eta_schema          1   many issues.
+  [OK]          Eta_schema          2   tagged and recursive.
+  [OK]          Eta_schema          3   policy closure deps.
+  [OK]          Eta_schema          4   cause integration.
+  [OK]          Eta_schema          5   issue paths distinguish fields and in...
+  [OK]          Eta_schema          6   issue source discriminator.
+  [OK]          Eta_schema          7   json number rendering.
+  [OK]          Eta_schema          8   json string rendering.
+  [OK]          Eta_schema          9   decode_with_policy enriches type.
+  [OK]          Eta_schema         10   json adapter make functor.
+  [OK]          Eta_schema         11   encode failures are typed.
+  [OK]          Eta_schema         12   encode float rejects non-finite.
+  [OK]          Eta_schema         13   tagged union rejects non-object case ...
+  [OK]          Eta_schema         14   lazy schema memoizes thunk.
+  [OK]          Eta_schema         15   decode int rejects upper float boundary.
+  [OK]          Eta_schema         16   json schema derivation and closed dec...
+  [OK]          Eta_schema         17   empty record schema.
+  [OK]          Eta_schema         18   dynamic record and freeform JSON.
+  [OK]          Eta_schema         19   untagged union cases.
+  [OK]          Eta_schema         20   untagged union and custom schema.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/schema_eio/_build/_tests/eta-schema-eio-shared'.
+Test Successful in 0.005s. 21 tests run.
+generated error fail pass / total     time test name
+[ ]    0    0    0    0 /  100     0.0s response idle timeout rejects generated nonpositive milliseconds and round-trips generated positive milliseconds
+[✓]  100    0    0  100 /  100     0.0s response idle timeout rejects generated nonpositive milliseconds and round-trips generated positive milliseconds
+================================================================================
+success (ran 1 tests)
+Testing `ppx-eta-eio'.
+This run has ID `YX6OU7Z4'.
+
+  [OK]          ppx                0   fn.
+  [OK]          ppx                1   sync leaf.
+  [OK]          ppx                2   result leaf parity.
+  [OK]          ppx                3   eta_error span status.
+  [OK]          ppx                4   eta_error raising renderer.
+  [OK]          sql_table          0   projection.
+  [OK]          sql_table          1   schema metadata.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/ppx_eio/_build/_tests/ppx-eta-eio'.
+Test Successful in 0.002s. 7 tests run.
+generated error fail pass / total     time test name
+[ ]    0    0    0    0 /   50     0.0s map identity
+[✓]   50    0    0   50 /   50     0.0s map identity
+[ ]    0    0    0    0 /   50     0.0s map composition
+[✓]   50    0    0   50 /   50     0.0s map composition
+[ ]    0    0    0    0 /   50     0.0s bind associativity
+[✓]   50    0    0   50 /   50     0.0s bind associativity
+[ ]    0    0    0    0 /   50     0.0s pure/bind left identity
+[✓]   50    0    0   50 /   50     0.0s pure/bind left identity
+[ ]    0    0    0    0 /   50     0.0s pure/bind right identity
+[✓]   50    0    0   50 /   50     0.0s pure/bind right identity
+[ ]    0    0    0    0 /   50     0.0s bind_error left identity
+[✓]   50    0    0   50 /   50     0.0s bind_error left identity
+[ ]    0    0    0    0 /   50     0.0s bind_error handles exactly once with the first typed failure in cause order
+[✓]   50    0    0   50 /   50     0.0s bind_error handles exactly once with the first typed failure in cause order
+[ ]    0    0    0    0 /   50     0.0s bind_error never handles defect interruption or finalizer diagnostics
+[✓]   50    0    0   50 /   50     0.0s bind_error never handles defect interruption or finalizer diagnostics
+[ ]    0    0    0    0 /   50     0.0s fold coherence with map/bind_error
+[✓]   50    0    0   50 /   50     0.0s fold coherence with map/bind_error
+[ ]    0    0    0    0 /   50     0.0s par preserves pair input order across both observable completion directions
+[✓]   50    0    0   50 /   50     0.0s par preserves pair input order across both observable completion directions
+[ ]    0    0    0    0 /   50     0.0s par first observed failure cancels sibling tree and awaits cleanup
+[✓]   50    0    0   50 /   50     0.0s par first observed failure cancels sibling tree and awaits cleanup
+[ ]    0    0    0    0 /   50     0.0s par3 preserves triple input order across both observable completion directions
+[✓]   50    0    0   50 /   50     0.0s par3 preserves triple input order across both observable completion directions
+[ ]    0    0    0    0 /   50     0.0s par4 preserves quadruple input order across both observable completion directions
+[✓]   50    0    0   50 /   50     0.0s par4 preserves quadruple input order across both observable completion directions
+[ ]    0    0    0    0 /   50     0.0s par3 first observed failure cancels every sibling and awaits cleanup
+[✓]   50    0    0   50 /   50     0.0s par3 first observed failure cancels every sibling and awaits cleanup
+[ ]    0    0    0    0 /   50     0.0s par4 first observed failure cancels every sibling and awaits cleanup
+[✓]   50    0    0   50 /   50     0.0s par4 first observed failure cancels every sibling and awaits cleanup
+[ ]    0    0    0    0 /   50     0.0s map_par preserves input order across both observable completion directions
+[✓]   50    0    0   50 /   50     0.0s map_par preserves input order across both observable completion directions
+[ ]    0    0    0    0 /   50     0.0s map_par first failure cancels in-flight siblings and awaits scoped release
+[✓]   50    0    0   50 /   50     0.0s map_par first failure cancels in-flight siblings and awaits scoped release
+[ ]    0    0    0    0 /   50     0.0s map_par never exceeds max_concurrent and reaches the bound when inputs suffice
+[✓]   50    0    0   50 /   50     0.0s map_par never exceeds max_concurrent and reaches the bound when inputs suffice
+[ ]    0    0    0    0 /   50     0.0s all never exceeds max_concurrent and reaches the bound when children suffice
+[✓]   50    0    0   50 /   50     0.0s all never exceeds max_concurrent and reaches the bound when children suffice
+[ ]    0    0    0    0 /   50     0.0s all omission admits at most eight children and reaches eight when inputs suffice
+[✓]   50    0    0   50 /   50     0.0s all omission admits at most eight children and reaches eight when inputs suffice
+[ ]    0    0    0    0 /   50     0.0s all rejects every generated nonpositive max_concurrent at construction
+[✓]   50    0    0   50 /   50     0.0s all rejects every generated nonpositive max_concurrent at construction
+[ ]    0    0    0    0 /   50     0.0s all explicit length bound admits every generated rendezvous participant
+[✓]   50    0    0   50 /   50     0.0s all explicit length bound admits every generated rendezvous participant
+[ ]    0    0    0    0 /    1     0.0s all omitted bound cannot progress when every admitted worker awaits an unadmitted participant
+[✓]    1    0    0    1 /    1     0.0s all omitted bound cannot progress when every admitted worker awaits an unadmitted participant
+[ ]    0    0    0    0 /   50     0.0s all collects results in input order after reverse observable completion
+[✓]   50    0    0   50 /   50     0.0s all collects results in input order after reverse observable completion
+[ ]    0    0    0    0 /   50     0.0s all first observed failure cancels siblings and awaits their finalizers
+[✓]   50    0    0   50 /   50     0.0s all first observed failure cancels siblings and awaits their finalizers
+[ ]    0    0    0    0 /   50     0.0s all_settled captures every child cause and preserves input order
+[✓]   50    0    0   50 /   50     0.0s all_settled captures every child cause and preserves input order
+[ ]    0    0    0    0 /   50     0.0s race returns the actual first distinctly tagged finite producer
+[✓]   50    0    0   50 /   50     0.0s race returns the actual first distinctly tagged finite producer
+[ ]    0    0    0    0 /   50     0.0s race loser cancellation releases an actually held scoped resource
+[✓]   50    0    0   50 /   50     0.0s race loser cancellation releases an actually held scoped resource
+[ ]    0    0    0    0 /   50     0.0s finally exactly once across success/typed-failure/defect/cancellation exit kinds
+[✓]   50    0    0   50 /   50     0.0s finally exactly once across success/typed-failure/defect/cancellation exit kinds
+[ ]    0    0    0    0 /   50     0.0s finally cleanup failure after success is a finalizer cause
+[✓]   50    0    0   50 /   50     0.0s finally cleanup failure after success is a finalizer cause
+[ ]    0    0    0    0 /   50     0.0s finally cleanup failure is suppressed under a primary failure
+[✓]   50    0    0   50 /   50     0.0s finally cleanup failure is suppressed under a primary failure
+[ ]    0    0    0    0 /   50     0.0s scope reverse acquisition/release order
+[✓]   50    0    0   50 /   50     0.0s scope reverse acquisition/release order
+[ ]    0    0    0    0 /   50     0.0s nested with_scope releases inner resources before outer continuation and finalizer
+[✓]   50    0    0   50 /   50     0.0s nested with_scope releases inner resources before outer continuation and finalizer
+[ ]    0    0    0    0 /   50     0.0s with_scope releases registered resources on success typed failure defect and cancellation
+[✓]   50    0    0   50 /   50     0.0s with_scope releases registered resources on success typed failure defect and cancellation
+[ ]    0    0    0    0 /   50     0.0s with_resource release across success/typed-failure/defect/cancellation exit kinds
+[✓]   50    0    0   50 /   50     0.0s with_resource release across success/typed-failure/defect/cancellation exit kinds
+[ ]    0    0    0    0 /   50     0.0s with_resource release failure after body success becomes Cause.Finalizer
+[✓]   50    0    0   50 /   50     0.0s with_resource release failure after body success becomes Cause.Finalizer
+[ ]    0    0    0    0 /   50     0.0s acquire_use_release release failure is suppressed under body failure
+[✓]   50    0    0   50 /   50     0.0s acquire_use_release release failure is suppressed under body failure
+[ ]    0    0    0    0 /   50     0.0s Channel admits active blocked senders FIFO as capacity opens
+[✓]   50    0    0   50 /   50     0.0s Channel admits active blocked senders FIFO as capacity opens
+[ ]    0    0    0    0 /   50     0.0s Channel create rejects every generated nonpositive capacity and accepts positive capacity
+[✓]   50    0    0   50 /   50     0.0s Channel create rejects every generated nonpositive capacity and accepts positive capacity
+[ ]    0    0    0    0 /   50     0.0s Channel send waits while full and recv waits while empty until the opposite operation commits
+[✓]   50    0    0   50 /   50     0.0s Channel send waits while full and recv waits while empty until the opposite operation commits
+[ ]    0    0    0    0 /   50     0.0s Channel blocked-sender cancellation removes waiter increments counter and consumes no value
+[✓]   50    0    0   50 /   50     0.0s Channel blocked-sender cancellation removes waiter increments counter and consumes no value
+[ ]    0    0    0    0 /   50     0.0s Channel try_send and try_recv return exact no-wait empty full item and close boundaries
+[✓]   50    0    0   50 /   50     0.0s Channel try_send and try_recv return exact no-wait empty full item and close boundaries
+[ ]    0    0    0    0 /   50     0.0s Channel graceful close fence/drain/reason ordering
+[✓]   50    0    0   50 /   50     0.0s Channel graceful close fence/drain/reason ordering
+[ ]    0    0    0    0 /   50     0.0s Channel close effect wrappers have the same fence drain and reason as direct close
+[✓]   50    0    0   50 /   50     0.0s Channel close effect wrappers have the same fence drain and reason as direct close
+[ ]    0    0    0    0 /   50     0.0s Semaphore waiting-cancellation safety/no permit consumption
+[✓]   50    0    0   50 /   50     0.0s Semaphore waiting-cancellation safety/no permit consumption
+[ ]    0    0    0    0 /   50     0.0s Semaphore wakes blocked permit waiters in FIFO order
+[✓]   50    0    0   50 /   50     0.0s Semaphore wakes blocked permit waiters in FIFO order
+[ ]    0    0    0    0 /   50     0.0s Semaphore validates bounds and try_acquire atomically decrements without barging queued waiters
+[✓]   50    0    0   50 /   50     0.0s Semaphore validates bounds and try_acquire atomically decrements without barging queued waiters
+[ ]    0    0    0    0 /   50     0.0s Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters
+[✓]   50    0    0   50 /   50     0.0s Semaphore.with_permits_or_abort rejects generated invalid requests and preserves exact counters
+[ ]    0    0    0    0 /   50     0.0s Semaphore.with_permits releases on success typed failure defect and cancellation
+[✓]   50    0    0   50 /   50     0.0s Semaphore.with_permits releases on success typed failure defect and cancellation
+[ ]    0    0    0    0 /   50     0.0s Semaphore.with_permits_or_abort returns Some for acquisition and None for abort
+[✓]   50    0    0   50 /   50     0.0s Semaphore.with_permits_or_abort returns Some for acquisition and None for abort
+[ ]    0    0    0    0 /   50     0.0s Semaphore.with_permits_or_abort releases on success failure defect abort and cancellation
+[✓]   50    0    0   50 /   50     0.0s Semaphore.with_permits_or_abort releases on success failure defect abort and cancellation
+[ ]    0    0    0    0 /   50     0.0s Queue combined and view close or shutdown effect wrappers equal direct transitions
+[✓]   50    0    0   50 /   50     0.1s Queue combined and view close or shutdown effect wrappers equal direct transitions
+[ ]    0    0    0    0 /   50     0.0s Queue graceful close/error ordering
+[✓]   50    0    0   50 /   50     0.0s Queue graceful close/error ordering
+[ ]    0    0    0    0 /   50     0.0s Queue shutdown immediately drops buffered values and closes future operations
+[✓]   50    0    0   50 /   50     0.0s Queue shutdown immediately drops buffered values and closes future operations
+[ ]    0    0    0    0 /   50     0.0s Queue take_up_to validates negative max and drains exactly zero or up to generated max
+[✓]   50    0    0   50 /   50     0.0s Queue take_up_to validates negative max and drains exactly zero or up to generated max
+[ ]    0    0    0    0 /   50     0.0s Queue stats size formula and empty full shutdown queries match buffered and waiting pressure
+[✓]   50    0    0   50 /   50     0.0s Queue stats size formula and empty full shutdown queries match buffered and waiting pressure
+[ ]    0    0    0    0 /   50     0.0s Queue repeated shutdown preserves committed state counters and Closed reasons
+[✓]   50    0    0   50 /   50     0.0s Queue repeated shutdown preserves committed state counters and Closed reasons
+[ ]    0    0    0    0 /   50     0.0s Queue shutdown wakes blocked producer consumer and await_shutdown waiter
+[✓]   50    0    0   50 /   50     0.0s Queue shutdown wakes blocked producer consumer and await_shutdown waiter
+[ ]    0    0    0    0 /   50     0.0s monotone delay sequences for valid exponential/fibonacci/linear schedules
+[✓]   50    0    0   50 /   50     0.0s monotone delay sequences for valid exponential/fibonacci/linear schedules
+[ ]    0    0    0    0 /   50     0.0s Schedule terminal Done metadata delay is exactly Duration.zero
+[✓]   50    0    0   50 /   50     0.0s Schedule terminal Done metadata delay is exactly Duration.zero
+[ ]    0    0    0    0 /   50     0.0s Schedule.and_then tags every first phase output before every second phase output
+[✓]   50    0    0   50 /   50     0.0s Schedule.and_then tags every first phase output before every second phase output
+[ ]    0    0    0    0 /   50     0.0s Schedule.named changes only pp and emits no logs spans or metrics
+[✓]   50    0    0   50 /   50     0.0s Schedule.named changes only pp and emits no logs spans or metrics
+[ ]    0    0    0    0 /   50     0.0s Schedule.next returns Some exactly for Continue and None exactly for terminal Done
+[✓]   50    0    0   50 /   50     0.0s Schedule.next returns Some exactly for Continue and None exactly for terminal Done
+[ ]    0    0    0    0 /   50     0.0s recurs n step count
+[✓]   50    0    0   50 /   50     0.0s recurs n step count
+[ ]    0    0    0    0 /   50     0.0s dynamic override restoration across each exit kind
+[✓]   50    0    0   50 /   50     0.0s dynamic override restoration across each exit kind
+[ ]    0    0    0    0 /   50     0.0s override sibling isolation under par
+[✓]   50    0    0   50 /   50     0.0s override sibling isolation under par
+[ ]    0    0    0    0 /   50     0.0s nested clock override uses innermost binding and restores each exact outer clock
+[✓]   50    0    0   50 /   50     0.0s nested clock override uses innermost binding and restores each exact outer clock
+[ ]    0    0    0    0 /   50     0.0s nested random logger and tracer overrides use innermost bindings and restore exact outer observations
+[✓]   50    0    0   50 /   50     0.0s nested random logger and tracer overrides use innermost bindings and restore exact outer observations
+[ ]    0    0    0    0 /   50     0.0s log pipeline applies stricter nested minimum then outer inner and call attrs before transform and sink
+[✓]   50    0    0   50 /   50     0.0s log pipeline applies stricter nested minimum then outer inner and call attrs before transform and sink
+[ ]    0    0    0    0 /   50     0.0s nested log interceptors run outermost first and pass replacements inward
+[✓]   50    0    0   50 /   50     0.0s nested log interceptors run outermost first and pass replacements inward
+[ ]    0    0    0    0 /   50     0.0s log interceptor Drop executes exactly its generated outer prefix and skips its suffix and sink
+[✓]   50    0    0   50 /   50     0.0s log interceptor Drop executes exactly its generated outer prefix and skips its suffix and sink
+[ ]    0    0    0    0 /   50     0.0s interruptible outside a mask is identity for generated finite effects
+[✓]   50    0    0   50 /   50     0.0s interruptible outside a mask is identity for generated finite effects
+[ ]    0    0    0    0 /   50     0.0s uninterruptible interruptible uninterruptible equals uninterruptible for generated finite effects
+[✓]   50    0    0   50 /   50     0.0s uninterruptible interruptible uninterruptible equals uninterruptible for generated finite effects
+================================================================================
+success (ran 73 tests)
+Testing `Eta database connectors'.
+This run has ID `ZC3MJ7LM'.
+
+  [OK]          duckdb           0   values and rows.
+  [OK]          duckdb           1   available is result.
+  [OK]          duckdb           2   invalid threads is result.
+  [OK]          duckdb           3   decode errors are structured.
+  [OK]          duckdb           4   bind error does not leak statements.
+  [OK]          duckdb           5   list result materializes value list.
+  [OK]          duckdb           6   appender failed close poisons handle.
+  [OK]          turso            0   config and retry.
+  [OK]          turso            1   available is result.
+  [OK]          turso            2   typed queries.
+  [OK]          turso            3   decode errors are structured.
+  [OK]          turso            4   text preserves embedded nul.
+  [OK]          turso            5   exec_script runs every statement.
+  [OK]          ladybug          0   error classification.
+  [OK]          ladybug          1   available is result.
+  [OK]          ladybug          2   typed query builder.
+  [OK]          ladybug          3   extension helpers.
+  [OK]          ladybug          4   official extension install lifecycle.
+  [OK]          ladybug          5   typed query runtime.
+  [OK]          ladybug          6   LIST values decode as lists.
+  [OK]          ladybug          7   relationships decode as rels.
+  [OK]          ladybug          8   paths decode as paths.
+  [OK]          ladybug          9   timestamps are not empty strings.
+  [OK]          ladybug         10   Param.map round-trips as map.
+  [OK]          ladybug         11   Param.float list writes fixed float vect...
+  [OK]          ladybug         12   Nema-shaped Section vector updates survi...
+  [OK]          ladybug         13   many int rows survive GC.
+  [OK]          ladybug         14   connection query timeout.
+  [OK]          ladybug         15   read-only classifier.
+  [OK]          ladybug         16   bind error does not leak statements.
+
+Full test results in `~/projects/ribelo/ocaml/Eta-dx-e16/_build/default/test/connectors/_build/_tests/Eta database connectors'.
+Test Successful in 6.795s. 30 tests run.

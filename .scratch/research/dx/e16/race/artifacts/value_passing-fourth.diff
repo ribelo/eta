@@ -1,0 +1,22 @@
+diff --git a/.scratch/research/dx/e16/race/value_passing.ml b/.scratch/research/dx/e16/race/drift/value_passing_4.ml
+index bda2f685..513228fc 100644
+--- a/.scratch/research/dx/e16/race/value_passing.ml
++++ b/.scratch/research/dx/e16/race/drift/value_passing_4.ml
+@@ -37 +37 @@ let with_user_db clock released =
+-let program clock released users =
++let program clock released users audit =
+@@ -41 +41,3 @@ let program clock released users =
+-  let+ second = User_db.lookup db users.second in
++  let* () = Effect.sync (fun () -> audit first) in
++  let* second = User_db.lookup db users.second in
++  let+ () = Effect.sync (fun () -> audit second) in
+@@ -47,0 +50 @@ let run () =
++  let audited = ref [] in
+@@ -51,2 +54,5 @@ let run () =
+-  match Eta_eio.Runtime.run rt (program clock released users) with
+-  | Exit.Ok result when !released -> result
++  let audit result = audited := result :: !audited in
++  match Eta_eio.Runtime.run rt (program clock released users audit) with
++  | Exit.Ok ((first, second) as result)
++    when !released && List.rev !audited = [ first; second ] ->
++      result

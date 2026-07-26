@@ -1,0 +1,11 @@
+ocamlfind: [WARNING] Package `mtime.clock.os': Deprecated, use the mtime.clock library.
+File ".scratch/research/dx/e16/race/negative/wrong_reader.ml", line 17, characters 39-46:
+17 | let _must_not_compile = Reader.run bad program
+                                            ^^^^^^^
+Error: This expression has type
+         "Reader_port.env ->
+         (string * string, [ `Closed | `Invalid_user of string ])
+         Eta.Effect.t"
+       but an expression was expected of type
+         "wrong_env -> ('a, 'b) Eta.Effect.t"
+       Type "Reader_port.env" is not compatible with type "wrong_env"

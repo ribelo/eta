@@ -1,0 +1,5 @@
+# Fourth-dependency changed-line and site census
+10	4	.scratch/research/dx/e16/race/{value_passing.ml => drift/value_passing_4.ml}
+10	2	.scratch/research/dx/e16/race/{reader_port.ml => drift/reader_port_4.ml}
+value-passing: env_record_fields=0; changed_dependency_type_or_signature_sites=1 (program); changed_full_construction_sites=1 (program call); audit_leaf_sites=2; audit_state/check_support=5
+Reader: env_record_fields=4; changed_env_type_sites=1 (audit field); changed_full_construction_sites=1 (env literal); audit_leaf_sites=2; audit_accessor_sites=1; audit_state/check_support=5
