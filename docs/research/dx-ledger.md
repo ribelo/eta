@@ -289,7 +289,7 @@ evidence; every hold names its re-entry trigger.
   E6 name-carries-strategy criterion. Three mechanical pre-merge fixes.
   V-DX-E29-001/002.
 
-### E31 — `[@@eta.trace]` promote-trigger measurement
+### E31 — `[@@eta.trace]` promote-trigger measurement — in flight
 - What: count real `Effect.fn __POS__ __FUNCTION__` sites; decide by
   E10's pre-registered trigger.
 - Rationale: close E10 by evidence, not nostalgia.

@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing
+- In flight: **E31 — `[@@eta.trace]` promote-trigger measurement**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e31`
+  - Branch: `research/dx-e31-eta-trace-trigger`
+  - Stage: predictions sealed (V-DX-E31-001); objective.md written; awaiting executor
 - Done (recent): **E29 promoted** (`par3`/`par4`; review verdict promote,
   one mechanical rework round)
 - Done (recent): **E28 promoted** (`2edda44b`, unified admission;
@@ -94,4 +97,4 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-26 — E29 promoted
+- Last update: 2026-07-26 — E31 launched
