@@ -276,12 +276,18 @@ evidence; every hold names its re-entry trigger.
   docs mis-steering corrected; deadlock warning made precise with
   discriminating tests. V-DX-E28-001..003.
 
-### E29 — Concurrent product ergonomics (`par3`/`par4`) — in flight
+### E29 — Concurrent product ergonomics (`par3`/`par4`) — promoted 2026-07-26
 - What: pleasant explicit concurrency for 3–4 effects (nested
   `par (par a b) c` yields nested tuples).
 - Rationale: E9b made concurrency explicit; the explicit form should be
   pleasant, not penance.
 - Decision: queued by human 2026-07-23.
+- Outcome: `Effect.par3`/`Effect.par4` — flat concurrent products,
+  fail-fast like `par`, arity cap 4 with the beyond-four rule. Frequency
+  evidence reported straight (≈0 in-repo); promote decision rested on
+  the consumption model (V-DX-PRINC-1) + E9b's structural forcing + the
+  E6 name-carries-strategy criterion. Three mechanical pre-merge fixes.
+  V-DX-E29-001/002.
 
 ### E31 — `[@@eta.trace]` promote-trigger measurement
 - What: count real `Effect.fn __POS__ __FUNCTION__` sites; decide by

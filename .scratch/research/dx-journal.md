@@ -4132,3 +4132,51 @@ past frequency kills, not their verdicts: `sync_option` had neither
 in-repo use nor a forcing function (kill stands); `with_2`/`with_3` died
 on cohort shape judgment (kill stands). E29's objective is amended
 mid-flight to carry this principle.
+
+---
+
+## V-DX-E29-002 — 2026-07-26 — research/dx-e29-par-ergonomics — phase: results + decision
+
+**Gates** (orchestrator re-run, final): native trio + mainline `@install`
+pass in worktree and on master after merge.
+
+**Arc.** Frequency-gated sugar experiment with an honest kill path.
+Executor reported the frequency evidence straight — actual 3 nested-par
+sites (found one the orchestrator's count missed), all test-harness
+machinery, "pain not demonstrated in-repo" — and left the promote/kill
+call to the review per the pre-registered gates. PR-style oracle review:
+**promote**, rationale: census is weak evidence under the consumption
+model (V-DX-PRINC-1); E9b creates a real structural need downstream;
+the names carry the strategy (E6 standing criterion satisfied); "only
+ergonomics" suffices because two predictable members of the existing
+`par` family shrink call-site cognitive surface more than they grow API
+surface. Three mechanical pre-merge fixes (stale registry totals;
+fail-fast properties must enumerate every winner position per the
+exact-branch law policy; footprint audit must discriminate each child
+position) — one rework round, reviewer of record verified: **approve**
+(laws 73/73, core 612).
+
+**What shipped.** `Effect.par3`/`Effect.par4` — flat concurrent products
+over the shared `par_run_forks` engine; fail-fast like `par`; results in
+argument order; blueprint names/footprints aggregated; arity cap 4 with
+the beyond-four rule (`all` for homogeneous, nested `par` for
+heterogeneous). 9 shared-suite tests, 4 qcheck properties, law rows
+M119–M122.
+
+**Prediction scoring (orchestrator, V-DX-E29-001) — full house.**
+Decision (promote par3+par4 as one concept, justified by E9b's forcing
+function + E6 criterion, not repo frequency): hit. Semantics inherited
+(fail-fast all siblings, tuple order, parity, blueprint aggregation):
+hit. Census +2 vals: hit. Footguns +0: hit. Review
+(approve/approve-with-reservations on arity): hit (promote with three
+mechanical fixes). Outcome: hit. The ~35% kill probability I assigned
+was single-event unscorable, but the review's promote rationale matched
+the predicted structure exactly. The consumption-model principle
+(V-DX-PRINC-1) was load-bearing in the verdict — its first use.
+
+**Decision: PROMOTE.** Merged `--no-ff`; master gates green; master +
+branch pushed; worktree removed; objective + follow-up archived.
+
+**Follow-ups.** Watch item: par3/par4 adoption in downstream code (the
+consumption model says watch external usage, not this repo's census).
+Candidate input for the golden tutorials end item.

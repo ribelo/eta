@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E29 — Concurrent product ergonomics (`par3`/`par4`)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e29`
-  - Branch: `research/dx-e29-par-ergonomics`
-  - Stage: predictions sealed (V-DX-E29-001); objective.md written; awaiting executor
+- In flight: nothing
+- Done (recent): **E29 promoted** (`par3`/`par4`; review verdict promote,
+  one mechanical rework round)
 - Done (recent): **E28 promoted** (`2edda44b`, unified admission;
   one rework round after review)
 - Done (recent): **E30 promoted** (`7d0f462e`, three review rounds;
@@ -59,7 +58,7 @@ loop (plan §4.2 as amended by Amendment 1).
   E10 **held** (`let%eta` killed; `[@@eta.trace]` pre-selected, promote
   trigger defined; branch kept/pushed)
 - RESOLVED 2026-07-19: ladybug ABI fix `7a16e6fb`; master gates green.
-- Queue: E29 (par ergonomics) → E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
+- Queue: E31 → E32 → E16 → E21 → E17 (gated) → E18 → end items. Proposed (undecided): E33.
   hold-gated)
 - Backlog: E24b hook-ownership (context complete after E19/E20); retry
   cause-alignment; **same-domain runtime fence for Channel/Pubsub/Pool**
@@ -95,4 +94,4 @@ loop (plan §4.2 as amended by Amendment 1).
   primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
   unnecessity. Every objective.md carries the consumption-model block;
   frequency gates apply only absent a structural need.
-- Last update: 2026-07-25 — E29 launched
+- Last update: 2026-07-26 — E29 promoted

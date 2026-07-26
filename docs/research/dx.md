@@ -591,3 +591,30 @@ Provenance: `.scratch/research/dx/e30/`, V-DX-E30-001/002, branch
 
 Provenance: `.scratch/research/dx/e28/`, V-DX-E28-001..003, branch
 `research/dx-e28-all-vs-map-par`, law rows M114–M118, R127–R130.
+
+## E29 — `par3`/`par4`: flat concurrent products (promoted 2026-07-26)
+
+E9b made concurrency explicit, so 3–4-way concurrent fetches are the
+common consumer shape — and nested `par` was never a design, just the
+accident of a binary API. `Effect.par3`/`Effect.par4` collect flat
+tuples in argument order with `par`'s fail-fast semantics; arity caps at
+four with an explicit beyond-four rule.
+
+Durable lessons:
+
+1. **Frequency gates have a consumption-model exception.** In-repo
+   frequency was ≈ 0 — and irrelevant: the consumers who feel the pain
+   are downstream, and E9b's explicit-concurrency decision structurally
+   forces this shape onto them. The structural need must be *argued and
+   examined*, not waved through — but absence of in-repo use cannot
+   answer it (V-DX-PRINC-1's first application).
+2. **"Only ergonomics" can be enough** when the additions are
+   predictable members of an existing family — they shrink call-site
+   cognitive surface more than they grow API surface. The E6 criterion
+   is the guardrail: the name must carry the execution strategy
+   (`par3` does; `with_2` didn't).
+3. **Registry discipline is per-row arithmetic, not vibes.** Three
+   mechanical pre-merge fixes were all about the executable-law
+   registry: totals that match the rows, properties that enumerate every
+   documented branch deterministically, and audit tests that
+   discriminate every child position.
