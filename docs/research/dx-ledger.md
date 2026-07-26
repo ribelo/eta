@@ -356,7 +356,7 @@ evidence; every hold names its re-entry trigger.
 
 Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 
-### E35 — Stack-safety probe (P0)
+### E35 — Stack-safety probe (P0) — in flight
 - What: boundary corpus (million binds/maps/concat, deep recovery, deep
   cause trees) on BOTH substrates; trampolined interpreter only on
   measured failure.
