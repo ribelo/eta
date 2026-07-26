@@ -2757,6 +2757,206 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let result = run_ok rt (Effect.par (Effect.pure 1) (Effect.pure "two")) in
     Alcotest.(check (pair int string)) "par returns typed pair" (1, "two") result
 
+  let test_par3_returns_triple_in_argument_order () =
+    B.with_runtime @@ fun ctx rt ->
+    let left_gate, release_left = B.create_promise () in
+    let middle_gate, release_middle = B.create_promise () in
+    let promise =
+      B.fork_run ctx rt
+        (Effect.par3
+           (B.await_effect left_gate |> Effect.map (fun () -> 1))
+           (B.await_effect middle_gate |> Effect.map (fun () -> "two"))
+           (Effect.pure 3.0))
+    in
+    (* Completion order is the reverse of argument order. *)
+    B.resolve release_middle ();
+    B.resolve release_left ();
+    (match B.await promise with
+    | Exit.Ok (left, middle, right) ->
+        Alcotest.(check int) "par3 left" 1 left;
+        Alcotest.(check string) "par3 middle" "two" middle;
+        Alcotest.(check (float 0.001)) "par3 right" 3.0 right
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause)
+
+  let test_par4_returns_quadruple_in_argument_order () =
+    B.with_runtime @@ fun ctx rt ->
+    let gate1, release1 = B.create_promise () in
+    let gate2, release2 = B.create_promise () in
+    let gate3, release3 = B.create_promise () in
+    let promise =
+      B.fork_run ctx rt
+        (Effect.par4
+           (B.await_effect gate1 |> Effect.map (fun () -> 1))
+           (B.await_effect gate2 |> Effect.map (fun () -> "two"))
+           (B.await_effect gate3 |> Effect.map (fun () -> 3.0))
+           (Effect.pure true))
+    in
+    (* Completion order is the reverse of argument order. *)
+    B.resolve release3 ();
+    B.resolve release2 ();
+    B.resolve release1 ();
+    (match B.await promise with
+    | Exit.Ok (first, second, third, fourth) ->
+        Alcotest.(check int) "par4 first" 1 first;
+        Alcotest.(check string) "par4 second" "two" second;
+        Alcotest.(check (float 0.001)) "par4 third" 3.0 third;
+        Alcotest.(check bool) "par4 fourth" true fourth
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause)
+
+  let test_par3_children_run_concurrently () =
+    B.with_runtime @@ fun ctx rt ->
+    let started = B.create_stream 3 in
+    let go, release = B.create_promise () in
+    let child name =
+      Effect.sync (fun () -> B.stream_add started name)
+      |> Effect.bind (fun () -> B.await_effect go)
+      |> Effect.map (fun () -> name)
+    in
+    let promise =
+      B.fork_run ctx rt (Effect.par3 (child 1) (child 2) (child 3))
+    in
+    (* All three children must start before any can finish; a serialized
+       par3 would deadlock here. *)
+    ignore (B.stream_take started : int);
+    ignore (B.stream_take started : int);
+    ignore (B.stream_take started : int);
+    B.resolve release ();
+    match B.await promise with
+    | Exit.Ok actual ->
+        Alcotest.(check (triple int int int)) "par3 rendezvous" (1, 2, 3)
+          actual
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let test_par4_children_run_concurrently () =
+    B.with_runtime @@ fun ctx rt ->
+    let started = B.create_stream 4 in
+    let go, release = B.create_promise () in
+    let child name =
+      Effect.sync (fun () -> B.stream_add started name)
+      |> Effect.bind (fun () -> B.await_effect go)
+      |> Effect.map (fun () -> name)
+    in
+    let promise =
+      B.fork_run ctx rt
+        (Effect.par4 (child 1) (child 2) (child 3) (child 4))
+    in
+    ignore (B.stream_take started : int);
+    ignore (B.stream_take started : int);
+    ignore (B.stream_take started : int);
+    ignore (B.stream_take started : int);
+    B.resolve release ();
+    match B.await promise with
+    | Exit.Ok (a, b, c, d) ->
+        Alcotest.(check (triple int int int)) "par4 rendezvous first three"
+          (1, 2, 3) (a, b, c);
+        Alcotest.(check int) "par4 rendezvous fourth" 4 d
+    | Exit.Error cause ->
+        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
+
+  let check_fail_fast_cancels_siblings ~arity run_product =
+    (* The failing child fails immediately; every sibling must be cancelled
+       before completing, whatever position the failure occupies. *)
+    for position = 0 to arity - 1 do
+      B.with_runtime @@ fun _ctx rt ->
+      let completed = Array.make arity false in
+      let child index =
+        if index = position then Effect.fail "boom"
+        else
+          B.yield_effect ()
+          |> Effect.bind (fun () ->
+                 Effect.sync (fun () ->
+                     completed.(index) <- true;
+                     index))
+      in
+      let exit = run_product rt child in
+      check_exit_error string_cause
+        (Printf.sprintf "failure at position %d" position)
+        (Cause.Fail "boom") exit;
+      Array.iteri
+        (fun index done_ ->
+          if index <> position then
+            Alcotest.(check bool)
+              (Printf.sprintf "sibling %d cancelled before completion" index)
+              false done_)
+        completed
+    done
+
+  let test_par3_fail_fast_cancels_all_siblings () =
+    check_fail_fast_cancels_siblings ~arity:3 @@ fun rt child ->
+    B.run rt (Effect.par3 (child 0) (child 1) (child 2))
+
+  let test_par4_fail_fast_cancels_all_siblings () =
+    check_fail_fast_cancels_siblings ~arity:4 @@ fun rt child ->
+    B.run rt (Effect.par4 (child 0) (child 1) (child 2) (child 3))
+
+  let check_cancelled_siblings_release_before_return ~arity run_product =
+    B.with_test_clock @@ fun ctx clock rt ->
+    let gates = Array.init arity (fun _ -> B.create_promise ()) in
+    let released = Array.make arity false in
+    let sibling index =
+      let acquired, mark_acquired = gates.(index) in
+      Effect.with_scope
+        (Effect.acquire_release
+           ~acquire:(Effect.sync (fun () -> B.resolve mark_acquired ()))
+           ~release:(fun () ->
+             Effect.sync (fun () -> released.(index) <- true))
+        |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
+    in
+    let body =
+      Array.fold_left
+        (fun acc (acquired, _) ->
+          acc |> Effect.bind (fun () -> B.await_effect acquired))
+        Effect.unit gates
+      |> Effect.bind (fun () -> Effect.fail "body")
+    in
+    let promise = B.fork_run ctx rt (run_product body sibling) in
+    wait_for_sleepers clock arity;
+    match B.await promise with
+    | Exit.Ok _ -> Alcotest.fail "expected body failure"
+    | Exit.Error cause ->
+        (* Parity with the par/all cancellation baselines: the body's
+           failure is observed and cancelled scope-holding siblings
+           contribute their interrupt exits to the aggregate. *)
+        check_concurrent_cause "par3/par4 cancellation cause" cause;
+        Alcotest.(check bool)
+          "body failure observed" true
+          (string_cause_contains "body" cause);
+        Array.iteri
+          (fun index done_ ->
+            Alcotest.(check bool)
+              (Printf.sprintf "sibling %d released before return" index)
+              true done_)
+          released
+
+  let test_par3_cancelled_siblings_release_before_return () =
+    check_cancelled_siblings_release_before_return ~arity:2
+    @@ fun body sibling -> Effect.par3 body (sibling 0) (sibling 1)
+
+  let test_par4_cancelled_siblings_release_before_return () =
+    check_cancelled_siblings_release_before_return ~arity:3
+    @@ fun body sibling ->
+    Effect.par4 body (sibling 0) (sibling 1) (sibling 2)
+
+  let test_par3_par4_audit_aggregates_children () =
+    check_audit "par3"
+      (audit ~names:[ "a"; "b"; "c" ] ~uses_clock:true
+         ~has_concurrency:true ())
+      (Effect.par3
+         (Effect.named "a" (Effect.sleep Duration.zero))
+         (Effect.named "b" (Effect.sync (fun () -> "b")))
+         (Effect.named "c" (Effect.pure 3.0)));
+    check_audit "par4"
+      (audit ~names:[ "a"; "b"; "c"; "d" ] ~uses_clock:true
+         ~emits_logs:true ~has_concurrency:true ())
+      (Effect.par4
+         (Effect.named "a" (Effect.sync (fun () -> 1)))
+         (Effect.named "b" (Effect.log "hello"))
+         (Effect.named "c" (Effect.pure 3.0))
+         (Effect.named "d" (Effect.pure true)))
+
   let test_all_collects_in_input_order () =
     B.with_runtime @@ fun _ctx rt ->
     let result =
@@ -3959,6 +4159,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_par_returns_both_successes;
           Alcotest.test_case "par keeps heterogeneous successes private"
             `Quick test_par_keeps_heterogeneous_successes_private;
+          Alcotest.test_case "par3 returns triple in argument order" `Quick
+            test_par3_returns_triple_in_argument_order;
+          Alcotest.test_case "par4 returns quadruple in argument order" `Quick
+            test_par4_returns_quadruple_in_argument_order;
+          Alcotest.test_case "par3 children run concurrently" `Quick
+            test_par3_children_run_concurrently;
+          Alcotest.test_case "par4 children run concurrently" `Quick
+            test_par4_children_run_concurrently;
+          Alcotest.test_case "par3 fail-fast cancels all siblings" `Quick
+            test_par3_fail_fast_cancels_all_siblings;
+          Alcotest.test_case "par4 fail-fast cancels all siblings" `Quick
+            test_par4_fail_fast_cancels_all_siblings;
+          Alcotest.test_case "par3 cancelled siblings release before return"
+            `Quick test_par3_cancelled_siblings_release_before_return;
+          Alcotest.test_case "par4 cancelled siblings release before return"
+            `Quick test_par4_cancelled_siblings_release_before_return;
+          Alcotest.test_case "par3/par4 audit aggregates children" `Quick
+            test_par3_par4_audit_aggregates_children;
           Alcotest.test_case "all collects in input order" `Quick
             test_all_collects_in_input_order;
           Alcotest.test_case "all empty returns empty list" `Quick
