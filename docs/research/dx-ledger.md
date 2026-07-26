@@ -367,7 +367,7 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   fiber stacks + jsoo CPS trampoline. 1M regression tests on all three
   substrates. V-DX-E35-001/002.
 
-### E36 — Background failure semantics (P0)
+### E36 — Background failure semantics (P0) — in flight
 - What: split `with_background` semantics — fail-fast (death cancels
   body) vs supervised (current, honestly named) vs best-effort.
 
