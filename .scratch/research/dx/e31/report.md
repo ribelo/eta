@@ -43,3 +43,83 @@ leaf shape. E7 and E25 also show a limitation of the fixed wrapper: meaningful
 The consumption-model rescue therefore does not activate. External applications
 could choose more function-level spans, but no promoted contract forces them to
 do so, and “consumers may want it later” is not observable evidence.
+
+## Cohort material (verbatim)
+
+<!-- COHORT MATERIAL START -->
+### Decision requested
+
+Eta currently spells a function-boundary tracing span explicitly as:
+
+```ocaml
+let load_user id =
+  Effect.fn __POS__ __FUNCTION__ (body id)
+```
+
+The proposed feature would replace that wrapper at function definitions with
+exactly one sugar spelling, either:
+
+```ocaml
+let%eta load_user id = body id
+```
+
+or:
+
+```ocaml
+let load_user id = body id [@@eta.trace]
+```
+
+In either form, `body id` must already return `Effect.t`. The form adds the
+current function name and source location span; it does not lift ordinary OCaml
+code into an effect. Recursive functions create a span on each call. Optional
+`fn` configuration such as `~kind`, `~error_pp`, and `~attrs` remains an explicit
+`Effect.fn` use.
+
+The trigger is not “could this work?” It is: **do reviewers still explicitly ask
+for this sugar after E7/E8?**
+
+### Measured demand
+
+- Current executable census: **4 exact `Effect.fn __POS__ __FUNCTION__` sites in
+  2 files**.
+- All four are framework tests: three hand-written parity oracles for
+  `[%eta.result]`, and one direct test of `Effect.fn`'s name/location contract.
+- **0 of 4 are function bindings eligible for the proposed sugar.**
+- **0 are consumer-shaped application sites.**
+- A broad textual search adds one application-shaped README example, but it binds
+  a local effect value rather than a function and is also ineligible.
+- No experiment promoted after the hold creates a structural need for
+  definition-level trace sugar.
+- E8 reduces demand: `[%eta.result "name" body]` owns the common named typed-result
+  leaf shape, including its function/source wrapper.
+
+### Candidate verdict: FIRE — strongest case
+
+The repository is a library implementation and test corpus, not a representative
+sample of downstream applications. Application authors may reasonably put spans
+at effect-returning service-function boundaries even though Eta's own machinery
+does not. The explicit wrapper repeats two compiler-provided tokens and obscures
+the function body. A single visible definition annotation would make that policy
+concise, while the existing explicit primitive remains available for configured
+spans. If this is a pattern you would actively choose in ordinary Eta
+applications, explicitly request **FIRE** and choose one spelling.
+
+### Candidate verdict: NO-FIRE — strongest case
+
+The post-E7/E8 evidence contains no eligible consumer site and no structural
+forcing function. The common named typed-result leaf boilerplate is already
+covered by `[%eta.result]`; configured spans still need explicit `Effect.fn`.
+A new definition form also introduces two predictable comprehension costs:
+readers may think it lifts a plain body, and may think recursive definitions get
+one span rather than one per call. Shipping syntax for hypothetical downstream
+preference, without an observed or structurally forced use, fails the gate. If
+you would not actively request the form on this evidence, choose **NO-FIRE**.
+
+### Response format
+
+1. `FIRE: let%eta` or `FIRE: [@@eta.trace]` — only if you explicitly want the
+   sugar after considering the evidence; briefly say why.
+2. Otherwise `NO-FIRE`; briefly state which evidence controls.
+
+Do not choose FIRE merely because the transformation seems technically simple.
+<!-- COHORT MATERIAL END -->
