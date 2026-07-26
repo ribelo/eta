@@ -2,15 +2,32 @@
 
 ## Recommendation
 
-**READY FOR REVIEW.** Ship the explicit split:
+**BLOCKED.** Do not ship the candidate split yet. The intended API remains:
 
 - `Effect.with_background`: fail-fast lexical background work;
 - `Effect.with_supervised_background`: the former behavior, unchanged;
 - no best-effort value: `with_supervised_background (ignore_errors background)`
   already expresses it.
 
-The implementation, native shared suite, jsoo counterparts, law registry,
-documentation, changelog, migration, and every assignment gate agree.
+All assignment gates pass, but adversarial review found three semantic proof
+gaps that the current runtime contract/tests do not close.
+
+## Blocking findings
+
+1. The assignment requires background failure to beat body success when both
+   become ready from one release. The candidate instead specifies first terminal
+   publication because `Runtime_contract` exposes no release epoch, runnable-set
+   inspection, or portable waiter priority. Restoring the literal rule requires
+   a cross-backend arbitration primitive outside E36's scope fence; accepting
+   publication order requires an upstream objective decision.
+2. Use-first cleanup parity is incomplete. The candidate extracts cancellation
+   finalizers from the losing exit and gives use its own child finalizer scope;
+   this has not proven the former `finally (cancel_child_effect child)` cause
+   shape and ordering when background cleanup fails after use success/failure.
+3. Loser exit publication happens with `stream_add` after cancellation. The
+   runtime contract does not state that this handoff is cancellation-safe. The
+   candidate needs a protected commit plus a regression proving both terminal
+   events are always published before arbitration assembly.
 
 ## Contracts and mechanism
 
@@ -79,8 +96,9 @@ cleanup failure.
 
 ## Predictions versus actuals
 
-Nine of ten top-level sealed predictions matched: five semantic edges, migration,
-census, footgun, and review outcome. The tie prediction changed.
+Eight of ten top-level sealed predictions matched: five semantic edges,
+migration, census, and footgun. The tie prediction and READY review prediction
+did not survive adversarial review.
 
 The journal predicted unconditional safety-first background precedence for work
 made runnable by one release. The runtime contract has no release epoch,
@@ -109,15 +127,13 @@ Artifacts: `.scratch/research/dx/e36/redteam/`.
 
 | Candidate | Final status | Evidence |
 |---|---|---|
-| Dedicated asymmetric lexical arbiter + verbatim supervised helper | Accepted | All native/mainline/jsoo gates and pinned branches pass |
+| Dedicated asymmetric lexical arbiter + verbatim supervised helper | Partial / blocked | Main branches pass, but tie, cleanup parity, and cancellation-safe publication remain open |
 | Pure `par`/`race` composition | Rejected | Cannot satisfy asymmetric early-success and cleanup shapes |
 | `with_best_effort_background` | Out of scope / unnecessary | Existing composition expresses it |
 | Supervisor redesign or HTTP migration | Out of scope | E36 fence; E42a follow-up |
 
-Strongest remaining risk: apparent simultaneity has no portable wall-clock tie
-concept. The contract intentionally speaks only about observable publication
-order. A future runtime priority/epoch primitive would justify reconsidering
-safety-first same-release precedence.
+Blocking risks are the missing portable same-release priority, unproven use-first
+cleanup shape/order, and an uncontracted cancellation-sensitive loser handoff.
 
 ## Verification
 
