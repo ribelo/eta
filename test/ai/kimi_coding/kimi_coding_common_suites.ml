@@ -263,6 +263,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | A.Assistant { content = A.Text text :: _; _ } ->
         Alcotest.(check string) "text" "Sunny and 21C" text
     | _ -> Alcotest.fail "assistant");
+    Alcotest.(check (option int))
+      "messages cache read" (Some 6)
+      (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_read));
+    Alcotest.(check (option int))
+      "messages cache write" (Some 4)
+      (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_write));
     let stream =
       run_ok rt "stream messages"
         (K.stream_messages ~identity
@@ -330,6 +336,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         events
     in
     Alcotest.(check bool) "reasoning" true has_reasoning
+
+  let test_chat_cache_usage () =
+    let response =
+      K.decode_chat (read_fixture "chat.json") |> expect_ok "chat"
+    in
+    let usage = Option.get response.usage in
+    Alcotest.(check (option int))
+      "cache miss" (Some 0) usage.A.input_tokens.cache_read;
+    Alcotest.(check (option int))
+      "cache write not reported" None usage.A.input_tokens.cache_write
 
   let test_reasoning_levels () =
     let credential =
@@ -485,6 +501,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_messages_headers_and_stream;
           Alcotest.test_case "catalog and chat reasoning" `Quick
             test_catalog_and_chat_reasoning;
+          Alcotest.test_case "chat cache usage" `Quick test_chat_cache_usage;
           Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "identity requires product" `Quick
             test_identity_requires_product;

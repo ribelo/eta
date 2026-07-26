@@ -313,6 +313,12 @@ let test_decode_responses_fixture () =
   Alcotest.(check (option string)) "id" (Some "resp_fixture") response.id;
   Alcotest.(check string) "text" "It is 21C in Warsaw."
     (assistant_text response.message);
+  Alcotest.(check (option int))
+    "cache miss" (Some 0)
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_read));
+  Alcotest.(check (option int))
+    "cache write not reported" None
+    (Option.bind response.usage (fun usage -> usage.A.input_tokens.cache_write));
   match assistant_tool_calls response.message with
   | [ call ] ->
       Alcotest.(check string) "call id" "call_weather" call.id;
