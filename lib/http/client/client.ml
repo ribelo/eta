@@ -65,19 +65,12 @@ let shutdown t =
   ensure_owner_domain t;
   t.shutdown_impl ()
 
-let validate_request req =
-  if req.Request.response_idle_timeout_ms < 0 then
-    invalid_arg
-      "Eta_http.Client: response_idle_timeout_ms must be >= 0"
-
 let request t req =
   ensure_owner_domain t;
-  validate_request req;
   t.request_impl req
 
 let request_with_retry ?policy t req =
   ensure_owner_domain t;
-  validate_request req;
   Retry.run ?policy t.request_impl req
 
 let[@cold] runtime_service_error request =

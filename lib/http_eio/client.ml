@@ -128,13 +128,13 @@ let make_h1 ~sw ~net
                    |> Eta.Effect.map (fun () -> existing))
   in
   let request_impl request =
-    let response_idle_timeout_ms = request.Request.response_idle_timeout_ms in
+    let response_idle_timeout = request.Request.response_idle_timeout in
     match H1.request_of_request request with
     | Error error -> Eta.Effect.fail error
     | Ok request ->
         pool_for request
         |> Eta.Effect.bind (fun pool ->
-               H1_client.request_with_pool ~response_idle_timeout_ms pool
+               H1_client.request_with_pool ~response_idle_timeout pool
                  request)
         |> Eta.Effect.map H1.response
   in
@@ -165,12 +165,12 @@ let make_h1_direct ~sw ~net ?host_eio
     ?(max_response_body_bytes = default_max_response_body_bytes) ?ca_file () =
   validate_max_response_body_bytes "make_h1_direct" max_response_body_bytes;
   let request_impl request =
-    let response_idle_timeout_ms = request.Request.response_idle_timeout_ms in
+    let response_idle_timeout = request.Request.response_idle_timeout in
     match H1.request_of_request request with
     | Error error -> Eta.Effect.fail error
     | Ok request ->
         H1_client.request ~max_response_body_bytes ?host_eio ?ca_file ~sw ~net
-          ~response_idle_timeout_ms request
+          ~response_idle_timeout request
         |> Eta.Effect.map H1.response
   in
   let stats_impl () =
@@ -328,7 +328,7 @@ let h1_on_flow state flow request =
   | Ok h1_request ->
       H1_client.request_on_flow
         ~release:(fun () -> close_counted state flow)
-        ~response_idle_timeout_ms:request.Request.response_idle_timeout_ms
+        ~response_idle_timeout:request.Request.response_idle_timeout
         ~max_response_body_bytes:state.max_response_body_bytes ~flow h1_request
       |> Eta.Effect.map H1.response
 

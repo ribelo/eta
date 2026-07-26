@@ -1,6 +1,8 @@
 open Test_eta_http_support
 open Test_eta_http_h2_support
 
+module Response_idle_timeout = Eta_http.Request.Response_idle_timeout
+
 let tcp_port = function
   | `Tcp (_, port) -> port
   | `Unix _ -> Alcotest.fail "expected TCP listener"
@@ -288,7 +290,7 @@ let test_h2_response_header_idle_timeout_is_typed () =
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:env#clock () in
   let request =
-    Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+    Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
       "https://api.example.test/header-timeout"
   in
   Fun.protect
@@ -337,7 +339,7 @@ let test_h2_streaming_upload_does_not_suppress_header_idle_timeout () =
       ()
   in
   let request =
-    Eta_http.Request.make ~response_idle_timeout_ms:5 "POST"
+    Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "POST"
       "https://api.example.test/upload-timeout"
       ~body:(Eta_http.Request.Stream body)
   in
@@ -750,7 +752,7 @@ let test_h2_response_header_idle_timeout_resets_on_informational () =
       ])
     (fun rt connection ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "https://api.example.test/early-hints"
       in
       let response =
@@ -777,7 +779,8 @@ let test_h2_informational_end_stream_is_protocol_error () =
       ])
     (fun rt connection ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:50 "GET"
+        Eta_http.Request.make
+          ~response_idle_timeout:(Response_idle_timeout.of_ms 50) "GET"
           "https://api.example.test/invalid-early-hints"
       in
       match
@@ -820,7 +823,7 @@ let test_h2_response_body_idle_timeout_is_typed () =
       ])
     (fun rt connection ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "https://api.example.test/body-timeout"
       in
       let result =
@@ -874,7 +877,7 @@ let test_h2_response_idle_timeout_resets_between_body_chunks () =
       ])
     (fun rt connection ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "https://api.example.test/body-progress"
       in
       let body =
@@ -886,7 +889,7 @@ let test_h2_response_idle_timeout_resets_between_body_chunks () =
       in
       Alcotest.(check string) "body" "abc" (Bytes.to_string body))
 
-let test_h2_response_idle_timeout_zero_disables () =
+let test_h2_response_idle_timeout_disabled () =
   let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
   let headers =
     raw_headers encoder ~stream_id:1
@@ -909,7 +912,7 @@ let test_h2_response_idle_timeout_zero_disables () =
       ])
     (fun rt connection ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:0 "GET"
+        Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
           "https://api.example.test/no-timeout"
       in
       let body =

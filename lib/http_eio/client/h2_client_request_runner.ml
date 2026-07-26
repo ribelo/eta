@@ -11,37 +11,38 @@ module Response_reader = H2_client_response_reader
 let informational_status = Response_reader.informational_status
 
 let request_on_connection connection request url =
-  let response_idle_timeout_ms = request.Request.response_idle_timeout_ms in
-  if response_idle_timeout_ms < 0 then
-    invalid_arg
-      "Eta_http_eio.Client: response_idle_timeout_ms must be >= 0";
+  let response_idle_timeout =
+    Request.Response_idle_timeout.to_ms request.Request.response_idle_timeout
+  in
   let with_timeout ~on_timeout eff =
-    if response_idle_timeout_ms = 0 then eff
-    else
-      Eta.Effect.timeout_as
-        (Eta.Duration.ms response_idle_timeout_ms)
-        ~on_timeout eff
+    match response_idle_timeout with
+    | None -> eff
+    | Some milliseconds ->
+        Eta.Effect.timeout_as
+          (Eta.Duration.ms milliseconds)
+          ~on_timeout eff
   in
   let header_timeout =
     Errors.error request
       (Response_header_timeout
-         { timeout_ms = Some response_idle_timeout_ms })
+         { timeout_ms = response_idle_timeout })
   in
   let body_timeout =
     Errors.error request
       (Response_body_idle_timeout
-         { timeout_ms = Some response_idle_timeout_ms })
+         { timeout_ms = response_idle_timeout })
   in
   let with_body_timeout body =
-    if response_idle_timeout_ms = 0 then body
-    else
-      Body.of_reader ~release:(fun () -> Body.discard body) (fun () ->
-          Eta.Effect.timeout_as
-            (Eta.Duration.ms response_idle_timeout_ms)
-            ~on_timeout:body_timeout (Body.read body)
-          |> Eta.Effect.map (function
-               | None -> Body.End
-               | Some chunk -> Body.Chunk chunk))
+    match response_idle_timeout with
+    | None -> body
+    | Some milliseconds ->
+        Body.of_reader ~release:(fun () -> Body.discard body) (fun () ->
+            Eta.Effect.timeout_as
+              (Eta.Duration.ms milliseconds)
+              ~on_timeout:body_timeout (Body.read body)
+            |> Eta.Effect.map (function
+                 | None -> Body.End
+                 | Some chunk -> Body.Chunk chunk))
   in
   let header_progress_mutex = Eio.Mutex.create () in
   let header_progress = ref 0 in

@@ -4,3 +4,7 @@
  (action
   (setenv EIO_BACKEND posix
    (run %{test}))))
+
+(test
+ (name http_law_properties)
+ (libraries eta_http qcheck qcheck-core.runner))

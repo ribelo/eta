@@ -36,11 +36,6 @@ type nonrec pool = pool
 let default_max_response_body_bytes =
   H1_client_response_reader.default_max_response_body_bytes
 
-let validate_response_idle_timeout_ms value =
-  if value < 0 then
-    invalid_arg
-      "Eta_http_eio.H1.Client: response_idle_timeout_ms must be >= 0"
-
 let response_header_timeout request timeout_ms =
   H1_client_errors.make_error request
     (Response_header_timeout { timeout_ms = Some timeout_ms })
@@ -49,30 +44,32 @@ let response_body_idle_timeout request timeout_ms =
   H1_client_errors.make_error request
     (Response_body_idle_timeout { timeout_ms = Some timeout_ms })
 
-let with_timeout timeout_ms ~on_timeout eff =
-  if timeout_ms = 0 then eff
-  else
-    Effect.timeout_as (Eta.Duration.ms timeout_ms) ~on_timeout eff
+let with_timeout timeout ~on_timeout eff =
+  match Request.Response_idle_timeout.to_ms timeout with
+  | None -> eff
+  | Some milliseconds ->
+      Effect.timeout_as (Eta.Duration.ms milliseconds)
+        ~on_timeout:(on_timeout milliseconds) eff
 
-let with_body_idle_timeout request timeout_ms body =
-  if timeout_ms = 0 then body
-  else
-    Body.of_reader ~release:(fun () -> Body.discard body) (fun () ->
-        Effect.timeout_as (Eta.Duration.ms timeout_ms)
-          ~on_timeout:(response_body_idle_timeout request timeout_ms)
-          (Body.read body)
-        |> Effect.map (function
-             | None -> Body.End
-             | Some chunk -> Body.Chunk chunk))
+let with_body_idle_timeout request timeout body =
+  match Request.Response_idle_timeout.to_ms timeout with
+  | None -> body
+  | Some milliseconds ->
+      Body.of_reader ~release:(fun () -> Body.discard body) (fun () ->
+          Effect.timeout_as (Eta.Duration.ms milliseconds)
+            ~on_timeout:(response_body_idle_timeout request milliseconds)
+            (Body.read body)
+          |> Effect.map (function
+               | None -> Body.End
+               | Some chunk -> Body.Chunk chunk))
 
 let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
     ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?(response_idle_timeout_ms = Request.default_response_idle_timeout_ms)
+    ?(response_idle_timeout = Request.Response_idle_timeout.default)
     ?release ?release_on_error ~flow request =
   if max_response_body_bytes < 0 then
     invalid_arg
       "Eta_http_eio.H1.Client.request_on_flow: max_response_body_bytes must be >= 0";
-  validate_response_idle_timeout_ms response_idle_timeout_ms;
   let release =
     match release with
     | Some release -> release
@@ -90,9 +87,8 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
            Effect.sync (fun () ->
                H1_client_response_reader.read_response_head ?host_eio ~initial
                  flow request)
-           |> with_timeout response_idle_timeout_ms
-                ~on_timeout:
-                  (response_header_timeout request response_idle_timeout_ms)
+           |> with_timeout response_idle_timeout
+                ~on_timeout:(response_header_timeout request)
            |> Effect.bind_error cleanup_after_error
            |> Effect.bind (function
                 | Error error -> cleanup_after_error error
@@ -113,8 +109,8 @@ let request_on_flow ?host_eio ?(on_unread_body = fun () -> Effect.unit)
                             flow request head
                         in
                         let body =
-                          with_body_idle_timeout request
-                            response_idle_timeout_ms body
+                          with_body_idle_timeout request response_idle_timeout
+                            body
                         in
                         Effect.pure
                           {
@@ -237,7 +233,7 @@ let make_pool ?(max_response_body_bytes = default_max_response_body_bytes)
               ~uri:(Url.to_string url) err))
   |> Effect.map (fun pool -> { origin; target; max_response_body_bytes; pool })
 
-let request_owner pool request response_idle_timeout_ms response_ch release_ch
+let request_owner pool request response_idle_timeout response_ch release_ch
     cancel_ch =
   let ack = ref None in
   let report_error error = send_best_effort response_ch (Error error) in
@@ -252,7 +248,7 @@ let request_owner pool request response_idle_timeout_ms response_ch release_ch
             ~release_on_error:(fun () ->
               H1_client_errors.close_flow request conn.flow)
             ~max_response_body_bytes:pool.max_response_body_bytes
-            ~response_idle_timeout_ms
+            ~response_idle_timeout
             ~flow:conn.flow request
           |> Effect.map (fun response -> `Response response)
           |> Effect.bind_error (fun error -> Effect.pure (`Request_error error))
@@ -312,9 +308,8 @@ let request_owner pool request response_idle_timeout_ms response_ch release_ch
               ~uri:(H1_client_errors.uri request) err))
 
 let request_with_pool
-    ?(response_idle_timeout_ms = Request.default_response_idle_timeout_ms)
+    ?(response_idle_timeout = Request.Response_idle_timeout.default)
     pool request =
-  validate_response_idle_timeout_ms response_idle_timeout_ms;
   if not (String.equal (origin_key request.url) pool.origin) then
     Effect.fail (origin_error pool request)
   else
@@ -335,7 +330,7 @@ let request_with_pool
       (Effect.acquire_release ~acquire:Effect.unit ~release:close_if_pending
       |> Effect.bind (fun () ->
              Effect.daemon
-               (request_owner pool request response_idle_timeout_ms response_ch
+               (request_owner pool request response_idle_timeout response_ch
                   release_ch cancel_ch)
              |> Effect.bind (fun () ->
                     Channel.recv response_ch
@@ -362,21 +357,20 @@ let shutdown_pool pool =
               ~uri:(Url.to_string pool.target.url) err))
 
 let request ?(max_response_body_bytes = default_max_response_body_bytes)
-    ?(response_idle_timeout_ms = Request.default_response_idle_timeout_ms)
+    ?(response_idle_timeout = Request.Response_idle_timeout.default)
     ?host_eio ?ca_file ~sw ~net request =
   if max_response_body_bytes < 0 then
     invalid_arg "Eta_http_eio.H1.Client.request: max_response_body_bytes must be >= 0";
-  validate_response_idle_timeout_ms response_idle_timeout_ms;
   let target = Connect.target_of_url request.url in
   Connect.connect_tcp ?host_eio ~sw ~net ~method_:request.method_ target
   |> Effect.bind (fun tcp ->
          match target.scheme with
          | Http ->
              request_on_flow ?host_eio ~max_response_body_bytes ~flow:tcp
-               ~response_idle_timeout_ms request
+               ~response_idle_timeout request
          | Https ->
              Connect.connect_tls ?host_eio ~alpn_protocols:[ "http/1.1" ] ?ca_file
                ~method_:request.method_ target tcp
              |> Effect.bind (fun (tls, _alpn) ->
                     request_on_flow ~max_response_body_bytes
-                      ~response_idle_timeout_ms ~flow:(tls :> flow) request))
+                      ~response_idle_timeout ~flow:(tls :> flow) request))

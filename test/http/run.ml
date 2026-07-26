@@ -110,8 +110,8 @@ let () =
             test_h1_response_body_idle_timeout_is_typed;
           Alcotest.test_case "response idle timeout resets between chunks"
             `Quick test_h1_response_idle_timeout_resets_between_chunks;
-          Alcotest.test_case "response idle timeout zero disables" `Quick
-            test_h1_response_idle_timeout_zero_disables;
+          Alcotest.test_case "response idle timeout disabled" `Quick
+            test_h1_response_idle_timeout_disabled;
           Alcotest.test_case "request on flow fixed response" `Quick
             test_h1_client_request_on_flow_fixed_response;
           Alcotest.test_case "split response" `Quick
@@ -550,8 +550,8 @@ let () =
             test_h2_response_body_idle_timeout_is_typed;
           Alcotest.test_case "response idle timeout resets between body chunks"
             `Quick test_h2_response_idle_timeout_resets_between_body_chunks;
-          Alcotest.test_case "response idle timeout zero disables" `Quick
-            test_h2_response_idle_timeout_zero_disables;
+          Alcotest.test_case "response idle timeout disabled" `Quick
+            test_h2_response_idle_timeout_disabled;
           Alcotest.test_case "body reader drains buffered chunks before EOF"
             `Quick test_h2_body_reader_drains_buffered_chunks_before_eof;
           Alcotest.test_case "concurrent streams share owner" `Quick

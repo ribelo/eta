@@ -1,5 +1,20 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
+module Response_idle_timeout = struct
+  type t = Disabled | Enabled of int
+
+  let disabled = Disabled
+  let default = Enabled 300_000
+
+  let of_ms milliseconds =
+    if milliseconds <= 0 then
+      invalid_arg
+        "Eta_http.Request.Response_idle_timeout.of_ms: milliseconds must be > 0";
+    Enabled milliseconds
+
+  let to_ms = function Disabled -> None | Enabled milliseconds -> Some milliseconds
+end
+
 type body =
   | Empty
   | Fixed of bytes list
@@ -14,20 +29,12 @@ type t = {
   uri : string;
   headers : Header.t;
   body : body;
-  response_idle_timeout_ms : int;
+  response_idle_timeout : Response_idle_timeout.t;
 }
 
-let default_response_idle_timeout_ms = 300_000
-
-let validate_response_idle_timeout_ms value =
-  if value < 0 then
-    invalid_arg
-      "Eta_http.Request.make: response_idle_timeout_ms must be >= 0"
-
 let make ?(headers = Header.empty) ?(body = Empty)
-    ?(response_idle_timeout_ms = default_response_idle_timeout_ms) method_ uri =
-  validate_response_idle_timeout_ms response_idle_timeout_ms;
-  { method_; uri; headers; body; response_idle_timeout_ms }
+    ?(response_idle_timeout = Response_idle_timeout.default) method_ uri =
+  { method_; uri; headers; body; response_idle_timeout }
 
 let body_chunks t =
   match t.body with

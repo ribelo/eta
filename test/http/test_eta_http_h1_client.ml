@@ -1,5 +1,7 @@
 open Test_eta_http_support
 
+module Response_idle_timeout = Eta_http.Request.Response_idle_timeout
+
 let tcp_port = function
   | `Tcp (_, port) -> port
   | `Unix _ -> Alcotest.fail "expected TCP listener"
@@ -61,7 +63,7 @@ let find_http_client_source () =
 let request_owner_source source =
   let start =
     require_sub source
-      ~needle:"let request_owner pool request response_idle_timeout_ms response_ch release_ch"
+      ~needle:"let request_owner pool request response_idle_timeout response_ch release_ch"
   in
   let finish =
     match find_sub_from source ~needle:"let request_with_pool" start with
@@ -126,20 +128,23 @@ let test_request_response_idle_timeout_config () =
     Eta_http.Request.make "GET" "http://example.test/default-timeout"
   in
   let disabled =
-    Eta_http.Request.make ~response_idle_timeout_ms:0 "GET"
+    Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
       "http://example.test/disabled-timeout"
   in
-  Alcotest.(check int)
-    "default" 300000 default.response_idle_timeout_ms;
-  Alcotest.(check int)
-    "disabled" 0 disabled.response_idle_timeout_ms;
+  Alcotest.(check (option int))
+    "default" (Some 300000)
+    (Response_idle_timeout.to_ms default.response_idle_timeout);
+  Alcotest.(check (option int))
+    "disabled" None
+    (Response_idle_timeout.to_ms disabled.response_idle_timeout);
+  let invalid_message =
+    "Eta_http.Request.Response_idle_timeout.of_ms: milliseconds must be > 0"
+  in
+  Alcotest.check_raises "zero rejected" (Invalid_argument invalid_message)
+    (fun () -> ignore (Response_idle_timeout.of_ms 0));
   Alcotest.check_raises "negative rejected"
-    (Invalid_argument
-       "Eta_http.Request.make: response_idle_timeout_ms must be >= 0")
-    (fun () ->
-      ignore
-        (Eta_http.Request.make ~response_idle_timeout_ms:(-1) "GET"
-           "http://example.test/negative-timeout"))
+    (Invalid_argument invalid_message)
+    (fun () -> ignore (Response_idle_timeout.of_ms (-1)))
 
 let test_h1_response_header_idle_timeout_is_typed () =
   with_mock_h1_client
@@ -151,7 +156,7 @@ let test_h1_response_header_idle_timeout_is_typed () =
     ])
     (fun _clock rt client ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "http://example.test/header-timeout"
       in
       match Eta.Runtime.run rt (Eta_http.Client.request client request) with
@@ -185,7 +190,7 @@ let test_h1_response_header_idle_timeout_resets_on_informational () =
       ])
     (fun _clock rt client ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "http://example.test/early-hints"
       in
       let response =
@@ -203,7 +208,7 @@ let test_h1_response_body_idle_timeout_is_typed () =
     ])
     (fun _clock rt client ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "http://example.test/body-timeout"
       in
       let response =
@@ -243,7 +248,7 @@ let test_h1_response_idle_timeout_resets_between_chunks () =
     ])
     (fun _clock rt client ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:5 "GET"
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
           "http://example.test/body-progress"
       in
       let body =
@@ -254,7 +259,7 @@ let test_h1_response_idle_timeout_resets_between_chunks () =
       in
       Alcotest.(check string) "body" "ab" (Bytes.to_string body))
 
-let test_h1_response_idle_timeout_zero_disables () =
+let test_h1_response_idle_timeout_disabled () =
   with_mock_h1_client
     (fun clock -> [
       `Run
@@ -264,7 +269,7 @@ let test_h1_response_idle_timeout_zero_disables () =
     ])
     (fun _clock rt client ->
       let request =
-        Eta_http.Request.make ~response_idle_timeout_ms:0 "GET"
+        Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
           "http://example.test/no-timeout"
       in
       let body =
