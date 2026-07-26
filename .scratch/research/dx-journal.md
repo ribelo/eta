@@ -4104,3 +4104,31 @@ own code doesn't show it.
 - Outcome: promote. If killed, the value is the recorded evidence that
   E9b's explicit-concurrency ergonomics do NOT need arity sugar yet —
   a real finding for the model doc.
+
+---
+
+## V-DX-PRINC-1 — 2026-07-25 — standing principle: consumption model (human decision)
+
+Recorded from the human, adopted as a standing programme rule:
+
+> Eta is a library that will primarily be consumed by external consumers.
+> The fact that something is not used inside Eta itself does not mean it
+> is unnecessary. What we are doing is trying to close the complexity
+> inside, to provide a nice interface outward for consumers.
+
+**Operational rule** (carried in every experiment objective from now on):
+in-repo usage is ONE signal among several. Absence of in-repo use never
+discharges a structural need argued from the consumption model — for
+example a forcing function created by another promoted change (E9b making
+concurrency explicit forces concurrent-product ergonomics onto downstream
+code that this repo's census cannot see). Frequency gates ("sugar follows
+demonstrated frequency") apply to speculative complexity with no
+structural need; they do not kill API whose consumers live downstream.
+When census and structural signals conflict, the experiment must say so
+explicitly and let the review weigh both — not bury the conflict.
+
+**Retroactive note.** This adjusts the *weight* of the evidence behind
+past frequency kills, not their verdicts: `sync_option` had neither
+in-repo use nor a forcing function (kill stands); `with_2`/`with_3` died
+on cohort shape judgment (kill stands). E29's objective is amended
+mid-flight to carry this principle.

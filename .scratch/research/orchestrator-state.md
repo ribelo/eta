@@ -91,4 +91,8 @@ loop (plan §4.2 as amended by Amendment 1).
   experiment branch, and verify the branch base contains the predictions
   commit (E30 staging cut twice from stale/diverged local master; foreign
   schema commit needed temp-worktree merge `5ce0aa6e`)
+- STANDING RULE (V-DX-PRINC-1, human 2026-07-25): Eta is consumed
+  primarily by EXTERNAL consumers. In-repo unusedness is not evidence of
+  unnecessity. Every objective.md carries the consumption-model block;
+  frequency gates apply only absent a structural need.
 - Last update: 2026-07-25 — E29 launched
