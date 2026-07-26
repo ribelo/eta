@@ -4337,3 +4337,42 @@ frequency predictions hit; its A recommendation upheld.
 CLOSED.** The 24-site noise is the accepted, honest price of a name that
 never needs a second look. Evidence record merged (docs-only branch);
 gates green; worktree removed; objective archived.
+
+---
+
+## V-DX-E16-001 — 2026-07-26 — research/dx-e16-reader-race — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. The no-`R` boundary gets its day in
+court: build the rival (`Reader`), race it against value-passing on one
+real service, and let pre-registered criteria decide. Expected outcome:
+kill — with the diff and ratings as the evidence the boundary has never
+had in-repo. Scored at V-DX-E16-002.
+
+**The race.** One real `examples/` service, ported twice: value-passing
+(current style: explicit parameters) vs. `Reader` (`('env, 'a, 'err) t =
+'env -> ('a, 'err) Effect.t` with `ask`/`local`/`map`/`bind`, ~50 lines,
+optional module on the branch — core untouched by construction).
+
+**Pre-registered criteria (predicted direction for each).**
+- Diff size/shape: Reader version ≥ value-passing in lines (env record
+  declaration + `ask` plumbing) — predicted: Reader loses.
+- Inferred types on hover: Reader's `('env, 'a, 'err) t` triple noisier
+  than `('a, 'err) t`; wrong-env-record errors go through the function
+  type and the record — predicted: Reader loses on readability of both.
+- The env-blob drift check: within ONE service, the env record accretes
+  all dependencies as one record (the blob ZIO's HList scars warn
+  about) — predicted: blob appears immediately (≥ 3 fields), and adding
+  a 4th dependency touches the record type + every construction site
+  rather than one function signature.
+- Reviewer comprehension/teach-back: value-passing reads as ordinary
+  OCaml (functions taking arguments); `Reader` requires the `ask`/
+  `local` machinery mental model — predicted: value-passing wins.
+- Steelman check (the evidence-based-coding rule): the Reader port must
+  be written in its strongest form, or the race is rigged — the
+  executor's journal must show the strongest-form attempt.
+
+**Outcome.** KILL, ~85% — the no-`R` boundary rests on in-repo evidence
+(diff + ratings). Upset case (~15%): a service with many cross-cutting
+dependencies where `Reader` genuinely clarifies (then promote as an
+optional package, never core). Census: +0 either way (optional module
+on branch, killed, or optional package, promoted). Footguns +0.
