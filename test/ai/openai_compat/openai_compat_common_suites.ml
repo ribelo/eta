@@ -205,6 +205,9 @@ let test_decode_compatible_fixtures () =
   in
   Alcotest.(check string) "text" "Compatible response"
     (assistant_text text.message);
+  Alcotest.(check (option int))
+    "cache reporting unavailable" None
+    (Option.bind text.usage (fun usage -> usage.A.input_tokens.cache_read));
   let tool =
     C.decode_chat (read_fixture "mistral_tool.json")
     |> expect_ok "mistral tool"

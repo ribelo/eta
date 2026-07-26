@@ -109,31 +109,6 @@ let rec write_chunks writer = function
   | chunk :: rest ->
       write_chunk writer chunk |> Eta.Effect.bind (fun () -> write_chunks writer rest)
 
-let write_fixed_body_sync writer chunks =
-  let write_chunk chunk =
-    let s = Bytes.to_string chunk in
-    let len = Bytes.length chunk in
-    let rec loop off =
-      if off < len then (
-        let write_len = min 65_536 (len - off) in
-        let bytes = Bytes.of_string (String.sub s off write_len) in
-        match H2_proto.Body.Writer.write_bytes writer bytes ~off:0 ~len:write_len with
-        | Error _ -> ()
-        | Ok () ->
-            flush_body_writer writer;
-            loop (off + write_len))
-    in
-    loop 0
-  in
-  let rec write_chunks = function
-    | [] -> ()
-    | chunk :: rest ->
-        write_chunk chunk;
-        write_chunks rest
-  in
-  write_chunks chunks;
-  H2_proto.Body.Writer.close writer
-
 let rec write_stream writer body =
   Body.read body
   |> Eta.Effect.bind (function

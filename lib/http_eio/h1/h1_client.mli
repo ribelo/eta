@@ -33,6 +33,7 @@ val request_on_flow :
   ?host_eio:Eta_eio.Host.t ->
   ?on_unread_body:(unit -> (unit, Error.t) Eta.Effect.t) ->
   ?max_response_body_bytes:int ->
+  ?response_idle_timeout:Request.Response_idle_timeout.t ->
   ?release:(unit -> (unit, Error.t) Eta.Effect.t) ->
   ?release_on_error:(unit -> (unit, Error.t) Eta.Effect.t) ->
   flow:[> Eio.Flow.two_way_ty | Eio.Resource.close_ty] Eio.Resource.t ->
@@ -68,7 +69,10 @@ val make_pool :
     CA bundle added to the trust store on top of the system roots. *)
 
 val request_with_pool :
-  pool -> request -> (response, Error.t) Eta.Effect.t
+  ?response_idle_timeout:Request.Response_idle_timeout.t ->
+  pool ->
+  request ->
+  (response, Error.t) Eta.Effect.t
 (** Execute [request] through [pool].
 
     [request.url] must match the pool origin. The h1 connection stays checked
@@ -80,6 +84,7 @@ val shutdown_pool : pool -> (unit, Error.t) Eta.Effect.t
 
 val request :
   ?max_response_body_bytes:int ->
+  ?response_idle_timeout:Request.Response_idle_timeout.t ->
   ?host_eio:Eta_eio.Host.t ->
   ?ca_file:string ->
   sw:Eio.Switch.t ->

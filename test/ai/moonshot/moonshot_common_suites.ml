@@ -235,6 +235,16 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check bool) "reasoning" true has_reasoning;
     Alcotest.(check bool) "text" true has_text
 
+  let test_cache_usage () =
+    let response =
+      M.decode_chat (read_fixture "chat.json") |> expect_ok "chat"
+    in
+    let usage = Option.get response.usage in
+    Alcotest.(check (option int))
+      "cache miss" (Some 0) usage.A.input_tokens.cache_read;
+    Alcotest.(check (option int))
+      "cache write not reported" None usage.A.input_tokens.cache_write
+
   let tests =
     [
       ( "moonshot",
@@ -246,6 +256,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "reasoning levels" `Quick test_reasoning_levels;
           Alcotest.test_case "chat and reasoning stream" `Quick
             test_chat_and_reasoning_stream;
+          Alcotest.test_case "cache usage" `Quick test_cache_usage;
         ] );
     ]
 end

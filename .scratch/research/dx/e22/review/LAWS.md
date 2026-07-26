@@ -14,8 +14,8 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **112 mli-stated claims**, **2 prose-pending model claims**,
-**128 registered external claim clusters**, and **73 unique named qcheck properties** in
-`test/laws/law_properties.ml`. Verified external named suites are registered
+**135 registered external claim clusters**, and **74 unique named qcheck properties** in
+`test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
 ## Mli-stated laws
@@ -273,6 +273,13 @@ qcheck optics.
 | R127 | When every admitted `all` worker is blocked waiting on work that has not been admitted, the group cannot make progress. | `lib/eta/effect.mli:241-243` | `all omitted bound cannot progress when every admitted worker awaits an unadmitted participant` observes exactly eight admitted workers complete one blocked barrier check each before watchdog cancellation, no ninth admission or completion, cleanup, and an exact empty fiber census; `all omitted bound stalls when every worker awaits unadmitted` is the shared-runtime test-clock witness — `test/laws/law_properties.ml:669-707`; `test/core_common/effect_common_suites.ml:4008-4010` |
 | R129 | `map_par` does not force its mapper while constructing a blueprint. | `lib/eta/effect.mli:247-248` | `map_par mapper defect is runtime die`; `map_par capped mapper defect is runtime die` — `test/core_common/effect_common_suites.ml:3989-3993` |
 | R130 | `all` aggregates prebuilt child names and capability footprints for introspection. | `lib/eta/effect.mli:247-249` | `audit declared leaves and preserve union` — `test/core_common/effect_common_suites.ml:3746-3747` |
+| R131 | Native HTTP/1.1 and HTTP/2 requests default the response idle timeout to 300,000 ms. | `lib/http/client/request.mli:13` | `request response idle timeout config` — `test/http/test_eta_http_h1_client.ml` |
+| R132 | `Response_idle_timeout.disabled` disables native HTTP/1.1 and HTTP/2 response idle timeouts. | `lib/http/client/request.mli:13` | `request response idle timeout config`; `response idle timeout disabled` in both the `h1-client` and `h2-connection` suites — `test/http/test_eta_http_h1_client.ml`; `test/http/test_eta_http_h2_connection.ml` |
+| R133 | `Response_idle_timeout.of_ms` rejects every nonpositive duration with `Invalid_argument`. | `lib/http/client/request.mli:14-15` | `response idle timeout rejects generated nonpositive milliseconds and round-trips generated positive milliseconds` generates the full signed nonpositive class — `test/laws/http_law_properties.ml`; boundary witnesses remain in `request response idle timeout config` — `test/http/test_eta_http_h1_client.ml` |
+| R134 | `Response_idle_timeout.to_ms` distinguishes disabled from enabled timeouts as `None` versus `Some milliseconds`. | `lib/http/client/request.mli:15-16` | `response idle timeout rejects generated nonpositive milliseconds and round-trips generated positive milliseconds` generates positive enabled values — `test/laws/http_law_properties.ml`; `request response idle timeout config` observes disabled as `None` — `test/http/test_eta_http_h1_client.ml` |
+| R135 | Every native response-header wait has a fresh timeout, including the wait after an informational response. | `lib/http/client/request.mli:38-39` | `header idle timeout resets on informational` in both the `h1-client` and `h2-connection` suites — `test/http/test_eta_http_h1_client.ml`; `test/http/test_eta_http_h2_connection.ml` |
+| R136 | Every requested native response-body chunk has a fresh timeout. | `lib/http/client/request.mli:39-40` | `response idle timeout resets between chunks` in the `h1-client` suite; `response idle timeout resets between body chunks` in the `h2-connection` suite — `test/http/test_eta_http_h1_client.ml`; `test/http/test_eta_http_h2_connection.ml` |
+| R137 | Native response-header expiry and response-body expiry produce their respective typed retryable transport failures. | `lib/http/client/request.mli:40-42` | `response header idle timeout is typed`; `response body idle timeout is typed` in both the `h1-client` and `h2-connection` suites — `test/http/test_eta_http_h1_client.ml`; `test/http/test_eta_http_h2_connection.ml` |
 
 ## Model laws (prose pending)
 
@@ -296,9 +303,10 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/eta/semaphore.mli` | 17 | 0 | 0 | 17 |
 | `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
 | `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
-| **Total covered** | **112** | **128** | **2** | **240** |
+| `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
+| **Total covered** | **112** | **135** | **2** | **247** |
 
-The executable contains 73 unique properties in total. Matrix properties cover
+The law executables contain 74 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
 assertion in that named property.
 

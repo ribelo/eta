@@ -207,8 +207,3 @@ let register_failure_handler t notify =
 let mux t = t.mux
 let client t = t.client
 let stats t = Multiplexer.stats t.mux
-
-let fork_daemon t f =
-  Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-      f ();
-      `Stop_daemon)

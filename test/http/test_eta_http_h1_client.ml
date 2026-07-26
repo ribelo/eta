@@ -1,5 +1,7 @@
 open Test_eta_http_support
 
+module Response_idle_timeout = Eta_http.Request.Response_idle_timeout
+
 let tcp_port = function
   | `Tcp (_, port) -> port
   | `Unix _ -> Alcotest.fail "expected TCP listener"
@@ -61,10 +63,10 @@ let find_http_client_source () =
 let request_owner_source source =
   let start =
     require_sub source
-      ~needle:"let request_owner pool request response_ch release_ch cancel_ch ="
+      ~needle:"let request_owner pool request response_idle_timeout response_ch release_ch"
   in
   let finish =
-    match find_sub_from source ~needle:"let request_with_pool pool request =" start with
+    match find_sub_from source ~needle:"let request_with_pool" start with
     | Some finish -> finish
     | None -> Alcotest.fail "missing request_owner end marker"
   in
@@ -107,6 +109,176 @@ let test_client_rejects_cross_domain_use () =
     |> Domain.join
   in
   Alcotest.(check bool) "cross-domain client use rejected" true rejected
+
+let with_mock_h1_client read_actions f =
+  Eio_mock.Backend.run_full @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let net = Eio_mock.Net.make "eta-http-idle-timeout-net" in
+  let flow = Eio_mock.Flow.make "eta-http-idle-timeout-flow" in
+  let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, 80) in
+  Eio_mock.Net.on_getaddrinfo net [ `Return [ address ] ];
+  Eio_mock.Net.on_connect net [ `Return flow ];
+  Eio_mock.Flow.on_read flow (read_actions env#clock);
+  let rt = Eta_eio.Runtime.create ~sw ~clock:env#clock () in
+  let client = Eta_http_eio.Client.make_h1_direct ~sw ~net () in
+  f env#clock rt client
+
+let test_request_response_idle_timeout_config () =
+  let default =
+    Eta_http.Request.make "GET" "http://example.test/default-timeout"
+  in
+  let disabled =
+    Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
+      "http://example.test/disabled-timeout"
+  in
+  Alcotest.(check (option int))
+    "default" (Some 300000)
+    (Response_idle_timeout.to_ms default.response_idle_timeout);
+  Alcotest.(check (option int))
+    "disabled" None
+    (Response_idle_timeout.to_ms disabled.response_idle_timeout);
+  let invalid_message =
+    "Eta_http.Request.Response_idle_timeout.of_ms: milliseconds must be > 0"
+  in
+  Alcotest.check_raises "zero rejected" (Invalid_argument invalid_message)
+    (fun () -> ignore (Response_idle_timeout.of_ms 0));
+  Alcotest.check_raises "negative rejected"
+    (Invalid_argument invalid_message)
+    (fun () -> ignore (Response_idle_timeout.of_ms (-1)))
+
+let test_h1_response_header_idle_timeout_is_typed () =
+  with_mock_h1_client
+    (fun clock -> [
+      `Run
+        (fun () ->
+          Eio.Time.sleep clock 0.006;
+          "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    ])
+    (fun _clock rt client ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "http://example.test/header-timeout"
+      in
+      match Eta.Runtime.run rt (Eta_http.Client.request client request) with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            ({
+               Eta_http.Error.kind =
+                 Response_header_timeout { timeout_ms = Some 5 };
+               _;
+             } as error)) ->
+          Alcotest.(check bool)
+            "retryable" true
+            (Eta_http.Error.retryability error
+            = Retryable_if_body_replayable)
+      | Eta.Exit.Ok _ -> Alcotest.fail "header wait unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected header timeout result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
+
+let test_h1_response_header_idle_timeout_resets_on_informational () =
+  with_mock_h1_client
+    (fun clock ->
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.004;
+          "HTTP/1.1 103 Early Hints\r\n\r\n");
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.004;
+          "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+      ])
+    (fun _clock rt client ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "http://example.test/early-hints"
+      in
+      let response =
+        Eta.Runtime.run rt (Eta_http.Client.request client request)
+        |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int) "status" 200 response.status)
+
+let test_h1_response_body_idle_timeout_is_typed () =
+  with_mock_h1_client
+    (fun clock -> [
+      `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n";
+      `Return "a";
+      `Run (fun () -> Eio.Time.sleep clock 0.006; "b");
+    ])
+    (fun _clock rt client ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "http://example.test/body-timeout"
+      in
+      let response =
+        Eta.Runtime.run rt (Eta_http.Client.request client request)
+        |> Eta_test.Expect.expect_ok
+      in
+      let first =
+        Eta.Runtime.run rt (Eta_http.Body.Stream.read response.body)
+        |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check (option string))
+        "first chunk" (Some "a") (Option.map Bytes.to_string first);
+      match Eta.Runtime.run rt (Eta_http.Body.Stream.read response.body) with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            ({
+               Eta_http.Error.kind =
+                 Response_body_idle_timeout { timeout_ms = Some 5 };
+               _;
+             } as error)) ->
+          Alcotest.(check bool)
+            "retryable" true
+            (Eta_http.Error.retryability error
+            = Retryable_if_body_replayable)
+      | Eta.Exit.Ok _ -> Alcotest.fail "body wait unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected body timeout result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
+
+let test_h1_response_idle_timeout_resets_between_chunks () =
+  with_mock_h1_client
+    (fun clock -> [
+      `Return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n";
+      `Run (fun () -> Eio.Time.sleep clock 0.004; "a");
+      `Run (fun () -> Eio.Time.sleep clock 0.004; "b");
+    ])
+    (fun _clock rt client ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "http://example.test/body-progress"
+      in
+      let body =
+        Eta_http.Client.request client request
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check string) "body" "ab" (Bytes.to_string body))
+
+let test_h1_response_idle_timeout_disabled () =
+  with_mock_h1_client
+    (fun clock -> [
+      `Run
+        (fun () ->
+          Eio.Time.sleep clock 0.006;
+          "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    ])
+    (fun _clock rt client ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
+          "http://example.test/no-timeout"
+      in
+      let body =
+        Eta_http.Client.request client request
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check string) "body" "ok" (Bytes.to_string body))
 
 let test_h1_pool_marks_undelivered_response_unreusable () =
   let source = read_file (find_h1_client_source ()) in

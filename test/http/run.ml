@@ -99,6 +99,19 @@ let () =
         ] );
       ( "h1-client",
         [
+          Alcotest.test_case "request response idle timeout config" `Quick
+            test_request_response_idle_timeout_config;
+          Alcotest.test_case "response header idle timeout is typed" `Quick
+            test_h1_response_header_idle_timeout_is_typed;
+          Alcotest.test_case "header idle timeout resets on informational"
+            `Quick
+            test_h1_response_header_idle_timeout_resets_on_informational;
+          Alcotest.test_case "response body idle timeout is typed" `Quick
+            test_h1_response_body_idle_timeout_is_typed;
+          Alcotest.test_case "response idle timeout resets between chunks"
+            `Quick test_h1_response_idle_timeout_resets_between_chunks;
+          Alcotest.test_case "response idle timeout disabled" `Quick
+            test_h1_response_idle_timeout_disabled;
           Alcotest.test_case "request on flow fixed response" `Quick
             test_h1_client_request_on_flow_fixed_response;
           Alcotest.test_case "split response" `Quick
@@ -521,6 +534,24 @@ let () =
         ] );
       ( "h2-connection",
         [
+          Alcotest.test_case "release resets core stream" `Quick
+            test_h2_multiplexer_release_resets_core_stream;
+          Alcotest.test_case "response header idle timeout is typed" `Quick
+            test_h2_response_header_idle_timeout_is_typed;
+          Alcotest.test_case
+            "streaming upload does not suppress header idle timeout" `Quick
+            test_h2_streaming_upload_does_not_suppress_header_idle_timeout;
+          Alcotest.test_case "header idle timeout resets on informational"
+            `Quick
+            test_h2_response_header_idle_timeout_resets_on_informational;
+          Alcotest.test_case "informational END_STREAM is protocol error"
+            `Quick test_h2_informational_end_stream_is_protocol_error;
+          Alcotest.test_case "response body idle timeout is typed" `Quick
+            test_h2_response_body_idle_timeout_is_typed;
+          Alcotest.test_case "response idle timeout resets between body chunks"
+            `Quick test_h2_response_idle_timeout_resets_between_body_chunks;
+          Alcotest.test_case "response idle timeout disabled" `Quick
+            test_h2_response_idle_timeout_disabled;
           Alcotest.test_case "body reader drains buffered chunks before EOF"
             `Quick test_h2_body_reader_drains_buffered_chunks_before_eof;
           Alcotest.test_case "concurrent streams share owner" `Quick

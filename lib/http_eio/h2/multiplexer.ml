@@ -85,6 +85,10 @@ let close_request_body body =
 let release t stream =
   let stream_id = Stream_state.id stream in
   let decision = Stream_state.release t.streams stream in
+  (match decision with
+  | Stream_state.Queue_rst ->
+      H2.Connection.Client.cancel_stream t.client stream_id
+  | Stream_state.No_rst -> ());
   (match Hashtbl.find_opt t.request_bodies stream_id with
   | Some body ->
       close_request_body body;

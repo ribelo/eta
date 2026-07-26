@@ -109,7 +109,9 @@ let usage ?(raw_prompt_names = false) json =
     else ("input_tokens_details", "output_tokens_details")
   in
   let cache_read_tokens =
-    nested_int input_details_name "cached_tokens"
+    match nested_int input_details_name "cached_tokens" with
+    | Some _ as value -> value
+    | None -> Json.int_member "cached_tokens" json
   in
   let cache_write_tokens =
     nested_int input_details_name "cache_write_tokens"
@@ -136,6 +138,11 @@ let usage ?(raw_prompt_names = false) json =
     loop names
   in
   let optional_raw name = function None -> [] | Some value -> [ (name, value) ] in
+  let cache_read_raw =
+    match nested_scalar input_details_name "cached_tokens" with
+    | Some _ as value -> value
+    | None -> Json.scalar_string_member "cached_tokens" json
+  in
   let subtract left rights =
     Option.map
       (fun total ->
@@ -167,8 +174,7 @@ let usage ?(raw_prompt_names = false) json =
           Option.value ~default:"" (Option.map string_of_int output_tokens) );
         ("total_tokens", Option.value ~default:"" (Option.map string_of_int total_tokens));
       ]
-      @ optional_raw "cached_tokens"
-          (nested_scalar input_details_name "cached_tokens")
+      @ optional_raw "cached_tokens" cache_read_raw
       @ optional_raw "cache_write_tokens"
           (nested_scalar input_details_name "cache_write_tokens")
       @ optional_raw "reasoning_tokens"

@@ -40,6 +40,5 @@ val register_failure_handler :
 val mux : t -> Multiplexer.t
 val client : t -> Eta_http_h2.Connection.t
 val stats : t -> Stream_state.stats
-val fork_daemon : t -> (unit -> unit) -> unit
 val is_closed : t -> bool
 val shutdown : t -> unit

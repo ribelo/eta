@@ -1,6 +1,8 @@
 open Test_eta_http_support
 open Test_eta_http_h2_support
 
+module Response_idle_timeout = Eta_http.Request.Response_idle_timeout
+
 let tcp_port = function
   | `Tcp (_, port) -> port
   | `Unix _ -> Alcotest.fail "expected TCP listener"
@@ -15,6 +17,21 @@ let write_iovecs flow iovecs =
   let written = iovecs_len iovecs in
   Eio.Flow.write flow (Eta_http_eio.H2.Writer.cstructs_of_iovecs iovecs);
   written
+
+let iovecs_to_string iovecs =
+  iovecs
+  |> List.map (fun ({ buffer; off; len } : _ Eta_http_h2.Iovec.t) ->
+         Bigstringaf.substring buffer ~off ~len)
+  |> String.concat ""
+
+let rec drain_h2_writes connection =
+  match Eta_http_h2.Connection.next_write_operation connection with
+  | Write iovecs ->
+      Eta_http_h2.Connection.report_write_result connection
+        (`Ok (iovecs_len iovecs));
+      drain_h2_writes connection
+  | Yield -> ()
+  | Close code -> Alcotest.failf "unexpected H2 close %d" code
 
 let read_into_connection flow conn =
   let chunk = Cstruct.create 0x4000 in
@@ -129,6 +146,41 @@ let request_effect ?body connection target =
          |> Eta.Effect.map (fun body ->
                 (response.Eta_http.Response.status, Bytes.to_string body)))
 
+let test_h2_multiplexer_release_resets_core_stream () =
+  let mux = Eta_http_eio.H2.Multiplexer.create () in
+  let client = Eta_http_eio.H2.Multiplexer.client_connection mux in
+  drain_h2_writes client;
+  let request : Eta_http_h2.Connection.Client.request =
+    {
+      meth = "GET";
+      scheme = Some "https";
+      authority = Some "api.example.test";
+      path = "/stalled";
+      headers = [];
+    }
+  in
+  let opened =
+    match
+      Eta_http_eio.H2.Multiplexer.request mux ~tag:1 request
+        ~error_handler:(fun _ _ -> ())
+        ~response_handler:(fun _ _ _ -> ())
+    with
+    | Ok opened -> opened
+    | Error _ -> Alcotest.fail "request was not admitted"
+  in
+  drain_h2_writes client;
+  (match Eta_http_eio.H2.Multiplexer.release mux opened.stream with
+  | Eta_http_eio.H2.Stream_state.Queue_rst -> ()
+  | No_rst -> Alcotest.fail "active stream release did not require reset");
+  match Eta_http_h2.Connection.next_write_operation client with
+  | Write iovecs ->
+      let frame = iovecs_to_string iovecs in
+      Alcotest.(check int) "RST_STREAM frame length" 13 (String.length frame);
+      Alcotest.(check int) "RST_STREAM frame type" 0x3 (Char.code frame.[3]);
+      Alcotest.(check int) "CANCEL error code" 0x8 (Char.code frame.[12])
+  | Yield -> Alcotest.fail "stream release did not emit RST_STREAM"
+  | Close code -> Alcotest.failf "unexpected H2 close %d" code
+
 let open_h2_request connection tag target =
   let request : Eta_http_h2.Connection.Client.request =
     {
@@ -224,6 +276,95 @@ let timeout_error uri =
   Eta_http.Error.make ~protocol:H2 ~method_:"POST" ~uri
     (Connection_protocol_violation
        { kind = "test_timeout"; message = "h2 request timed out" })
+
+let test_h2_response_header_idle_timeout_is_typed () =
+  Eio_mock.Backend.run_full @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let flow = Eio_mock.Flow.make "eta-http-h2-header-idle-timeout" in
+  let never, _resolver = Eio.Promise.create () in
+  Eio_mock.Flow.on_read flow [ `Await never ];
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:env#clock () in
+  let request =
+    Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+      "https://api.example.test/header-timeout"
+  in
+  Fun.protect
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
+    (fun () ->
+      match
+        Eta.Runtime.run rt
+          (Eta_http_eio.Client.request_h2_on_connection connection request
+             (Eta_http.Request.url request))
+      with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            ({
+               Eta_http.Error.kind =
+                 Response_header_timeout { timeout_ms = Some 5 };
+               _;
+             } as error)) ->
+          Alcotest.(check bool)
+            "retryable" true
+            (Eta_http.Error.retryability error
+            = Retryable_if_body_replayable)
+      | Eta.Exit.Ok _ -> Alcotest.fail "header wait unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected H2 header timeout result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
+
+let test_h2_streaming_upload_does_not_suppress_header_idle_timeout () =
+  Eio_mock.Backend.run_full @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let flow = Eio_mock.Flow.make "eta-http-h2-upload-header-idle-timeout" in
+  let never, _resolver = Eio.Promise.create () in
+  Eio_mock.Flow.on_read flow [ `Await never ];
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:env#clock () in
+  let released = ref 0 in
+  let body =
+    blocking_body
+      ~release:(fun () ->
+        incr released;
+        Eta.Effect.unit)
+      ()
+  in
+  let request =
+    Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "POST"
+      "https://api.example.test/upload-timeout"
+      ~body:(Eta_http.Request.Stream body)
+  in
+  Fun.protect
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
+    (fun () ->
+      (match
+         Eta.Runtime.run rt
+           (Eta_http_eio.Client.request_h2_on_connection connection request
+              (Eta_http.Request.url request))
+       with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind =
+                Response_header_timeout { timeout_ms = Some 5 };
+              _;
+            }) ->
+          ()
+      | Eta.Exit.Ok _ -> Alcotest.fail "header wait unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected streaming-upload timeout result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause);
+      Alcotest.(check int) "upload body released" 1 !released)
 
 let wait_until label predicate =
   let rec loop attempts =
@@ -576,6 +717,212 @@ let raw_data ?(end_stream = false) ~stream_id data =
   Eta_http_h2.Frame.header ~length:(String.length data) ~frame_type:Data ~flags
     ~stream_id
   ^ data
+
+let with_mock_h2_connection read_actions f =
+  Eio_mock.Backend.run_full @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let flow = Eio_mock.Flow.make "eta-http-h2-idle-timeout-flow" in
+  Eio_mock.Flow.on_read flow (read_actions env#clock);
+  let connection =
+    Eta_http_eio.H2.Connection.create ~sw ~now_ms:(fun () -> 0L)
+      ~flow:(flow :> Eta_http_eio.H2.Connection.flow)
+      ()
+  in
+  let rt = Eta_eio.Runtime.create ~sw ~clock:env#clock () in
+  Fun.protect
+    ~finally:(fun () -> Eta_http_eio.H2.Connection.shutdown connection)
+    (fun () -> f rt connection)
+
+let test_h2_response_header_idle_timeout_resets_on_informational () =
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let early =
+    raw_headers encoder ~stream_id:1 [ hpack_header ":status" "103" ]
+  in
+  let final =
+    raw_headers encoder ~end_stream:true ~stream_id:1
+      [ hpack_header ":status" "200" ]
+  in
+  with_mock_h2_connection
+    (fun clock ->
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.004;
+          Eta_http_h2.Frame.settings ^ early);
+        `Run (fun () -> Eio.Time.sleep clock 0.004; final);
+      ])
+    (fun rt connection ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "https://api.example.test/early-hints"
+      in
+      let response =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check int) "status" 200 response.status)
+
+let test_h2_informational_end_stream_is_protocol_error () =
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let invalid =
+    raw_headers encoder ~end_stream:true ~stream_id:1
+      [ hpack_header ":status" "103" ]
+  in
+  with_mock_h2_connection
+    (fun clock ->
+      let never = Eta_test.Async.unresolved () in
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.001;
+          Eta_http_h2.Frame.settings ^ invalid);
+        `Await never;
+      ])
+    (fun rt connection ->
+      let request =
+        Eta_http.Request.make
+          ~response_idle_timeout:(Response_idle_timeout.of_ms 50) "GET"
+          "https://api.example.test/invalid-early-hints"
+      in
+      match
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Runtime.run rt
+      with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            {
+              Eta_http.Error.kind = Connection_protocol_violation _;
+              _;
+            }) ->
+          ()
+      | Eta.Exit.Ok _ ->
+          Alcotest.fail "informational END_STREAM unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected informational END_STREAM result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
+
+let test_h2_response_body_idle_timeout_is_typed () =
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let headers =
+    raw_headers encoder ~stream_id:1
+      [
+        hpack_header ":status" "200";
+        hpack_header "content-length" "2";
+      ]
+  in
+  let first = raw_data ~stream_id:1 "a" in
+  let last = raw_data ~end_stream:true ~stream_id:1 "b" in
+  with_mock_h2_connection
+    (fun clock ->
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.001;
+          Eta_http_h2.Frame.settings ^ headers ^ first);
+        `Run (fun () -> Eio.Time.sleep clock 0.006; last);
+      ])
+    (fun rt connection ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "https://api.example.test/body-timeout"
+      in
+      let result =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt
+      in
+      match result with
+      | Eta.Exit.Error
+          (Eta.Cause.Fail
+            ({
+               Eta_http.Error.kind =
+                 Response_body_idle_timeout { timeout_ms = Some 5 };
+               _;
+             } as error)) ->
+          Alcotest.(check bool)
+            "retryable" true
+            (Eta_http.Error.retryability error
+            = Retryable_if_body_replayable)
+      | Eta.Exit.Ok _ -> Alcotest.fail "body wait unexpectedly succeeded"
+      | Eta.Exit.Error cause ->
+          Alcotest.failf "unexpected H2 body timeout result: %a"
+            (Eta.Cause.pp Eta_http.Error.pp)
+            cause)
+
+let test_h2_response_idle_timeout_resets_between_body_chunks () =
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let headers =
+    raw_headers encoder ~stream_id:1
+      [
+        hpack_header ":status" "200";
+        hpack_header "content-length" "3";
+      ]
+  in
+  with_mock_h2_connection
+    (fun clock ->
+      let never = Eta_test.Async.unresolved () in
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.001;
+          Eta_http_h2.Frame.settings ^ headers ^ raw_data ~stream_id:1 "a");
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.004;
+          raw_data ~stream_id:1 "b");
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.004;
+          raw_data ~end_stream:true ~stream_id:1 "c");
+        `Await never;
+      ])
+    (fun rt connection ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:(Response_idle_timeout.of_ms 5) "GET"
+          "https://api.example.test/body-progress"
+      in
+      let body =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check string) "body" "abc" (Bytes.to_string body))
+
+let test_h2_response_idle_timeout_disabled () =
+  let encoder = Eta_http_h2.Hpack.encoder_create 4096 in
+  let headers =
+    raw_headers encoder ~stream_id:1
+      [
+        hpack_header ":status" "200";
+        hpack_header "content-length" "2";
+      ]
+  in
+  with_mock_h2_connection
+    (fun clock ->
+      let never = Eta_test.Async.unresolved () in
+      [
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.006;
+          Eta_http_h2.Frame.settings ^ headers);
+        `Run (fun () ->
+          Eio.Time.sleep clock 0.006;
+          raw_data ~end_stream:true ~stream_id:1 "ok");
+        `Await never;
+      ])
+    (fun rt connection ->
+      let request =
+        Eta_http.Request.make ~response_idle_timeout:Response_idle_timeout.disabled "GET"
+          "https://api.example.test/no-timeout"
+      in
+      let body =
+        Eta_http_eio.Client.request_h2_on_connection connection request
+          (Eta_http.Request.url request)
+        |> Eta.Effect.bind (fun (response : Eta_http.Response.t) ->
+               Eta_http.Body.Stream.read_all response.body)
+        |> Eta.Runtime.run rt |> Eta_test.Expect.expect_ok
+      in
+      Alcotest.(check string) "body" "ok" (Bytes.to_string body))
 
 let raw_rst_stream ~stream_id error_code =
   let payload =
