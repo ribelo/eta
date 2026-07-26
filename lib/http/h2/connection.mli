@@ -100,6 +100,8 @@ module Client : sig
     error_handler:(Stream.id -> error -> unit) ->
     response_handler:(Stream.id -> response -> unit) ->
     Body.Writer.t
+
+  val cancel_stream : connection -> Stream.id -> unit
 end
 
 module Server : sig

@@ -735,7 +735,18 @@ let handle_client_headers t c ~flags ~stream_id payload =
                     client_stream_error t stream_id Error_code.Protocol_error
                       "response HEADERS invalid 101 status"
                 | Some status when status >= 100 && status < 200 ->
-                    ()
+                    if flags land Frame.Flags.end_stream <> 0 then
+                      client_stream_error t stream_id Error_code.Protocol_error
+                        "informational response HEADERS carried END_STREAM"
+                    else
+                      let response : client_response =
+                        {
+                          status;
+                          headers = strip_pseudo_headers headers;
+                          body = client_stream.response_body;
+                        }
+                      in
+                      client_stream.response_handler stream_id response
                 | Some status ->
                     client_stream.response_started <- true;
                     let response : client_response =
@@ -1438,6 +1449,11 @@ module Client = struct
               wake_schedulable_stream t stream));
         wake_writer t;
         writer
+
+  let cancel_stream t stream_id =
+    match Hashtbl.find_opt t.streams stream_id with
+    | None -> ()
+    | Some _ -> reset_stream t stream_id Error_code.Cancel
 end
 
 module Server = struct

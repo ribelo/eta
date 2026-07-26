@@ -14,10 +14,20 @@ type t = {
   uri : string;
   headers : Header.t;
   body : body;
+  response_idle_timeout_ms : int;
 }
 
-let make ?(headers = Header.empty) ?(body = Empty) method_ uri =
-  { method_; uri; headers; body }
+let default_response_idle_timeout_ms = 300_000
+
+let validate_response_idle_timeout_ms value =
+  if value < 0 then
+    invalid_arg
+      "Eta_http.Request.make: response_idle_timeout_ms must be >= 0"
+
+let make ?(headers = Header.empty) ?(body = Empty)
+    ?(response_idle_timeout_ms = default_response_idle_timeout_ms) method_ uri =
+  validate_response_idle_timeout_ms response_idle_timeout_ms;
+  { method_; uri; headers; body; response_idle_timeout_ms }
 
 let body_chunks t =
   match t.body with
