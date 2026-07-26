@@ -123,3 +123,96 @@ you would not actively request the form on this evidence, choose **NO-FIRE**.
 
 Do not choose FIRE merely because the transformation seems technically simple.
 <!-- COHORT MATERIAL END -->
+
+## Technical baseline from E10 (excluded from cohort material)
+
+E10 proved that both candidate forms can preserve function arguments, recursive
+per-call wrapping, source locations, runtime parity, and `.mli` signatures; its
+error-location corpus rated 4–5/5 and did not fire its technical kill gate. That
+settles feasibility only. Per the E31 protocol, none of this was shown to the
+cohort because prior engineering work is sunk cost, not evidence that users want
+the feature.
+
+## Red-team pass
+
+### Attack on the memo
+
+**Strongest pro-sugar argument not supported by the evidence:** “Downstream
+consumers will want function-level spans once they see the concise syntax; the
+repository simply cannot exhibit demand for syntax it does not currently
+promote.”
+
+**Status: UNSUPPORTED.** The first sentence is a forecast without observed
+reviewer demand. The second correctly warns that in-repo unusedness alone is not
+proof of unnecessity, but V-DX-PRINC-1 requires a forcing function to rescue the
+external-consumer case. No post-E10 experiment supplies one. This temptation is
+therefore labeled rather than smuggled into the FIRE case.
+
+### Bias checks
+
+- The FIRE case receives its strongest supported point: Eta's internal/test
+  corpus is not representative of downstream service functions.
+- The broad search's application-shaped OTEL README occurrence is disclosed,
+  not hidden by the executable-source counting rule; it is a local value binding
+  and cannot use the proposed function sugar.
+- The 5→4 change is not presented as declining adoption: E10's fifth site was its
+  own eligible parity fixture on the hold branch.
+- The cohort block contains no fact about prior implementation completeness or
+  test investment.
+- Both outcomes remain live: an explicit cohort request is sufficient to FIRE
+  despite the author's recommendation.
+
+## Recommendation
+
+**Recommend NO-FIRE.** The measured tree has four executable occurrences in two
+files, but zero eligible consumer sites; the only eligible fifth occurrence in
+E10's count was E10's own parity fixture. No later experiment creates a forcing
+function, and E8 materially absorbs the motivating leaf boilerplate.
+
+This recommendation does not self-decide the trigger. If the independent cohort
+explicitly requests one spelling, FIRE wins and a separate implementation
+objective follows. Otherwise the pre-registered outcome is to close E10 as
+**killed**, retaining this parking-lot evidence and making no code change.
+
+## Prediction scoring
+
+| Sealed prediction | Actual at review handoff | Score |
+| --- | --- | --- |
+| 4 executable sites | 4 | **Hit** |
+| 2 executable files | 2 | **Hit** |
+| E10 delta −1 site | 5→4; E10-only parity fixture absent | **Hit** |
+| E10 file delta −1 | 2→2 | **Miss** |
+| 0 consumer-shaped executable sites | 0 | **Hit** |
+| 4 framework/test sites | 4 | **Hit** |
+| 4 sugar-eligible sites | 0 | **Miss** |
+| No post-E10 forcing function | None found | **Hit** |
+| E8 reduces need | Directly absorbs named typed-result leaf wrapper | **Hit** |
+| Cohort says NO-FIRE | Pending orchestrator cohort | **Unscored** |
+| Final outcome killed | Pending cohort decision | **Unscored** |
+| NO-FIRE surface/footgun delta +0 | No code changed | **Hit at handoff** |
+| FIRE follow-up +1 form/+1 rejection path/+2 comprehension traps | No FIRE follow-up in this objective | **Unscored** |
+
+Scored observations: **8 hits / 10 scored**, with two misses. The important miss
+strengthens rather than weakens NO-FIRE: none of the four executable sites is
+eligible for function-level sugar.
+
+## Verification
+
+No source, interface, test, example, benchmark, driver, or build configuration
+changed. Relative to the branch baseline, the only changed paths are:
+
+- `.scratch/research/dx/e31/journal.md`
+- `.scratch/research/dx/e31/census.md`
+- `.scratch/research/dx/e31/report.md`
+
+Required docs-only gates were run anyway:
+
+| Command | Result |
+| --- | --- |
+| `nix develop -c dune build @install` | **PASS** |
+| `nix develop -c dune runtest --force` | **PASS** |
+| `nix develop -c eta-oxcaml-test-shipped` | **PASS** |
+
+## Handoff
+
+**E31 READY FOR REVIEW**
