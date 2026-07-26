@@ -4250,3 +4250,47 @@ hit. Executor: 8/10, its two misses strengthening the verdict.
 **Decision: E31 complete (promote the measurement); E10 KILLED.**
 Merged `--no-ff` (evidence record); gates green; branch pushed; worktree
 removed; objective archived. Parking-lot entry added to the ledger.
+
+---
+
+## V-DX-E32-001 — 2026-07-26 — research/dx-e32-fold-recheck — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. F2 watch item cashed: does a shorthand
+for `fold ~ok:Fun.id ~error:f` earn its val, or does E23's verdict (one
+both-channel fold) hold? Scored at V-DX-E32-002.
+
+**Measured pre-state (verified).** `fold ~ok:Fun.id` sites: **26 in 10
+files** — and **6 of the 10 files are in `examples/`** (the code that
+teaches external consumers). Sample shapes: pure typed recovery to a
+success value (`render_close`, `function \`Cache_miss -> "fallback"`),
+never a constant (so `Result.value ~default`-style shorthands don't fit).
+
+**The honest tension.** For A (verdict holds): E23's concept-shrinkage
+story; the exception-misreading vector of `recover` was measured in the
+E23 review (rated 3 — "could easily imply exception recovery"). For B
+(re-add `recover` as fold's documented special case): 26 sites is the
+programme's highest demonstrated frequency; the noise concentrates in
+teaching code; progressive disclosure is established culture (E20's
+shorthands); R3 explicitly sanctions evidence-driven reverts; `recover f`
+vs `fold ~ok:Fun.id ~error:f` is a real readability win at the sites
+that teach.
+
+**Predictions.**
+- Census: 26 sites / 10 files confirmed (±2); examples concentration
+  confirmed.
+- Decision: **B — `recover` returns** documented as `fold`'s pure
+  typed-recovery special case (`fold ~ok:Fun.id ≡ recover`), ~55%;
+  A (verdict holds) ~40%; other ~5%. Kill gate for B: the review
+  re-measures the exception-misreading and finds it RE-OPENED by the
+  new framing (typed-channel discipline of the E23 surface should
+  contain it — if it doesn't, B dies and A holds).
+- If B: vals +1 (handle cluster 10 → 11 — the concept count stays flat
+  by progressive disclosure; the tension with E23's 11→10 is recorded
+  honestly, not hidden). Footguns +0. The 26 sites migrate (examples
+  first — consistency of the teaching surface).
+- Review: PR-style oracle, shown the usage data + both surfaces + the
+  E23 misreading evidence. Decisive question: does `recover` framed as
+  "fold's special case, typed channel only" read as exception-catching
+  anyway?
+- Outcome: B promotes; if the misreading re-opens, A holds with the
+  recheck as the record.
