@@ -4734,3 +4734,54 @@ loss.
 The executor did exactly right surfacing these raw instead of
 hand-waving them; the orchestrator's read is that two of three are
 unfinished evidence, and the third was my spec bug.
+
+---
+
+## V-DX-E36-003 — 2026-07-27 — research/dx-e36-background-semantics — phase: results + decision (hardening wave)
+
+**What shipped.** The split, exactly as amended: `with_background` is now
+**fail-fast** (background failure cancels the body, finalizers run,
+cause propagates `par`-style; racing terminal events linearized by
+publication order — `par`'s first-observed rule, no priority promise);
+**`with_supervised_background`** preserves the former record-only
+behavior verbatim. Implementation: dedicated lexical arbiter
+(single-consumer exit stream, exactly-once finalization); the
+internal-cancel filter discards ONLY clean internal cancellations and
+attaches complete loser causes otherwise. `with_best_effort_background`
+not added (composition covers it). Census +1 val; footgun −1
+("background death invisible to the body" removed by construction).
+Six pinned semantic edges tested on both substrates; law rows
+R138–R145.
+
+**Arc (the deep one).** Initial implementation → executor BLOCKED with
+three raw findings (same-release priority inexpressible; cleanup parity
+unproven; publication safety unproven) → orchestrator adjudication
+(V-DX-E36-002: finding 1 was an orchestrator spec over-reach — `par`
+itself only guarantees publication order — amended; findings 2–3
+assigned as evidence work) → rework → review verdict
+**should-not-have-merged**: a probe proved the cleanup-parity claim was
+FALSE (the internal-cancel filter dropped the interrupt wrapper even
+when cleanup failed; the parity tests were hollow; R143 registered the
+false claim) → rework round 2 (filter rule corrected to design intent;
+exact structural old-vs-new parity tests; registry truth repair; jsoo
+F3 to native parity; untested background-first cleanup shape added;
+unobservable cancellation-count claim reworded) → reviewer of record:
+**approve**, with exact old-shape cause trees now structurally proven
+(`Suppressed(Interrupt, Fail(Cleanup_failed))`).
+
+**Prediction scoring (orchestrator, V-DX-E36-001) — 6/7.** Split
+(fail-fast default + supervised rename): hit. Best-effort YAGNI: hit.
+Census +1: hit. Footgun −1: hit. Migration shape: hit. Review promote:
+hit. **Same-release priority (failure beats success): MISS** — over-
+specified beyond `par`'s own guarantee; amended to publication order.
+Executor: 8/10 initially; its honest BLOCKED and the follow-up rounds
+were the experiment's real quality signal.
+
+**Decision: PROMOTE.** Merged `--no-ff`; all gate tracks green on
+master; branch pushed; worktree removed; objective + two follow-ups
+archived.
+
+**Follow-ups.** E42a's daemon-hiding should evaluate http protocol
+readers against the new fail-fast `with_background` (registered since
+the objective; untouched here). Report nit noted by review (stale
+approximate test name at report.md:78 — cosmetic, recorded).

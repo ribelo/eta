@@ -8,10 +8,9 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E36 — Background failure semantics (P0)**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e36`
-  - Branch: `research/dx-e36-background-semantics`
-  - Stage: predictions sealed (V-DX-E36-001); objective.md written; awaiting executor
+- In flight: nothing (next: **E37 parallel-acquire ownership**)
+- Done (recent): **E36 promoted** (fail-fast `with_background` +
+  `with_supervised_background`; two deep review rounds)
 - Done (recent): **E35 promoted** (stack safety established: 1M under
   documented defaults; no interpreter rewrite)
 - Wave: **EOP-audit hardening wave registered** (V-DX-EOP-AUDIT) —

@@ -763,3 +763,31 @@ Durable lessons:
    test proves nothing unless something nearby dies on cue: plain JS
    recursion dies at 12,513 frames on the same Node; raw non-tail
    OCaml-under-jsoo dies at 10k. The deaths validate the passes.
+
+## E36 — Background failure semantics: structured lifetime AND structured failure (2026-07-27)
+
+`with_background` is now fail-fast: a dead protocol reader or heartbeat
+cancels the body, runs its finalizers, and propagates its cause —
+`par`-like, with races linearized by terminal-exit publication order
+(the honest rule, because it's the only one `par` itself guarantees).
+The old record-only behavior lives on, honestly named, as
+`with_supervised_background`. The audit's §4.2 gap is closed: lifetime
+AND failure are now both structured.
+
+Durable lessons:
+
+1. **"Unproven" is not "inexpressible" — but proving is the work.** The
+   executor's BLOCKED correctly separated one spec over-reach
+   (orchestrator's, amended) from two evidence gaps. Two were closed by
+   tests; the priority rule was closed by discovering `par` never
+   promised it either.
+2. **Parity claims need shape-exact evidence.** The first
+   "cleanup-parity proven" was false: the filter dropped the interrupt
+   wrapper, the tests accepted both shapes, and the registry registered
+   it anyway. The corrected rule is the design's own intent: filter
+   only CLEAN internal cancellations; attach the complete loser cause
+   otherwise. A probe comparing exact cause trees old-vs-new is the
+   only acceptable evidence for such claims.
+3. **The surprising semantics should carry the marked name.** Fail-fast
+   is what `with_background` reads as; record-only is the marked
+   variant. T2 applies to semantics, not just types.

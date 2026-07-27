@@ -367,9 +367,15 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   fiber stacks + jsoo CPS trampoline. 1M regression tests on all three
   substrates. V-DX-E35-001/002.
 
-### E36 — Background failure semantics (P0) — in flight
+### E36 — Background failure semantics (P0) — promoted 2026-07-27
 - What: split `with_background` semantics — fail-fast (death cancels
   body) vs supervised (current, honestly named) vs best-effort.
+- Outcome: shipped. `with_background` fail-fast (publication-order
+  linearization, par's model); `with_supervised_background` preserves
+  the old behavior verbatim; best-effort not added. Two deep rounds:
+  executor's honest BLOCKED (spec over-reach amended) and a
+  probe-proven false-parity catch (filter rule corrected). Law rows
+  R138–R145. V-DX-E36-001..003.
 
 ### E37 — Parallel-acquire ownership (P0)
 - What: one combinator — ownership transfer to parent scope + correct
