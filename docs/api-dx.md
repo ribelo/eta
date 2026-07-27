@@ -495,12 +495,12 @@ A failed shard cancels admitted acquisitions and rolls back completed
 connections in reverse successful-acquisition order. After full success, the
 same release order applies when the owner scope exits.
 
-Heterogeneous parallel acquisition remains an advanced case. It requires an
-explicit owner-registration bridge, which may use the `Effect.Expert`
-runtime-package extension point. Keep that bridge in library integration code;
-ordinary homogeneous application code should use `acquire_all_par`, and a fixed
-heterogeneous set should default to the visible `with_resource` ladder unless
-acquisition concurrency is required.
+Heterogeneous parallel acquisition remains an advanced case; default a fixed
+heterogeneous set to the visible sequential `with_resource` ladder. If
+acquisition concurrency is unavoidable, an integration bridge must stage each
+successful acquisition privately and atomically transfer the complete finalizer
+batch only after every acquisition succeeds. Direct per-child owner registration
+is not transactional. Ordinary homogeneous code should use `acquire_all_par`.
 
 `Effect.finally` is not replaced by hand-written `bind_error` cleanup. Manual
 cleanup around typed success/failure paths misses defects and cancellation, and

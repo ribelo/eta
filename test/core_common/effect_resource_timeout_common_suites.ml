@@ -508,6 +508,123 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (List.rev !releases);
     Alcotest.(check bool) "in-flight acquire cancelled" true !d_cancelled
 
+  let test_acquire_all_par_parent_interruption_rolls_back_once () =
+    B.with_runtime @@ fun ctx rt ->
+    let a_done, a_done_u = B.create_promise () in
+    let b_done, b_done_u = B.create_promise () in
+    let c_started, c_started_u = B.create_promise () in
+    let releases = ref [] in
+    let acquire = function
+      | `A ->
+          E.sync (fun () ->
+              B.resolve a_done_u ();
+              "a")
+      | `B ->
+          B.await_effect a_done
+          |> E.bind (fun () ->
+                 E.sync (fun () ->
+                     B.resolve b_done_u ();
+                     "b"))
+      | `In_flight ->
+          B.await_effect b_done
+          |> E.bind (fun () ->
+                 E.sync (fun () -> B.resolve c_started_u ()))
+          |> E.bind (fun () -> B.await_cancel_effect ())
+          |> E.map (fun () -> "never")
+    in
+    let release resource =
+      E.sync (fun () -> releases := resource :: !releases)
+    in
+    let fiber =
+      B.fork_run_cancelable ctx rt
+        (E.with_scope
+           (E.acquire_all_par ~acquire ~release [ `A; `B; `In_flight ]))
+    in
+    ignore (B.await c_started : unit);
+    B.cancel_fiber fiber;
+    (match B.await_cancelable fiber with
+    | `Cancelled -> ()
+    | `Returned (Exit.Error cause) when Cause.is_interrupt_only cause -> ()
+    | `Returned (Exit.Error cause) ->
+        Alcotest.failf "expected parent interruption, got %a"
+          (Cause.pp pp_hidden) cause
+    | `Returned (Exit.Ok _) -> Alcotest.fail "parent cancellation returned Ok");
+    Alcotest.(check (list string))
+      "parent interruption reverse rollback exactly once" [ "b"; "a" ]
+      (List.rev !releases)
+
+  let test_acquire_all_par_rollback_release_failure_diagnostics () =
+    B.with_runtime @@ fun _ctx rt ->
+    let a_done, a_done_u = B.create_promise () in
+    let releases = ref 0 in
+    let acquire = function
+      | `A ->
+          E.sync (fun () ->
+              B.resolve a_done_u ();
+              "a")
+      | `Fail ->
+          B.await_effect a_done |> E.bind (fun () -> E.fail `Acquire)
+    in
+    let release _resource =
+      E.sync (fun () -> incr releases)
+      |> E.bind (fun () -> E.fail `Release)
+    in
+    (match
+       B.run rt
+         (E.with_scope
+            (E.acquire_all_par ~acquire ~release [ `A; `Fail ]))
+     with
+    | Exit.Error
+        (Cause.Suppressed
+          {
+            primary = Cause.Fail `Acquire;
+            finalizer = Cause.Finalizer.Fail "<typed failure>";
+          }) ->
+        ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected acquire failure with rollback diagnostic, got %a"
+          (Cause.pp pp_hidden) cause
+    | Exit.Ok _ -> Alcotest.fail "expected acquire and rollback failure");
+    Alcotest.(check int) "failing staged release ran once" 1 !releases
+
+  let test_acquire_all_par_acquire_defect_rolls_back () =
+    B.with_runtime @@ fun _ctx rt ->
+    let a_done, a_done_u = B.create_promise () in
+    let b_done, b_done_u = B.create_promise () in
+    let defect = Failure "acquire defect" in
+    let releases = ref [] in
+    let acquire = function
+      | `A ->
+          E.sync (fun () ->
+              B.resolve a_done_u ();
+              "a")
+      | `B ->
+          B.await_effect a_done
+          |> E.bind (fun () ->
+                 E.sync (fun () ->
+                     B.resolve b_done_u ();
+                     "b"))
+      | `Defect ->
+          B.await_effect b_done
+          |> E.bind (fun () -> E.sync (fun () -> raise defect))
+    in
+    let release resource =
+      E.sync (fun () -> releases := resource :: !releases)
+    in
+    (match
+       B.run rt
+         (E.with_scope
+            (E.acquire_all_par ~acquire ~release [ `A; `B; `Defect ]))
+     with
+    | Exit.Error (Cause.Die die) when die.exn == defect -> ()
+    | Exit.Error cause ->
+        Alcotest.failf "expected acquire defect, got %a" (Cause.pp pp_hidden)
+          cause
+    | Exit.Ok _ -> Alcotest.fail "expected acquire defect");
+    Alcotest.(check (list string))
+      "defect reverse rollback exactly once" [ "b"; "a" ]
+      (List.rev !releases)
+
   let test_acquire_all_par_cancellation_cleans_late_completion () =
     B.with_runtime @@ fun ctx rt ->
     let a_done, a_done_u = B.create_promise () in
@@ -999,6 +1116,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_acquire_all_par_admission_and_concurrency;
           Alcotest.test_case "acquire_all_par failure reverse cleanup" `Quick
             test_acquire_all_par_failure_releases_reverse_success_order;
+          Alcotest.test_case "acquire_all_par parent interruption rollback"
+            `Quick test_acquire_all_par_parent_interruption_rolls_back_once;
+          Alcotest.test_case "acquire_all_par rollback release diagnostics"
+            `Quick test_acquire_all_par_rollback_release_failure_diagnostics;
+          Alcotest.test_case "acquire_all_par acquire defect rollback" `Quick
+            test_acquire_all_par_acquire_defect_rolls_back;
           Alcotest.test_case "acquire_all_par cancellation late completion"
             `Quick test_acquire_all_par_cancellation_cleans_late_completion;
           Alcotest.test_case "acquire_all_par scope exit ownership" `Quick

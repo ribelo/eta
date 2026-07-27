@@ -50,15 +50,21 @@ module/type, compatibility path, fallback, or `Expert` surface.
 | --- | --- | --- |
 | Concurrent/default/explicit admission and nonpositive rejection | `acquire_all_par admission and concurrency` forces ten blocked inputs to reach exactly the default eight, then seven inputs to reach exactly an explicit three, and rejects zero at construction | proven |
 | Acquire failure and in-flight cancellation | `acquire_all_par failure reverse cleanup` forces `a`, then `b`, then failure while a fourth child is in-flight; exit stays the acquisition failure, the fourth observes interruption, and releases are exactly `b,a` | proven |
+| Parent interruption during acquisition | `acquire_all_par parent interruption rollback` cancels the batch from its parent after two acquisitions complete and a third starts; the exit remains interruption and releases are exactly `b,a` once each | proven |
+| Rollback release failure | `acquire_all_par rollback release diagnostics` forces a typed acquire failure after one success, then makes that staged release fail; the result is the acquire failure with a `Cause.Finalizer` diagnostic suppressed beneath it, and the release runs once | proven |
+| Acquire defect rollback | `acquire_all_par acquire defect rollback` raises a distinguished defect after `a` and `b` complete; the exact exception remains `Cause.Die` and releases are exactly `b,a` once each | proven |
 | Late completion after cancellation | `acquire_all_par cancellation late completion` allows an uninterruptible acquire to return only after sibling failure; rollback is `late,a` before recovery continues, success continuation is skipped, and owner exit adds no duplicate | proven |
 | Empty fiber census | `acquire_all_par late completion census` repeats the late-completion attack through `Eta_test.Run` and requires an available empty structured-fiber census | proven |
 | Success ownership on every exit | `acquire_all_par scope exit ownership` observes no release during the body and exact `second,first` release after success, typed failure, defect, and interruption | proven |
 | Release diagnostics | `acquire_all_par release diagnostics` makes both releases fail; all run in `2,1` order, success produces a sequential `Cause.Finalizer`, and body failure remains primary with the full sequential finalizer diagnostic suppressed | proven |
 | Input order | `acquire_all_par input order` forces completion `3,1,2,0`, returns `0,1,2,3`, and releases `0,2,1,3` | proven |
+| jsoo transfer and rollback parity | `acquire_all_par success transfer order` observes input-order results, no release before the body, and reverse-success release; `acquire_all_par sibling failure rollback` observes exact `b,a` rollback; `acquire_all_par parent interruption` observes interruption with exact `b,a` rollback | proven |
 
-Observation boundary for the six core tests is the complete Eio runtime exit and
-release trail. The late-cancellation companion additionally observes Eta_test's
-root-exit fiber census. No test relies on wall-clock timing.
+Observation boundary for the nine native core tests is the complete Eio runtime
+exit and release trail. The late-cancellation companion additionally observes
+Eta_test's root-exit fiber census. The three jsoo tests observe the corresponding
+runtime exit and release trail under the JS scheduler. No test relies on
+wall-clock timing.
 
 ## Docs migration
 
@@ -71,9 +77,11 @@ Effect.with_scope
 ```
 
 The former recipe block contained six `Effect.Expert` calls; the ordinary block
-contains zero. `Effect.Expert` is mentioned only in the demoted heterogeneous,
-library-integration note. `acquire_release` and `with_scope` documentation now
-point homogeneous parallel acquisition to `acquire_all_par`.
+contains zero. The heterogeneous note defaults to the sequential
+`with_resource` ladder and requires private staging plus atomic batch transfer
+for any advanced concurrent bridge; it explicitly rejects direct per-child owner
+registration. `acquire_release` and `with_scope` documentation point homogeneous
+parallel acquisition to `acquire_all_par`.
 
 ## Census and footgun score
 
@@ -116,7 +124,7 @@ failure class was fixed within one forward attempt.
 
 ## Verification
 
-All assignment gates are green on the final code/test tree:
+The initial implementation passed the complete assignment gate set:
 
 ```sh
 nix develop -c dune build @install
@@ -126,36 +134,43 @@ nix develop .#mainline -c dune build --build-dir=_build-mainline @install
 nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force
 ```
 
-Focused development evidence is also green:
+The follow-up final tree was revalidated with the required native and jsoo
+gates:
 
 ```sh
-nix develop -c dune runtest test/core_eio test/test --force
+nix develop -c dune runtest test/core_eio --force
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force
 ```
 
-The focused run executed 626 core Eio tests and 41 eta_test tests.
+The native gate ran 629 tests. The jsoo gate explicitly passed
+`acquire_all_par success transfer order`, `acquire_all_par sibling failure
+rollback`, and `acquire_all_par parent interruption`.
 
 ## Hypothesis status
 
 | Candidate | Status | Evidence |
 | --- | --- | --- |
-| Private staging scope plus one batch commit | accepted | all semantic, census, native, shipped, mainline, and JS gates pass |
-| Direct per-child registration into the owner (former Expert recipe) | rejected | failure recovered inside the owner would retain partial resources; rollback test requires cleanup before recovery |
-| Custom atomic owner-finalizer aggregator | dominated | it passed focused evidence, but existing staging/finalizer machinery expresses the same protocol with materially less code and authoritative cause handling |
+| Private staging scope plus one batch commit | accepted | the nine named native tests and three named jsoo tests in the semantics table, plus `acquire_all_par late completion census`, pass |
+| Direct per-child registration into the owner (former Expert recipe) | rejected | `acquire_all_par failure reverse cleanup` requires prompt rollback before recovery rather than retaining partial owner resources |
+| Custom atomic owner-finalizer aggregator | dominated | `acquire_all_par release diagnostics` and `acquire_all_par rollback release diagnostics` pass through the existing staging/finalizer machinery without a second cause-handling path |
 | New heterogeneous or arity-specific public API | out of scope | excluded by the E6 and objective fences, not tested or rejected on technical feasibility |
 
 ## Decision diary
 
 - **V-DX-E37-1 — ship one homogeneous ownership combinator.**
   Status: ACCEPT.
-  Evidence: all six pinned semantics plus empty-census red team and all gates.
+  Evidence: the nine native tests and three jsoo tests named in the semantics
+  table, plus `acquire_all_par late completion census`.
   Counterevidence: a plain public-combinator recipe cannot transfer ownership;
   direct owner registration fails transactional rollback.
   Confidence: high.
 
 - **V-DX-E37-2 — use staged finalizers and one batch transfer.**
   Status: ACCEPT.
-  Evidence: exact reverse completion ordering, late cancellation, every exit
-  kind, and authoritative finalizer diagnostics.
+  Evidence: `acquire_all_par failure reverse cleanup`, `acquire_all_par parent
+  interruption rollback`, `acquire_all_par cancellation late completion`,
+  `acquire_all_par scope exit ownership`, `acquire_all_par release diagnostics`,
+  and `acquire_all_par rollback release diagnostics`.
   Remaining risk: a finite uninterruptible acquisition necessarily delays the
   structured join and therefore rollback return; detaching it would violate the
   no-leak and census requirements.
