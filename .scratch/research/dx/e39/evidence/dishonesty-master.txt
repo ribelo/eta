@@ -1,0 +1,2 @@
+declared uses_clock=false runtime_sleeps=1
+commit=ba1275f40a0d8178413750a7f6eb6e6378b34295
