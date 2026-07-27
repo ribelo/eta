@@ -4874,3 +4874,48 @@ different deliverables — the registry's exact-span discipline is what
 caught the gap. (2) The staging pattern (arm rollback before the
 checkpoint; batch-commit on success) is now the canonical answer for
 parallel acquisition and belongs in `model.md`.
+
+---
+
+## V-DX-E38-001 — 2026-07-27 — research/dx-e38-finalizer-diagnostics — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E38-002.
+
+**Measured pre-state (verified).** `Cause.Finalizer.Fail of string` —
+typed finalizer failures are flattened at `finalizer_of_cause
+(render_error frame)`, losing the error value. `Cause.die` already
+carries rich structure ({exn; backtrace; span_name; annotations});
+`Cause.Portable` exists to materialize into strings for cross-domain
+transport (its string form is its JOB). E25/E7 already supply printers
+(`error_pp`, `[@@deriving eta_error]`). Consumers of the string payload:
+`Cause.pp`/`equal`/`diagnostic_equal`, otel/JSON encoding, E4's render
+corpus, supervisor/async/resource suites.
+
+**Predictions.**
+- Shape: **existential payload with printer** on the same-domain side
+  (`Finalizer.Fail` becomes a GADT case carrying the error value + its
+  pp; `Cause.Portable.Finalizer.Fail` stays string-materialized via the
+  payload's pp at the `of_cause` boundary). The diagnostic-record
+  alternative rejected: it flattens at construction AND keeps string
+  kinds (the human's explicit string aversion).
+- Rendering parity: `Cause.pp`/`pp_compact` produce IDENTICAL strings
+  for existing cases (today's string IS the pp output; the
+  `<typed failure>` default persists where no error_pp is registered) —
+  E4's corpus unchanged or deliberately minimal-delta.
+- Equality: same-domain `equal`/`diagnostic_equal` compare rendered
+  forms via pp (documented); structure otherwise preserved.
+- Consumers: otel/JSON encoding keeps working via pp (parity);
+  supervisor/cause/render suites migrated mechanically (existential
+  unpacking at match sites — wide but mechanical).
+- jsoo: pure-OCaml GADT — portable, no substrate question.
+- The gain lands where E25/E7 aimed it: with an `error_pp`/`pp_err`
+  present, finalizer failures render MEANINGFULLY (kind + payload),
+  not `"<typed failure>"`; without one, behavior is today's. The error
+  VALUE additionally survives for classification by whoever holds the
+  concrete type (application owns its error types — the library
+  doesn't classify what it doesn't own).
+- Census: payload shape change (no new vals); footguns +0 (a wart
+  removed). Law-registry rows updated for the changed claims.
+- Review: PR-style oracle. Outcome: promote. Risk: equality semantics
+  needs one design decision (rendered-form equality) that the review
+  may challenge.
