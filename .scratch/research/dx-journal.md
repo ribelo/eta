@@ -4919,3 +4919,45 @@ corpus, supervisor/async/resource suites.
 - Review: PR-style oracle. Outcome: promote. Risk: equality semantics
   needs one design decision (rendered-form equality) that the review
   may challenge.
+
+---
+
+## V-DX-E38-002 — 2026-07-27 — research/dx-e38-finalizer-diagnostics — phase: results + decision (hardening wave)
+
+**What shipped.** `Cause.Finalizer.Fail` is now `{ error : 'err;
+rendered : string }` — the error VALUE survives for classification by
+whoever holds the concrete type, and the rendered string travels for
+display. Rendering happens ONCE at conversion, inside the runtime
+capture path: a raising printer becomes `Cause.Die` at conversion,
+restoring E25's contract bit-for-bit. NO stored printer — the escape
+class and the reflexivity class are dead by construction. Equality on
+Fail payloads is string equality on `rendered` (parity with the old
+world; reflexive even with stateful printers). `Portable` materializes
+from `rendered`. Parity: E4 render corpus unchanged, OTel JSON golden
+unchanged, no-printer default `"<typed failure>"` preserved, E7-derived
+`pp_err` renders meaningfully end-to-end (`db:7`). Law rows R154–R165.
+
+**Arc.** Initial shape ({error; pp} — deferred printer) → review
+verdict should-not-have-merged: the deferred printer escapes Eta's
+capture boundary (reproduced: `portable=raised(...)` where E25 promises
+a defect) and a stateful printer can break equality reflexivity →
+design replacement (orchestrator, on the review's analysis):
+render-at-capture + store value-and-rendered + drop the printer →
+verification confirmed fixed on both capture paths → one surgical
+registry round (4 uncovered clauses + 2 span fixes, R163–R165 with
+direct tests) → reviewer of record: **approve**.
+
+**Prediction scoring (orchestrator, V-DX-E38-001).** Existential
+payload: hit in spirit (the final form keeps the value; the
+deferred-printer detail died in review — recorded honestly). Portable
+materialization: hit. Render parity: hit (all four claims). Consumers
+migrated mechanically: hit. jsoo portable: hit. The error_pp-culture
+gain: hit. Census +0: hit. **Footguns +0: the one to learn from** —
+the first implementation INTRODUCED an escape footgun the prediction
+missed (evaluation timing moved from capture to observation; invisible
+in the type); the repaired design restores +0 and the lesson is
+recorded in dx.md.
+
+**Decision: PROMOTE.** Merged `--no-ff`; all gate tracks green on
+master; branch pushed; worktree removed; objective + two follow-ups
+archived.

@@ -818,3 +818,27 @@ Durable lessons:
    the parallel-acquire *ownership semantics*. Same task family,
    different question — the constraint held because the questions were
    never conflated.
+
+## E38 — Finalizer diagnostics: the string dies, the value survives (2026-07-27)
+
+`Cause.Finalizer.Fail` was the last place a typed error was flattened to
+a string. Now it's `{ error; rendered }`: the value survives for whoever
+holds its concrete type, and the rendered string — computed **once, at
+conversion, inside the runtime capture path** — travels for display.
+`Cause.Portable` keeps materializing strings, because that's its job.
+E7-derived printers now render meaningfully in cleanup diagnostics
+(`db:7`, not `<typed failure>`).
+
+The deep lesson, and the reason the first shape died in review:
+
+1. **Deferral is a semantics change, and the type won't tell you.**
+   Moving the printer's invocation from capture-time to observation-time
+   silently broke E25's contract ("a raising pp becomes a defect via the
+   ordinary capture path") and gave stateful printers a reflexivity
+   surface. The repaired design evaluates at the same moment as before
+   and stores *more* — value AND rendered string. Evaluation timing is
+   part of a contract even when it's invisible in the signature.
+2. **Parity by construction beats parity by testing.** String equality
+   on the stored `rendered` is the old world's semantics exactly — no
+   new collision-limit paragraph, no new footgun, nothing for the
+   equality tests to relearn.

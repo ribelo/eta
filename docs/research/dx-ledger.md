@@ -386,9 +386,15 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   enclosing scope; no Expert required. Mechanism cleared on first
   review; evidence repaired in one rework round. V-DX-E37-001/002.
 
-### E38 — Finalizer diagnostics structure (P0-5) — in flight
+### E38 — Finalizer diagnostics structure (P0-5) — promoted 2026-07-27
 - What: `Finalizer.Fail of string` → structural payload (existential
   with printer / diagnostic record); `'err` untouched.
+- Outcome: `Fail { error; rendered }` — value survives for
+  classification; rendering happens once at capture (raising printer →
+  `Cause.Die`, E25 contract restored); no stored printer, no escape or
+  reflexivity surface; equality = string equality (parity). Law rows
+  R154–R165. Two rework rounds (design replacement + registry).
+  V-DX-E38-001/002.
 
 ### E39 — E12 audit-slim race
 - What: remove vs. slim-and-rename (`visible_static_spine`) for
