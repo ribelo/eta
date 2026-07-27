@@ -4961,3 +4961,61 @@ recorded in dx.md.
 **Decision: PROMOTE.** Merged `--no-ff`; all gate tracks green on
 master; branch pushed; worktree removed; objective + two follow-ups
 archived.
+
+---
+
+## V-DX-E39-001 — 2026-07-28 — research/dx-e39-audit-slim-race — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E39-002.
+
+**The race.** EOP-audit §6.1 calls the E12 surface the strongest removal
+candidate: `audit`'s own docs admit blindness (bind continuations, `sync`
+callbacks, dynamic fragments, trust in `Expert.make` author declarations,
+both over- and under-reporting); every `Custom` node stores a
+`capability_footprint`; `preserve` unions footprints at every wrap;
+`Expert.make` forces an unverifiable capability contract on ~12 modules;
+`all` has special introspection behavior. Against that: T5 ("the blueprint
+is a value: inspectable, printable, auditable") and E12's teaching role.
+Endpoints: **R** = remove everything (audit, describe, collect_names,
+footprints, 4 assertions); **S** = slim — `describe`/`collect_names` survive
+(footprint-free by construction: `describe` renders `Custom` as opaque
+leaves with `<bind …>` unforced, never touches capability flags), while
+`audit` + footprints + assertions + the `Expert.make` burden die.
+
+**Measured pre-facts (verified).** Assertions `assert_pure_eff`/
+`assert_no_clock`/`assert_no_logs`/`assert_no_metrics`: 4 uses, ALL in
+`test/test/test_eta_test.ml` self-tests — zero other consumers.
+`Effect.audit`: 6 uses (redteam ×2, blocking_common ×1 boundary check,
+effect_common_suites ×3). `describe`: 3 uses + snapshot. `collect_names`:
+4 uses + `syntax.mli` doc ref. Footprint declaration sites: ~12 modules.
+
+**Predictions.**
+
+1. **Landing: S.** `describe`/`collect_names` survive; `audit` record,
+   `capability_footprint`, all four assertions, and the `Expert.make`
+   capability parameter die. Confidence medium-high; kill probability for
+   `describe` ~25%.
+2. **Footprint cost:** real but small — construction-allocation overhead
+   < 10% on a construction-heavy microbenchmark; ~7 words per `Custom`
+   node plus union allocation per `preserve`. NOT the deciding factor;
+   honesty + complexity decide. (If ≥ 10%, cost becomes first-class —
+   predicted not to trigger.)
+3. **All four assertions die under both endpoints** — no structural
+   consumer exists beyond self-tests.
+4. **`Expert.make`** loses the capability declaration; the unverifiable-
+   contract paragraph leaves the mli.
+5. **`describe`/`collect_names` keep their names** — already honest;
+   `visible_static_spine` rename judged unnecessary (it targets `audit`'s
+   dishonesty, which is being deleted anyway).
+6. **`blocking_common`'s boundary audit check** migrates to an ordinary
+   behavior test or is dropped with a journal note; does not block.
+7. **Census:** introspection cluster −5 vals minimum (`audit` + 4
+   assertions); `Expert.make` simplified. `describe`/`collect_names`
+   unchanged under S.
+8. **Review:** the dossier + both diffs go to PR-style oracle review;
+   S wins on T5/teaching grounds. The REMOVE counter — "E12's teaching
+   evidence was `[agent-sim]` post-hoc" — is raised and answered:
+   `describe` costs nothing (footprint-free) and T5 needs an
+   introspection leg, or its claims become prose.
+9. **Outcome:** PROMOTE of exactly one endpoint with measured evidence;
+   HOLD probability low.
