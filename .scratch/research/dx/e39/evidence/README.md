@@ -3,6 +3,7 @@
 - `source-audit.md` — exhaustive consumer map, dependency map, tracing fault-line
   check, `all` special behavior, and honesty audit.
 - `cost-before.json` / `cost-baseline.md` — raw and summarized BEFORE benchmark.
+- `cost-after-s.json` / `cost-measurement.md` — raw S run and calculated deltas.
 - `dishonesty-master.txt` — executable false declaration on the master-side API.
 - `describe-master.txt` — byte source for later Endpoint-S snapshot parity.
 - `describe-slim.txt` / `snapshot-parity-s.txt` — byte-identical Endpoint-S proof.
