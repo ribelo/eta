@@ -377,7 +377,7 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   probe-proven false-parity catch (filter rule corrected). Law rows
   R138–R145. V-DX-E36-001..003.
 
-### E37 — Parallel-acquire ownership (P0)
+### E37 — Parallel-acquire ownership (P0) — in flight
 - What: one combinator — ownership transfer to parent scope + correct
   partial-acquire cleanup. Correctness, not E6's killed ergonomics.
 

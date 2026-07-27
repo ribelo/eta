@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E37 parallel-acquire ownership**)
+- In flight: **E37 — Parallel-acquire ownership (P0)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e37`
+  - Branch: `research/dx-e37-parallel-acquire`
+  - Stage: predictions sealed (V-DX-E37-001); objective.md written; awaiting executor
 - Done (recent): **E36 promoted** (fail-fast `with_background` +
   `with_supervised_background`; two deep review rounds)
 - Done (recent): **E35 promoted** (stack safety established: 1M under
