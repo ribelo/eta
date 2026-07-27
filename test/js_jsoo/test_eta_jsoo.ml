@@ -321,6 +321,151 @@ let test_timeout_releases_resource done_ =
            expect_fail (( = ) `Timeout) result;
            if not !released then fail "resource was not released"))
 
+let signal promise =
+  Eta.Promise.resolve promise (Eta.Exit.Ok ()) |> Eta.Effect.discard
+
+let test_acquire_all_par_success_transfer_order done_ =
+  let b_done = Eta.Promise.create () in
+  let trail = ref [] in
+  let acquire = function
+    | `A ->
+        Eta.Promise.await b_done
+        |> Eta.Effect.bind (fun () ->
+               Eta.Effect.sync (fun () ->
+                   trail := "acquire:a" :: !trail;
+                   "a"))
+    | `B ->
+        Eta.Effect.sync (fun () -> trail := "acquire:b" :: !trail)
+        |> Eta.Effect.bind (fun () -> signal b_done)
+        |> Eta.Effect.map (fun () -> "b")
+  in
+  let release resource =
+    Eta.Effect.sync (fun () -> trail := ("release:" ^ resource) :: !trail)
+  in
+  let program =
+    Eta.Effect.with_scope
+      (Eta.Effect.acquire_all_par ~acquire ~release [ `A; `B ]
+      |> Eta.Effect.bind (fun resources ->
+             Eta.Effect.sync (fun () ->
+                 if List.exists (String.starts_with ~prefix:"release:") !trail
+                 then fail "resource released before owner body";
+                 trail := "body" :: !trail;
+                 resources)))
+  in
+  run program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok [ "a"; "b" ] ->
+            let expected =
+              [ "acquire:b"; "acquire:a"; "body"; "release:a"; "release:b" ]
+            in
+            if List.rev !trail <> expected then
+              fail "acquire_all_par jsoo transfer order diverged"
+        | Eta.Exit.Ok _ -> fail "acquire_all_par jsoo result order diverged"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "acquire_all_par jsoo success failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
+let test_acquire_all_par_sibling_failure_rollback done_ =
+  let a_done = Eta.Promise.create () in
+  let b_done = Eta.Promise.create () in
+  let in_flight_started = Eta.Promise.create () in
+  let releases = ref [] in
+  let acquire = function
+    | `A -> signal a_done |> Eta.Effect.map (fun () -> "a")
+    | `B ->
+        Eta.Promise.await a_done
+        |> Eta.Effect.bind (fun () -> signal b_done)
+        |> Eta.Effect.map (fun () -> "b")
+    | `Fail ->
+        Eta.Promise.await b_done
+        |> Eta.Effect.bind (fun () -> Eta.Promise.await in_flight_started)
+        |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Acquire)
+    | `In_flight ->
+        signal in_flight_started
+        |> Eta.Effect.bind (fun () -> Eta.Effect.never)
+  in
+  let release resource =
+    Eta.Effect.sync (fun () -> releases := resource :: !releases)
+  in
+  run
+    (Eta.Effect.with_scope
+       (Eta.Effect.acquire_all_par ~acquire ~release
+          [ `A; `B; `Fail; `In_flight ]))
+    ~on_result:
+      (finish done_ (fun exit ->
+           expect_fail (( = ) `Acquire) exit;
+           if List.rev !releases <> [ "b"; "a" ] then
+             fail "acquire_all_par jsoo sibling rollback diverged"))
+
+let cancel_from_parent_when started batch =
+  Eta.Effect.Expert.make ~inherit_:batch ~capabilities:[ `Concurrency ]
+  @@ fun context ->
+  let contract = Eta.Effect.Expert.contract context in
+  let cancel_ready, cancel_ready_resolver =
+    contract.Runtime_contract.create_promise ()
+  in
+  let result, result_resolver = contract.Runtime_contract.create_promise () in
+  contract.Runtime_contract.run_scope
+    ~name:"acquire_all_par parent interruption"
+    (fun sw ->
+      contract.Runtime_contract.fork sw (fun () ->
+          let exit =
+            try
+              contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
+              contract.Runtime_contract.resolve_promise cancel_ready_resolver
+                cancel_context;
+              Eta.Effect.Expert.eval context batch
+            with exn -> Eta.Effect.Expert.exit_of_exn context exn
+          in
+          contract.Runtime_contract.resolve_promise result_resolver exit);
+      let cancel_context =
+        contract.Runtime_contract.await_promise cancel_ready
+      in
+      while not !started do
+        contract.Runtime_contract.yield ()
+      done;
+      contract.Runtime_contract.cancel cancel_context
+        (Failure "cancel acquire_all_par from parent");
+      contract.Runtime_contract.await_promise result)
+
+let test_acquire_all_par_parent_interruption done_ =
+  let a_done = Eta.Promise.create () in
+  let b_done = Eta.Promise.create () in
+  let in_flight_started = ref false in
+  let releases = ref [] in
+  let acquire = function
+    | `A -> signal a_done |> Eta.Effect.map (fun () -> "a")
+    | `B ->
+        Eta.Promise.await a_done
+        |> Eta.Effect.bind (fun () -> signal b_done)
+        |> Eta.Effect.map (fun () -> "b")
+    | `In_flight ->
+        Eta.Promise.await b_done
+        |> Eta.Effect.bind (fun () ->
+               Eta.Effect.sync (fun () -> in_flight_started := true))
+        |> Eta.Effect.bind (fun () -> Eta.Effect.never)
+  in
+  let release resource =
+    Eta.Effect.sync (fun () -> releases := resource :: !releases)
+  in
+  let batch =
+    Eta.Effect.with_scope
+      (Eta.Effect.acquire_all_par ~acquire ~release [ `A; `B; `In_flight ])
+  in
+  run (cancel_from_parent_when in_flight_started batch)
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error cause when Eta.Cause.is_interrupt_only cause ->
+            if List.rev !releases <> [ "b"; "a" ] then
+              fail "acquire_all_par jsoo parent rollback diverged"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "expected jsoo parent interruption, got %a"
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok _ -> fail "jsoo parent interruption returned Ok"))
+
 let test_await_cancellation_removes_promise_subscription done_ =
   let cancel_called = ref false in
   let subscriptions_seen_by_cancel_hook = ref (-1) in
@@ -838,6 +983,12 @@ let tests =
     ("delay", test_delay);
     ("fresh runtime-local counter", test_fresh_uses_runtime_local_mutable_counter);
     ("timeout releases resource", test_timeout_releases_resource);
+    ( "acquire_all_par success transfer order",
+      test_acquire_all_par_success_transfer_order );
+    ( "acquire_all_par sibling failure rollback",
+      test_acquire_all_par_sibling_failure_rollback );
+    ( "acquire_all_par parent interruption",
+      test_acquire_all_par_parent_interruption );
     ( "await cancellation removes promise subscription",
       test_await_cancellation_removes_promise_subscription );
     ( "throwing await cancel hook does not strand fiber",
