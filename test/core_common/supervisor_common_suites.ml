@@ -421,17 +421,52 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "body finalized once" 1 !body_finalizers;
     Alcotest.(check int) "background finalized once" 1 !background_finalizers
 
-  let cleanup_matches_old_shape = function
-    | Cause.Finalizer.Fail "<typed failure>" -> true
-    | Cause.Finalizer.Suppressed
-        {
-          primary = Cause.Finalizer.Interrupt _;
-          finalizer = Cause.Finalizer.Fail "<typed failure>";
-        } ->
-        true
-    | _ -> false
+  let rec finalizer_shape = function
+    | Cause.Finalizer.Fail err -> Printf.sprintf "Fail(%s)" err
+    | Cause.Finalizer.Die die ->
+        Printf.sprintf "Die(%s)" (Printexc.to_string die.exn)
+    | Cause.Finalizer.Interrupt _ -> "Interrupt"
+    | Cause.Finalizer.Sequential causes ->
+        Printf.sprintf "Sequential[%s]"
+          (String.concat ";" (List.map finalizer_shape causes))
+    | Cause.Finalizer.Concurrent causes ->
+        Printf.sprintf "Concurrent[%s]"
+          (String.concat ";" (List.map finalizer_shape causes))
+    | Cause.Finalizer.Finalizer cause ->
+        Printf.sprintf "Finalizer(%s)" (finalizer_shape cause)
+    | Cause.Finalizer.Suppressed { primary; finalizer } ->
+        Printf.sprintf "Suppressed(%s,%s)" (finalizer_shape primary)
+          (finalizer_shape finalizer)
 
-  let run_cleanup_parity_case make body check_exit =
+  let rec cause_shape render = function
+    | Cause.Fail err -> Printf.sprintf "Fail(%s)" (render err)
+    | Cause.Die die -> Printf.sprintf "Die(%s)" (Printexc.to_string die.exn)
+    | Cause.Interrupt _ -> "Interrupt"
+    | Cause.Sequential causes ->
+        Printf.sprintf "Sequential[%s]"
+          (String.concat ";" (List.map (cause_shape render) causes))
+    | Cause.Concurrent causes ->
+        Printf.sprintf "Concurrent[%s]"
+          (String.concat ";" (List.map (cause_shape render) causes))
+    | Cause.Finalizer cause ->
+        Printf.sprintf "Finalizer(%s)" (finalizer_shape cause)
+    | Cause.Suppressed { primary; finalizer } ->
+        Printf.sprintf "Suppressed(%s,%s)" (cause_shape render primary)
+          (finalizer_shape finalizer)
+
+  let background_error_name = function
+    | `Background_failed -> "Background_failed"
+    | `Body_failed -> "Body_failed"
+    | `Cleanup_failed -> "Cleanup_failed"
+
+  let pp_background_error ppf err =
+    Format.pp_print_string ppf (background_error_name err)
+
+  let exit_shape = function
+    | Exit.Ok _ -> "Ok"
+    | Exit.Error cause -> cause_shape background_error_name cause
+
+  let run_cleanup_parity_case make body =
     B.with_test_clock @@ fun _ctx clock rt ->
     let background =
       E.acquire_release ~acquire:E.unit
@@ -440,52 +475,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let program =
       make background (fun () -> wait_for_sleepers_effect clock 1 |> E.bind body)
+      |> E.with_error_pp pp_background_error
     in
-    check_exit (B.run rt program)
+    B.run rt program
+
+  let check_cleanup_parity expected body =
+    let old_shape =
+      run_cleanup_parity_case E.with_supervised_background body |> exit_shape
+    in
+    let new_shape =
+      run_cleanup_parity_case E.with_background body |> exit_shape
+    in
+    Alcotest.(check string) "old exact tree" expected old_shape;
+    Alcotest.(check string) "new exact tree" expected new_shape;
+    Alcotest.(check string) "old/new structural parity" old_shape new_shape
 
   let test_background_cleanup_after_body_success_matches_old_shape () =
-    let check = function
-      | Exit.Error (Cause.Finalizer finalizer)
-        when cleanup_matches_old_shape finalizer ->
-          ()
-      | Exit.Error cause ->
-          Alcotest.failf "unexpected success cleanup cause: %a"
-            (Cause.pp pp_hidden) cause
-      | Exit.Ok () -> Alcotest.fail "cleanup failure was hidden after success"
-    in
-    run_cleanup_parity_case E.with_supervised_background (fun () -> E.unit) check;
-    run_cleanup_parity_case E.with_background (fun () -> E.unit) check
+    check_cleanup_parity
+      "Finalizer(Suppressed(Interrupt,Fail(Cleanup_failed)))"
+      (fun () -> E.unit)
 
   let test_background_cleanup_after_body_failure_matches_old_shape () =
-    let check = function
-      | Exit.Error
-          (Cause.Suppressed { primary = Cause.Fail `Body_failed; finalizer })
-        when cleanup_matches_old_shape finalizer ->
-          ()
-      | Exit.Error cause ->
-          Alcotest.failf "unexpected typed-failure cleanup cause: %a"
-            (Cause.pp pp_hidden) cause
-      | Exit.Ok _ -> Alcotest.fail "body failure unexpectedly succeeded"
-    in
-    run_cleanup_parity_case E.with_supervised_background
-      (fun () -> E.fail `Body_failed) check;
-    run_cleanup_parity_case E.with_background (fun () -> E.fail `Body_failed)
-      check
+    check_cleanup_parity
+      "Suppressed(Fail(Body_failed),Suppressed(Interrupt,Fail(Cleanup_failed)))"
+      (fun () -> E.fail `Body_failed)
 
   let test_background_cleanup_after_body_defect_matches_old_shape () =
     let defect = Failure "body defect" in
-    let check = function
-      | Exit.Error (Cause.Suppressed { primary = Cause.Die die; finalizer })
-        when die.exn == defect && cleanup_matches_old_shape finalizer ->
-          ()
-      | Exit.Error cause ->
-          Alcotest.failf "unexpected defect cleanup cause: %a"
-            (Cause.pp pp_hidden) cause
-      | Exit.Ok _ -> Alcotest.fail "body defect unexpectedly succeeded"
-    in
     let body () = E.sync (fun () -> raise defect) in
-    run_cleanup_parity_case E.with_supervised_background body check;
-    run_cleanup_parity_case E.with_background body check
+    check_cleanup_parity
+      "Suppressed(Die(Failure(\"body defect\")),Suppressed(Interrupt,Fail(Cleanup_failed)))"
+      body
 
   let test_background_loser_publishes_after_cancellation_before_assembly () =
     B.with_runtime @@ fun ctx rt ->
@@ -518,6 +538,33 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "background failure was lost");
     Alcotest.(check bool) "loser finalizer finished" true !finalizer_finished
+
+  let test_background_winner_preserves_body_cleanup_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let body_ready, mark_body_ready = B.create_promise () in
+    let cleanup_count = ref 0 in
+    let background =
+      B.await_effect body_ready
+      |> E.bind (fun () -> E.fail `Background_failed)
+    in
+    let use =
+      E.acquire_release ~acquire:E.unit
+        ~release:(fun () ->
+          E.sync (fun () -> incr cleanup_count)
+          |> E.bind (fun () -> E.fail `Cleanup_failed))
+      |> E.bind (fun () ->
+             E.sync (fun () -> B.resolve mark_body_ready ())
+             |> E.bind (fun () -> E.never))
+    in
+    let exit =
+      E.with_background background (fun () -> use)
+      |> E.with_error_pp pp_background_error |> B.run rt
+    in
+    Alcotest.(check string)
+      "background primary with complete body cleanup cause"
+      "Suppressed(Fail(Background_failed),Suppressed(Interrupt,Fail(Cleanup_failed)))"
+      (exit_shape exit);
+    Alcotest.(check int) "body cleanup exactly once" 1 !cleanup_count
 
   let test_supervisor_threshold_failure () =
     B.with_runtime @@ fun _ctx rt ->
@@ -634,7 +681,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             "with_supervised_background failure does not cancel use" `Quick
             test_effect_with_supervised_background_failure_does_not_cancel_use;
           Alcotest.test_case
-            "with_background same-release publication order matches par once"
+            "with_background same-release publication order chooses one winner"
             `Quick
             test_effect_with_background_same_release_has_one_winner;
           Alcotest.test_case
@@ -650,6 +697,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             "background loser publishes after cancellation before assembly"
             `Quick
             test_background_loser_publishes_after_cancellation_before_assembly;
+          Alcotest.test_case
+            "background winner preserves body cleanup failure" `Quick
+            test_background_winner_preserves_body_cleanup_failure;
           Alcotest.test_case "threshold failure" `Quick
             test_supervisor_threshold_failure;
           Alcotest.test_case "records multiple failures" `Quick

@@ -249,12 +249,6 @@ let rec is_interrupt_with_id expected = function
   | Cause.Suppressed _ ->
       false
 
-let cancellation_finalizer stop_id = function
-  | Cause.Suppressed { primary; finalizer }
-    when is_interrupt_with_id stop_id primary ->
-      if is_internal_cancel_finalizer finalizer then None else Some finalizer
-  | _ -> None
-
 let is_clean_internal_cancel stop_id = function
   | cause when is_interrupt_with_id stop_id cause -> true
   | Cause.Suppressed { primary; finalizer } ->
@@ -333,18 +327,17 @@ let with_background ?name background use =
       | None -> ())
   | Some _, Some _ -> ());
   match (!winner, !background_exit, !use_exit) with
-  | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Error loser) -> (
-      match cancellation_finalizer stop_id loser with
-      | Some finalizer -> attach_finalizer (error cause) finalizer
-      | None -> error cause)
+  | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Error loser) ->
+      if is_clean_internal_cancel stop_id loser then error cause
+      else
+        attach_finalizer (error cause)
+          (Cause.finalizer_of_cause (render_error frame) loser)
   | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Ok _) -> error cause
-  | Some (`Use exit), Some (Exit.Error loser), Some _ -> (
-      match cancellation_finalizer stop_id loser with
-      | Some finalizer -> attach_finalizer exit finalizer
-      | None when is_clean_internal_cancel stop_id loser -> exit
-      | None ->
-          attach_finalizer exit
-            (Cause.finalizer_of_cause (render_error frame) loser))
+  | Some (`Use exit), Some (Exit.Error loser), Some _ ->
+      if is_clean_internal_cancel stop_id loser then exit
+      else
+        attach_finalizer exit
+          (Cause.finalizer_of_cause (render_error frame) loser)
   | Some (`Use exit), Some (Exit.Ok ()), Some _ -> exit
   | _ -> invalid_arg "Effect.with_background: incomplete arbitration"
 

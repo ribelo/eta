@@ -103,6 +103,53 @@ let test_background_typed_failure_cancels_use done_ =
            expect_fail (( = ) `Background_failed) exit;
            if !finalizers <> 1 then fail "body finalizer did not run once"))
 
+let test_background_loser_publishes_after_cancellation done_ =
+  let runtime = Eta_jsoo.Runtime.create () in
+  let finalizer_started = Eta.Promise.create () in
+  let release_finalizer = Eta.Promise.create () in
+  let result_resolved = ref false in
+  let finalizer_finished = ref false in
+  let background =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed)
+  in
+  let use =
+    Eta.Effect.finally
+      (Eta.Promise.resolve finalizer_started (Eta.Exit.Ok ())
+      |> Eta.Effect.discard
+      |> Eta.Effect.bind (fun () -> Eta.Promise.await release_finalizer)
+      |> Eta.Effect.map (fun () -> finalizer_finished := true))
+      Eta.Effect.never
+  in
+  Eta_jsoo.Runtime.run runtime
+    (Eta.Effect.with_background background (fun () -> use))
+    ~on_result:
+      (fun exit ->
+        result_resolved := true;
+        finish done_
+          (fun exit ->
+            expect_fail (( = ) `Background_failed) exit;
+            if not !finalizer_finished then
+              fail "loser finalizer was not completed before assembly")
+          exit);
+  let controller =
+    Eta.Promise.await finalizer_started
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.sync (fun () ->
+               if !result_resolved then
+                 fail "result resolved while loser finalizer was held"))
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.discard
+             (Eta.Promise.resolve release_finalizer (Eta.Exit.Ok ())))
+  in
+  Eta_jsoo.Runtime.run runtime controller ~on_result:(function
+    | Eta.Exit.Ok () -> ()
+    | Eta.Exit.Error cause ->
+        set_exit_code 1;
+        log
+          (Format.asprintf "eta_jsoo failed: F3 controller: %a"
+             (Eta.Cause.pp pp_err) cause))
+
 let test_background_defect_cancels_use done_ =
   let finalizers = ref 0 in
   let defect = Failure "background defect" in
@@ -812,7 +859,7 @@ let tests =
     ( "with_background typed failure cancels use",
       test_background_typed_failure_cancels_use );
     ( "with_background loser publishes after cancellation before assembly",
-      test_background_typed_failure_cancels_use );
+      test_background_loser_publishes_after_cancellation );
     ( "with_background defect cancels use",
       test_background_defect_cancels_use );
     ( "with_background body exits cancel child",

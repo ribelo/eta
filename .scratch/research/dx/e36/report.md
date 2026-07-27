@@ -9,24 +9,35 @@
 - no best-effort value: `with_supervised_background (ignore_errors background)`
   already expresses it.
 
-The adjudicated follow-up closes all three prior findings with amended wording
-and executable evidence.
+Follow-up 2 corrects the false cleanup-parity conclusion from follow-up 1 and
+closes the resulting blocking defect with exact structural evidence.
 
 ## Follow-up 1 closures
 
 1. **F1 closed by amendment:** the contract now explicitly says terminal-exit
-   publication order and names `par`'s first-observed model. Tests use the same
-   vocabulary and promise no safety-first priority.
-2. **F2 closed by evidence:** three discriminating native tests run the old
-   supervised structure and new fail-fast structure after body success, typed
-   failure, and defect. Both preserve the old finalizer/suppressed-primary
-   ordering. Evidence also exposed that the old cancellation rendering may
-   retain or erase an internal interrupt wrapper; both variants preserve the
-   same user cleanup diagnostic and primary body cause.
+   publication order and names `par`'s first-observed model. The registry treats
+   that correspondence as contract wording; tests pin publication order and
+   promise no safety-first priority.
+2. **F2 was not closed:** those tests accepted two shapes independently and
+   therefore could not detect that the candidate discarded an interrupt wrapper.
+   Follow-up 2 replaces this false conclusion and its registry evidence.
 3. **F3 closed by evidence:** native and jsoo regressions delay the losing body
    finalizer until after cancellation, then require the exact background failure
    and completed loser finalizer before the arbiter returns. No publication was
    lost, so no protected-commit code was added.
+
+## Follow-up 2 repair
+
+- The filter now removes only a clean internal cancellation. Every loser with a
+  cleanup failure, defect, or composite is converted and attached in full.
+- Exact old/new structural comparisons pin the complete expected trees after
+  body success, typed failure, and defect. Typed cleanup errors render as
+  `Cleanup_failed`, rather than the former non-discriminating placeholder.
+- A background-winner regression pins the background failure as primary and the
+  complete body interruption/cleanup failure as its finalizer diagnostic.
+- The jsoo publication test now holds the losing finalizer, proves the parent
+  result remains unresolved, then releases cleanup and checks the exact winner
+  plus completed cleanup.
 
 ## Contracts and mechanism
 
@@ -41,10 +52,10 @@ and executable evidence.
 `with_supervised_background` is the old supervisor implementation renamed
 verbatim. Fail-fast `with_background` uses one generative stop exception, one
 fresh internal interrupt ID, one two-exit stream, and one parent arbiter under a
-lexical switch. The arbiter issues at most one group cancellation. The switch
-waits for both children before result assembly. Internal cancellation-only exits
-are removed; real loser cleanup diagnostics remain finalizer/suppressed-finalizer
-evidence.
+lexical switch. Observable tests require each branch's finalizers to run exactly
+once. The switch waits for both children before result assembly. Internal
+cancellation-only exits are removed; every loser carrying real diagnostics is
+attached in full, preserving its interrupt wrapper and cleanup provenance.
 
 `race` and `par` composition were rejected by executable-mechanism analysis:
 `race` does not fail fast after one failed branch, while `par` cannot let an
@@ -54,8 +65,8 @@ extra control failure and cause rewriting.
 ## Pinned semantics evidence
 
 Native registrations are in
-`test/core_common/supervisor_common_suites.ml:523-541`; jsoo counterparts are in
-`test/js_jsoo/test_eta_jsoo.ml:87-241`.
+`test/core_common/supervisor_common_suites.ml:668-702`; jsoo counterparts are in
+`test/js_jsoo/test_eta_jsoo.ml:859-872`.
 
 | Edge | Named evidence | Result |
 |---|---|---|
@@ -66,10 +77,9 @@ Native registrations are in
 | Supervised preservation | Three mechanically migrated current tests plus `with_supervised_background failure does not cancel use`; jsoo counterpart | Body remains blocked after child failure and completes only after independent release |
 | Same-release race | `with_background same-release exits choose one winner once`; jsoo counterpart | First post-release publication agrees with the primary outcome; both finalizers run exactly once |
 
-The jsoo pass exposed and closed one substrate-specific diagnostic: protected
-successful cleanup could render a cancellation-only finalizer interrupt. The
-final implementation filters that internal diagnostic while preserving any real
-cleanup failure.
+The final implementation filters only clean internal cancellation. Exact native
+trees preserve real cleanup failures; the strengthened jsoo F3 test proves its
+held successful finalizer completes before result assembly.
 
 ## Migration
 
@@ -97,7 +107,8 @@ cleanup failure.
 
 Nine of ten top-level sealed predictions matched. The original safety-first tie
 prediction was superseded by the adjudicated publication-order amendment; the
-READY review prediction is restored after F2/F3 evidence passed.
+READY review prediction is restored only after follow-up 2 replaced the false F2
+evidence and F3 was strengthened.
 
 The journal predicted unconditional safety-first background precedence for work
 made runnable by one release. The runtime contract has no release epoch,
@@ -105,12 +116,12 @@ runnable-set inspection, or backend-independent waiter priority. The shipped
 rule is the strongest precise rule the existing substrates expose: terminal
 exits are serialized through one runtime
 stream and the first publication wins. The same-release tests record that
-publication and prove one winner and exactly-once cleanup. The sealed journal was
-not edited.
+publication and prove one winner and exactly-once finalization. The sealed
+journal was not edited.
 
 The prediction of an atomic CAS was also unnecessary: only the parent consumes
 the exit stream and selects the winner, so a single-consumer arbiter is smaller
-and gives the same one-cancellation invariant.
+and gives the observable winner and exactly-once-finalizer invariants.
 
 ## Red-team outcome
 
