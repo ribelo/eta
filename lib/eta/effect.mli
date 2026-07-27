@@ -270,6 +270,19 @@ val map_par :
     work.
     @raise Invalid_argument if [max_concurrent <= 0]. *)
 
+val acquire_all_par :
+  ?max_concurrent:int ->
+  acquire:('c -> ('a, 'err) t) ->
+  release:('a -> (unit, 'r) t) ->
+  'c list -> ('a list, 'err) t
+(** Acquire concurrently and return resources in input order. Admission matches
+    {!map_par}: the default is 8 and nonpositive bounds are rejected.
+    Acquire failure or interruption cancels admitted work and releases completed
+    resources in reverse successful-acquisition order. A late completion is
+    cleaned without transfer. Success transfers ownership to the current scope;
+    releases run in that order after success, typed failure, defect, or
+    interruption. Release failures use the existing finalizer cause semantics. *)
+
 val uninterruptible : ('a, 'err) t -> ('a, 'err) t
 (** Defer parent cancellation while running the wrapped eff.
 
@@ -619,10 +632,8 @@ val acquire_release :
     [Cause.Finalizer] after a successful body or suppressed onto the primary
     failure after a failed body.
 
-    Parallel acquisition caveat: parallel combinators give each child its own
-    finalizer scope, so a resource acquired under {!map_par} and registered
-    into the enclosing {!with_scope} needs an explicit ownership bridge
-    (advanced; see the parallel-acquisition recipe in docs/api-dx.md). *)
+    For homogeneous parallel acquisition into an enclosing scope, use
+    {!acquire_all_par} rather than composing this operation with {!map_par}. *)
 
 val acquire_use_release :
   acquire:('a, 'err) t ->
@@ -684,10 +695,8 @@ val with_scope : ('a, 'err) t -> ('a, 'err) t
 
     Scopes compose: nested [with_scope] blocks release their own resources
     before the outer scope continues. Use this for resource lifetimes that
-    should not extend to the runtime boundary. For acquiring several
-    independent resources in parallel into one scope, see the
-    parallel-acquisition recipe in docs/api-dx.md (and the caveat on
-    {!acquire_release}). *)
+    should not extend to the runtime boundary. Use {!acquire_all_par} to acquire
+    several homogeneous independent resources in parallel into this scope. *)
 
 val with_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t

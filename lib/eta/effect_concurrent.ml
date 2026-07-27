@@ -1,6 +1,6 @@
 (** Concurrent combinators: [par], [par_pair], [race], [all], [all_settled],
-    [map_par]. Shared admission: [collect_workers]. Internal: see Effect for the
-    public surface. *)
+    [map_par], [acquire_all_par]. Shared admission: [collect_workers]. Internal:
+    see Effect for the public surface. *)
 
 open Effect_core
 
@@ -386,3 +386,41 @@ let map_par ?(max_concurrent = 8) f xs =
     ~footprint:(footprint ~has_concurrency:true ()) @@ fun frame ->
   collect_workers frame ~name:"Effect.map_par"
     ~workers:(min max_concurrent n) ~inputs ~f ~n
+
+let acquire_one owner staging release acquire =
+  preserve ~leaf_name:"Effect.acquire_all_par.acquire"
+    ~footprint:(footprint ~has_resources:true ()) acquire @@ fun frame ->
+  frame.runtime.contract.Runtime_contract.check ();
+  match eval frame acquire with
+  | Exit.Error _ as error -> error
+  | Exit.Ok resource ->
+      staging.finalizers :=
+        (fun () -> run_scope_value owner (release resource))
+        :: !(staging.finalizers);
+      (* Cancellation after acquisition is observed only after rollback has
+         been armed. A late completion therefore stays in the staging scope. *)
+      fiber_yield frame;
+      ok resource
+
+let acquire_all_par ?(max_concurrent = 8) ~acquire ~release configs =
+  if max_concurrent <= 0 then
+    invalid_arg "Effect.acquire_all_par: max_concurrent must be > 0";
+  let inputs = Array.of_list configs in
+  let n = Array.length inputs in
+  make ~leaf_name:"Effect.acquire_all_par"
+    ~footprint:(footprint ~has_concurrency:true ~has_resources:true ())
+  @@ fun owner ->
+  run_scope_body owner @@ fun staging ->
+  let resources =
+    collect_workers staging ~name:"Effect.acquire_all_par"
+      ~workers:(min max_concurrent n) ~inputs
+      ~f:(fun config -> acquire_one owner staging release (acquire config)) ~n
+    |> exit_to_value staging
+  in
+  (* Check once more before the non-suspending batch commit. Build the final
+     stack before mutating either scope so allocation failure still rolls back. *)
+  staging.runtime.contract.Runtime_contract.check ();
+  let transferred = !(staging.finalizers) @ !(owner.finalizers) in
+  owner.finalizers := transferred;
+  staging.finalizers := [];
+  resources

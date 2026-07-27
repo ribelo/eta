@@ -478,39 +478,29 @@ The structure makes lifecycle semantics visible: acquisition is sequential,
 the inner resource releases before the outer resource, and both releases run
 when their enclosing body exits.
 
-When acquisition concurrency matters, use one `Effect.with_scope`, acquire the
-independent descriptions with `Effect.map_par` (or `Effect.all` for an existing
-homogeneous list), and register each completed resource in the owner scope with
-`Effect.acquire_release`. Parallel combinators give each child its own finalizer
-scope, so the bridge must perform owner registration explicitly. **This bridge
-is advanced**: it uses `Effect.Expert.make`/`eval`, the runtime-package
-extension point, not ordinary application API — most programs should prefer the
-`with_resource` ladder above. For example, four homogeneous database shards can
-share one owner scope:
+When homogeneous acquisition concurrency matters, use
+`Effect.acquire_all_par` inside one `Effect.with_scope`. It stages successful
+acquisitions until the whole batch succeeds, then transfers them into the owner
+scope. For example, four database shards can share one owner scope:
 
 ```ocaml
-let acquire_into scope ~acquire ~release =
-  Effect.Expert.make @@ fun child ->
-  match Effect.Expert.eval child acquire with
-  | Exit.Error _ as error -> error
-  | Exit.Ok resource ->
-      Effect.Expert.eval scope
-        (Effect.acquire_release ~acquire:(Effect.pure resource) ~release)
-
 let with_shards configs body =
   Effect.with_scope
-    (Effect.Expert.make @@ fun scope ->
-     Effect.Expert.eval scope
-       (Effect.map_par
-          (fun config ->
-            acquire_into scope ~acquire:(Db.connect config) ~release:Db.close)
-          configs
-        |> Effect.bind body))
+    (Effect.acquire_all_par ~acquire:Db.connect ~release:Db.close configs
+    |> Effect.bind body)
 ```
 
-The shard acquisitions run concurrently. A failed shard cancels acquisitions
-still in progress; connections already registered are closed once in reverse
-successful acquisition order as the scope exits.
+Results retain configuration order even when acquisitions finish out of order.
+A failed shard cancels admitted acquisitions and rolls back completed
+connections in reverse successful-acquisition order. After full success, the
+same release order applies when the owner scope exits.
+
+Heterogeneous parallel acquisition remains an advanced case. It requires an
+explicit owner-registration bridge, which may use the `Effect.Expert`
+runtime-package extension point. Keep that bridge in library integration code;
+ordinary homogeneous application code should use `acquire_all_par`, and a fixed
+heterogeneous set should default to the visible `with_resource` ladder unless
+acquisition concurrency is required.
 
 `Effect.finally` is not replaced by hand-written `bind_error` cleanup. Manual
 cleanup around typed success/failure paths misses defects and cancellation, and

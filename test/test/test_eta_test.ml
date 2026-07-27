@@ -725,6 +725,51 @@ let test_run_completed_structured_fibers_are_not_pending () =
   Expect.expect_ok outcome.exit;
   Run.expect_no_pending_fibers outcome
 
+let test_acquire_all_par_late_completion_leaves_empty_fiber_census () =
+  let a_done = ref false in
+  let late_started = ref false in
+  let late_completed = ref false in
+  let releases = ref [] in
+  let rec await predicate =
+    Eta.Effect.sync predicate
+    |> Eta.Effect.bind (fun ready ->
+           if ready then Eta.Effect.unit
+           else Eta.Effect.yield |> Eta.Effect.bind (fun () -> await predicate))
+  in
+  let acquire = function
+    | `A ->
+        Eta.Effect.sync (fun () ->
+            a_done := true;
+            "a")
+    | `Late ->
+        Eta.Effect.sync (fun () -> late_started := true)
+        |> Eta.Effect.bind (fun () ->
+               Eta.Effect.uninterruptible
+                 (Eta.Effect.delay (Eta.Duration.ms 1)
+                    (Eta.Effect.sync (fun () ->
+                         late_completed := true;
+                         "late"))))
+    | `Fail ->
+        await (fun () -> !a_done && !late_started)
+        |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Acquire)
+  in
+  let release resource =
+    Eta.Effect.sync (fun () -> releases := resource :: !releases)
+  in
+  let program =
+    Eta.Effect.with_scope
+      (Eta.Effect.acquire_all_par ~acquire ~release [ `A; `Late; `Fail ]
+      |> Eta.Effect.discard
+      |> Eta.Effect.bind_error (fun `Acquire -> Eta.Effect.unit))
+  in
+  let outcome = Run.run program in
+  Expect.expect_ok outcome.exit;
+  Alcotest.(check bool) "late acquisition completed" true !late_completed;
+  Alcotest.(check (list string))
+    "late child and owner resource released once" [ "late"; "a" ]
+    (List.rev !releases);
+  Run.expect_no_pending_fibers outcome
+
 let test_run_fiber_accounting_preserves_exit_corpus () =
   let corpus =
     [
@@ -1106,6 +1151,8 @@ let () =
             test_run_nan_metric_replays_equal;
           Alcotest.test_case "completed structured fibers are not pending" `Quick
             test_run_completed_structured_fibers_are_not_pending;
+          Alcotest.test_case "acquire_all_par late completion census" `Quick
+            test_acquire_all_par_late_completion_leaves_empty_fiber_census;
           Alcotest.test_case "fiber accounting preserves exit corpus" `Quick
             test_run_fiber_accounting_preserves_exit_corpus;
           Alcotest.test_case "reused clock isolates sleep history" `Quick

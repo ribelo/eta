@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **112 mli-stated claims**, **2 prose-pending model claims**,
-**135 registered external claim clusters**, and **74 unique named qcheck properties** in
+**143 registered external claim clusters**, and **74 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -193,6 +193,14 @@ qcheck optics.
 | R143 | Use-first background cancellation preserves the exact former cleanup diagnostic tree after body success, typed failure, and defect. | `.scratch/research/dx/e36/report.md:31-35` | Exact expected-tree and old/new structural comparisons: `background cleanup after body success matches old shape`; `background cleanup after body failure matches old shape`; `background cleanup after body defect matches old shape` — `test/core_common/supervisor_common_suites.ml:687-695` |
 | R144 | `with_background` awaits a cancelled loser through finalization and terminal publication before assembling its result. | `lib/eta/effect.mli:694-697`; `.scratch/research/dx/e36/report.md:24-27,38-40` | `background loser publishes after cancellation before assembly` — `test/core_common/supervisor_common_suites.ml:696-699`; held-finalizer jsoo counterpart — `test/js_jsoo/test_eta_jsoo.ml:106-151,861-862` |
 | R145 | When background wins and body cleanup fails, the background cause remains primary and the complete body interruption/cleanup cause is preserved. | `.scratch/research/dx/e36/report.md:36-37` | `background winner preserves body cleanup failure` — `test/core_common/supervisor_common_suites.ml:700-702` |
+| R146 | `acquire_all_par` acquisitions overlap and use `map_par`'s default-eight, explicit-bound, and nonpositive-rejection admission contract. | `lib/eta/effect.mli:278-279` | `acquire_all_par admission and concurrency` — `test/core_common/effect_resource_timeout_common_suites.ml:423-462,998-999` |
+| R147 | `acquire_all_par` returns resources in input order independently of successful acquisition order. | `lib/eta/effect.mli:278` | `acquire_all_par input order` — `test/core_common/effect_resource_timeout_common_suites.ml:675-707,1008-1009` |
+| R148 | Acquire failure cancels admitted work and releases completed resources in reverse successful-acquisition order. | `lib/eta/effect.mli:280-281` | `acquire_all_par failure reverse cleanup` — `test/core_common/effect_resource_timeout_common_suites.ml:464-509,1000-1001` |
+| R149 | Interruption during acquisition rolls back completed resources in reverse successful-acquisition order. | `lib/eta/effect.mli:280-281` | `acquire_all_par cancellation late completion` — `test/core_common/effect_resource_timeout_common_suites.ml:511-564,1002-1003` |
+| R150 | An acquisition completing after cancellation is cleaned without transfer or duplicate owner registration. | `lib/eta/effect.mli:281-282` | `acquire_all_par cancellation late completion` and `acquire_all_par late completion census` — `test/core_common/effect_resource_timeout_common_suites.ml:511-564,1002-1003`; `test/test/test_eta_test.ml:728-771,1154-1155` |
+| R151 | Successful `acquire_all_par` transfers ownership to the current scope. | `lib/eta/effect.mli:282` | `acquire_all_par scope exit ownership` — `test/core_common/effect_resource_timeout_common_suites.ml:566-623,1004-1005` |
+| R152 | Transferred releases run in reverse successful-acquisition order after success, typed failure, defect, and interruption. | `lib/eta/effect.mli:282-284` | `acquire_all_par scope exit ownership` — `test/core_common/effect_resource_timeout_common_suites.ml:566-623,1004-1005` |
+| R153 | `acquire_all_par` release failures retain existing finalizer and suppressed-finalizer cause semantics, and every release is attempted. | `lib/eta/effect.mli:284` | `acquire_all_par release diagnostics` — `test/core_common/effect_resource_timeout_common_suites.ml:625-673,1006-1007` |
 | R41 | A failing daemon bypasses the typed result and emits a runtime diagnostic. | `lib/eta/effect.mli:715-717` | `daemon failure logs diagnostic` — `test/core_common/effect_resource_timeout_common_suites.ml:820-821` |
 | R42 | Runtime drain waits for observably pending finite daemon work and its registered finalizer. | `lib/eta/effect.mli:715-717` | `daemon drain waits pending finalizer` — `test/core_common/effect_resource_timeout_common_suites.ml:818-819` |
 | R43 | Bounded Queue offers wait while full. | `lib/eta/queue.mli:64-69` | `backpressure offer waits for capacity` — `test/core_common/core_common_suites.ml:1833-1834` |
