@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E38 finalizer diagnostics structure**)
+- In flight: **E38 — Finalizer diagnostics structure (P0-5)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e38`
+  - Branch: `research/dx-e38-finalizer-diagnostics`
+  - Stage: predictions sealed (V-DX-E38-001); objective.md written; awaiting executor
 - Done (recent): **E37 promoted** (`acquire_all_par`; transactional
   staging; mechanism cleared first-pass, evidence repaired in one round)
 - Done (recent): **E36 promoted** (fail-fast `with_background` +

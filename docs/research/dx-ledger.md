@@ -386,7 +386,7 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   enclosing scope; no Expert required. Mechanism cleared on first
   review; evidence repaired in one rework round. V-DX-E37-001/002.
 
-### E38 — Finalizer diagnostics structure (P0-5)
+### E38 — Finalizer diagnostics structure (P0-5) — in flight
 - What: `Finalizer.Fail of string` → structural payload (existential
   with printer / diagnostic record); `'err` untouched.
 
