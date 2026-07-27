@@ -695,8 +695,8 @@ val with_background :
     first, [use] is cancelled and awaited, its finalizers run, and the
     background cause propagates, like {!par}'s sibling rule. If [use] finishes
     first, [background] is cancelled and awaited. A racing background failure
-    and body completion are linearized by terminal-exit publication; the first
-    publication wins. *)
+    and body completion are linearized by terminal-exit publication order,
+    matching {!par}'s first-observed rule; the first publication wins. *)
 
 val with_supervised_background :
   ?name:string -> (unit, 'err) t -> (unit -> ('a, 'err) t) -> ('a, 'err) t

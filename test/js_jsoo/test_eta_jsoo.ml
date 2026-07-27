@@ -91,7 +91,10 @@ let test_background_typed_failure_cancels_use done_ =
     |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed)
   in
   let use =
-    Eta.Effect.finally (Eta.Effect.sync (fun () -> incr finalizers))
+    Eta.Effect.finally
+      (Eta.Effect.yield
+      |> Eta.Effect.bind (fun () ->
+             Eta.Effect.sync (fun () -> incr finalizers)))
       Eta.Effect.never
   in
   run (Eta.Effect.with_background background (fun () -> use))
@@ -807,6 +810,8 @@ let tests =
     ( "expert clock observes scoped override",
       test_expert_clock_observes_scoped_override );
     ( "with_background typed failure cancels use",
+      test_background_typed_failure_cancels_use );
+    ( "with_background loser publishes after cancellation before assembly",
       test_background_typed_failure_cancels_use );
     ( "with_background defect cancels use",
       test_background_defect_cancels_use );

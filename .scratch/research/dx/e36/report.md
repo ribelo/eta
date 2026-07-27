@@ -2,32 +2,31 @@
 
 ## Recommendation
 
-**BLOCKED.** Do not ship the candidate split yet. The intended API remains:
+**READY FOR REVIEW.** Ship the explicit split:
 
 - `Effect.with_background`: fail-fast lexical background work;
 - `Effect.with_supervised_background`: the former behavior, unchanged;
 - no best-effort value: `with_supervised_background (ignore_errors background)`
   already expresses it.
 
-All assignment gates pass, but adversarial review found three semantic proof
-gaps that the current runtime contract/tests do not close.
+The adjudicated follow-up closes all three prior findings with amended wording
+and executable evidence.
 
-## Blocking findings
+## Follow-up 1 closures
 
-1. The assignment requires background failure to beat body success when both
-   become ready from one release. The candidate instead specifies first terminal
-   publication because `Runtime_contract` exposes no release epoch, runnable-set
-   inspection, or portable waiter priority. Restoring the literal rule requires
-   a cross-backend arbitration primitive outside E36's scope fence; accepting
-   publication order requires an upstream objective decision.
-2. Use-first cleanup parity is incomplete. The candidate extracts cancellation
-   finalizers from the losing exit and gives use its own child finalizer scope;
-   this has not proven the former `finally (cancel_child_effect child)` cause
-   shape and ordering when background cleanup fails after use success/failure.
-3. Loser exit publication happens with `stream_add` after cancellation. The
-   runtime contract does not state that this handoff is cancellation-safe. The
-   candidate needs a protected commit plus a regression proving both terminal
-   events are always published before arbitration assembly.
+1. **F1 closed by amendment:** the contract now explicitly says terminal-exit
+   publication order and names `par`'s first-observed model. Tests use the same
+   vocabulary and promise no safety-first priority.
+2. **F2 closed by evidence:** three discriminating native tests run the old
+   supervised structure and new fail-fast structure after body success, typed
+   failure, and defect. Both preserve the old finalizer/suppressed-primary
+   ordering. Evidence also exposed that the old cancellation rendering may
+   retain or erase an internal interrupt wrapper; both variants preserve the
+   same user cleanup diagnostic and primary body cause.
+3. **F3 closed by evidence:** native and jsoo regressions delay the losing body
+   finalizer until after cancellation, then require the exact background failure
+   and completed loser finalizer before the arbiter returns. No publication was
+   lost, so no protected-commit code was added.
 
 ## Contracts and mechanism
 
@@ -96,9 +95,9 @@ cleanup failure.
 
 ## Predictions versus actuals
 
-Eight of ten top-level sealed predictions matched: five semantic edges,
-migration, census, and footgun. The tie prediction and READY review prediction
-did not survive adversarial review.
+Nine of ten top-level sealed predictions matched. The original safety-first tie
+prediction was superseded by the adjudicated publication-order amendment; the
+READY review prediction is restored after F2/F3 evidence passed.
 
 The journal predicted unconditional safety-first background precedence for work
 made runnable by one release. The runtime contract has no release epoch,
@@ -127,13 +126,14 @@ Artifacts: `.scratch/research/dx/e36/redteam/`.
 
 | Candidate | Final status | Evidence |
 |---|---|---|
-| Dedicated asymmetric lexical arbiter + verbatim supervised helper | Partial / blocked | Main branches pass, but tie, cleanup parity, and cancellation-safe publication remain open |
+| Dedicated asymmetric lexical arbiter + verbatim supervised helper | Accepted | Publication-order wording, cleanup parity, and post-cancel publication are executable on required substrates |
 | Pure `par`/`race` composition | Rejected | Cannot satisfy asymmetric early-success and cleanup shapes |
 | `with_best_effort_background` | Out of scope / unnecessary | Existing composition expresses it |
 | Supervisor redesign or HTTP migration | Out of scope | E36 fence; E42a follow-up |
 
-Blocking risks are the missing portable same-release priority, unproven use-first
-cleanup shape/order, and an uncontracted cancellation-sensitive loser handoff.
+Remaining risk is limited to backend implementations outside the two required
+substrates; native Eio and jsoo now execute the post-cancellation publication
+regression.
 
 ## Verification
 
