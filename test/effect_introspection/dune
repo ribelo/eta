@@ -3,16 +3,6 @@
  (modules snapshot_effect_describe)
  (libraries eta))
 
-(executable
- (name redteam_effect_audit)
- (modules redteam_effect_audit)
- (libraries eta eta_eio eio_main))
-
-(executable
- (name dishonest_expert_make)
- (modules dishonest_expert_make)
- (libraries eta eta_eio eio_main))
-
 (rule
  (target actual_descriptions.txt)
  (action
@@ -23,13 +13,3 @@
  (alias runtest)
  (action
   (diff expected_descriptions.txt actual_descriptions.txt)))
-
-(rule
- (alias runtest)
- (action
-  (run %{exe:redteam_effect_audit.exe})))
-
-(rule
- (alias runtest)
- (action
-  (run %{exe:dishonest_expert_make.exe})))

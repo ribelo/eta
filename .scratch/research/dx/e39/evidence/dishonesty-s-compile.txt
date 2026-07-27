@@ -1,0 +1,9 @@
+warning: Git tree '/home/ribelo/projects/ribelo/ocaml/Eta-dx-e39' is dirty
+File "test/effect_introspection/dishonest_expert_make.ml", line 6, characters 66-68:
+6 |     Effect.Expert.make ~leaf_name:"dishonest.sleep" ~capabilities:[]
+                                                                      ^^
+Error: The function applied to this argument has type
+         ?names:string list -> ('a, 'b) Effect.t
+This argument cannot be applied with label "~capabilities"
+
+exit_status=1

@@ -33,16 +33,14 @@ module Make (B : Backend) = struct
       wait_until ~attempts:(attempts - 1) label predicate
 
   let install_cancel_handle ?(reason = Exit) slot eff =
-    Effect.Expert.make ~capabilities:[ `Concurrency ] ~inherit_:eff
-      ~leaf_name:"test.interruptible.cancel-handle" @@ fun context ->
+    Effect.Expert.make ~leaf_name:"test.interruptible.cancel-handle" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
     Effect.Expert.eval context eff
 
   let nested_eval_with_cancel_handle ?(reason = Exit) slot eff =
-    Effect.Expert.make ~capabilities:[ `Concurrency ]
-      ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
+    Effect.Expert.make ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
@@ -53,8 +51,7 @@ module Make (B : Backend) = struct
     | None -> B.fail "Effect.interruptible test cancel handle was not installed"
 
   let never_observing_cancellation_reason blocked observed_reason =
-    Effect.Expert.make ~capabilities:[ `Concurrency ]
-      ~leaf_name:"test.interruptible.observe-cancellation-reason"
+    Effect.Expert.make ~leaf_name:"test.interruptible.observe-cancellation-reason"
     @@ fun context ->
     let contract = Effect.Expert.contract context in
     let promise, _resolver = contract.Runtime_contract.create_promise () in

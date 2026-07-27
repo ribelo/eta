@@ -5,6 +5,10 @@
 - `cost-before.json` / `cost-baseline.md` — raw and summarized BEFORE benchmark.
 - `dishonesty-master.txt` — executable false declaration on the master-side API.
 - `describe-master.txt` — byte source for later Endpoint-S snapshot parity.
+- `describe-slim.txt` / `snapshot-parity-s.txt` — byte-identical Endpoint-S proof.
+- `dishonesty-s-compile.txt` — the committed master probe rejected by S because
+  `~capabilities` no longer exists.
+- `gates-s/` — exact Endpoint-S gate commands, statuses, and captured output.
 
 The dishonest probe source is
 `test/effect_introspection/dishonest_expert_make.ml`; its test demonstrates an

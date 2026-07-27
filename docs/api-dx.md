@@ -60,8 +60,7 @@ Use syntax operators rather than explicit bind in application code:
 - `and*` / `and+` for sequential product (strict left-to-right; nothing forked).
 - `Effect.par` for independent concurrent effects (explicit at the call site).
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
-- `Effect.all` when the effects are already built and their static names and
-  capability footprints should remain visible to introspection.
+- `Effect.all` when the effects are already built.
 - `Effect.map_par` when a function should be mapped lazily over a collection.
 
 Both collection combinators use the same admission policy: at most eight child

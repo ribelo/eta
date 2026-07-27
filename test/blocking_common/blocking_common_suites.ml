@@ -65,11 +65,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let value = f () in
     (now_us () - started, value)
 
-  let test_blocking_run_declares_background_footprint () =
-    let audited = Effect.audit (Eta_blocking.run (fun () -> 1)) in
-    Alcotest.(check bool) "background" true audited.has_background;
-    Alcotest.(check bool) "concurrency" true audited.has_concurrency;
-    Alcotest.(check bool) "resources" true audited.has_resources
+  let test_blocking_run_executes () =
+    B.with_runtime @@ fun _ctx rt ->
+    Alcotest.(check int) "result" 1
+      (run_ok rt (Eta_blocking.run (fun () -> 1)))
 
   let test_blocking_run_and_stats () =
     B.with_runtime @@ fun _ctx rt ->
@@ -325,8 +324,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         [
           Alcotest.test_case "run and stats" `Quick
             test_blocking_run_and_stats;
-          Alcotest.test_case "run declares background footprint" `Quick
-            test_blocking_run_declares_background_footprint;
+          Alcotest.test_case "run executes blocking function" `Quick
+            test_blocking_run_executes;
           Alcotest.test_case "result lifts result" `Quick
             test_blocking_result_lifts_result_value;
           Alcotest.test_case "result short aliases" `Quick

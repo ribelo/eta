@@ -6,8 +6,7 @@ let[@inline always] step_schedule clock input driver =
   Sch.step ~now_ms:(clock#now_ms ()) ~input !driver
 
 let repeat ~schedule eff =
-  preserve ~leaf_name:"Effect.repeat"
-    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.repeat" eff @@ fun frame ->
   try
     let clock = Runtime_core.current_clock frame.runtime in
     let random = Runtime_core.current_random frame.runtime in
@@ -32,8 +31,7 @@ let forever eff =
   repeat ~schedule:Sch.forever eff |> map (fun (_ : int) -> assert false)
 
 let retry ~schedule ~while_ eff =
-  preserve ~leaf_name:"Effect.retry"
-    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.retry" eff @@ fun frame ->
   try
     let clock = Runtime_core.current_clock frame.runtime in
     let random = Runtime_core.current_random frame.runtime in
@@ -61,8 +59,7 @@ let retry ~schedule ~while_ eff =
   with exn -> exit_of_exn frame exn
 
 let retry_or_else ~schedule ~while_ ~or_else eff =
-  preserve ~leaf_name:"Effect.retry_or_else"
-    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.retry_or_else" eff @@ fun frame ->
   try
     let clock = Runtime_core.current_clock frame.runtime in
     let random = Runtime_core.current_random frame.runtime in

@@ -1,0 +1,3 @@
+command: nix develop -c dune build @install
+started_utc: 2026-07-27T21:42:42Z
+exit_status: 0

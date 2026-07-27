@@ -1,0 +1,29 @@
+===== pure-map-chain =====
+Map
+  Map
+    Pure
+===== named-leaf =====
+Custom("user.load")
+===== nested-bind =====
+Bind
+  Bind
+    Pure
+    <bind …>
+  <bind …>
+===== par =====
+Map
+  Custom("Effect.par")
+===== all =====
+Custom("Effect.all")
+===== race =====
+Custom("Effect.race")
+===== map-par =====
+Custom("Effect.map_par")
+===== fold =====
+Custom("Effect.bind_error")
+===== bind-error =====
+Custom("Effect.bind_error")
+===== resource =====
+Custom("Effect.with_scope")
+===== background =====
+Custom("Effect.daemon")

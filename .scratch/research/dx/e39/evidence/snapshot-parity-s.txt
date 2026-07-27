@@ -1,0 +1,3 @@
+master e6ec8777dc5f12e27e57a1c5577147398aa81a83604c48c3bdd8404c308b457d  .scratch/research/dx/e39/evidence/describe-master.txt
+slim   e6ec8777dc5f12e27e57a1c5577147398aa81a83604c48c3bdd8404c308b457d  .scratch/research/dx/e39/evidence/describe-slim.txt
+cmp=byte-identical

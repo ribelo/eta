@@ -206,13 +206,9 @@ let race_eval effects frame =
               error (cause_of_list diagnostics))
       | None -> error (Cause.concurrent !causes))
 
-let concurrent_footprint effects =
-  union_footprint (concat_footprints effects)
-    (footprint ~has_concurrency:true ())
-
 let race effects =
   make ~leaf_name:"Effect.race" ~names:(concat_names effects)
-    ~footprint:(concurrent_footprint effects) (race_eval effects)
+    (race_eval effects)
 
 type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
@@ -248,13 +244,8 @@ let par_eval left right frame =
   | Exit.Error cause -> error cause
 
 let par left right =
-  let footprint =
-    union_footprint
-      (union_footprint (capability_footprint left) (capability_footprint right))
-      (footprint ~has_concurrency:true ())
-  in
   make ~leaf_name:"Effect.par" ~names:(names left @ names right)
-    ~footprint (par_eval left right)
+    (par_eval left right)
 
 (** Fork [eff] as a child that publishes its exit to a fresh promise; the
     returned [await] reads the published value once [par_run_forks] has
@@ -285,17 +276,8 @@ let par3_eval left middle right frame =
   | Exit.Error cause -> error cause
 
 let par3 left middle right =
-  (* Children are heterogeneous: names and footprints are folded one child
-     at a time rather than collected into a homogeneously typed list. *)
   let child_names = names left @ names middle @ names right in
-  let footprint =
-    union_footprint
-      (union_footprint (capability_footprint left)
-         (union_footprint (capability_footprint middle)
-            (capability_footprint right)))
-      (footprint ~has_concurrency:true ())
-  in
-  make ~leaf_name:"Effect.par3" ~names:child_names ~footprint
+  make ~leaf_name:"Effect.par3" ~names:child_names
     (par3_eval left middle right)
 
 let par4_eval first second third fourth frame =
@@ -316,15 +298,7 @@ let par4 first second third fourth =
   let child_names =
     names first @ names second @ names third @ names fourth
   in
-  let footprint =
-    union_footprint
-      (union_footprint (capability_footprint first)
-         (union_footprint (capability_footprint second)
-            (union_footprint (capability_footprint third)
-               (capability_footprint fourth))))
-      (footprint ~has_concurrency:true ())
-  in
-  make ~leaf_name:"Effect.par4" ~names:child_names ~footprint
+  make ~leaf_name:"Effect.par4" ~names:child_names
     (par4_eval first second third fourth)
 
 let all_settled_eval effects frame =
@@ -343,7 +317,7 @@ let all_settled_eval effects frame =
 
 let all_settled effects =
   make ~leaf_name:"Effect.all_settled" ~names:(concat_names effects)
-    ~footprint:(concurrent_footprint effects) (all_settled_eval effects)
+    (all_settled_eval effects)
 
 (** [workers] forks share an atomic counter, each pulling the next input until
     the index reaches [n]. The parent frame is passed explicitly into each
@@ -372,8 +346,7 @@ let all ?(max_concurrent = 8) effects =
     invalid_arg "Effect.all: max_concurrent must be > 0";
   let inputs = Array.of_list effects in
   let n = Array.length inputs in
-  make ~leaf_name:"Effect.all" ~names:(concat_names effects)
-    ~footprint:(concurrent_footprint effects) @@ fun frame ->
+  make ~leaf_name:"Effect.all" @@ fun frame ->
   collect_workers frame ~name:"Effect.all" ~workers:(min max_concurrent n)
     ~inputs ~f:Fun.id ~n
 
@@ -382,14 +355,12 @@ let map_par ?(max_concurrent = 8) f xs =
     invalid_arg "Effect.map_par: max_concurrent must be > 0";
   let inputs = Array.of_list xs in
   let n = Array.length inputs in
-  make ~leaf_name:"Effect.map_par"
-    ~footprint:(footprint ~has_concurrency:true ()) @@ fun frame ->
+  make ~leaf_name:"Effect.map_par" @@ fun frame ->
   collect_workers frame ~name:"Effect.map_par"
     ~workers:(min max_concurrent n) ~inputs ~f ~n
 
 let acquire_one owner staging release acquire =
-  preserve ~leaf_name:"Effect.acquire_all_par.acquire"
-    ~footprint:(footprint ~has_resources:true ()) acquire @@ fun frame ->
+  preserve ~leaf_name:"Effect.acquire_all_par.acquire" acquire @@ fun frame ->
   frame.runtime.contract.Runtime_contract.check ();
   match eval frame acquire with
   | Exit.Error _ as error -> error
@@ -407,9 +378,7 @@ let acquire_all_par ?(max_concurrent = 8) ~acquire ~release configs =
     invalid_arg "Effect.acquire_all_par: max_concurrent must be > 0";
   let inputs = Array.of_list configs in
   let n = Array.length inputs in
-  make ~leaf_name:"Effect.acquire_all_par"
-    ~footprint:(footprint ~has_concurrency:true ~has_resources:true ())
-  @@ fun owner ->
+  make ~leaf_name:"Effect.acquire_all_par" @@ fun owner ->
   run_scope_body owner @@ fun staging ->
   let resources =
     collect_workers staging ~name:"Effect.acquire_all_par"
