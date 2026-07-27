@@ -8,7 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E39 — E12 audit-slim race**)
+- In flight: **E39 — E12 audit-slim race** (remove vs. slim)
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e39`
+  - Branch: `research/dx-e39-audit-slim-race`
+  - Stage: predictions sealed (V-DX-E39-001); objective.md written; awaiting executor
 - Done (recent): **E38 promoted** (`Fail { error; rendered }`;
   render-at-capture design; two rework rounds)
 - Done (recent): **E37 promoted** (`acquire_all_par`; transactional
@@ -117,4 +120,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-26 — envless verdict adopted; docs updated
+- Last update: 2026-07-28 — E39 launched
