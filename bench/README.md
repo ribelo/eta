@@ -15,6 +15,7 @@ Package-level optimization status is tracked separately in
 | Real-use workloads | `realuse.*` | End-to-end programs (fanout, retry, scope, pipeline) that exercise `map_par`, `Schedule`/`retry`, `acquire_release`/`scoped`, and bind/catch composition. Each row pays one full Eio runtime setup per sample, matching what a binary entry point pays. |
 | Concurrency | `effect.concurrency.*` | `par`, `all`, `map_par`, `race`, and supervisor costs. |
 | Observability | `effect.observability.*` | Tracer, auto-instrumentation, cause construction, trace context, and OTLP adapter cost. |
+| Blueprint construction | `effect.construction.*` | Allocation and wall time for deep map, bind, and preserve-backed construction chains. |
 | Queue | `eta.queue.*` | Unbounded queue send/receive and producer/consumer handoff cost. |
 | Streams | `eta_stream.*` | Representative `eta_stream` pipelines and file reads. |
 | HTTP/WebSocket | `http.ws.*` | WebSocket codec encode/decode and local loopback echo cost. |
@@ -86,6 +87,10 @@ Each file contains:
 - `machine` with OS, kernel, CPU, OCaml, and Dune versions
 - `benchmarks[]` with `name`, `metric`, `unit`, raw `samples`, `mean`,
   `stddev`, `min`, and `max`
+
+Runtime rows report `allocated_words` as
+`minor_words + major_words - promoted_words`, alongside the three raw GC
+counters, so promoted allocations are not counted twice.
 
 Cross-machine results are not directly comparable. Use the machine fingerprint
 before treating a delta as a regression.

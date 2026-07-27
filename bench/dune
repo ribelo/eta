@@ -6,6 +6,7 @@
   (alias ../bench/runtime_overhead/bench)
   (alias ../bench/runtime_real/bench)
   (alias ../bench/runtime_observability/bench)
+  (alias ../bench/effect_construction/bench)
   (alias ../lib/signal/bench/bench)
   (alias ../lib/stream/bench/bench)
   (alias ../lib/schema/bench/bench)

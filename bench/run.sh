@@ -67,6 +67,7 @@ build_targets=(
   bench/runtime_overhead/runtime_overhead.exe
   bench/runtime_real/runtime_real.exe
   bench/runtime_observability/runtime_observability.exe
+  bench/effect_construction/effect_construction.exe
   lib/signal/bench/bench_signal.exe
   lib/stream/bench/bench_stream.exe
   lib/schema/bench/bench_schema.exe
@@ -97,6 +98,7 @@ run_runtime _build/default/bench/runtime_concurrency/runtime_concurrency.exe
 run_runtime _build/default/bench/runtime_overhead/runtime_overhead.exe
 run_runtime _build/default/bench/runtime_real/runtime_real.exe
 run_runtime _build/default/bench/runtime_observability/runtime_observability.exe
+run_runtime _build/default/bench/effect_construction/effect_construction.exe
 run_json_script bench/runtime_overhead_ts/run.sh
 run_runtime _build/default/lib/signal/bench/bench_signal.exe
 run_runtime _build/default/lib/stream/bench/bench_stream.exe
