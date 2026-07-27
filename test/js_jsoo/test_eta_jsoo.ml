@@ -73,6 +73,223 @@ let expect_fail pred = function
            (Eta.Cause.pp pp_err) cause)
   | Eta.Exit.Ok _ -> fail "expected typed failure, got Ok"
 
+let rec finalizer_has_typed_failure = function
+  | Eta.Cause.Finalizer.Fail _ -> true
+  | Eta.Cause.Finalizer.Die _ | Eta.Cause.Finalizer.Interrupt _ -> false
+  | Eta.Cause.Finalizer.Sequential causes
+  | Eta.Cause.Finalizer.Concurrent causes ->
+      List.exists finalizer_has_typed_failure causes
+  | Eta.Cause.Finalizer.Finalizer cause -> finalizer_has_typed_failure cause
+  | Eta.Cause.Finalizer.Suppressed { primary; finalizer } ->
+      finalizer_has_typed_failure primary
+      || finalizer_has_typed_failure finalizer
+
+let test_background_typed_failure_cancels_use done_ =
+  let finalizers = ref 0 in
+  let background =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed)
+  in
+  let use =
+    Eta.Effect.finally
+      (Eta.Effect.yield
+      |> Eta.Effect.bind (fun () ->
+             Eta.Effect.sync (fun () -> incr finalizers)))
+      Eta.Effect.never
+  in
+  run (Eta.Effect.with_background background (fun () -> use))
+    ~on_result:
+      (finish done_ (fun exit ->
+           expect_fail (( = ) `Background_failed) exit;
+           if !finalizers <> 1 then fail "body finalizer did not run once"))
+
+let test_background_loser_publishes_after_cancellation done_ =
+  let runtime = Eta_jsoo.Runtime.create () in
+  let finalizer_started = Eta.Promise.create () in
+  let release_finalizer = Eta.Promise.create () in
+  let result_resolved = ref false in
+  let finalizer_finished = ref false in
+  let background =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed)
+  in
+  let use =
+    Eta.Effect.finally
+      (Eta.Promise.resolve finalizer_started (Eta.Exit.Ok ())
+      |> Eta.Effect.discard
+      |> Eta.Effect.bind (fun () -> Eta.Promise.await release_finalizer)
+      |> Eta.Effect.map (fun () -> finalizer_finished := true))
+      Eta.Effect.never
+  in
+  Eta_jsoo.Runtime.run runtime
+    (Eta.Effect.with_background background (fun () -> use))
+    ~on_result:
+      (fun exit ->
+        result_resolved := true;
+        finish done_
+          (fun exit ->
+            expect_fail (( = ) `Background_failed) exit;
+            if not !finalizer_finished then
+              fail "loser finalizer was not completed before assembly")
+          exit);
+  let controller =
+    Eta.Promise.await finalizer_started
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.sync (fun () ->
+               if !result_resolved then
+                 fail "result resolved while loser finalizer was held"))
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.discard
+             (Eta.Promise.resolve release_finalizer (Eta.Exit.Ok ())))
+  in
+  Eta_jsoo.Runtime.run runtime controller ~on_result:(function
+    | Eta.Exit.Ok () -> ()
+    | Eta.Exit.Error cause ->
+        set_exit_code 1;
+        log
+          (Format.asprintf "eta_jsoo failed: F3 controller: %a"
+             (Eta.Cause.pp pp_err) cause))
+
+let test_background_defect_cancels_use done_ =
+  let finalizers = ref 0 in
+  let defect = Failure "background defect" in
+  let background =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.sync (fun () -> raise defect))
+  in
+  let use =
+    Eta.Effect.finally (Eta.Effect.sync (fun () -> incr finalizers))
+      Eta.Effect.never
+  in
+  run (Eta.Effect.with_background background (fun () -> use))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Die die)
+          when die.exn == defect && !finalizers = 1 ->
+            ()
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "unexpected background defect cause: %a"
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok _ -> fail "background defect was hidden"))
+
+let test_background_body_exits_cancel_child done_ =
+  let success_finalizers = ref 0 in
+  let failure_finalizers = ref 0 in
+  let case finalizers body =
+    Eta.Effect.with_background
+      (Eta.Effect.finally (Eta.Effect.sync (fun () -> incr finalizers))
+         Eta.Effect.never)
+      (fun () -> body)
+    |> Eta.Effect.to_exit
+  in
+  let open Eta.Syntax in
+  let program =
+    let* success = case success_finalizers (Eta.Effect.pure "ok") in
+    let+ failure = case failure_finalizers (Eta.Effect.fail `Use_failed) in
+    (success, failure)
+  in
+  run program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Ok
+            ( Eta.Exit.Ok "ok",
+              Eta.Exit.Error (Eta.Cause.Fail `Use_failed) )
+          when !success_finalizers = 1 && !failure_finalizers = 1 ->
+            ()
+        | Eta.Exit.Ok _ -> fail "unexpected body-first exits or finalizer counts"
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "body-first test failed: %a"
+                 (Eta.Cause.pp pp_err) cause)))
+
+let test_background_body_interruption_matches_par done_ =
+  let ready = Eta.Promise.create () in
+  let finalizers = ref 0 in
+  let background =
+    Eta.Effect.finally (Eta.Effect.sync (fun () -> incr finalizers))
+      (Eta.Promise.resolve ready (Eta.Exit.Ok ())
+      |> Eta.Effect.discard
+      |> Eta.Effect.bind (fun () -> Eta.Effect.never))
+  in
+  let scoped =
+    Eta.Effect.with_background background (fun () -> Eta.Effect.never)
+  in
+  let controller =
+    Eta.Promise.await ready
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Stop)
+  in
+  run (Eta.Effect.discard (Eta.Effect.par scoped controller))
+    ~on_result:
+      (finish done_ (fun exit ->
+           expect_fail (( = ) `Stop) exit;
+           if !finalizers <> 1 then
+             fail "interrupted background did not finalize once"))
+
+let test_supervised_background_does_not_cancel_use done_ =
+  let body_completed = ref false in
+  let background =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed)
+  in
+  let use =
+    Eta.Effect.yield
+    |> Eta.Effect.bind (fun () -> Eta.Effect.yield)
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.sync (fun () -> body_completed := true))
+  in
+  run (Eta.Effect.with_supervised_background background (fun () -> use))
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Finalizer _) when !body_completed -> ()
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "unexpected supervised cause: %a"
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok () -> fail "supervised child failure was hidden"))
+
+let test_background_same_release_has_one_winner done_ =
+  let go = Eta.Promise.create () in
+  let ready = ref 0 in
+  let first = ref None in
+  let body_finalizers = ref 0 in
+  let background_finalizers = ref 0 in
+  let arrive tag =
+    Eta.Effect.sync (fun () -> incr ready; !ready)
+    |> Eta.Effect.bind (fun count ->
+           if count = 2 then
+             Eta.Effect.discard (Eta.Promise.resolve go (Eta.Exit.Ok ()))
+           else Eta.Effect.unit)
+    |> Eta.Effect.bind (fun () -> Eta.Promise.await go)
+    |> Eta.Effect.bind (fun () ->
+           Eta.Effect.sync (fun () ->
+               if Option.is_none !first then first := Some tag))
+  in
+  let background =
+    Eta.Effect.finally
+      (Eta.Effect.sync (fun () -> incr background_finalizers))
+      (arrive `Background
+      |> Eta.Effect.bind (fun () -> Eta.Effect.fail `Background_failed))
+  in
+  let use =
+    Eta.Effect.finally (Eta.Effect.sync (fun () -> incr body_finalizers))
+      (arrive `Body)
+  in
+  run (Eta.Effect.with_background background (fun () -> use))
+    ~on_result:
+      (finish done_ (fun exit ->
+           (match (!first, exit) with
+           | Some `Background,
+             Eta.Exit.Error (Eta.Cause.Fail `Background_failed) ->
+               ()
+           | Some `Body, Eta.Exit.Ok () -> ()
+           | Some `Body, Eta.Exit.Error (Eta.Cause.Finalizer finalizer)
+             when finalizer_has_typed_failure finalizer ->
+               ()
+           | _ -> fail "same-release result disagreed with first publication");
+           if !body_finalizers <> 1 || !background_finalizers <> 1 then
+             fail "same-release branch finalized more or less than once"))
+
 let test_delay done_ =
   run (Eta.Effect.delay (Eta.Duration.ms 1) (Eta.Effect.pure 42))
     ~on_result:(finish done_ (expect_ok_int 42))
@@ -639,6 +856,20 @@ let tests =
     ("intercept_log parity", test_intercept_log_parity);
     ( "expert clock observes scoped override",
       test_expert_clock_observes_scoped_override );
+    ( "with_background typed failure cancels use",
+      test_background_typed_failure_cancels_use );
+    ( "with_background loser publishes after cancellation before assembly",
+      test_background_loser_publishes_after_cancellation );
+    ( "with_background defect cancels use",
+      test_background_defect_cancels_use );
+    ( "with_background body exits cancel child",
+      test_background_body_exits_cancel_child );
+    ( "with_background body interruption matches par",
+      test_background_body_interruption_matches_par );
+    ( "with_supervised_background does not cancel use",
+      test_supervised_background_does_not_cancel_use );
+    ( "with_background same-release exits choose one winner",
+      test_background_same_release_has_one_winner );
   ]
   @ Async_shared.tests
   @ Interruptible_shared.tests

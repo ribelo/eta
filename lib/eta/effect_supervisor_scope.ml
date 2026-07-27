@@ -220,7 +220,7 @@ let cancel_child_effect child =
   | Error cause when Cause.is_interrupt_only cause -> ok ()
   | Error cause -> error cause
 
-let with_background ?name background use =
+let with_supervised_background ?name background use =
   let background =
     match name with
     | None -> background
@@ -236,6 +236,110 @@ let with_background ?name background use =
                 Supervisor_lift
                   (Effect_resource.finally (cancel_child_effect child) (use ())) ));
     }
+
+type ('a, 'err) background_event =
+  | Background_exit of (unit, 'err) Exit.t
+  | Background_use_exit of ('a, 'err) Exit.t
+
+let rec is_interrupt_with_id expected = function
+  | Cause.Interrupt (Some actual) -> Cause.equal_interrupt_id actual expected
+  | Cause.Sequential causes | Cause.Concurrent causes ->
+      List.for_all (is_interrupt_with_id expected) causes
+  | Cause.Fail _ | Cause.Die _ | Cause.Interrupt None | Cause.Finalizer _
+  | Cause.Suppressed _ ->
+      false
+
+let is_clean_internal_cancel stop_id = function
+  | cause when is_interrupt_with_id stop_id cause -> true
+  | Cause.Suppressed { primary; finalizer } ->
+      is_interrupt_with_id stop_id primary
+      && is_internal_cancel_finalizer finalizer
+  | _ -> false
+
+let attach_finalizer exit finalizer =
+  match exit with
+  | Exit.Ok _ -> error (Cause.finalizer finalizer)
+  | Exit.Error primary -> error (Cause.suppressed ~primary ~finalizer)
+
+let with_background ?name background use =
+  let background =
+    match name with
+    | None -> background
+    | Some name -> Effect_observability.named name background
+  in
+  make ~leaf_name:"Effect.with_background" ~names:(names background)
+    ~footprint:
+      (union_footprint (capability_footprint background)
+         (footprint ~has_concurrency:true ()))
+  @@ fun frame ->
+  let exception Stop in
+  let contract = frame.runtime.contract in
+  let events = contract.Runtime_contract.create_stream 2 in
+  let stop_id = Cause.fresh_interrupt_id () in
+  let internal_cancel =
+    {
+      interrupt_id = stop_id;
+      matches_cancel = (function Stop -> true | _ -> false);
+    }
+  in
+  let background_exit = ref None in
+  let use_exit = ref None in
+  let winner = ref None in
+  let record = function
+    | Background_exit exit as event ->
+        background_exit := Some exit;
+        event
+    | Background_use_exit exit as event ->
+        use_exit := Some exit;
+        event
+  in
+  let take () = record (contract.Runtime_contract.stream_take events) in
+  (try
+     switch_run frame @@ fun sw ->
+     fiber_fork frame ~sw (fun () ->
+         contract.Runtime_contract.stream_add events
+           (Background_exit (run_scope ~internal_cancel ~sw frame background)));
+     fiber_fork frame ~sw (fun () ->
+         let exit =
+           run_scope_body ~internal_cancel ~sw frame @@ fun use_frame ->
+           run_to_value use_frame (use ())
+         in
+         contract.Runtime_contract.stream_add events (Background_use_exit exit));
+     (match take () with
+     | Background_exit (Exit.Error _ as exit) ->
+         winner := Some (`Background exit);
+         switch_fail frame sw Stop
+     | Background_exit (Exit.Ok ()) ->
+         let exit =
+           match take () with
+           | Background_use_exit exit -> exit
+           | Background_exit _ -> assert false
+         in
+         winner := Some (`Use exit)
+     | Background_use_exit exit ->
+         winner := Some (`Use exit);
+         switch_fail frame sw Stop)
+   with Stop -> ());
+  (match (!background_exit, !use_exit) with
+  | None, _ | _, None -> (
+      match contract.Runtime_contract.stream_take_nonblocking events with
+      | Some event -> ignore (record event)
+      | None -> ())
+  | Some _, Some _ -> ());
+  match (!winner, !background_exit, !use_exit) with
+  | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Error loser) ->
+      if is_clean_internal_cancel stop_id loser then error cause
+      else
+        attach_finalizer (error cause)
+          (Cause.finalizer_of_cause (render_error frame) loser)
+  | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Ok _) -> error cause
+  | Some (`Use exit), Some (Exit.Error loser), Some _ ->
+      if is_clean_internal_cancel stop_id loser then exit
+      else
+        attach_finalizer exit
+          (Cause.finalizer_of_cause (render_error frame) loser)
+  | Some (`Use exit), Some (Exit.Ok ()), Some _ -> exit
+  | _ -> invalid_arg "Effect.with_background: incomplete arbitration"
 
 let supervisor_pure value = Supervisor_pure value
 let supervisor_lift eff = Supervisor_lift eff

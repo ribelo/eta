@@ -147,7 +147,7 @@ module Make (B : Backend) = struct
     in
     let program =
       let* () =
-        Effect.with_background background (fun () ->
+        Effect.with_supervised_background background (fun () ->
             wait_until "background promise waiter" (fun () -> !started))
       in
       let* cleaned = Effect.sync (fun () -> !cleanup_ran) in

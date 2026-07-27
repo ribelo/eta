@@ -4,10 +4,15 @@ Use `Effect.with_background` when a background loop should live exactly as long
 as a foreground body. It is the structured version of "run this forever while I
 use the handle".
 
-The background child is cancelled when the body returns or fails. The child is
-not awaited as part of the body result, so application code that must observe
-background failure should report it through an owned queue, promise, or an
-explicit `Supervisor.scoped` nursery.
+The background child is cancelled and awaited when the body returns or fails.
+If the child fails first, the body is cancelled and awaited and the child's cause
+propagates. This fail-fast rule fits protocol readers and heartbeats whose death
+invalidates the foreground work.
+
+Use `Effect.with_supervised_background` when the child may fail without
+interrupting the body. Its failure is recorded under supervision and is observed
+only after the body ends. Best-effort work needs no third combinator: pass
+`Effect.ignore_errors background` to the supervised variant.
 
 ## Stream Reader Scoped To A Handle
 

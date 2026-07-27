@@ -127,8 +127,10 @@ model. Public child work is lexical:
 - `Effect.par`, `Effect.all`, `Effect.race`, and `Effect.map_par` for
   concurrent effect composition.
 - `Supervisor.scoped` when a parent needs child handles inside a nursery.
-- `Effect.with_background` when background work should live only while a body
-  runs.
+- `Effect.with_background` when required background work should live only while
+  a body runs and fail that body if it dies.
+- `Effect.with_supervised_background` for the same lifetime without fail-fast
+  child-to-body propagation.
 
 Runtime-owned daemon work stays internal to modules that own that lifecycle.
 There is no public `forkDaemon` API for application code.

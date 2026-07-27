@@ -445,7 +445,7 @@ module Make (B : Runtime_backend.S) = struct
     in
     check_ok Alcotest.int "repeat result" 3 (B.run rt repeat_eff)
 
-  let test_with_background_cancels_child () =
+  let test_with_supervised_background_cancels_child () =
     B.with_test_clock @@ fun ctx clock rt ->
     let finalizer_ran = ref false in
     let child_started = ref false in
@@ -456,7 +456,7 @@ module Make (B : Runtime_backend.S) = struct
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
     let program =
-      E.with_background background (fun () ->
+      E.with_supervised_background background (fun () ->
           E.delay (Duration.ms 10) (E.sync (fun () -> !child_started)))
     in
     let promise = B.fork_run ctx rt program in
@@ -1216,8 +1216,8 @@ module Make (B : Runtime_backend.S) = struct
           Alcotest.test_case "acquire_use_release defect releases" `Quick
             test_acquire_use_release_defect_releases;
           Alcotest.test_case "retry repeat" `Quick test_retry_repeat;
-          Alcotest.test_case "with_background cancels child" `Quick
-            test_with_background_cancels_child;
+          Alcotest.test_case "with_supervised_background cancels child" `Quick
+            test_with_supervised_background_cancels_child;
           Alcotest.test_case "daemon drain" `Quick test_daemon_drain;
           Alcotest.test_case "runtime daemon scope does not join" `Quick
             test_runtime_fork_daemon_scope_does_not_join;

@@ -10,7 +10,8 @@ let background started stopped =
       ~acquire:(Effect.sync (fun () -> started := true))
       ~release:(fun () -> Effect.sync (fun () -> stopped := true))
   in
-  Effect.yield
+  let* () = Effect.yield in
+  Effect.fail (`Missing_user "cache.refresh")
 
 let wait_started started =
   Effect.sync (fun () ->
@@ -50,5 +51,9 @@ let () =
         exit 1);
       Format.printf "background:%s,%s stopped=%b@." left right !stopped
   | Exit.Error cause ->
-      Format.eprintf "background failed: %a@." (Cause.pp pp_error) cause;
+      if not !stopped then (
+        Format.eprintf "background finalizer did not run@.";
+        exit 1);
+      Format.eprintf "background failed fast: %a stopped=%b@."
+        (Cause.pp pp_error) cause !stopped;
       exit 1

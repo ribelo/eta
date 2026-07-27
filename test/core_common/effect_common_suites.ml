@@ -284,6 +284,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     check_audit "structured background"
       (audit ~has_concurrency:true ())
       (Effect.with_background Effect.unit (fun () -> Effect.unit));
+    check_audit "supervised structured background"
+      (audit ~has_concurrency:true ())
+      (Effect.with_supervised_background Effect.unit (fun () -> Effect.unit));
     check_audit "named preserve"
       (audit ~names:[ "request" ] ~uses_clock:true ~emits_logs:true ())
       (Effect.named "request" (Effect.log "hello"))
