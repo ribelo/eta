@@ -265,7 +265,7 @@ let with_background ?name background use =
     | None -> background
     | Some name -> Effect_observability.named name background
   in
-  make ~leaf_name:"Effect.with_background" ~names:(names background) @@ fun frame ->
+  make ~leaf_name:"Effect.with_background" @@ fun frame ->
   let exception Stop in
   let contract = frame.runtime.contract in
   let events = contract.Runtime_contract.create_stream 2 in

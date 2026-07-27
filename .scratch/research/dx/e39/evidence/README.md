@@ -9,7 +9,10 @@
 - `describe-slim.txt` / `snapshot-parity-s.txt` — byte-identical Endpoint-S proof.
 - `dishonesty-s-compile.txt` — the committed master probe rejected by S because
   `~capabilities` no longer exists.
-- `gates-s/` — exact Endpoint-S gate commands, statuses, and captured output.
+- `gates-s/` — exact Endpoint-S gate commands and statuses.
+- `gates-r/` — exact Endpoint-R gate commands and statuses.
+- `tracing-r.md` — mechanical and executable proof that tracing survives removal
+  of the internal static-name list.
 
 The dishonest probe source is
 `test/effect_introspection/dishonest_expert_make.ml`; its test demonstrates an

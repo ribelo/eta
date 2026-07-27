@@ -59,8 +59,8 @@ let daemon = daemon_internal
 module Expert = struct
   type context = Effect_core.frame
 
-  let make ?leaf_name ?names f =
-    Effect_core.make ?leaf_name ?names f
+  let make ?leaf_name f =
+    Effect_core.make ?leaf_name f
   let contract context = context.runtime.Runtime_core.contract
   let current_scope context = context.sw
   let outer_scope context = context.runtime.Runtime_core.outer_scope

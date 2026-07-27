@@ -60,8 +60,6 @@ The current examples cover:
   outcomes.
 - `all_health_checks.ml` - fail-fast collection of a homogeneous list of
   independent effects with `Effect.all`.
-- `blueprint_names.ml` - static effect-name inspection before runtime
-  interpretation, including the documented dynamic-continuation boundary.
 - `bounded_channel.ml` - bounded same-domain handoff with sender backpressure,
   direct stats snapshots, and effectful typed close propagation.
 - `channel_probe.ml` - non-blocking bounded-channel probes without manual

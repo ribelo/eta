@@ -132,20 +132,6 @@ module Make (B : Runtime_backend.S) = struct
     B.run rt (E.yield |> E.map (fun () -> 42))
     |> check_ok Alcotest.int "yield returns" 42
 
-  let test_collect_names () =
-    let eff =
-      E.concat
-        [
-          E.named "leaf-a" (E.sync (fun () -> ())) |> E.map (fun _ -> ());
-          E.sync (fun () -> ());
-          E.named "leaf-b" (E.sync (fun () -> ()));
-        ]
-      |> E.named "outer"
-    in
-    Alcotest.(check (list string))
-      "names in pre-order" [ "outer"; "leaf-a"; "leaf-b" ]
-      (E.collect_names eff)
-
   let test_from_result_and_exit_to_result () =
     B.with_runtime @@ fun _ctx rt ->
     check_ok Alcotest.int "from_result ok" 7
@@ -1175,7 +1161,6 @@ module Make (B : Runtime_backend.S) = struct
           Alcotest.test_case "ignore_errors" `Quick test_ignore_errors;
           Alcotest.test_case "to_result" `Quick test_result;
           Alcotest.test_case "yield" `Quick test_yield;
-          Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "from_result and exit to_result" `Quick
             test_from_result_and_exit_to_result;
           Alcotest.test_case "map bind tap runtime" `Quick

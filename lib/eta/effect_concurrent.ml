@@ -207,8 +207,7 @@ let race_eval effects frame =
       | None -> error (Cause.concurrent !causes))
 
 let race effects =
-  make ~leaf_name:"Effect.race" ~names:(concat_names effects)
-    (race_eval effects)
+  make ~leaf_name:"Effect.race" (race_eval effects)
 
 type ('a, 'b) par_pair = { left : 'a; right : 'b }
 
@@ -244,8 +243,7 @@ let par_eval left right frame =
   | Exit.Error cause -> error cause
 
 let par left right =
-  make ~leaf_name:"Effect.par" ~names:(names left @ names right)
-    (par_eval left right)
+  make ~leaf_name:"Effect.par" (par_eval left right)
 
 (** Fork [eff] as a child that publishes its exit to a fresh promise; the
     returned [await] reads the published value once [par_run_forks] has
@@ -276,9 +274,7 @@ let par3_eval left middle right frame =
   | Exit.Error cause -> error cause
 
 let par3 left middle right =
-  let child_names = names left @ names middle @ names right in
-  make ~leaf_name:"Effect.par3" ~names:child_names
-    (par3_eval left middle right)
+  make ~leaf_name:"Effect.par3" (par3_eval left middle right)
 
 let par4_eval first second third fourth frame =
   let first_fork, await_first = promise_fork frame first in
@@ -295,11 +291,7 @@ let par4_eval first second third fourth frame =
   | Exit.Error cause -> error cause
 
 let par4 first second third fourth =
-  let child_names =
-    names first @ names second @ names third @ names fourth
-  in
-  make ~leaf_name:"Effect.par4" ~names:child_names
-    (par4_eval first second third fourth)
+  make ~leaf_name:"Effect.par4" (par4_eval first second third fourth)
 
 let all_settled_eval effects frame =
   let results = Array.make (List.length effects) None in
@@ -316,8 +308,7 @@ let all_settled_eval effects frame =
   ok (collect_results "Effect.all_settled" results)
 
 let all_settled effects =
-  make ~leaf_name:"Effect.all_settled" ~names:(concat_names effects)
-    (all_settled_eval effects)
+  make ~leaf_name:"Effect.all_settled" (all_settled_eval effects)
 
 (** [workers] forks share an atomic counter, each pulling the next input until
     the index reaches [n]. The parent frame is passed explicitly into each

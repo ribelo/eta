@@ -125,13 +125,6 @@
   (pps ppx_eta)))
 
 (executable
- (name blueprint_names)
- (modules blueprint_names)
- (libraries eta eta_eio eio_main)
- (preprocess
-  (pps ppx_eta)))
-
-(executable
  (name bounded_channel)
  (modules bounded_channel)
  (libraries eta eta_eio eio_main)
@@ -397,7 +390,6 @@
   signal_stabilization.exe
   batch_concurrency.exe
   all_health_checks.exe
-  blueprint_names.exe
   bounded_channel.exe
   channel_probe.exe
   unbounded_queue.exe

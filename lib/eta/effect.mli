@@ -811,7 +811,6 @@ module Expert : sig
 
   val make :
     ?leaf_name:string ->
-    ?names:string list ->
     (context -> ('a, 'err) Exit.t) ->
     ('a, 'err) t
   (** Build a runtime-backed effect without exposing Eta's internal effect
@@ -1171,21 +1170,3 @@ val fn :
     be total; a raising printer becomes a defect. *)
 
 val name : ('a, 'err) t -> string option
-val collect_names : ('a, 'err) t -> string list
-(** [collect_names eff] returns names that are statically present in
-    [eff]'s current description.
-
-    This is a preflight/documentation helper, not a complete runtime inventory.
-    Continuation-producing nodes such as [bind], [bind_error], [map_par], and
-    [supervisor_scoped] are not forced or traversed,
-    so names created by those continuations are intentionally absent. *)
-
-val describe : ('a, 'err) t -> string
-(** Render the statically constructed blueprint as a deterministic tree without
-    evaluating it.
-
-    The node labels are [Pure], [Fail], [Custom], [Custom("name")], [Map], and
-    [Bind], with two spaces per child depth and no trailing newline. A [Bind]
-    includes its visible input subtree followed by a literal [<bind …>] child;
-    the continuation is never forced. Opaque custom/wrapper evaluators remain
-    leaves rather than pretending their runtime work is inspectable. *)

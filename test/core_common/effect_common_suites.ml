@@ -183,22 +183,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let e = Effect.pure 1 |> Effect.map (fun n -> n + 1) in
     Alcotest.(check int) "map" 2 (run_ok rt e)
 
-  let test_collect_names () =
-    let e =
-      Effect.concat
-        [
-          Effect.named "leaf-a" (Effect.sync (fun () -> ()))
-          |> Effect.map (fun _ -> ());
-          Effect.sync (fun () -> ());
-          Effect.named "leaf-b" (Effect.sync (fun () -> ()));
-        ]
-      |> Effect.named "outer"
-    in
-    Alcotest.(check (list string))
-      "names in pre-order"
-      [ "outer"; "leaf-a"; "leaf-b" ]
-      (Effect.collect_names e)
-
   let test_effect_map_bind_tap_runtime () =
     B.with_runtime @@ fun _ctx rt ->
     let observed = ref [] in
@@ -3735,7 +3719,6 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "to_exit captures die_message" `Quick
             test_exit_captures_die_message;
           Alcotest.test_case "Map" `Quick test_map;
-          Alcotest.test_case "collect_names" `Quick test_collect_names;
           Alcotest.test_case "map bind tap runtime" `Quick
             test_effect_map_bind_tap_runtime;
           Alcotest.test_case "tap observer runtime" `Quick

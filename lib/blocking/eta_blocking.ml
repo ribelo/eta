@@ -115,7 +115,7 @@ let pool_and_runner context override =
 
 let run ?pool ?(name = "blocking") ?on_cancel f =
   check_not_worker "Eta_blocking.run";
-  Expert.make ~names:[ name ]
+  Expert.make
     @@ fun context ->
   let contract = Expert.contract context in
   let pool, runner = pool_and_runner context pool in
@@ -146,7 +146,7 @@ let run_result_timeout ?pool ?name ?on_cancel ~timeout ~on_timeout f =
           (fun () ->
             if Atomic.compare_and_set cancel_hook_called false true then hook ())
   in
-  Expert.make ~names:[ name ]
+  Expert.make
     @@ fun context ->
   let contract = Expert.contract context in
   let completed, resolver = contract.Runtime_contract.create_promise () in

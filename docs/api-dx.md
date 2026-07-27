@@ -161,8 +161,6 @@ Use named helpers at common boundaries:
 - `[@@deriving eta_error]` from `ppx_eta` for a plain `pp_<type>` over a public,
   explicit-tag closed polymorphic error row, then explicit `?error_pp` /
   `with_error_pp` wiring.
-- `Effect.name` and `Effect.collect_names` for preflight documentation of
-  statically present blueprint names. This is not a runtime inventory.
 - `Eta.Exit.to_result` at boundaries that intentionally accept only successful
   values and single typed failures as ordinary OCaml `result`.
 - `Eta.Resource.auto` for runtime-owned cached resources with scheduled refresh.
@@ -352,7 +350,6 @@ The runnable examples under `examples/` use real public modules:
 - `stream_decode.ml`
 - `batch_concurrency.ml`
 - `all_health_checks.ml`
-- `blueprint_names.ml`
 - `bounded_channel.ml`
 - `channel_probe.ml`
 - `unbounded_queue.ml`
@@ -695,14 +692,6 @@ not wire itself into spans: pass `pp_error` to `named` / `fn` with `~error_pp`,
 or use `with_error_pp pp_error` for one explicit subtree. A raising derived or
 custom payload printer follows the same contract and becomes a defect.
 
-`Effect.name` and `Effect.collect_names` are not replaced by a parallel manual
-registry of expected workflow names. They inspect the existing effect
-description before interpretation and are useful for documentation, preflight
-checks, and diagnostics. They are intentionally not a complete runtime
-inventory: names created by continuation-producing nodes such as `bind`,
-`bind_error`, `map_par`, or supervisor bodies are not forced just to
-inspect them.
-
 `Exit` and `Cause` are not replaced by OCaml `result` or exceptions.
 `Exit.to_result` is intentionally partial: it converts successful values and a
 single typed `Cause.Fail`, but defects, interruption, concurrent/sequential
@@ -842,11 +831,8 @@ and observability. The current evidence supports this split:
 | --- | --- |
 | Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
 | Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
-| Diagnostic/preflight surface | `name`, `collect_names` |
-| Low-level or advanced surface | `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
+| Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
 
-The diagnostic row is not first-contact workflow style, but it is promoted for
-preflight documentation and tests that inspect an existing effect description.
 The low-level group is not a deletion list. It is a doc-demotion list: these
 names should not be the first way users learn Eta, but they remain justified as
 primitive, bridge, or implementation support until stronger evidence says
@@ -1020,7 +1006,6 @@ nix develop -c dune exec examples/map_projection.exe
 nix develop -c dune exec examples/all_health_checks.exe
 nix develop -c dune exec examples/bounded_channel.exe
 nix develop -c dune exec examples/channel_probe.exe
-nix develop -c dune exec examples/blueprint_names.exe
 nix develop -c dune exec examples/unbounded_queue.exe
 nix develop -c dune exec examples/queue_probe.exe
 nix develop -c dune exec examples/mutable_ref_state.exe

@@ -68,7 +68,7 @@ let with_tracer tracer eff =
   eval { frame with runtime } eff
 
 let named ?(kind = Capabilities.Internal) ?error_pp name eff =
-  make ~leaf_name:name ~names:(name :: names eff) @@ fun frame ->
+  make ~leaf_name:name @@ fun frame ->
   let frame =
     match error_pp with
     | None -> frame

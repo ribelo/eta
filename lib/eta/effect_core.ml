@@ -70,7 +70,6 @@ type ('a, +'err) t =
       {
         eval : frame -> ('a, 'err) Exit.t;
         leaf_name : string option;
-        names : string list;
       }
       -> ('a, 'err) t
   | Map :
@@ -86,23 +85,15 @@ type ('a, +'err) t =
       }
       -> ('b, 'err) t
 
-let rec names : type a err. (a, err) t -> string list = function
-  | Pure _ | Fail _ -> []
-  | Custom { names; _ } -> names
-  | Map { inner; _ } -> names inner
-  | Bind { inner; _ } -> names inner
-
 let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ -> None
 
-let make ?leaf_name ?(names = []) eval =
-  Custom { eval; leaf_name; names }
+let make ?leaf_name eval =
+  Custom { eval; leaf_name }
 
 let preserve ?leaf_name eff (eval) =
-  make ?leaf_name ~names:(names eff) eval
-
-let concat_names effects = List.concat_map names effects
+  make ?leaf_name eval
 
 let[@inline always] [@zero_alloc opt] exit_to_value frame = function
   | Exit.Ok value -> value
@@ -124,12 +115,6 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       match eval frame inner with
       | Exit.Ok value -> eval frame (k value)
       | Exit.Error _ as err -> err)
-
-let with_names names eff =
-  match eff with
-  | Custom custom -> Custom { custom with names }
-  | Pure _ | Fail _ | Map _ | Bind _ ->
-      make ~names (fun frame -> eval frame eff)
 
 let run_to_exit frame eff =
   try eval frame eff with
@@ -306,7 +291,6 @@ let never : 'a 'err. ('a, 'err) t =
               raise exn
           | exn -> exit_of_exn frame exn);
       leaf_name = Some "Effect.never";
-      names = [];
     }
 
 let die_message message = sync (fun () -> failwith message)
@@ -330,7 +314,7 @@ let seq next self = bind (fun () -> next) self
 
 let concat effects =
   let sequenced = List.fold_left (fun acc eff -> seq eff acc) unit effects in
-  make ~names:(concat_names effects) (fun frame -> eval frame sequenced)
+  make (fun frame -> eval frame sequenced)
 
 let combine_stripped combine causes =
   match List.filter_map Fun.id causes with
@@ -599,29 +583,3 @@ let interruptible eff =
           restore.Runtime_contract.restore (fun () -> eval frame eff))
 
 let name eff = leaf_name eff
-let collect_names eff = names eff
-
-let describe eff =
-  let buffer = Buffer.create 128 in
-  let line depth text =
-    if Buffer.length buffer > 0 then Buffer.add_char buffer '\n';
-    Buffer.add_string buffer (String.make (depth * 2) ' ');
-    Buffer.add_string buffer text
-  in
-  let rec walk : type a err. int -> (a, err) t -> unit =
-   fun depth -> function
-    | Pure _ -> line depth "Pure"
-    | Fail _ -> line depth "Fail"
-    | Custom { leaf_name = None; _ } -> line depth "Custom"
-    | Custom { leaf_name = Some name; _ } ->
-        line depth (Printf.sprintf "Custom(%S)" name)
-    | Map { inner; _ } ->
-        line depth "Map";
-        walk (depth + 1) inner
-    | Bind { inner; _ } ->
-        line depth "Bind";
-        walk (depth + 1) inner;
-        line (depth + 1) "<bind …>"
-  in
-  walk 0 eff;
-  Buffer.contents buffer
