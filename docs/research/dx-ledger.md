@@ -377,9 +377,14 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   probe-proven false-parity catch (filter rule corrected). Law rows
   R138–R145. V-DX-E36-001..003.
 
-### E37 — Parallel-acquire ownership (P0) — in flight
+### E37 — Parallel-acquire ownership (P0) — promoted 2026-07-27
 - What: one combinator — ownership transfer to parent scope + correct
   partial-acquire cleanup. Correctness, not E6's killed ergonomics.
+- Outcome: `Effect.acquire_all_par` — transactional staging (arm
+  rollback before the checkpoint, batch-commit on success); reverse-
+  order rollback on any failure/interruption; ownership transfer to the
+  enclosing scope; no Expert required. Mechanism cleared on first
+  review; evidence repaired in one rework round. V-DX-E37-001/002.
 
 ### E38 — Finalizer diagnostics structure (P0-5)
 - What: `Finalizer.Fail of string` → structural payload (existential

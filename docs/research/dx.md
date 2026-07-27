@@ -791,3 +791,30 @@ Durable lessons:
 3. **The surprising semantics should carry the marked name.** Fail-fast
    is what `with_background` reads as; record-only is the marked
    variant. T2 applies to semantics, not just types.
+
+## E37 — Parallel acquisition without Expert: `acquire_all_par` (2026-07-27)
+
+The audit's §4.3 gap is closed: acquiring N resources in parallel with
+correct cleanup no longer requires the runtime extension point.
+`Effect.acquire_all_par` uses **transactional staging**: each
+acquisition's release is armed in a staging scope before a cancellation
+checkpoint; on success, a non-suspending batch commit moves the staged
+finalizers into the owner scope. Any failure or interruption rolls back
+completed acquisitions in reverse successful-acquisition order; late
+completions are cleaned without transfer. The staging pattern (arm
+rollback before the checkpoint; batch-commit on success) is now the
+canonical answer for parallel acquisition.
+
+Durable lessons:
+
+1. **A correct mechanism and true evidence are different deliverables.**
+   The review's concurrency audit found no leak, no double-release, a
+   safe commit window, and correct ordering on the first pass — while
+   the registry claimed branches the tests didn't exercise. The
+   exact-span registry discipline, not the implementation, is what
+   failed first.
+2. **Correctness gaps outrank ergonomic verdicts.** E6 killed the
+   parallel-acquire *syntax* (reviewers prefer the ladder); E37 shipped
+   the parallel-acquire *ownership semantics*. Same task family,
+   different question — the constraint held because the questions were
+   never conflated.

@@ -4827,3 +4827,50 @@ no arity zoo, no ergonomic relitigation.
 - Review: PR-style oracle on the contract + semantics evidence.
   Outcome: promote. Kill path: if correct semantics cannot fit the doc
   budget (~10 lines), the shape is wrong — hold and record.
+
+---
+
+## V-DX-E37-002 — 2026-07-27 — research/dx-e37-parallel-acquire — phase: results + decision (hardening wave)
+
+**What shipped.** `Effect.acquire_all_par ?max_concurrent ~acquire
+~release configs` — parallel resource acquisition with correct ownership
+and NO Expert required. Design: transactional staging — each
+acquisition's release is armed in a staging scope BEFORE a `fiber_yield`
+checkpoint (so cancellation after acquisition rolls back); after all
+complete, a `check()` guards a non-suspending batch commit moving staged
+finalizers into the owner scope. Any acquire failure/interruption →
+reverse successful-acquisition-order rollback; late completions cleaned
+without transfer; success → ownership transferred, releases on all exit
+kinds; admission matches `map_par`. The Expert-bridge recipe in
+docs/api-dx.md is obsoleted and re-pointed.
+
+**Arc.** Initial implementation → review verdict should-not-have-merged
+— but with a split: the review's own concurrency audit found the
+MECHANISM sound (no leak, no double-release, safe commit window,
+correct reverse ordering proven by a forced `3,1,2,0` completion
+releasing `0,2,1,3`), while the EVIDENCE was broken (registry rows
+claiming branches the tests didn't exercise — R149's "interruption" was
+a sibling failure, R153 skipped rollback release failures; stale spans
+from the mli insertion; wrong totals; three missing discriminating
+tests; no jsoo coverage; a leftover doc note describing the obsolete
+bridge) → one evidence rework round (three discriminating tests, full
+registry truth repair, jsoo suite, doc fix) → reviewer of record:
+**approve** (629 core + 41 eta_test + 3 new jsoo tests re-run
+independently).
+
+**Prediction scoring (orchestrator, V-DX-E37-001) — full house.**
+Shape (homogeneous, map_par-shaped): hit. All six semantic edges: hit.
+No Expert at the public surface: hit (transactional staging). Census
++1: hit. Footgun −1: hit. api-dx re-point: hit. Doc-budget kill path
+not triggered; review promote: hit. Executor likewise scored its set
+honestly.
+
+**Decision: PROMOTE.** Merged `--no-ff`; all gate tracks green on
+master; branch pushed; worktree removed; objective + follow-up
+archived.
+
+**Lessons recorded.** (1) A correct mechanism and true evidence are
+different deliverables — the registry's exact-span discipline is what
+caught the gap. (2) The staging pattern (arm rollback before the
+checkpoint; batch-commit on success) is now the canonical answer for
+parallel acquisition and belongs in `model.md`.
