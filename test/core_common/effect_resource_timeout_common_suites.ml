@@ -33,7 +33,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.testable (Cause.pp Format.pp_print_string) (Cause.equal String.equal)
 
   let rec finalizer_contains expected = function
-    | Cause.Finalizer.Fail { error; pp } -> String.equal expected (Format.asprintf "%a" pp error)
+    | Cause.Finalizer.Fail { error = _; rendered } -> String.equal expected rendered
     | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
     | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
         List.exists (finalizer_contains expected) causes
@@ -203,8 +203,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail { error; pp };
-          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+            finalizer = Cause.Finalizer.Fail { error = _; rendered };
+          }) when String.equal rendered "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed release failure, got %a"
@@ -220,7 +220,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         |> E.bind (fun () -> E.pure "body"))
     in
     check_exit_error string_cause "release failure"
-      (Cause.Finalizer (Cause.Finalizer.Fail { error = "<typed failure>"; pp = Format.pp_print_string }))
+      (Cause.Finalizer (Cause.Finalizer.Fail { error = "<typed failure>"; rendered = "<typed failure>" }))
       (B.run rt eff)
 
   let test_acquire_release_releases_on_defect () =
@@ -252,8 +252,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match B.run rt eff with
     | Exit.Error
         (Cause.Suppressed
-          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail { error; pp } })
-      when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail { error = _; rendered } })
+      when String.equal rendered "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed release failure after defect, got %a"
@@ -348,8 +348,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match B.run rt eff with
     | Exit.Error
         (Cause.Suppressed
-          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail { error; pp } })
-      when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail { error = _; rendered } })
+      when String.equal rendered "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed release failure after defect, got %a"
@@ -389,7 +389,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
            (fun () -> E.pure "body"))
     in
     check_exit_error string_cause "release failure"
-      (Cause.Finalizer (Cause.Finalizer.Fail { error = "<typed failure>"; pp = Format.pp_print_string }))
+      (Cause.Finalizer (Cause.Finalizer.Fail { error = "<typed failure>"; rendered = "<typed failure>" }))
       (B.run rt eff)
 
   let test_with_resource_let_at_success () =
@@ -578,8 +578,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail `Acquire;
-            finalizer = Cause.Finalizer.Fail { error; pp };
-          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+            finalizer = Cause.Finalizer.Fail { error = _; rendered };
+          }) when String.equal rendered "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected acquire failure with rollback diagnostic, got %a"
@@ -769,8 +769,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let expected_finalizers =
       Cause.Finalizer.Sequential
-        [ Cause.Finalizer.Fail { error = "<typed failure>"; pp = Format.pp_print_string };
-          Cause.Finalizer.Fail { error = "<typed failure>"; pp = Format.pp_print_string } ]
+        [ Cause.Finalizer.Fail { error = "<typed failure>"; rendered = "<typed failure>" };
+          Cause.Finalizer.Fail { error = "<typed failure>"; rendered = "<typed failure>" } ]
     in
     (match run false with
     | Exit.Error (Cause.Finalizer finalizers)

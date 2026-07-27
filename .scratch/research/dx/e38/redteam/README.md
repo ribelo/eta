@@ -1,28 +1,26 @@
-# DX-E38 red-team cases
+# DX-E38 follow-up red-team cases
 
-These cases attack the points where an existential finalizer payload can regress
-silently. The executable assertions live in the normal test suites so they remain
-project gates rather than scratch-only probes.
+The executable assertions live in normal project suites so the repaired design
+remains gated after the research branch.
 
 | Attack | Required observation | Executable test |
 | --- | --- | --- |
-| Release fails without `error_pp` | The full cause still renders `Finalizer(Fail("<typed failure>"))`. | `release failure without error_pp keeps default finalizer render` in `test/ppx_common/ppx_common_suites.ml` |
-| Release fails under E7-derived `pp_err` | The full cause renders `Finalizer(Fail("db:7"))`; the derived kind and payload survive cleanup conversion. | `derived eta_error printer renders release finalizer failure` in `test/ppx_common/ppx_common_suites.ml` |
-| Distinct values and hidden types share one printer output | Both equality modes report equality for the collision and inequality for a distinct rendering. This exposes the documented rule honestly: equality observes diagnostics, not hidden value identity. | `finalizer equal uses rendered form including collisions` and `finalizer diagnostic equal uses rendered form including collisions` in `test/core_common/cause_exit_common_suites.ml` |
+| Release fails without `error_pp` | Full output remains `Finalizer(Fail("<typed failure>"))`. | `release failure without error_pp keeps default finalizer render` in `test/ppx_common/ppx_common_suites.ml` |
+| Release fails under E7-derived `pp_err` | Capture stores `db:7`; full output remains `Finalizer(Fail("db:7"))`. | `derived eta_error printer renders release finalizer failure` in `test/ppx_common/ppx_common_suites.ml` |
+| Registered-release printer raises during conversion | The runtime returns top-level `Cause.Die`; no later Portable/render call raises the printer exception. | Native `eta_error raising release renderer`; jsoo `raising release error_pp becomes die at conversion` |
+| `Effect.finally` printer raises during conversion | Conversion is outside the cleanup-execution catch, so the result is top-level `Cause.Die`, not `Cause.Finalizer.Die`. | Native `eta_error raising finally renderer`; jsoo `raising finally error_pp becomes die at conversion` |
+| Printer is total but stateful | It runs once at capture; both equality modes remain reflexive and never rerun it. | `finalizer equality is reflexive after stateful capture` in `test/core_common/cause_exit_common_suites.ml` |
+| Typed value could still be flattened | Conversion stores the expected string and the original existential value by physical identity. | `finalizer fail preserves typed payload and leaves typed channel` in `test/core_common/cause_exit_common_suites.ml` |
 
 ## Outcome
 
-All three attacks passed under the Nix/OxCaml focused gate:
+All attacks passed under native and mainline js_of_ocaml gates:
 
 ```sh
 nix develop -c dune runtest test/core_eio test/ppx_eio test/otel_eio test/laws --force
+nix develop .#mainline -c dune runtest --build-dir=_build-mainline test/js_jsoo --force
 ```
 
-- printer-less release output remained byte-identical;
-- the E7-derived printer produced `db:7` through release conversion;
-- distinct hidden values/types with colliding printer output compared equal in
-  both equality modes, while a distinct rendering compared unequal.
-
-The equality limit is intentional and public: neither equality mode can recover
-the existential value type, so they compare diagnostics rather than hidden value
-identity.
+The repaired payload stores no printer. Therefore public rendering, equality,
+squash, and Portable conversion cannot execute the original `error_pp` outside
+Eta's capture boundary.

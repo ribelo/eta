@@ -10,8 +10,9 @@
     [Finalizer] marks diagnostic failures produced while cleaning up after a
     successful primary eff; ordinary [Effect.bind_error] leaves failures under
     this node untouched. Same-domain typed finalizer failures retain their error
-    value and printer after leaving the cleanup eff, but are no longer part of
-    the typed error channel. Portable conversion materializes them to strings.
+    value and capture-time rendering after leaving the cleanup eff, but are no
+    longer part of the typed error channel. Portable conversion drops the value
+    and keeps that rendered string.
     [Suppressed] preserves a primary failure together with a finalizer failure
     that occurred while cleaning up the primary failure. *)
 
@@ -33,7 +34,7 @@ module Finalizer : sig
   type t =
     | Fail : {
         error : 'err;
-        pp : Format.formatter -> 'err -> unit;
+        rendered : string;
       } -> t
     | Die of die
     | Interrupt of interrupt_id option
@@ -43,21 +44,20 @@ module Finalizer : sig
     | Suppressed of { primary : t; finalizer : t }
 
   val equal : t -> t -> bool
-  (** Structural equality for finalizer diagnostics. [Fail] payloads can hide
-      different concrete types, so each payload is rendered with its own [pp]
-      and the resulting strings are compared. Distinct values whose printers
-      collide therefore compare equal. Other nodes retain structural equality;
-      [Die] preserves physical exception identity. *)
+  (** Structural equality for finalizer diagnostics. [Fail] compares the stored
+      [rendered] strings, matching the pre-E38 string-payload semantics.
+      The hidden values do not participate.
+      Other nodes retain structural equality; [Die] preserves physical exception
+      identity. *)
 
   val diagnostic_equal : t -> t -> bool
-  (** Diagnostic equality uses the same rendered-form rule for [Fail], including
-      its collision limit. [Die] instead compares materialized exception
-      diagnostics. *)
+  (** Diagnostic equality uses the same stored-string rule for [Fail].
+      [Die] instead compares materialized exception diagnostics. *)
 
   val pp : Format.formatter -> t -> unit
-  (** Render finalizer diagnostics. [Fail] uses its stored printer. A failure
-      produced without an installed effect error printer stores Eta's default
-      printer and therefore continues to render as ["<typed failure>"]. *)
+  (** Render finalizer diagnostics. [Fail] uses its stored [rendered] string.
+      A failure produced without an installed effect error printer
+      therefore continues to render as ["<typed failure>"]. *)
 
   val is_interrupt_only : t -> bool
 end
@@ -163,21 +163,23 @@ val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
 val finalizer_of_cause :
   (Format.formatter -> 'err -> unit) -> 'err t -> Finalizer.t
 (** Move a cause out of the typed error channel for finalizer diagnostics.
-    Typed failures retain their concrete value paired with [pp_err] until a
-    portable or rendering boundary materializes them. *)
+    Each typed failure is rendered exactly once during conversion and retains
+    both its concrete value and that string. A raising [pp_err] propagates; Eta's
+    runtime invokes this conversion inside ordinary defect capture, so a raising
+    effect [error_pp] becomes [Cause.Die]. *)
 
 val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Structural equality for causes. [Die] causes compare by physical exception
     identity, plus diagnostic span and annotation metadata. This preserves
     same-domain exception identity; use {!diagnostic_equal} when test code wants
-    to compare materialized exception diagnostics instead. [Finalizer.Fail]
-    branches compare by the rendered-form rule documented on
+    to compare materialized exception diagnostics instead.
+    [Finalizer.Fail] branches compare by the stored-string rule documented on
     {!Finalizer.equal}. *)
 
 val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Diagnostic equality for causes. [Die] causes compare exception slot,
     rendered exception message, rendered backtrace, span name, and annotations.
-    [Finalizer.Fail] branches compare by the rendered-form rule documented on
+    [Finalizer.Fail] branches compare by the stored-string rule documented on
     {!Finalizer.diagnostic_equal}. *)
 
 val pp :

@@ -10,7 +10,7 @@ let render_err = function
 
 let pp_err fmt err = Format.pp_print_string fmt (render_err err)
 let finalizer_fail_string error =
-  Cause.Finalizer.Fail { error; pp = Format.pp_print_string }
+  Cause.Finalizer.Fail { error; rendered = error }
 
 let test_cause_extractors_and_squash () =
   let id = Cause.fresh_interrupt_id () in
@@ -67,28 +67,26 @@ let test_cause_pretty () =
     (Cause.pretty render_err cause)
 
 let test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel () =
-  let observed = ref None in
-  let pp_observing fmt (Release_error { kind; code } as error) =
-    observed := Some error;
+  let renders = ref 0 in
+  let pp_observing fmt (Release_error { kind; code }) =
+    incr renders;
     Format.fprintf fmt "%s:%d" kind code
   in
   let original = Release_error { kind = "release"; code = 42 } in
   let finalizer = Cause.finalizer_of_cause pp_observing (Cause.fail original) in
-  Alcotest.(check bool) "conversion does not render eagerly" true
-    (Option.is_none !observed);
+  Alcotest.(check int) "rendered exactly once at conversion" 1 !renders;
   (match finalizer with
-  | Cause.Finalizer.Fail { error; pp } ->
+  | Cause.Finalizer.Fail { error; rendered } ->
       Alcotest.(check string)
-        "stored printer classifies the surviving value" "release:42"
-        (Format.asprintf "%a" pp error)
+        "stored capture-time rendering" "release:42" rendered;
+      Alcotest.(check bool) "original concrete value survived" true
+        (Obj.repr error == Obj.repr original)
   | _ -> Alcotest.fail "expected typed finalizer failure");
-  Alcotest.(check bool) "original concrete value survived" true
-    (match !observed with Some error -> error == original | None -> false);
   Alcotest.(check int) "finalizer failure is outside typed channel" 0
     (List.length
        (Cause.failures (Cause.finalizer finalizer : release_error Cause.t)))
 
-let test_portable_finalizer_fail_materializes_stored_printer () =
+let test_portable_finalizer_fail_keeps_captured_rendering () =
   let same_domain =
     Cause.finalizer_of_cause pp_err (Cause.fail (`C 7)) |> Cause.finalizer
   in
@@ -98,38 +96,48 @@ let test_portable_finalizer_fail_materializes_stored_printer () =
       Alcotest.failf "unexpected portable cause: %a"
         (Cause.Portable.pp pp_err) portable
 
-let colliding_pp fmt _ = Format.pp_print_string fmt "collision"
-
-let test_finalizer_equal_uses_rendered_form_including_collisions () =
-  let left = Cause.Finalizer.Fail { error = `A; pp = colliding_pp } in
-  let right = Cause.Finalizer.Fail { error = 37; pp = colliding_pp } in
+let test_finalizer_equal_uses_stored_strings () =
+  let left = Cause.Finalizer.Fail { error = `A; rendered = "same" } in
+  let right = Cause.Finalizer.Fail { error = 37; rendered = "same" } in
   let distinct =
-    Cause.Finalizer.Fail
-      { error = `B; pp = (fun fmt _ -> Format.pp_print_string fmt "distinct") }
+    Cause.Finalizer.Fail { error = `B; rendered = "distinct" }
   in
-  Alcotest.(check bool) "different hidden types collide honestly" true
+  Alcotest.(check bool) "same stored strings compare equal" true
     (Cause.Finalizer.equal left right);
-  Alcotest.(check bool) "different rendered forms differ" false
+  Alcotest.(check bool) "different stored strings differ" false
     (Cause.Finalizer.equal left distinct);
-  Alcotest.(check bool) "Cause.equal delegates to rendered equality" true
+  Alcotest.(check bool) "Cause.equal delegates to string equality" true
     (Cause.equal (fun _ _ -> false) (Cause.finalizer left)
        (Cause.finalizer right))
 
-let test_finalizer_diagnostic_equal_uses_rendered_form_including_collisions () =
-  let left = Cause.Finalizer.Fail { error = `A; pp = colliding_pp } in
-  let right = Cause.Finalizer.Fail { error = 37; pp = colliding_pp } in
+let test_finalizer_diagnostic_equal_uses_stored_strings () =
+  let left = Cause.Finalizer.Fail { error = `A; rendered = "same" } in
+  let right = Cause.Finalizer.Fail { error = 37; rendered = "same" } in
   let distinct =
-    Cause.Finalizer.Fail
-      { error = `B; pp = (fun fmt _ -> Format.pp_print_string fmt "distinct") }
+    Cause.Finalizer.Fail { error = `B; rendered = "distinct" }
   in
-  Alcotest.(check bool) "different hidden types collide honestly" true
+  Alcotest.(check bool) "same stored strings compare equal" true
     (Cause.Finalizer.diagnostic_equal left right);
-  Alcotest.(check bool) "different rendered forms differ" false
+  Alcotest.(check bool) "different stored strings differ" false
     (Cause.Finalizer.diagnostic_equal left distinct);
-  Alcotest.(check bool) "Cause.diagnostic_equal delegates to rendered equality"
+  Alcotest.(check bool) "Cause.diagnostic_equal delegates to string equality"
     true
     (Cause.diagnostic_equal (fun _ _ -> false) (Cause.finalizer left)
        (Cause.finalizer right))
+
+let test_finalizer_equality_is_reflexive_after_stateful_capture () =
+  let renders = ref 0 in
+  let stateful_pp fmt _ =
+    incr renders;
+    Format.pp_print_int fmt !renders
+  in
+  let finalizer = Cause.finalizer_of_cause stateful_pp (Cause.fail `A) in
+  Alcotest.(check int) "printer ran once" 1 !renders;
+  Alcotest.(check bool) "equal is reflexive" true
+    (Cause.Finalizer.equal finalizer finalizer);
+  Alcotest.(check bool) "diagnostic_equal is reflexive" true
+    (Cause.Finalizer.diagnostic_equal finalizer finalizer);
+  Alcotest.(check int) "equality did not rerun printer" 1 !renders
 
 let test_exit_combinators () =
   let ok = Exit.ok 21 in
@@ -173,15 +181,17 @@ let tests =
         Alcotest.test_case
           "finalizer fail preserves typed payload and leaves typed channel" `Quick
           test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel;
-        Alcotest.test_case "portable finalizer fail materializes stored printer"
-          `Quick test_portable_finalizer_fail_materializes_stored_printer;
+        Alcotest.test_case "portable finalizer fail keeps captured rendering"
+          `Quick test_portable_finalizer_fail_keeps_captured_rendering;
         Alcotest.test_case
-          "finalizer equal uses rendered form including collisions" `Quick
-          test_finalizer_equal_uses_rendered_form_including_collisions;
+          "finalizer equal uses stored strings" `Quick
+          test_finalizer_equal_uses_stored_strings;
         Alcotest.test_case
-          "finalizer diagnostic equal uses rendered form including collisions"
-          `Quick
-          test_finalizer_diagnostic_equal_uses_rendered_form_including_collisions;
+          "finalizer diagnostic equal uses stored strings" `Quick
+          test_finalizer_diagnostic_equal_uses_stored_strings;
+        Alcotest.test_case
+          "finalizer equality is reflexive after stateful capture" `Quick
+          test_finalizer_equality_is_reflexive_after_stateful_capture;
       ] );
     ( "Exit",
       [ Alcotest.test_case "combinators" `Quick test_exit_combinators ] );

@@ -274,7 +274,7 @@ let lifecycle_program kind body =
         ]
 
 let finalizer_fail_string error =
-  Eta.Cause.Finalizer.Fail { error; pp = Format.pp_print_string }
+  Eta.Cause.Finalizer.Fail { error; rendered = error }
 
 let property_map_identity =
   QCheck.Test.make ~name:"map identity" ~count blueprint (fun body ->

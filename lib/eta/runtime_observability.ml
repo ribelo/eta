@@ -171,8 +171,7 @@ let[@inline always] span_status_message (status : Capabilities.span_status) =
 
 let rec status_of_finalizer_cause : Cause.Finalizer.t -> Capabilities.span_status =
  function
-  | Cause.Finalizer.Fail { error; pp } ->
-      Error (Format.asprintf "%a" pp error)
+  | Cause.Finalizer.Fail { rendered; _ } -> Error rendered
   | Cause.Finalizer.Die die -> Error (Printexc.to_string die.exn)
   | Cause.Finalizer.Interrupt _ -> Cancelled
   | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->

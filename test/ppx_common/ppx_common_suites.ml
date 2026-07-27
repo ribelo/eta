@@ -244,12 +244,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "expected failure"
 
   let test_eta_error_raising_release_renderer_becomes_defect () =
-    B.with_traced_runtime @@ fun _ctx rt _tracer ->
+    B.with_runtime @@ fun _ctx rt ->
     let program : (unit, raising_err) Effect.t =
       Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit
            ~release:(fun () -> Effect.fail (`Custom "release")))
-      |> Effect.named ~error_pp:pp_raising_err "db.release"
+      |> Effect.with_error_pp pp_raising_err
     in
     match B.run rt program with
     | Exit.Error (Cause.Die die) ->
@@ -258,6 +258,20 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Printexc.to_string die.exn)
     | Exit.Error _ -> Alcotest.fail "expected release renderer defect"
     | Exit.Ok () -> Alcotest.fail "expected release failure"
+
+  let test_eta_error_raising_finally_renderer_becomes_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let program : (unit, raising_err) Effect.t =
+      Effect.finally (Effect.fail (`Custom "cleanup")) Effect.unit
+      |> Effect.with_error_pp pp_raising_err
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "finally printer defect" "Failure(\"derived renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error _ -> Alcotest.fail "expected finally renderer defect"
+    | Exit.Ok () -> Alcotest.fail "expected finally failure"
 
   let test_sql_table_projection () =
     let select =
@@ -304,6 +318,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_eta_error_raising_renderer_becomes_defect;
           Alcotest.test_case "eta_error raising release renderer" `Quick
             test_eta_error_raising_release_renderer_becomes_defect;
+          Alcotest.test_case "eta_error raising finally renderer" `Quick
+            test_eta_error_raising_finally_renderer_becomes_defect;
         ] );
       ( "sql_table",
         [

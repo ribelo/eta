@@ -4,16 +4,18 @@
 open Effect_core
 
 let run_cleanup frame cleanup =
-  try
-    Runtime_core.with_restoration_forbidden frame.runtime @@ fun () ->
-    frame.runtime.contract.Runtime_contract.protect @@ fun () ->
-    match run_scope frame (cleanup ()) with
-    | Exit.Ok () -> None
-    | Exit.Error cause -> Some (render_cause_error frame cause)
-  with exn ->
-    Some
-      (render_cause_error frame
-         (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn))
+  let cleanup_exit =
+    try
+      Runtime_core.with_restoration_forbidden frame.runtime @@ fun () ->
+      frame.runtime.contract.Runtime_contract.protect @@ fun () ->
+      run_scope frame (cleanup ())
+    with exn ->
+      Exit.Error
+        (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn)
+  in
+  match cleanup_exit with
+  | Exit.Ok () -> None
+  | Exit.Error cause -> Some (capture_finalizer_cause frame cause)
 
 let finish_with_cleanup frame cleanup exit =
   match run_cleanup frame (fun () -> cleanup exit) with
@@ -26,10 +28,9 @@ let finish_with_cleanup frame cleanup exit =
 let on_exit cleanup eff =
   preserve ~leaf_name:"Effect.on_exit"
     ~footprint:(footprint ~has_resources:true ()) eff @@ fun frame ->
-  try
-    finish_with_cleanup frame cleanup (run_to_exit frame eff)
-  with
-  | exn when Runtime_core.is_cancellation frame.runtime.contract exn -> (
+  match run_to_exit frame eff with
+  | exit -> finish_with_cleanup frame cleanup exit
+  | exception exn when Runtime_core.is_cancellation frame.runtime.contract exn -> (
       let reason =
         match Runtime_core.cancellation_reason frame.runtime.contract exn with
         | Some reason -> reason
@@ -39,7 +40,7 @@ let on_exit cleanup eff =
       match run_cleanup frame (fun () -> cleanup (Exit.Error primary)) with
       | None -> raise exn
       | Some finalizer -> error (Cause.suppressed ~primary ~finalizer))
-  | exn ->
+  | exception exn ->
       finish_with_cleanup frame cleanup (exit_of_exn frame exn)
 
 let finally cleanup eff =

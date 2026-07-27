@@ -233,7 +233,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Cause.Sequential [ Cause.Fail `Typed; Cause.interrupt ]);
     check_uncatchable "finalizer composite"
       (Cause.suppressed ~primary:(Cause.Fail `Typed)
-         ~finalizer:(Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string }))
+         ~finalizer:(Cause.Finalizer.Fail { error = "cleanup"; rendered = "cleanup" }))
 
   let test_effect_retry_composite_rejection_preserves_original_cause () =
     B.with_runtime @@ fun _ctx rt ->
@@ -586,7 +586,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
            (fun () -> Effect.sync (fun () -> incr attempts)))
     in
     (match B.run rt (Effect.forever source) with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error = _; rendered })) when String.equal rendered "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
@@ -1065,7 +1065,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             ~while_:(fun (_ : string) -> true)
             ~or_else:fallback finalizer_attempt)
      with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error = _; rendered })) when String.equal rendered "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
           (Cause.pp Format.pp_print_string) cause

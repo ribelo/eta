@@ -43,8 +43,8 @@ let () =
   in
   let finalizer =
     match (cleanup_exit, Exit.to_result cleanup_exit) with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })), None ->
-        Format.asprintf "%a" pp error
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error = _; rendered })), None ->
+        rendered
     | _ -> unexpected "cleanup failure" cleanup_exit
   in
   Format.printf "exit-cause:typed=%s defect=%s finalizer=%s@." typed defect

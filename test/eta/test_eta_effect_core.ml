@@ -188,8 +188,8 @@ let test_effect_finally_cleanup_failure_during_eio_cancellation_is_diagnostic ()
       (Cause.Suppressed
         {
           primary = Cause.Interrupt _;
-          finalizer = Cause.Finalizer.Fail { error; pp };
-        }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
+          finalizer = Cause.Finalizer.Fail { error = _; rendered };
+        }) when String.equal rendered "<typed failure>" ->
       ()
   | Exit.Ok _ -> Alcotest.fail "expected cancellation diagnostic failure"
   | Exit.Error cause ->

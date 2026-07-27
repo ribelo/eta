@@ -45,14 +45,14 @@ let cancel_sub frame (f) =
 let cancel_cancel frame cancel_context exn =
   frame.runtime.contract.Runtime_contract.cancel cancel_context exn
 
-let render_error frame err =
-  RObs.render_typed_failure ~error_renderer:frame.error_renderer (Obj.repr err)
-
-let pp_error frame =
+let finalizer_error_pp frame =
   let error_renderer = frame.error_renderer in
   fun fmt err ->
     Format.pp_print_string fmt
       (RObs.render_typed_failure ~error_renderer (Obj.repr err))
+
+let capture_finalizer_cause frame cause =
+  Cause.finalizer_of_cause (finalizer_error_pp frame) cause
 
 (* ---------------------------------------------------------------- *)
 (* Effect type and basic constructors                                *)
@@ -280,13 +280,13 @@ let run_async_canceler frame canceler =
      match !outcome with
      | Some _ when Runtime_core.is_cancellation frame.runtime.contract exn -> ()
      | Some _ | None -> raised := Some exn);
-  let render cause = Cause.finalizer_of_cause (pp_error frame) cause in
+  let capture cause = capture_finalizer_cause frame cause in
   match (!raised, !outcome) with
   | Some exn, _ ->
       Some
-        (render
+        (capture
            (Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn))
-  | None, Some (Exit.Error cause) -> Some (render cause)
+  | None, Some (Exit.Error cause) -> Some (capture cause)
   | None, Some (Exit.Ok ()) -> None
   | None, None ->
       invalid_arg "Effect.async: canceler protection returned no outcome"
@@ -498,9 +498,6 @@ let to_exit eff =
     | exn -> exit_of_exn frame exn)
 
 let map_cause_error = Cause.map
-
-let render_cause_error frame cause =
-  Cause.finalizer_of_cause (pp_error frame) cause
 
 let map_error (f) eff =
   preserve ~leaf_name:"Effect.map_error" eff @@ fun frame ->

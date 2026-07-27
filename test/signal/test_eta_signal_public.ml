@@ -80,7 +80,7 @@ let contains_substring haystack needle =
   search 0
 
 let rec finalizer_has_fail_message expected = function
-  | Eta.Cause.Finalizer.Fail { error; pp } -> contains_substring (Format.asprintf "%a" pp error) expected
+  | Eta.Cause.Finalizer.Fail { error = _; rendered } -> contains_substring rendered expected
   | Eta.Cause.Finalizer.Die _ | Eta.Cause.Finalizer.Interrupt _ -> false
   | Eta.Cause.Finalizer.Sequential causes
   | Eta.Cause.Finalizer.Concurrent causes ->
