@@ -1816,7 +1816,9 @@ module Make (Observer_error : Observer_error) () = struct
             Eta.Exit.Error
               (Eta.Cause.suppressed ~primary
                  ~finalizer:
-                   (Eta.Cause.finalizer_of_cause render_graph_error
+                   (Eta.Cause.finalizer_of_cause
+                      (fun fmt error ->
+                        Format.pp_print_string fmt (render_graph_error error))
                       cleanup_cause)))
 
   let compare_signal_scope_then_id (P left) (P right) =

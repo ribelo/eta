@@ -192,7 +192,7 @@ let string_cause =
   Alcotest.testable (Cause.pp Format.pp_print_string) (Cause.equal String.equal)
 
 let rec finalizer_contains expected = function
-  | Cause.Finalizer.Fail actual -> String.equal expected actual
+  | Cause.Finalizer.Fail { error = _; rendered } -> String.equal expected rendered
   | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
   | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
       List.exists (finalizer_contains expected) causes

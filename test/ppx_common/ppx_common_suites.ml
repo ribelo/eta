@@ -196,6 +196,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "default status" "<typed failure>" (status "db.save.before");
     Alcotest.(check string) "derived status" "db:7" (status "db.save")
 
+  let test_derived_eta_error_printer_renders_release_finalizer_failure () =
+    B.with_runtime @@ fun _ctx rt ->
+    let program : (unit, err) Effect.t =
+      Effect.with_scope
+        (Effect.acquire_release ~acquire:Effect.unit
+           ~release:(fun () -> Effect.fail (`Db 7)))
+      |> Effect.with_error_pp pp_err
+    in
+    match B.run rt program with
+    | Exit.Error cause ->
+        Alcotest.(check string)
+          "derived pp_err survives release conversion"
+          {|Finalizer(Fail("db:7"))|}
+          (Format.asprintf "%a" (Cause.pp pp_err) cause)
+    | Exit.Ok () -> Alcotest.fail "expected release finalizer failure"
+
+  let test_release_failure_without_error_pp_keeps_default_finalizer_render () =
+    B.with_runtime @@ fun _ctx rt ->
+    let program : (unit, err) Effect.t =
+      Effect.with_scope
+        (Effect.acquire_release ~acquire:Effect.unit
+           ~release:(fun () -> Effect.fail (`Db 7)))
+    in
+    match B.run rt program with
+    | Exit.Error cause ->
+        Alcotest.(check string)
+          "printer-less release parity"
+          {|Finalizer(Fail("<typed failure>"))|}
+          (Format.asprintf "%a" (Cause.pp pp_err) cause)
+    | Exit.Ok () -> Alcotest.fail "expected release finalizer failure"
+
   let test_eta_error_raising_renderer_becomes_defect () =
     B.with_traced_runtime @@ fun _ctx rt _tracer ->
     let program =
@@ -211,6 +242,36 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.fail "expected defect from raising derived renderer"
     | Exit.Error _ -> Alcotest.fail "expected die defect"
     | Exit.Ok _ -> Alcotest.fail "expected failure"
+
+  let test_eta_error_raising_release_renderer_becomes_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let program : (unit, raising_err) Effect.t =
+      Effect.with_scope
+        (Effect.acquire_release ~acquire:Effect.unit
+           ~release:(fun () -> Effect.fail (`Custom "release")))
+      |> Effect.with_error_pp pp_raising_err
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "release printer defect" "Failure(\"derived renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error _ -> Alcotest.fail "expected release renderer defect"
+    | Exit.Ok () -> Alcotest.fail "expected release failure"
+
+  let test_eta_error_raising_finally_renderer_becomes_defect () =
+    B.with_runtime @@ fun _ctx rt ->
+    let program : (unit, raising_err) Effect.t =
+      Effect.finally (Effect.fail (`Custom "cleanup")) Effect.unit
+      |> Effect.with_error_pp pp_raising_err
+    in
+    match B.run rt program with
+    | Exit.Error (Cause.Die die) ->
+        Alcotest.(check string)
+          "finally printer defect" "Failure(\"derived renderer exploded\")"
+          (Printexc.to_string die.exn)
+    | Exit.Error _ -> Alcotest.fail "expected finally renderer defect"
+    | Exit.Ok () -> Alcotest.fail "expected finally failure"
 
   let test_sql_table_projection () =
     let select =
@@ -246,8 +307,19 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Alcotest.test_case "result leaf parity" `Quick test_ppx_result_parity;
           Alcotest.test_case "eta_error span status" `Quick
             test_eta_error_span_status;
+          Alcotest.test_case
+            "derived eta_error printer renders release finalizer failure" `Quick
+            test_derived_eta_error_printer_renders_release_finalizer_failure;
+          Alcotest.test_case
+            "release failure without error_pp keeps default finalizer render"
+            `Quick
+            test_release_failure_without_error_pp_keeps_default_finalizer_render;
           Alcotest.test_case "eta_error raising renderer" `Quick
             test_eta_error_raising_renderer_becomes_defect;
+          Alcotest.test_case "eta_error raising release renderer" `Quick
+            test_eta_error_raising_release_renderer_becomes_defect;
+          Alcotest.test_case "eta_error raising finally renderer" `Quick
+            test_eta_error_raising_finally_renderer_becomes_defect;
         ] );
       ( "sql_table",
         [

@@ -331,13 +331,13 @@ let with_background ?name background use =
       if is_clean_internal_cancel stop_id loser then error cause
       else
         attach_finalizer (error cause)
-          (Cause.finalizer_of_cause (render_error frame) loser)
+          (capture_finalizer_cause frame loser)
   | Some (`Background (Exit.Error cause)), Some _, Some (Exit.Ok _) -> error cause
   | Some (`Use exit), Some (Exit.Error loser), Some _ ->
       if is_clean_internal_cancel stop_id loser then exit
       else
         attach_finalizer exit
-          (Cause.finalizer_of_cause (render_error frame) loser)
+          (capture_finalizer_cause frame loser)
   | Some (`Use exit), Some (Exit.Ok ()), Some _ -> exit
   | _ -> invalid_arg "Effect.with_background: incomplete arbitration"
 

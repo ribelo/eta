@@ -171,7 +171,7 @@ let[@inline always] span_status_message (status : Capabilities.span_status) =
 
 let rec status_of_finalizer_cause : Cause.Finalizer.t -> Capabilities.span_status =
  function
-  | Cause.Finalizer.Fail msg -> Error msg
+  | Cause.Finalizer.Fail { rendered; _ } -> Error rendered
   | Cause.Finalizer.Die die -> Error (Printexc.to_string die.exn)
   | Cause.Finalizer.Interrupt _ -> Cancelled
   | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
@@ -270,7 +270,8 @@ let exception_event_attrs_finalizer path cause =
   in
   match cause with
   | Cause.Finalizer.Die die -> exception_die_attrs base die
-  | Cause.Finalizer.Fail _ | Cause.Finalizer.Interrupt _ -> base
+  | Cause.Finalizer.Fail _ -> base
+  | Cause.Finalizer.Interrupt _ -> base
   | Cause.Finalizer.Sequential _ | Cause.Finalizer.Concurrent _
   | Cause.Finalizer.Finalizer _ | Cause.Finalizer.Suppressed _ ->
       assert false
@@ -294,8 +295,9 @@ let exception_event_attrs_tree ~error_renderer cause =
         let acc = collect (path ^ ".primary") acc primary in
         collect_finalizer (path ^ ".suppressed_finalizer") acc finalizer
   and collect_finalizer path acc = function
-    | Cause.Finalizer.Fail _ | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _
-      as c ->
+    | (Cause.Finalizer.Fail _ as c) ->
+        exception_event_attrs_finalizer path c :: acc
+    | (Cause.Finalizer.Die _ as c) | (Cause.Finalizer.Interrupt _ as c) ->
         exception_event_attrs_finalizer path c :: acc
     | Cause.Finalizer.Sequential causes ->
         fold_indexed collect_finalizer (path ^ ".seq.") 0 acc causes

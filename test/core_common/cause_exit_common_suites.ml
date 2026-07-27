@@ -1,11 +1,16 @@
 open Eta
 
 type err = [ `A | `B | `C of int ]
+type release_error = Release_error of { kind : string; code : int }
 
 let render_err = function
   | `A -> "A"
   | `B -> "B"
   | `C n -> "C:" ^ string_of_int n
+
+let pp_err fmt err = Format.pp_print_string fmt (render_err err)
+let finalizer_fail_string error =
+  Cause.Finalizer.Fail { error; rendered = error }
 
 let test_cause_extractors_and_squash () =
   let id = Cause.fresh_interrupt_id () in
@@ -24,7 +29,7 @@ let test_cause_extractors_and_squash () =
         Cause.finalizer
           (Cause.Finalizer.Sequential
              [
-               Cause.Finalizer.Fail "cleanup failed";
+               finalizer_fail_string "cleanup failed";
                Cause.Finalizer.Die (match Cause.die finalizer_defect with
                    | Cause.Die die -> die
                    | _ -> assert false);
@@ -53,13 +58,161 @@ let test_cause_pretty () =
       [
         Cause.fail `A;
         Cause.suppressed ~primary:(Cause.fail `B)
-          ~finalizer:(Cause.Finalizer.Fail "cleanup failed");
+          ~finalizer:(finalizer_fail_string "cleanup failed");
       ]
   in
   Alcotest.(check string)
     "pretty"
     "sequential:\n  fail: A\n  suppressed:\n    primary:\n      fail: B\n    finalizer:\n      finalizer fail: cleanup failed"
     (Cause.pretty render_err cause)
+
+let test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel () =
+  let renders = ref 0 in
+  let pp_observing fmt (Release_error { kind; code }) =
+    incr renders;
+    Format.fprintf fmt "%s:%d" kind code
+  in
+  let original = Release_error { kind = "release"; code = 42 } in
+  let finalizer = Cause.finalizer_of_cause pp_observing (Cause.fail original) in
+  Alcotest.(check int) "rendered exactly once at conversion" 1 !renders;
+  (match finalizer with
+  | Cause.Finalizer.Fail { error; rendered } ->
+      Alcotest.(check string)
+        "stored capture-time rendering" "release:42" rendered;
+      Alcotest.(check bool) "original concrete value survived" true
+        (Obj.repr error == Obj.repr original)
+  | _ -> Alcotest.fail "expected typed finalizer failure");
+  Alcotest.(check int) "finalizer failure is outside typed channel" 0
+    (List.length
+       (Cause.failures (Cause.finalizer finalizer : release_error Cause.t)))
+
+let test_portable_finalizer_fail_keeps_captured_rendering () =
+  let same_domain =
+    Cause.finalizer_of_cause pp_err (Cause.fail (`C 7)) |> Cause.finalizer
+  in
+  match Cause.to_portable Fun.id same_domain with
+  | Cause.Portable.Finalizer (Cause.Portable.Finalizer.Fail "C:7") -> ()
+  | portable ->
+      Alcotest.failf "unexpected portable cause: %a"
+        (Cause.Portable.pp pp_err) portable
+
+let test_finalizer_equal_uses_stored_strings () =
+  let left = Cause.Finalizer.Fail { error = `A; rendered = "same" } in
+  let right = Cause.Finalizer.Fail { error = 37; rendered = "same" } in
+  let distinct =
+    Cause.Finalizer.Fail { error = `B; rendered = "distinct" }
+  in
+  Alcotest.(check bool) "same stored strings compare equal" true
+    (Cause.Finalizer.equal left right);
+  Alcotest.(check bool) "different stored strings differ" false
+    (Cause.Finalizer.equal left distinct);
+  Alcotest.(check bool) "Cause.equal delegates to string equality" true
+    (Cause.equal (fun _ _ -> false) (Cause.finalizer left)
+       (Cause.finalizer right))
+
+let test_finalizer_diagnostic_equal_uses_stored_strings () =
+  let left = Cause.Finalizer.Fail { error = `A; rendered = "same" } in
+  let right = Cause.Finalizer.Fail { error = 37; rendered = "same" } in
+  let distinct =
+    Cause.Finalizer.Fail { error = `B; rendered = "distinct" }
+  in
+  Alcotest.(check bool) "same stored strings compare equal" true
+    (Cause.Finalizer.diagnostic_equal left right);
+  Alcotest.(check bool) "different stored strings differ" false
+    (Cause.Finalizer.diagnostic_equal left distinct);
+  Alcotest.(check bool) "Cause.diagnostic_equal delegates to string equality"
+    true
+    (Cause.diagnostic_equal (fun _ _ -> false) (Cause.finalizer left)
+       (Cause.finalizer right))
+
+let test_finalizer_equality_is_reflexive_after_stateful_capture () =
+  let renders = ref 0 in
+  let stateful_pp fmt _ =
+    incr renders;
+    Format.pp_print_int fmt !renders
+  in
+  let finalizer = Cause.finalizer_of_cause stateful_pp (Cause.fail `A) in
+  Alcotest.(check int) "printer ran once" 1 !renders;
+  Alcotest.(check bool) "equal is reflexive" true
+    (Cause.Finalizer.equal finalizer finalizer);
+  Alcotest.(check bool) "diagnostic_equal is reflexive" true
+    (Cause.Finalizer.diagnostic_equal finalizer finalizer);
+  Alcotest.(check int) "equality did not rerun printer" 1 !renders
+
+let die_record exn =
+  match Cause.die exn with
+  | Cause.Die die -> die
+  | _ -> assert false
+
+let finalizer_structural_tree id =
+  Cause.Finalizer.Suppressed
+    {
+      primary =
+        Cause.Finalizer.Finalizer
+          (Cause.Finalizer.Sequential
+             [
+               Cause.Finalizer.Interrupt None;
+               Cause.Finalizer.Interrupt (Some id);
+             ]);
+      finalizer =
+        Cause.Finalizer.Concurrent [ Cause.Finalizer.Interrupt (Some id) ];
+    }
+
+let test_finalizer_equal_is_structural_and_die_identity_based () =
+  let id = Cause.fresh_interrupt_id () in
+  let other_id = Cause.fresh_interrupt_id () in
+  Alcotest.(check bool) "same composite structure" true
+    (Cause.Finalizer.equal (finalizer_structural_tree id)
+       (finalizer_structural_tree id));
+  Alcotest.(check bool) "interrupt identity participates" false
+    (Cause.Finalizer.equal (finalizer_structural_tree id)
+       (finalizer_structural_tree other_id));
+  Alcotest.(check bool) "sequential and concurrent differ" false
+    (Cause.Finalizer.equal
+       (Cause.Finalizer.Sequential [ Cause.Finalizer.Interrupt None ])
+       (Cause.Finalizer.Concurrent [ Cause.Finalizer.Interrupt None ]));
+  let defect = Failure "same" in
+  let same_exn_left = Cause.Finalizer.Die (die_record defect) in
+  let same_exn_right = Cause.Finalizer.Die (die_record defect) in
+  let equal_message_distinct_exn =
+    Cause.Finalizer.Die (die_record (Failure "same"))
+  in
+  Alcotest.(check bool) "same exception object" true
+    (Cause.Finalizer.equal same_exn_left same_exn_right);
+  Alcotest.(check bool) "equal message does not replace exception identity" false
+    (Cause.Finalizer.equal same_exn_left equal_message_distinct_exn)
+
+let test_finalizer_diagnostic_equal_compares_materialized_die_diagnostics () =
+  let make ?(span_name = "span") ?(annotations = [ ("request.id", "a") ]) msg =
+    match
+      Cause.die_with_diagnostics ~span_name ~annotations (Failure msg)
+    with
+    | Cause.Die die -> Cause.Finalizer.Die die
+    | _ -> assert false
+  in
+  let left = make "same" in
+  let same = make "same" in
+  Alcotest.(check bool) "identity equality remains strict" false
+    (Cause.Finalizer.equal left same);
+  Alcotest.(check bool) "materialized diagnostics match" true
+    (Cause.Finalizer.diagnostic_equal left same);
+  Alcotest.(check bool) "message participates" false
+    (Cause.Finalizer.diagnostic_equal left (make "different"));
+  Alcotest.(check bool) "span participates" false
+    (Cause.Finalizer.diagnostic_equal left (make ~span_name:"other" "same"));
+  Alcotest.(check bool) "annotations participate" false
+    (Cause.Finalizer.diagnostic_equal left
+       (make ~annotations:[ ("request.id", "b") ] "same"))
+
+let test_finalizer_of_cause_propagates_direct_printer_exception () =
+  let printer_defect = Failure "direct finalizer renderer exploded" in
+  let raising_pp _fmt (_ : err) = raise printer_defect in
+  match Cause.finalizer_of_cause raising_pp (Cause.fail `A) with
+  | exception exn when exn == printer_defect -> ()
+  | exception exn ->
+      Alcotest.failf "unexpected propagated exception: %s"
+        (Printexc.to_string exn)
+  | _ -> Alcotest.fail "expected the directly supplied printer to raise"
 
 let test_exit_combinators () =
   let ok = Exit.ok 21 in
@@ -100,6 +253,30 @@ let tests =
         Alcotest.test_case "extractors and squash" `Quick
           test_cause_extractors_and_squash;
         Alcotest.test_case "pretty" `Quick test_cause_pretty;
+        Alcotest.test_case
+          "finalizer fail preserves typed payload and leaves typed channel" `Quick
+          test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel;
+        Alcotest.test_case "portable finalizer fail keeps captured rendering"
+          `Quick test_portable_finalizer_fail_keeps_captured_rendering;
+        Alcotest.test_case
+          "finalizer equal uses stored strings" `Quick
+          test_finalizer_equal_uses_stored_strings;
+        Alcotest.test_case
+          "finalizer diagnostic equal uses stored strings" `Quick
+          test_finalizer_diagnostic_equal_uses_stored_strings;
+        Alcotest.test_case
+          "finalizer equality is reflexive after stateful capture" `Quick
+          test_finalizer_equality_is_reflexive_after_stateful_capture;
+        Alcotest.test_case
+          "finalizer equal is structural and die identity based" `Quick
+          test_finalizer_equal_is_structural_and_die_identity_based;
+        Alcotest.test_case
+          "finalizer diagnostic equal compares materialized die diagnostics"
+          `Quick
+          test_finalizer_diagnostic_equal_compares_materialized_die_diagnostics;
+        Alcotest.test_case
+          "finalizer_of_cause propagates direct printer exception" `Quick
+          test_finalizer_of_cause_propagates_direct_printer_exception;
       ] );
     ( "Exit",
       [ Alcotest.test_case "combinators" `Quick test_exit_combinators ] );

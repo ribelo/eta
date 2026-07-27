@@ -315,10 +315,11 @@ let run_finalizers ~runtime ~fail_key finalizers =
            | [ cause ] -> Some cause
            | causes -> Some (Cause.sequential causes))
 
-let render_finalizer_cause ~error_renderer cause =
+let capture_finalizer_cause ~error_renderer cause =
   Cause.finalizer_of_cause
-    (fun err ->
-      RObs.render_typed_failure ~error_renderer (Obj.repr err))
+    (fun fmt err ->
+      Format.pp_print_string fmt
+        (RObs.render_typed_failure ~error_renderer (Obj.repr err)))
     cause
 
 let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
@@ -329,7 +330,7 @@ let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
       | None -> value
       | Some finalizer ->
           raise_cause fail_key
-            (Cause.finalizer (render_finalizer_cause ~error_renderer finalizer)))
+            (Cause.finalizer (capture_finalizer_cause ~error_renderer finalizer)))
   | exception exn when is_cancellation runtime.contract exn -> (
       let reason =
         match cancellation_reason runtime.contract exn with
@@ -341,7 +342,7 @@ let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
       | Some finalizer ->
           raise_cause fail_key
             (Cause.suppressed ~primary:(interrupt_of_cancel reason)
-               ~finalizer:(render_finalizer_cause ~error_renderer finalizer)))
+               ~finalizer:(capture_finalizer_cause ~error_renderer finalizer)))
   | exception exn ->
       let primary = cause_of_exn_runtime runtime fail_key exn in
       let cause =
@@ -349,6 +350,6 @@ let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime
         | None -> primary
         | Some finalizer ->
             Cause.suppressed ~primary
-              ~finalizer:(render_finalizer_cause ~error_renderer finalizer)
+              ~finalizer:(capture_finalizer_cause ~error_renderer finalizer)
       in
       raise_cause fail_key cause

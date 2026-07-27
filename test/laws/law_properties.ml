@@ -273,6 +273,9 @@ let lifecycle_program kind body =
           E.delay (Eta.Duration.ms 1) E.unit;
         ]
 
+let finalizer_fail_string error =
+  Eta.Cause.Finalizer.Fail { error; rendered = error }
+
 let property_map_identity =
   QCheck.Test.make ~name:"map identity" ~count blueprint (fun body ->
       let program = effect_of body in
@@ -352,8 +355,7 @@ let property_bind_error_uncatchable_boundary =
       let interrupt_cause = Eta.Cause.Interrupt None in
       let finalizer_cause =
         Eta.Cause.Finalizer
-          (Eta.Cause.Finalizer.Fail
-             (Printf.sprintf "bind-error-finalizer:%d" recovered))
+          (finalizer_fail_string (Printf.sprintf "bind-error-finalizer:%d" recovered))
       in
       let cases =
         [
@@ -1013,10 +1015,12 @@ let property_finally_cleanup_failure_after_success =
         E.finally (E.fail cleanup_error) (E.pure value)
         |> E.with_error_pp Format.pp_print_int |> run
       in
-      outcome.exit
-      = Eta.Exit.Error
-          (Eta.Cause.Finalizer
-             (Eta.Cause.Finalizer.Fail (string_of_int cleanup_error)))
+      (match outcome.exit with
+      | Eta.Exit.Error actual ->
+          Eta.Cause.equal Int.equal actual
+            (Eta.Cause.Finalizer
+               (finalizer_fail_string (string_of_int cleanup_error)))
+      | Eta.Exit.Ok _ -> false)
       && no_pending outcome)
 
 let property_finally_cleanup_failure_suppressed =
@@ -1028,14 +1032,15 @@ let property_finally_cleanup_failure_suppressed =
         E.finally (E.fail cleanup_error) (E.fail primary_error)
         |> E.with_error_pp Format.pp_print_int |> run
       in
-      outcome.exit
-      = Eta.Exit.Error
-          (Eta.Cause.Suppressed
-             {
-               primary = Eta.Cause.Fail primary_error;
-               finalizer =
-                 Eta.Cause.Finalizer.Fail (string_of_int cleanup_error);
-             })
+      (match outcome.exit with
+      | Eta.Exit.Error actual ->
+          Eta.Cause.equal Int.equal actual
+            (Eta.Cause.Suppressed
+               {
+                 primary = Eta.Cause.Fail primary_error;
+                 finalizer = finalizer_fail_string (string_of_int cleanup_error);
+               })
+      | Eta.Exit.Ok _ -> false)
       && no_pending outcome)
 
 let property_scope_lifo =
@@ -1156,10 +1161,12 @@ let property_with_resource_release_failure_after_success =
             E.pure (body_value + (actual - resource)))
         |> E.with_error_pp Format.pp_print_int |> run
       in
-      outcome.exit
-      = Eta.Exit.Error
-          (Eta.Cause.Finalizer
-             (Eta.Cause.Finalizer.Fail (string_of_int release_error)))
+      (match outcome.exit with
+      | Eta.Exit.Error actual ->
+          Eta.Cause.equal Int.equal actual
+            (Eta.Cause.Finalizer
+               (finalizer_fail_string (string_of_int release_error)))
+      | Eta.Exit.Ok _ -> false)
       && !released_resource = Some resource
       && outcome.events = []
       && no_pending outcome)
@@ -1181,14 +1188,15 @@ let property_acquire_use_release_failure_suppressed =
             else E.fail (primary_error + 1))
         |> E.with_error_pp Format.pp_print_int |> run
       in
-      outcome.exit
-      = Eta.Exit.Error
-          (Eta.Cause.Suppressed
-             {
-               primary = Eta.Cause.Fail primary_error;
-               finalizer =
-                 Eta.Cause.Finalizer.Fail (string_of_int release_error);
-             })
+      (match outcome.exit with
+      | Eta.Exit.Error actual ->
+          Eta.Cause.equal Int.equal actual
+            (Eta.Cause.Suppressed
+               {
+                 primary = Eta.Cause.Fail primary_error;
+                 finalizer = finalizer_fail_string (string_of_int release_error);
+               })
+      | Eta.Exit.Ok _ -> false)
       && !released_resource = Some resource
       && outcome.events = []
       && no_pending outcome)

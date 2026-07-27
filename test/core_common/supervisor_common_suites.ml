@@ -23,7 +23,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until_effect (fun () -> B.sleeper_count clock >= expected)
 
   let rec finalizer_contains expected = function
-    | Cause.Finalizer.Fail actual -> String.equal expected actual
+    | Cause.Finalizer.Fail { error = _; rendered } -> String.equal expected rendered
     | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
     | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
         List.exists (finalizer_contains expected) causes
@@ -422,7 +422,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "background finalized once" 1 !background_finalizers
 
   let rec finalizer_shape = function
-    | Cause.Finalizer.Fail err -> Printf.sprintf "Fail(%s)" err
+    | Cause.Finalizer.Fail { error = _; rendered } -> Printf.sprintf "Fail(%s)" rendered
     | Cause.Finalizer.Die die ->
         Printf.sprintf "Die(%s)" (Printexc.to_string die.exn)
     | Cause.Finalizer.Interrupt _ -> "Interrupt"

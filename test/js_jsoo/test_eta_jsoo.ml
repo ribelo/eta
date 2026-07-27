@@ -867,6 +867,46 @@ module Promise_shared =
     let fail = fail
   end)
 
+let raising_release_pp _fmt (_ : [ `Release ]) = failwith "renderer exploded"
+
+let test_raising_release_error_pp_becomes_die done_ =
+  let program : (unit, [ `Release ]) Eta.Effect.t =
+    Eta.Effect.with_scope
+      (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
+         ~release:(fun () -> Eta.Effect.fail `Release))
+    |> Eta.Effect.with_error_pp raising_release_pp
+  in
+  run program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Die die)
+          when String.equal (Printexc.to_string die.exn)
+                 "Failure(\"renderer exploded\")" ->
+            ()
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "expected release renderer defect, got %a"
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok () -> fail "expected release renderer defect"))
+
+let test_raising_finally_error_pp_becomes_die done_ =
+  let program : (unit, [ `Release ]) Eta.Effect.t =
+    Eta.Effect.finally (Eta.Effect.fail `Release) Eta.Effect.unit
+    |> Eta.Effect.with_error_pp raising_release_pp
+  in
+  run program
+    ~on_result:
+      (finish done_ (function
+        | Eta.Exit.Error (Eta.Cause.Die die)
+          when String.equal (Printexc.to_string die.exn)
+                 "Failure(\"renderer exploded\")" ->
+            ()
+        | Eta.Exit.Error cause ->
+            fail
+              (Format.asprintf "expected finally renderer defect, got %a"
+                 (Eta.Cause.pp pp_err) cause)
+        | Eta.Exit.Ok () -> fail "expected finally renderer defect"))
+
 (* Stack-safety regression corpus (DX-E35): bounded jsoo twin of the native
    tests in test/eta/test_eta_effect_core.ml, pinning the same measured
    contract: these compositions complete at depth 1M under the documented
@@ -989,6 +1029,10 @@ let tests =
       test_acquire_all_par_sibling_failure_rollback );
     ( "acquire_all_par parent interruption",
       test_acquire_all_par_parent_interruption );
+    ( "raising release error_pp becomes die at conversion",
+      test_raising_release_error_pp_becomes_die );
+    ( "raising finally error_pp becomes die at conversion",
+      test_raising_finally_error_pp_becomes_die );
     ( "await cancellation removes promise subscription",
       test_await_cancellation_removes_promise_subscription );
     ( "throwing await cancel hook does not strand fiber",

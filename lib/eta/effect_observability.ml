@@ -189,7 +189,7 @@ let with_result_attrs ~(ok_attrs) ~(err_attrs) eff =
         in
         error
           (Cause.suppressed ~primary:cause
-             ~finalizer:(render_cause_error frame finalizer)))
+             ~finalizer:(capture_finalizer_cause frame finalizer)))
 
 let link_span ?(attrs = []) ~trace_id ~span_id eff =
   preserve eff @@ fun frame ->
