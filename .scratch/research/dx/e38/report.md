@@ -158,3 +158,40 @@ nix develop -c dune build @examples
 Ship the capture-time value + rendered-string GADT. It preserves typed structure,
 restores E25's defect boundary, restores total/reflexive string equality, keeps
 all existing output, and stores no executable printer in a finalizer cause.
+
+## Follow-up 2 — registry completion
+
+Evidence ID: `V-DX-E38-F2-002`
+
+This appendix supersedes the registry totals in the earlier Law registry section;
+the runtime design and implementation verdict remain unchanged.
+
+Three previously uncovered public clauses now have direct named evidence:
+
+- R163 covers structural equality for non-`Fail` finalizer nodes and physical
+  exception identity for `Finalizer.Die` with a composite/identity matrix;
+- R164 directly distinguishes materialized `Finalizer.Die` diagnostic equality
+  from physical identity and checks message, span, and annotation differences;
+- R165 invokes `Cause.finalizer_of_cause` directly with a raising printer and
+  observes propagation of that same exception object.
+
+R154 now cites both normative source locations, including
+`lib/eta/cause.mli:12-14`. The introductory prose was reflowed without changing
+its contract so R155 can cite only the Portable clause at line 15 and exclude the
+typed-channel clause.
+
+The `cause.mli` registry census is now **12 registered external rows** and the
+overall registry is **275 covered rows**. No runtime implementation or jsoo test
+changed.
+
+The focused and prescribed native commands passed on the final tree:
+
+```sh
+nix develop -c dune runtest test/core_eio test/laws --force
+nix develop -c dune build @install
+nix develop -c dune runtest --force
+nix develop -c eta-oxcaml-test-shipped
+```
+
+Per Follow-up 2, the mainline jsoo gate was not rerun because no jsoo test moved.
+All sealed Follow-up 2 predictions matched.

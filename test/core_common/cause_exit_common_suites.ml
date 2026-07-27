@@ -139,6 +139,81 @@ let test_finalizer_equality_is_reflexive_after_stateful_capture () =
     (Cause.Finalizer.diagnostic_equal finalizer finalizer);
   Alcotest.(check int) "equality did not rerun printer" 1 !renders
 
+let die_record exn =
+  match Cause.die exn with
+  | Cause.Die die -> die
+  | _ -> assert false
+
+let finalizer_structural_tree id =
+  Cause.Finalizer.Suppressed
+    {
+      primary =
+        Cause.Finalizer.Finalizer
+          (Cause.Finalizer.Sequential
+             [
+               Cause.Finalizer.Interrupt None;
+               Cause.Finalizer.Interrupt (Some id);
+             ]);
+      finalizer =
+        Cause.Finalizer.Concurrent [ Cause.Finalizer.Interrupt (Some id) ];
+    }
+
+let test_finalizer_equal_is_structural_and_die_identity_based () =
+  let id = Cause.fresh_interrupt_id () in
+  let other_id = Cause.fresh_interrupt_id () in
+  Alcotest.(check bool) "same composite structure" true
+    (Cause.Finalizer.equal (finalizer_structural_tree id)
+       (finalizer_structural_tree id));
+  Alcotest.(check bool) "interrupt identity participates" false
+    (Cause.Finalizer.equal (finalizer_structural_tree id)
+       (finalizer_structural_tree other_id));
+  Alcotest.(check bool) "sequential and concurrent differ" false
+    (Cause.Finalizer.equal
+       (Cause.Finalizer.Sequential [ Cause.Finalizer.Interrupt None ])
+       (Cause.Finalizer.Concurrent [ Cause.Finalizer.Interrupt None ]));
+  let defect = Failure "same" in
+  let same_exn_left = Cause.Finalizer.Die (die_record defect) in
+  let same_exn_right = Cause.Finalizer.Die (die_record defect) in
+  let equal_message_distinct_exn =
+    Cause.Finalizer.Die (die_record (Failure "same"))
+  in
+  Alcotest.(check bool) "same exception object" true
+    (Cause.Finalizer.equal same_exn_left same_exn_right);
+  Alcotest.(check bool) "equal message does not replace exception identity" false
+    (Cause.Finalizer.equal same_exn_left equal_message_distinct_exn)
+
+let test_finalizer_diagnostic_equal_compares_materialized_die_diagnostics () =
+  let make ?(span_name = "span") ?(annotations = [ ("request.id", "a") ]) msg =
+    match
+      Cause.die_with_diagnostics ~span_name ~annotations (Failure msg)
+    with
+    | Cause.Die die -> Cause.Finalizer.Die die
+    | _ -> assert false
+  in
+  let left = make "same" in
+  let same = make "same" in
+  Alcotest.(check bool) "identity equality remains strict" false
+    (Cause.Finalizer.equal left same);
+  Alcotest.(check bool) "materialized diagnostics match" true
+    (Cause.Finalizer.diagnostic_equal left same);
+  Alcotest.(check bool) "message participates" false
+    (Cause.Finalizer.diagnostic_equal left (make "different"));
+  Alcotest.(check bool) "span participates" false
+    (Cause.Finalizer.diagnostic_equal left (make ~span_name:"other" "same"));
+  Alcotest.(check bool) "annotations participate" false
+    (Cause.Finalizer.diagnostic_equal left
+       (make ~annotations:[ ("request.id", "b") ] "same"))
+
+let test_finalizer_of_cause_propagates_direct_printer_exception () =
+  let printer_defect = Failure "direct finalizer renderer exploded" in
+  let raising_pp _fmt (_ : err) = raise printer_defect in
+  match Cause.finalizer_of_cause raising_pp (Cause.fail `A) with
+  | exception exn when exn == printer_defect -> ()
+  | exception exn ->
+      Alcotest.failf "unexpected propagated exception: %s"
+        (Printexc.to_string exn)
+  | _ -> Alcotest.fail "expected the directly supplied printer to raise"
+
 let test_exit_combinators () =
   let ok = Exit.ok 21 in
   Alcotest.(check bool) "ok is ok" true (Exit.is_ok ok);
@@ -192,6 +267,16 @@ let tests =
         Alcotest.test_case
           "finalizer equality is reflexive after stateful capture" `Quick
           test_finalizer_equality_is_reflexive_after_stateful_capture;
+        Alcotest.test_case
+          "finalizer equal is structural and die identity based" `Quick
+          test_finalizer_equal_is_structural_and_die_identity_based;
+        Alcotest.test_case
+          "finalizer diagnostic equal compares materialized die diagnostics"
+          `Quick
+          test_finalizer_diagnostic_equal_compares_materialized_die_diagnostics;
+        Alcotest.test_case
+          "finalizer_of_cause propagates direct printer exception" `Quick
+          test_finalizer_of_cause_propagates_direct_printer_exception;
       ] );
     ( "Exit",
       [ Alcotest.test_case "combinators" `Quick test_exit_combinators ] );

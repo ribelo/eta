@@ -296,15 +296,18 @@ qcheck optics.
 | R135 | Every native response-header wait has a fresh timeout, including the wait after an informational response. | `lib/http/client/request.mli:38-39` | `header idle timeout resets on informational` in both the `h1-client` and `h2-connection` suites — `test/http/run.ml:106-108,544-546` |
 | R136 | Every requested native response-body chunk has a fresh timeout. | `lib/http/client/request.mli:39-40` | `response idle timeout resets between chunks` in the `h1-client` suite; `response idle timeout resets between body chunks` in the `h2-connection` suite — `test/http/run.ml:111-112,551-552` |
 | R137 | Native response-header expiry and response-body expiry produce their respective typed retryable transport failures. | `lib/http/client/request.mli:40-42` | `response header idle timeout is typed`; `response body idle timeout is typed` in both the `h1-client` and `h2-connection` suites — `test/http/run.ml:104-105,109-110,539-543,549-550` |
-| R154 | Same-domain typed finalizer conversion renders each failure exactly once, stores its concrete value and rendered string, and removes it from the typed channel. | `lib/eta/cause.mli:165-167` | `finalizer fail preserves typed payload and leaves typed channel` — `test/core_common/cause_exit_common_suites.ml:69-87,181-183` |
-| R155 | Portable conversion drops a same-domain finalizer value and keeps its capture-time rendered string. | `lib/eta/cause.mli:14-15` | `portable finalizer fail keeps captured rendering` — `test/core_common/cause_exit_common_suites.ml:89-97,184-185` |
-| R156 | `Cause.Finalizer.equal` compares `Fail` payloads by stored strings and ignores hidden values. | `lib/eta/cause.mli:47-49` | `finalizer equal uses stored strings` and `finalizer equality is reflexive after stateful capture` — `test/core_common/cause_exit_common_suites.ml:99-111,128-140,186-194` |
-| R157 | `Cause.Finalizer.diagnostic_equal` uses the same stored-string rule for `Fail`. | `lib/eta/cause.mli:54` | `finalizer diagnostic equal uses stored strings` and `finalizer equality is reflexive after stateful capture` — `test/core_common/cause_exit_common_suites.ml:113-126,128-140,189-194` |
+| R154 | Same-domain typed finalizer conversion renders each failure exactly once, stores its concrete value and rendered string, and removes it from the typed channel. | `lib/eta/cause.mli:12-14,165-167` | `finalizer fail preserves typed payload and leaves typed channel` — `test/core_common/cause_exit_common_suites.ml:69-87,256-258` |
+| R155 | Portable conversion drops a same-domain finalizer value and keeps its capture-time rendered string. | `lib/eta/cause.mli:15` | `portable finalizer fail keeps captured rendering` — `test/core_common/cause_exit_common_suites.ml:89-97,259-260` |
+| R156 | `Cause.Finalizer.equal` compares `Fail` payloads by stored strings and ignores hidden values. | `lib/eta/cause.mli:47-49` | `finalizer equal uses stored strings` and `finalizer equality is reflexive after stateful capture` — `test/core_common/cause_exit_common_suites.ml:99-111,128-140,261-269` |
+| R157 | `Cause.Finalizer.diagnostic_equal` uses the same stored-string rule for `Fail`. | `lib/eta/cause.mli:54` | `finalizer diagnostic equal uses stored strings` and `finalizer equality is reflexive after stateful capture` — `test/core_common/cause_exit_common_suites.ml:113-126,128-140,264-269` |
 | R158 | `Cause.Finalizer.pp` renders `Fail` from its stored capture-time string. | `lib/eta/cause.mli:58` | `derived eta_error printer renders release finalizer failure` — `test/ppx_common/ppx_common_suites.ml:199-213,310-312` |
 | R159 | A typed finalizer failure produced without an installed effect error printer retains the `"<typed failure>"` rendering. | `lib/eta/cause.mli:59-60` | `release failure without error_pp keeps default finalizer render` — `test/ppx_common/ppx_common_suites.ml:215-228,313-316` |
-| R160 | Same-domain `Cause.equal` delegates finalizer `Fail` branches to the stored-string equality rule. | `lib/eta/cause.mli:176-177` | `finalizer equal uses stored strings` — `test/core_common/cause_exit_common_suites.ml:109-111,186-188` |
-| R161 | Same-domain `Cause.diagnostic_equal` delegates finalizer `Fail` branches to the stored-string diagnostic-equality rule. | `lib/eta/cause.mli:182-183` | `finalizer diagnostic equal uses stored strings` — `test/core_common/cause_exit_common_suites.ml:123-126,189-191` |
+| R160 | Same-domain `Cause.equal` delegates finalizer `Fail` branches to the stored-string equality rule. | `lib/eta/cause.mli:176-177` | `finalizer equal uses stored strings` — `test/core_common/cause_exit_common_suites.ml:109-111,261-263` |
+| R161 | Same-domain `Cause.diagnostic_equal` delegates finalizer `Fail` branches to the stored-string diagnostic-equality rule. | `lib/eta/cause.mli:182-183` | `finalizer diagnostic equal uses stored strings` — `test/core_common/cause_exit_common_suites.ml:123-126,264-266` |
 | R162 | A raising effect `error_pp` during runtime finalizer conversion becomes `Cause.Die` through ordinary defect capture. | `lib/eta/cause.mli:168-169` | Native `eta_error raising release renderer` and `eta_error raising finally renderer` — `test/ppx_common/ppx_common_suites.ml:246-274,319-322`; js_of_ocaml `raising release error_pp becomes die at conversion` and `raising finally error_pp becomes die at conversion` — `test/js_jsoo/test_eta_jsoo.ml:870-908,1032-1035` |
+| R163 | Other `Cause.Finalizer` nodes retain structural equality, while `Finalizer.Die` preserves physical exception identity. | `lib/eta/cause.mli:50-51` | `finalizer equal is structural and die identity based` — `test/core_common/cause_exit_common_suites.ml:147-183,270-272` |
+| R164 | `Cause.Finalizer.diagnostic_equal` compares materialized `Die` diagnostics. | `lib/eta/cause.mli:55` | `finalizer diagnostic equal compares materialized die diagnostics` — `test/core_common/cause_exit_common_suites.ml:185-205,273-276` |
+| R165 | A raising printer supplied directly to `Cause.finalizer_of_cause` propagates its exception. | `lib/eta/cause.mli:167` | `finalizer_of_cause propagates direct printer exception` — `test/core_common/cause_exit_common_suites.ml:207-215,277-279` |
 
 ## Model laws (prose pending)
 
@@ -329,9 +332,9 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/eta/runtime_contract.mli` | 0 | 1 | 0 | 1 |
 | `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
 | `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
-| `lib/eta/cause.mli` | 0 | 9 | 0 | 9 |
+| `lib/eta/cause.mli` | 0 | 12 | 0 | 12 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **112** | **160** | **2** | **272** |
+| **Total covered** | **112** | **163** | **2** | **275** |
 
 The law executables contain 74 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

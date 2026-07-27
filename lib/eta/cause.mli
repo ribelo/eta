@@ -11,8 +11,8 @@
     successful primary eff; ordinary [Effect.bind_error] leaves failures under
     this node untouched. Same-domain typed finalizer failures retain their error
     value and capture-time rendering after leaving the cleanup eff, but are no
-    longer part of the typed error channel. Portable conversion drops the value
-    and keeps that rendered string.
+    longer part of the typed error channel.
+    Portable conversion drops the value and keeps that rendered string.
     [Suppressed] preserves a primary failure together with a finalizer failure
     that occurred while cleaning up the primary failure. *)
 
