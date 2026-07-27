@@ -1,0 +1,27 @@
+DX-E39 endpoint identities and diff statistics
+assembled_at_commit=82d1729779e8ac8855f2fc80a0582eda350eaf3a
+master_at_assembly=f8ec7b6c101bb6c5434d8275afb8369e345633a2
+master_merge_base=7d8e52364782cecfd4c205d7edae62b750a05803
+endpoint_s=f136a68df0f7dcc96e19804eabec25f1aa69b5d2
+endpoint_s_code=6c51b9e305d3d1cb492bdd69f3d0784d134c0ca9
+endpoint_r=82d1729779e8ac8855f2fc80a0582eda350eaf3a
+
+master-at-assembly..S (literal requested range)
+77 files changed, 1400 insertions(+), 980 deletions(-)
+
+merge-base..S (E39 semantic range; excludes later master-only scope-fenced state)
+76 files changed, 1398 insertions(+), 975 deletions(-)
+production/test/docs/examples/bench subset:
+58 files changed, 236 insertions(+), 777 deletions(-)
+
+S..R
+29 files changed, 154 insertions(+), 389 deletions(-)
+production/test/docs/examples/bench subset:
+21 files changed, 21 insertions(+), 316 deletions(-)
+
+Commands:
+git diff --shortstat f8ec7b6c..f136a68d
+git diff --shortstat 7d8e5236..f136a68d
+git diff --numstat 7d8e5236..f136a68d -- lib test docs examples bench
+git diff --shortstat f136a68d..82d17297
+git diff --numstat f136a68d..82d17297 -- lib test docs examples bench

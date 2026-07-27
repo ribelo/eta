@@ -1,4 +1,4 @@
-# DX-E39 Phase-0 Evidence
+# DX-E39 evidence index
 
 - `source-audit.md` — exhaustive consumer map, dependency map, tracing fault-line
   check, `all` special behavior, and honesty audit.
@@ -14,6 +14,6 @@
 - `tracing-r.md` — mechanical and executable proof that tracing survives removal
   of the internal static-name list.
 
-The dishonest probe source is
-`test/effect_introspection/dishonest_expert_make.ml`; its test demonstrates an
-`Expert.make ~capabilities:[]` leaf that sleeps while `audit.uses_clock=false`.
+The dishonest probe source was committed at pre-deletion commit `ba1275f4` as
+`test/effect_introspection/dishonest_expert_make.ml`; S deleted that obsolete
+source after recording its runtime output and compile rejection.
