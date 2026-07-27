@@ -854,8 +854,8 @@ let test_stream_decode_error_suppresses_close_failure () =
           primary =
             Eta.Cause.Fail
               (Decode_error { provider = "stream-fixture"; message; _ });
-          finalizer = Eta.Cause.Finalizer.Fail "<typed failure>";
-        }) ->
+          finalizer = Eta.Cause.Finalizer.Fail { error; pp };
+        }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
       Alcotest.(check string) "message" "bad stream event" message;
       ignore close_error
   | Eta.Exit.Error cause ->

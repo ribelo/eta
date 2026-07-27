@@ -48,6 +48,12 @@ let cancel_cancel frame cancel_context exn =
 let render_error frame err =
   RObs.render_typed_failure ~error_renderer:frame.error_renderer (Obj.repr err)
 
+let pp_error frame =
+  let error_renderer = frame.error_renderer in
+  fun fmt err ->
+    Format.pp_print_string fmt
+      (RObs.render_typed_failure ~error_renderer (Obj.repr err))
+
 (* ---------------------------------------------------------------- *)
 (* Effect type and basic constructors                                *)
 (* ---------------------------------------------------------------- *)
@@ -274,7 +280,7 @@ let run_async_canceler frame canceler =
      match !outcome with
      | Some _ when Runtime_core.is_cancellation frame.runtime.contract exn -> ()
      | Some _ | None -> raised := Some exn);
-  let render cause = Cause.finalizer_of_cause (render_error frame) cause in
+  let render cause = Cause.finalizer_of_cause (pp_error frame) cause in
   match (!raised, !outcome) with
   | Some exn, _ ->
       Some
@@ -494,7 +500,7 @@ let to_exit eff =
 let map_cause_error = Cause.map
 
 let render_cause_error frame cause =
-  Cause.finalizer_of_cause (render_error frame) cause
+  Cause.finalizer_of_cause (pp_error frame) cause
 
 let map_error (f) eff =
   preserve ~leaf_name:"Effect.map_error" eff @@ fun frame ->

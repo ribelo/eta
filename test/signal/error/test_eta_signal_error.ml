@@ -103,7 +103,7 @@ let test_observer_cause_preserves_unclassified_defects () =
 
 let test_observer_cause_maps_nested_primary_only () =
   let interrupt_id = Eta.Cause.fresh_interrupt_id () in
-  let finalizer = Eta.Cause.Finalizer.Fail "cleanup failed" in
+  let finalizer = Eta.Cause.Finalizer.Fail { error = "cleanup failed"; pp = Format.pp_print_string } in
   let source =
     Eta.Cause.Suppressed
       {

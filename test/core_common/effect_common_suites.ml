@@ -96,7 +96,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
 
   let rec finalizer_contains expected = function
-    | Cause.Finalizer.Fail actual -> String.equal expected actual
+    | Cause.Finalizer.Fail { error; pp } -> String.equal expected (Format.asprintf "%a" pp error)
     | Cause.Finalizer.Die _ | Cause.Finalizer.Interrupt _ -> false
     | Cause.Finalizer.Sequential causes | Cause.Finalizer.Concurrent causes ->
         List.exists (finalizer_contains expected) causes
@@ -560,7 +560,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Cause.Suppressed
          {
            primary = Cause.Fail `Typed;
-           finalizer = Cause.Finalizer.Fail "cleanup";
+           finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
          })
 
   let test_effect_fold_recover_shape () =
@@ -683,10 +683,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Cause.Suppressed
          {
            primary = Cause.Fail `Typed;
-           finalizer = Cause.Finalizer.Fail "cleanup";
+           finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
          })
       (function
-        | Cause.Finalizer (Cause.Finalizer.Fail "cleanup") -> ()
+        | Cause.Finalizer (Cause.Finalizer.Fail { error; pp }) when String.equal (Format.asprintf "%a" pp error) "cleanup" -> ()
         | cause ->
             Alcotest.failf "expected finalizer diagnostic, got %a"
               (Cause.pp pp_hidden) cause)
@@ -810,7 +810,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Cause.Suppressed
         {
           primary = Cause.Fail `Source;
-          finalizer = Cause.Finalizer.Fail "cleanup";
+          finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
         }
     in
     match B.run rt (effect_error_cause cause |> Effect.when_ true) with
@@ -851,7 +851,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Cause.Suppressed
           {
             primary = Cause.Fail "predicate";
-            finalizer = Cause.Finalizer.Fail "cleanup";
+            finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
           };
       ]
     in
@@ -1001,7 +1001,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Cause.Suppressed
         {
           primary = Cause.Fail `Source;
-          finalizer = Cause.Finalizer.Fail "cleanup";
+          finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
         }
     in
     let eff =
@@ -1014,8 +1014,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail `Source;
-            finalizer = Cause.Finalizer.Fail "cleanup";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "cleanup" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
@@ -1070,7 +1070,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       B.run rt
         (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.discard)
     with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -1157,7 +1157,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Effect.finally (Effect.fail "cleanup") Effect.unit
         |> Effect.ignore_errors)
     with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer diagnostic, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -1241,7 +1241,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       run_ok rt
         (Effect.finally (Effect.fail "cleanup") Effect.unit |> Effect.to_exit)
     with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer exit, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -1425,7 +1425,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Exit.to_result
          (Exit.Error
             (Cause.suppressed ~primary:(Cause.Fail "body")
-               ~finalizer:(Cause.Finalizer.Fail "release"))))
+               ~finalizer:(Cause.Finalizer.Fail { error = "release"; pp = Format.pp_print_string }))))
 
   let test_effect_map_error_maps_full_cause () =
     B.with_runtime @@ fun _ctx rt ->
@@ -1443,8 +1443,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected mapped suppressed cause, got %a"
@@ -1571,7 +1571,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Cause.Suppressed
         {
           primary = Cause.Fail `Body;
-          finalizer = Cause.Finalizer.Fail "cleanup";
+          finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
         }
     in
     let eff =
@@ -1583,8 +1583,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Die body;
-            finalizer = Cause.Finalizer.Fail "cleanup";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "cleanup" ->
         Alcotest.(check string)
           "body" "Failure(\"body defect\")" (Printexc.to_string body.exn)
     | Exit.Error cause ->
@@ -1820,7 +1820,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Cause.Suppressed
         {
           primary = Cause.Fail "body";
-          finalizer = Cause.Finalizer.Fail "cleanup";
+          finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
         }
     in
     let observed = ref false in
@@ -2078,7 +2078,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Effect.bind_error (fun (_ : string) -> Effect.pure 0)
     in
     match B.run rt eff with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer cleanup failure, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -2095,8 +2095,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed cleanup failure, got %a"
@@ -2127,7 +2127,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     match B.run rt eff with
     | Exit.Error
         (Cause.Suppressed
-          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail "<typed failure>" }) ->
+          { primary = Cause.Die _; finalizer = Cause.Finalizer.Fail { error; pp } }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed cleanup failure after defect, got %a"
@@ -2212,7 +2212,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Effect.on_exit (fun _ -> Effect.fail "cleanup")
     in
     (match B.run rt success with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer cleanup failure, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -2227,8 +2227,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed cleanup failure, got %a"
@@ -2273,7 +2273,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (Cause.Suppressed
          {
            primary = Cause.Fail "body";
-           finalizer = Cause.Finalizer.Fail "cleanup";
+           finalizer = Cause.Finalizer.Fail { error = "cleanup"; pp = Format.pp_print_string };
          })
 
   let test_effect_on_error_skips_interruption () =
@@ -2348,8 +2348,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed on_error cleanup failure, got %a"
@@ -2365,8 +2365,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Interrupt _;
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed on_interrupt cleanup failure, got %a"
@@ -2458,7 +2458,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (fun () -> Effect.pure 1)
     in
     (match B.run rt success with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) -> ()
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" -> ()
     | Exit.Error cause ->
         Alcotest.failf "expected finalizer release failure, got %a"
           (Cause.pp Format.pp_print_string) cause
@@ -2474,8 +2474,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         (Cause.Suppressed
           {
             primary = Cause.Fail "body";
-            finalizer = Cause.Finalizer.Fail "<typed failure>";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         ()
     | Exit.Error cause ->
         Alcotest.failf "expected suppressed release failure, got %a"
@@ -2509,7 +2509,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                |> Effect.map (fun () -> `Caught))
     in
     match B.run rt eff with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         Alcotest.(check bool)
           "handler skipped because finalizer failure keeps eff failed" false
           !handler_ran
@@ -2551,7 +2551,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                |> Effect.map (fun () -> "handled"))
     in
     match B.run rt eff with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail "<typed failure>")) ->
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
         Alcotest.(check bool)
           "handler skipped because finalizer failure remains" false !handler_ran
     | Exit.Ok _ -> Alcotest.fail "unexpected Ok value"
@@ -2691,7 +2691,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let raw =
       Cause.suppressed ~primary:(Cause.fail "typed")
         ~finalizer:
-          (Cause.finalizer_of_cause Fun.id
+          (Cause.finalizer_of_cause Format.pp_print_string
              (Cause.die_with_diagnostics ~backtrace ~span_name:"release"
                 ~annotations:[ ("phase", "release") ] (Failure "boom")))
     in

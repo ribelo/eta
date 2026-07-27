@@ -1,11 +1,16 @@
 open Eta
 
 type err = [ `A | `B | `C of int ]
+type release_error = Release_error of { kind : string; code : int }
 
 let render_err = function
   | `A -> "A"
   | `B -> "B"
   | `C n -> "C:" ^ string_of_int n
+
+let pp_err fmt err = Format.pp_print_string fmt (render_err err)
+let finalizer_fail_string error =
+  Cause.Finalizer.Fail { error; pp = Format.pp_print_string }
 
 let test_cause_extractors_and_squash () =
   let id = Cause.fresh_interrupt_id () in
@@ -24,7 +29,7 @@ let test_cause_extractors_and_squash () =
         Cause.finalizer
           (Cause.Finalizer.Sequential
              [
-               Cause.Finalizer.Fail "cleanup failed";
+               finalizer_fail_string "cleanup failed";
                Cause.Finalizer.Die (match Cause.die finalizer_defect with
                    | Cause.Die die -> die
                    | _ -> assert false);
@@ -53,13 +58,78 @@ let test_cause_pretty () =
       [
         Cause.fail `A;
         Cause.suppressed ~primary:(Cause.fail `B)
-          ~finalizer:(Cause.Finalizer.Fail "cleanup failed");
+          ~finalizer:(finalizer_fail_string "cleanup failed");
       ]
   in
   Alcotest.(check string)
     "pretty"
     "sequential:\n  fail: A\n  suppressed:\n    primary:\n      fail: B\n    finalizer:\n      finalizer fail: cleanup failed"
     (Cause.pretty render_err cause)
+
+let test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel () =
+  let observed = ref None in
+  let pp_observing fmt (Release_error { kind; code } as error) =
+    observed := Some error;
+    Format.fprintf fmt "%s:%d" kind code
+  in
+  let original = Release_error { kind = "release"; code = 42 } in
+  let finalizer = Cause.finalizer_of_cause pp_observing (Cause.fail original) in
+  Alcotest.(check bool) "conversion does not render eagerly" true
+    (Option.is_none !observed);
+  (match finalizer with
+  | Cause.Finalizer.Fail { error; pp } ->
+      Alcotest.(check string)
+        "stored printer classifies the surviving value" "release:42"
+        (Format.asprintf "%a" pp error)
+  | _ -> Alcotest.fail "expected typed finalizer failure");
+  Alcotest.(check bool) "original concrete value survived" true
+    (match !observed with Some error -> error == original | None -> false);
+  Alcotest.(check int) "finalizer failure is outside typed channel" 0
+    (List.length
+       (Cause.failures (Cause.finalizer finalizer : release_error Cause.t)))
+
+let test_portable_finalizer_fail_materializes_stored_printer () =
+  let same_domain =
+    Cause.finalizer_of_cause pp_err (Cause.fail (`C 7)) |> Cause.finalizer
+  in
+  match Cause.to_portable Fun.id same_domain with
+  | Cause.Portable.Finalizer (Cause.Portable.Finalizer.Fail "C:7") -> ()
+  | portable ->
+      Alcotest.failf "unexpected portable cause: %a"
+        (Cause.Portable.pp pp_err) portable
+
+let colliding_pp fmt _ = Format.pp_print_string fmt "collision"
+
+let test_finalizer_equal_uses_rendered_form_including_collisions () =
+  let left = Cause.Finalizer.Fail { error = `A; pp = colliding_pp } in
+  let right = Cause.Finalizer.Fail { error = 37; pp = colliding_pp } in
+  let distinct =
+    Cause.Finalizer.Fail
+      { error = `B; pp = (fun fmt _ -> Format.pp_print_string fmt "distinct") }
+  in
+  Alcotest.(check bool) "different hidden types collide honestly" true
+    (Cause.Finalizer.equal left right);
+  Alcotest.(check bool) "different rendered forms differ" false
+    (Cause.Finalizer.equal left distinct);
+  Alcotest.(check bool) "Cause.equal delegates to rendered equality" true
+    (Cause.equal (fun _ _ -> false) (Cause.finalizer left)
+       (Cause.finalizer right))
+
+let test_finalizer_diagnostic_equal_uses_rendered_form_including_collisions () =
+  let left = Cause.Finalizer.Fail { error = `A; pp = colliding_pp } in
+  let right = Cause.Finalizer.Fail { error = 37; pp = colliding_pp } in
+  let distinct =
+    Cause.Finalizer.Fail
+      { error = `B; pp = (fun fmt _ -> Format.pp_print_string fmt "distinct") }
+  in
+  Alcotest.(check bool) "different hidden types collide honestly" true
+    (Cause.Finalizer.diagnostic_equal left right);
+  Alcotest.(check bool) "different rendered forms differ" false
+    (Cause.Finalizer.diagnostic_equal left distinct);
+  Alcotest.(check bool) "Cause.diagnostic_equal delegates to rendered equality"
+    true
+    (Cause.diagnostic_equal (fun _ _ -> false) (Cause.finalizer left)
+       (Cause.finalizer right))
 
 let test_exit_combinators () =
   let ok = Exit.ok 21 in
@@ -100,6 +170,18 @@ let tests =
         Alcotest.test_case "extractors and squash" `Quick
           test_cause_extractors_and_squash;
         Alcotest.test_case "pretty" `Quick test_cause_pretty;
+        Alcotest.test_case
+          "finalizer fail preserves typed payload and leaves typed channel" `Quick
+          test_finalizer_fail_preserves_typed_payload_and_leaves_typed_channel;
+        Alcotest.test_case "portable finalizer fail materializes stored printer"
+          `Quick test_portable_finalizer_fail_materializes_stored_printer;
+        Alcotest.test_case
+          "finalizer equal uses rendered form including collisions" `Quick
+          test_finalizer_equal_uses_rendered_form_including_collisions;
+        Alcotest.test_case
+          "finalizer diagnostic equal uses rendered form including collisions"
+          `Quick
+          test_finalizer_diagnostic_equal_uses_rendered_form_including_collisions;
       ] );
     ( "Exit",
       [ Alcotest.test_case "combinators" `Quick test_exit_combinators ] );

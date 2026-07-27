@@ -55,7 +55,7 @@ let test_corpus_nested_finalizer_sequential () =
     (Cause.finalizer
        (Cause.Finalizer.Sequential
           [
-            Cause.Finalizer.Fail "cleanup failed";
+            Cause.Finalizer.Fail { error = "cleanup failed"; pp = Format.pp_print_string };
             Cause.Finalizer.Die (die_record (Invalid_argument "cleanup defect"));
             Cause.Finalizer.Interrupt (Some id);
           ]))
@@ -111,7 +111,7 @@ let test_corpus_suppressed_concurrent_finalizer () =
          (Cause.concurrent [ Cause.fail `A; Cause.die (Failure "boom") ])
        ~finalizer:
          (Cause.Finalizer.Sequential
-            [ Cause.Finalizer.Fail "cleanup failed"; Cause.Finalizer.Interrupt None ]))
+            [ Cause.Finalizer.Fail { error = "cleanup failed"; pp = Format.pp_print_string }; Cause.Finalizer.Interrupt None ]))
     ~pretty:
       "suppressed:\n  primary:\n    concurrent:\n      fail: A\n      defect: \
        Failure(\"boom\")\n  finalizer:\n    sequential:\n      finalizer fail: \
@@ -132,8 +132,8 @@ let test_corpus_suppressed_primary_suppressed () =
     (Cause.suppressed
        ~primary:
          (Cause.suppressed ~primary:(Cause.fail `A)
-            ~finalizer:(Cause.Finalizer.Fail "f1"))
-       ~finalizer:(Cause.Finalizer.Fail "f2"))
+            ~finalizer:(Cause.Finalizer.Fail { error = "f1"; pp = Format.pp_print_string }))
+       ~finalizer:(Cause.Finalizer.Fail { error = "f2"; pp = Format.pp_print_string }))
     ~pretty:
       "suppressed:\n  primary:\n    suppressed:\n      primary:\n        fail: \
        A\n      finalizer:\n        finalizer fail: f1\n  finalizer:\n    \
@@ -145,7 +145,7 @@ let test_corpus_newline_sanitization () =
     (Cause.sequential
        [
          Cause.fail `Nl;
-         Cause.finalizer (Cause.Finalizer.Fail "line1\nline2");
+         Cause.finalizer (Cause.Finalizer.Fail { error = "line1\nline2"; pp = Format.pp_print_string });
        ])
     ~pretty:
       "sequential:\n  fail: x\ny\n  finalizer:\n    finalizer fail: line1\n\
@@ -166,8 +166,8 @@ let test_corpus_empty_and_singleton_raw_composites () =
 
 let fin_leaves =
   [
-    Cause.Finalizer.Fail "cleanup failed";
-    Cause.Finalizer.Fail "line1\nline2";
+    Cause.Finalizer.Fail { error = "cleanup failed"; pp = Format.pp_print_string };
+    Cause.Finalizer.Fail { error = "line1\nline2"; pp = Format.pp_print_string };
     Cause.Finalizer.Die (die_record (Failure "fin boom"));
     Cause.Finalizer.Die (die_record (Invalid_argument "bad\narg"));
     Cause.Finalizer.Interrupt None;

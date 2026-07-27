@@ -317,8 +317,9 @@ let run_finalizers ~runtime ~fail_key finalizers =
 
 let render_finalizer_cause ~error_renderer cause =
   Cause.finalizer_of_cause
-    (fun err ->
-      RObs.render_typed_failure ~error_renderer (Obj.repr err))
+    (fun fmt err ->
+      Format.pp_print_string fmt
+        (RObs.render_typed_failure ~error_renderer (Obj.repr err)))
     cause
 
 let with_finalizers ?(interrupt_of_cancel = fun _ -> Cause.interrupt) ~runtime

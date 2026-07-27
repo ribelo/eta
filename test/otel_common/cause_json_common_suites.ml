@@ -61,7 +61,7 @@ let test_finalizer_and_suppressed () =
     (Cause.to_portable Fun.id
        (Cause.finalizer
           (Cause.Finalizer.Sequential
-             [ Cause.Finalizer.Fail "cleanup failed"; Cause.Finalizer.Interrupt None ])))
+             [ Cause.Finalizer.Fail { error = "cleanup failed"; pp = Format.pp_print_string }; Cause.Finalizer.Interrupt None ])))
     {|{"kind":"finalizer","cause":{"kind":"sequential","causes":[{"kind":"fail","message":"cleanup failed"},{"kind":"interrupt","id":null}]}}|};
   check "suppressed keeps primary and finalizer"
     (Cause.to_portable Fun.id

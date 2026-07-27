@@ -434,8 +434,8 @@ val map_error : ('err1 -> 'err2) -> ('a, 'err1) t -> ('a, 'err2) t
 (** Transform typed failures while preserving unchecked defects, interruption,
     and the surrounding cause structure. [Cause.Fail] values in the primary
     cause tree are mapped, including failures nested under [Sequential] and
-    [Concurrent]. Cleanup/finalizer failures are already rendered into
-    {!Cause.Finalizer} nodes and are preserved unchanged, including
+    [Concurrent]. Cleanup/finalizer failures are already outside the typed
+    channel in {!Cause.Finalizer} nodes and are preserved unchanged, including
     [Cause.Suppressed.finalizer] branches. *)
 
 val or_die : ('err -> exn) -> ('a, 'err) t -> ('a, 'outer) t
@@ -445,7 +445,7 @@ val or_die : ('err -> exn) -> ('a, 'err) t -> ('a, 'outer) t
     [Cause.Fail err] in the primary cause tree becomes a [Cause.Die] built from
     [to_exn err]. [Sequential] and [Concurrent] structure is preserved.
     Existing defects, interruption, and finalizer diagnostics are preserved.
-    For [Cause.Suppressed], only the primary cause is converted; the rendered
+    For [Cause.Suppressed], only the primary cause is converted; the structured
     finalizer diagnostic is left unchanged.
 
     If [to_exn] raises, the exception is reported through Eta's ordinary defect

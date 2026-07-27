@@ -50,7 +50,8 @@ let verify charge_exit ledger_exit tracer =
   in
   let finalizer =
     match ledger_exit with
-    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail message)) -> message
+    | Exit.Error (Cause.Finalizer (Cause.Finalizer.Fail { error; pp })) ->
+        Format.asprintf "%a" pp error
     | _ -> failwith "error rendering check failed: expected finalizer failure"
   in
   let spans = Tracer.dump tracer in

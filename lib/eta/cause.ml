@@ -56,7 +56,10 @@ let pp_die fmt die =
 
 module Finalizer = struct
   type t =
-    | Fail of string
+    | Fail : {
+        error : 'err;
+        pp : Format.formatter -> 'err -> unit;
+      } -> t
     | Die of die
     | Interrupt of interrupt_id option
     | Sequential of t list
@@ -64,9 +67,12 @@ module Finalizer = struct
     | Finalizer of t
     | Suppressed of { primary : t; finalizer : t }
 
+  let render_fail error pp = Format.asprintf "%a" pp error
+
   let rec equal left right =
     match (left, right) with
-    | Fail a, Fail b -> String.equal a b
+    | Fail { error = a; pp = pp_a }, Fail { error = b; pp = pp_b } ->
+        String.equal (render_fail a pp_a) (render_fail b pp_b)
     | Die a, Die b -> equal_die a b
     | Interrupt a, Interrupt b -> Option.equal Int.equal a b
     | Sequential a, Sequential b | Concurrent a, Concurrent b ->
@@ -78,7 +84,8 @@ module Finalizer = struct
 
   let rec diagnostic_equal left right =
     match (left, right) with
-    | Fail a, Fail b -> String.equal a b
+    | Fail { error = a; pp = pp_a }, Fail { error = b; pp = pp_b } ->
+        String.equal (render_fail a pp_a) (render_fail b pp_b)
     | Die a, Die b -> diagnostic_equal_die a b
     | Interrupt a, Interrupt b -> Option.equal Int.equal a b
     | Sequential a, Sequential b | Concurrent a, Concurrent b ->
@@ -90,7 +97,8 @@ module Finalizer = struct
     | _ -> false
 
   let rec pp fmt = function
-    | Fail err -> Format.fprintf fmt "Fail(%S)" err
+    | Fail { error; pp = pp_err } ->
+        Format.fprintf fmt "Fail(%S)" (render_fail error pp_err)
     | Die die -> pp_die fmt die
     | Interrupt None -> Format.pp_print_string fmt "Interrupt"
     | Interrupt (Some id) -> Format.fprintf fmt "Interrupt(%d)" id
@@ -179,7 +187,8 @@ module Portable = struct
       | Suppressed of { primary : t; finalizer : t }
 
     let rec of_finalizer : Finalizer_cause.t -> t = function
-      | Finalizer_cause.Fail err -> Fail err
+      | Finalizer_cause.Fail { error; pp } ->
+          Fail (Format.asprintf "%a" pp error)
       | Finalizer_cause.Die die -> Die (die_of_cause die)
       | Finalizer_cause.Interrupt id -> Interrupt id
       | Finalizer_cause.Sequential causes -> Sequential (List.map of_finalizer causes)
@@ -321,17 +330,17 @@ let suppressed ~primary ~finalizer = Suppressed { primary; finalizer }
 let to_portable = Portable.of_cause
 
 let rec finalizer_of_cause :
-    type err. (err -> string) -> err t -> Finalizer.t =
- fun (render) -> function
-  | Fail err -> Finalizer.Fail (render err)
+    type err. (Format.formatter -> err -> unit) -> err t -> Finalizer.t =
+ fun (pp) -> function
+  | Fail error -> Finalizer.Fail { error; pp }
   | Die die -> Finalizer.Die die
   | Interrupt id -> Finalizer.Interrupt id
-  | Sequential causes -> Finalizer.Sequential (List.map (finalizer_of_cause render) causes)
-  | Concurrent causes -> Finalizer.Concurrent (List.map (finalizer_of_cause render) causes)
+  | Sequential causes -> Finalizer.Sequential (List.map (finalizer_of_cause pp) causes)
+  | Concurrent causes -> Finalizer.Concurrent (List.map (finalizer_of_cause pp) causes)
   | Finalizer cause -> Finalizer.Finalizer cause
   | Suppressed { primary; finalizer } ->
       Finalizer.Suppressed
-        { primary = finalizer_of_cause render primary; finalizer }
+        { primary = finalizer_of_cause pp primary; finalizer }
 
 let rec map : type err mapped. (err -> mapped) -> err t -> mapped t =
  fun (f) -> function
@@ -407,7 +416,7 @@ let interruptors cause =
 
 let finalizer_failures cause =
   let rec collect_finalizer acc = function
-    | Finalizer.Fail msg -> msg :: acc
+    | Finalizer.Fail { error; pp } -> Finalizer.render_fail error pp :: acc
     | Finalizer.Die _ | Finalizer.Interrupt _ -> acc
     | Finalizer.Sequential causes | Finalizer.Concurrent causes ->
         List.fold_left collect_finalizer acc causes
@@ -521,7 +530,8 @@ let pretty render_error cause =
     add_backtrace (indent + 1) die.backtrace
   in
   let rec add_finalizer indent = function
-    | Finalizer.Fail msg -> add_line indent ("finalizer fail: " ^ msg)
+    | Finalizer.Fail { error; pp } ->
+        add_line indent ("finalizer fail: " ^ Finalizer.render_fail error pp)
     | Finalizer.Die die -> add_die indent die
     | Finalizer.Interrupt None -> add_line indent "interrupt"
     | Finalizer.Interrupt (Some id) ->
@@ -625,9 +635,9 @@ let pp_compact render_error cause =
     let parens = needs_parens ctx flavor in
     if parens then add "(";
     (match node with
-    | Finalizer.Fail msg ->
+    | Finalizer.Fail { error; pp } ->
         add "fail(";
-        add (Printf.sprintf "%S" msg);
+        add (Printf.sprintf "%S" (Finalizer.render_fail error pp));
         add ")"
     | Finalizer.Die die -> add_die die
     | Finalizer.Interrupt id -> add_interrupt id

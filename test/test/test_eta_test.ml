@@ -1006,8 +1006,8 @@ let test_run_six_canonical_golden_scenarios () =
       (Eta.Cause.Suppressed
         {
           primary = Eta.Cause.Fail "body failed";
-          finalizer = Eta.Cause.Finalizer.Fail "<typed failure>";
-        }) ->
+          finalizer = Eta.Cause.Finalizer.Fail { error; pp };
+        }) when String.equal (Format.asprintf "%a" pp error) "<typed failure>" ->
       ()
   | _ -> Alcotest.fail "suppressed finalizer cause was not preserved");
   Expect.expect_ok race_loser_released.exit;

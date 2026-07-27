@@ -9,9 +9,9 @@
     [Concurrent] preserves failures observed from parallel composition.
     [Finalizer] marks diagnostic failures produced while cleaning up after a
     successful primary eff; ordinary [Effect.bind_error] leaves failures under
-    this node untouched. Finalizer failures are rendered to strings when they
-    leave the cleanup eff, so they are no longer part of the typed error
-    channel.
+    this node untouched. Same-domain typed finalizer failures retain their error
+    value and printer after leaving the cleanup eff, but are no longer part of
+    the typed error channel. Portable conversion materializes them to strings.
     [Suppressed] preserves a primary failure together with a finalizer failure
     that occurred while cleaning up the primary failure. *)
 
@@ -31,7 +31,10 @@ type die = {
 
 module Finalizer : sig
   type t =
-    | Fail of string
+    | Fail : {
+        error : 'err;
+        pp : Format.formatter -> 'err -> unit;
+      } -> t
     | Die of die
     | Interrupt of interrupt_id option
     | Sequential of t list
@@ -40,8 +43,22 @@ module Finalizer : sig
     | Suppressed of { primary : t; finalizer : t }
 
   val equal : t -> t -> bool
+  (** Structural equality for finalizer diagnostics. [Fail] payloads can hide
+      different concrete types, so each payload is rendered with its own [pp]
+      and the resulting strings are compared. Distinct values whose printers
+      collide therefore compare equal. Other nodes retain structural equality;
+      [Die] preserves physical exception identity. *)
+
   val diagnostic_equal : t -> t -> bool
+  (** Diagnostic equality uses the same rendered-form rule for [Fail], including
+      its collision limit. [Die] instead compares materialized exception
+      diagnostics. *)
+
   val pp : Format.formatter -> t -> unit
+  (** Render finalizer diagnostics. [Fail] uses its stored printer. A failure
+      produced without an installed effect error printer stores Eta's default
+      printer and therefore continues to render as ["<typed failure>"]. *)
+
   val is_interrupt_only : t -> bool
 end
 
@@ -143,17 +160,25 @@ val squash : ('err -> exn) -> 'err t -> exn
     preferred, then defects, then finalizer failures, then interruption. *)
 
 val map : ('err1 -> 'err2) -> 'err1 t -> 'err2 t
-val finalizer_of_cause : ('err -> string) -> 'err t -> Finalizer.t
+val finalizer_of_cause :
+  (Format.formatter -> 'err -> unit) -> 'err t -> Finalizer.t
+(** Move a cause out of the typed error channel for finalizer diagnostics.
+    Typed failures retain their concrete value paired with [pp_err] until a
+    portable or rendering boundary materializes them. *)
 
 val equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Structural equality for causes. [Die] causes compare by physical exception
     identity, plus diagnostic span and annotation metadata. This preserves
     same-domain exception identity; use {!diagnostic_equal} when test code wants
-    to compare materialized exception diagnostics instead. *)
+    to compare materialized exception diagnostics instead. [Finalizer.Fail]
+    branches compare by the rendered-form rule documented on
+    {!Finalizer.equal}. *)
 
 val diagnostic_equal : ('err -> 'err -> bool) -> 'err t -> 'err t -> bool
 (** Diagnostic equality for causes. [Die] causes compare exception slot,
-    rendered exception message, rendered backtrace, span name, and annotations. *)
+    rendered exception message, rendered backtrace, span name, and annotations.
+    [Finalizer.Fail] branches compare by the rendered-form rule documented on
+    {!Finalizer.diagnostic_equal}. *)
 
 val pp :
   (Format.formatter -> 'err -> unit) -> Format.formatter -> 'err t -> unit

@@ -54,8 +54,9 @@ let verify success_exit failure_exit suppressed_exit cancel_exit seen =
         (Cause.Suppressed
           {
             primary = Cause.Fail `Body_failed;
-            finalizer = Cause.Finalizer.Fail "cleanup_failed";
-          }) ->
+            finalizer = Cause.Finalizer.Fail { error; pp };
+          })
+      when String.equal (Format.asprintf "%a" pp error) "cleanup_failed" ->
         "suppressed"
     | Exit.Error cause ->
         Format.eprintf "unexpected suppressed exit: %a@." (Cause.pp pp_error)
