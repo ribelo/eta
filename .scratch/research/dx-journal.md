@@ -4701,3 +4701,36 @@ the weaker semantics.
   cancel-and-await behavior is unchanged; interruption during
   fail-fast behaves like `par`'s.
 - Review: PR-style oracle on the two contracts. Outcome: promote.
+
+---
+
+## V-DX-E36-002 — 2026-07-26 — research/dx-e36-background-semantics — phase: orchestrator decision (blocker adjudication)
+
+The executor reported BLOCKED with three findings. Adjudication:
+
+**Finding 1 (same-release priority) — spec amendment, resolved.** The
+sealed objective demanded "background failure beats body success when
+both become ready from one release." That is STRONGER than `par`'s own
+guarantee ("the first child failure cancels the sibling" — first in
+*observation order*; `par` linearizes, it does not prioritize failure
+over simultaneous success). Contract amended: **racing terminal events
+are linearized by publication order** (the strongest precise rule the
+substrates expose, and exactly `par`'s model); safety-first same-instant
+priority is explicitly NOT guaranteed. No runtime-contract work. My
+over-specification is scored as a prediction miss at V-DX-E36-003.
+
+**Finding 2 (use-first cleanup parity) — evidence gap, not a blocker.**
+"Unproven" is not "inexpressible": the rework is discriminating tests
+(background cleanup fails after body success / typed failure / defect,
+asserting the former `finally (cancel child)` cause shape and ordering),
+with structure adjustment only if the tests expose real divergence.
+
+**Finding 3 (cancellation-safe loser publication) — evidence gap,
+E15-flavored.** A both-substrates regression proving both terminal
+events always publish before arbitration assembly; a protected commit
+(uninterruptible publication window) only if the regression exposes
+loss.
+
+The executor did exactly right surfacing these raw instead of
+hand-waving them; the orchestrator's read is that two of three are
+unfinished evidence, and the third was my spec bug.
