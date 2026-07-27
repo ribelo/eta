@@ -4785,3 +4785,45 @@ archived.
 readers against the new fail-fast `with_background` (registered since
 the objective; untouched here). Report nit noted by review (stale
 approximate test name at report.md:78 — cosmetic, recorded).
+
+---
+
+## V-DX-E37-001 — 2026-07-27 — research/dx-e37-parallel-acquire — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E37-002.
+
+**Measured pre-state (verified).** Sequential acquisition is served by the
+`with_resource` ladder (E6 confirmed: reviewers prefer it ergonomically).
+PARALLEL acquisition with correct ownership has no first-class API: the
+documented recipe requires `Effect.Expert.make`/`eval` to re-register
+releases into the owner scope (docs/api-dx.md:485 — "advanced; the
+runtime-package extension point, not ordinary application API"). The mli
+of `acquire_release` itself names the gap: parallel combinators give each
+child its own finalizer scope. E6's verdict stands as a hard constraint:
+no arity zoo, no ergonomic relitigation.
+
+**Predictions.**
+- Shape that ships: homogeneous, `map_par`-shaped —
+  `Effect.acquire_all_par ?max_concurrent ~acquire ~release inputs` —
+  covering the canonical case (shards, connections, workers) with zero
+  arity problems. Heterogeneous stays with the E6 ladder (sequential)
+  or the documented advanced path; the experiment may report a clean
+  heterogeneous primitive as a bonus, not a requirement.
+- Semantics pinned: (a) acquisitions concurrent (bounded optional,
+  mirroring `map_par`'s current admission contract); (b) ANY acquire
+  failure → already-acquired released in reverse order, error
+  propagates; (c) cancellation mid-acquisition → same cleanup, and an
+  in-flight acquisition that later completes does NOT register;
+  (d) success → ownership transferred to the enclosing scope,
+  reverse-order release at scope exit on success/typed-failure/defect/
+  interruption; (e) release failures → finalizer diagnostics per
+  existing cause semantics.
+- Implementation uses NO Expert at the public surface — the Expert
+  bridge pattern becomes library-internal or is replaced by a cleaner
+  internal path.
+- Census: +1 val; footguns −1 ("parallel acquisition requires Expert"
+  gap closed). The api-dx recipe re-points to the combinator; the
+  Expert bridge note is demoted to heterogeneous/advanced.
+- Review: PR-style oracle on the contract + semantics evidence.
+  Outcome: promote. Kill path: if correct semantics cannot fit the doc
+  budget (~10 lines), the shape is wrong — hold and record.
