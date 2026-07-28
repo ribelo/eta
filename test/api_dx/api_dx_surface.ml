@@ -122,7 +122,7 @@ let promoted_examples =
     "examples/blocking_result.ml";
     "examples/supervisor_scope.ml";
     "examples/background_lifecycle.ml";
-    "examples/daemon_drain.ml";
+    "examples/background_shutdown.ml";
     "examples/observability.ml";
     "examples/observability_controls.ml";
     "examples/observability_sinks.ml";

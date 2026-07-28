@@ -1,4 +1,5 @@
 module Effect = Eta.Effect
+module Spi = Eta.Spi
 module Duration = Eta.Duration
 module Queue = Eta.Queue
 module Runtime_contract = Eta.Runtime_contract
@@ -1659,8 +1660,8 @@ module Make (Observer_error : Observer_error) () = struct
           ~state:timer_state_port)
 
   let current_runtime_contract () =
-    Effect.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
-      (fun context -> Eta.Exit.Ok (Effect.Expert.contract context))
+    Spi.Expert.make ~leaf_name:"Eta_signal.current_runtime_contract"
+      (fun context -> Eta.Exit.Ok (Spi.Expert.contract context))
 
   let timer_demand_access =
     Timer.demand_effect_access
@@ -1798,17 +1799,17 @@ module Make (Observer_error : Observer_error) () = struct
     let render_graph_error err =
       Format.asprintf "%a" Error.pp_graph_error err
     in
-    Effect.Expert.make @@ fun context ->
+    Spi.Expert.make @@ fun context ->
     let exit =
-      try Effect.Expert.eval context eff
-      with exn -> Effect.Expert.exit_of_exn context exn
+      try Spi.Expert.eval context eff
+      with exn -> Spi.Expert.exit_of_exn context exn
     in
     match exit with
     | Eta.Exit.Ok _ -> exit
     | Eta.Exit.Error primary -> (
         let cleanup_exit =
-          try Effect.Expert.eval context (cleanup ())
-          with exn -> Effect.Expert.exit_of_exn context exn
+          try Spi.Expert.eval context (cleanup ())
+          with exn -> Spi.Expert.exit_of_exn context exn
         in
         match cleanup_exit with
         | Eta.Exit.Ok () -> Eta.Exit.Error primary
@@ -1907,9 +1908,9 @@ module Make (Observer_error : Observer_error) () = struct
     | _ -> None
 
   let run_observer_effect _observer _token observer_eff =
-    Effect.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
+    Spi.Expert.make ~leaf_name:"eta_signal.observer" @@ fun context ->
     try
-      match Effect.Expert.eval context observer_eff with
+      match Spi.Expert.eval context observer_eff with
       | Eta.Exit.Ok () -> Eta.Exit.Ok ()
       | Eta.Exit.Error cause ->
           Eta.Exit.Error

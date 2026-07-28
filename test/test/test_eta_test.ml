@@ -54,7 +54,7 @@ let terminal :
   | `Typed_failure -> Eta.Effect.fail `Expected
   | `Defect -> Eta.Effect.die_message "expected scoped defect"
   | `Interruption ->
-      Eta.Effect.Expert.make (fun _ ->
+      Eta.Spi.Expert.make (fun _ ->
           Eta.Exit.Error Eta.Cause.interrupt)
 
 let test_scoped_capabilities_restore_on_all_exit_kinds () =
@@ -337,7 +337,7 @@ let test_daemon_retains_fork_time_capabilities_after_scope_exit () =
     Eta.Effect.named "daemon" Eta.Effect.unit
   in
   let start =
-    Eta.Effect.daemon daemon_body
+    Eta.Spi.daemon daemon_body
     |> Eta.Effect.with_tracer (Eta.Tracer.as_capability tracer)
     |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
     |> Eta.Effect.with_random (Eta.Capabilities.random_of_seed 88)
@@ -519,7 +519,7 @@ let test_daemon_failure_respects_minimum_log_level () =
   with_test_clock @@ fun _sw _base_clock rt ->
   let logger = Eta.Logger.in_memory () in
   let start =
-    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    Eta.Spi.daemon (Eta.Effect.die_message "daemon boom")
     |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
     |> Eta.Effect.with_minimum_log_level Eta.Capabilities.Fatal
   in
@@ -532,7 +532,7 @@ let test_daemon_failure_carries_scoped_attrs () =
   with_test_clock @@ fun _sw _base_clock rt ->
   let logger = Eta.Logger.in_memory () in
   let start =
-    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    Eta.Spi.daemon (Eta.Effect.die_message "daemon boom")
     |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
     |> Eta.Effect.annotate_logs [ ("tenant", "acme") ]
   in
@@ -552,7 +552,7 @@ let test_daemon_failure_uses_inherited_override_diagnostics () =
   let logger = Eta.Logger.in_memory () in
   let tracer = Eta.Tracer.in_memory () in
   let start =
-    Eta.Effect.daemon (Eta.Effect.die_message "daemon boom")
+    Eta.Spi.daemon (Eta.Effect.die_message "daemon boom")
     |> Eta.Effect.with_tracer (Eta.Tracer.as_capability tracer)
     |> Eta.Effect.with_logger (Eta.Logger.as_capability logger)
     |> Eta.Effect.with_random (Eta.Capabilities.random_of_seed 123)
@@ -681,7 +681,7 @@ let test_run_replays_with_same_construction () =
     (List.map (fun span -> span.Eta.Tracer.trace_id) second.spans)
 
 let test_run_accounts_for_pending_owned_daemon () =
-  let outcome = Run.run (Eta.Effect.daemon Eta.Effect.never) in
+  let outcome = Run.run (Eta.Spi.daemon Eta.Effect.never) in
   Expect.expect_ok outcome.exit;
   match outcome.pending_fibers with
   | Some [ { Run.id = 1; parent_id = None; kind = Run.Daemon } ] -> ()
@@ -692,7 +692,7 @@ let test_run_accounts_for_pending_owned_daemon () =
 
 let test_run_disabled_accounting_fails_census_expectation () =
   let outcome =
-    Run.run ~account_fibers:false (Eta.Effect.daemon Eta.Effect.never)
+    Run.run ~account_fibers:false (Eta.Spi.daemon Eta.Effect.never)
   in
   Alcotest.(check bool) "census unavailable" true
     (outcome.Run.pending_fibers = None);
@@ -856,7 +856,7 @@ let test_run_yielding_daemon_does_not_block_virtual_deadlines () =
   let open Eta.Syntax in
   let daemon = Eta.Effect.forever Eta.Effect.yield in
   let program =
-    let* () = Eta.Effect.daemon daemon in
+    let* () = Eta.Spi.daemon daemon in
     let* () = Eta.Effect.sleep (Eta.Duration.ms 1) in
     Eta.Effect.sleep (Eta.Duration.ms 2)
   in
@@ -895,7 +895,7 @@ let test_run_testable_uses_diagnostic_defect_equality () =
 
 let test_run_nested_pending_parentage_replays () =
   let program =
-    Eta.Effect.par (Eta.Effect.daemon Eta.Effect.never) Eta.Effect.unit
+    Eta.Effect.par (Eta.Spi.daemon Eta.Effect.never) Eta.Effect.unit
     |> Eta.Effect.discard
   in
   let first = Run.run program in

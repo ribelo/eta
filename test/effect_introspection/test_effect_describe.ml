@@ -6,7 +6,7 @@ let check expected eff =
 let test_constructor_tree_without_evaluation () =
   let custom_forced = ref false in
   let custom : (unit, string) Effect.t =
-    Effect.Expert.make (fun _ ->
+    Spi.Expert.make (fun _ ->
         custom_forced := true;
         Exit.Ok ())
   in
@@ -15,7 +15,7 @@ let test_constructor_tree_without_evaluation () =
   check "Custom" custom;
   Alcotest.(check bool) "custom evaluator remains opaque" false !custom_forced;
   check "Custom(\"named.custom\")"
-    (Effect.Expert.make ~leaf_name:"named.custom" (fun _ -> Exit.Ok ()));
+    (Spi.Expert.make ~leaf_name:"named.custom" (fun _ -> Exit.Ok ()));
   let map_forced = ref false in
   let mapped =
     Effect.map

@@ -97,10 +97,12 @@ interrupted before resolution, and waits for that protected canceler to finish.
 Therefore the canceler must not block indefinitely. A JS wrapper must check its
 required host API and fail loudly; it must not install a polyfill.
 
-Use `Effect.Expert.make` only in runtime packages that genuinely need the
+Use `Eta.Spi.Expert.make` only in runtime packages that genuinely need the
 current `Runtime_contract`, scope, runtime service, or Eta instrumentation
-hooks. If a wrapper only needs “register callback, optionally unregister on
-interruption,” touching `Expert.context` is the wrong boundary: use `async`.
+hooks. `Eta.Spi` is the unstable service-provider interface: it is not
+application API and carries no compatibility guarantee. If a wrapper only
+needs “register callback, optionally unregister on
+interruption,” touching the SPI context is the wrong boundary: use `async`.
 Neither API makes blocking registration safe; move blocking work to
 `Eta_blocking` instead.
 
@@ -135,7 +137,7 @@ Use ordinary OCaml for application services:
 - Pass dependencies as function arguments, records, modules, or closures.
 - Use `Effect.with_resource` only where constructing or cleaning up a service is
   effectful.
-- Keep `Runtime_contract.service` and `Effect.Expert.runtime_service` for
+- Keep `Runtime_contract.service` and `Eta.Spi.Expert.runtime_service` for
   optional Eta packages that need backend-attached runtime services.
 
 Use named helpers at common boundaries:
@@ -204,8 +206,10 @@ Use named helpers at common boundaries:
   lexical body and its failure must cancel that body.
 - `Effect.with_supervised_background` when the same lexical lifetime should not
   make child failure interrupt the body.
-- `Effect.daemon` plus `Runtime.drain` for runtime-owned finite background work
-  that must be waited for at shutdown or in tests.
+- Graceful shutdown draining: run the worker under `Effect.with_background`,
+  signal it from the body, and await its completion inside the body before the
+  scope exits. Runtime-owned daemons live in the unstable `Eta.Spi`, not in
+  application code.
 - `Eta.Supervisor.scoped { run = ... }` plus
   `Eta.Supervisor.Scope.(let*)` when child handles must stay inside a nursery.
 - `Effect.is_tracing_enabled`, `Effect.annotate_all_lazy`, and
@@ -324,8 +328,8 @@ one-shot cleanup, lexical semaphore permits, abortable admission control, tests,
 runtime-local pools, scoped pubsub subscriptions, non-blocking pubsub polls,
 trace sampling, trace context propagation, trace context injection, blocking typed leaves, runtime exit/cause boundaries, runtime
 execution boundaries, observability, observability controls,
-observability sinks, lazy metric batching, background lifecycle, runtime-owned
-daemon draining, supervised nurseries, runtime-owned resource failure
+observability sinks, lazy metric batching, background lifecycle, scoped
+background shutdown draining, supervised nurseries, runtime-owned resource failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
@@ -389,7 +393,7 @@ The runnable examples under `examples/` use real public modules:
 - `blocking_result.ml`
 - `supervisor_scope.ml`
 - `background_lifecycle.ml`
-- `daemon_drain.ml`
+- `background_shutdown.ml`
 - `observability.ml`
 - `observability_controls.ml`
 - `observability_sinks.ml`
@@ -818,12 +822,13 @@ rank-2 scope token so child handles cannot escape their nursery. Prefer
 failure invalidates the body; use `Effect.with_supervised_background` when it
 does not.
 
-`Effect.daemon` is not replaced by `Effect.with_background`. Use
-`with_background` for required body-owned work that fails fast, or
-`with_supervised_background` when child failure must not interrupt the body.
-Both cancel the child when the body finishes. Use `daemon` only for runtime-owned
-finite infrastructure work, and `Runtime.drain` before shutdown or in tests that
-assert daemon effects.
+`Effect.with_background` covers application background work. Use it for
+required body-owned work that fails fast, or `with_supervised_background` when
+child failure must not interrupt the body. Both cancel the child when the body
+finishes; for graceful shutdown the body signals the worker and awaits its
+completion before the scope exits. Runtime-owned daemon work has moved to the
+unstable service-provider interface `Eta.Spi.daemon`, and `Runtime.drain`
+waits for it before shutdown or in tests that assert daemon effects.
 
 `Eta_eio.Runtime.create` remains explicit in application examples. The current
 examples use the runtime value to own clocks, sleep/random capabilities,
@@ -841,13 +846,15 @@ and observability. The current evidence supports this split:
 | Surface | Examples |
 | --- | --- |
 | Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
-| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
-| Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
+| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
+| Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_scoped`/`supervisor_yield` primitives behind `Supervisor`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`), and the unstable `Eta.Spi` namespace (`Spi.daemon`, `Spi.Expert`) |
 
 The low-level group is not a deletion list. It is a doc-demotion list: these
 names should not be the first way users learn Eta, but they remain justified as
 primitive, bridge, or implementation support until stronger evidence says
-otherwise. The detailed audit lives in
+otherwise. `Eta.Spi` is not doc-demoted application surface: it is the
+explicitly unstable service-provider namespace, not application API. The
+detailed audit lives in
 `.scratch/research/evidence/eta_research/api_dx/effect_surface.md`.
 
 The no-explicit-bind surface scanner intentionally excludes archived research
@@ -1043,7 +1050,7 @@ nix develop -c dune exec examples/connection_pool.exe
 nix develop -c dune exec examples/pubsub_subscription.exe
 nix develop -c dune exec examples/pubsub_poll.exe
 nix develop -c dune exec examples/supervisor_scope.exe
-nix develop -c dune exec examples/daemon_drain.exe
+nix develop -c dune exec examples/background_shutdown.exe
 nix develop -c dune runtest test/blocking_eio --force
 nix develop -c dune runtest examples --force
 ```

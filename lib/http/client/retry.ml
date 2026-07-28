@@ -212,19 +212,19 @@ let add_ms_capped a b =
   if b <= 0 then a else if a > max_int - b then max_int else a + b
 
 let post_delay_check deadline_ms =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.post-delay-check" (fun ctx ->
-      let contract = Eta.Effect.Expert.contract ctx in
+  Eta.Spi.Expert.make ~leaf_name:"eta-http.retry.post-delay-check" (fun ctx ->
+      let contract = Eta.Spi.Expert.contract ctx in
       try
         contract.Eta.Runtime_contract.yield ();
         contract.Eta.Runtime_contract.check ();
         if contract.Eta.Runtime_contract.now_ms () < deadline_ms then
           Eta.Exit.Error Eta.Cause.interrupt
         else Eta.Exit.Ok ()
-      with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
+      with exn -> Eta.Spi.Expert.exit_of_exn ctx exn)
 
 let delay_then delay eff =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.delay" (fun ctx ->
-      let contract = Eta.Effect.Expert.contract ctx in
+  Eta.Spi.Expert.make ~leaf_name:"eta-http.retry.delay" (fun ctx ->
+      let contract = Eta.Spi.Expert.contract ctx in
       let deadline_ms =
         add_ms_capped
           (contract.Eta.Runtime_contract.now_ms ())
@@ -232,16 +232,16 @@ let delay_then delay eff =
       in
       Eta.Effect.delay delay
         (post_delay_check deadline_ms |> Eta.Effect.bind (fun () -> eff))
-      |> Eta.Effect.Expert.eval ctx)
+      |> Eta.Spi.Expert.eval ctx)
 
 let request_once_effect request_once request =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.request-once" (fun ctx ->
-      try request_once request |> Eta.Effect.Expert.eval ctx
-      with exn -> Eta.Effect.Expert.exit_of_exn ctx exn)
+  Eta.Spi.Expert.make ~leaf_name:"eta-http.retry.request-once" (fun ctx ->
+      try request_once request |> Eta.Spi.Expert.eval ctx
+      with exn -> Eta.Spi.Expert.exit_of_exn ctx exn)
 
 let runtime_now_s =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.retry.now" (fun ctx ->
-      let contract = Eta.Effect.Expert.contract ctx in
+  Eta.Spi.Expert.make ~leaf_name:"eta-http.retry.now" (fun ctx ->
+      let contract = Eta.Spi.Expert.contract ctx in
       Eta.Exit.Ok
         (float_of_int (contract.Eta.Runtime_contract.now_ms ()) /. 1000.0))
 

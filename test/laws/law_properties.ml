@@ -325,7 +325,7 @@ let property_bind_error_left_identity =
         (run (apply_fn handler error)))
 
 let effect_from_cause cause =
-  E.Expert.make (fun _ -> Eta.Exit.Error cause)
+  Eta.Spi.Expert.make (fun _ -> Eta.Exit.Error cause)
 
 let property_bind_error_once_and_first_typed =
   QCheck.Test.make

@@ -687,18 +687,6 @@ val with_supervised_background :
     failure is recorded by the supervisor and does not affect [use] before it
     ends. When [use] returns or fails, the child is cancelled and awaited. *)
 
-val daemon : (unit, 'err) t -> (unit, 'err) t
-(** Start runtime-owned finite background work on the runtime's outer switch.
-
-    Daemons are for Eta modules that own a lifecycle beyond the caller's local
-    scope, such as pool eviction loops and protocol readers. Application code
-    should prefer {!with_background} when the work belongs to one request,
-    server, stream, or resource scope.
-
-    Failures bypass the typed result and are reported as runtime daemon
-    diagnostics. Use {!Runtime.drain} to wait for currently running finite
-    daemon work before process shutdown or tests that assert daemon effects. *)
-
 val supervisor_scoped :
   ?max_failures:int -> ('a, 'err) supervisor_body -> ('a, 'err) t
 (** Low-level abstract supervisor-scope runner used by {!Supervisor}. Prefer
@@ -722,36 +710,10 @@ val suppress_observability : ('a, 'err) t -> ('a, 'err) t
     export path. It does not change typed errors, resource finalization, or
     defect diagnostics. *)
 
-val supervisor_pure : 'a -> ('s, 'a, 'err) supervisor_scope
-val supervisor_lift : ('a, 'err) t -> ('s, 'a, 'err) supervisor_scope
-val supervisor_fail : 'err -> ('s, 'a, 'err) supervisor_scope
-
-val supervisor_bind :
-  ('a -> ('s, 'b, 'err) supervisor_scope) ->
-  ('s, 'a, 'err) supervisor_scope ->
-  ('s, 'b, 'err) supervisor_scope
-
-val supervisor_start :
-  ('s, 'err) supervisor ->
-  ('s, 'a, 'err) supervisor_scope ->
-  ('s, ('s, 'err, 'a) supervisor_child, 'outer_err) supervisor_scope
-
-val supervisor_await :
-  ('s, 'err, 'a) supervisor_child -> ('s, 'a, 'err) supervisor_scope
-
-val supervisor_cancel :
-  ('s, 'err, 'a) supervisor_child -> ('s, unit, 'err) supervisor_scope
-
-val supervisor_failures :
-  ('s, 'err) supervisor -> ('s, 'err Cause.t list, 'outer_err) supervisor_scope
-
-val supervisor_check :
-  ('s, [> `Supervisor_failed of int ] as 'err) supervisor ->
-  ('s, unit, 'err) supervisor_scope
-
 val supervisor_yield : ('s, unit, 'err) supervisor_scope
-(** Low-level abstract supervisor-scope builders used by {!Supervisor.Scope}.
-    They intentionally do not expose the interpreter AST constructors. *)
+(** Low-level supervisor-scope yield used by {!Supervisor.Scope}. The
+    supervisor-scope primitives intentionally do not expose the interpreter
+    AST constructors. *)
 
 val with_clock : Capabilities.clock -> ('a, 'err) t -> ('a, 'err) t
 (** Dynamically replace the fiber-local runtime clock for [body]. Children
@@ -759,7 +721,7 @@ val with_clock : Capabilities.clock -> ('a, 'err) t -> ('a, 'err) t
     interruption restores it. Innermost wins; [par] siblings are isolated.
     Leaves capture it at call time; in-flight sleeps are unchanged. Daemons keep it after scope exit.
     This governs clock reads/sleeps, including the [now_ms] and [sleep] fields
-    exposed to {!Expert.contract}, and their users: delay, timed, timeout,
+    exposed to {!Spi.Expert.contract}, and their users: delay, timed, timeout,
     retry/repeat, timestamps, and span timing.
 
     {[ Effect.with_clock (Eta_test.Test_clock.as_capability clock) program ]} *)
@@ -805,70 +767,6 @@ val named :
     ["<typed failure>"]. Output is rendered at most once per span status or
     exception event. The printer must be total; a raising [error_pp] becomes a
     defect through the ordinary capture path. *)
-
-module Expert : sig
-  type context
-
-  val make :
-    ?leaf_name:string ->
-    (context -> ('a, 'err) Exit.t) ->
-    ('a, 'err) t
-  (** Build a runtime-backed effect without exposing Eta's internal effect
-      representation. Runtime-specific packages use this to attach operations
-      to the current {!Runtime_contract.t}; ordinary user code should prefer the
-      typed combinators in this module. *)
-
-  val contract : context -> Runtime_contract.t
-  (** Runtime contract selected by the current interpreter. *)
-
-  val current_scope : context -> Runtime_contract.scope
-  (** Current lexical runtime scope. *)
-
-  val outer_scope : context -> Runtime_contract.scope
-  (** Runtime boundary scope used for runtime-owned background work. *)
-
-  val runtime_service : context -> 'a Runtime_contract.service_key -> 'a option
-  (** Runtime-package service attached when the interpreter was created. *)
-
-  val auto_instrument : context -> bool
-  (** Whether runtime leaf auto-instrumentation is enabled. *)
-
-  val instrument_leaf : context -> name:string -> (unit -> 'a) -> 'a
-  (** Run a leaf body under Eta's standard runtime instrumentation. *)
-
-  val emit_trace_event :
-    context -> name:string -> attrs:(string * string) list -> unit
-  (** Emit an event on the active span, if tracing is enabled and sampled. *)
-
-  val record_metric :
-    context ->
-    name:string ->
-    description:string ->
-    unit_:string ->
-    kind:Capabilities.metric_kind ->
-    attrs:(string * string) list ->
-    value:Capabilities.metric_value ->
-    unit
-  (** Record a metric point when runtime metrics are enabled. *)
-
-  val fork_daemon : context -> (unit -> [ `Stop_daemon ]) -> unit
-  (** Fork runtime-owned finite background work and include it in
-      {!Runtime.drain} accounting. *)
-
-  val eval : context -> ('a, 'err) t -> ('a, 'err) Exit.t
-  (** Evaluate a child effect in the current runtime context. *)
-
-  val eval_in_scope :
-    context -> Runtime_contract.scope -> ('a, 'err) t -> ('a, 'err) Exit.t
-  (** Evaluate a child effect in an explicit runtime scope. *)
-
-  val exit_of_exn : context -> exn -> ('a, 'err) Exit.t
-  (** Convert an unchecked exception raised by a custom operation into Eta's
-      diagnostic cause using the current runtime settings. *)
-end
-(** Narrow extension point for runtime packages. This module is intentionally
-    small: it lets optional packages implement backend-specific leaves while
-    keeping the root [Effect.t] representation private. *)
 
 val annotate : key:string -> value:string -> ('a, 'err) t -> ('a, 'err) t
 (** Attach a string attribute to the active span. If no span is active, the

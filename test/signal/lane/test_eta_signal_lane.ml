@@ -129,9 +129,9 @@ let test_reentry_policy () =
 let test_access_token_guards_leave () =
   let lane = Lane.create () in
   let eff =
-    Eta.Effect.Expert.make ~leaf_name:"eta_signal_lane.test" @@ fun context ->
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal_lane.test" @@ fun context ->
     try
-      let contract = Eta.Effect.Expert.contract context in
+      let contract = Eta.Spi.Expert.contract context in
       let first = Lane.enter ~hooks contract lane in
       Lane.leave lane first;
       Alcotest.check_raises "stale token"
@@ -145,7 +145,7 @@ let test_access_token_guards_leave () =
         (fun () -> Lane.leave lane first);
       Lane.leave lane second;
       Eta.Exit.Ok ()
-    with exn -> Eta.Effect.Expert.exit_of_exn context exn
+    with exn -> Eta.Spi.Expert.exit_of_exn context exn
   in
   expect_effect_ok "lane access token" eff
 
@@ -242,8 +242,8 @@ let test_interruptible_restore_preserves_reentrant_lane_fiber () =
   let nested_reentered = ref false in
   let restored_id = ref None in
   let current_fiber_id =
-    Eta.Effect.Expert.make ~leaf_name:"eta_signal_lane.current_fiber_id" @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal_lane.current_fiber_id" @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     Eta.Exit.Ok (contract.Eta.Runtime_contract.current_fiber_id ())
   in
   let outer_lane =

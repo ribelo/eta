@@ -171,8 +171,8 @@ module Adapter = struct
     { demand_claim_plan = claim; demand_effect_plan = effects }
 
   let run_cancellable ~install_cancel ~loop =
-    Effect.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"eta_signal.timer" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     let cancelled_exit = function
       | Exit.Error cause when Cause.is_interrupt_only cause -> Exit.Ok ()
       | exit -> exit
@@ -182,18 +182,18 @@ module Adapter = struct
       let cancel () =
         contract.Runtime_contract.cancel cancel_context Timer_cancelled
       in
-      match Effect.Expert.eval context (install_cancel ~cancel) with
+      match Spi.Expert.eval context (install_cancel ~cancel) with
       | Exit.Error _ as error -> error
       | Exit.Ok `Stop -> Exit.Ok ()
-      | Exit.Ok `Continue -> Effect.Expert.eval context loop |> cancelled_exit
+      | Exit.Ok `Continue -> Spi.Expert.eval context loop |> cancelled_exit
     with exn ->
       if Option.is_some (contract.Runtime_contract.cancellation_reason exn) then
         Exit.Ok ()
-      else Effect.Expert.exit_of_exn context exn
+      else Spi.Expert.exit_of_exn context exn
 
   let current_runtime_contract () =
-    Effect.Expert.make ~leaf_name:"eta_signal.timer.demand.runtime_contract"
-      (fun context -> Exit.Ok (Effect.Expert.contract context))
+    Spi.Expert.make ~leaf_name:"eta_signal.timer.demand.runtime_contract"
+      (fun context -> Exit.Ok (Spi.Expert.contract context))
 
   let run_pending_cancel_hooks effects hooks_ref =
     match !hooks_ref with
@@ -334,7 +334,7 @@ module Adapter = struct
       match status with
       | `Stop -> Effect.unit
       | `Continue ->
-          Effect.daemon
+          Spi.daemon
             (run_cancellable
                ~install_cancel:(fun ~cancel ->
                  daemon.install_cancel ~generation ~cancel)

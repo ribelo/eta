@@ -453,8 +453,8 @@ let close_expired_entries_before_retry t entries =
   |> Effect.map (fun () -> Reserve_slot)
 
 let yield_for_slot () =
-  Effect.Expert.make ~leaf_name:"eta.pool.wait_for_slot" @@ fun context ->
-  let contract = Effect.Expert.contract context in
+  Spi.Expert.make ~leaf_name:"eta.pool.wait_for_slot" @@ fun context ->
+  let contract = Spi.Expert.contract context in
   contract.Runtime_contract.yield ();
   Exit.Ok ()
 
@@ -614,7 +614,7 @@ let create ?(name = "eta.pool") ?kind ~max_size ?max_idle ?idle_lifetime
          let start_daemon =
            match (idle_lifetime, max_lifetime) with
            | None, None -> Effect.unit
-           | Some _, _ | _, Some _ -> Effect.daemon (eviction_loop t)
+           | Some _, _ | _, Some _ -> Spi.daemon (eviction_loop t)
          in
          start_daemon |> Effect.map (fun () -> t))
 

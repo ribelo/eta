@@ -1,4 +1,5 @@
 module Effect = Eta.Effect
+module Spi = Eta.Spi
 module Exit = Eta.Exit
 module Cause = Eta.Cause
 module Duration = Eta.Duration
@@ -176,10 +177,10 @@ module Make (Key : Key) = struct
       |> Effect.to_exit
     else Effect.pure (Exit.Ok None)
 
-  let replay exit = Effect.Expert.make ~leaf_name:"eta_cache.replay" (fun _ -> exit)
+  let replay exit = Spi.Expert.make ~leaf_name:"eta_cache.replay" (fun _ -> exit)
 
   let await_pending t pending =
-    Effect.Expert.make ~leaf_name:"eta_cache.await" @@ fun _ ->
+    Spi.Expert.make ~leaf_name:"eta_cache.await" @@ fun _ ->
     t.contract.Runtime_contract.await_promise pending.promise
 
   let resolve_pending t pending exit =
@@ -349,8 +350,8 @@ module Make (Key : Key) = struct
   let make ~capacity ~lookup ~time_to_live =
     if capacity <= 0 then
       invalid_arg "Eta_cache.Make.make: capacity must be > 0";
-    Effect.Expert.make ~leaf_name:"eta_cache.make" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"eta_cache.make" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     Exit.Ok
       {
         capacity;

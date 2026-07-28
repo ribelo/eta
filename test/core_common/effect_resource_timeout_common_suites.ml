@@ -6,9 +6,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let pp_hidden ppf _ = Format.pp_print_string ppf "<effect>"
 
   let runtime_interrupt_effect () =
-    E.Expert.make ~leaf_name:"test.interrupt"
+    Spi.Expert.make ~leaf_name:"test.interrupt"
     @@ fun context ->
-    let contract = E.Expert.contract context in
+    let contract = Spi.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
     contract.Eta.Runtime_contract.cancel cancel_context Exit;
     contract.Eta.Runtime_contract.await_cancel ()
@@ -141,7 +141,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              |> E.bind (fun () ->
                     E.sync (fun () -> Atomic.set completed true)))
     in
-    run_ok rt (E.daemon daemon_body);
+    run_ok rt (Spi.daemon daemon_body);
     ignore (B.await started : unit);
     Alcotest.(check bool) "daemon pending" false (Atomic.get completed);
     Alcotest.(check bool) "finalizer pending" false (Atomic.get released);
@@ -154,7 +154,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_daemon_failure_logs_diagnostic () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
     let daemon_body = E.sync (fun () -> failwith "daemon crash") in
-    run_ok rt (E.daemon daemon_body);
+    run_ok rt (Spi.daemon daemon_body);
     B.drain rt;
     match Logger.dump logger with
     | [ record ] ->
@@ -169,7 +169,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_daemon_interrupt_does_not_log_diagnostic () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
-    run_ok rt (E.daemon (runtime_interrupt_effect ()));
+    run_ok rt (Spi.daemon (runtime_interrupt_effect ()));
     B.drain rt;
     Alcotest.(check int)
       "no daemon diagnostics" 0

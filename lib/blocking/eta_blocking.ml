@@ -1,4 +1,4 @@
-module Expert = Eta.Effect.Expert
+module Expert = Eta.Spi.Expert
 module Runtime_contract = Eta.Runtime_contract
 
 let string_of_outcome = function

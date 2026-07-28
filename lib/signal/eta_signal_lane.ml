@@ -1,5 +1,6 @@
 module Runtime_contract = Eta.Runtime_contract
 module Effect = Eta.Effect
+module Spi = Eta.Spi
 module Sync_lock = Eta.Sync_lock
 
 type waiter_state =
@@ -265,9 +266,9 @@ let release_sync lane access_ref =
 
 let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
     lane f =
-  Effect.Expert.make ~leaf_name
+  Spi.Expert.make ~leaf_name
   @@ fun context ->
-  let contract = Effect.Expert.contract context in
+  let contract = Spi.Expert.contract context in
   let lane_depth =
     Option.value (contract.Runtime_contract.local_get depth_local) ~default:0
   in
@@ -279,8 +280,8 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
     try
       ensure_context ();
       let access = active_access lane in
-      Effect.Expert.eval context (Effect.sync (fun () -> f access))
-    with exn -> Effect.Expert.exit_of_exn context exn
+      Spi.Expert.eval context (Effect.sync (fun () -> f access))
+    with exn -> Spi.Expert.exit_of_exn context exn
   else
     let access_ref = ref None in
     let release_after_interrupt () =
@@ -296,7 +297,7 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
         Effect.sync (fun () -> release_sync lane access_ref)
       in
       contract.Runtime_contract.local_with_binding depth_local 1 (fun () ->
-          Effect.Expert.eval context
+          Spi.Expert.eval context
             (after_acquired ()
             |> Effect.bind (fun () -> Effect.sync (fun () -> f access))
             |> Effect.on_exit (fun _exit -> release_lane)))
@@ -307,4 +308,4 @@ let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
         raise exn
     | exn ->
         release_after_interrupt ();
-        Effect.Expert.exit_of_exn context exn
+        Spi.Expert.exit_of_exn context exn
