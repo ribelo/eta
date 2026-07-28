@@ -5291,3 +5291,52 @@ the second consecutive experiment where review caught what the full suite
 + executor + orchestrator missed: green tests, false contract, because
 every witness was cooperative. Lesson registered: discriminating classes
 must include NON-cooperative witnesses.
+
+---
+
+## V-DX-E42A-001 — 2026-07-28 — research/dx-e42a-privacy-moves — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E42A-002.
+
+**The batch (EOP audit §6.2–6.4, grill-adopted).** Three privacy moves:
+(1) `Effect.daemon` → hidden SPI (docs already say runtime-owned daemon
+work should stay internal; the audit: it is a public second execution
+model); (2) `Effect.Expert` → explicitly unstable SPI namespace (a
+pragmatic SPI for optional packages that currently *looks* like normal
+library and smells like a service locator); (3) low-level supervisor
+builders (`supervisor_pure/lift/fail/bind/start/await/cancel/failures/
+check`) → private, since `Supervisor.scoped`/`Supervisor.Scope` are the
+user surface.
+
+**Measured pre-facts.** Usage: `Effect.daemon` 26 lines (~11 files;
+machinery in `eta_otel`, `eta_signal_timer`; ONE app-shaped case —
+`examples/daemon_drain.ml`); `Effect.Expert` 122 lines (stream, blocking,
+js_stream, cache, otel, + tests incl. backend_eio, js_jsoo);
+`supervisor_*` 19 lines. JS track touched (js_stream, test/js_jsoo).
+
+**Predictions.**
+
+1. **Shape:** ONE explicitly-unstable SPI namespace carries both
+   `daemon` and `Expert` (executor proposes the mechanics; the doc must
+   state: not application API, no compatibility guarantee, usage
+   requires runtime-package justification, not for dependency
+   injection). Supervisor builders become invisible in the public mli.
+2. **Migration:** ~170 lines, compiler-guided, zero semantic change.
+   `examples/daemon_drain.ml` is the one app-shaped case — predicted
+   rewritten to the recommended top-level-scope pattern rather than
+   SPI-framed (review decides).
+3. **Census:** `Effect.mli` public surface −10 vals −1 submodule
+   (`daemon` + 9 `supervisor_*` + `Expert`); new SPI module +1.
+   Application-facing surface materially smaller; SPI surface explicitly
+   labelled.
+4. **Footguns:** −1/+0 (`daemon`'s second execution model and
+   `Expert`'s locator appearance stop reading as application API).
+5. **Law registry:** daemon/Expert/supervisor rows re-anchored (source
+   spans move) in the same change; no orphans.
+6. **JS track:** `lib/js_stream`, `test/js_jsoo` migrate; mainline
+   builds stay green.
+7. **Docs:** `docs/services.md` (the Expert escape-hatch doc) and
+   `docs/api-dx.md` updated; the SPI doc carries the audit's four
+   sentences.
+8. **Outcome:** promote. Risk: the daemon example's entanglement;
+   predicted resolved within the batch.
