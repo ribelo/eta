@@ -100,3 +100,13 @@ only the pre-existing `fn ~error_pp` debt. No audit, footprint, assertion,
 - `Expert.make`: one optional metadata argument in total, `?leaf_name`; zero
   aggregate-name or audit-declaration metadata arguments.
 - Explicit `~names` storage producers under `lib/`: zero.
+
+## Follow-up 2 note
+
+Before promotion, the benchmark fingerprint returned to R's leaf-only
+`Effect.name` shape so a filtered deep `Map` workload cannot make `describe`
+construct quadratic indentation after measurement. The historical D7
+`describe` consumer remains recorded because it existed for the BEFORE/S runs;
+fingerprinting occurs after measured rows, so their timing comparison is
+unchanged. The `describe` law matrix also gained a side-effectful `Map` function
+whose untouched flag closes R166b's no-evaluation coverage gap.

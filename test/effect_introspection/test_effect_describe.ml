@@ -16,7 +16,16 @@ let test_constructor_tree_without_evaluation () =
   Alcotest.(check bool) "custom evaluator remains opaque" false !custom_forced;
   check "Custom(\"named.custom\")"
     (Effect.Expert.make ~leaf_name:"named.custom" (fun _ -> Exit.Ok ()));
-  check "Map\n  Pure" (Effect.map (( + ) 1) (Effect.pure 1));
+  let map_forced = ref false in
+  let mapped =
+    Effect.map
+      (fun value ->
+        map_forced := true;
+        value + 1)
+      (Effect.pure 1)
+  in
+  check "Map\n  Pure" mapped;
+  Alcotest.(check bool) "map function remains opaque" false !map_forced;
   let continuation_forced = ref false in
   let bound =
     Effect.bind

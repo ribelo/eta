@@ -1,0 +1,3 @@
+command: nix develop -c dune runtest --force
+started_utc: 2026-07-28T07:42:50Z
+exit_status: 0

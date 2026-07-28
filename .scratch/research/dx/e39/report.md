@@ -160,3 +160,21 @@ Exact commands, subsets, and the four-endpoint census are in
 R's two-field/no-names representation, and restores only T5's honest printable
 blueprint operation. The boundary is proven by exact master parity, exhaustive
 constructor/opacity coverage, law registration, and all four mandatory gates.
+
+## Follow-up 2 pre-promotion fixes
+
+1. The construction benchmark sink returned to R's safe `Effect.name`
+   fingerprint. A filtered deep `Map` chain therefore receives a constant-depth
+   leaf-label read instead of a quadratic-indentation `describe` traversal. The
+   historical D7 consumer remains correct: `describe` was the sink at the
+   BEFORE/S measurement point. Fingerprinting occurs after measured rows, so
+   the recorded timing comparison is unchanged.
+2. R166b now observes a side-effectful `Map` function as well as `Custom.eval`
+   and `Bind.k`; all three flags remain false after `describe`. Registry source
+   pointers were updated without changing the claim.
+
+After both fixes, the native build/full-test/shipped trio, focused
+`test/effect_introspection` suite, and mainline JS targets all passed. The
+direct filtered quick benchmark also completed with `construction_sink=0`.
+Exact records are the `*-final.status` files under
+[`evidence/gates-sprime/`](evidence/gates-sprime/README.md).

@@ -46,8 +46,13 @@ are not run and that wrapper internals remain opaque.
 fingerprint a retained blueprint and prevent benchmark elision. It is benchmark
 infrastructure, not production demand. The omission is now recorded as D7 in
 [`../evidence/source-audit.md`](../evidence/source-audit.md) and in the dossier's
-[consumer table](consumer-dependency-honesty.md). S′ restores that exact sink
-implementation for BEFORE/S cross-tree benchmark comparability.
+[consumer table](consumer-dependency-honesty.md). S′ initially restored that
+exact sink, but Follow-up 2 returns the final tree to R's safe `Effect.name`
+fingerprint: a filtered deep `Map` chain would make `describe` allocate
+quadratic indentation and risk stack exhaustion/OOM. D7 remains historical
+evidence because the `describe` sink existed at the BEFORE/S measurement point.
+The fingerprint runs only after measured rows, so changing it now does not alter
+the recorded BEFORE/S timing comparison.
 
 ## S′ census
 
@@ -100,6 +105,8 @@ The R disposition now says it is superseded only for `describe`. R's
 
 All mandatory S′ gates passed. Exact command/timestamp/status artifacts are in
 [`../evidence/gates-sprime/`](../evidence/gates-sprime/README.md).
+Follow-up 2 reran the native trio, focused introspection suite, and mainline JS
+targets after both final fixes; the `-final.status` records all report 0.
 
 | Gate | Status |
 | --- | ---: |
