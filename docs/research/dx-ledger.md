@@ -412,6 +412,14 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 ### E40 — `all` admission split
 - What: `all` unbounded (deadlock-immune), `all_bounded ~max_concurrent`,
   `all_settled` aligned; `map_par` keeps documented default-8.
+- **Decision: PROMOTED (2026-07-28, `9a80a07c`).** `all` forks one fiber
+  per input behind an admission gate (register-then-release + post-release
+  cancellation check) — deadlock-immunity is true, proven under
+  synchronous first-child failure. `all_bounded` keeps the E28 pool under
+  a required bound. Breaking change in CHANGELOG; footguns −1/+1
+  (fan-out registered). The eager-fork hole (sequential fork + Eio
+  run-immediately) was found by review and closed by the gate.
+  Evidence: `.scratch/research/dx/e40/`, V-DX-E40-001..002.
 
 ### E41 — `Resource` → `Refreshable`
 - What: rename + move to eta_cache + lexical-first `with_auto`.

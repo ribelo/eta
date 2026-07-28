@@ -8,12 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E40 — `all` admission split**
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e40`
-  - Branch: `research/dx-e40-all-admission-split`
-  - Stage: review HOLD — admission-gate fix items (V-DX-E40-001b);
-    followup-1.md written; awaiting executor rework; scope waiver granted
-    (V-DX-E40-001a)
+- In flight: nothing (next: **E42a — privacy moves**)
+- Done (recent): **E40 promoted** (`9a80a07c`; `all` unbounded behind an
+  admission gate, `all_bounded` named; review found the eager-fork hole,
+  gate closed it; footguns −1/+1)
 - Done (recent): **E39 promoted as third endpoint S′** (`203b8fbe`;
   audit/footprints/assertions/collect_names deleted; `describe` kept;
   −36.36% words, −54.70% construction time; two review rounds)
@@ -125,4 +123,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-28 — E40 rework round (admission gate)
+- Last update: 2026-07-28 — E40 promoted

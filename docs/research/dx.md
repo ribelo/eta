@@ -873,3 +873,32 @@ one proposal, check whether they share a cost and a justification —
 
 Provenance: `.scratch/research/dx/e39/`, V-DX-E39-001..003, branch
 `research/dx-e39-audit-slim-race`, merge `203b8fbe`.
+
+## E40 — `all` admission split: the gate that makes the promise true (2026-07-28)
+
+`Effect.all` no longer hides a magic number. It now forks one fiber per
+input — deadlock-immune for coordination shapes — and the old bounded
+behavior moved to the honestly-named `all_bounded ~max_concurrent`
+(required bound, coordination caveat attached). `map_par` keeps its
+measured, documented default-8.
+
+The experiment's lesson is in what the tests didn't see. The first
+implementation passed the full suite — barrier shapes, generated laws,
+deadlock pinned "both ways" — and was still wrong: `Eio.Fiber.fork` runs
+each new child immediately, so a synchronously-failing first child
+prevented later children from ever being forked. Every test witness was
+cooperative, so nobody noticed. The fix is an admission gate: every child
+registers behind a start promise, the gate releases after the
+registration loop, and a post-release cancellation check keeps doomed
+children from running. "Every child is admitted" is now a true sentence,
+proven by a counted regression under synchronous failure.
+
+Carried forward: discriminating test classes must include
+non-cooperative witnesses; and a green suite proves nothing about a
+contract the suite never attacked. Breaking change documented in
+CHANGELOG; the unbounded-fan-out trade is registered as a footgun with
+docs guidance (`all` for finite coordination groups, `all_bounded` for
+large/data-derived independent work, `map_par` for lazy mapping).
+
+Provenance: `.scratch/research/dx/e40/`, V-DX-E40-001..002, branch
+`research/dx-e40-all-admission-split`, merge `9a80a07c`.

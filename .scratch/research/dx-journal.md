@@ -5232,3 +5232,62 @@ Executor's sealed set unaffected (its predictions were about sites/laws,
 and its own review already caught the M123 wave-admission gap).
 
 Rework round via followup-1.md.
+
+---
+
+## V-DX-E40-002 — 2026-07-28 — research/dx-e40-all-admission-split — phase: results + decision
+
+**Decision: PROMOTE.** Merged `--no-ff` (`9a80a07c`); master gates green;
+master + branch pushed; worktree removed.
+
+**What landed.** `all` unbounded (one fiber per input) behind an
+admission gate: every child registers behind a start promise, the gate
+releases after the registration loop, and a post-release `check ()`
+prevents cancelled children from running — making "every child is
+admitted" TRUE, including under synchronous first-child failure.
+`all_bounded ~max_concurrent` keeps the E28 worker pool under a required
+positive bound with the coordination caveat. `all_settled` shares the
+gate. `map_par` untouched (documented default-8). CHANGELOG breaking
+entry; footgun delta **−1/+1** (hidden cap-8 stall removed; unbounded
+fan-out registered with docs guidance); law rows rewritten to pin the
+gate (77 properties green).
+
+**Verified evidence.** Gates re-run by orchestrator on the final tip
+(native trio + mainline JS) and on master post-merge. Counted Eio
+regression: synchronous first-child failure still registers all children
+(`[(0, 3)]` — 3 registrations, only the first body runs). Deadlock pair
+(barrier shape) pins both directions. Omission census 106/106
+safe-to-widen confirmed. Reviewer-of-record final verdict: promote, no
+remaining correctness issue — with independent reruns (Eio admission 3/3,
+laws 77/77) and leak/interaction analysis (no promise leak on
+registration failure; `stop_once`/`Race_won` untouched; bounded siblings
+ungated by default).
+
+**Prediction scoring (orchestrator, V-DX-E40-001).**
+- #1 landing shape: **hit** (all unbounded, all_bounded required,
+  all_settled aligned, map_par untouched, no all_settled_bounded) — plus
+  the admission gate, which no one predicted.
+- #2 fork-all sharing with all_settled: **hit** (shared gate).
+- #3 migration classifications: **hit** (7→all_bounded; 106/106
+  safe-to-widen).
+- #4 deadlock pinned both ways: **partial** — the first immunity test
+  covered only cooperative children; the eager-fork hole escaped to
+  review. Final pin is real (gate + counted regression).
+- #5 census/footguns: census **hit** (+1 val); footguns **miss** —
+  predicted −1/+0, actual −1/+1 (fan-out trap not predicted).
+- #6 review misreadings: **superseded** (PR-style review found a worse
+  defect than any misreading).
+- #7 T1 contract crisp: **hit**.
+- #8 law rows updated same change: **hit** (overclaim corrected too).
+- #9 promote, no hidden default-8 dependency: **hit** in-repo; the
+  external silent-semantics-change point (CHANGELOG) was an unpredicted
+  process find.
+Executor: sealed follow-up amendment predictions; own footgun miss
+scored honestly.
+
+**Process notes.** Scope waiver (V-DX-E40-001a) — incident class now has
+search-discipline mitigation in future objectives. The eager-fork hole is
+the second consecutive experiment where review caught what the full suite
++ executor + orchestrator missed: green tests, false contract, because
+every witness was cooperative. Lesson registered: discriminating classes
+must include NON-cooperative witnesses.
