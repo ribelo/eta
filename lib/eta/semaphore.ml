@@ -148,8 +148,7 @@ let cleanup_waiter contract t waiter =
 let acquire t n =
   validate_request "acquire" t n;
   Effect_erasure.effect_to_public
-    (Effect_core.sync_frame ~leaf_name:"Semaphore.acquire"
-       ~footprint:(Effect_core.footprint ~has_concurrency:true ()) (fun frame ->
+    (Effect_core.sync_frame ~leaf_name:"Semaphore.acquire" (fun frame ->
          let contract = frame.Effect_core.runtime.Runtime_core.contract in
          let promise, resolver = contract.Runtime_contract.create_promise () in
          let waiter = { permits = n; contract; resolver; state = Waiting } in

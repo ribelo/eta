@@ -1,0 +1,3 @@
+command: nix develop .#mainline -c dune build --build-dir=_build-mainline test/cache_jsoo test/js_jsoo test/signal_jsoo test/http_js
+started_utc: 2026-07-28T07:10:08Z
+exit_status: 0

@@ -116,28 +116,42 @@ let emit_measurement ~name ~metric ~unit samples =
 
 let measure_once f =
   Gc.compact ();
-  let before = Gc.quick_stat () in
+  let before_minor, before_promoted, before_major = Gc.counters () in
   let start = Unix.gettimeofday () in
   f ();
   let stop = Unix.gettimeofday () in
-  let after = Gc.quick_stat () in
+  let after_minor, after_promoted, after_major = Gc.counters () in
   let wall_ns = (stop -. start) *. 1_000_000_000. in
-  let minor_words = after.minor_words -. before.minor_words in
-  let major_words = after.major_words -. before.major_words in
-  (wall_ns, minor_words, major_words)
+  let minor_words = after_minor -. before_minor in
+  let promoted_words = after_promoted -. before_promoted in
+  let major_words = after_major -. before_major in
+  let allocated_words = minor_words +. major_words -. promoted_words in
+  (wall_ns, allocated_words, minor_words, promoted_words, major_words)
 
 let run_workload opts workload =
   if should_run opts workload.name then
     let samples = Option.value workload.samples ~default:opts.samples in
-    let rec collect i walls minors majors =
-      if i = 0 then (List.rev walls, List.rev minors, List.rev majors)
+    let rec collect i walls allocated minors promoteds majors =
+      if i = 0 then
+        ( List.rev walls,
+          List.rev allocated,
+          List.rev minors,
+          List.rev promoteds,
+          List.rev majors )
       else
-        let wall, minor, major = measure_once workload.run in
-        collect (i - 1) (wall :: walls) (minor :: minors) (major :: majors)
+        let wall, alloc, minor, promoted, major = measure_once workload.run in
+        collect (i - 1) (wall :: walls) (alloc :: allocated) (minor :: minors)
+          (promoted :: promoteds) (major :: majors)
     in
-    let walls, minors, majors = collect samples [] [] [] in
+    let walls, allocated, minors, promoted, majors =
+      collect samples [] [] [] [] []
+    in
     emit_measurement ~name:workload.name ~metric:"wall_ns" ~unit:"ns" walls;
+    emit_measurement ~name:workload.name ~metric:"allocated_words" ~unit:"words"
+      allocated;
     emit_measurement ~name:workload.name ~metric:"minor_words" ~unit:"words" minors;
+    emit_measurement ~name:workload.name ~metric:"promoted_words" ~unit:"words"
+      promoted;
     emit_measurement ~name:workload.name ~metric:"major_words" ~unit:"words" majors
 
 let run opts workloads = List.iter (run_workload opts) workloads

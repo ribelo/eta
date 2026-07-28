@@ -1,0 +1,4 @@
+command: nix develop -c dune exec bench/effect_construction/effect_construction.exe -- --quick --filter 'effect.construction.map_bind$'
+started_utc: 2026-07-28T07:41:03Z
+exit_status: 0
+observed: construction_sink=0

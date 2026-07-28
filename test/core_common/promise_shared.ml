@@ -41,8 +41,7 @@ module Make (B : Backend) = struct
         Effect.yield
 
   let install_cancel_handle slot eff =
-    Effect.Expert.make ~capabilities:[ `Concurrency ] ~inherit_:eff
-      ~leaf_name:"test.promise.cancel-handle" @@ fun context ->
+    Effect.Expert.make ~leaf_name:"test.promise.cancel-handle" @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context Exit);

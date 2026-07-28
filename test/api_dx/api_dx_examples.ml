@@ -1133,15 +1133,6 @@ let manual_resource_proposed load =
   let* () = Eta.Resource.refresh resource |> Effect.ignore_errors in
   Eta.Resource.get resource
 
-let blueprint_names_current static_names dynamic_names =
-  let registered = Hashtbl.create 8 in
-  List.iter (fun name -> Hashtbl.replace registered name ()) static_names;
-  List.iter (fun name -> Hashtbl.replace registered name ()) dynamic_names;
-  Hashtbl.fold (fun name () acc -> name :: acc) registered []
-
-let blueprint_names_proposed eff =
-  (Effect.name eff, Effect.collect_names eff)
-
 let source_location_current (file, line, col_start, col_end) name attrs body =
   let loc = Printf.sprintf "%s:%d:%d-%d" file line col_start col_end in
   Effect.named name
@@ -1635,23 +1626,6 @@ loop checks|};
       area = "all_collect";
       variant = "proposed";
       code = {|Effect.all checks|};
-    };
-    {
-      area = "blueprint_names";
-      variant = "current";
-      code =
-        {|let registered = Hashtbl.create 8 in
-List.iter (fun name -> Hashtbl.replace registered name ()) static_names;
-List.iter (fun name -> Hashtbl.replace registered name ()) dynamic_names;
-Hashtbl.fold (fun name () acc -> name :: acc) registered []|};
-    };
-    {
-      area = "blueprint_names";
-      variant = "proposed";
-      code =
-        {|let top = Effect.name program in
-let static = Effect.collect_names program in
-(top, static)|};
     };
     {
       area = "channel";
@@ -2867,18 +2841,6 @@ let assert_expected_shape snippet =
       then
         failwith
           "all_collect proposed example should use Effect.all instead of a recursive bind loop"
-  | ( "blueprint_names",
-      "proposed",
-      (_, _, _, bind, let_star, let_at, from_result) ) ->
-      if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
-        failwith "blueprint_names proposed example should be pure inspection";
-      if
-        count_sub snippet.code "Effect.name" <> 1
-        || count_sub snippet.code "Effect.collect_names" <> 1
-        || count_sub snippet.code "Hashtbl" <> 0
-      then
-        failwith
-          "blueprint_names proposed example should use Eta blueprint inspection instead of a manual registry"
   | "channel", "proposed", (_, _, _, bind, let_star, let_at, from_result) ->
       if bind <> 0 || let_star <> 5 || let_at <> 0 || from_result <> 0 then
         failwith

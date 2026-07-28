@@ -146,7 +146,7 @@ let test_expert_custom_effect_uses_runtime_contract () =
   Direct_runtime.now := 10;
   let rt = Direct.create () in
   let eff =
-    Effect.Expert.make ~capabilities:[ `Clock ] ~names:[ "expert.contract" ]
+    Effect.Expert.make
     @@ fun context ->
     let contract = Effect.Expert.contract context in
     contract.Runtime_contract.sleep (Duration.ms 5);
@@ -158,7 +158,7 @@ let test_expert_clock_observes_scoped_override () =
   Direct_runtime.now := 10;
   let rt = Direct.create () in
   let expert_now =
-    Effect.Expert.make ~capabilities:[ `Clock ] ~leaf_name:"test.expert-now" @@ fun context ->
+    Effect.Expert.make ~leaf_name:"test.expert-now" @@ fun context ->
     let contract = Effect.Expert.contract context in
     Exit.Ok (contract.Runtime_contract.now_ms ())
   in

@@ -105,8 +105,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
   in
   let cases = [ start; stop; idle ] in
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
-      ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
+    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
     let find_case timer =
       match
@@ -377,8 +376,7 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
       let record event = append_event events event in
       let result =
         run_ok runtime
-          (Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
-             ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
+          (Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
           @@ fun context ->
             let runtime_contract = Eta.Effect.Expert.contract context in
             let node_runtime_contract =
@@ -445,8 +443,7 @@ let test_refresh_node_demand_runtime_mismatch_short_circuits () =
     | None -> Alcotest.fail "unknown timer node"
   in
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
-      ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
+    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
     let make_node runtime_contract case =
       let node =
@@ -519,8 +516,7 @@ let test_mark_node_unneeded_marks_starting_inactive () =
   in
   let starting_hooks, inactive_hooks =
     run_ok runtime
-      (Eta.Effect.Expert.make ~capabilities:[ `Concurrency ]
-         ~leaf_name:"eta_signal.timer.test_mark_node_unneeded"
+      (Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_mark_node_unneeded"
        @@ fun context ->
          let runtime_contract = Eta.Effect.Expert.contract context in
          let make_node case =
@@ -878,8 +874,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
         append_event events ("set:" ^ state_label state))
   in
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency; `Background ]
-      ~leaf_name:"eta_signal.timer.test_node"
+    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node"
     @@ fun context ->
     let runtime_contract = Eta.Effect.Expert.contract context in
     let timer =

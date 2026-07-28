@@ -1,0 +1,9 @@
+(executable
+ (name effect_construction)
+ (modules effect_construction construction_sink)
+ (libraries bench_lib eta))
+
+(rule
+ (alias bench)
+ (action
+  (run ./effect_construction.exe --quick)))

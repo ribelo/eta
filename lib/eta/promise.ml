@@ -24,8 +24,7 @@ let remove_waiter t waiter =
       `Removed
 
 let await t =
-  Effect_erasure.public_runtime ~leaf_name:"Promise.await"
-    ~footprint:Effect_core.concurrency_footprint t
+  Effect_erasure.public_runtime ~leaf_name:"Promise.await" t
   @@ fun contract t ->
   let backend_promise, resolver = contract.Runtime_contract.create_promise () in
   let waiter = { contract; resolver } in
@@ -50,8 +49,7 @@ let await t =
             raise exn)
 
 let resolve t exit =
-  Effect_erasure.public_runtime ~leaf_name:"Promise.resolve"
-    ~footprint:Effect_core.concurrency_footprint t
+  Effect_erasure.public_runtime ~leaf_name:"Promise.resolve" t
   @@ fun _contract t ->
   match
     with_lock t @@ fun () ->

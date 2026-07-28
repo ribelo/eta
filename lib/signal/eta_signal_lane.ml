@@ -265,7 +265,7 @@ let release_sync lane access_ref =
 
 let with_sync ~leaf_name ~depth_local ~ensure_context ~hooks ~after_acquired
     lane f =
-  Effect.Expert.make ~capabilities:[ `Concurrency; `Resources ] ~leaf_name
+  Effect.Expert.make ~leaf_name
   @@ fun context ->
   let contract = Effect.Expert.contract context in
   let lane_depth =

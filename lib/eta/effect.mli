@@ -22,30 +22,6 @@
 
 type ('a, 'err) t
 
-type audit = {
-  names : string list;
-  uses_clock : bool;
-  emits_logs : bool;
-  emits_metrics : bool;
-  has_concurrency : bool;
-  has_resources : bool;
-  has_background : bool;
-}
-(** Static preflight summary of an effect blueprint.
-
-    The summary covers only the blueprint's currently constructed static spine
-    and capability footprints declared by Eta library leaves. It is not a
-    runtime inventory. In particular, {!bind} and other continuation-producing
-    combinators do not call ordinary OCaml continuation functions during
-    inspection, so an effect constructed later by such a function is absent.
-
-    Every [true] capability flag means that the static blueprint may use that
-    capability if execution reaches the declaring leaf. It may over-report one
-    execution because control flow or disabled observability can prevent the
-    operation. A [false] flag excludes only declared use in the visible static
-    blueprint; it does not constrain opaque continuation code, arbitrary work
-    inside {!sync}, or a dishonest custom {!Expert.make} declaration. *)
-
 type ('s, 'a, 'err) supervisor_scope
 
 type ('a, 'err) supervisor_body = {
@@ -244,9 +220,6 @@ val all :
     admitted can request full fan-out with
     [all ~max_concurrent:(List.length effects) effects].
 
-    Unlike {!map_par}, whose mapper is not forced while constructing the
-    blueprint, [all] receives prebuilt effects and aggregates their static names
-    and capability footprints for introspection.
     @raise Invalid_argument if [max_concurrent <= 0]. *)
 
 val all_settled :
@@ -268,6 +241,7 @@ val map_par :
     concurrent fibers, not domain workers. This does not move arbitrary effects
     to worker domains; use the optional [eta_par] package for CPU-bound batch
     work.
+    The mapper is not forced while constructing the blueprint.
     @raise Invalid_argument if [max_concurrent <= 0]. *)
 
 val acquire_all_par :
@@ -837,28 +811,12 @@ module Expert : sig
 
   val make :
     ?leaf_name:string ->
-    ?names:string list ->
-    ?inherit_:('child, 'child_err) t ->
-    capabilities:
-      [ `Clock | `Logs | `Metrics | `Concurrency | `Resources | `Background ]
-      list ->
     (context -> ('a, 'err) Exit.t) ->
     ('a, 'err) t
   (** Build a runtime-backed effect without exposing Eta's internal effect
       representation. Runtime-specific packages use this to attach operations
       to the current {!Runtime_contract.t}; ordinary user code should prefer the
-      typed combinators in this module.
-
-      The capability declaration is required because the evaluator is an opaque
-      function that {!audit} cannot inspect. Include [`Clock], [`Logs],
-      [`Metrics], [`Concurrency], [`Resources], or [`Background] when the custom
-      leaf directly performs the corresponding operation. An omitted capability
-      is a contract made by the custom leaf author, not something Eta can verify.
-      [`Background] also sets [has_concurrency], so a background declaration
-      cannot produce an internally inconsistent audit.
-      Pass a statically available child as [inherit_] when the evaluator wraps it;
-      its declared footprint is unioned with the custom leaf's direct footprint.
-      Effects created later by ordinary functions remain opaque. *)
+      typed combinators in this module. *)
 
   val contract : context -> Runtime_contract.t
   (** Runtime contract selected by the current interpreter. *)
@@ -876,14 +834,11 @@ module Expert : sig
   (** Whether runtime leaf auto-instrumentation is enabled. *)
 
   val instrument_leaf : context -> name:string -> (unit -> 'a) -> 'a
-  (** Run a leaf body under Eta's standard runtime instrumentation. A custom
-      leaf that calls this declares [`Clock] because enabled tracing timestamps
-      the span. *)
+  (** Run a leaf body under Eta's standard runtime instrumentation. *)
 
   val emit_trace_event :
     context -> name:string -> attrs:(string * string) list -> unit
-  (** Emit an event on the active span, if tracing is enabled and sampled. A
-      custom leaf that calls this declares [`Clock] for the event timestamp. *)
+  (** Emit an event on the active span, if tracing is enabled and sampled. *)
 
   val record_metric :
     context ->
@@ -894,13 +849,11 @@ module Expert : sig
     attrs:(string * string) list ->
     value:Capabilities.metric_value ->
     unit
-  (** Record a metric point when runtime metrics are enabled. A custom leaf that
-      calls this declares both [`Metrics] and [`Clock]. *)
+  (** Record a metric point when runtime metrics are enabled. *)
 
   val fork_daemon : context -> (unit -> [ `Stop_daemon ]) -> unit
   (** Fork runtime-owned finite background work and include it in
-      {!Runtime.drain} accounting. A custom leaf that calls this declares
-      [`Background], which also implies concurrency. *)
+      {!Runtime.drain} accounting. *)
 
   val eval : context -> ('a, 'err) t -> ('a, 'err) Exit.t
   (** Evaluate a child effect in the current runtime context. *)
@@ -1217,34 +1170,6 @@ val fn :
     be total; a raising printer becomes a defect. *)
 
 val name : ('a, 'err) t -> string option
-val collect_names : ('a, 'err) t -> string list
-(** [collect_names eff] returns names that are statically present in
-    [eff]'s current description.
-
-    This is a preflight/documentation helper, not a complete runtime inventory.
-    Continuation-producing nodes such as [bind], [bind_error], [map_par], and
-    [supervisor_scoped] are not forced or traversed,
-    so names created by those continuations are intentionally absent. *)
-
-val audit : ('a, 'err) t -> audit
-(** Inspect the statically constructed part of an effect blueprint.
-
-    [names] has the same ordering and continuation boundary as
-    {!collect_names}. [uses_clock] is set by declared Eta clock reads or sleeps,
-    including clock-backed scheduling and observability timestamps.
-    [emits_logs] and [emits_metrics] are set by declared log and metric leaves.
-    [has_concurrency] is set by declared fiber/concurrent combinators.
-    [has_resources] is set by declared resource scopes or finalizer lifecycle
-    combinators. [has_background] is set only by declared runtime-owned work
-    that may outlive the caller's lexical scope; structured background work sets
-    [has_concurrency] but not [has_background].
-
-    Flags are unioned across the visible static spine and through Eta wrappers.
-    They are conservative possibilities, so [true] does not promise an observed
-    operation. Conversely, [false] says only that no visible declared leaf has
-    that footprint. For example, the sleep in
-    [bind (fun () -> sleep duration) unit] is invisible because inspecting the
-    blueprint never calls the continuation. *)
 
 val describe : ('a, 'err) t -> string
 (** Render the statically constructed blueprint as a deterministic tree without

@@ -3,10 +3,10 @@
  (modules snapshot_effect_describe)
  (libraries eta))
 
-(executable
- (name redteam_effect_audit)
- (modules redteam_effect_audit)
- (libraries eta eta_eio eio_main))
+(test
+ (name test_effect_describe)
+ (modules test_effect_describe)
+ (libraries eta alcotest))
 
 (rule
  (target actual_descriptions.txt)
@@ -15,11 +15,6 @@
    (run %{exe:snapshot_effect_describe.exe}))))
 
 (rule
- (alias runtest)
+ (aliases runtest effect-describe-snapshot)
  (action
   (diff expected_descriptions.txt actual_descriptions.txt)))
-
-(rule
- (alias runtest)
- (action
-  (run %{exe:redteam_effect_audit.exe})))

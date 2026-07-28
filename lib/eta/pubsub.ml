@@ -305,8 +305,7 @@ let publish_sync contract t value =
         raise exn)
 
 let publish t value =
-  Effect_erasure.public_sync ~leaf_name:"Pubsub.publish"
-    ~footprint:(Effect_core.footprint ~has_concurrency:true ()) t (fun contract t ->
+  Effect_erasure.public_sync ~leaf_name:"Pubsub.publish" t (fun contract t ->
       publish_sync contract t value)
   |> Effect.bind (function
        | `Published result -> Effect.pure result
@@ -414,8 +413,7 @@ let recv_sync contract sub =
   loop ()
 
 let recv sub =
-  Effect_erasure.public_sync ~leaf_name:"Pubsub.recv"
-    ~footprint:(Effect_core.footprint ~has_concurrency:true ()) sub recv_sync
+  Effect_erasure.public_sync ~leaf_name:"Pubsub.recv" sub recv_sync
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> assert false

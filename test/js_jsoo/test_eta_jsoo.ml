@@ -400,8 +400,7 @@ let test_acquire_all_par_sibling_failure_rollback done_ =
              fail "acquire_all_par jsoo sibling rollback diverged"))
 
 let cancel_from_parent_when started batch =
-  Eta.Effect.Expert.make ~inherit_:batch ~capabilities:[ `Concurrency ]
-  @@ fun context ->
+  Eta.Effect.Expert.make @@ fun context ->
   let contract = Eta.Effect.Expert.contract context in
   let cancel_ready, cancel_ready_resolver =
     contract.Runtime_contract.create_promise ()
@@ -513,7 +512,7 @@ let test_throwing_await_cancel_hook_does_not_strand_fiber done_ =
 let test_runtime_locals_cross_fork done_ =
   let local = Runtime_contract.create_local () in
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let result =
       contract.Runtime_contract.local_with_binding local 42 (fun () ->
@@ -536,8 +535,7 @@ let test_runtime_local_inheritance_kinds done_ =
     Runtime_contract.create_local ~inheritance:Fiber_local ()
   in
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency; `Background ]
-    @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let observe () =
       ( contract.Runtime_contract.local_get inherited,
@@ -575,7 +573,7 @@ let test_runtime_local_inheritance_kinds done_ =
 
 let test_runtime_stream_fifo done_ =
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let stream = contract.Runtime_contract.create_stream 1 in
     let values =
@@ -593,7 +591,7 @@ let test_runtime_stream_fifo done_ =
 
 let test_runtime_resolve_wakes_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let waiter_started, waiter_started_resolver =
@@ -623,7 +621,7 @@ let test_runtime_resolve_wakes_live_waiter done_ =
 
 let test_runtime_resolve_after_waiter_cancellation done_ =
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let started, started_resolver =
@@ -669,7 +667,7 @@ let test_runtime_resolve_after_waiter_cancellation done_ =
 
 let test_runtime_canceled_waiter_does_not_strand_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make ~capabilities:[ `Concurrency ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let canceled_started, canceled_started_resolver =
@@ -826,7 +824,7 @@ let test_expert_clock_observes_scoped_override done_ =
   in
   let runtime = Eta_jsoo.Runtime.create ~now_ms:(fun () -> 11) () in
   let expert_now =
-    Eta.Effect.Expert.make ~capabilities:[ `Clock ] @@ fun context ->
+    Eta.Effect.Expert.make @@ fun context ->
     let contract = Eta.Effect.Expert.contract context in
     Eta.Exit.Ok (contract.Eta.Runtime_contract.now_ms ())
   in

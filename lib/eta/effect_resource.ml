@@ -26,8 +26,7 @@ let finish_with_cleanup frame cleanup exit =
       | Exit.Error primary -> error (Cause.suppressed ~primary ~finalizer))
 
 let on_exit cleanup eff =
-  preserve ~leaf_name:"Effect.on_exit"
-    ~footprint:(footprint ~has_resources:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.on_exit" eff @@ fun frame ->
   match run_to_exit frame eff with
   | exit -> finish_with_cleanup frame cleanup exit
   | exception exn when Runtime_core.is_cancellation frame.runtime.contract exn -> (
@@ -69,8 +68,7 @@ let on_interrupt cleanup eff =
     eff
 
 let acquire_release ~acquire ~(release) =
-  preserve ~leaf_name:"Effect.acquire_release"
-    ~footprint:(footprint ~has_resources:true ()) acquire @@ fun frame ->
+  preserve ~leaf_name:"Effect.acquire_release" acquire @@ fun frame ->
   match eval frame acquire with
   | Exit.Error _ as err -> err
   | Exit.Ok value ->
@@ -81,8 +79,7 @@ let acquire_release ~acquire ~(release) =
       ok value
 
 let with_scope eff =
-  preserve ~leaf_name:"Effect.with_scope"
-    ~footprint:(footprint ~has_resources:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.with_scope" eff @@ fun frame ->
   try
     ok
       (let run_scoped sw =

@@ -500,8 +500,7 @@ let sent_token t = with_lock t @@ fun () -> t.sent_token
 let same_sent_token left right = left == right
 
 let offer t value =
-  Effect_erasure.public_sync ~leaf_name:"Queue.offer"
-    ~footprint:(Effect_core.footprint ~has_concurrency:true ()) t (fun contract t ->
+  Effect_erasure.public_sync ~leaf_name:"Queue.offer" t (fun contract t ->
       offer_sync contract t value)
   |> Effect.bind (function
        | `Sent -> Effect.pure true
@@ -680,8 +679,7 @@ let take_sync contract t =
   loop ()
 
 let take t =
-  Effect_erasure.public_sync ~leaf_name:"Queue.take"
-    ~footprint:(Effect_core.footprint ~has_concurrency:true ()) t take_sync
+  Effect_erasure.public_sync ~leaf_name:"Queue.take" t take_sync
   |> Effect.bind (function
        | `Item value -> Effect.pure value
        | `Empty -> invariant_failed "blocking take returned Empty"
@@ -723,9 +721,7 @@ let close_with_error_effect t error =
 let shutdown_effect t = Effect.sync (fun () -> shutdown t)
 
 let await_shutdown t =
-  Effect_erasure.public_sync ~leaf_name:"Queue.await_shutdown"
-    ~footprint:(Effect_core.footprint ~has_concurrency:true ()) t
-    await_shutdown_sync
+  Effect_erasure.public_sync ~leaf_name:"Queue.await_shutdown" t await_shutdown_sync
 
 let capacity t = with_lock t @@ fun () -> capacity_sync t
 let size t = with_lock t @@ fun () -> size_locked t

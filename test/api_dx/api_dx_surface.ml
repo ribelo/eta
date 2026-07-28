@@ -93,7 +93,6 @@ let promoted_examples =
     "examples/stream_decode.ml";
     "examples/batch_concurrency.ml";
     "examples/all_health_checks.ml";
-    "examples/blueprint_names.ml";
     "examples/bounded_channel.ml";
     "examples/channel_probe.ml";
     "examples/unbounded_queue.ml";

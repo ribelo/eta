@@ -6,7 +6,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let pp_hidden ppf _ = Format.pp_print_string ppf "<effect>"
 
   let runtime_interrupt_effect () =
-    E.Expert.make ~capabilities:[ `Concurrency ] ~leaf_name:"test.interrupt"
+    E.Expert.make ~leaf_name:"test.interrupt"
     @@ fun context ->
     let contract = E.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->

@@ -63,58 +63,6 @@ let[@cold] [@zero_alloc assume error] error cause = Exit.Error cause
 let default_renderer _ = "<typed failure>"
 let default_interrupt_of_cancel _ = Cause.interrupt
 
-type audit = {
-  names : string list;
-  uses_clock : bool;
-  emits_logs : bool;
-  emits_metrics : bool;
-  has_concurrency : bool;
-  has_resources : bool;
-  has_background : bool;
-}
-
-type capability_footprint = {
-  uses_clock : bool;
-  emits_logs : bool;
-  emits_metrics : bool;
-  has_concurrency : bool;
-  has_resources : bool;
-  has_background : bool;
-}
-
-let footprint ?(uses_clock = false) ?(emits_logs = false)
-    ?(emits_metrics = false) ?(has_concurrency = false)
-    ?(has_resources = false) ?(has_background = false) () =
-  {
-    uses_clock;
-    emits_logs;
-    emits_metrics;
-    has_concurrency;
-    has_resources;
-    has_background;
-  }
-
-let no_footprint = footprint ()
-let concurrency_footprint =
-  {
-    uses_clock = false;
-    emits_logs = false;
-    emits_metrics = false;
-    has_concurrency = true;
-    has_resources = false;
-    has_background = false;
-  }
-
-let union_footprint left right =
-  {
-    uses_clock = left.uses_clock || right.uses_clock;
-    emits_logs = left.emits_logs || right.emits_logs;
-    emits_metrics = left.emits_metrics || right.emits_metrics;
-    has_concurrency = left.has_concurrency || right.has_concurrency;
-    has_resources = left.has_resources || right.has_resources;
-    has_background = left.has_background || right.has_background;
-  }
-
 type ('a, +'err) t =
   | Pure : 'a -> ('a, 'err) t
   | Fail : 'err -> ('a, 'err) t
@@ -122,8 +70,6 @@ type ('a, +'err) t =
       {
         eval : frame -> ('a, 'err) Exit.t;
         leaf_name : string option;
-        names : string list;
-        footprint : capability_footprint;
       }
       -> ('a, 'err) t
   | Map :
@@ -139,36 +85,15 @@ type ('a, +'err) t =
       }
       -> ('b, 'err) t
 
-let rec names : type a err. (a, err) t -> string list = function
-  | Pure _ | Fail _ -> []
-  | Custom { names; _ } -> names
-  | Map { inner; _ } -> names inner
-  | Bind { inner; _ } -> names inner
-
 let leaf_name : type a err. (a, err) t -> string option = function
   | Custom { leaf_name; _ } -> leaf_name
   | Pure _ | Fail _ | Map _ | Bind _ -> None
 
-let rec capability_footprint : type a err. (a, err) t -> capability_footprint =
-  function
-  | Pure _ | Fail _ -> no_footprint
-  | Custom { footprint; _ } -> footprint
-  | Map { inner; _ } -> capability_footprint inner
-  | Bind { inner; _ } -> capability_footprint inner
+let make ?leaf_name eval =
+  Custom { eval; leaf_name }
 
-let make ?leaf_name ?(names = []) ~footprint eval =
-  Custom { eval; leaf_name; names; footprint }
-
-let preserve ?leaf_name ?(footprint = no_footprint) eff (eval) =
-  make ?leaf_name ~names:(names eff)
-    ~footprint:(union_footprint (capability_footprint eff) footprint)
-    eval
-
-let concat_names effects = List.concat_map names effects
-let concat_footprints effects =
-  List.fold_left
-    (fun acc eff -> union_footprint acc (capability_footprint eff))
-    no_footprint effects
+let preserve ?leaf_name eff (eval) =
+  make ?leaf_name eval
 
 let[@inline always] [@zero_alloc opt] exit_to_value frame = function
   | Exit.Ok value -> value
@@ -190,12 +115,6 @@ let rec eval : type a err. frame -> (a, err) t -> (a, err) Exit.t =
       match eval frame inner with
       | Exit.Ok value -> eval frame (k value)
       | Exit.Error _ as err -> err)
-
-let with_names names eff =
-  match eff with
-  | Custom custom -> Custom { custom with names }
-  | Pure _ | Fail _ | Map _ | Bind _ ->
-      make ~names ~footprint:(capability_footprint eff) (fun frame -> eval frame eff)
 
 let run_to_exit frame eff =
   try eval frame eff with
@@ -253,8 +172,8 @@ let unit = pure ()
 let from_result = function Stdlib.Ok value -> pure value | Stdlib.Error err -> fail err
 let from_option ~if_none = function Some value -> pure value | None -> fail if_none
 
-let sync_frame ?leaf_name ?(footprint = no_footprint) f =
-  make ?leaf_name ~footprint (fun frame ->
+let sync_frame ?leaf_name f =
+  make ?leaf_name (fun frame ->
       try ok (f frame) with
       | exn when Runtime_core.is_cancellation frame.runtime.contract exn ->
           raise exn
@@ -292,7 +211,7 @@ let run_async_canceler frame canceler =
       invalid_arg "Effect.async: canceler protection returned no outcome"
 
 let async ~register =
-  make ~leaf_name:"Effect.async" ~footprint:concurrency_footprint @@ fun frame ->
+  make ~leaf_name:"Effect.async" @@ fun frame ->
   let contract = frame.runtime.contract in
   let promise, resolver = contract.Runtime_contract.create_promise () in
   let state = Atomic.make Async_pending in
@@ -372,8 +291,6 @@ let never : 'a 'err. ('a, 'err) t =
               raise exn
           | exn -> exit_of_exn frame exn);
       leaf_name = Some "Effect.never";
-      names = [];
-      footprint = concurrency_footprint;
     }
 
 let die_message message = sync (fun () -> failwith message)
@@ -397,8 +314,7 @@ let seq next self = bind (fun () -> next) self
 
 let concat effects =
   let sequenced = List.fold_left (fun acc eff -> seq eff acc) unit effects in
-  make ~names:(concat_names effects) ~footprint:(concat_footprints effects)
-    (fun frame -> eval frame sequenced)
+  make (fun frame -> eval frame sequenced)
 
 let combine_stripped combine causes =
   match List.filter_map Fun.id causes with
@@ -558,29 +474,25 @@ let tap_defect (observe) eff =
       | [] -> original)
 
 let delay duration eff =
-  preserve ~leaf_name:"Effect.delay"
-    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.delay" eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   clock#sleep duration;
   eval frame eff
 
 let sleep duration =
-  sync_frame ~leaf_name:"Effect.sleep" ~footprint:(footprint ~uses_clock:true ())
-    (fun frame ->
+  sync_frame ~leaf_name:"Effect.sleep" (fun frame ->
       let clock = Runtime_core.current_clock frame.runtime in
       clock#sleep duration)
 
 let now_ms =
-  sync_frame ~leaf_name:"Effect.now_ms" ~footprint:(footprint ~uses_clock:true ())
-    (fun frame ->
+  sync_frame ~leaf_name:"Effect.now_ms" (fun frame ->
       let clock = Runtime_core.current_clock frame.runtime in
       clock#now_ms ())
 let fresh () = sync_frame (fun frame -> frame.runtime.contract.fresh ())
 let fresh_named prefix = fresh () |> map (Printf.sprintf "%s-%d" prefix)
 
 let timed eff =
-  preserve ~leaf_name:"Effect.timed"
-    ~footprint:(footprint ~uses_clock:true ()) eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.timed" eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   let started_ms = clock#now_ms () in
   match eval frame eff with
@@ -590,9 +502,7 @@ let timed eff =
   | Exit.Error _ as err -> err
 
 let timeout_as duration ~on_timeout eff =
-  preserve ~leaf_name:"Effect.timeout_as"
-    ~footprint:(footprint ~uses_clock:true ~has_concurrency:true ())
-    eff @@ fun frame ->
+  preserve ~leaf_name:"Effect.timeout_as" eff @@ fun frame ->
   let clock = Runtime_core.current_clock frame.runtime in
   let body_result = ref None in
   let timeout_fired = ref false in
@@ -673,19 +583,6 @@ let interruptible eff =
           restore.Runtime_contract.restore (fun () -> eval frame eff))
 
 let name eff = leaf_name eff
-let collect_names eff = names eff
-
-let audit eff =
-  let footprint = capability_footprint eff in
-  {
-    names = names eff;
-    uses_clock = footprint.uses_clock;
-    emits_logs = footprint.emits_logs;
-    emits_metrics = footprint.emits_metrics;
-    has_concurrency = footprint.has_concurrency;
-    has_resources = footprint.has_resources;
-    has_background = footprint.has_background;
-  }
 
 let describe eff =
   let buffer = Buffer.create 128 in
