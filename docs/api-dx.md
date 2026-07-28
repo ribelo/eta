@@ -60,28 +60,33 @@ Use syntax operators rather than explicit bind in application code:
 - `and*` / `and+` for sequential product (strict left-to-right; nothing forked).
 - `Effect.par` for independent concurrent effects (explicit at the call site).
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
-- `Effect.all` when the effects are already built and every child should be
-  admitted immediately.
-- `Effect.all_bounded ~max_concurrent` when prebuilt, independent effects need
-  an explicit resource or concurrency cap.
-- `Effect.map_par` when a function should be mapped lazily over a collection.
+- `Effect.all` for a finite group of prebuilt effects that requires full
+  admission.
+- `Effect.all_bounded ~max_concurrent` for a large or data-derived group of
+  independent prebuilt effects that needs an explicit resource or concurrency
+  cap.
+- `Effect.map_par` when lazily mapping a function over a collection.
 
-`Effect.all` admits every child immediately. `Effect.all_bounded` requires a
-positive bound. `Effect.map_par` retains its default bound of eight and accepts
-a different positive `~max_concurrent`. Results retain input order and these
-three operations are fail-fast.
+`Effect.all` forks one fiber per input and registers every child fiber before
+any child body starts. Full admission is not scheduler preemption: on a
+single-domain backend, a body that never yields can still prevent sibling
+bodies from running. `Effect.all_bounded` requires a positive bound.
+`Effect.map_par` retains its default bound of eight and accepts a different
+positive `~max_concurrent`. Results retain input order and these three
+operations are fail-fast.
 
 | Task shape | Recommended form | Admission |
 | --- | --- | --- |
-| Effects already in hand; every child must start | `Effect.all effects` | Every child |
-| Independent effects already in hand; resource/load cap required | `Effect.all_bounded ~max_concurrent effects` | Required positive bound |
-| Function plus a collection | `Effect.map_par f inputs` | 8 |
+| Finite prebuilt group requiring full admission | `Effect.all effects` | One fiber per input; all registered before bodies start |
+| Large/data-derived independent prebuilt group | `Effect.all_bounded ~max_concurrent effects` | Required positive bound |
+| Lazy function mapping over a collection | `Effect.map_par f inputs` | 8 |
 
-Reach for `all_bounded` only when the children are independent of unadmitted
-siblings and the caller owns a concrete resource or load limit. A bound smaller
-than a coordination group can stall when every admitted child waits for an
-unadmitted sibling; use `all` for barriers and coordinator shapes because it
-admits every prebuilt child immediately.
+An `all` over 10,000 inputs forks approximately 10,000 fibers. Use
+`all_bounded` only when the children are independent of unadmitted siblings and
+the caller owns a concrete resource or load limit. A bound smaller than a
+coordination group can stall when every admitted child waits for an unadmitted
+sibling; use `all` for finite barriers and coordinator shapes because it
+registers every prebuilt child before any body starts.
 
 ### Callback-shaped host APIs: `async` or `Expert.make`?
 

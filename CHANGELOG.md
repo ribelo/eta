@@ -18,6 +18,14 @@
 
 ### Changed
 
+- **Breaking:** `Effect.all` now forks one fiber per input instead of applying
+  an omitted cap of eight. Explicitly bounded calls move to the named sibling:
+
+  ```text
+  all ~max_concurrent:n effects  →  all_bounded ~max_concurrent:n effects
+  all effects                    →  now forks one fiber per input (was: at
+                                    most 8 admitted at once)
+  ```
 - **Breaking:** `Effect.with_background` is now fail-fast. A background typed
   failure or defect cancels and awaits the body and propagates its cause, like
   `Effect.par`; body completion still cancels and awaits the background. Move

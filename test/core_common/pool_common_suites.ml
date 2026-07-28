@@ -576,6 +576,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until (fun () -> (Pool.stats pool).Pool.waiting = 1);
     Alcotest.(check int) "max live bounded" 2 !(factory.max_live);
     Alcotest.(check int) "opened bounded" 2 (Pool.stats pool).Pool.opened;
+    wait_for_sleepers clock 2;
     B.adjust_clock clock (Duration.ms 30);
     check_exit_ok Alcotest.unit "first" () (B.await first);
     check_exit_ok Alcotest.unit "second" () (B.await second);
@@ -632,6 +633,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.delay (Duration.ms 20) E.unit))
     in
     wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+    wait_for_sleepers clock 1;
     let waiter =
       B.fork_run ctx rt (Pool.with_resource pool (fun _ -> E.unit))
     in
@@ -643,7 +645,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Error (Cause.Fail `Pool_shutdown) -> ()
     | _ -> Alcotest.fail "expected waiter Pool_shutdown"
     end;
-    B.adjust_clock clock (Duration.ms 20);
+    advance_clock_until_resolved clock holder 100;
     check_exit_ok Alcotest.unit "holder done" () (B.await holder);
     check_exit_ok Alcotest.unit "shutdown done" () (B.await shutdown);
     let stats = Pool.stats pool in
@@ -662,6 +664,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.delay (Duration.ms 100) E.unit))
     in
     wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+    wait_for_sleepers clock 1;
     let waiter =
       B.fork_run ctx rt (Pool.with_resource pool (fun _ -> E.unit))
     in
@@ -677,7 +680,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     (match B.await waiter with
     | Exit.Error (Cause.Fail `Pool_shutdown) -> ()
     | _ -> Alcotest.fail "expected waiter Pool_shutdown");
-    B.adjust_clock clock (Duration.ms 100);
+    advance_clock_until_resolved clock holder 150;
     check_exit_ok Alcotest.unit "holder done" () (B.await holder);
     advance_clock_until_resolved clock shutdown 100;
     check_exit_ok Alcotest.unit "shutdown done" () (B.await shutdown)
@@ -692,6 +695,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.delay (Duration.ms 30) E.unit))
     in
     wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+    wait_for_sleepers clock 1;
     let shutdown =
       B.fork_run ctx rt (Pool.shutdown ~deadline:(Duration.ms 2) pool)
     in
@@ -700,7 +704,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     (match B.await shutdown with
     | Exit.Error (Cause.Fail `Pool_shutdown_timeout) -> ()
     | _ -> Alcotest.fail "expected shutdown timeout");
-    B.adjust_clock clock (Duration.ms 30);
+    advance_clock_until_resolved clock holder 100;
     check_exit_ok Alcotest.unit "holder done" () (B.await holder);
     wait_until (fun () -> (Pool.stats pool).Pool.closed = 1)
 
@@ -724,6 +728,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
              E.delay (Duration.ms 1) E.unit))
     in
     wait_until (fun () -> (Pool.stats pool).Pool.active = 1);
+    wait_for_sleepers clock 1;
     let shutdown =
       B.fork_run ctx rt (Pool.shutdown ~deadline:(Duration.ms 200) pool)
     in

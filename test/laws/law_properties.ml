@@ -221,6 +221,13 @@ let equivalent ok error left right =
       (Run.pp pp_int pp_int) left (Run.pp pp_int pp_int) right
 
 let no_pending outcome = outcome.Run.pending_fibers = Some []
+
+let atomic_push cell value =
+  let rec loop () =
+    let values = Atomic.get cell in
+    if not (Atomic.compare_and_set cell values (value :: values)) then loop ()
+  in
+  loop ()
 let raises_invalid_argument f =
   match f () with
   | exception Invalid_argument _ -> true
@@ -724,20 +731,35 @@ let collect_with_peak collect values =
   let outcome = run (collect children) in
   (outcome, !maximum, !in_flight)
 
-(* Observation: peak simultaneously delayed children and final empty census;
-   generated class: lists of length 9..12, which always discriminate the old
-   cap of eight. *)
-let property_all_admits_every_child =
+(* Observation: exact backend fork registrations, body starts annotated with
+   the live registration count, first typed failure, and empty active-fiber
+   census. Generated class: a synchronous first failure followed by 1..11
+   arbitrary successful children. *)
+let property_all_registers_before_synchronous_failure =
   QCheck.Test.make
-    ~name:"all admits every generated child immediately"
-    ~count QCheck.(list_size (Gen.int_range 9 12) bounded_int)
-    (fun values ->
-      let outcome, maximum, in_flight = collect_with_peak E.all values in
-      outcome.exit = Eta.Exit.Ok values
-      && maximum = List.length values
-      && in_flight = 0
-      && List.length outcome.sleeps = List.length values
-      && no_pending outcome)
+    ~name:
+      "all registers one fiber per generated child before synchronous first failure"
+    ~count
+    QCheck.(pair bounded_int (list_size (Gen.int_range 2 12) bounded_int))
+    (fun (error, values) ->
+      let registrations = Atomic.make 0 in
+      let active = Atomic.make 0 in
+      let starts = Atomic.make [] in
+      let child index value =
+        E.sync (fun () ->
+            atomic_push starts (index, Atomic.get registrations))
+        |> E.bind (fun () -> if index = 0 then E.fail error else E.pure value)
+      in
+      let children = List.mapi child values in
+      let exit =
+        Eta_test_backend_eio.Backend.run_counting_forks ~registrations ~active
+          (E.all children)
+      in
+      let length = List.length values in
+      exit = Eta.Exit.Error (Eta.Cause.Fail error)
+      && Atomic.get registrations = length
+      && Atomic.get active = 0
+      && List.rev (Atomic.get starts) = [ (0, length) ])
 
 (* Observation: exact peak, ordered result, cleanup, and empty census;
    generated class: nonempty lists of length 1..12 and bounds 1..8. *)
@@ -769,9 +791,11 @@ let property_all_bounded_rejects_nonpositive_max_concurrent =
           ignore
             (E.all_bounded ~max_concurrent [ E.pure 1 ] : (int list, _) E.t)))
 
-(* Observation for the barrier laws: exact admission/check/completion/finalizer
-   counts, timeout exit, sleepers, and fibers. Positive/full-bound classes use
-   N=9..12; bounded nonprogress uses N=2..12 and bound N-1. *)
+(* Observation for the barrier laws: positive/full-bound cases use a finite
+   cooperative-yield budget and exact admission/completion/finalizer/fiber
+   counts; bounded nonprogress uses a timeout plus exact admission/check/
+   completion/finalizer/fiber counts. Positive classes use N=9..12; bounded
+   nonprogress uses N=2..12 and bound N-1. *)
 let coordination_barrier participants =
   let admitted = ref 0 in
   let active = ref 0 in
@@ -799,20 +823,46 @@ let coordination_barrier participants =
   (List.init participants child, admitted, active, completed, checks)
 
 let coordination_barrier_completes collect participants =
-  let children, admitted, active, completed, checks =
-    coordination_barrier participants
+  let admitted = ref 0 in
+  let active = ref 0 in
+  let completed = ref 0 in
+  let rec await_everyone remaining =
+    if !admitted = participants then (
+      incr completed;
+      E.unit)
+    else if remaining = 0 then E.fail `Admission_withheld
+    else E.bind (fun () -> await_everyone (remaining - 1)) E.yield
   in
-  let outcome =
-    run
-      (collect children
-       |> E.timeout_as (Eta.Duration.ms 15) ~on_timeout:`Watchdog)
+  let child index =
+    E.acquire_release
+      ~acquire:
+        (E.sync (fun () ->
+             incr admitted;
+             incr active))
+      ~release:(fun () -> E.sync (fun () -> decr active))
+    |> E.bind (fun () -> await_everyone (participants * 2))
+    |> E.map (fun () -> index)
   in
-  outcome.exit = Eta.Exit.Ok (List.init participants Fun.id)
-  && !admitted = participants
-  && !checks = participants
-  && !completed = participants
-  && !active = 0
-  && no_pending outcome
+  let outcome = run (collect (List.init participants child)) in
+  let holds =
+    outcome.exit = Eta.Exit.Ok (List.init participants Fun.id)
+    && !admitted = participants
+    && !completed = participants
+    && !active = 0
+    && no_pending outcome
+  in
+  if holds then true
+  else
+    QCheck.Test.fail_reportf
+      "participants=%d admitted=%d active=%d completed=%d outcome:@.%a"
+      participants !admitted !active !completed
+      (Run.pp
+         (Format.pp_print_list
+            ~pp_sep:(fun fmt () -> Format.pp_print_string fmt "; ")
+            Format.pp_print_int)
+         (fun fmt `Admission_withheld ->
+           Format.pp_print_string fmt "Admission_withheld"))
+      outcome
 
 let property_all_coordination_barrier =
   QCheck.Test.make
@@ -1004,27 +1054,42 @@ let property_all_settled_input_order_and_capture =
           && no_pending outcome
       | Eta.Exit.Ok _ | Eta.Exit.Error _ -> false)
 
-(* Observation: the same barrier's exact counts and empty census with every
-   outcome materialized; generated class: N=9..12. *)
-let property_all_settled_admits_every_child =
+(* Observation: exact backend fork registrations, every body start annotated
+   with the final registration count, every materialized outcome, and empty
+   active-fiber census. Generated class: a synchronous first failure followed
+   by 1..11 arbitrary successful children. *)
+let property_all_settled_registers_before_synchronous_failure =
   QCheck.Test.make
-    ~name:"all_settled admits every generated child immediately"
-    ~count QCheck.(int_range 9 12) (fun participants ->
-      let children, admitted, active, completed, checks =
-        coordination_barrier participants
+    ~name:
+      "all_settled registers every generated child before synchronous first failure"
+    ~count
+    QCheck.(pair bounded_int (list_size (Gen.int_range 2 12) bounded_int))
+    (fun (error, values) ->
+      let registrations = Atomic.make 0 in
+      let active = Atomic.make 0 in
+      let starts = Atomic.make [] in
+      let child index value =
+        E.sync (fun () ->
+            atomic_push starts (index, Atomic.get registrations))
+        |> E.bind (fun () -> if index = 0 then E.fail error else E.pure value)
       in
-      let outcome =
-        run
-          (E.all_settled children
-           |> E.timeout_as (Eta.Duration.ms 15) ~on_timeout:`Watchdog)
+      let children = List.mapi child values in
+      let exit =
+        Eta_test_backend_eio.Backend.run_counting_forks ~registrations ~active
+          (E.all_settled children)
       in
-      outcome.exit
-      = Eta.Exit.Ok (List.init participants (fun index -> Ok index))
-      && !admitted = participants
-      && !checks = participants
-      && !completed = participants
-      && !active = 0
-      && no_pending outcome)
+      let length = List.length values in
+      let expected =
+        List.mapi
+          (fun index value ->
+            if index = 0 then Error (Eta.Cause.Fail error) else Ok value)
+          values
+      in
+      let starts = List.sort compare (Atomic.get starts) in
+      exit = Eta.Exit.Ok expected
+      && Atomic.get registrations = length
+      && Atomic.get active = 0
+      && starts = List.init length (fun index -> (index, length)))
 
 let property_race_first_value =
   QCheck.Test.make
@@ -3173,7 +3238,7 @@ let laws =
     property_map_par_order;
     property_map_par_fail_fast;
     property_map_par_max_concurrent;
-    property_all_admits_every_child;
+    property_all_registers_before_synchronous_failure;
     property_all_bounded_max_concurrent;
     property_all_bounded_rejects_nonpositive_max_concurrent;
     property_all_coordination_barrier;
@@ -3184,7 +3249,7 @@ let laws =
     property_all_fail_fast;
     property_all_bounded_fail_fast;
     property_all_settled_input_order_and_capture;
-    property_all_settled_admits_every_child;
+    property_all_settled_registers_before_synchronous_failure;
     property_race_first_value;
     property_race_loser_cancellation;
     property_finally_exactly_once;

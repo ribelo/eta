@@ -209,11 +209,11 @@ val par4 :
 
 val all : ('a, 'err) t list -> ('a list, 'err) t
 (** Run every prebuilt effect concurrently, collecting results in input order.
-    Every child is admitted immediately, so admission cannot deadlock a
-    coordination group by withholding one of its children.
-
-    Fail-fast: the first child failure cancels its siblings; the cause of the
-    first observed failure propagates. *)
+    [all] forks one fiber per input and registers every child fiber before any
+    child body starts, so no coordination child can be withheld by admission.
+    Fail-fast: the first child failure cancels siblings and propagates its cause.
+    Reserve [all] for finite groups requiring full admission; use {!all_bounded} for large or
+    data-derived independent prebuilt effects and {!map_par} for lazy mapping. *)
 
 val all_bounded : max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
 (** Run prebuilt effects with at most [max_concurrent] children admitted at
@@ -225,8 +225,8 @@ val all_bounded : max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
 
 val all_settled :
   ('a, 'err) t list -> (('a, 'err Cause.t) result list, 'outer_err) t
-(** Run every effect concurrently and collect every child outcome in input order.
-    Failures become [Error cause] values; every child is admitted as in {!all}. *)
+(** Collect every child outcome in input order; failures become [Error cause].
+    As in {!all}, every child fiber is registered before any child body starts. *)
 
 val map_par :
   ?max_concurrent:int ->

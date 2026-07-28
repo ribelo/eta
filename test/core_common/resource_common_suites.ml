@@ -205,12 +205,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "initial value" 1 (run_ok rt (Resource.get resource));
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_for_sleepers clock 1;
     Alcotest.(check int) "first refresh" 2
       (run_ok rt (Resource.get resource));
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_until (fun () -> run_ok rt (Resource.get resource) = 3);
     Alcotest.(check int) "second refresh" 3
       (run_ok rt (Resource.get resource))
 
@@ -238,7 +238,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "initial value" 1 (run_ok rt (Resource.get resource));
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_for_sleepers clock 1;
     Alcotest.(check int) "failed refresh keeps old value" 1
       (run_ok rt (Resource.get resource));
     Alcotest.(check (list string)) "observed refresh error" [ "boom" ]
@@ -249,7 +249,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     end;
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_until (fun () -> run_ok rt (Resource.get resource) = 2);
     Alcotest.(check int) "subsequent refresh updates" 2
       (run_ok rt (Resource.get resource))
 
@@ -274,7 +274,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_for_sleepers clock 1;
     Alcotest.(check int) "loader defect keeps old value" 1
       (run_ok rt (Resource.get resource));
     begin match run_ok rt (Resource.failures resource) with
@@ -285,7 +285,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     end;
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_until (fun () -> run_ok rt (Resource.get resource) = 2);
     Alcotest.(check int) "refresh loop continued" 2
       (run_ok rt (Resource.get resource))
 
@@ -311,7 +311,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_for_sleepers clock 1;
     begin match run_ok rt (Resource.failures resource) with
     | [ Cause.Fail (`Refresh_failed "boom"); Cause.Die die ] ->
         Alcotest.(check string) "on_error defect" "Failure(\"observer boom\")"
@@ -320,7 +320,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     end;
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
-    B.yield ();
+    wait_until (fun () -> run_ok rt (Resource.get resource) = 2);
     Alcotest.(check int) "refresh loop continued" 2
       (run_ok rt (Resource.get resource))
 

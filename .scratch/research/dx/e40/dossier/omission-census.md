@@ -1,10 +1,10 @@
 # `Effect.all` omission-site census
 
-Final lexical census after the admission split and test migration. Comments and
+Final lexical census after the admission split and follow-up gate. Comments and
 string literals are excluded; `Effect.all`, `Eta.Effect.all`,
 `Eta_js.Effect.all`, and the test alias `E.all` are included.
 
-**Result:** 106 omission sites; 106 safe-to-widen; 0 load-bearing.
+**Result:** 108 omission sites; 108 safe-to-widen; 0 load-bearing.
 No omission was rebound. The 55 consumer/example/benchmark sites match the
 sealed one-line predictions in `../journal.md`; verification callers are
 recorded individually because their assertions, not hidden admission, own their
@@ -97,19 +97,21 @@ behavior.
 | `test/core_common/stress_common_suites.ml:390` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/core_common/stress_common_suites.ml:409` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/core_common/upstream_invariants_common_suites.ml:104` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/core_eio/run.ml:27` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/core_eio/run.ml:87` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/effect_introspection/snapshot_effect_describe.ml:16` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/eta/test_eta_effect_core.ml:330` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/http/test_eta_http_h2_connection.ml:250` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/http_js/run_http_js_tests.ml:419` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/http_js/run_http_js_tests.ml:436` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/js_jsoo/test_eta_js_jsoo.ml:133` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:735` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:822` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:883` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:948` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:1336` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:1702` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
-| `test/laws/law_properties.ml:2036` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:756` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:872` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:933` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:998` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:1401` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:1767` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
+| `test/laws/law_properties.ml:2101` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/runtime_common/runtime_common_suites.ml:458` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/runtime_common/runtime_common_suites.ml:481` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |
 | `test/runtime_common/runtime_common_suites.ml:493` | safe-to-widen | Verification-only caller with no caller-owned cap-eight protocol; asserted behavior is preserved under full admission. |

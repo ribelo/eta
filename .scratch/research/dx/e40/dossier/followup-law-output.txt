@@ -1,0 +1,9 @@
+[ ]    0    0    0    0 /   50     0.0s all registers one fiber per generated child before synchronous first failure
+[✓]   50    0    0   50 /   50     0.0s all registers one fiber per generated child before synchronous first failure
+[ ]    0    0    0    0 /   50     0.0s all admits every generated rendezvous participant without admission deadlock
+[✓]   50    0    0   50 /   50     0.0s all admits every generated rendezvous participant without admission deadlock
+[ ]    0    0    0    0 /   50     0.0s all_bounded can stall when every admitted child awaits an unadmitted participant
+[✓]   50    0    0   50 /   50     0.0s all_bounded can stall when every admitted child awaits an unadmitted participant
+[ ]    0    0    0    0 /   50     0.0s all_settled registers every generated child before synchronous first failure
+[✓]   50    0    0   50 /   50     0.0s all_settled registers every generated child before synchronous first failure
+success (ran 77 tests)

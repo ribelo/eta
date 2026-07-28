@@ -1,5 +1,5 @@
-[ ]    0    0    0    0 /   50     0.0s all admits every generated child immediately
-[✓]   50    0    0   50 /   50     0.0s all admits every generated child immediately
+[ ]    0    0    0    0 /   50     0.0s all registers one fiber per generated child before synchronous first failure
+[✓]   50    0    0   50 /   50     0.0s all registers one fiber per generated child before synchronous first failure
 [ ]    0    0    0    0 /   50     0.0s all_bounded never exceeds max_concurrent and reaches the bound when children suffice
 [✓]   50    0    0   50 /   50     0.0s all_bounded never exceeds max_concurrent and reaches the bound when children suffice
 [ ]    0    0    0    0 /   50     0.0s all_bounded rejects every generated nonpositive max_concurrent at construction
@@ -18,6 +18,6 @@
 [✓]   50    0    0   50 /   50     0.0s all first observed failure cancels siblings and awaits their finalizers
 [ ]    0    0    0    0 /   50     0.0s all_bounded first observed failure cancels admitted siblings and awaits their finalizers
 [✓]   50    0    0   50 /   50     0.0s all_bounded first observed failure cancels admitted siblings and awaits their finalizers
-[ ]    0    0    0    0 /   50     0.0s all_settled admits every generated child immediately
-[✓]   50    0    0   50 /   50     0.0s all_settled admits every generated child immediately
+[ ]    0    0    0    0 /   50     0.0s all_settled registers every generated child before synchronous first failure
+[✓]   50    0    0   50 /   50     0.0s all_settled registers every generated child before synchronous first failure
 success (ran 77 tests)

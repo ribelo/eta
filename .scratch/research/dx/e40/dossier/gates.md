@@ -1,4 +1,4 @@
-# Required gate results
+# Required gate results — Follow-up 1
 
 All commands were run exactly from the E40 worktree after the final source and
 test changes.
@@ -15,5 +15,10 @@ Focused evidence also passed:
 | Command | Result |
 | --- | --- |
 | `nix develop -c dune build lib/eta/eta.cmxa` | PASS |
-| `nix develop -c dune runtest test/laws test/core_common --force` | PASS |
-| `nix develop -c dune runtest test/core_eio --force` | PASS (631 tests) |
+| `EIO_BACKEND=posix _build/default/test/core_eio/run.exe test '^Effect Eio admission$'` | PASS (3 tests) |
+| `EIO_BACKEND=posix _build/default/test/laws/law_properties.exe` | PASS (77 properties) |
+| `nix develop -c dune runtest test/core_eio --force` | PASS (634 tests, included by full gate) |
+
+Focused status excerpts are in `followup-admission-output.txt` and
+`followup-law-output.txt`. The broader deadlock/parity excerpts remain in
+`deadlock-shared-output.txt` and `deadlock-law-output.txt`.

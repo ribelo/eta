@@ -1,5 +1,5 @@
 diff --git a/.scratch/research/dx/e22/review/LAWS.md b/.scratch/research/dx/e22/review/LAWS.md
-index 53c5899c..61e55e76 100644
+index 53c5899c..e75ecf1a 100644
 --- a/.scratch/research/dx/e22/review/LAWS.md
 +++ b/.scratch/research/dx/e22/review/LAWS.md
 @@ -13,8 +13,8 @@ does **not** claim retrospective coverage of every other public interface. The
@@ -8,12 +8,12 @@ index 53c5899c..61e55e76 100644
 
 -Direct qcheck census: **112 mli-stated claims**, **2 prose-pending model claims**,
 -**169 registered external claim clusters**, and **74 unique named qcheck properties** in
-+Direct qcheck census: **115 mli-stated claims**, **2 prose-pending model claims**,
++Direct qcheck census: **116 mli-stated claims**, **2 prose-pending model claims**,
 +**169 registered external claim clusters**, and **77 unique named qcheck properties** in
  `test/laws/`. Verified external named suites are registered
  separately below and are not silently counted as qcheck coverage.
 
-@@ -40,16 +40,19 @@ separately below and are not silently counted as qcheck coverage.
+@@ -40,16 +40,20 @@ separately below and are not silently counted as qcheck coverage.
  | M120 | `par3` propagates the first child failure and cancels every sibling. | `lib/eta/effect.mli:190-192` | `par3 first observed failure cancels every sibling and awaits cleanup` |
  | M121 | Successful `par4 first second third fourth` returns its flat quadruple in argument order, independent of completion order. | `lib/eta/effect.mli:203-204` | `par4 preserves quadruple input order across both observable completion directions` |
  | M122 | `par4` propagates the first child failure and cancels every sibling. | `lib/eta/effect.mli:204-206` | `par4 first observed failure cancels every sibling and awaits cleanup` |
@@ -28,10 +28,11 @@ index 53c5899c..61e55e76 100644
 -| M16 | `all_settled` captures every child failure as an `Error cause` value. | `lib/eta/effect.mli:225-229` | `all_settled captures every child cause and preserves input order` |
 -| M17 | `all_settled` returns child outcomes in input order. | `lib/eta/effect.mli:225-229` | `all_settled captures every child cause and preserves input order` |
 +| M13 | `all` returns successful values in input order. | `lib/eta/effect.mli:211` | `all collects results in input order after reverse observable completion` |
-+| M14 | `all` cancels every sibling after the first observed failure. | `lib/eta/effect.mli:215` | `all first observed failure cancels siblings and awaits their finalizers` |
-+| M15 | `all` propagates the cause of the first observed failure. | `lib/eta/effect.mli:215-216` | `all first observed failure cancels siblings and awaits their finalizers` |
-+| M114 | `all` admits every prebuilt child immediately. | `lib/eta/effect.mli:211-212` | `all admits every generated child immediately` |
-+| M115 | Admission cannot deadlock an `all` coordination group by withholding one of its children. | `lib/eta/effect.mli:212-213` | `all admits every generated rendezvous participant without admission deadlock` |
++| M14 | `all` cancels every sibling after the first observed failure. | `lib/eta/effect.mli:214` | `all first observed failure cancels siblings and awaits their finalizers` |
++| M15 | `all` propagates the cause of the first observed failure. | `lib/eta/effect.mli:214` | `all first observed failure cancels siblings and awaits their finalizers` |
++| M114 | `all` forks one fiber per input. | `lib/eta/effect.mli:212` | `all registers one fiber per generated child before synchronous first failure` |
++| M127 | `all` registers every child fiber before any child body starts. | `lib/eta/effect.mli:212-213` | `all registers one fiber per generated child before synchronous first failure` |
++| M115 | No coordination child can be withheld by `all` admission. | `lib/eta/effect.mli:213` | `all admits every generated rendezvous participant without admission deadlock` |
 +| M116 | `all_bounded ~max_concurrent:n` never admits more than `n` children at once. | `lib/eta/effect.mli:219-220` | `all_bounded never exceeds max_concurrent and reaches the bound when children suffice` |
 +| M117 | `all_bounded` rejects every nonpositive `max_concurrent` at construction. | `lib/eta/effect.mli:224` | `all_bounded rejects every generated nonpositive max_concurrent at construction` |
 +| M123 | `all_bounded` returns successful values in input order. | `lib/eta/effect.mli:219-220` | `all_bounded collects results in input order after reverse observable completion` |
@@ -39,11 +40,11 @@ index 53c5899c..61e55e76 100644
 +| M125 | `all_bounded` propagates the cause of the first observed failure. | `lib/eta/effect.mli:220` | `all_bounded first observed failure cancels admitted siblings and awaits their finalizers` |
 +| M16 | `all_settled` captures every child failure as an `Error cause` value. | `lib/eta/effect.mli:228-229` | `all_settled captures every child cause and preserves input order` |
 +| M17 | `all_settled` returns child outcomes in input order. | `lib/eta/effect.mli:228` | `all_settled captures every child cause and preserves input order` |
-+| M126 | `all_settled` admits every child immediately. | `lib/eta/effect.mli:228-229` | `all_settled admits every generated child immediately` |
++| M126 | `all_settled` registers every child fiber before any child body starts. | `lib/eta/effect.mli:229` | `all_settled registers every generated child before synchronous first failure` |
  | M18 | `map_par` returns mapped values in input order despite completion order. | `lib/eta/effect.mli:231-237` | `map_par preserves input order across both observable completion directions` |
  | M19 | `map_par` cancels in-flight siblings after the first failure. | `lib/eta/effect.mli:236-237` | `map_par first failure cancels in-flight siblings and awaits scoped release` |
  | M20 | `map_par ~max_concurrent` never exceeds its configured child-fiber bound. | `lib/eta/effect.mli:239-241` | `map_par never exceeds max_concurrent and reaches the bound when inputs suffice` |
-@@ -155,33 +158,33 @@ qcheck optics.
+@@ -155,33 +159,33 @@ qcheck optics.
  | R08 | A registration exception wins even after synchronous resolution. | `lib/eta/effect.mli:97-98` | `async register raise wins after synchronous resume` — `test/core_common/effect_async_shared.ml:330-331` |
  | R09 | Registration-to-parking `async` wakeups are not lost across resolution/cancellation orderings. | `lib/eta/effect.mli:99-100` | `async fixed same-domain resolution/cancel orderings preserve wakeups` — `test/core_common/effect_async_shared.ml:338-339` |
  | R10 | js_of_ocaml uses the same `async` one-shot protocol. | `lib/eta/effect.mli:101-102` | E13 shared tests `async one-shot first resolution wins`; `async canceler runs once on interruption`; `async canceler survives pending interruption across yields`; `async canceler never runs after resolution`; `async register raise becomes die`; `async register raise wins after synchronous resume`; `async canceler failure is suppressed under interruption`; `async canceler defect is suppressed under interruption`; `async synchronous resolution does not deadlock`; `async fixed same-domain resolution/cancel orderings preserve wakeups` — definitions `test/core_common/effect_async_shared.ml:322-339`, native adapter `test/core_common/effect_async_common_suites.ml:47-55`, JS adapter `test/js_jsoo/test_eta_jsoo.ml:847-853,1023` |
@@ -104,7 +105,7 @@ index 53c5899c..61e55e76 100644
  | R38 | `with_supervised_background` cancels and awaits its child when use returns. | `lib/eta/effect.mli:686-688` | `with_supervised_background cancels child` — `test/core_common/supervisor_common_suites.ml:660-661` |
  | R39 | `with_supervised_background` cancels and awaits its child when use fails. | `lib/eta/effect.mli:686-688` | `with_supervised_background cancels child after use failure` — `test/core_common/supervisor_common_suites.ml:665-667` |
  | R40 | `with_supervised_background` reports child cleanup failure when it awaits the child. | `lib/eta/effect.mli:686-688` | `with_supervised_background reports cleanup failure` — `test/core_common/supervisor_common_suites.ml:662-664` |
-@@ -212,44 +215,44 @@ qcheck optics.
+@@ -212,44 +216,44 @@ qcheck optics.
  | R49 | `send` reports `Dropped` when a dropping Queue rejects admission. | `lib/eta/queue.mli:124-128` | `send drop_new fails on rejection` — `test/core_common/core_common_suites.ml:1833-1834` |
  | R50 | `try_offer` reports `Full` instead of waiting on a full bounded Queue. | `lib/eta/queue.mli:130-134` | `backpressure try_offer reports full` — `test/core_common/core_common_suites.ml:1837-1838` |
  | R51 | A Queue sent token changes whenever a value is admitted and remains stable when no admission occurs. | `lib/eta/queue.mli:136-141` | `sent token changes only on admission` — `test/core_common/core_common_suites.ml:1821-1822` |
@@ -174,14 +175,34 @@ index 53c5899c..61e55e76 100644
  | R91 | Registered log Keep/Replace/Drop/order/fiber-local/error paths and level helpers match their documented pipeline behavior. | `lib/eta/effect.mli:955-1041` | M42–M44 properties; `intercept_log order and redaction`; `intercept_log drop short-circuits`; `intercept_log with_logger both orders`; `intercept_log raise becomes defect`; `intercept_log is fiber-local`; `log carries active span ids`; `annotate_logs merges per-call attrs`; `minimum log level drops lower records`; `log level helpers` — `test/core_common/observability_common_suites.ml:1490-1497,1518-1541`; `test/otel_common/logger_common_suites.ml:97-98` |
  | R92 | Registered metric interception and counter/gauge/frequency/histogram/summary/timer helpers emit the documented measurements. | `lib/eta/effect.mli:1043-1128` | `intercept_metric enriches subtree`; `intercept_metric drop short-circuits`; `counter cumulative latest`; `counter monotonic sums`; `gauge latest`; `frequency counts categories`; `histogram explicit buckets`; `summary quantiles`; `timer records elapsed histogram` — `test/core_common/observability_common_suites.ml:1542-1545`; `test/otel_common/metrics_common_suites.ml:302-314` |
  | R93 | `fn` follows registered location/attribute behavior. | `lib/eta/effect.mli:1166-1168` | `fn records location`; `annotate_all and fn attrs` — `test/core_common/observability_common_suites.ml:1443-1445` |
-@@ -285,8 +288,8 @@ qcheck optics.
+@@ -285,8 +289,8 @@ qcheck optics.
  | R124 | Eta does not itself cancel host work; `on_cancel` is the caller-owned host-cancellation request. | `lib/js/eta_js.mli:38-39` | `eta_js from_js_promise interrupt detaches` forces and observes host settlement after detach while asserting one hook call — `test/js_jsoo/test_eta_js_jsoo.ml:512-549,647-648`; Fetch hook integration `cancellation aborts fetch` — `test/http_js/run_http_js_tests.ml:367-397,726` |
  | R125 | A non-thenable raises during registration and becomes `Cause.Die`. | `lib/js/eta_js.mli:39-40` | `eta_js from_js_promise non-thenable dies` — `test/js_jsoo/test_eta_js_jsoo.ml:590-612,651-652`; migrated Fetch taxonomy `non-thenable fetch dies` — `test/http_js/run_http_js_tests.ml:485-500,730` |
  | R126 | The success type is asserted by the caller and is not checked by `from_js_promise`. | `lib/js/eta_js.mli:39` | **Static observation boundary:** signature `lib/js/eta_js.mli:27-31` leaves result `'a` unconstrained by the `Js.Unsafe.any` input; dynamic raw-boundary witnesses `eta_js from_js_promise pending resolves after registration` and `eta_js from_js_promise already settled` observe caller-selected `int` values without claiming runtime validation — `test/js_jsoo/test_eta_js_jsoo.ml:373-390,633-636` |
 -| R127 | When every admitted `all` worker is blocked waiting on work that has not been admitted, the group cannot make progress. | `lib/eta/effect.mli:217-219` | `all omitted bound cannot progress when every admitted worker awaits an unadmitted participant` observes exactly eight admitted workers complete one blocked barrier check each before watchdog cancellation, no ninth admission or completion, cleanup, and an exact empty fiber census; `all omitted bound stalls when every worker awaits unadmitted` is the shared-runtime test-clock witness — `test/laws/law_properties.ml:788-826`; `test/core_common/effect_common_suites.ml:3992-3994` |
 -| R129 | `map_par` does not force its mapper while constructing a blueprint. | `lib/eta/effect.mli:244` | `map_par mapper defect is runtime die`; `map_par capped mapper defect is runtime die` — `test/core_common/effect_common_suites.ml:3973-3977` |
-+| R127 | An `all_bounded` bound smaller than a coordination group can stall when every admitted child waits for an unadmitted child. | `lib/eta/effect.mli:221-222` | `all_bounded can stall when every admitted child awaits an unadmitted participant` proves the timeout, exact admission/completion counts, cleanup, and empty fiber census; `all_bounded stalls below the coordination group size` is the shared-runtime witness — `test/laws/law_properties.ml:834-853`; `test/core_common/effect_common_suites.ml:2960-2996,3976-3978` |
++| R127 | An `all_bounded` bound smaller than a coordination group can stall when every admitted child waits for an unadmitted child. | `lib/eta/effect.mli:221-222` | `all_bounded can stall when every admitted child awaits an unadmitted participant` proves the timeout, exact admission/completion counts, cleanup, and empty fiber census; `all_bounded stalls below the coordination group size` is the shared-runtime witness — `test/laws/law_properties.ml:884-903`; `test/core_common/effect_common_suites.ml:2960-2996,3976-3978` |
 +| R129 | `map_par` does not force its mapper while constructing a blueprint. | `lib/eta/effect.mli:244` | `map_par mapper defect is runtime die`; `map_par capped mapper defect is runtime die` — `test/core_common/effect_common_suites.ml:3957-3961` |
  | R131 | Native HTTP/1.1 and HTTP/2 requests default the response idle timeout to 300,000 ms. | `lib/http/client/request.mli:13` | `request response idle timeout config` — `test/http/run.ml:100-103` |
  | R132 | `Response_idle_timeout.disabled` disables native HTTP/1.1 and HTTP/2 response idle timeouts. | `lib/http/client/request.mli:13` | `request response idle timeout config`; `response idle timeout disabled` in both the `h1-client` and `h2-connection` suites — `test/http/run.ml:100-114,535-554` |
  | R133 | `Response_idle_timeout.of_ms` rejects every nonpositive duration with `Invalid_argument`. | `lib/http/client/request.mli:14-15` | `response idle timeout rejects generated nonpositive milliseconds and round-trips generated positive milliseconds` generates the full signed nonpositive class — `test/laws/http_law_properties.ml:16-32`; boundary witnesses remain in `request response idle timeout config` — `test/http/run.ml:100-103` |
+@@ -330,7 +334,7 @@ valid constructor domains; until then their provenance is explicit.
+
+ | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
+ | --- | ---: | ---: | ---: | ---: |
+-| `lib/eta/effect.mli` | 59 | 120 | 0 | 179 |
++| `lib/eta/effect.mli` | 63 | 120 | 0 | 183 |
+ | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
+ | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
+ | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
+@@ -340,9 +344,9 @@ valid constructor domains; until then their provenance is explicit.
+ | `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
+ | `lib/eta/cause.mli` | 0 | 12 | 0 | 12 |
+ | Durable report claims | 0 | 2 | 0 | 2 |
+-| **Total covered** | **112** | **169** | **2** | **281** |
++| **Total covered** | **116** | **169** | **2** | **285** |
+
+-The law executables contain 74 unique properties in total. Matrix properties cover
++The law executables contain 77 unique properties in total. Matrix properties cover
+ multiple one-claim rows only where each claim has a direct discriminating
+ assertion in that named property.
