@@ -15,14 +15,14 @@ let wait_until label f =
   in
   loop 1_000
 
-let worker stop done_ started flushed =
+let worker stop resolve_done started flushed =
   let open Syntax in
   Effect.named ~error_pp:pp_error "app.flush"
     (let* () = Effect.sync (fun () -> started := true) in
      let* () = Effect.sync (fun () -> Eio.Promise.await stop) in
      Effect.sync (fun () ->
          flushed := true;
-         Eio.Promise.resolve done_ ()))
+         Eio.Promise.resolve resolve_done ()))
 
 let run_ok rt eff =
   match Eta_eio.Runtime.run rt eff with
@@ -47,7 +47,7 @@ let () =
      exits. No runtime-owned daemon and no [Runtime.drain] needed. *)
   run_ok rt
     (Effect.with_background ~name:"app.worker"
-       (worker stop done_ started flushed)
+       (worker stop resolve_done started flushed)
        (fun () ->
          let open Syntax in
          let* () =
@@ -55,8 +55,11 @@ let () =
          in
          let* () = Effect.sync (fun () -> before := !flushed) in
          let* () = Effect.sync (fun () -> Eio.Promise.resolve resolve_stop ()) in
-         Effect.sync (fun () -> Eio.Promise.await done_)));
+         let* () = Effect.sync (fun () -> Eio.Promise.await done_) in
+         (* The worker completes BEFORE the scope exits; assert it where the
+            example demonstrates it. *)
+         Effect.sync (fun () ->
+             require "worker completed before scope exit" !flushed)));
   require "worker still waiting before stop" (not !before);
-  require "worker completed after scope exit" !flushed;
   Format.printf "background-shutdown:started=%b before=%b after=%b@." !started
     !before !flushed

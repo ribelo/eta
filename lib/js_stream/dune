@@ -4,5 +4,5 @@
  (enabled_if
   (<> %{ocaml_version} 5.2.0+ox))
  (modules eta_js_stream)
- (libraries eta_js)
+ (libraries eta eta_js)
  (synopsis "JavaScript streams for eta_js"))

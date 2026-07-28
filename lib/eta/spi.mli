@@ -9,7 +9,9 @@
       removed in any release and does not carry the stability expectations of
       {!Effect}.
     - Usage requires justification at the runtime-package level: it exists for
-      packages that implement or extend an Eta runtime backend.
+      justified Eta library and package implementation support — runtime
+      backends, backend-aware leaves, and runtime-owned infrastructure such as
+      lifecycle protocols, eviction loops, and protocol readers.
     - It is not for application dependency injection: applications pass
       dependencies as ordinary OCaml values.
 

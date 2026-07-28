@@ -16,7 +16,6 @@ module Runtime_contract = Eta.Runtime_contract
 module Sampler = Eta.Sampler
 module Schedule = Eta.Schedule
 module Semaphore = Eta.Semaphore
-module Spi = Eta.Spi
 module String_helpers = Eta.String_helpers
 module Supervisor = Eta.Supervisor
 module Trace_context = Eta.Trace_context
