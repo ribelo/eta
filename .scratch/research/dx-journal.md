@@ -5019,3 +5019,43 @@ effect_common_suites ×3). `describe`: 3 uses + snapshot. `collect_names`:
    introspection leg, or its claims become prose.
 9. **Outcome:** PROMOTE of exactly one endpoint with measured evidence;
    HOLD probability low.
+
+---
+
+## V-DX-E39-002 — 2026-07-28 — research/dx-e39-audit-slim-race — phase: interim decision (request changes; third endpoint registered)
+
+Executor delivered both endpoints + dossier; orchestrator verification passed
+(gates re-run green on S incl. mainline JS; cost measurement INDEPENDENTLY
+REPRODUCED — 2,200,014 → 1,400,014 words = −36.36%, ~6.3ms → ~2.9ms ≈ −54.7%,
+exact match with dossier; snapshot parity byte-identical; dishonesty probe
+unwritable on S; law dispositions surgical; scope incident accepted as
+non-contaminating post-hoc disclosure).
+
+Independent PR-style decision review: **request changes**. The review
+unbundled what the race bundled: `describe` and `collect_names` have
+different costs and different justifications. Findings:
+
+1. **`collect_names` is where S becomes sentimentality** — zero non-test
+   consumers, 12 storage sites, a field on every `Custom`, `with_names`
+   with zero callers, and an unconfronted inconsistency: S removed `all`'s
+   name aggregation but kept it in `race`/`par`/`par3`/`par4`/`all_settled`,
+   so `collect_names (all [named "a" …])` loses `"a"` while sibling
+   combinators keep it. Arbitrary semantics, indefensible.
+2. **`describe`'s structural case is T5, not the consumer map** — no
+   production/teaching consumer substantiated (the dossier overstated it);
+   but `describe` is the minimal honest implementation of "printable
+   blueprint", representation-free (walks constructors + `leaf_name`,
+   both kept by R), and its snapshot corpus proves stability. T5 is the
+   forcing function; the consumer map is not.
+3. Minor: consumer map missed `construction_sink.ml`'s `Effect.describe`
+   (bench anti-elision; does not strengthen S).
+
+**Registered third endpoint S′ = R + `describe`** (i.e., S minus
+`collect_names`, `Custom.names`, `Expert.make ?names`, all `~names`
+producers): `Custom { eval; leaf_name }` (2 fields), `describe` restored
+with snapshot corpus, benchmark sink restored to `describe` for cross-tree
+comparability, law registry third-pass dispositions. Rework round via
+followup-1.md. Prediction note: orchestrator's sealed #1 (S lands,
+describe+collect_names survive) trending **partial** — the spirit (audit/
+footprints/assertions die, honest printable blueprint survives) held; the
+`collect_names` detail did not. Final scoring at results.
