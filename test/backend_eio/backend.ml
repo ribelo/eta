@@ -210,6 +210,33 @@ let run rt eff = Eta_eio.Runtime.run rt eff
 let run_exn rt eff = Eta_eio.Runtime.run_exn rt eff
 let drain = Eta_eio.Runtime.drain
 
+let run_counting_forks ~registrations ~active eff =
+  run_eio @@ fun stdenv ->
+  Eio.Switch.run @@ fun sw ->
+  let module Base =
+    (val Eta_eio.runtime ~sw ~clock:(Eio.Stdenv.clock stdenv) :
+      Eta.Runtime_contract.RUNTIME)
+  in
+  let module Counting = struct
+    include Base
+
+    let fork scope f =
+      ignore (Atomic.fetch_and_add registrations 1);
+      ignore (Atomic.fetch_and_add active 1);
+      let finish () = ignore (Atomic.fetch_and_add active (-1)) in
+      try Base.fork scope (fun () -> Fun.protect ~finally:finish f)
+      with exn ->
+        finish ();
+        raise exn
+  end
+  in
+  let rt =
+    Eta.Runtime.create_with_runtime
+      (module Counting : Eta.Runtime_contract.RUNTIME)
+      ()
+  in
+  Eta.Runtime.run rt eff
+
 let fork_run sw rt eff =
   let promise, resolver = Eio.Promise.create () in
   Eio.Fiber.fork ~sw (fun () -> Eio.Promise.resolve resolver (run rt eff));

@@ -60,23 +60,33 @@ Use syntax operators rather than explicit bind in application code:
 - `and*` / `and+` for sequential product (strict left-to-right; nothing forked).
 - `Effect.par` for independent concurrent effects (explicit at the call site).
 - `let@` for callback-shaped lifecycle helpers such as `Effect.with_resource`.
-- `Effect.all` when the effects are already built.
-- `Effect.map_par` when a function should be mapped lazily over a collection.
+- `Effect.all` for a finite group of prebuilt effects that requires full
+  admission.
+- `Effect.all_bounded ~max_concurrent` for a large or data-derived group of
+  independent prebuilt effects that needs an explicit resource or concurrency
+  cap.
+- `Effect.map_par` when lazily mapping a function over a collection.
 
-Both collection combinators use the same admission policy: at most eight child
-effects run concurrently by default, or the positive `~max_concurrent` supplied
-by the caller. Results retain input order and failure is fail-fast.
+`Effect.all` forks one fiber per input and registers every child fiber before
+any child body starts. Full admission is not scheduler preemption: on a
+single-domain backend, a body that never yields can still prevent sibling
+bodies from running. `Effect.all_bounded` requires a positive bound.
+`Effect.map_par` retains its default bound of eight and accepts a different
+positive `~max_concurrent`. Results retain input order and these three
+operations are fail-fast.
 
-| Task shape | Recommended form | Default admission |
+| Task shape | Recommended form | Admission |
 | --- | --- | --- |
-| Effects already in hand | `Effect.all effects` | 8 |
-| Function plus a collection | `Effect.map_par f inputs` | 8 |
+| Finite prebuilt group requiring full admission | `Effect.all effects` | One fiber per input; all registered before bodies start |
+| Large/data-derived independent prebuilt group | `Effect.all_bounded ~max_concurrent effects` | Required positive bound |
+| Lazy function mapping over a collection | `Effect.map_par f inputs` | 8 |
 
-Admission is not a barrier. When every admitted worker is blocked waiting on
-work that has not been admitted, the group cannot make progress. For a nonempty
-barrier/coordinator shape that requires every prebuilt child to be admitted,
-make full fan-out explicit:
-`Effect.all ~max_concurrent:(List.length effects) effects`.
+An `all` over 10,000 inputs forks approximately 10,000 fibers. Use
+`all_bounded` only when the children are independent of unadmitted siblings and
+the caller owns a concrete resource or load limit. A bound smaller than a
+coordination group can stall when every admitted child waits for an unadmitted
+sibling; use `all` for finite barriers and coordinator shapes because it
+registers every prebuilt child before any body starts.
 
 ### Callback-shaped host APIs: `async` or `Expert.make`?
 
@@ -444,14 +454,15 @@ interruption, or finalizer diagnostics.
 effects. Use `and*` for a small fixed set of differently typed effects that must
 sequence left-to-right; use `Effect.par` for a fixed concurrent product;
 `Effect.all effects` when homogeneous effects are already built;
+`Effect.all_bounded ~max_concurrent effects` when those prebuilt effects are
+independent and need a concrete resource or load cap;
 `Effect.map_par f inputs` when the workflow maps a function over a collection;
 and `all_settled` when every child outcome is needed instead of fail-fast
-collection. `all` and `map_par` both collect in input order and admit at most
-eight children by default; pass `~max_concurrent` for a different positive cap.
-Omission never means unbounded concurrency. A nonempty coordinator that needs
-every prebuilt effect admitted uses
-`Effect.all ~max_concurrent:(List.length effects) effects` and must make that
-full-fan-out requirement explicit at review.
+collection. `all` admits every child immediately; `all_settled` uses the same
+admission model. `all_bounded` requires a positive bound, while `map_par`
+defaults to eight and accepts a different positive bound. A bounded operation
+can stall a coordination group whose admitted children wait for an unadmitted
+sibling, so barriers and coordinator shapes use `all`.
 
 `Effect.acquire_release` and `Effect.with_scope` are not replaced by
 `Effect.with_resource`. They are needed for resources that intentionally live
@@ -829,8 +840,8 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
-| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
+| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
+| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`, `daemon`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_*` builders, `Expert`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`, `Effect.Expert.runtime_service`) |
 
 The low-level group is not a deletion list. It is a doc-demotion list: these

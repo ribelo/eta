@@ -1,6 +1,6 @@
-(** Concurrent combinators: [par], [par_pair], [race], [all], [all_settled],
-    [map_par], [acquire_all_par]. Shared admission: [collect_workers]. Internal:
-    see Effect for the public surface. *)
+(** Concurrent combinators: [par], [par_pair], [race], [all], [all_bounded],
+    [all_settled], [map_par], [acquire_all_par]. Bounded admission:
+    [collect_workers]. Internal: see Effect for the public surface. *)
 
 open Effect_core
 
@@ -50,8 +50,23 @@ let rec is_interrupt_with_id : type err. Cause.interrupt_id -> err Cause.t -> bo
   | Cause.Suppressed _ ->
       false
 
+(** Register every fork behind one start promise, then release them together.
+    Backends may run a newly forked fiber immediately, so the promise wait must
+    be the wrapper's first action. *)
+let fork_after_registration frame ~sw forks =
+  let contract = frame.runtime.contract in
+  let start, release = contract.Runtime_contract.create_promise () in
+  List.iter
+    (fun fork ->
+      fiber_fork frame ~sw (fun () ->
+          contract.Runtime_contract.await_promise start;
+          contract.Runtime_contract.check ();
+          fork ()))
+    forks;
+  contract.Runtime_contract.resolve_promise release ()
+
 (** Run side-effecting forks under one switch and aggregate child causes. *)
-let par_run_forks frame ~forks ~assemble =
+let par_run_forks ?(start_after_registration = false) frame ~forks ~assemble =
   let causes = Atomic.make [] in
   let stopping = Atomic.make false in
   let exception Stop in
@@ -68,18 +83,22 @@ let par_run_forks frame ~forks ~assemble =
   in
   (try
      switch_run frame @@ fun par_sw ->
-     List.iter
-      (fun fork ->
-         fiber_fork frame ~sw:par_sw (fun () ->
-             try fork internal_cancel par_sw
-             with exn ->
-               let cause =
-                 Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
-               in
-               if not (is_interrupt_with_id stop_id cause) then
-                 atomic_push causes cause;
-               stop_once par_sw))
-       forks
+     let runs =
+       List.map
+         (fun fork () ->
+           try fork internal_cancel par_sw
+           with exn ->
+             let cause =
+               Runtime_core.cause_of_exn_runtime frame.runtime frame.fail_key exn
+             in
+             if not (is_interrupt_with_id stop_id cause) then
+               atomic_push causes cause;
+             stop_once par_sw)
+         forks
+     in
+     if start_after_registration then
+       fork_after_registration frame ~sw:par_sw runs
+     else List.iter (fiber_fork frame ~sw:par_sw) runs
    with Stop -> ());
   match List.rev (Atomic.get causes) with
   | [] -> ok (assemble ())
@@ -296,15 +315,15 @@ let par4 first second third fourth =
 let all_settled_eval effects frame =
   let results = Array.make (List.length effects) None in
   switch_run frame (fun sw ->
-      List.iteri
-        (fun index eff ->
-          fiber_fork frame ~sw (fun () ->
-              results.(index) <-
-                Some
-                  (match run_child frame sw eff with
-                  | Exit.Ok value -> Ok value
-                  | Exit.Error cause -> Error cause)))
-        effects);
+      List.mapi
+        (fun index eff () ->
+          results.(index) <-
+            Some
+              (match run_child frame sw eff with
+              | Exit.Ok value -> Ok value
+              | Exit.Error cause -> Error cause))
+        effects
+      |> fork_after_registration frame ~sw);
   ok (collect_results "Effect.all_settled" results)
 
 let all_settled effects =
@@ -332,14 +351,29 @@ let collect_workers frame ~name ~workers ~inputs ~f ~n =
   par_run_forks frame ~forks
     ~assemble:(fun () -> collect_results name results)
 
-let all ?(max_concurrent = 8) effects =
+let all_eval effects frame =
+  let results = Array.make (List.length effects) None in
+  let forks =
+    List.mapi
+      (fun index eff internal_cancel sw ->
+        results.(index) <-
+          Some (exit_to_value frame (run_child ~internal_cancel frame sw eff)))
+      effects
+  in
+  par_run_forks ~start_after_registration:true frame ~forks
+    ~assemble:(fun () -> collect_results "Effect.all" results)
+
+let all effects =
+  make ~leaf_name:"Effect.all" (all_eval effects)
+
+let all_bounded ~max_concurrent effects =
   if max_concurrent <= 0 then
-    invalid_arg "Effect.all: max_concurrent must be > 0";
+    invalid_arg "Effect.all_bounded: max_concurrent must be > 0";
   let inputs = Array.of_list effects in
   let n = Array.length inputs in
-  make ~leaf_name:"Effect.all" @@ fun frame ->
-  collect_workers frame ~name:"Effect.all" ~workers:(min max_concurrent n)
-    ~inputs ~f:Fun.id ~n
+  make ~leaf_name:"Effect.all_bounded" @@ fun frame ->
+  collect_workers frame ~name:"Effect.all_bounded"
+    ~workers:(min max_concurrent n) ~inputs ~f:Fun.id ~n
 
 let map_par ?(max_concurrent = 8) f xs =
   if max_concurrent <= 0 then
