@@ -40,7 +40,9 @@ describe snapshot corpus are unchanged.
       removed in any release and does not carry the stability expectations of
       {!Effect}.
     - Usage requires justification at the runtime-package level: it exists for
-      packages that implement or extend an Eta runtime backend.
+      justified Eta library and package implementation support — runtime
+      backends, backend-aware leaves, and runtime-owned infrastructure such as
+      lifecycle protocols, eviction loops, and protocol readers.
     - It is not for application dependency injection: applications pass
       dependencies as ordinary OCaml values.
 
@@ -50,7 +52,10 @@ describe snapshot corpus are unchanged.
 
 The four required sentences are present in substance: not application API;
 no compatibility guarantee; usage requires justification at the
-runtime-package level; not for application dependency injection.
+runtime-package level; not for application dependency injection. The
+eligibility clause names justified Eta library/package implementation
+support — runtime backends, backend-aware leaves, and runtime-owned
+infrastructure — matching the SPI's real consumers (follow-up 1, fix 2).
 
 Surface: `Spi.daemon` (1 val) + `Spi.Expert` (submodule: abstract `context`
 type + 13 vals). The daemon doc's two law-bearing sentences moved verbatim
@@ -73,8 +78,11 @@ type + 13 vals). The daemon doc's two law-bearing sentences moved verbatim
 `lib/eta/runtime.mli` / `lib/eta/runtime_contract.mli`: `[Effect.Expert]` →
 `[Spi.Expert]` doc references (in place, no line drift).
 
-`lib/js/eta_js.ml{,i}`: `module Spi = Eta.Spi` alias added so the JS facade
-keeps parity (`Eta_js.Spi.Expert` for `eta_js_stream`).
+`lib/js_stream/eta_js_stream.ml` consumes the SPI as `Eta.Spi.Expert`
+directly with an explicit `eta` dependency (`lib/js_stream/dune`,
+`dune-project`, regenerated `eta_js_stream.opam`). The `eta_js` facade does
+NOT re-export the SPI (follow-up 1, fix 1: one namespace, no second
+application-facing locator).
 
 `lib/eta/supervisor.mli`: unchanged.
 
@@ -145,7 +153,8 @@ runtime-services framing already matches).
 | top-level SPI modules | 0 | 1 (`Spi`) | +1 |
 
 SPI surface (`lib/eta/spi.mli`): `daemon` (1 val) + `Expert` (1 submodule:
-1 abstract type + 13 vals) = 14 vals total. `Eta_js`: +1 module alias.
+1 abstract type + 13 vals) = 14 vals total. No `Eta_js` re-export: the JS
+facade does not alias the SPI (follow-up 1, fix 1).
 
 Sealed prediction was −10 vals −1 submodule +1 SPI module: exact match.
 

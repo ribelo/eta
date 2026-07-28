@@ -63,3 +63,66 @@ question for the reviewer (not blocking): whether `supervisor_scoped` /
 `supervisor_yield` should follow the nine builders in a later pass — the
 mechanics now make that a 6-line mli deletion, and the census impact would
 be −2 further vals.
+
+## Follow-up 1 (promote-with-fixes)
+
+Independent review: design sound, three inconsistencies blocked promotion.
+All three applied; amendment `journal-followup-1.md` (journal.md stays
+sealed).
+
+1. **`Eta_js.Spi` alias removed.** One namespace restored: `eta_js` no
+   longer re-exports the SPI; `eta_js_stream` consumes `Eta.Spi.Expert`
+   directly with `eta` declared in `lib/js_stream/dune`, `dune-project`,
+   and the regenerated `eta_js_stream.opam`. Census corrected (the
+   "`Eta_js`: +1 module alias" line is gone; SPI surface is unchanged at
+   14 vals). Registry: R116–R126 re-anchored −1 for the `eta_js.mli` line
+   shift (content-verified, including R126's second reference).
+2. **SPI eligibility doc matches its consumers.** The bullet now names
+   justified Eta library/package implementation support — runtime
+   backends, backend-aware leaves, and runtime-owned infrastructure — so
+   the fence admits `eta_cache`/`eta_signal`/`eta_http`/`eta_stream`/
+   protocol clients while keeping "not application API / no compatibility
+   guarantee / not for application dependency injection" verbatim.
+   Registry: R41/R42 → `spi.mli:29-31`, CD-E22-018 → `spi.mli:33-98`
+   (content-verified).
+3. **Example asserts what it demonstrates.** The completion assertion
+   moved inside the `with_background` body after the `done_` await as
+   `"worker completed before scope exit"`. Executing the example for this
+   fix exposed a latent defect from the original batch: the rewritten
+   example never compiled (`Eio.Promise.resolve` was passed the promise,
+   not the resolver) because none of the four mandated gates build
+   `@examples`. Fixed (`worker` now takes `resolve_done`);
+   `dune build @examples` and `dune exec examples/background_shutdown.exe`
+   both pass, printing `started=true before=false after=true`. Gate
+   lesson recorded: example rewrites must build and run the example,
+   not just its dune stanza.
+
+Registered follow-up **F-E42a-1**: `Supervisor` should eventually own the
+public supervisor/child/scope/body types directly over the private
+representation, eliminating the five erasure bridges (no new ones); the
+`%identity` invariant stays audited-only — erasure surface must not
+spread.
+
+### Parity (qualified)
+
+The batch parity claim is qualified: `test/api_dx/api_dx_examples.ml`
+intentionally changes meaning — its "proposed" pattern moved from
+daemon/drain to scoped shutdown, which is the mandated example migration,
+not a behavior expectation of the library. Every other test edit is a
+namespace token swap; `expected_descriptions.txt` remains zero-diff; all
+behavior suites pass unmodified.
+
+### Gates (re-run after fixes)
+
+| gate | result |
+| --- | --- |
+| `nix develop -c dune build @install` | PASS |
+| `nix develop -c dune runtest --force` | PASS |
+| `nix develop -c eta-oxcaml-test-shipped` | PASS |
+| `nix develop .#mainline -c dune build --build-dir=_build-mainline lib/js lib/js_stream test/cache_jsoo test/js_jsoo test/signal_jsoo test/http_js` | PASS |
+
+### Final recommendation
+
+Promote. The three inconsistencies are resolved at their roots (namespace,
+doc, assertion), the law registry is re-anchored for both file shifts with
+content verification, and all gates are green on the amended tree.
