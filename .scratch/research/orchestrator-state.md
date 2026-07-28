@@ -8,7 +8,12 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E42a — privacy moves**)
+- In flight: **E42a — privacy moves** (daemon/Expert → SPI, supervisor builders → private)
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e42a`
+  - Branch: `research/dx-e42a-privacy-moves`
+  - Stage: review verdict promote-with-fixes (3 items: Eta_js.Spi alias,
+    SPI eligibility doc, example assertion); followup-1.md written;
+    awaiting executor rework
 - Done (recent): **E40 promoted** (`9a80a07c`; `all` unbounded behind an
   admission gate, `all_bounded` named; review found the eager-fork hole,
   gate closed it; footguns −1/+1)
