@@ -140,3 +140,78 @@ All four required gates are expected to pass. The native suites should expose
 only stale API calls and old admission assertions during migration. The
 specified mainline JS build should require no behavior change because the
 split is in core Eta and current JS target uses remain omission-only.
+
+## Amendment predictions (sealed)
+
+Sealed for Follow-up 1 before any follow-up product, test, API, guide, law, or
+changelog change. Follow-up base is
+`d31992f87d9cf5460850256fbf069b762ee13ed0`. This amendment may be scored and
+annotated in the report, but neither this section nor the original predictions
+above will be edited after the amendment seal commit.
+
+### Gate and fail-fast predictions
+
+1. One shared registration helper can create a start promise, register every
+   input fiber with `await start` as its first action, and resolve the promise
+   only after the registration loop finishes. `all` can opt into that helper
+   through `par_run_forks`; `all_settled` can use the same helper directly,
+   without changing `par`, bounded workers, or `map_par`.
+2. On Eio, the wrapper's first action will suspend each newly registered fiber,
+   returning control to the registration loop. A synchronous first-child typed
+   failure therefore cannot prevent later fork registrations.
+3. Once the gate opens, a synchronous first-child failure in `all` will trigger
+   the existing group cancellation. Every input fiber will have been registered,
+   the first body will run and fail, bodies that have not received a scheduler
+   turn will not run, already-started siblings will be cancelled and awaited,
+   and the group will exit with the first typed failure.
+4. `all_settled` will register every input fiber before any body starts, then run
+   every body after the gate opens. A synchronous first-child failure remains an
+   `Error cause` value rather than failing the outer group; later child bodies
+   run and their outcomes remain in input order.
+5. Full admission is not scheduler preemption or fairness. After registration
+   and gate release, an Eio child that never yields can monopolize the domain and
+   prevent sibling bodies and the parent from progressing. A finite
+   non-cooperative witness should show all registrations occur before its body
+   monopolizes execution, while later bodies start only after it returns.
+
+### Regression-test predictions
+
+- A counted Eio backend will observe exactly `N` fork registrations for
+  `all [sync fail; marked tail...]`, exactly one body mark, and
+  `Exit.Error (Cause.Fail "boom")`. The current ungated implementation would
+  observe one registration, so this discriminates the defect.
+- The same counted backend will observe exactly `N` registrations and all `N`
+  body marks for `all_settled [sync fail; marked tail...]`, with an outer
+  successful list containing the first `Error` and later `Ok` values.
+- A finite no-yield first body will still be preceded by all registrations, but
+  its completion mark will precede the second body's start mark. This pins the
+  documented admission-versus-scheduling boundary without hanging the suite.
+- The existing barrier, order, fail-fast, cancellation, finalizer, and empty
+  census witnesses should continue to pass. Focused Eio and law runs should fail
+  before the gate only at the new `all` synchronous-failure registration check
+  and pass after it.
+
+### Predicted law-row changes
+
+- M114 will sharpen from “admits every prebuilt child immediately” to “registers
+  every prebuilt child fiber before any child body starts” and point to a named
+  generated synchronous-first-failure property with an exact fork-registration
+  count, exact body-start count, first typed failure, and empty fiber census.
+- M115 will keep the coordination-group non-withholding claim and its generated
+  barrier witness; its observation boundary remains cooperative rendezvous
+  participants, while M114 carries the scheduler-independent registration proof.
+- M126 will sharpen analogously for `all_settled` and point to a named generated
+  synchronous-first-failure property proving exact registrations before body
+  execution, all materialized outcomes, and an empty fiber census.
+- The direct claim and QCheck-property counts should remain unchanged: rows and
+  properties are strengthened in place rather than added or orphaned.
+
+### Corrected footgun registration
+
+The review correction is expected to score exact: the footgun delta is
+**-1/+1**, not the original predicted **-1/+0**. Naming `all_bounded` removes the
+hidden cap-eight coordination trap, while unbounded `all` introduces a visible
+fan-out risk because a 10,000-element input registers approximately 10,000
+fibers. The mli and API guide must reserve `all` for finite groups requiring full
+admission, direct large or data-derived independent prebuilt lists to
+`all_bounded`, and direct lazy collection mapping to `map_par`.
