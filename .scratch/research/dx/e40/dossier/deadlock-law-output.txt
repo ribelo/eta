@@ -1,0 +1,23 @@
+[ ]    0    0    0    0 /   50     0.0s all admits every generated child immediately
+[✓]   50    0    0   50 /   50     0.0s all admits every generated child immediately
+[ ]    0    0    0    0 /   50     0.0s all_bounded never exceeds max_concurrent and reaches the bound when children suffice
+[✓]   50    0    0   50 /   50     0.0s all_bounded never exceeds max_concurrent and reaches the bound when children suffice
+[ ]    0    0    0    0 /   50     0.0s all_bounded rejects every generated nonpositive max_concurrent at construction
+[✓]   50    0    0   50 /   50     0.0s all_bounded rejects every generated nonpositive max_concurrent at construction
+[ ]    0    0    0    0 /   50     0.0s all admits every generated rendezvous participant without admission deadlock
+[✓]   50    0    0   50 /   50     0.0s all admits every generated rendezvous participant without admission deadlock
+[ ]    0    0    0    0 /   50     0.0s all_bounded length bound admits every generated rendezvous participant
+[✓]   50    0    0   50 /   50     0.0s all_bounded length bound admits every generated rendezvous participant
+[ ]    0    0    0    0 /   50     0.0s all_bounded can stall when every admitted child awaits an unadmitted participant
+[✓]   50    0    0   50 /   50     0.0s all_bounded can stall when every admitted child awaits an unadmitted participant
+[ ]    0    0    0    0 /   50     0.0s all collects results in input order after reverse observable completion
+[✓]   50    0    0   50 /   50     0.0s all collects results in input order after reverse observable completion
+[ ]    0    0    0    0 /   50     0.0s all_bounded collects results in input order after reverse observable completion
+[✓]   50    0    0   50 /   50     0.0s all_bounded collects results in input order after reverse observable completion
+[ ]    0    0    0    0 /   50     0.0s all first observed failure cancels siblings and awaits their finalizers
+[✓]   50    0    0   50 /   50     0.0s all first observed failure cancels siblings and awaits their finalizers
+[ ]    0    0    0    0 /   50     0.0s all_bounded first observed failure cancels admitted siblings and awaits their finalizers
+[✓]   50    0    0   50 /   50     0.0s all_bounded first observed failure cancels admitted siblings and awaits their finalizers
+[ ]    0    0    0    0 /   50     0.0s all_settled admits every generated child immediately
+[✓]   50    0    0   50 /   50     0.0s all_settled admits every generated child immediately
+success (ran 77 tests)

@@ -207,26 +207,26 @@ val par4 :
 
     This is the arity cap; see {!par3} for the beyond-four rule. *)
 
-val all :
-  ?max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
-(** Run prebuilt effects concurrently, collecting results in input order.
-    Fail-fast: the first child failure cancels admitted siblings; the cause of
-    the first observed failure propagates.
+val all : ('a, 'err) t list -> ('a list, 'err) t
+(** Run every prebuilt effect concurrently, collecting results in input order.
+    Every child is admitted immediately, so admission cannot deadlock a
+    coordination group by withholding one of its children.
 
-    At most [max_concurrent] children are admitted at once; omission means 8,
-    and fewer are admitted when the list is shorter. When every admitted worker
-    is blocked waiting on work that has not been admitted, the group cannot make
-    progress. A nonempty barrier or coordinator shape that needs every child
-    admitted can request full fan-out with
-    [all ~max_concurrent:(List.length effects) effects].
+    Fail-fast: the first child failure cancels its siblings; the cause of the
+    first observed failure propagates. *)
+
+val all_bounded : max_concurrent:int -> ('a, 'err) t list -> ('a list, 'err) t
+(** Run prebuilt effects with at most [max_concurrent] children admitted at
+    once, collecting results in input order. Fail-fast like {!all}.
+    A bound smaller than a coordination group can stall when every admitted
+    child waits for work from a child that has not been admitted.
 
     @raise Invalid_argument if [max_concurrent <= 0]. *)
 
 val all_settled :
   ('a, 'err) t list -> (('a, 'err Cause.t) result list, 'outer_err) t
-(** Run effects concurrently and collect every child outcome in input order.
-    Child failures are returned as [Error cause] values instead of failing the
-    outer eff. *)
+(** Run every effect concurrently and collect every child outcome in input order.
+    Failures become [Error cause] values; every child is admitted as in {!all}. *)
 
 val map_par :
   ?max_concurrent:int ->

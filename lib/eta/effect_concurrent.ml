@@ -1,6 +1,6 @@
-(** Concurrent combinators: [par], [par_pair], [race], [all], [all_settled],
-    [map_par], [acquire_all_par]. Shared admission: [collect_workers]. Internal:
-    see Effect for the public surface. *)
+(** Concurrent combinators: [par], [par_pair], [race], [all], [all_bounded],
+    [all_settled], [map_par], [acquire_all_par]. Bounded admission:
+    [collect_workers]. Internal: see Effect for the public surface. *)
 
 open Effect_core
 
@@ -332,14 +332,29 @@ let collect_workers frame ~name ~workers ~inputs ~f ~n =
   par_run_forks frame ~forks
     ~assemble:(fun () -> collect_results name results)
 
-let all ?(max_concurrent = 8) effects =
+let all_eval effects frame =
+  let results = Array.make (List.length effects) None in
+  let forks =
+    List.mapi
+      (fun index eff internal_cancel sw ->
+        results.(index) <-
+          Some (exit_to_value frame (run_child ~internal_cancel frame sw eff)))
+      effects
+  in
+  par_run_forks frame ~forks
+    ~assemble:(fun () -> collect_results "Effect.all" results)
+
+let all effects =
+  make ~leaf_name:"Effect.all" (all_eval effects)
+
+let all_bounded ~max_concurrent effects =
   if max_concurrent <= 0 then
-    invalid_arg "Effect.all: max_concurrent must be > 0";
+    invalid_arg "Effect.all_bounded: max_concurrent must be > 0";
   let inputs = Array.of_list effects in
   let n = Array.length inputs in
-  make ~leaf_name:"Effect.all" @@ fun frame ->
-  collect_workers frame ~name:"Effect.all" ~workers:(min max_concurrent n)
-    ~inputs ~f:Fun.id ~n
+  make ~leaf_name:"Effect.all_bounded" @@ fun frame ->
+  collect_workers frame ~name:"Effect.all_bounded"
+    ~workers:(min max_concurrent n) ~inputs ~f:Fun.id ~n
 
 let map_par ?(max_concurrent = 8) f xs =
   if max_concurrent <= 0 then
