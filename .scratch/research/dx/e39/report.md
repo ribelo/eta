@@ -1,125 +1,162 @@
-# DX-E39 report — audit-slim race
+# DX-E39 report — audit-slim race and S′ follow-up
 
 ## Outcome
 
-Both required endpoints are implemented as consecutive, independently
-reviewable ranges:
+Three reviewable endpoints now exist:
 
 | Endpoint | Commit / range | Result |
 | --- | --- | --- |
-| S — slim | `7d8e5236..f136a68d` (code at `6c51b9e3`) | removes audit/footprints/declarations/assertions and `all` introspection special-case; keeps `describe`/`collect_names` |
+| S — slim | `7d8e5236..f136a68d` (code at `6c51b9e3`) | removes audit/footprints/declarations/assertions and `all` introspection special-casing; keeps `describe`/`collect_names` |
 | R — remove | `f136a68d..82d17297` | additionally removes `describe`, `collect_names`, and propagated static names |
+| S′ — describe-only | `f136a68d..563eef24` | keeps R's no-names two-field representation and restores only `describe` |
 
-The decision dossier is [in `dossier/`](dossier/README.md). My recommendation is
-**Endpoint S**: it removes the untrustworthy assurance vocabulary and captures
-the measured footprint cost while preserving the evidenced honest
-printable-blueprint use. R is green and materially smaller, so independent
-review can choose it if the incomplete `collect_names` structural case is judged
-insufficient.
+Independent review requested S′ because S's partial name propagation was
+arbitrary while T5 requires a minimal printable blueprint. The adopted response
+is [`dossier/addendum-sprime.md`](dossier/addendum-sprime.md). My final
+recommendation is **promote S′**.
 
-## Phase-0 evidence
+## Follow-up findings and resolution
 
-The exhaustive [source audit](evidence/source-audit.md) found:
+1. **S's `collect_names` seam was indefensible.** At S, `race`, `par`, `par3`,
+   `par4`, and `all_settled` aggregated child names while `all` no longer did.
+   S′ retains R's full deletion: no `collect_names`, `Custom.names`, `?names`,
+   `~names`, or `with_names`.
+2. **`describe` is justified by T5, not demand.** The original dossier
+   overstated the teaching/external-demand evidence. S′ restores the exact
+   master contract and walker because a blueprint value remains minimally
+   printable; the implementation adds no per-node representation.
+3. **The consumer census missed the benchmark sink.** The pre-deletion
+   `bench/effect_construction/construction_sink.ml:9` call was anti-elision
+   infrastructure, not production demand. It is now D7 in the source audit and
+   restored in S′ for benchmark comparability.
 
-- no in-repository real application/runtime consumer of `audit`, `describe`,
-  `collect_names`, or the audit assertions (the census does not establish
-  absence among external consumers);
-- one raw-`audit` package-boundary check, dominant audit self-tests, and public
-  docs/teaching uses for static names and description;
-- seven public assertions rather than the objective's stated four;
-- no runtime tracing reader of the propagated `Custom.names` list;
-- `all` aggregated prebuilt-child names and footprints at construction while
-  `map_par` did not;
-- contracts honestly hedged the static boundary, but `assert_pure_eff` and the
-  writable `Expert.make` declaration still sounded/acted like assurances.
+## Phase-0 evidence and cost
 
-The master-side dishonesty probe executed one sleep while reporting
-`uses_clock=false`. S rejects the same `~capabilities:[]` syntax.
+The corrected [source audit](evidence/source-audit.md) still finds no
+in-repository production/runtime consumer of `audit`, `describe`,
+`collect_names`, or the audit assertions; it cannot establish absence among
+external consumers. It finds the raw-audit blocking boundary, dominant
+self-tests, documentation references, and the corrected benchmark-infrastructure
+call. Runtime tracing never read propagated `Custom.names`.
 
-## Cost result
-
-Protocol and raw values are in [the cost dossier](dossier/cost.md). On the
-pre-registered 100,000-iteration `map_bind_preserve` row:
+The pre-registered 100,000-iteration `map_bind_preserve` result remains:
 
 - allocated words: 2,200,014 → 1,400,014 (**-36.36%**);
 - warm-up-discarded median time: 6,357,551 ns → 2,879,977 ns (**-54.70%**);
 - map/bind control allocation: 600,014 → 600,014 (**0.00%**).
 
-The 10% first-class threshold fired. The exact eight-word saving per preserve
-layer matches removal of the footprint record/header and `Custom` field.
+The measured footprint win is shared by S, R, and S′. S′ additionally shares R's
+removal of the static names field/sites; no R→S′ allocation claim is made.
+Protocol and raw data remain in [the cost dossier](dossier/cost.md).
 
-## Regression evidence
+## S′ proof obligations
 
-- BEFORE and S `describe` snapshot hashes are identical and `cmp` reports
-  byte-identical: [snapshot artifact](evidence/snapshot-parity-s.txt).
-- S makes the dishonest capability declaration unwritable:
-  [compile artifact](evidence/dishonesty-s-compile.txt).
-- R deletes `Custom.names` while runtime span naming stays direct and its named
-  span witnesses pass: [tracing artifact](evidence/tracing-r.md).
-- Law-bearing removals have explicit S and R dispositions in the census-complete
-  `LAWS.md` registry.
+### Snapshot parity and representation
 
-## Gates
+The restored S′ corpus is byte-identical to master:
 
-All mandatory gates passed on **both** endpoint trees:
+```text
+master e6ec8777dc5f12e27e57a1c5577147398aa81a83604c48c3bdd8404c308b457d
+sprime e6ec8777dc5f12e27e57a1c5577147398aa81a83604c48c3bdd8404c308b457d
+cmp=byte-identical
+```
 
-| Gate | S | R |
-| --- | ---: | ---: |
-| `nix develop -c dune build @install` | 0 | 0 |
-| `nix develop -c dune runtest --force` | 0 | 0 |
-| `nix develop -c eta-oxcaml-test-shipped` | 0 | 0 |
-| mainline JS targets, dedicated `_build-mainline` | 0 | 0 |
+The exact master walker compiles against `Custom { eval; leaf_name }`; it reads
+constructors plus `leaf_name` and no names aggregate. The new named test also
+covers every documented label, indentation, trailing-newline absence, Bind
+shape/continuation opacity, and custom/wrapper opacity.
 
-Exact command/timestamp/status files:
-[`evidence/gates-s/`](evidence/gates-s/README.md) and
-[`evidence/gates-r/`](evidence/gates-r/README.md).
+Artifacts:
+[`evidence/snapshot-parity-sprime.txt`](evidence/snapshot-parity-sprime.txt) and
+[`evidence/representation-sprime.md`](evidence/representation-sprime.md). The
+follow-up names-dependency stop condition was not met.
 
-## Prediction score
+### Law registry, third pass
 
-The sealed journal was not edited. Falsifiable subtotal: **7 hits, 1
-partial/miss, 2 misses**.
+Rows R166a–R166h register each restored `describe` claim against the named Dune
+snapshot alias and the exact constructor/opacity Alcotest case. The R disposition
+is superseded only for `describe`; `collect_names` remains removed and
+CD-E22-014 remains only `fn ~error_pp` debt. No audit, footprint, assertion, or
+names-propagation row returned.
+
+### Gates
+
+All mandatory gates passed on all endpoints, including S′:
+
+| Gate | S | R | S′ |
+| --- | ---: | ---: | ---: |
+| `nix develop -c dune build @install` | 0 | 0 | 0 |
+| `nix develop -c dune runtest --force` | 0 | 0 | 0 |
+| `nix develop -c eta-oxcaml-test-shipped` | 0 | 0 | 0 |
+| mainline JS targets, dedicated `_build-mainline` | 0 | 0 | 0 |
+
+Exact S′ commands/timestamps/statuses:
+[`evidence/gates-sprime/`](evidence/gates-sprime/README.md).
+
+## Prediction scores
+
+The original sealed text remains unchanged. Independent review downgrades the
+original `describe` consumer interpretation because snapshot/benchmark tooling
+is not observed demand. Revised original subtotal: **6 hits, 2 partial/misses,
+2 misses**.
 
 - Hits: allocation direction and ≥10% threshold; timing direction; consumer
-  classifications for audit/describe/collect_names; tracing fault line.
-- Partial/miss: an assertion boundary consumer was predicted, but the boundary
-  used raw `audit` and assertions had only a self-test.
-- Misses: predicted 10–25% allocation and 5–15% timing brackets were both too
-  conservative (observed 36.36% and 54.70%).
-- Predicted winner S agrees with my recommendation but is not included in the
-  empirical subtotal; final promotion is the independent review outcome.
+  classifications for audit and `collect_names`; tracing fault line.
+- Partial/misses: assertion boundary use was actually raw `audit`; `describe`
+  tooling existed, but the predicted teaching/demand interpretation was too
+  strong.
+- Misses: the 10–25% allocation and 5–15% timing brackets were too conservative.
+- The original endpoint-winner prediction S was rejected by review and remains
+  outside the falsifiable subtotal.
 
-Full scoring: [dossier/recommendation.md](dossier/recommendation.md).
+The appended `Amendment predictions (sealed)` section was committed before S′
+code as `36d39c85`. Its three clusters all hit: exact snapshot/no-names proof,
+exact describe-only law restoration, and exact S′ census. **Amendment subtotal:
+3 hits, 0 partials, 0 misses.**
 
 ## Diff and census summary
 
-- Semantic merge-base→S: 76 files, +1,398/-975 overall;
-  product/test/docs/examples/bench subset: 58 files, +236/-777.
-- S→R: 29 files, +154/-389 overall;
-  product/test/docs/examples/bench subset: 21 files, +21/-316.
-- `Custom` fields: 4 BEFORE → 3 S → 2 R.
-- E39 public cluster: audit entries 2→0→0; tree/aggregate inspection vals
-  2→2→0; assertions 7→0→0; Expert metadata parameters 3→1→0.
+Requested final ranges:
 
-Literal current-master stats and the merge-base explanation are preserved in
-[dossier/diff-stats.txt](dossier/diff-stats.txt).
+- `f136a68d..563eef24`: 44 files, +773/-290.
+- merge-base `7d8e5236..563eef24`: 105 files, +2,075/-1,169.
+- R provenance `82d17297..563eef24`: 26 files, +730/-12, including the
+  intervening original dossier and sealed amendment.
 
-## Deviations
+S′ census:
+
+- `Custom`: 2 fields (`eval`, `leaf_name`).
+- Public aggregate/tree introspection: 1 value (`describe`); separate `name`
+  remains.
+- Audit assertions: 0.
+- `Expert.make`: `?leaf_name` only; 0 aggregate-name/audit metadata parameters.
+- Explicit `~names` storage sites under `lib/`: 0.
+
+Exact commands, subsets, and the four-endpoint census are in
+[`dossier/addendum-sprime.md`](dossier/addendum-sprime.md) and
+[`dossier/diff-stats.txt`](dossier/diff-stats.txt).
+
+## Deviations and process notes
 
 1. Removed all seven actual public assertions, not only the four stated in the
-   objective.
+   original objective.
 2. Migrated `blocking_common`'s raw-audit boundary check to ordinary execution
    behavior.
 3. Corrected allocation measurement to `Gc.counters` with promotion subtraction
-   before collecting either side; benchmark protocol was then frozen.
-4. S removes `all`'s child-name special case while keeping general static-name
-   propagation for `collect_names`; R removes the mechanism completely.
+   before collecting either side; the protocol was then frozen.
+4. The original consumer map omitted the benchmark sink; Follow-up 1 corrects
+   the line-level audit and dossier rather than hiding the miss.
 5. Master advanced after the branch merge-base only in a scope-fenced state
-   path. That path was not read or touched; semantic review stats use the fixed
-   merge-base and literal master stats are also recorded.
-6. A post-implementation read-only dossier reviewer reported that one broad
-   symbol grep inadvertently emitted three matching lines from the prohibited
-   `docs/research/` tree. It did not open or modify those files, did not report
-   their contents to this executor, and did not use them in its conclusions.
-   This occurred after predictions, both endpoints, measurements, and the
-   dossier were complete; it cannot have influenced the sealed prediction or
-   implementation, but is disclosed as a scope-process incident.
+   path. That path was not read or touched; semantic stats use the fixed
+   merge-base.
+6. The previously disclosed post-implementation reviewer grep incident in
+   prohibited `docs/research/` occurred after the original experiment and did
+   not report contents to this executor. No prohibited path was used in this
+   follow-up.
+
+## Final recommendation
+
+**Promote S′.** It resolves S's inconsistent `collect_names` semantics, retains
+R's two-field/no-names representation, and restores only T5's honest printable
+blueprint operation. The boundary is proven by exact master parity, exhaustive
+constructor/opacity coverage, law registration, and all four mandatory gates.

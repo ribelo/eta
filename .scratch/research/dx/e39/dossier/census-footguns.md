@@ -1,5 +1,9 @@
 # API, representation, and footgun deltas
 
+> Follow-up 1 adds the final S′ census in
+> [`addendum-sprime.md`](addendum-sprime.md). The BEFORE/S/R table below is the
+> original two-endpoint dossier and remains as provenance.
+
 Endpoint identities: baseline `7d8e5236`, S `f136a68d` (code endpoint
 `6c51b9e3`), R `82d17297`.
 

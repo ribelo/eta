@@ -1,5 +1,9 @@
 # Endpoint verification artifacts
 
+> S′ parity, representation, law, and gate artifacts are indexed in
+> [`addendum-sprime.md`](addendum-sprime.md). The sections below preserve the
+> original S/R verification record.
+
 ## Snapshot parity (BEFORE ↔ S)
 
 [`../evidence/snapshot-parity-s.txt`](../evidence/snapshot-parity-s.txt) records:

@@ -25,3 +25,28 @@ git diff --shortstat 7d8e5236..f136a68d
 git diff --numstat 7d8e5236..f136a68d -- lib test docs examples bench
 git diff --shortstat f136a68d..82d17297
 git diff --numstat f136a68d..82d17297 -- lib test docs examples bench
+
+Follow-up 1 / S-prime
+endpoint_sprime=563eef245c98f175b5d722304b8cdaa15ee9957a
+
+S..S-prime (requested final review range)
+44 files changed, 773 insertions(+), 290 deletions(-)
+production/test/docs/examples/bench subset:
+19 files changed, 70 insertions(+), 210 deletions(-)
+
+merge-base..S-prime
+105 files changed, 2075 insertions(+), 1169 deletions(-)
+production/test/docs/examples/bench subset:
+65 files changed, 290 insertions(+), 971 deletions(-)
+
+R..S-prime (third-endpoint provenance, including intervening dossier/seal)
+26 files changed, 730 insertions(+), 12 deletions(-)
+production/test/docs/examples/bench subset:
+7 files changed, 159 insertions(+), 4 deletions(-)
+
+Commands:
+git diff --shortstat f136a68d..563eef24
+git diff --numstat f136a68d..563eef24 -- lib test docs examples bench
+git diff --shortstat 7d8e5236..563eef24
+git diff --numstat 7d8e5236..563eef24 -- lib test docs examples bench
+git diff --shortstat 82d17297..563eef24

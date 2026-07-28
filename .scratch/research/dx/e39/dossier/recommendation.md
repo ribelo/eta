@@ -1,6 +1,11 @@
 # Recommendation and prediction score
 
-## Recommendation: promote Endpoint S
+> **Superseded by Follow-up 1.** Independent review requested the third endpoint
+> S′ = R + `describe`. The final recommendation and amended score are in
+> [`addendum-sprime.md`](addendum-sprime.md); the original recommendation below
+> remains as review provenance.
+
+## Original recommendation: promote Endpoint S
 
 Between the two built endpoints, S is the stronger contract/cost trade:
 

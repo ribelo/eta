@@ -11,16 +11,19 @@ check. This dossier page is its decision table, not a replacement for it.
 | Surface | Self-test | Boundary | Documentation | In-repository real production/runtime consumer | Structural need found |
 | --- | --- | --- | --- | ---: | --- |
 | `Effect.audit` | dominant; audit algebra and red-team tests | one raw-audit `eta_blocking` footprint check | MLI/research | **0** | none beyond static test contracts |
-| `Effect.describe` | snapshot plus audit failure text | 0 | MLI/research | **0** | deterministic, non-evaluating blueprint teaching/debug view |
+| `Effect.describe` | snapshot, audit failure text, and construction-benchmark anti-elision | 0 | MLI/research | **0** | T5's minimal deterministic, non-evaluating printable-blueprint surface; not observed demand |
 | `Effect.collect_names` | two name-order tests and API-DX example harness | 0 | public DX preflight guidance | **0** | statically present-name preflight/documentation, explicitly incomplete |
 | seven `Eta_test` assertions | one positive-path helper test | **0** | MLI/research | **0** | none; `blocking_common` used raw `audit`, not an assertion |
 
 Primary evidence: source audit §§1.1–1.5. The census found **seven**, not the
 objective's stated four, public assertion values; all seven were removed.
-In-repository zero use was not treated as proof by itself. The named structural
-case for `describe` is the S-side argument; no application/runtime use was
-found in the searched repository for any surface. The census cannot establish
-absence among external consumers.
+In-repository zero use was not treated as proof by itself. Follow-up review
+corrected the original census: `bench/effect_construction/construction_sink.ml`
+also called `describe` as anti-elision infrastructure. It does not establish
+application demand. The structural case for `describe` is T5's printability
+principle, not consumer frequency; no application/runtime use was found in the
+searched repository. The census cannot establish absence among external
+consumers.
 
 ## Dependency map and stop check
 
@@ -53,4 +56,5 @@ Primary evidence: source audit §§2.1–2.5.
 | `describe` | opaque custom nodes stay leaves; bind continuation unforced | honest deterministic static tree, not runtime behavior |
 
 The complete quoted contracts and hedges are in source audit §3. S removes the
-first three rows. R also removes the last two public aggregate/tree surfaces.
+first three rows. R also removes the last two public aggregate/tree surfaces;
+S′ restores only `describe` while retaining R's `collect_names` deletion.

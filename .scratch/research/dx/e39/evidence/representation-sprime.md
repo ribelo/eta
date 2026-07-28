@@ -4,7 +4,7 @@ S′ restores `describe` without restoring static-name storage:
 
 - `lib/eta/effect_core.ml:68-74`: `Custom` has exactly two fields, `eval` and
   `leaf_name`.
-- `lib/eta/effect_core.ml:587-611`: `describe` pattern-matches constructors and
+- `lib/eta/effect_core.ml:587-610`: `describe` pattern-matches constructors and
   reads only `leaf_name` from `Custom`; it contains no reference to `names`.
 - `lib/eta/effect.mli:812-815`: `Expert.make` retains only `?leaf_name` before
   its evaluator; there is no `?names` or audit declaration.

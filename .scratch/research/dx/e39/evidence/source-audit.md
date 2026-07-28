@@ -97,6 +97,7 @@ cross-package boundary is A4 (`eta_blocking` footprint declaration check).
 | D4 | `lib/test/eta_test.ml:753` | `fail_audit` pretty-prints blueprint via `describe` | **self-test infrastructure** | Couples assertions to `describe` for human failure text only. |
 | D5 | `lib/eta/syntax.mli:33-35` | same `and*` introspection caveat | **doc ref** | |
 | D6 | research (E12, EOP, e39, LAWS debt CD-E22-014) | design history | **doc ref** | |
+| D7 | `bench/effect_construction/construction_sink.ml:9` at pre-deletion commit `ba1275f4` | anti-elision fingerprint for the E39 construction benchmark | **self-test / benchmark infrastructure** | Missed by the original Phase-0 table despite the stated `bench/` search. It is not application/runtime demand for `describe`. S′ restores the same call for cross-tree benchmark comparability. |
 
 **Real production/runtime consumers:** **none found.**
 
@@ -146,7 +147,7 @@ teaching/preflight need, still with zero in-repo application call sites.
 | Surface | Self-test | Boundary | Doc ref | Real | Prediction (journal) |
 | --- | --- | --- | --- | --- | --- |
 | `audit` | dominant (A2,A3) + eta_test impl (A1) | A4 blocking footprint | A5–A7 | **0** | match |
-| `describe` | D1–D4 | 0 | D5–D6 | **0** (teaching/snapshot structural) | match |
+| `describe` | D1–D4, D7 | 0 | D5–D6 | **0** (T5 printability rationale; no observed application demand) | partial — tooling existed, but the original teaching/demand interpretation was too strong |
 | `collect_names` | C1–C3 | 0 | C4–C6 | **0** (docs claim preflight) | match |
 | assertions | S1 only | **0** (not blocking) | S3 | **0** | boundary prediction slightly high — boundary uses raw `audit` |
 
