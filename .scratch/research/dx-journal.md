@@ -5365,3 +5365,56 @@ struck); #2 migration size — **miss** (≈563 line-events vs ~170;
 test-surface breadth + erasure bridges); #7 docs — **partial**
 (eligibility sentence needed the review's correction). Rework via
 followup-1.md.
+
+---
+
+## V-DX-E42A-002 — 2026-07-28 — research/dx-e42a-privacy-moves — phase: results + decision
+
+**Decision: PROMOTE.** Merged `--no-ff` (`d45a9c1e`); master gates green;
+master + branch pushed; worktree removed.
+
+**What landed.** `Eta.Spi` — one explicitly unstable SPI namespace in the
+root `eta` library carrying `daemon` + `Expert`, with the four-sentence
+fence (not application API / no compat guarantee / runtime-package
+justification / not for DI) and, after review, eligibility broadened to
+"justified Eta library/package implementation support" (the original
+wording forbade the repo's own consumers). Nine `supervisor_*` builders
+privatized (`Effect_supervisor_scope` + `include`; five audited
+`%identity` bridges centralized in `effect_erasure.ml`).
+`examples/daemon_drain.ml` → `background_shutdown.ml` teaching
+application-scope shutdown. `Effect.mli`: 129 → 119 vals, 0 public
+submodules. Zero runtime semantic delta (snapshot zero-diff;
+implementations verbatim).
+
+**Verified evidence.** Gates re-run on the final tip (native trio +
+@examples + mainline JS incl. lib/js, lib/js_stream) and on master
+post-merge. Privacy compile-probed by the review (mangled/wrapper paths
+fail; private CMI only under `eta/.private`). `%identity` casts sound
+today (`include` shares the representation; audited invariant, must not
+spread — recorded). The example's assertion fix exposed a real
+promise-vs-resolver type confusion, fixed and executed. Registry
+re-anchored twice, content-verified both times.
+
+**Prediction scoring (orchestrator, V-DX-E42A-001).**
+- #1 one SPI namespace + four sentences: **hit** (with the review's
+  alias strike — the executor's unpredicted `Eta_js.Spi` second locator
+  removed; final shape matches the prediction).
+- #2 migration ~170 lines: **miss** (≈563 line-events; test-surface
+  breadth + the unpredicted erasure bridges).
+- #3 census −10 vals −1 submodule +1 SPI module: **hit** (verified).
+- #4 footguns −1/+0: **hit**.
+- #5 registry re-anchored, no orphans: **hit**.
+- #6 JS track migrates, mainline green: **hit**.
+- #7 docs carry the four sentences: **partial** (services.md untouched
+  by design; the eligibility sentence needed review's correction).
+- #8 promote, example entanglement resolved: **hit** (and it caught a
+  latent type confusion, as examples should).
+Executor: 7/8 clean hits + honest misses (bridge mechanics, line band);
+follow-up amendment sealed separately.
+
+**Process notes.** The review's compile-probes of privacy (rather than
+trusting the convention) are now the standard for privacy claims.
+Orchestrator bookkeeping lesson: `**` is not literal in BRE sed —
+state-file edits use exact-match tools only (two stale blocks repaired).
+F-E42a-1 registered: `Supervisor` should own its public types directly,
+eliminating the five erasure bridges (no new `%identity` surface).

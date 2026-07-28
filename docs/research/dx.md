@@ -902,3 +902,26 @@ large/data-derived independent work, `map_par` for lazy mapping).
 
 Provenance: `.scratch/research/dx/e40/`, V-DX-E40-001..002, branch
 `research/dx-e40-all-admission-split`, merge `9a80a07c`.
+
+## E42a — Privacy moves: the facade shrinks to what applications own (2026-07-28)
+
+`Effect.mli` lost 10 vals and its last public submodule, and the library
+is more honest for it. `Effect.daemon` (a public second execution model)
+and `Effect.Expert` (a pragmatic SPI that looked like a service-locator
+invitation) now live in `Eta.Spi` — one namespace whose doc fence says
+plainly: not application API, no compatibility guarantee, justification
+required, not for dependency injection. The nine low-level supervisor
+builders vanished from the public interface entirely; `Supervisor`
+consumes them through audited casts in the repo's single erasure module.
+
+Two review catches worth remembering. First, the batch's own "one
+namespace" rule was nearly violated by a convenience alias in `eta_js` —
+quarantines leak through convenience, and the review struck it. Second,
+the SPI's eligibility sentence as first written forbade the library's own
+legitimate consumers; a fence that criminalizes legitimate use is just
+the next doc-vs-reality mismatch waiting to be discovered. The privacy
+itself was compile-probed, not assumed: application paths to the
+builders fail; the private CMI sits outside normal reach.
+
+Provenance: `.scratch/research/dx/e42a/`, V-DX-E42A-001..002, branch
+`research/dx-e42a-privacy-moves`, merge `d45a9c1e`.

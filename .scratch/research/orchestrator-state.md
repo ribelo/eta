@@ -8,12 +8,10 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E42a — privacy moves** (daemon/Expert → SPI, supervisor builders → private)
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e42a`
-  - Branch: `research/dx-e42a-privacy-moves`
-  - Stage: review verdict promote-with-fixes (3 items: Eta_js.Spi alias,
-    SPI eligibility doc, example assertion); followup-1.md written;
-    awaiting executor rework
+- In flight: nothing (next: **E41 — `Resource` → `Refreshable`**)
+- Done (recent): **E42a promoted** (`d45a9c1e`; `Eta.Spi` namespace,
+  nine supervisor builders privatized, `Effect.mli` 129 → 119 vals;
+  privacy compile-probed)
 - Done (recent): **E40 promoted** (`9a80a07c`; `all` unbounded behind an
   admission gate, `all_bounded` named; review found the eager-fork hole,
   gate closed it; footguns −1/+1)
@@ -128,4 +126,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-28 — E42a launched
+- Last update: 2026-07-28 — E42a promoted

@@ -427,6 +427,15 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 ### E42 — Hygiene batches (a/b)
 - a: daemon → SPI; `Expert` → unstable SPI namespace; supervisor
   builders → private.
+  **Decision: PROMOTED (2026-07-28, `d45a9c1e`).** `Eta.Spi` (one
+  unstable namespace, four-sentence fence, eligibility broadened by
+  review); nine builders privatized via `Effect_supervisor_scope` +
+  audited erasure bridges; example rewritten to application-scope
+  shutdown. `Effect.mli` 129 → 119 vals, 0 public submodules. Zero
+  semantic delta. Privacy compile-probed (not just convention).
+  Follow-up F-E42a-1: `Supervisor` owns its public types, eliminating
+  the five erasures. Evidence: `.scratch/research/dx/e42a/`,
+  V-DX-E42A-001..002.
 - b: `ppx_sql` split; docs-level tiering; Mutable_ref purity; race
   naming question.
 
