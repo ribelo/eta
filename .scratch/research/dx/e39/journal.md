@@ -68,3 +68,35 @@ not by reading the static `names : string list` carried by `Custom`. Therefore
 `leaf_name`/the named evaluator must remain for tracing and `describe`, while the
 aggregated `names` field will prove introspection-only. If source evidence instead
 shows runtime tracing reads propagated `names`, the objective requires a stop.
+
+## Amendment predictions (sealed)
+
+Sealed for Follow-up 1 before restoring any S′ source, test, benchmark, or law
+row. The preceding predictions remain unchanged.
+
+### Predicted snapshot parity
+
+Restoring master's `describe` walker and snapshot corpus on R's two-field
+`Custom` will produce byte-identical output to `evidence/describe-master.txt`,
+including SHA-256
+`e6ec8777dc5f12e27e57a1c5577147398aa81a83604c48c3bdd8404c308b457d`.
+The walker will compile without `Custom.names` because it reads only effect
+constructors and `leaf_name`.
+
+### Predicted law-row restorations
+
+Exactly the deterministic `describe` tree contract will return to the active
+registry with the named snapshot rule as executable coverage. The R disposition
+will remain authoritative for `collect_names`; CD-E22-014 will continue to carry
+only the pre-existing `fn ~error_pp` debt. No audit, footprint, assertion,
+`collect_names`, or names-propagation row will return.
+
+### Predicted S′ census
+
+- `Custom`: two fields, `eval` and `leaf_name`.
+- Public aggregate/tree introspection values: one, `describe` only; `name`
+  remains the separate leaf-label query.
+- `Eta_test` audit assertions: zero.
+- `Expert.make`: one optional metadata argument in total, `?leaf_name`; zero
+  aggregate-name or audit-declaration metadata arguments.
+- Explicit `~names` storage producers under `lib/`: zero.
