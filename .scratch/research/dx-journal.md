@@ -5199,3 +5199,36 @@ searches): future objectives will carry search discipline — repo-wide
 discovery commands must exclude fenced paths by glob
 (`-g '!docs/research/**' -g '!.scratch/research/dx-journal.md'`) rather
 than rely on after-the-fact care.
+
+---
+
+## V-DX-E40-001b — 2026-07-28 — research/dx-e40-all-admission-split — phase: interim verdict (HOLD, four fix items)
+
+Executor's work verified mechanically (gates re-run green incl. mainline
+JS; census 106/106 confirmed). Independent PR review: **HOLD** — the
+central admission guarantee is false on the Eio backend. Sequential
+`List.iter fiber_fork` + Eio's run-child-immediately means a
+synchronously-failing (or non-cooperative) first child prevents later
+children from being forked at all — reproduced with a probe
+(`started=[0]`, children 1..2 never admitted). The barrier tests pass
+only because their children cooperatively yield; the generated laws only
+generate cooperative children. The mli contract and law rows overclaim.
+
+Fix items (review-precise): (1) admission gate — register every child
+behind a start gate, release after the registration loop completes, for
+`all` AND `all_settled` (shared contract); (2) backend regression
+counting fork registrations under synchronous first-child failure;
+(3) CHANGELOG breaking entry — omission call sites silently change
+cap-8 → unbounded (orchestrator process miss: the objective should have
+named it); (4) footgun delta corrected −1/+0 → **−1/+1** (unbounded
+fan-out registered) + docs warning for large/data-derived collections.
+
+Prediction notes (orchestrator, V-DX-E40-001): #1 landing shape stands
+but needs the gate; #4 "deadlock pinned both ways" — **partial**: the
+immunity test covered only cooperative children; the eager-fork hole
+escaped. #9 "no hidden default-8 dependency" holds in-repo; the external
+silent-change point was not predicted and is a genuine process find.
+Executor's sealed set unaffected (its predictions were about sites/laws,
+and its own review already caught the M123 wave-admission gap).
+
+Rework round via followup-1.md.
