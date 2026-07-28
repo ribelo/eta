@@ -5340,3 +5340,28 @@ js_stream, cache, otel, + tests incl. backend_eio, js_jsoo);
    sentences.
 8. **Outcome:** promote. Risk: the daemon example's entanglement;
    predicted resolved within the batch.
+
+---
+
+## V-DX-E42A-001a — 2026-07-28 — research/dx-e42a-privacy-moves — phase: interim verdict (promote-with-fixes, three items)
+
+Orchestrator verification passed (gates re-run green incl. mainline JS +
+js_stream; bridges sound — `include` shares the representation; census
+129→119 confirmed; snapshot zero-diff; registry re-anchored). Independent
+PR review: **promote with fixes** — three precise items: (1) a second SPI
+locator (`Eta_js.Spi` alias) contradicts the one-namespace constraint —
+remove; (2) the SPI eligibility doc ("runtime backend packages only")
+forbids the repo's actual consumers (`eta_cache`/`eta_signal`/`eta_http`/
+`eta_stream`) — rewrite to "justified Eta package implementation
+support"; (3) the new example asserts "worker completed AFTER scope exit"
+while teaching the opposite ordering — fix. Also verified by the review:
+privacy is real for normal Dune consumption (compile-probed; private CMI
+only under `eta/.private`); `%identity` casts sound today (audited
+invariant — must not spread); supervisor_scoped/yield follow-up
+registered (Supervisor owns the types, eliminating the five erasures).
+Prediction notes (orchestrator, V-DX-E42A-001): #1 shape — **partial**
+(the executor's "one namespace" gained an unpredicted alias the review
+struck); #2 migration size — **miss** (≈563 line-events vs ~170;
+test-surface breadth + erasure bridges); #7 docs — **partial**
+(eligibility sentence needed the review's correction). Rework via
+followup-1.md.
