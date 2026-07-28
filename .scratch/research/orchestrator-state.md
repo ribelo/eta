@@ -8,10 +8,15 @@ map: what / rationale / decision / decision rationale), the tail of
 loop (plan §4.2 as amended by Amendment 1).
 
 - Current phase: **D** (runtime & model)
-- In flight: **E39 — E12 audit-slim race** (remove vs. slim)
-  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e39`
-  - Branch: `research/dx-e39-audit-slim-race`
-  - Stage: endpoints S+R verified; review demanded changes — S' (R + describe) registered (V-DX-E39-002); followup-1.md written; awaiting executor rework
+- In flight: **E40 — `all` admission split**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e40`
+  - Branch: `research/dx-e40-all-admission-split`
+  - Stage: review HOLD — admission-gate fix items (V-DX-E40-001b);
+    followup-1.md written; awaiting executor rework; scope waiver granted
+    (V-DX-E40-001a)
+- Done (recent): **E39 promoted as third endpoint S′** (`203b8fbe`;
+  audit/footprints/assertions/collect_names deleted; `describe` kept;
+  −36.36% words, −54.70% construction time; two review rounds)
 - Done (recent): **E38 promoted** (`Fail { error; rendered }`;
   render-at-capture design; two rework rounds)
 - Done (recent): **E37 promoted** (`acquire_all_par`; transactional
@@ -120,4 +125,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-28 — E40 launched
+- Last update: 2026-07-28 — E40 rework round (admission gate)
