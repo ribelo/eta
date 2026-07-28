@@ -842,3 +842,34 @@ The deep lesson, and the reason the first shape died in review:
    on the stored `rendered` is the old world's semantics exactly — no
    new collision-limit paragraph, no new footgun, nothing for the
    equality tests to relearn.
+
+## E39 — The audit-slim race: honesty deleted, the printable blueprint stays (2026-07-28)
+
+The EOP audit called E12's introspection surface the library's strongest
+removal candidate, and it was mostly right. What died: `Effect.audit`'s
+capability flags (whose own docs admitted over/under-reporting), the
+stored per-node footprints that fed them (`Custom` 4 → 2 fields), all
+seven `Eta_test` audit assertions, `Expert.make`'s capability/names
+metadata, `collect_names` with its 12 storage sites and an arbitrary
+`all`-vs-`race` aggregation seam, and `all`'s introspection
+special-casing. What survived: `describe` — the one honest, cost-free,
+deterministically-printable view of a blueprint value, justified not by
+consumer demand but by T5 ("the blueprint is a value: inspectable,
+printable, auditable"). Its snapshot corpus is byte-identical before and
+after.
+
+The race built both endpoints (slim S, full-removal R) with measured
+evidence, and the decision review synthesized a third endpoint better
+than either: S′ = R + `describe`. Blueprint construction got 36.36%
+cheaper in allocated words and 54.70% faster in median time on the
+pre-registered workload — the footprint machinery had been taxing every
+`preserve` wrap eight words. Dishonest capability declarations are now
+unwritable by construction.
+
+Lesson carried forward: when an API's own documentation apologizes for
+its accuracy, the API is the problem. And when two things are bundled in
+one proposal, check whether they share a cost and a justification —
+`describe` and `collect_names` did not.
+
+Provenance: `.scratch/research/dx/e39/`, V-DX-E39-001..003, branch
+`research/dx-e39-audit-slim-race`, merge `203b8fbe`.

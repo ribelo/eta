@@ -5059,3 +5059,72 @@ followup-1.md. Prediction note: orchestrator's sealed #1 (S lands,
 describe+collect_names survive) trending **partial** — the spirit (audit/
 footprints/assertions die, honest printable blueprint survives) held; the
 `collect_names` detail did not. Final scoring at results.
+
+---
+
+## V-DX-E39-003 — 2026-07-28 — research/dx-e39-audit-slim-race — phase: results + decision
+
+**Winner: S′ (`d42b4abf`)** — the third endpoint synthesized by review:
+R (full removal of audit/footprints/assertions/collect_names/names
+propagation) + restored `describe` on a two-field `Custom`. Merged
+`--no-ff` (`203b8fbe`); master gates green; master + branch pushed.
+
+**Verified evidence (orchestrator-checked, not just reported).**
+- Cost: 2,200,014 → 1,400,014 allocated words (**−36.36%**) and ~6.3ms →
+  ~2.9ms median (**−54.70%**) on the pre-registered 100k-layer
+  map/bind/preserve workload, control row allocation-identical —
+  INDEPENDENTLY REPRODUCED to the digit in fresh temp worktrees. The
+  decomposition is exact: 8 words per preserve layer (7-word footprint
+  record + 1 Custom field). The pre-registered 10% threshold fired; cost
+  was first-class evidence.
+- Snapshot parity: `describe` output byte-identical (SHA-256 match) on
+  master vs S′ — twice verified (S round and S′ round).
+- Dishonesty probe: `Expert.make ~capabilities:[]` on a sleeping leaf is
+  a compile error on S′; the lie the old API permitted is unwritable.
+- `describe` compiles against two-field `Custom { eval; leaf_name }` —
+  representation-freedom proven by construction.
+- Law registry: three disposition passes; R166a–R166h restored with exact
+  executable anchors; R166b's `Map` witness gap closed (final review).
+- Benchmark sink landmine (400M spaces under `--filter`) found by the
+  second review round and fixed with the constant-depth `Effect.name`
+  fingerprint; filtered run independently re-verified by the reviewer.
+- Gates: native trio + mainline JS targets green on the final tip
+  (orchestrator re-run) and on master post-merge.
+
+**The arc** (this experiment's real product): two endpoints built and
+measured → review unbundled `describe` (honest, free, T5-forced) from
+`collect_names` (12 storage sites, zero consumers, arbitrary
+`all`-vs-`race` aggregation seam) → S′ registered → built → two narrow
+fixes → promote. The EOP audit's §6.1 "strongest removal candidate" is
+adjudicated: removal was right about everything except `describe`.
+
+**Prediction scoring (orchestrator, V-DX-E39-001).**
+- #1 Landing S (describe+collect_names survive): **partial** — describe
+  survives; collect_names died by the review's unbundling.
+- #2 Cost <10%, not deciding: **miss** — 36.36%/54.70%; threshold fired;
+  cost was first-class. Delightful miss.
+- #3 Assertions die under both: **hit** (all SEVEN died; the objective
+  undercounted at four — executor found the full cluster).
+- #4 Expert.make burden dies: **hit** (`?leaf_name` alone remains).
+- #5 Names unchanged: **miss** for `collect_names` (deleted), **hit** for
+  `describe`.
+- #6 blocking_common migrates: **hit** (ordinary behavior test).
+- #7 Census −5: **partial** — deeper than predicted (audit + 7 assertions
+  + collect_names + names machinery).
+- #8 S wins on T5/teaching: **partial** — S′ won; T5 was indeed the
+  forcing function, but the review stripped the consumer-map
+  rationalization.
+- #9 PROMOTE exactly one endpoint: **hit** (a synthesized third).
+Executor: 7 hits / 1 partial / 2 misses on the original set (brackets too
+conservative, scored honestly); amendment set hit exactly (SHA-256
+predicted pre-restore).
+
+**Protocol notes.** Review rounds went to the reviewer of record
+(agent_send); the third endpoint is the review's design, adopted by the
+orchestrator; the scope incident (3 grep lines from `docs/research/`,
+post-hoc, unused) accepted as non-contaminating. Objective archives
+restored from orchestrator's own texts after untracked-file cleanup.
+
+**Decision: PROMOTE S′.** Follow-ups: none new. EOP-audit wave continues
+(E40 next). `describe`'s justification is now honestly stated: T5 forces
+it, not consumer demand.

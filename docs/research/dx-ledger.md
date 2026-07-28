@@ -399,6 +399,15 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 ### E39 — E12 audit-slim race
 - What: remove vs. slim-and-rename (`visible_static_spine`) for
   `audit`/footprints/`assert_pure_eff`; footprint-cost vs teaching-value.
+- **Decision: PROMOTED as third endpoint S′ (2026-07-28, `203b8fbe`).**
+  Deleted: `audit` + stored footprints (`Custom` 4→2 fields), all 7
+  assertions, `Expert.make` capability/names metadata, `collect_names` +
+  name propagation, `all` introspection special-casing. Kept: `describe`
+  (T5's honest printable blueprint; snapshot byte-identical). Measured:
+  −36.36% allocated words, −54.70% median construction time. Third
+  endpoint synthesized by review unbundling `describe` from
+  `collect_names`. Evidence: `.scratch/research/dx/e39/`,
+  V-DX-E39-001..003.
 
 ### E40 — `all` admission split
 - What: `all` unbounded (deadlock-immune), `all_bounded ~max_concurrent`,
