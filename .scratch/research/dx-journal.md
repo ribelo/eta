@@ -5179,3 +5179,23 @@ bounded default.
    are updated in the same change; no orphaned rows.
 9. Outcome: promote. Risk point: a hidden default-8 dependency in the 9
    omission sites — predicted none load-bearing.
+
+---
+
+## V-DX-E40-001a — 2026-07-28 — scope-fence waiver (E40)
+
+The executor signaled BLOCKED on procedural grounds: a broad discovery
+search returned one line from the fenced `docs/research/` tree.
+Ruling: **waiver GRANTED.** Basis: (1) the dual-seal is intact — the
+executor's predictions were committed (`f1957d65`) before any code or the
+incident, and the exposed tree is not the prediction journal; (2) one
+line, unopened beyond the match, unused as evidence (executor
+disclosure); (3) precedent — E39's same-class incident accepted as
+non-contaminating. The executor's conservatism (BLOCKED over READY) is
+the correct instinct and is recorded approvingly.
+
+Pattern note (2nd incident of this class, both from broad repo-root
+searches): future objectives will carry search discipline — repo-wide
+discovery commands must exclude fenced paths by glob
+(`-g '!docs/research/**' -g '!.scratch/research/dx-journal.md'`) rather
+than rely on after-the-fact care.
