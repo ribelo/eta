@@ -1170,3 +1170,13 @@ val fn :
     be total; a raising printer becomes a defect. *)
 
 val name : ('a, 'err) t -> string option
+
+val describe : ('a, 'err) t -> string
+(** Render the statically constructed blueprint as a deterministic tree without
+    evaluating it.
+
+    The node labels are [Pure], [Fail], [Custom], [Custom("name")], [Map], and
+    [Bind], with two spaces per child depth and no trailing newline. A [Bind]
+    includes its visible input subtree followed by a literal [<bind …>] child;
+    the continuation is never forced. Opaque custom/wrapper evaluators remain
+    leaves rather than pretending their runtime work is inspectable. *)

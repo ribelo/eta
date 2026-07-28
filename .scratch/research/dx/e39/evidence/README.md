@@ -13,6 +13,10 @@
 - `gates-r/` — exact Endpoint-R gate commands and statuses.
 - `tracing-r.md` — mechanical and executable proof that tracing survives removal
   of the internal static-name list.
+- `describe-sprime.txt` / `snapshot-parity-sprime.txt` — byte-identical
+  master↔S′ `describe` output.
+- `representation-sprime.md` — two-field `Custom` and no-names proof.
+- `gates-sprime/` — exact S′ gate commands and statuses.
 
 The dishonest probe source was committed at pre-deletion commit `ba1275f4` as
 `test/effect_introspection/dishonest_expert_make.ml`; S deleted that obsolete

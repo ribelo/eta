@@ -583,3 +583,28 @@ let interruptible eff =
           restore.Runtime_contract.restore (fun () -> eval frame eff))
 
 let name eff = leaf_name eff
+
+let describe eff =
+  let buffer = Buffer.create 128 in
+  let line depth text =
+    if Buffer.length buffer > 0 then Buffer.add_char buffer '\n';
+    Buffer.add_string buffer (String.make (depth * 2) ' ');
+    Buffer.add_string buffer text
+  in
+  let rec walk : type a err. int -> (a, err) t -> unit =
+   fun depth -> function
+    | Pure _ -> line depth "Pure"
+    | Fail _ -> line depth "Fail"
+    | Custom { leaf_name = None; _ } -> line depth "Custom"
+    | Custom { leaf_name = Some name; _ } ->
+        line depth (Printf.sprintf "Custom(%S)" name)
+    | Map { inner; _ } ->
+        line depth "Map";
+        walk (depth + 1) inner
+    | Bind { inner; _ } ->
+        line depth "Bind";
+        walk (depth + 1) inner;
+        line (depth + 1) "<bind …>"
+  in
+  walk 0 eff;
+  Buffer.contents buffer

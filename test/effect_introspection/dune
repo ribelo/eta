@@ -1,0 +1,20 @@
+(executable
+ (name snapshot_effect_describe)
+ (modules snapshot_effect_describe)
+ (libraries eta))
+
+(test
+ (name test_effect_describe)
+ (modules test_effect_describe)
+ (libraries eta alcotest))
+
+(rule
+ (target actual_descriptions.txt)
+ (action
+  (with-stdout-to actual_descriptions.txt
+   (run %{exe:snapshot_effect_describe.exe}))))
+
+(rule
+ (aliases runtest effect-describe-snapshot)
+ (action
+  (diff expected_descriptions.txt actual_descriptions.txt)))

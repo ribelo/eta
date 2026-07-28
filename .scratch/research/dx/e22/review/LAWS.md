@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **112 mli-stated claims**, **2 prose-pending model claims**,
-**161 registered external claim clusters**, and **74 unique named qcheck properties** in
+**169 registered external claim clusters**, and **74 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -306,6 +306,14 @@ qcheck optics.
 | R163 | Other `Cause.Finalizer` nodes retain structural equality, while `Finalizer.Die` preserves physical exception identity. | `lib/eta/cause.mli:50-51` | `finalizer equal is structural and die identity based` — `test/core_common/cause_exit_common_suites.ml:147-183,270-272` |
 | R164 | `Cause.Finalizer.diagnostic_equal` compares materialized `Die` diagnostics. | `lib/eta/cause.mli:55` | `finalizer diagnostic equal compares materialized die diagnostics` — `test/core_common/cause_exit_common_suites.ml:185-205,273-276` |
 | R165 | A raising printer supplied directly to `Cause.finalizer_of_cause` propagates its exception. | `lib/eta/cause.mli:167` | `finalizer_of_cause propagates direct printer exception` — `test/core_common/cause_exit_common_suites.ml:207-215,277-279` |
+| R166a | `describe` renders a deterministic tree for the statically constructed blueprint. | `lib/eta/effect.mli:1174-1176` | Dune alias `effect-describe-snapshot` compares the exact committed corpus — `test/effect_introspection/dune:11-20`, `test/effect_introspection/snapshot_effect_describe.ml:3-27`, `test/effect_introspection/expected_descriptions.txt` |
+| R166b | `describe` does not evaluate the blueprint. | `lib/eta/effect.mli:1175-1176` | `constructor tree is exact and inspection does not evaluate` — `test/effect_introspection/test_effect_describe.ml:6-16,20-30,38-46` |
+| R166c | `describe` uses exactly the documented `Pure`, `Fail`, `Custom`, named `Custom`, `Map`, and `Bind` labels. | `lib/eta/effect.mli:1178-1179` | `constructor tree is exact and inspection does not evaluate` — `test/effect_introspection/test_effect_describe.ml:13-19,28,31-32,38-46` |
+| R166d | `describe` indents each child depth by two spaces. | `lib/eta/effect.mli:1179` | `constructor tree is exact and inspection does not evaluate` — exact Map and Bind strings `test/effect_introspection/test_effect_describe.ml:19,28,38-46` |
+| R166e | `describe` produces no trailing newline. | `lib/eta/effect.mli:1179` | `constructor tree is exact and inspection does not evaluate` — `test/effect_introspection/test_effect_describe.ml:33-36,38-46` |
+| R166f | A described `Bind` contains its visible input subtree followed by a literal `<bind …>` child. | `lib/eta/effect.mli:1179-1180` | `constructor tree is exact and inspection does not evaluate` — `test/effect_introspection/test_effect_describe.ml:20-28,38-46` |
+| R166g | `describe` never forces a `Bind` continuation. | `lib/eta/effect.mli:1180-1181` | `constructor tree is exact and inspection does not evaluate` — exact false continuation witness `test/effect_introspection/test_effect_describe.ml:20-30,38-46` |
+| R166h | Opaque custom and wrapper evaluators remain leaves in `describe`. | `lib/eta/effect.mli:1181-1182` | `constructor tree is exact and inspection does not evaluate` — anonymous/named custom and hidden-Map wrapper witnesses `test/effect_introspection/test_effect_describe.ml:7-18,31-32,38-46` |
 
 ## Model laws (prose pending)
 
@@ -322,7 +330,7 @@ valid constructor domains; until then their provenance is explicit.
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/eta/effect.mli` | 59 | 112 | 0 | 171 |
+| `lib/eta/effect.mli` | 59 | 120 | 0 | 179 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
 | `lib/eta/queue.mli` | 16 | 14 | 0 | 30 |
@@ -332,7 +340,7 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
 | `lib/eta/cause.mli` | 0 | 12 | 0 | 12 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **112** | **161** | **2** | **273** |
+| **Total covered** | **112** | **169** | **2** | **281** |
 
 The law executables contain 74 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
@@ -348,7 +356,8 @@ assertion in that named property.
 | DX-E39 S / CD-E22-001 | Removed rather than carried as debt: the audit over-/under-reporting claims and dishonest `Expert.make` declaration surface were deleted. |
 | DX-E39 S / CD-E22-018 capability portion | Removed rather than carried as debt: capability declarations, inherited footprints, and background-footprint implication were deleted. The surviving Expert helper/runtime-contract debt remains as CD-E22-018. |
 | DX-E39 R / R93 collect-names portion | Removed from the mixed row: the public `collect_names` contract and its executable registration were deleted. The surviving `fn` claim and registrations remain in R93. |
-| DX-E39 R / CD-E22-014 introspection portions | Removed rather than carried as debt: the `collect_names` continuation-boundary and deterministic `describe` snapshot contracts were deleted. The surviving `fn ~error_pp` debt remains as CD-E22-014. |
+| DX-E39 R / CD-E22-014 introspection portions | Superseded in part by S′: R removed both the `collect_names` continuation-boundary and deterministic `describe` contracts. S′ restores only `describe` as covered rows R166a–R166h; `collect_names` remains removed, and the surviving `fn ~error_pp` debt remains CD-E22-014. |
+| DX-E39 S′ / R166a–R166h | Restored with direct executable coverage: the deterministic, non-evaluating `describe` tree contract is registered to the exact snapshot alias and constructor/opacity test. No audit, footprint, assertion, `collect_names`, or propagated-names claim returns. |
 
 ## Explicit dated claim debt inside the complete inventory
 
