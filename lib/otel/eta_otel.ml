@@ -455,7 +455,7 @@ let export_program t =
   |> Eta.Effect.named "eta_otel.exporter"
 
 let start_daemon rt eff =
-  match Eta.Runtime.run rt (Eta.Effect.daemon eff) with
+  match Eta.Runtime.run rt (Eta.Spi.daemon eff) with
   | Eta.Exit.Ok () -> ()
   | Eta.Exit.Error _ -> ()
 

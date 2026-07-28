@@ -24,4 +24,4 @@ let () =
   snapshot "resource"
     (Effect.with_resource ~acquire:(Effect.pure ())
        ~release:(fun () -> Effect.unit) (fun () -> Effect.unit));
-  snapshot "background" (Effect.daemon Effect.unit)
+  snapshot "background" (Spi.daemon Effect.unit)

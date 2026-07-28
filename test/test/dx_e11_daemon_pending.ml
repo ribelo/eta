@@ -1,6 +1,6 @@
 let () =
   let program : (unit, string) Eta.Effect.t =
-    Eta.Effect.daemon Eta.Effect.never
+    Eta.Spi.daemon Eta.Effect.never
   in
   let outcome = Eta_test.Run.run program in
   Format.printf "%a@."

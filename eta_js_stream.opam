@@ -11,6 +11,7 @@ bug-reports: "https://github.com/ribelo/eta/issues"
 depends: [
   "dune" {>= "3.21"}
   "ocaml" {>= "5.2.0"}
+  "eta"
   "eta_js"
   "odoc" {with-doc}
 ]

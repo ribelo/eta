@@ -73,8 +73,11 @@ let with_monitor ~sw ~net use =
     (fun () -> use state)
 ~~~
 
-Use `Effect.daemon` only for runtime-owned infrastructure whose lifetime
-is intentionally tied to the runtime rather than to a caller's lexical body.
+Runtime-owned infrastructure whose lifetime is intentionally tied to the
+runtime rather than to a caller's lexical body uses `Eta.Spi.daemon` — the
+unstable service-provider interface, not application API. Applications use the
+scoped patterns above and drain their workers inside the body before the scope
+exits.
 
 ## Development note
 

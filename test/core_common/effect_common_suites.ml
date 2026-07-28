@@ -15,8 +15,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     ()
 
   let runtime_interrupt_effect () =
-    Effect.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
     contract.Eta.Runtime_contract.cancel cancel_context Exit;
     contract.Eta.Runtime_contract.await_cancel ()
@@ -28,7 +28,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause
 
   let effect_error_cause cause =
-    Effect.Expert.make ~leaf_name:"test.error-cause" @@ fun _context ->
+    Spi.Expert.make ~leaf_name:"test.error-cause" @@ fun _context ->
     Exit.Error cause
 
   let expect_typed_failure_eq testable exit expected =
@@ -903,7 +903,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_ignore_errors () =
     B.with_runtime @@ fun _ctx rt ->
     let typed_cause cause =
-      Effect.Expert.make ~leaf_name:"test.typed-cause" @@ fun _context ->
+      Spi.Expert.make ~leaf_name:"test.typed-cause" @@ fun _context ->
       Exit.Error cause
     in
     Alcotest.(check unit)

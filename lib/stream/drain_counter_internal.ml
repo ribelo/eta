@@ -64,9 +64,9 @@ let enqueue_waiter contract counter =
 
 let await_zero ?(name = "eta_stream.drain_counter.await_zero") counter =
   Eta.Effect.named name
-    (Eta.Effect.Expert.make ~leaf_name:name
+    (Eta.Spi.Expert.make ~leaf_name:name
     @@ fun context ->
-     let contract = Eta.Effect.Expert.contract context in
+     let contract = Eta.Spi.Expert.contract context in
      let rec loop () =
        match
          with_lock counter @@ fun () ->

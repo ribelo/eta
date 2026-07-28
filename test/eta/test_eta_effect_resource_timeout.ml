@@ -11,7 +11,7 @@ let test_drain_does_not_busy_wait () =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) ()
   in
   let daemon_body = Effect.sync (fun () -> Eio_unix.sleep 0.1) in
-  (match Runtime.run rt (Effect.daemon daemon_body) with
+  (match Runtime.run rt (Spi.daemon daemon_body) with
   | Exit.Ok () -> ()
   | Exit.Error _ -> Alcotest.fail "daemon launch failed");
   let cpu_before = Sys.time () in

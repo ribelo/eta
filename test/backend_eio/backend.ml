@@ -243,12 +243,12 @@ let fork_run sw rt eff =
   promise
 
 let cancelable_effect cancel_ref eff =
-  Eta.Effect.Expert.make ~leaf_name:"test.cancelable" @@ fun context ->
-  let contract = Eta.Effect.Expert.contract context in
+  Eta.Spi.Expert.make ~leaf_name:"test.cancelable" @@ fun context ->
+  let contract = Eta.Spi.Expert.contract context in
   contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
   cancel_ref :=
     Some (fun () -> contract.Eta.Runtime_contract.cancel cancel_context Exit);
-  Eta.Effect.Expert.eval context eff
+  Eta.Spi.Expert.eval context eff
 
 let fork_run_cancelable sw rt eff =
   let cancelable_cancel = ref None in

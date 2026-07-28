@@ -33,27 +33,27 @@ module Make (B : Backend) = struct
       wait_until ~attempts:(attempts - 1) label predicate
 
   let install_cancel_handle ?(reason = Exit) slot eff =
-    Effect.Expert.make ~leaf_name:"test.interruptible.cancel-handle" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"test.interruptible.cancel-handle" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
-    Effect.Expert.eval context eff
+    Spi.Expert.eval context eff
 
   let nested_eval_with_cancel_handle ?(reason = Exit) slot eff =
-    Effect.Expert.make ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"test.interruptible.nested-eval-cancel-handle" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
     slot := Some (fun () -> contract.Runtime_contract.cancel cancel_context reason);
-    Effect.Expert.eval context eff
+    Spi.Expert.eval context eff
 
   let call_cancel = function
     | Some cancel -> cancel ()
     | None -> B.fail "Effect.interruptible test cancel handle was not installed"
 
   let never_observing_cancellation_reason blocked observed_reason =
-    Effect.Expert.make ~leaf_name:"test.interruptible.observe-cancellation-reason"
+    Spi.Expert.make ~leaf_name:"test.interruptible.observe-cancellation-reason"
     @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    let contract = Spi.Expert.contract context in
     let promise, _resolver = contract.Runtime_contract.create_promise () in
     blocked := true;
     try contract.Runtime_contract.await_promise promise with exn ->
@@ -482,7 +482,7 @@ module Make (B : Backend) = struct
       Effect.sync (fun () -> daemon_result := Some result)
     in
     let program =
-      let* () = Effect.uninterruptible (Effect.daemon daemon) in
+      let* () = Effect.uninterruptible (Spi.daemon daemon) in
       let* () = Effect.sync (fun () -> daemon_released := true) in
       let+ () =
         wait_until "masked daemon result" (fun () -> Option.is_some !daemon_result)
@@ -520,7 +520,7 @@ module Make (B : Backend) = struct
     in
     let program =
       let* () =
-        Effect.uninterruptible (Effect.finally (Effect.daemon daemon) Effect.unit)
+        Effect.uninterruptible (Effect.finally (Spi.daemon daemon) Effect.unit)
       in
       let* () = wait_until "cleanup daemon block" (fun () -> !daemon_blocked) in
       let* () = Effect.sync (fun () -> call_cancel !daemon_cancel_handle) in

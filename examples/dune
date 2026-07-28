@@ -328,8 +328,8 @@
   (pps ppx_eta)))
 
 (executable
- (name daemon_drain)
- (modules daemon_drain)
+ (name background_shutdown)
+ (modules background_shutdown)
  (libraries eta eta_eio eio_main)
  (preprocess
   (pps ppx_eta)))
@@ -419,7 +419,7 @@
   blocking_result.exe
   supervisor_scope.exe
   background_lifecycle.exe
-  daemon_drain.exe
+  background_shutdown.exe
   observability.exe
   observability_controls.exe
   observability_sinks.exe

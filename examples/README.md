@@ -117,8 +117,8 @@ The current examples cover:
   nursery.
 - `background_lifecycle.ml` - a body-owned background child, backend-neutral
   `Effect.yield`, and independent foreground work with `Effect.par`.
-- `daemon_drain.ml` - runtime-owned finite daemon work and explicit shutdown
-  draining.
+- `background_shutdown.ml` - a long-lived worker owned by the application
+  scope and drained explicitly at shutdown.
 - `observability.ml` - named workflow spans, logs, events, result attributes,
   and metrics from one Eta blueprint.
 - `observability_controls.ml` - tracing guards, lazy span attributes, and

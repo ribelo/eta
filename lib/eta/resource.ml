@@ -107,5 +107,5 @@ let auto ?(on_error) ~load ?random ~schedule () =
   |> Effect.map (loaded load)
   |> Effect.bind (fun resource ->
          let driver = Schedule.start ?random schedule in
-         Effect.daemon (refresh_loop resource driver)
+         Spi.daemon (refresh_loop resource driver)
          |> Effect.map (fun () -> resource))

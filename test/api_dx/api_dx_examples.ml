@@ -470,9 +470,11 @@ let observability_sinks_proposed () =
   Eta.Tracer.retain_recent tracer ~max:1;
   (Eta.Tracer.dump tracer, Eta.Logger.dump logger, Eta.Meter.dump meter)
 
-let daemon_drain_proposed rt work =
-  ignore (Eta.Runtime.run rt (Effect.daemon work));
-  Eta.Runtime.drain rt
+let background_shutdown_proposed worker request_stop wait_finished =
+  let open Syntax in
+  Effect.with_background worker (fun () ->
+      let* () = request_stop in
+      wait_finished)
 
 let background_current heartbeat wait_started left right =
   Effect.with_background heartbeat (fun () ->
@@ -2458,7 +2460,7 @@ Effect.with_background heartbeat (fun () ->
   |> Effect.map format_pair)|};
     };
     {
-      area = "daemon_drain";
+      area = "background_shutdown";
       variant = "current";
       code =
         {|let done_ = Atomic.make false in
@@ -2469,11 +2471,13 @@ Eio.Fiber.fork_daemon ~sw (fun () ->
 while not (Atomic.get done_) do Eio.Fiber.yield () done|};
     };
     {
-      area = "daemon_drain";
+      area = "background_shutdown";
       variant = "proposed";
       code =
-        {|ignore (Runtime.run rt (Effect.daemon worker));
-Runtime.drain rt|};
+        {|let open Eta.Syntax in
+Effect.with_background worker (fun () ->
+  let* () = request_stop in
+  wait_finished)|};
     };
   ]
 
@@ -3212,18 +3216,20 @@ let assert_expected_shape snippet =
       if count_sub snippet.code "Effect.par" <> 1 then
         failwith
           "background proposed example should spell concurrent loads with Effect.par"
-  | "daemon_drain", "proposed", (_, _, _, bind, let_star, let_at, from_result)
+  | "background_shutdown", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
-      if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
-        failwith "daemon_drain proposed example should be direct lifecycle use";
+      if bind <> 0 || let_star <> 1 || let_at <> 0 || from_result <> 0 then
+        failwith
+          "background_shutdown proposed example should signal then await inside the scope";
       if
-        count_sub snippet.code "Effect.daemon" <> 1
-        || count_sub snippet.code "Runtime.drain" <> 1
+        count_sub snippet.code "Effect.with_background" <> 1
+        || count_sub snippet.code "Effect.daemon" <> 0
+        || count_sub snippet.code "Runtime.drain" <> 0
         || count_sub snippet.code "Eio.Fiber.fork_daemon" <> 0
         || count_sub snippet.code "Atomic." <> 0
       then
         failwith
-          "daemon_drain proposed example should use Eta daemon/drain instead of manual fiber bookkeeping"
+          "background_shutdown proposed example should drain the worker inside the application scope"
   | _ -> ()
 
 let () =

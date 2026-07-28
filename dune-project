@@ -78,6 +78,7 @@
   "eta_js_stream provides pull-based streams for eta_js without Eio or Cstruct dependencies.")
  (depends
   (ocaml (>= 5.2.0))
+  eta
   eta_js))
 
 (package

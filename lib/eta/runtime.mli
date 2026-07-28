@@ -31,7 +31,7 @@ val create_with_runtime :
 
     [services] attaches optional runtime-package services. Root [eta] does not
     inspect their types; packages such as [eta_blocking] own their keys and
-    retrieve them through [Effect.Expert].
+    retrieve them through [Spi.Expert].
 
     [capture_backtrace] controls whether unchecked exceptions captured as
     [Cause.Die] carry [Printexc.raw_backtrace]. It defaults to [true]. Disable

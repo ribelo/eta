@@ -105,8 +105,8 @@ let test_refresh_node_demand_owns_node_start_wiring () =
   in
   let cases = [ start; stop; idle ] in
   let eff =
-    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
-    let runtime_contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer.test_node_demand" @@ fun context ->
+    let runtime_contract = Eta.Spi.Expert.contract context in
     let find_case timer =
       match
         List.find_opt
@@ -184,7 +184,7 @@ let test_refresh_node_demand_owns_node_start_wiring () =
           "cancel hooks" 1 (List.length cancel_hooks);
         List.iter (fun hook -> hook ()) cancel_hooks;
         (match
-           Eta.Effect.Expert.eval context
+           Eta.Spi.Expert.eval context
              (Eta.Effect.concat (Timer.start_attempt_effects start_attempts))
          with
         | Eta.Exit.Ok () ->
@@ -376,9 +376,9 @@ let test_refresh_node_on_demand_owns_validation_and_token_order () =
       let record event = append_event events event in
       let result =
         run_ok runtime
-          (Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
+          (Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer.test_refresh_node_on_demand"
           @@ fun context ->
-            let runtime_contract = Eta.Effect.Expert.contract context in
+            let runtime_contract = Eta.Spi.Expert.contract context in
             let node_runtime_contract =
               if runtime_matches then runtime_contract else foreign_contract
             in
@@ -443,8 +443,8 @@ let test_refresh_node_demand_runtime_mismatch_short_circuits () =
     | None -> Alcotest.fail "unknown timer node"
   in
   let eff =
-    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
-    let runtime_contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer.test_node_runtime_mismatch" @@ fun context ->
+    let runtime_contract = Eta.Spi.Expert.contract context in
     let make_node runtime_contract case =
       let node =
         Timer.create_node ~runtime_contract
@@ -516,9 +516,9 @@ let test_mark_node_unneeded_marks_starting_inactive () =
   in
   let starting_hooks, inactive_hooks =
     run_ok runtime
-      (Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_mark_node_unneeded"
+      (Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer.test_mark_node_unneeded"
        @@ fun context ->
-         let runtime_contract = Eta.Effect.Expert.contract context in
+         let runtime_contract = Eta.Spi.Expert.contract context in
          let make_node case =
            let node =
              Timer.create_node ~runtime_contract
@@ -874,9 +874,9 @@ let test_create_daemon_node_owns_start_effect_generation () =
         append_event events ("set:" ^ state_label state))
   in
   let eff =
-    Eta.Effect.Expert.make ~leaf_name:"eta_signal.timer.test_node"
+    Eta.Spi.Expert.make ~leaf_name:"eta_signal.timer.test_node"
     @@ fun context ->
-    let runtime_contract = Eta.Effect.Expert.contract context in
+    let runtime_contract = Eta.Spi.Expert.contract context in
     let timer =
       Timer.create_daemon_node ~runtime_contract ~refresh_when_inactive:true
         ~refresh_operation:None
@@ -899,7 +899,7 @@ let test_create_daemon_node_owns_start_effect_generation () =
       (Eta.Runtime_contract.same_runtime
          (Timer.runtime_contract timer)
          runtime_contract);
-    Eta.Effect.Expert.eval context (Timer.start_effect timer)
+    Eta.Spi.Expert.eval context (Timer.start_effect timer)
   in
   run_ok runtime eff;
   Alcotest.(check (list string))

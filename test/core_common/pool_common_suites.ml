@@ -63,8 +63,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.failf "%s: expected interrupt, got Ok" label
 
   let runtime_interrupt_effect () =
-    Effect.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
-    let contract = Effect.Expert.contract context in
+    Spi.Expert.make ~leaf_name:"test.interrupt" @@ fun context ->
+    let contract = Spi.Expert.contract context in
     contract.Eta.Runtime_contract.cancel_sub @@ fun cancel_context ->
     contract.Eta.Runtime_contract.cancel cancel_context Exit;
     contract.Eta.Runtime_contract.await_cancel ()

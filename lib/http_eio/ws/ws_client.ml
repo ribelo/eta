@@ -553,7 +553,7 @@ let make_connection ~flow ~selected_protocol ~max_frame_size
       max_frame_size;
     }
   in
-  Effect.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
+  Spi.daemon (reader_loop t reader None) |> Effect.map (fun () -> t)
 
 let connect_on_flow ?(key = Codec.key_of_nonce (Openssl.random_bytes 16))
     ?(max_frame_size = default_max_frame_size) ?headers ?protocols

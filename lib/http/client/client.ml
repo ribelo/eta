@@ -86,11 +86,11 @@ let[@cold] runtime_service_error request =
        })
 
 let runtime_service_effect ?request f =
-  Eta.Effect.Expert.make ~leaf_name:"eta-http.runtime-service" (fun ctx ->
-      match Eta.Effect.Expert.runtime_service ctx service_key with
-      | Some service -> Eta.Effect.Expert.eval ctx (f service)
+  Eta.Spi.Expert.make ~leaf_name:"eta-http.runtime-service" (fun ctx ->
+      match Eta.Spi.Expert.runtime_service ctx service_key with
+      | Some service -> Eta.Spi.Expert.eval ctx (f service)
       | None ->
-          Eta.Effect.Expert.eval ctx
+          Eta.Spi.Expert.eval ctx
             (Eta.Effect.fail (runtime_service_error request)))
 
 let make_runtime ?(protocol = Auto)

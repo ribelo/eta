@@ -840,8 +840,8 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let local = Rc.create_local () in
     let locals_eff =
-      E.Expert.make @@ fun context ->
-      let contract = E.Expert.contract context in
+      Spi.Expert.make @@ fun context ->
+      let contract = Spi.Expert.contract context in
       let result =
         contract.Rc.local_with_binding local 42 (fun () ->
             contract.Rc.run_scope @@ fun sw ->
@@ -858,8 +858,8 @@ module Make (B : Runtime_backend.S) = struct
     check_ok Alcotest.int "local" 42 (B.run rt locals_eff);
 
     let stream_eff =
-      E.Expert.make @@ fun context ->
-      let contract = E.Expert.contract context in
+      Spi.Expert.make @@ fun context ->
+      let contract = Spi.Expert.contract context in
       let stream = contract.Rc.create_stream 2 in
       let values =
         contract.Rc.run_scope @@ fun sw ->
@@ -883,8 +883,8 @@ module Make (B : Runtime_backend.S) = struct
       (contract.Rc.local_get inherited, contract.Rc.local_get fiber_local)
     in
     let eff =
-      E.Expert.make @@ fun context ->
-      let contract = E.Expert.contract context in
+      Spi.Expert.make @@ fun context ->
+      let contract = Spi.Expert.contract context in
       let result =
         contract.Rc.local_with_binding inherited 42 @@ fun () ->
         contract.Rc.local_with_binding fiber_local 99 @@ fun () ->
@@ -1101,7 +1101,7 @@ module Make (B : Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let owner = Domain.self () in
     let daemon_domain = ref None in
-    B.run rt (E.daemon (E.sync (fun () -> daemon_domain := Some (Domain.self ()))))
+    B.run rt (Spi.daemon (E.sync (fun () -> daemon_domain := Some (Domain.self ()))))
     |> expect_ok |> ignore;
     B.drain rt;
     Alcotest.(check (option bool))
@@ -1111,7 +1111,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_daemon_drain () =
     B.with_runtime @@ fun _ctx rt ->
     let completed = ref false in
-    B.run rt (E.daemon (E.sync (fun () -> completed := true)))
+    B.run rt (Spi.daemon (E.sync (fun () -> completed := true)))
     |> expect_ok |> ignore;
     B.drain rt;
     Alcotest.(check bool) "daemon completed" true !completed
@@ -1119,13 +1119,13 @@ module Make (B : Runtime_backend.S) = struct
   let test_runtime_fork_daemon_scope_does_not_join () =
     B.with_test_clock @@ fun ctx clock rt ->
     let daemon_scope =
-      E.Expert.make @@ fun context ->
-      let contract = E.Expert.contract context in
+      Spi.Expert.make @@ fun context ->
+      let contract = Spi.Expert.contract context in
       try
         contract.Rc.run_scope @@ fun sw ->
         contract.Rc.fork_daemon sw (fun () -> contract.Rc.await_cancel ());
         Exit.Ok ()
-      with exn -> E.Expert.exit_of_exn context exn
+      with exn -> Spi.Expert.exit_of_exn context exn
     in
     let promise =
       B.fork_run ctx rt

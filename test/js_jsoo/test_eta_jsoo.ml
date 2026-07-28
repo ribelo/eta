@@ -400,8 +400,8 @@ let test_acquire_all_par_sibling_failure_rollback done_ =
              fail "acquire_all_par jsoo sibling rollback diverged"))
 
 let cancel_from_parent_when started batch =
-  Eta.Effect.Expert.make @@ fun context ->
-  let contract = Eta.Effect.Expert.contract context in
+  Eta.Spi.Expert.make @@ fun context ->
+  let contract = Eta.Spi.Expert.contract context in
   let cancel_ready, cancel_ready_resolver =
     contract.Runtime_contract.create_promise ()
   in
@@ -415,8 +415,8 @@ let cancel_from_parent_when started batch =
               contract.Runtime_contract.cancel_sub @@ fun cancel_context ->
               contract.Runtime_contract.resolve_promise cancel_ready_resolver
                 cancel_context;
-              Eta.Effect.Expert.eval context batch
-            with exn -> Eta.Effect.Expert.exit_of_exn context exn
+              Eta.Spi.Expert.eval context batch
+            with exn -> Eta.Spi.Expert.exit_of_exn context exn
           in
           contract.Runtime_contract.resolve_promise result_resolver exit);
       let cancel_context =
@@ -512,8 +512,8 @@ let test_throwing_await_cancel_hook_does_not_strand_fiber done_ =
 let test_runtime_locals_cross_fork done_ =
   let local = Runtime_contract.create_local () in
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let result =
       contract.Runtime_contract.local_with_binding local 42 (fun () ->
           contract.Runtime_contract.run_scope @@ fun sw ->
@@ -535,8 +535,8 @@ let test_runtime_local_inheritance_kinds done_ =
     Runtime_contract.create_local ~inheritance:Fiber_local ()
   in
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let observe () =
       ( contract.Runtime_contract.local_get inherited,
         contract.Runtime_contract.local_get fiber_local )
@@ -573,8 +573,8 @@ let test_runtime_local_inheritance_kinds done_ =
 
 let test_runtime_stream_fifo done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let stream = contract.Runtime_contract.create_stream 1 in
     let values =
       contract.Runtime_contract.run_scope @@ fun sw ->
@@ -591,8 +591,8 @@ let test_runtime_stream_fifo done_ =
 
 let test_runtime_resolve_wakes_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let waiter_started, waiter_started_resolver =
       contract.Runtime_contract.create_promise ()
@@ -621,8 +621,8 @@ let test_runtime_resolve_wakes_live_waiter done_ =
 
 let test_runtime_resolve_after_waiter_cancellation done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let started, started_resolver =
       contract.Runtime_contract.create_promise ()
@@ -667,8 +667,8 @@ let test_runtime_resolve_after_waiter_cancellation done_ =
 
 let test_runtime_canceled_waiter_does_not_strand_live_waiter done_ =
   let eff =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     let promise, resolver = contract.Runtime_contract.create_promise () in
     let canceled_started, canceled_started_resolver =
       contract.Runtime_contract.create_promise ()
@@ -722,7 +722,7 @@ let test_daemon_drain done_ =
   let completed = ref false in
   let runtime = Eta_jsoo.Runtime.create () in
   Eta_jsoo.Runtime.run runtime
-    (Eta.Effect.daemon (Eta.Effect.sync (fun () -> completed := true)))
+    (Eta.Spi.daemon (Eta.Effect.sync (fun () -> completed := true)))
     ~on_result:
       (finish
          (fun () ->
@@ -824,8 +824,8 @@ let test_expert_clock_observes_scoped_override done_ =
   in
   let runtime = Eta_jsoo.Runtime.create ~now_ms:(fun () -> 11) () in
   let expert_now =
-    Eta.Effect.Expert.make @@ fun context ->
-    let contract = Eta.Effect.Expert.contract context in
+    Eta.Spi.Expert.make @@ fun context ->
+    let contract = Eta.Spi.Expert.contract context in
     Eta.Exit.Ok (contract.Eta.Runtime_contract.now_ms ())
   in
   let open Eta.Syntax in

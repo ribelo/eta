@@ -271,7 +271,7 @@ let request_owner pool request response_idle_timeout response_ch release_ch
                  |> Effect.bind (fun () ->
                         (* Expected caller cancellation is reported through
                            [response_ch]. The catch below consumes this typed
-                           failure before the Effect.daemon boundary, so it
+                           failure before the Spi.daemon boundary, so it
                            must not emit eta.daemon.failure. *)
                         Effect.fail
                           (`Http
@@ -329,7 +329,7 @@ let request_with_pool
     Effect.with_scope
       (Effect.acquire_release ~acquire:Effect.unit ~release:close_if_pending
       |> Effect.bind (fun () ->
-             Effect.daemon
+             Spi.daemon
                (request_owner pool request response_idle_timeout response_ch
                   release_ch cancel_ch)
              |> Effect.bind (fun () ->
