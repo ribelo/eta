@@ -5128,3 +5128,54 @@ restored from orchestrator's own texts after untracked-file cleanup.
 **Decision: PROMOTE S′.** Follow-ups: none new. EOP-audit wave continues
 (E40 next). `describe`'s justification is now honestly stated: T5 forces
 it, not consumer demand.
+
+---
+
+## V-DX-E40-001 — 2026-07-28 — research/dx-e40-all-admission-split — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E40-002.
+
+**Current state (measured).** `all ?(max_concurrent = 8)` — bounded by
+default (E28's unification, recent). `all_settled` already unbounded
+(forks every child via `List.iteri` + `fiber_fork`). Usage: 7
+`all ~max_concurrent` sites; ~9 `Effect.all` omission sites (mostly bench
+fixtures). E28 deadlock-warning tests live in
+`test/core_common/effect_common_suites.ml`. Ecosystem precedent (Finder,
+via the audit grill): neither ZIO nor Effect-TS ships a magic-number
+bounded default.
+
+**Predictions.**
+
+1. **Landing (registered split):** `all` unbounded (fork-all, like
+   `all_settled` today), `all_bounded ~max_concurrent` with a REQUIRED
+   bound (`Invalid_argument` on ≤ 0, coordination caveat documented),
+   `all_settled` stays unbounded with docs aligned to the shared model,
+   `map_par` untouched (documented default-8 stands on E24 evidence).
+   `all_settled_bounded` NOT added (YAGNI; deferred note if it surfaces).
+2. `all`'s implementation simplifies to all_settled-style fork-all;
+   `all_bounded` keeps the E28 worker pool.
+3. Migration: 7 `~max_concurrent` sites → `all_bounded`; ~9 omission
+   sites censused and classified — predicted ALL safe-to-widen (prebuilt
+   effects, small lists, no hot loops). If any site had a load-bearing
+   bound, it migrates to `all_bounded` with a journal note.
+4. Deadlock semantics pinned BOTH ways: (a) `all_bounded` with
+   bound < participants on a barrier shape CAN stall (documented,
+   discriminating test); (b) `all` on the same shape completes (new
+   guarantee, discriminating test). E28's deadlock tests adapted, not
+   deleted.
+5. Census: concurrency cluster +1 val (`all_bounded`); `all` loses its
+   optional. Footguns: −1/+0 (hidden default-8 with silent-deadlock
+   potential removed).
+6. Review (PR-style, cold read): `all` reads unbounded-safe on ecosystem
+   precedent; `all_bounded` carries the constraint in the name (E6's
+   name-carries-strategy criterion); zero dangerous misreadings
+   predicted. Predicted reviewer question: "when do I reach for
+   `all_bounded`?" — must be answered by the docs without the review
+   packet saying so.
+7. T1 contract: `all`/`all_bounded` for prebuilt effects (explicit
+   admission choice), `map_par` for lazy mapping (documented default-8).
+   Crisp.
+8. Law registry: `all`'s admission/deadlock law rows change meaning and
+   are updated in the same change; no orphaned rows.
+9. Outcome: promote. Risk point: a hidden default-8 dependency in the 9
+   omission sites — predicted none load-bearing.
