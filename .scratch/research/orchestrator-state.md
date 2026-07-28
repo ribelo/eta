@@ -11,7 +11,7 @@ loop (plan §4.2 as amended by Amendment 1).
 - In flight: **E39 — E12 audit-slim race** (remove vs. slim)
   - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e39`
   - Branch: `research/dx-e39-audit-slim-race`
-  - Stage: predictions sealed (V-DX-E39-001); objective.md written; awaiting executor
+  - Stage: endpoints S+R verified; review demanded changes — S' (R + describe) registered (V-DX-E39-002); followup-1.md written; awaiting executor rework
 - Done (recent): **E38 promoted** (`Fail { error; rendered }`;
   render-at-capture design; two rework rounds)
 - Done (recent): **E37 promoted** (`acquire_all_par`; transactional
