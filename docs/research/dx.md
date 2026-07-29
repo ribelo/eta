@@ -424,6 +424,35 @@ deliberate telemetry upgrade. Red-team: raising bodies still surface as
 Provenance: `.scratch/research/dx/e8/`, V-DX-E8-001..002, branch
 `research/dx-e8-eta-result-sugar`.
 
+## E41 — `Resource` → `Refreshable` (promoted 2026-07-29)
+
+`Eta.Resource` was not a resource — it was a stale-while-refresh cached
+value stealing the acquire/scope/ownership mental model from the real
+resource model (`with_resource`/`acquire_release`). It is now
+`Eta_cache.Refreshable`, and its daemon-backed constructor `auto` is gone:
+`with_auto ~load ~schedule (fun handle -> …)` owns the refresh loop
+lexically — scope exit of any kind cancels and awaits it, proven by a
+discriminating matrix (non-exhausting schedules, third-load trap, empty
+fiber census). `with_auto_on_refresh_error` is the explicit alerting form.
+
+Two durable lessons:
+
+1. **No optional arguments in `let@`-canonical signatures.** OCaml erases
+   optionals only on positional-after-optional application, full
+   application, or a pinned expected type — and ppx_let does not propagate
+   the expected type. The canonical usage form decided the signature:
+   zero optionals, and `on_error` became a separate function
+   (`with_auto_on_refresh_error`) rather than positional noise or a deleted
+   capability. (Second erasure lesson of the programme.)
+2. **Discriminating tests need non-exhausting schedules.** The first exit
+   matrix used `Schedule.recurs 1`, which exhausts *naturally* right after
+   the interrupted load — "loop stopped" and "loop finished" were
+   indistinguishable until the review caught it.
+
+`?random` was deleted (zero users); the loop honors `Effect.with_random`
+(verified). Law rows R167–R176. Evidence: `.scratch/research/dx/e41/`,
+V-DX-E41-001..003.
+
 ## E23 — Error channel mirrors `Result` (promoted 2026-07-18)
 
 The handle cluster now mirrors `Stdlib.Result`: `bind_error` (was `catch`),

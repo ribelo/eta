@@ -423,6 +423,19 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
 
 ### E41 — `Resource` → `Refreshable`
 - What: rename + move to eta_cache + lexical-first `with_auto`.
+  **Decision: PROMOTED (2026-07-29, `b2c7a82b`).** `Eta.Resource` deleted,
+  rehomed as `Eta_cache.Refreshable` (no shim; `Eta_js.Refreshable` alias).
+  Daemon-backed `auto` deleted; `with_auto ~load ~schedule` owns the refresh
+  loop lexically on public `with_supervised_background` (scope-exit of any
+  kind cancels+awaits; third-load-trap discrimination; empty fiber census).
+  `with_auto_on_refresh_error` is the explicit alerting form. Zero optional
+  args after the ppx_let erasure constraint proved no optional survives the
+  clean `let@` form (second erasure lesson, V-DX-E41-002); `?random`
+  deleted — loop honors `Effect.with_random` (verified). Stale-while-
+  refresh and Fail/Die classification preserved verbatim; law rows
+  R167–R176. One should-not-merge review round (test-discrimination hole,
+  fabricated OTel doc linkage) fixed before merge. Evidence:
+  `.scratch/research/dx/e41/`, V-DX-E41-001..003.
 
 ### E42 — Hygiene batches (a/b)
 - a: daemon → SPI; `Expert` → unstable SPI namespace; supervisor

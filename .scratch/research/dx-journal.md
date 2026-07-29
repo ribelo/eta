@@ -5523,3 +5523,70 @@ val with_auto_on_refresh_error :
 - Census amendment: `eta_cache` +6 vals (not +5 as sealed in V-DX-E41-001).
 
 Awaiting rework; results at V-DX-E41-003.
+
+---
+
+## V-DX-E41-003 — 2026-07-29 — research/dx-e41-refreshable — phase: results + decision
+
+**Decision: PROMOTE** — merged `--no-ff` (`b2c7a82b`), master gates green,
+master + branch pushed, worktree removed, objectives archived.
+
+**The arc** (the most instructive experiment of the wave so far):
+1. Executor delivered the rename/move + `with_auto` — verified clean
+   (gates, scope-exit matrix, preservation suite, census exact, law rows,
+   red-team, hold-trigger none).
+2. Orchestrator verification found the `?random:None` erasure wart at
+   `let@` sites in the new signature. Follow-up 1 issued.
+3. Executor BLOCKED: `?on_error` also unerasable — both follow-up-1
+   endpoints failed. Orchestrator probe pinned the mechanism (positional-
+   after-optional, full application, or pinned expected type — and
+   ppx_let does not propagate the expected type). **Rule registered: a
+   signature whose canonical form is `let@` can carry no optional
+   arguments.** (Programme's second erasure lesson; orchestrator's
+   follow-up-1 endpoints recorded as built on an incomplete rule.)
+4. Oracle consultation → amendment (V-DX-E41-002): zero optionals;
+   `with_auto` + `with_auto_on_refresh_error` (name sharpened — the bare
+   `on_error` is channel-blind); `?random` deleted; both delegate to one
+   private helper.
+5. Rework delivered: final signatures verbatim, `with_random` honored by
+   the loop (verified path: `Effect.repeat` → `Runtime_core.current_random`),
+   erasure regressions on native + jsoo, `?random:None` noise gone.
+6. Independent PR review: **should-not-merge** — four findings, all
+   verified by the orchestrator: (F1) exit matrix used `Schedule.recurs 1`,
+   naturally exhausted — loop-stoppage not discriminated; (F2) OTel docs
+   fabricated a Refreshable linkage (pre-existing falsehood carried
+   forward); (F3) R167/R175 overclaimed (no exact counter; no mid-callback
+   barrier); disposition range omitted R176; (F4) example ran only the
+   rare form; stale "runtime-owned" wording in api-dx.md.
+7. Follow-up 3: third-load trap with non-exhausting schedules (passed
+   against the unchanged implementation — ownership was sound, tests now
+   prove it), OTel docs matched to the real immutable-record architecture,
+   discriminating counter/barrier tests, registry range fixed, canonical
+   example executes. Re-review by the reviewer of record: **promote**,
+   "no fix is merely cosmetic".
+
+**Prediction scoring (orchestrator, V-DX-E41-001).** Hits: census deltas
+(as amended to +6 in V-DX-E41-002); all `with_auto` semantics predictions
+(scope-exit kinds, exhaustion, seed-failure suppression, stale-while-
+refresh); public-machinery-only construction; `eta_js` alias; hold-trigger
+none; promote outcome; gates ≤3 attempts. Misses: migration size
+(12–18 predicted, ~34 paths + 2 rework rounds — the standing
+undercounting pattern); review smoothness (predicted promote with ≤2
+minor reservations; actual should-not-merge → rework → promote; the
+predicted "CPS ergonomics" reservation did materialize — as the erasure
+saga, far deeper than expected). Executor's sealed set: 5 hits, 1
+partial, 1 miss (their report).
+
+**Lessons for the programme.**
+- **let@ erasure rule** (second lesson): no optionals in let@-canonical
+  signatures; positional-after-optional is the only reliable syntactic
+  erasure. Future CPS combinators must state their erasure probe.
+- **Discriminating coverage** (AGENTS.md law policy in action): "the loop
+  stops" needs a schedule that cannot exhaust — natural exhaustion masked
+  the claim. The review's F1 is now the canonical example of a
+  non-discriminating test in the registry's review guidance.
+- **Docs can fabricate architecture.** The OTel falsehood predated E41;
+  rename work must verify doc claims against code, not carry them forward.
+
+**Follow-ups:** none new. `with_random` reached the loop (no E43 gap).
+Wave progress: 9/14 done. Next: E42b (hygiene batch).
