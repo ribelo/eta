@@ -514,6 +514,10 @@ Ordered dependency-first (see V-DX-EOP-AUDIT for per-claim verdicts).
   instrument territory; benefits ALL scoped stages; open.
 - F8 `Eta_test.Run` failure output cites Alcotest internals, not
   user-code location ("where" rated 3) — open.
+- F9 Refreshable generation scoping (Effect-TS `Resource`
+  close-on-replace semantics) — watch/documented boundary. Evidence gate: a
+  real use case where loaded generations hold resources. If it fires, design
+  Effect-TS `ScopedRef`-style close-previous-on-replace semantics.
 - E22 dated law debts (CD-E22-004/008/020/022/023 named by oracle as
   readily coverable) — prioritize, don't let them fossilize.
 - E22 registry granularity (compound rows R82–R93) — split on next

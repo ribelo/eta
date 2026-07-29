@@ -152,6 +152,95 @@ Eta has small, focused primitives rather than ZIO-compatible data structures:
 Eta core has no STM, Chunk, ZManaged, ZSink, or ZChannel compatibility layer.
 `eta_stream` is an optional Eta stream package, not a ZIO stream clone.
 
+## Resource, Three Ways
+
+`Resource` names three different ideas in the reference libraries:
+
+1. **Cats Effect `Resource` / ZIO 1 `ZManaged`: an acquire/release
+   descriptor.** It reifies a composable resource blueprint with acquisition,
+   use, and release. The ZIO 1 implementation lives under
+   `.reference/zio/managed/`; the ZIO 2 migration guide explicitly places it in
+   the same lineage as Cats Effect `Resource`
+   (`.reference/zio/docs/guides/migrate/migration-guide.md`, “Scopes”).
+2. **Effect-TS `Resource`: a refreshable cached value.** It stores the latest
+   acquisition result and exposes `manual`, `auto`, `get`, and `refresh`.
+   Eta's former `Eta.Resource` was a faithful port of this refreshable-cache
+   shape, not the Cats/ZManaged shape. Evidence:
+   `.reference/effect-smol/packages/effect/src/Resource.ts`.
+3. **ZIO 2 resource primitives: acquisition directly in `ZIO`, bounded by a
+   first-class `Scope`.** ZIO 2 deleted `ZManaged`. Its migration guide records
+   the reasons: users had to learn when to use `ZIO` versus `ZManaged`; every
+   `ZIO` method had to be reimplemented on `ZManaged` in a more complex form;
+   and the extra layer was slower. The replacement is `Scope` plus
+   `ZIO.acquireRelease`.
+
+Eta already has the third architecture. The mapping is:
+
+| ZIO 2 | Eta |
+| --- | --- |
+| `ZIO.acquireRelease` | `Effect.acquire_release` |
+| `acquireReleaseWith(...).use(...)` | `Effect.with_resource` |
+| `acquireReleaseExitWith` | `Effect.with_resource_exit` |
+| `ZIO.scoped` | `Effect.with_scope` |
+| Parallel acquisition into one scope | `Effect.acquire_all_par` |
+
+The current declarations from `lib/eta/effect.mli`, verbatim, are:
+
+```ocaml
+val acquire_release :
+  acquire:('a, 'err) t ->
+  release:('a -> (unit, 'release_err) t) ->
+  ('a, 'err) t
+
+val with_resource :
+  acquire:('a, 'err) t ->
+  release:('a -> (unit, 'release_err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+
+val with_resource_exit :
+  acquire:('a, 'err) t ->
+  release:('a -> ('b, 'err) Exit.t -> (unit, 'release_err) t) ->
+  ('a -> ('b, 'err) t) ->
+  ('b, 'err) t
+
+val with_scope : ('a, 'err) t -> ('a, 'err) t
+
+val acquire_all_par :
+  ?max_concurrent:int ->
+  acquire:('c -> ('a, 'err) t) ->
+  release:('a -> (unit, 'r) t) ->
+  'c list -> ('a list, 'err) t
+```
+
+Eta's scope is runtime-owned through the fiber frame; under the no-R boundary
+above, it does not need a type-level environment. Eta will not grow a reified
+`Resource.t` or `ZManaged` descriptor. `Effect.t` is already the blueprint
+language, so adding a second descriptor language would recreate the duplication
+ZIO 2 removed.
+
+The rename to `Eta_cache.Refreshable` therefore stands even though Effect-TS
+uses `Resource` for the same refreshable shape. Eta's API and documentation
+already use “resource” throughout for acquire/release lifetimes:
+`Effect.acquire_release`, `Effect.with_resource`, scopes, pools, and finalizers.
+`Refreshable` removes that internal collision and says what the cached value
+does.
+
+### Open question: Refreshable generation scoping
+
+Effect-TS builds its `Resource` on `ScopedRef`. A successful `refresh` replaces
+the generation and closes the previous generation's scope, releasing resources
+owned by the replaced value
+(`.reference/effect-smol/packages/effect/src/Resource.ts`).
+`Eta_cache.Refreshable` currently swaps a plain value. If a loaded generation
+owns a file watcher, connection, or similar resource, replacing it does not
+release that resource and can leak it.
+
+This is a watch item, not an API action. Its evidence gate fires only when a
+real Eta use case loads generations that hold resources. If it fires, design
+Effect-TS `ScopedRef`-style close-previous-on-replace semantics; until then the
+plain-value boundary remains explicit.
+
 ## Schedules
 
 `Schedule.t` is a pure recurrence-policy description used by retry, repeat,
