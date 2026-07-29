@@ -110,11 +110,11 @@ Successful exports are HTTP `200` or `202`.
 
 ## Cached Configuration
 
-Resolved endpoint and resource attributes are loaded once through `Resource.t`
+Resolved endpoint and resource attributes are loaded once through `Eta_cache.Refreshable.t`
 when the exporter starts.
 
 ```ocaml
-Resource.manual
+Eta_cache.Refreshable.manual
   (Effect.named "eta_otel.config"
      (Effect.named "eta_otel.config.load" (Effect.sync (fun () -> config))))
 ```

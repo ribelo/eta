@@ -7,6 +7,8 @@ module Int_cache = Eta_cache.Make (struct
   let hash = Hashtbl.hash
 end)
 
+module Refreshable = Eta_cache.Refreshable
+
 let pp_hidden ppf _ = Format.pp_print_string ppf "<cache-error>"
 
 let run_exit rt eff = Eta_eio.Runtime.run rt eff
@@ -301,6 +303,33 @@ let test_mixed_interrupt_failure_is_not_cached () =
   check_ok_int "later get retried" 42 (run_exit rt (Int_cache.get cache 1));
   Alcotest.(check int) "mixed interruption was not cached" 2 !calls
 
+let test_refreshable_with_auto_leaves_empty_fiber_census () =
+  let calls = ref 0 in
+  let load =
+    Effect.sync (fun () ->
+        incr calls;
+        !calls)
+    |> Effect.bind (function
+         | 1 -> Effect.pure 1
+         | _ -> Effect.never)
+  in
+  let rec await_refresh () =
+    Effect.sync (fun () -> !calls >= 2)
+    |> Effect.bind (function
+         | true -> Effect.unit
+         | false -> Effect.yield |> Effect.bind await_refresh)
+  in
+  let outcome =
+    Eta_test.Run.run
+      (Refreshable.with_auto ~load ~schedule:(Schedule.recurs 1)
+         (fun _refreshable -> await_refresh ()))
+  in
+  (match outcome.exit with
+   | Exit.Ok () -> ()
+   | Exit.Error cause ->
+       Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause);
+  Eta_test.Run.expect_no_pending_fibers outcome
+
 let () =
   Alcotest.run "eta_cache"
     [
@@ -338,5 +367,10 @@ let () =
           Alcotest.test_case "capacity evicts LRU" `Quick
             test_capacity_evicts_least_recently_used;
           Alcotest.test_case "stats update" `Quick test_stats_update;
+        ] );
+      ( "Refreshable",
+        [
+          Alcotest.test_case "with_auto leaves empty fiber census" `Quick
+            test_refreshable_with_auto_leaves_empty_fiber_census;
         ] );
     ]

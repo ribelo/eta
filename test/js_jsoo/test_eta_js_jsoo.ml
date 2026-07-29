@@ -611,6 +611,21 @@ let test_from_js_promise_non_thenable_dies done_ =
                (finish done_ (expect_die "from_js_promise forged then")))
          (expect_die "from_js_promise missing then"))
 
+let test_refreshable_facade_is_lexical done_ =
+  let calls = ref 0 in
+  let load = Eta_js.Effect.sync (fun () -> incr calls; !calls) in
+  let rec await_refresh refreshable =
+    if !calls >= 2 then Eta_js.Refreshable.get refreshable
+    else
+      Eta_js.Effect.yield
+      |> Eta_js.Effect.bind (fun () -> await_refresh refreshable)
+  in
+  run
+    (Eta_js.Refreshable.with_auto ~load
+       ~schedule:(Eta_js.Schedule.recurs 1)
+       await_refresh)
+    ~on_result:(finish done_ (expect_ok_int "refreshable facade" 2))
+
 let tests =
   [
     ("eta_js runtime delay", test_runtime_delay);
@@ -630,6 +645,7 @@ let tests =
     ("eta_js semaphore facade", test_semaphore_facade);
     ("eta_js pubsub facade", test_pubsub_facade);
     ("eta_js supervisor observes failure", test_supervisor_observes_failure);
+    ("eta_js refreshable facade is lexical", test_refreshable_facade_is_lexical);
     ( "eta_js from_js_promise pending resolves after registration",
       test_from_js_promise_pending_resolves_after_registration );
     ( "eta_js from_js_promise already settled",

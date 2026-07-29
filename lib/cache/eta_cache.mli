@@ -6,6 +6,8 @@
     lookups are tracked for single-flight sharing but are not retained cache
     entries for [size] and [stats.current_size]. *)
 
+module Refreshable = Refreshable
+
 module type Key = Hashtbl.HashedType
 
 module Make (Key : Key) : sig

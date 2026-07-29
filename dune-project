@@ -20,7 +20,7 @@
  (name eta_cache)
  (synopsis "Effect-integrated keyed cache for Eta")
  (description
-  "eta_cache provides a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats.")
+  "eta_cache provides refreshable values and a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats.")
  (depends
   (ocaml (>= 5.2.0))
   eta))
@@ -45,6 +45,7 @@
  (depends
   (ocaml (>= 5.2.0))
   eta
+  eta_cache
   eta_jsoo
   (js_of_ocaml (>= 5.0))))
 

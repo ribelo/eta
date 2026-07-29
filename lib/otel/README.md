@@ -153,7 +153,7 @@ clock. Supplying `~clock` replaces both operations as one pair.
 | `~on_send`        | no-op            | test hook called before each HTTP POST       |
 
 The exporter starts one Eta runtime daemon through `runtime_factory`. That
-daemon loads cached exporter configuration through `Eta.Resource`, consumes
+daemon loads cached exporter configuration through `Eta_cache.Refreshable`, consumes
 bounded `Eta_stream.Mailbox` sources, merges signal streams with
 `Eta_stream.merge`, exports batches with bounded parallelism, and decrements
 in-flight counters through Eta finalizers. Export POSTs go through eta_http

@@ -81,7 +81,7 @@ Core effect model and runtime boundaries:
 | `Runtime` | Backend-neutral interpreter for `Effect.t`, built from a runtime module. |
 | `Duration` | Millisecond-precision durations. |
 | `Schedule` | Pure recurrence descriptions for repeat and retry. |
-| `Resource` | Cached effectful resources with explicit refresh and refresh-failure inspection. |
+| `Eta_cache.Refreshable` | Optional refreshable cached values with explicit or lexical scheduled refresh. |
 | `Capabilities` | Small object-type traits for runtime services and explicit dependencies. |
 | `Trace_context` | W3C traceparent/tracestate/baggage extract and inject helpers for distributed tracing. |
 
@@ -388,9 +388,10 @@ let observed =
 ~~~
 
 `Supervisor.scoped` is the public way to start child work. Runtime-owned
-background work stays internal to modules that own that lifecycle. For
-long-lived cached resources, `Resource.auto` keeps the existing returned
-resource shape and records refresh failures through `Resource.failures`.
+background work stays internal to modules that own that lifecycle. For cached
+values that refresh while a workflow runs,
+`Eta_cache.Refreshable.with_auto` owns the refresh loop lexically and records
+refresh failures through `Eta_cache.Refreshable.failures`.
 
 For background work that exists only while a body runs, prefer
 `Effect.with_background`:
@@ -457,8 +458,8 @@ Wrap Eio operations in `Effect.sync` at the leaf when they need Eta tracing
 names or defect diagnostics. If a synchronous leaf has expected failures, return
 an ordinary OCaml `result` and lift it with `Effect.sync_result`;
 exceptions remain unchecked defects. If a protocol is reusable and owns
-lifecycle semantics, prefer a focused module such as `Resource` or `Pubsub`
-rather than a generic concurrency-data wrapper.
+lifecycle semantics, prefer a focused module such as `Eta_cache.Refreshable` or
+`Pubsub` rather than a generic concurrency-data wrapper.
 
 ## Redacted Values
 

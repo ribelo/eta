@@ -1,3 +1,5 @@
+open Eta
+
 type ('a, 'err) t = {
   load : ('a, 'err) Effect.t;
   mutex : Sync_lock.t;
@@ -55,18 +57,18 @@ let manual load =
   load |> Effect.map (loaded load)
 
 let failures resource =
-  Effect.named "resource.failures"
+  Effect.named "refreshable.failures"
     (Effect.sync (fun () ->
          with_lock resource @@ fun () -> List.rev resource.failures))
 
-let auto ?(on_error) ~load ?random ~schedule () =
+let with_auto ?(on_error) ~load ?random ~schedule body =
   let add_failure resource cause =
     Effect.sync (fun () ->
         with_lock resource @@ fun () ->
         resource.failures <- cause :: resource.failures)
   in
   let record_failure resource cause =
-    Effect.named "resource.auto.refresh_failed"
+    Effect.named "refreshable.with_auto.refresh_failed"
       (add_failure resource cause
       |> Effect.bind (fun () ->
              match (cause, on_error) with
@@ -96,7 +98,7 @@ let auto ?(on_error) ~load ?random ~schedule () =
                       | results ->
                           Effect.sync (fun () ->
                               invalid_arg
-                                ("Eta.Resource.auto: expected one refresh result, got "
+                                ("Eta_cache.Refreshable.with_auto: expected one refresh result, got "
                                ^ string_of_int (List.length results))))
                in
                refresh_once
@@ -107,5 +109,7 @@ let auto ?(on_error) ~load ?random ~schedule () =
   |> Effect.map (loaded load)
   |> Effect.bind (fun resource ->
          let driver = Schedule.start ?random schedule in
-         Spi.daemon (refresh_loop resource driver)
-         |> Effect.map (fun () -> resource))
+         Effect.with_supervised_background
+           ~name:"refreshable.with_auto"
+           (refresh_loop resource driver)
+           (fun () -> body resource))

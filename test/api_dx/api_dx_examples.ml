@@ -1,5 +1,6 @@
 module Effect = Eta.Effect
 module Syntax = Eta.Syntax
+module Refreshable = Eta_cache.Refreshable
 
 module Http = struct
   module Error = struct
@@ -1096,23 +1097,22 @@ let cached_resource_current load schedule observe =
                     Effect.pure initial)))
 
 let cached_resource_proposed load schedule observe =
-  let open Syntax in
-  let* resource = Eta.Resource.auto ~load ~schedule ~on_error:observe () in
-  Eta.Resource.get resource
+  Refreshable.with_auto ~load ~schedule ~on_error:observe (fun refreshable ->
+      Refreshable.get refreshable)
 
 let resource_failures_current load schedule =
   let observed = ref [] in
   let observe err = observed := Eta.Cause.Fail err :: !observed in
-  let open Syntax in
-  let* resource = Eta.Resource.auto ~load ~schedule ~on_error:observe () in
-  let* _value = Eta.Resource.get resource in
-  Effect.sync (fun () -> List.rev !observed)
+  Refreshable.with_auto ~load ~schedule ~on_error:observe (fun refreshable ->
+      let open Syntax in
+      let* _value = Refreshable.get refreshable in
+      Effect.sync (fun () -> List.rev !observed))
 
 let resource_failures_proposed load schedule =
-  let open Syntax in
-  let* resource = Eta.Resource.auto ~load ~schedule () in
-  let* _value = Eta.Resource.get resource in
-  Eta.Resource.failures resource
+  Refreshable.with_auto ~load ~schedule (fun refreshable ->
+      let open Syntax in
+      let* _value = Refreshable.get refreshable in
+      Refreshable.failures refreshable)
 
 let manual_resource_current load =
   let cache = ref None in
@@ -1131,9 +1131,9 @@ let manual_resource_current load =
 
 let manual_resource_proposed load =
   let open Syntax in
-  let* resource = Eta.Resource.manual load in
-  let* () = Eta.Resource.refresh resource |> Effect.ignore_errors in
-  Eta.Resource.get resource
+  let* refreshable = Refreshable.manual load in
+  let* () = Refreshable.refresh refreshable |> Effect.ignore_errors in
+  Refreshable.get refreshable
 
 let source_location_current (file, line, col_start, col_end) name attrs body =
   let loc = Printf.sprintf "%s:%d:%d-%d" file line col_start col_end in
@@ -1230,8 +1230,8 @@ load
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* resource = Resource.auto ~load ~schedule ~on_error:observe () in
-Resource.get resource|};
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule ~on_error:observe in
+Eta_cache.Refreshable.get refreshable|};
     };
     {
       area = "resource_failures";
@@ -1240,8 +1240,8 @@ Resource.get resource|};
         {|let observed = ref [] in
 let observe err = observed := Cause.Fail err :: !observed in
 let open Eta.Syntax in
-let* resource = Resource.auto ~load ~schedule ~on_error:observe () in
-let* _value = Resource.get resource in
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule ~on_error:observe in
+let* _value = Eta_cache.Refreshable.get refreshable in
 Effect.sync (fun () -> List.rev !observed)|};
     };
     {
@@ -1249,9 +1249,9 @@ Effect.sync (fun () -> List.rev !observed)|};
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* resource = Resource.auto ~load ~schedule () in
-let* _value = Resource.get resource in
-Resource.failures resource|};
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule in
+let* _value = Eta_cache.Refreshable.get refreshable in
+Eta_cache.Refreshable.failures refreshable|};
     };
     {
       area = "manual_resource";
@@ -1275,9 +1275,9 @@ refresh |> Effect.bind_error (fun _ -> Effect.unit) |> Effect.bind (fun () -> ge
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* resource = Resource.manual load in
-let* () = Resource.refresh resource |> Effect.ignore_errors in
-Resource.get resource|};
+let* refreshable = Eta_cache.Refreshable.manual load in
+let* () = Eta_cache.Refreshable.refresh refreshable |> Effect.ignore_errors in
+Eta_cache.Refreshable.get refreshable|};
     };
     {
       area = "scoped_resource";
@@ -2539,45 +2539,45 @@ let assert_expected_shape snippet =
         failwith "resource proposed example should use sync_result leaf"
   | "cached_resource", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
-      if bind <> 0 || let_star <> 1 || let_at <> 0 || from_result <> 0 then
+      if bind <> 0 || let_star <> 0 || let_at <> 1 || from_result <> 0 then
         failwith
-          "cached_resource proposed example should use Resource.auto with one let*";
+          "cached_resource proposed example should use Refreshable.with_auto with one let@";
       if
-        count_sub snippet.code "Resource.auto" <> 1
-        || count_sub snippet.code "Resource.get" <> 1
+        count_sub snippet.code "Refreshable.with_auto" <> 1
+        || count_sub snippet.code "Refreshable.get" <> 1
       then
         failwith
-          "cached_resource proposed example should prove Resource.auto and get"
+          "cached_resource proposed example should prove lexical Refreshable.with_auto and get"
   | ( "resource_failures",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
-      if bind <> 0 || let_star <> 2 || let_at <> 0 || from_result <> 0 then
+      if bind <> 0 || let_star <> 1 || let_at <> 1 || from_result <> 0 then
         failwith
-          "resource_failures proposed example should use Resource APIs with syntax sequencing";
+          "resource_failures proposed example should use Refreshable APIs with lexical syntax";
       if
-        count_sub snippet.code "Resource.auto" <> 1
-        || count_sub snippet.code "Resource.get" <> 1
-        || count_sub snippet.code "Resource.failures" <> 1
+        count_sub snippet.code "Refreshable.with_auto" <> 1
+        || count_sub snippet.code "Refreshable.get" <> 1
+        || count_sub snippet.code "Refreshable.failures" <> 1
         || count_sub snippet.code "ref []" <> 0
         || count_sub snippet.code "~on_error" <> 0
       then
         failwith
-          "resource_failures proposed example should read Eta-owned resource diagnostics instead of a side-channel ref"
+          "resource_failures proposed example should read refreshable diagnostics instead of a side-channel ref"
   | "manual_resource", "proposed", (_, _, _, bind, let_star, let_at, from_result)
     ->
       if bind <> 0 || let_star <> 2 || let_at <> 0 || from_result <> 0 then
         failwith
-          "manual_resource proposed example should use Resource APIs with syntax sequencing";
+          "manual_resource proposed example should use Refreshable APIs with syntax sequencing";
       if
-        count_sub snippet.code "Resource.manual" <> 1
-        || count_sub snippet.code "Resource.refresh" <> 1
-        || count_sub snippet.code "Resource.get" <> 1
+        count_sub snippet.code "Refreshable.manual" <> 1
+        || count_sub snippet.code "Refreshable.refresh" <> 1
+        || count_sub snippet.code "Refreshable.get" <> 1
         || count_sub snippet.code "Effect.ignore_errors" <> 1
         || count_sub snippet.code "Effect.bind_error" <> 0
         || count_sub snippet.code "ref None" <> 0
       then
         failwith
-          "manual_resource proposed example should prove caller-driven Resource refresh without a manual ref cache or raw catch"
+          "manual_resource proposed example should prove caller-driven Refreshable refresh without a manual ref cache or raw catch"
   | "scoped_resource", "proposed", (_, _, _, _, let_star, let_at, from_result) ->
       if let_star <> 1 || let_at <> 0 || from_result <> 0 then
         failwith

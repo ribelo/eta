@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **116 mli-stated claims**, **2 prose-pending model claims**,
-**169 registered external claim clusters**, and **77 unique named qcheck properties** in
+**178 registered external claim clusters**, and **77 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -318,6 +318,15 @@ qcheck optics.
 | R166f | A described `Bind` contains its visible input subtree followed by a literal `<bind …>` child. | `lib/eta/effect.mli:1077-1078` | `constructor tree is exact and inspection does not evaluate` — `test/effect_introspection/test_effect_describe.ml:29-37,47-55` |
 | R166g | `describe` never forces a `Bind` continuation. | `lib/eta/effect.mli:1078-1079` | `constructor tree is exact and inspection does not evaluate` — exact false continuation witness `test/effect_introspection/test_effect_describe.ml:29-39,47-55` |
 | R166h | Opaque custom and wrapper evaluators remain leaves in `describe`. | `lib/eta/effect.mli:1079-1080` | `constructor tree is exact and inspection does not evaluate` — anonymous/named custom and hidden-Map wrapper witnesses `test/effect_introspection/test_effect_describe.ml:7-18,40-41,47-55` |
+| R167 | `Refreshable.manual` loads once before returning a handle, and seed failure returns no handle. | `lib/cache/refreshable.mli:14-15` | `Refreshable manual refresh`; `Refreshable manual seed failure returns no handle` — `test/core_common/resource_common_suites.ml:140-164,589-593` |
+| R168 | Readers retain the last successfully loaded value while refresh runs or fails; only refresh success publishes a replacement. | `lib/cache/refreshable.mli:3-5,44-49` | `Refreshable failed refresh keeps cached value`; `Refreshable newer refresh wins` — `test/core_common/resource_common_suites.ml:174-233,595-598` |
+| R169 | `with_auto` seeds before running its body and seed failure suppresses the body. | `lib/cache/refreshable.mli:24-26` | `Refreshable with_auto seed failure skips body` — `test/core_common/resource_common_suites.ml:495-510,617-618` |
+| R170 | Every body exit kind cancels and awaits the automatic refresh loop; an in-flight refresh is cancelled at a checkpoint and finalized before exit. | `lib/cache/refreshable.mli:28-31` | `Refreshable with_auto stops loop on body success`; `Refreshable with_auto stops loop on body typed failure`; `Refreshable with_auto stops loop on body defect`; `Refreshable with_auto stops loop on body cancellation`; `Refreshable with_auto cancels and finalizes in-flight refresh` — `test/core_common/resource_common_suites.ml:386-494,607-616`; `Refreshable with_auto leaves empty fiber census` — `test/cache/test_eta_cache.ml:306-331,371-374` |
+| R171 | Schedule exhaustion ends automatic refresh without ending the body or invalidating its handle. | `lib/cache/refreshable.mli:31-32` | `Refreshable with_auto schedule exhaustion keeps handle usable` — `test/core_common/resource_common_suites.ml:511-526,619-620` |
+| R172 | Automatic refresh failures retain the last good value, classify typed failures as `Cause.Fail` and defects as `Cause.Die`, and do not stop later refreshes. | `lib/cache/refreshable.mli:34-37` | `Refreshable with_auto failed refresh keeps cached value`; `Refreshable with_auto records loader defect and continues`; `Refreshable failures preserve Fail Die observation order` — `test/core_common/resource_common_suites.ml:259-332,527-567,601-604,621-622` |
+| R173 | A raising `on_error` appends a `Cause.Die` after its typed refresh failure and later refreshes continue. | `lib/cache/refreshable.mli:37-38` | `Refreshable with_auto records on_error defect and continues` — `test/core_common/resource_common_suites.ml:333-367,605-606` |
+| R174 | Instrumenting `load` observes seed and refresh attempts, not terminal schedule exhaustion or other schedule-local boundaries. | `lib/cache/refreshable.mli:40-42` | `Refreshable with_auto schedule exhaustion keeps handle usable` — exact loader-attempt count at `test/core_common/resource_common_suites.ml:511-526,619-620` |
+| R175 | `failures` returns automatic failures in observation order, manual handles start empty, and typed failure recording precedes `on_error`. | `lib/cache/refreshable.mli:51-54` | `Refreshable manual failures start empty`; `Refreshable failures preserve Fail Die observation order`; `Refreshable with_auto records on_error defect and continues` — `test/core_common/resource_common_suites.ml:165-173,333-367,527-567,593-594,605-606,621-622` |
 
 ## Model laws (prose pending)
 
@@ -344,8 +353,9 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/js/eta_js.mli` | 0 | 11 | 0 | 11 |
 | `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
 | `lib/eta/cause.mli` | 0 | 12 | 0 | 12 |
+| `lib/cache/refreshable.mli` | 0 | 9 | 0 | 9 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **116** | **169** | **2** | **285** |
+| **Total covered** | **116** | **178** | **2** | **294** |
 
 The law executables contain 77 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
@@ -363,6 +373,7 @@ assertion in that named property.
 | DX-E39 R / R93 collect-names portion | Removed from the mixed row: the public `collect_names` contract and its executable registration were deleted. The surviving `fn` claim and registrations remain in R93. |
 | DX-E39 R / CD-E22-014 introspection portions | Superseded in part by S′: R removed both the `collect_names` continuation-boundary and deterministic `describe` contracts. S′ restores only `describe` as covered rows R166a–R166h; `collect_names` remains removed, and the surviving `fn ~error_pp` debt remains CD-E22-014. |
 | DX-E39 S′ / R166a–R166h | Restored with direct executable coverage: the deterministic, non-evaluating `describe` tree contract is registered to the exact snapshot alias and constructor/opacity test. No audit, footprint, assertion, `collect_names`, or propagated-names claim returns. |
+| DX-E41 / D-E22-001 `resource.mli` portion | Moved and renamed to `lib/cache/refreshable.mli`; every retained or amended behavioral claim is registered as R167-R175. The root `Eta.Resource` surface and its uncovered-debt entry are deleted rather than aliased. |
 
 ## Explicit dated claim debt inside the complete inventory
 
@@ -404,7 +415,7 @@ No new or changed prose may use this table as an escape from same-change testing
 | FG-E22-004 | Channel blocked-sender cancellation was absent. | **CLOSED** by M50. |
 | FG-E22-005 | Semaphore bracket and abort laws were absent. | **CLOSED** by M60–M62. |
 | FG-E22-006 | Required existing `effect.mli` and `queue.mli` clusters were omitted from the map. | **REGISTERED/CLOSED** by R01–R51; every pointer names a real executable test. |
-| D-E22-001 | Core interfaces `lib/eta/{capabilities,cause,duration,exit,log_level,logger,meter,mutable_ref,pool,portable_queue,promise,pubsub,random,resource,runtime,runtime_contract,runtime_supervisor,sampler,string_helpers,supervisor,sync_lock,syntax,trace_context,tracer}.mli`. | **DATED COVERAGE DEBT** — owner: Eta core maintainers; follow-up: claim-by-claim core registry by **2026-08-15**. |
+| D-E22-001 | Core interfaces `lib/eta/{capabilities,cause,duration,exit,log_level,logger,meter,mutable_ref,pool,portable_queue,promise,pubsub,random,runtime,runtime_contract,runtime_supervisor,sampler,string_helpers,supervisor,sync_lock,syntax,trace_context,tracer}.mli`. | **DATED COVERAGE DEBT** — owner: Eta core maintainers; follow-up: claim-by-claim core registry by **2026-08-15**. |
 | D-E22-002 | HTTP interfaces under `lib/http/`, `lib/http_eio/`, `lib/http_js/`, `lib/http_service/`, `lib/http_service_eio/`, and `lib/http_tls_openssl/`. | **DATED COVERAGE DEBT** — owner: Eta HTTP maintainers; follow-up: HTTP registry linked to interop/conformance suites by **2026-08-31**. |
 | D-E22-003 | AI/integration interfaces under `lib/ai/`, `lib/exa/`, `lib/otel/`, and `lib/redacted/`. | **DATED COVERAGE DEBT** — owner: Eta integration maintainers; follow-up: integration registry by **2026-09-15**. |
 | D-E22-004 | Signal interfaces under `lib/signal/`. | **DATED COVERAGE DEBT** — owner: Eta signal maintainers; follow-up: signal law registry by **2026-08-31**. |

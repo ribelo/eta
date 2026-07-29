@@ -1,5 +1,7 @@
 open Eta
 
+module Refreshable = Eta_cache.Refreshable
+
 type config = {
   version : int;
   endpoint : string;
@@ -27,17 +29,16 @@ let schedule =
 
 let program observed source =
   let open Syntax in
-  let* resource =
-    Resource.auto ~load:(load source) ~schedule
+  let@ refreshable =
+    Refreshable.with_auto ~load:(load source) ?random:None ~schedule
       ~on_error:(fun err -> observed := render_error err :: !observed)
-      ()
   in
-  let* initial = Resource.get resource in
+  let* initial = Refreshable.get refreshable in
   let* () = Effect.delay (Duration.ms 30) Effect.unit in
-  let* after_failed_refresh = Resource.get resource in
-  let* failures = Resource.failures resource in
+  let* after_failed_refresh = Refreshable.get refreshable in
+  let* failures = Refreshable.failures refreshable in
   let* () = Effect.delay (Duration.ms 30) Effect.unit in
-  let+ final = Resource.get resource in
+  let+ final = Refreshable.get refreshable in
   (initial, after_failed_refresh, final, failures)
 
 let () =

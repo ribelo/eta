@@ -1,5 +1,7 @@
 open Eta
 
+module Refreshable = Eta_cache.Refreshable
+
 type config = {
   version : int;
   endpoint : string;
@@ -22,20 +24,20 @@ let load source =
              source := rest;
              result))
 
-let refresh_catching resource =
-  Resource.refresh resource
+let refresh_catching refreshable =
+  Refreshable.refresh refreshable
   |> Effect.to_result
   |> Effect.map (function Ok () -> None | Error err -> Some err)
 
 let program source =
   let open Syntax in
-  let* resource = Resource.manual (load source) in
-  let* initial = Resource.get resource in
-  let* () = Resource.refresh resource in
-  let* refreshed = Resource.get resource in
-  let* failed = refresh_catching resource in
-  let* after_failed = Resource.get resource in
-  let+ recorded = Resource.failures resource in
+  let* refreshable = Refreshable.manual (load source) in
+  let* initial = Refreshable.get refreshable in
+  let* () = Refreshable.refresh refreshable in
+  let* refreshed = Refreshable.get refreshable in
+  let* failed = refresh_catching refreshable in
+  let* after_failed = Refreshable.get refreshable in
+  let+ recorded = Refreshable.failures refreshable in
   (initial, refreshed, failed, after_failed, recorded)
 
 let () =
