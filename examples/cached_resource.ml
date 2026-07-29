@@ -27,12 +27,8 @@ let load source =
 let schedule =
   Schedule.both (Schedule.recurs 2) (Schedule.spaced (Duration.ms 20))
 
-let program observed source =
+let use refreshable =
   let open Syntax in
-  let@ refreshable =
-    Refreshable.with_auto ~load:(load source) ?random:None ~schedule
-      ~on_error:(fun err -> observed := render_error err :: !observed)
-  in
   let* initial = Refreshable.get refreshable in
   let* () = Effect.delay (Duration.ms 30) Effect.unit in
   let* after_failed_refresh = Refreshable.get refreshable in
@@ -40,6 +36,20 @@ let program observed source =
   let* () = Effect.delay (Duration.ms 30) Effect.unit in
   let+ final = Refreshable.get refreshable in
   (initial, after_failed_refresh, final, failures)
+
+let program source =
+  let open Syntax in
+  let@ refreshable = Refreshable.with_auto ~load:(load source) ~schedule in
+  use refreshable
+
+let program_with_alerts observed source =
+  let open Syntax in
+  let@ refreshable =
+    Refreshable.with_auto_on_refresh_error
+      ~on_refresh_error:(fun err -> observed := render_error err :: !observed)
+      ~load:(load source) ~schedule
+  in
+  use refreshable
 
 let () =
   Eio_main.run @@ fun stdenv ->
@@ -54,7 +64,7 @@ let () =
       ]
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  match Eta_eio.Runtime.run rt (program observed source) with
+  match Eta_eio.Runtime.run rt (program_with_alerts observed source) with
   | Exit.Ok (initial, after_failed_refresh, final, failures) -> (
       match
         (after_failed_refresh.version, final.version, failures, !observed)

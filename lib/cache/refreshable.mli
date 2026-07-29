@@ -15,9 +15,7 @@ val manual :
     returned. *)
 
 val with_auto :
-  ?on_error:('err -> unit) ->
   load:('a, 'err) Effect.t ->
-  ?random:Capabilities.random ->
   schedule:(unit, 'schedule_out) Schedule.t ->
   (('a, 'err) t -> ('b, 'err) Effect.t) ->
   ('b, 'err) Effect.t
@@ -30,16 +28,28 @@ val with_auto :
     awaited; an in-flight refresh is cancelled at a checkpoint and its
     finalizers run before the call exits. Schedule exhaustion ends only the
     refresh loop: [body] continues with a usable handle and its last good value.
+    Use {!Effect.with_random} to inject deterministic randomness for schedule
+    jitter; otherwise the loop uses the runtime's current random source.
 
-    Refresh failures keep the last good value and call [on_error] for typed
-    failures when provided. {!failures} records typed loader failures as
-    [Cause.Fail err] and loader defects as [Cause.Die _]; neither stops later
-    refresh attempts. If [on_error] raises, that callback defect is recorded as
-    an additional [Cause.Die _] after the typed failure and the loop continues.
+    Refresh failures keep the last good value. {!failures} records typed loader
+    failures as [Cause.Fail err] and loader defects as [Cause.Die _]; neither
+    stops later refresh attempts.
 
     Instrument [load] to observe load attempts; use an application-owned counter
     when seed and refresh attempts need distinct labels. This observes loads,
     not terminal schedule exhaustion or other schedule-local boundaries. *)
+
+val with_auto_on_refresh_error :
+  on_refresh_error:('err -> unit) ->
+  load:('a, 'err) Effect.t ->
+  schedule:(unit, 'schedule_out) Schedule.t ->
+  (('a, 'err) t -> ('b, 'err) Effect.t) ->
+  ('b, 'err) Effect.t
+(** The explicit alerting form of {!with_auto}. [on_refresh_error] runs only for
+    typed automatic refresh failures: seed failure fails before the body and
+    never calls it, and body failures and defects do not call it. If the callback
+    raises, its defect is recorded as an additional [Cause.Die _] after the typed
+    refresh failure and later refreshes continue. *)
 
 val get : ('a, 'err) t -> ('a, 'err) Effect.t
 (** Return the last successfully loaded value. *)
@@ -51,4 +61,4 @@ val refresh : ('a, 'err) t -> (unit, 'err) Effect.t
 val failures : ('a, 'err) t -> ('err Cause.t list, 'outer_err) Effect.t
 (** Return automatic refresh failures in observation order. Manual values start
     with an empty list. A typed automatic refresh failure is recorded before
-    [on_error] runs. *)
+    [on_refresh_error] runs. *)

@@ -40,7 +40,8 @@ The current examples cover:
 - `repeat_heartbeat.ml` - scheduled unit-work recurrence without hand-written
   recursive sleep loops.
 - `cached_resource.ml` - lexically owned refreshable cache that keeps the last
-  good value after a failed refresh and records refresh diagnostics.
+  good value after a failed refresh; it shows the canonical form first and the
+  explicit immediate-alerting form second.
 - `manual_resource_refresh.ml` - caller-driven refreshable cache with explicit
   typed refresh failures.
 - `scoped_resource.ml` - a resource handle registered with an enclosing scope

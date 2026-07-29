@@ -121,14 +121,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
          | true -> E.unit
          | false -> E.yield |> E.bind (fun () -> wait_effect predicate))
 
-  let with_running_auto ?on_error ctx rt ~load ~schedule use =
+  let with_running_auto ?on_refresh_error ctx rt ~load ~schedule use =
     let ready, ready_resolver = B.create_promise () in
     let stop, stop_resolver = B.create_promise () in
+    let body refreshable =
+      E.sync (fun () -> B.resolve ready_resolver refreshable)
+      |> E.bind (fun () -> B.await_effect stop)
+    in
+    let program =
+      match on_refresh_error with
+      | None -> Refreshable.with_auto ~load ~schedule body
+      | Some on_refresh_error ->
+          Refreshable.with_auto_on_refresh_error ~on_refresh_error ~load
+            ~schedule body
+    in
     let running =
-      B.fork_run ctx rt
-        (Refreshable.with_auto ?on_error ~load ~schedule (fun refreshable ->
-             E.sync (fun () -> B.resolve ready_resolver refreshable)
-             |> E.bind (fun () -> B.await_effect stop)))
+      B.fork_run ctx rt program
     in
     let refreshable = B.await ready in
     Fun.protect
@@ -256,6 +264,86 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     Alcotest.(check int) "second refresh" 3
       (run_ok rt (Refreshable.get refreshable))
 
+  let test_refreshable_with_auto_callback_forms_erase_optionals () =
+    B.with_runtime @@ fun _ctx rt ->
+    let load : (int, [ `Refresh_failed ]) E.t = E.pure 7 in
+    let schedule = Schedule.recurs 0 in
+    let via_let_at =
+      let open Syntax in
+      let@ refreshable = Refreshable.with_auto ~load ~schedule in
+      Refreshable.get refreshable
+    in
+    let direct =
+      Refreshable.with_auto ~load ~schedule (fun refreshable ->
+          Refreshable.get refreshable)
+    in
+    let alerted_via_let_at =
+      let open Syntax in
+      let@ refreshable =
+        Refreshable.with_auto_on_refresh_error
+          ~on_refresh_error:(fun `Refresh_failed -> ()) ~load ~schedule
+      in
+      Refreshable.get refreshable
+    in
+    let alerted_direct =
+      Refreshable.with_auto_on_refresh_error
+        ~on_refresh_error:(fun `Refresh_failed -> ()) ~load ~schedule
+        (fun refreshable -> Refreshable.get refreshable)
+    in
+    Alcotest.(check (list int)) "both let@ and direct forms" [ 7; 7; 7; 7 ]
+      (run_ok rt (E.all [ via_let_at; direct; alerted_via_let_at; alerted_direct ]))
+
+  let test_refreshable_with_auto_uses_scoped_or_runtime_random () =
+    let schedule =
+      Schedule.both (Schedule.recurs 2)
+        (Schedule.spaced (Duration.ms 100)
+        |> Schedule.jittered ~min:0.5 ~max:1.5)
+    in
+    let expected seed =
+      let rec collect driver delays =
+        match Schedule.step ~now_ms:0 ~input:() driver with
+        | Schedule.Done _, _ -> List.rev delays
+        | Schedule.Continue metadata, driver' ->
+            collect driver' (Duration.to_ms metadata.delay :: delays)
+      in
+      collect
+        (Schedule.start ~random:(Capabilities.random_of_seed seed) schedule)
+        []
+    in
+    let run ~runtime_seed ?override_seed () =
+      B.with_seeded_logged_test_clock ~seed:runtime_seed
+      @@ fun ctx clock rt sleeps ->
+      let calls = ref 0 in
+      let load = E.sync (fun () -> incr calls; !calls) in
+      let program =
+        Refreshable.with_auto ~load ~schedule (fun _refreshable ->
+            wait_effect (fun () -> !calls = 3))
+      in
+      let program =
+        match override_seed with
+        | None -> program
+        | Some seed ->
+            E.with_random (Capabilities.random_of_seed seed) program
+      in
+      let running = B.fork_run ctx rt program in
+      wait_until (fun () -> List.length !sleeps = 1);
+      B.adjust_clock clock (List.hd !sleeps);
+      wait_until (fun () -> List.length !sleeps = 2);
+      B.adjust_clock clock (List.hd !sleeps);
+      check_exit_ok Alcotest.unit "jittered with_auto" () (B.await running);
+      List.rev_map Duration.to_ms !sleeps
+    in
+    let scoped_expected = expected 1234 in
+    let runtime_expected = expected 5678 in
+    Alcotest.(check bool) "seeds discriminate" true
+      (scoped_expected <> runtime_expected);
+    Alcotest.(check (list int)) "scoped random first run" scoped_expected
+      (run ~runtime_seed:17 ~override_seed:1234 ());
+    Alcotest.(check (list int)) "scoped random replay" scoped_expected
+      (run ~runtime_seed:23 ~override_seed:1234 ());
+    Alcotest.(check (list int)) "runtime default" runtime_expected
+      (run ~runtime_seed:5678 ())
+
   let test_refreshable_with_auto_failed_refresh_keeps_cached_value () =
     B.with_test_clock @@ fun ctx clock rt ->
     let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
@@ -274,7 +362,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let errors = ref [] in
     with_running_auto ctx rt ~load
       ~schedule:(refresh_schedule 2 (Duration.ms 5))
-      ~on_error:(fun err -> errors := err :: !errors)
+      ~on_refresh_error:(fun err -> errors := err :: !errors)
     @@ fun refreshable ->
     Alcotest.(check int) "initial value" 1
       (run_ok rt (Refreshable.get refreshable));
@@ -298,6 +386,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_refreshable_with_auto_records_loader_defect_and_continues () =
     B.with_test_clock @@ fun ctx clock rt ->
     let results = ref [ Ok 1; Error (Failure "loader boom"); Ok 2 ] in
+    let callback_calls = ref 0 in
     let load =
       E.named "refreshable.with_auto.load"
         (E.sync (fun () ->
@@ -312,6 +401,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     with_running_auto ctx rt ~load
       ~schedule:(refresh_schedule 2 (Duration.ms 5))
+      ~on_refresh_error:(fun _ -> incr callback_calls)
     @@ fun refreshable ->
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
@@ -328,9 +418,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.adjust_clock clock (Duration.ms 5);
     wait_until (fun () -> run_ok rt (Refreshable.get refreshable) = 2);
     Alcotest.(check int) "refresh loop continued" 2
-      (run_ok rt (Refreshable.get refreshable))
+      (run_ok rt (Refreshable.get refreshable));
+    Alcotest.(check int) "loader defect not sent to typed callback" 0
+      !callback_calls
 
-  let test_refreshable_with_auto_records_on_error_defect_and_continues () =
+  let test_refreshable_with_auto_records_on_refresh_error_defect_and_continues () =
     B.with_test_clock @@ fun ctx clock rt ->
     let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
     let load =
@@ -347,16 +439,17 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     with_running_auto ctx rt ~load
       ~schedule:(refresh_schedule 2 (Duration.ms 5))
-      ~on_error:(fun (`Refresh_failed _) -> failwith "observer boom")
+      ~on_refresh_error:(fun (`Refresh_failed _) -> failwith "observer boom")
     @@ fun refreshable ->
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
     wait_for_sleepers clock 1;
     begin match run_ok rt (Refreshable.failures refreshable) with
     | [ Cause.Fail (`Refresh_failed "boom"); Cause.Die die ] ->
-        Alcotest.(check string) "on_error defect" "Failure(\"observer boom\")"
+        Alcotest.(check string) "on_refresh_error defect"
+          "Failure(\"observer boom\")"
           (Printexc.to_string die.exn)
-    | _ -> Alcotest.fail "expected typed failure and on_error defect"
+    | _ -> Alcotest.fail "expected typed failure and on_refresh_error defect"
     end;
     wait_for_sleepers clock 1;
     B.adjust_clock clock (Duration.ms 5);
@@ -401,9 +494,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let started, started_resolver = B.create_promise () in
     let finalized = ref false in
     let calls = ref 0 in
+    let callback_calls = ref 0 in
     let load = blocked_refresh_load started started_resolver finalized calls in
     let program =
-      Refreshable.with_auto ~load ~schedule:(Schedule.recurs 1)
+      Refreshable.with_auto_on_refresh_error
+        ~on_refresh_error:(fun _ -> incr callback_calls) ~load
+        ~schedule:(Schedule.recurs 1)
         (fun _refreshable ->
           B.await_effect started |> E.bind (fun () -> E.fail `Body_failed))
     in
@@ -413,17 +509,22 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected body failure, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected body failure"
     end;
-    assert_blocked_refresh_stopped finalized calls
+    assert_blocked_refresh_stopped finalized calls;
+    Alcotest.(check int) "body typed failure not observed as refresh" 0
+      !callback_calls
 
   let test_refreshable_with_auto_stops_loop_on_body_defect () =
     B.with_runtime @@ fun _ctx rt ->
     let started, started_resolver = B.create_promise () in
     let finalized = ref false in
     let calls = ref 0 in
+    let callback_calls = ref 0 in
     let defect = Failure "body boom" in
     let load = blocked_refresh_load started started_resolver finalized calls in
     let program =
-      Refreshable.with_auto ~load ~schedule:(Schedule.recurs 1)
+      Refreshable.with_auto_on_refresh_error
+        ~on_refresh_error:(fun _ -> incr callback_calls) ~load
+        ~schedule:(Schedule.recurs 1)
         (fun _refreshable ->
           B.await_effect started
           |> E.bind (fun () -> E.sync (fun () -> raise defect)))
@@ -434,7 +535,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected body defect, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "expected body defect"
     end;
-    assert_blocked_refresh_stopped finalized calls
+    assert_blocked_refresh_stopped finalized calls;
+    Alcotest.(check int) "body defect not observed as refresh" 0 !callback_calls
 
   let test_refreshable_with_auto_stops_loop_on_body_cancellation () =
     B.with_runtime @@ fun ctx rt ->
@@ -495,8 +597,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_refreshable_with_auto_seed_failure_skips_body () =
     B.with_runtime @@ fun _ctx rt ->
     let body_ran = ref false in
+    let callback_calls = ref 0 in
     let program =
-      Refreshable.with_auto ~load:(E.fail `Seed_failed)
+      Refreshable.with_auto_on_refresh_error
+        ~on_refresh_error:(fun `Seed_failed -> incr callback_calls)
+        ~load:(E.fail `Seed_failed)
         ~schedule:(Schedule.recurs 1)
         (fun _refreshable -> E.sync (fun () -> body_ran := true))
     in
@@ -506,7 +611,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         Alcotest.failf "expected seed failure, got %a" (Cause.pp pp_hidden) cause
     | Exit.Ok _ -> Alcotest.fail "seed failure unexpectedly succeeded"
     end;
-    Alcotest.(check bool) "body did not run" false !body_ran
+    Alcotest.(check bool) "body did not run" false !body_ran;
+    Alcotest.(check int) "seed failure not observed as refresh" 0 !callback_calls
 
   let test_refreshable_with_auto_schedule_exhaustion_keeps_handle_usable () =
     B.with_runtime @@ fun _ctx rt ->
@@ -598,12 +704,18 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             test_refreshable_newer_refresh_wins;
           Alcotest.test_case "with_auto refreshes on schedule" `Quick
             test_refreshable_with_auto_refreshes_on_schedule;
+          Alcotest.test_case "with_auto callback forms erase optionals" `Quick
+            test_refreshable_with_auto_callback_forms_erase_optionals;
+          Alcotest.test_case "with_auto uses scoped or runtime random" `Quick
+            test_refreshable_with_auto_uses_scoped_or_runtime_random;
           Alcotest.test_case "with_auto failed refresh keeps cached value" `Quick
             test_refreshable_with_auto_failed_refresh_keeps_cached_value;
           Alcotest.test_case "with_auto records loader defect and continues" `Quick
             test_refreshable_with_auto_records_loader_defect_and_continues;
-          Alcotest.test_case "with_auto records on_error defect and continues" `Quick
-            test_refreshable_with_auto_records_on_error_defect_and_continues;
+          Alcotest.test_case
+            "with_auto_on_refresh_error records callback defect and continues"
+            `Quick
+            test_refreshable_with_auto_records_on_refresh_error_defect_and_continues;
           Alcotest.test_case "with_auto stops loop on body success" `Quick
             test_refreshable_with_auto_stops_loop_on_body_success;
           Alcotest.test_case "with_auto stops loop on body typed failure" `Quick

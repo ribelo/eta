@@ -100,3 +100,63 @@ record its source verbatim rather than retain or emulate `auto`.
    The review should verify the dependency direction is only
    `eta_cache`/`eta_js` -> `eta`, that root install metadata stays free of cache,
    and that both native and js_of_ocaml cache targets compile the moved module.
+
+## Follow-ups — optional-argument erasure and final contract
+
+This section is appended under follow-up authority; the sealed prediction text
+above remains byte-for-byte unchanged.
+
+Follow-up 1 first preferred deleting `?random`, because no caller supplied it
+and E19 already provided scoped `Effect.with_random`. That change exposed a
+second wart rather than completing the regression. OxCaml rejected the required
+partial callback form
+
+```ocaml
+let@ refreshable = Refreshable.with_auto ~load ~schedule in
+body refreshable
+```
+
+with this diagnostic:
+
+```text
+This expression has type
+  ?on_error:('a -> unit) ->
+  ((int, 'a) Refreshable.t -> ('b, 'a) Effect.t) -> ('b, 'a) Effect.t
+but an expression was expected of type ('c -> 'd) -> 'e
+Hint: This function application is partial, maybe some arguments are missing.
+```
+
+The established erasure rule is: an optional argument erases when a following
+positional argument is applied, when the call is fully applied, or when a fully
+pinned expected type supplies enough information. Applying later labeled
+arguments (`~load`, `~schedule`) does **not** erase it, and `ppx_let`/`let@` does
+not propagate its expected callback type early enough. The earlier apparent
+success of `?on_error` was not evidence: those call sites explicitly supplied
+`~on_error`. Therefore no optional argument can precede the callback in this
+signature.
+
+Follow-up 2 supersedes Follow-up 1 with two zero-optional public functions:
+canonical `with_auto ~load ~schedule body`, and the rare explicit
+`with_auto_on_refresh_error ~on_refresh_error ~load ~schedule body`. Both
+delegate to one private helper taking an explicit callback option. The split
+preserves immediate typed-refresh alerting without imposing placeholder syntax
+on canonical `let@` use. The cache census is consequently **14 public vals**,
+`+6` from the baseline of 8 rather than the sealed `+5` prediction.
+
+### Scoped-random reach verdict: reached
+
+The original direct `Schedule.start ?random` in `eta_cache` could use its own
+default or an explicit token but could not resolve the runtime's fiber-local
+override. No new core leaf is needed: public `Effect.repeat` resolves
+`Runtime_core.current_random` at interpretation time and passes it explicitly to
+`Schedule.start` (`lib/eta/effect_schedule.ml:8-15`). `Refreshable` now runs a
+private initial no-op iteration followed by refresh iterations through
+`Effect.repeat`; this preserves the prior schedule-before-first-refresh timing
+while reaching both the runtime default and inherited `Effect.with_random`
+binding.
+
+`Refreshable with_auto uses scoped or runtime random` compares the exact two-draw
+jitter sequence against `Schedule.start` with the runtime seed, then replays one
+scoped seed across runtimes with different defaults. The native parity test and
+the js_of_ocaml facade test also compile and run both zero-optional `let@` forms
+and their direct-call forms.

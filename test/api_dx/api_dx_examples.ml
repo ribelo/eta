@@ -1096,14 +1096,15 @@ let cached_resource_current load schedule observe =
                 Effect.with_background (Effect.repeat ~schedule:schedule refresh) (fun () ->
                     Effect.pure initial)))
 
-let cached_resource_proposed load schedule observe =
-  Refreshable.with_auto ~load ~schedule ~on_error:observe (fun refreshable ->
+let cached_resource_proposed load schedule _observe =
+  Refreshable.with_auto ~load ~schedule (fun refreshable ->
       Refreshable.get refreshable)
 
 let resource_failures_current load schedule =
   let observed = ref [] in
   let observe err = observed := Eta.Cause.Fail err :: !observed in
-  Refreshable.with_auto ~load ~schedule ~on_error:observe (fun refreshable ->
+  Refreshable.with_auto_on_refresh_error ~on_refresh_error:observe ~load
+    ~schedule (fun refreshable ->
       let open Syntax in
       let* _value = Refreshable.get refreshable in
       Effect.sync (fun () -> List.rev !observed))
@@ -1230,8 +1231,8 @@ load
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule ~on_error:observe in
-Eta_cache.Refreshable.get refreshable|};
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ~schedule in
+	Eta_cache.Refreshable.get refreshable|};
     };
     {
       area = "resource_failures";
@@ -1240,7 +1241,10 @@ Eta_cache.Refreshable.get refreshable|};
         {|let observed = ref [] in
 let observe err = observed := Cause.Fail err :: !observed in
 let open Eta.Syntax in
-let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule ~on_error:observe in
+let@ refreshable =
+  Eta_cache.Refreshable.with_auto_on_refresh_error
+    ~on_refresh_error:observe ~load ~schedule
+in
 let* _value = Eta_cache.Refreshable.get refreshable in
 Effect.sync (fun () -> List.rev !observed)|};
     };
@@ -1249,7 +1253,7 @@ Effect.sync (fun () -> List.rev !observed)|};
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let@ refreshable = Eta_cache.Refreshable.with_auto ~load ?random:None ~schedule in
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ~schedule in
 let* _value = Eta_cache.Refreshable.get refreshable in
 Eta_cache.Refreshable.failures refreshable|};
     };
@@ -2544,6 +2548,7 @@ let assert_expected_shape snippet =
           "cached_resource proposed example should use Refreshable.with_auto with one let@";
       if
         count_sub snippet.code "Refreshable.with_auto" <> 1
+        || count_sub snippet.code "with_auto_on_refresh_error" <> 0
         || count_sub snippet.code "Refreshable.get" <> 1
       then
         failwith
@@ -2559,7 +2564,7 @@ let assert_expected_shape snippet =
         || count_sub snippet.code "Refreshable.get" <> 1
         || count_sub snippet.code "Refreshable.failures" <> 1
         || count_sub snippet.code "ref []" <> 0
-        || count_sub snippet.code "~on_error" <> 0
+        || count_sub snippet.code "~on_refresh_error" <> 0
       then
         failwith
           "resource_failures proposed example should read refreshable diagnostics instead of a side-channel ref"

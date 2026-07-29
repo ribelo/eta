@@ -177,3 +177,50 @@ Verdict: **PASS — no public refresh-loop leak.**
 daemon constructor are deleted without shims, the lexical owner is implemented
 entirely on public machinery, every preserved/amended interface claim has named
 coverage, and native plus js_of_ocaml gates are green.
+
+## Follow-ups outcome
+
+Follow-up 1 is superseded by Follow-up 2. Its attempt to remove only `?random`
+proved that the remaining `?on_error` was also unerasable at `let@`: applying
+labeled `~load` and `~schedule` did not discharge the optional, and the compiler
+reported a partial `?on_error -> body -> effect` where `let@` required a callback
+function. The upheld blocker established that this callback-first API can contain
+no optional arguments.
+
+The final surface is:
+
+```ocaml
+Refreshable.with_auto ~load ~schedule body
+
+Refreshable.with_auto_on_refresh_error
+  ~on_refresh_error ~load ~schedule body
+```
+
+Both public functions delegate to one private helper with an explicit callback
+option. The canonical function has zero incidental vocabulary. The rare spelling
+states the alert's boundary: only typed automatic refresh failures call it; seed,
+body, and defect exits do not. A raising callback is still recorded as a later
+`Cause.Die` and refresh continues.
+
+The `?random` parameter is deleted. Scoped-random resolution is **reached**
+without new core surface: the loop now uses public `Effect.repeat`, which reads
+`Runtime_core.current_random` at interpretation time before starting its schedule
+driver. `Effect.with_random` therefore deterministically controls jitter, while
+an unwrapped loop uses the runtime default. The named native test checks exact
+default and cross-runtime scoped replay sequences.
+
+Native and js_of_ocaml parity tests compile and run both zero-optional `let@`
+forms; direct calls remain covered. The alerting tests additionally distinguish
+typed refresh failures from seed and body failures/defects. R173 and R175 now use
+`on_refresh_error`; new R176 registers scoped/default random resolution. Registry
+totals are **179 registered external clusters** and **295 covered claims**.
+
+The amended census is root `eta` **485 vals** and `eta_cache` **14 vals**: cache
+is `+6` from its baseline rather than the sealed `+5`, because the explicit rare
+function adds one value. This supersedes the original report's 13-val row and
+its `?random:None` deviation note; the original body remains unchanged as
+required.
+
+All four required follow-up gates passed on the final implementation and test
+surface: OxCaml `@install`, full `runtest`, shipped-package verification, and the
+mainline `cache_jsoo`/`js_jsoo` build.
