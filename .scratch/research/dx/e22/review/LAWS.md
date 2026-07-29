@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **116 mli-stated claims**, **2 prose-pending model claims**,
-**179 registered external claim clusters**, and **77 unique named qcheck properties** in
+**180 registered external claim clusters**, and **77 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -328,6 +328,7 @@ qcheck optics.
 | R174 | Instrumenting `load` observes seed and refresh attempts, not terminal schedule exhaustion or other schedule-local boundaries. | `lib/cache/refreshable.mli:38-40` | `Refreshable with_auto schedule exhaustion keeps handle usable` — exact loader-attempt count at `test/core_common/resource_common_suites.ml:671-685,787-788` |
 | R175 | `failures` returns automatic failures in observation order, manual handles start empty, and typed failure recording precedes `on_refresh_error`. | `lib/cache/refreshable.mli:61-64` | `Refreshable manual failures start empty`; `Refreshable failures preserve Fail Die observation order`; `Refreshable failure recorded before callback returns` — callback is promise-blocked while the body reads the ledger — `test/core_common/resource_common_suites.ml:177-184,464-495,687-727,753-754,773-774,789-790` |
 | R176 | Automatic schedule jitter uses the current runtime random source, and `Effect.with_random` provides deterministic scoped injection. | `lib/cache/refreshable.mli:31-32` | `Refreshable with_auto uses scoped or runtime random` — exact runtime-default and cross-runtime scoped replay sequences at `test/core_common/resource_common_suites.ml:300-349,763-764` |
+| R177 | `Mutable_ref.update` and `update_and_get` use CAS retry and may re-execute their callbacks, so callback effects can outnumber committed updates. | `lib/eta/mutable_ref.mli:13-26` | `CAS retry may re-execute callbacks` — a barrier forces two domains to compute from the same old value; both operations commit exactly two updates after exactly three callback evaluations at `test/core_common/core_common_suites.ml:187-216,1835-1836` |
 
 ## Model laws (prose pending)
 
@@ -355,8 +356,9 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/http/client/request.mli` | 0 | 7 | 0 | 7 |
 | `lib/eta/cause.mli` | 0 | 12 | 0 | 12 |
 | `lib/cache/refreshable.mli` | 0 | 10 | 0 | 10 |
+| `lib/eta/mutable_ref.mli` | 0 | 1 | 0 | 1 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **116** | **179** | **2** | **295** |
+| **Total covered** | **116** | **180** | **2** | **296** |
 
 The law executables contain 77 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating

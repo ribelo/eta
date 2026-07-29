@@ -654,6 +654,13 @@ replay random-dependent behavior from an explicit seed. This includes collection
 helpers such as `shuffle`, `weighted_choice`, and `sample`, which avoid
 hand-written indexing, sorting, and weight accumulation around raw floats.
 
+**Accepted footgun — `Mutable_ref` update callbacks must be pure.**
+`Mutable_ref.update` and `update_and_get` use a CAS retry loop, so the callback
+is a zero-to-many callback rather than an exactly-once action. Logging, sends,
+or external increments inside it can run again after contention and multiply.
+Compute only the replacement value in the callback; perform effects after the
+update, using `update_and_get` when the committed value is needed.
+
 `Sampler` is not replaced by ad hoc trace-id hashing in applications. It names
 the runtime sampling policy, clips ratio bounds, and preserves parent-based
 decisions in the same shape that `Runtime.create ?sampler` interprets for span

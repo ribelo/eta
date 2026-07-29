@@ -103,3 +103,41 @@ No package had existing evidence of an explicit unstable/experimental promise,
 so inventing labs membership would have been a vibes-based stability downgrade;
 the map records the tier as intentionally empty. The two attempted
 misclassifications therefore have only one answer under the published rules.
+
+## 3. `Mutable_ref` purity contract actuals
+
+Both public docs now say **must be pure**, zero-to-many, CAS retry, and that
+logging, sends, and external increments multiply. `docs/api-dx.md` adds one
+accepted-and-mitigated footgun and removes none (+1/+0): compute only the
+replacement in the callback, then perform effects after the update. Types and
+implementation are unchanged, so the val census delta is zero and exactly two
+vals are documentation-touched.
+
+The multiplying-effect bug is this shape:
+
+```ocaml
+Mutable_ref.update state (fun current ->
+    send audit_channel "incrementing";
+    current + 1)
+```
+
+Under one forced CAS collision, two successful updates evaluate that callback
+three times, so the send occurs three times for two committed increments. The
+new named test `CAS retry may re-execute callbacks` constructs exactly that
+barrier for both `update` and `update_and_get`, and the focused 648-test
+`test/core_eio` run passed. The new law-bearing wording is registered as R177.
+This evidence requirement changed four product/evidence paths rather than the
+sealed prediction's two docs-only paths; it preserves the adjudicated
+prose-only API/implementation outcome while satisfying the repository's
+same-change executable-law policy.
+
+OxCaml modes cannot express semantic purity. Locality, uniqueness, portability,
+and contention constrain value lifetime, aliasing, and cross-domain safety, not
+whether a closure logs, sends, or mutates a separately available handle. The
+linearity axis is also the wrong tool: `once` promises at-most-one invocation,
+while a CAS loop specifically requires a `many` callback and may invoke it
+again. With no effect/purity type that rejects all observable callback actions,
+an annotation would either fail to enforce the contract or reject valid pure
+closures for unrelated capture reasons. The adjudicated prose contract,
+reinforced by a deterministic retry witness, is therefore the precise current
+choice for future re-examination.
