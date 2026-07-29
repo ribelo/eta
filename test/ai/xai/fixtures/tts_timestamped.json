@@ -1,0 +1,9 @@
+{
+  "audio": "TVAz",
+  "content_type": "audio/mpeg",
+  "duration": 0.92,
+  "audio_timestamps": {
+    "graph_chars": ["H", "i"],
+    "graph_times": [[0.0, 0.06], {"start": 0.06, "end": 0.12}]
+  }
+}

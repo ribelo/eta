@@ -1,0 +1,20 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "type": "message",
+      "id": "item_1",
+      "role": "user",
+      "content": [{"type": "input_text", "text": "hello"}]
+    },
+    {
+      "type": "message",
+      "id": "item_2",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "hi"}]
+    }
+  ],
+  "first_id": "item_1",
+  "last_id": "item_2",
+  "has_more": true
+}

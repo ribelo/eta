@@ -1,0 +1,59 @@
+{
+  "id": "resp_xai_fixture",
+  "object": "response",
+  "created_at": 1785360000,
+  "completed_at": 1785360001,
+  "model": "grok-4.5",
+  "status": "completed",
+  "store": true,
+  "previous_response_id": "resp_previous",
+  "tools": [{"type": "web_search", "enable_image_search": true}],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "text": {"format": {"type": "text"}},
+  "reasoning": {"effort": "high"},
+  "service_tier": "priority",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_1",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{
+        "type": "output_text",
+        "text": "OUTPUT_SENTINEL Warsaw is sunny.",
+        "annotations": [{
+          "type": "url_citation",
+          "url": "https://weather.example/waw",
+          "title": "Weather",
+          "start_index": 0,
+          "end_index": 6
+        }]
+      }]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_1",
+      "summary": [{"type": "summary_text", "text": "Checked weather."}],
+      "content": [{"type": "reasoning_text", "text": "opaque"}],
+      "encrypted_content": "encrypted-reasoning"
+    },
+    {
+      "type": "future_xai_item",
+      "provider_extension": {"kept": true}
+    }
+  ],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 8,
+    "total_tokens": 20,
+    "input_tokens_details": {"cached_tokens": 3},
+    "output_tokens_details": {"reasoning_tokens": 2},
+    "num_sources_used": 1,
+    "num_server_side_tools_used": 1,
+    "server_side_tool_usage_details": {"web_search": 1},
+    "cost_in_usd_ticks": 37756000,
+    "cost_in_nano_usd": 12345,
+    "context_details": {"context_window": 500000}
+  }
+}

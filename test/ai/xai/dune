@@ -1,0 +1,17 @@
+(test
+ (name run_eio)
+ (libraries
+  eta
+  eta_ai
+  eta_ai_xai
+  eta_http
+  eta_runtime_common_tests
+  eta_test_backend_eio
+  alcotest
+  eio
+  eio_main)
+ (deps
+  (source_tree fixtures))
+ (action
+  (setenv EIO_BACKEND posix
+   (run %{test}))))

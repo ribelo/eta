@@ -1,0 +1,12 @@
+(library
+ (name eta_ai_xai)
+ (public_name eta_ai_xai)
+ (synopsis "Transport-neutral xAI provider for Eta AI")
+ (private_modules common)
+ (libraries
+  eta
+  eta_ai
+  eta_redacted
+  eta_http
+  yojson
+  base64))

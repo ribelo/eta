@@ -1,0 +1,29 @@
+{
+  "collection_id": "collection_80100614-300c-4609-959b-a138fa90f542",
+  "collection_name": "SEC Filings",
+  "created_at": "2025-09-16T18:36:09.790629Z",
+  "index_configuration": {
+    "model_name": "grok-embedding-small"
+  },
+  "chunk_configuration": {
+    "tokens_configuration": {
+      "max_chunk_size_tokens": 1024,
+      "chunk_overlap_tokens": 200,
+      "encoding_name": "o200k_base"
+    },
+    "strip_whitespace": true,
+    "inject_name_into_chunks": false
+  },
+  "metric_space": "HNSW_METRIC_COSINE",
+  "documents_count": 0,
+  "field_definitions": [
+    {
+      "key": "document_type",
+      "required": false,
+      "unique": false,
+      "inject_into_chunk": true,
+      "description": "Filing type"
+    }
+  ],
+  "collection_description": "Filings from the SEC for financial analysis"
+}

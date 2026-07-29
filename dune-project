@@ -482,6 +482,20 @@
   (eio (>= 1.0))))
 
 (package
+ (name eta_ai_xai)
+ (synopsis "Transport-neutral xAI provider for Eta AI")
+ (description
+  "eta_ai_xai provides lossless xAI Responses, resources, model catalogs, unary speech, voice discovery, and Realtime codecs without an Eio dependency.")
+ (depends
+  (ocaml (>= 5.2.0))
+  eta
+  eta_ai
+  eta_redacted
+  eta_http
+  base64
+  (yojson (>= 2.0))))
+
+(package
  (name eta_ai_anthropic)
  (synopsis "Anthropic provider for Eta AI")
  (description

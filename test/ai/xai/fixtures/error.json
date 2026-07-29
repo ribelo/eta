@@ -1,0 +1,9 @@
+{
+  "error": {
+    "message": "request rejected",
+    "type": "invalid_request_error",
+    "code": "bad_xai_request",
+    "param": {"field": "tools"}
+  },
+  "trace_id": "trace_fixture"
+}
