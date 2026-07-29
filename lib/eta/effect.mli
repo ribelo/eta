@@ -161,6 +161,10 @@ val concat : (unit, 'err) t list -> (unit, 'err) t
 val race : ('a, 'err) t list -> ('a, 'err) t
 (** First child to produce a value wins; the rest are cancelled.
 
+    Unlike JavaScript's [Promise.race], a typed failure does not win: it is
+    collected while [race] waits for the first success; if every child fails,
+    their causes are returned concurrently.
+
     Losers' values are discarded by design. Resource lifetime is owned by
     scopes, not by race: a loser that holds its resource under
     {!acquire_release} / {!Semaphore.with_permits} has it released when it is

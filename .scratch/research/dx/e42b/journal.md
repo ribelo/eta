@@ -141,3 +141,34 @@ an annotation would either fail to enforce the contract or reject valid pure
 closures for unrelated capture reasons. The adjudicated prose contract,
 reinforced by a deterministic retry witness, is therefore the precise current
 choice for future re-examination.
+
+## 4. `race` naming actuals
+
+The executable call-site census is 120 call lines in 78 tracked `.ml`/`.mli`
+files under `lib`, `test`, `examples`, and `bench`: 50 mechanically repeated
+typecheck fixtures and 70 non-fixture calls. No unqualified additional call was
+found. Existing teaching is consistent: `effect.mli` said the first child to
+produce a value wins, `docs/concurrency-guide.md` says first child to succeed,
+and `examples/README.md` explicitly says a successful branch wins even when
+another branch fails earlier. The API-DX references use `race` as a concurrency
+primitive without making first-settlement claims.
+
+The surprise search found no caller comment, test, red-team note, or failure
+report saying that an early typed failure was unexpectedly ignored. Instead,
+named executable evidence deliberately asserts `race ignores early failure
+until success`, `race simultaneous success/failure returns winner`, `race all
+failures returns concurrent causes`, and `race success iff any succeeds`.
+Therefore the pre-registered flip condition did **not** fire: `race` is kept and
+there is no migration.
+
+Implementation inspection at `lib/eta/effect_concurrent.ml:107-229` confirms
+that each `Exit.Error` is collected while results remain; the first `Exit.Ok`
+stores the winner and cancels losers, while an all-error run returns
+`Cause.concurrent`. Loser finalizer diagnostics remain a separate post-winner
+failure path, so the new sentence avoids the inaccurate stronger claim that
+race can fail *only* when every child fails. `effect.mli` now says explicitly:
+unlike JavaScript's `Promise.race`, a typed failure does not win; it is collected
+while waiting for success, and all-child failure returns the causes
+concurrently. Existing discriminating tests register the two added claims as
+R178 and R179. Actual surface delta: zero renamed/added/removed vals and one
+documentation-touched val, exactly as predicted.

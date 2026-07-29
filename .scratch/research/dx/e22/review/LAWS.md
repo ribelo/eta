@@ -14,7 +14,7 @@ prospective repository rule applies without a debt escape hatch to new or
 changed law-bearing prose in every `.mli`.
 
 Direct qcheck census: **116 mli-stated claims**, **2 prose-pending model claims**,
-**180 registered external claim clusters**, and **77 unique named qcheck properties** in
+**182 registered external claim clusters**, and **77 unique named qcheck properties** in
 `test/laws/`. Verified external named suites are registered
 separately below and are not silently counted as qcheck coverage.
 
@@ -32,8 +32,8 @@ separately below and are not silently counted as qcheck coverage.
 | M07b | `bind_error` chooses the first typed failure in cause order. | `lib/eta/effect.mli:286-289` | `bind_error handles exactly once with the first typed failure in cause order` |
 | M07c | `bind_error` does not handle causes containing defects, interruption, or finalizer diagnostics. | `lib/eta/effect.mli:282-289` | `bind_error never handles defect interruption or finalizer diagnostics` |
 | M08 | `fold` is coherent with success `map` and typed-error `bind_error`. | `lib/eta/effect.mli:315-317` | `fold coherence with map/bind_error` |
-| M09 | `race` returns the first value. | `lib/eta/effect.mli:161-164` | `race returns the actual first distinctly tagged finite producer` |
-| M10 | A cancelled race loser releases an actually held scoped resource. | `lib/eta/effect.mli:164-167` | `race loser cancellation releases an actually held scoped resource` |
+| M09 | `race` returns the first value. | `lib/eta/effect.mli:161-162` | `race returns the actual first distinctly tagged finite producer` |
+| M10 | A cancelled race loser releases an actually held scoped resource. | `lib/eta/effect.mli:168-171` | `race loser cancellation releases an actually held scoped resource` |
 | M11 | Successful `par left right` returns its pair in input position order, independent of completion order. | `lib/eta/effect.mli:178-181` | `par preserves pair input order across both observable completion directions` |
 | M12 | `par` propagates the first child failure and cancels its sibling. | `lib/eta/effect.mli:179-181` | `par first observed failure cancels sibling tree and awaits cleanup` |
 | M119 | Successful `par3 left middle right` returns its flat triple in argument order, independent of completion order. | `lib/eta/effect.mli:189-190` | `par3 preserves triple input order across both observable completion directions` |
@@ -329,6 +329,8 @@ qcheck optics.
 | R175 | `failures` returns automatic failures in observation order, manual handles start empty, and typed failure recording precedes `on_refresh_error`. | `lib/cache/refreshable.mli:61-64` | `Refreshable manual failures start empty`; `Refreshable failures preserve Fail Die observation order`; `Refreshable failure recorded before callback returns` — callback is promise-blocked while the body reads the ledger — `test/core_common/resource_common_suites.ml:177-184,464-495,687-727,753-754,773-774,789-790` |
 | R176 | Automatic schedule jitter uses the current runtime random source, and `Effect.with_random` provides deterministic scoped injection. | `lib/cache/refreshable.mli:31-32` | `Refreshable with_auto uses scoped or runtime random` — exact runtime-default and cross-runtime scoped replay sequences at `test/core_common/resource_common_suites.ml:300-349,763-764` |
 | R177 | `Mutable_ref.update` and `update_and_get` use CAS retry and may re-execute their callbacks, so callback effects can outnumber committed updates. | `lib/eta/mutable_ref.mli:13-26` | `CAS retry may re-execute callbacks` — a barrier forces two domains to compute from the same old value; both operations commit exactly two updates after exactly three callback evaluations at `test/core_common/core_common_suites.ml:187-216,1835-1836` |
+| R178 | A typed failure does not win `race`; it is collected while `race` waits for a success. | `lib/eta/effect.mli:164-166` | `race ignores early failure until success` — an immediate typed failure loses to the earlier of two delayed successes at `test/core_common/effect_common_suites.ml:3181-3198,4003-4004` |
+| R179 | If every `race` child fails, their causes are returned concurrently. | `lib/eta/effect.mli:165-166` | `race all failures returns concurrent causes` — two ordered delayed typed failures produce the exact concurrent cause at `test/core_common/effect_common_suites.ml:3217-3230,4010-4011` |
 
 ## Model laws (prose pending)
 
@@ -345,7 +347,7 @@ valid constructor domains; until then their provenance is explicit.
 
 | Mli | Direct qcheck claims | Registered external rows | Model claims | Covered registry rows |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/eta/effect.mli` | 63 | 118 | 0 | 181 |
+| `lib/eta/effect.mli` | 63 | 120 | 0 | 183 |
 | `lib/eta/spi.mli` | 0 | 2 | 0 | 2 |
 | `lib/eta/schedule.mli` | 8 | 2 | 2 | 10 |
 | `lib/eta/channel.mli` | 12 | 0 | 0 | 12 |
@@ -358,7 +360,7 @@ valid constructor domains; until then their provenance is explicit.
 | `lib/cache/refreshable.mli` | 0 | 10 | 0 | 10 |
 | `lib/eta/mutable_ref.mli` | 0 | 1 | 0 | 1 |
 | Durable report claims | 0 | 2 | 0 | 2 |
-| **Total covered** | **116** | **180** | **2** | **296** |
+| **Total covered** | **116** | **182** | **2** | **298** |
 
 The law executables contain 77 unique properties in total. Matrix properties cover
 multiple one-claim rows only where each claim has a direct discriminating
