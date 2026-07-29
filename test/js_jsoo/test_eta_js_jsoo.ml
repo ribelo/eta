@@ -611,6 +611,55 @@ let test_from_js_promise_non_thenable_dies done_ =
                (finish done_ (expect_die "from_js_promise forged then")))
          (expect_die "from_js_promise missing then"))
 
+let test_refreshable_facade_is_lexical done_ =
+  let calls = ref 0 in
+  let load = Eta_js.Effect.sync (fun () -> incr calls; !calls) in
+  let rec await_refresh refreshable =
+    if !calls >= 2 then Eta_js.Refreshable.get refreshable
+    else
+      Eta_js.Effect.yield
+      |> Eta_js.Effect.bind (fun () -> await_refresh refreshable)
+  in
+  run
+    (Eta_js.Refreshable.with_auto ~load
+       ~schedule:(Eta_js.Schedule.recurs 1)
+       await_refresh)
+    ~on_result:(finish done_ (expect_ok_int "refreshable facade" 2))
+
+let test_refreshable_let_at_erases_optionals done_ =
+  let ( let@ ) bracket body = bracket body in
+  let load : (int, [ `Refresh_failed ]) Eta_js.Effect.t =
+    Eta_js.Effect.pure 7
+  in
+  let schedule = Eta_js.Schedule.recurs 0 in
+  let canonical =
+    let@ refreshable =
+      Eta_js.Refreshable.with_auto ~load ~schedule
+    in
+    Eta_js.Refreshable.get refreshable
+  in
+  let alerted =
+    let@ refreshable =
+      Eta_js.Refreshable.with_auto_on_refresh_error
+        ~on_refresh_error:(fun `Refresh_failed -> ()) ~load ~schedule
+    in
+    Eta_js.Refreshable.get refreshable
+  in
+  let alerted_direct =
+    Eta_js.Refreshable.with_auto_on_refresh_error
+      ~on_refresh_error:(fun `Refresh_failed -> ()) ~load ~schedule
+      Eta_js.Refreshable.get
+  in
+  run (Eta_js.Effect.all [ canonical; alerted; alerted_direct ])
+    ~on_result:
+      (finish done_ (function
+        | Eta_js.Exit.Ok [ 7; 7; 7 ] -> ()
+        | Eta_js.Exit.Ok _ -> fail_test "refreshable callback forms: bad values"
+        | Eta_js.Exit.Error cause ->
+            fail_test
+              (Printf.sprintf "refreshable callback forms: got %s"
+                 (pp_cause cause))))
+
 let tests =
   [
     ("eta_js runtime delay", test_runtime_delay);
@@ -630,6 +679,9 @@ let tests =
     ("eta_js semaphore facade", test_semaphore_facade);
     ("eta_js pubsub facade", test_pubsub_facade);
     ("eta_js supervisor observes failure", test_supervisor_observes_failure);
+    ("eta_js refreshable facade is lexical", test_refreshable_facade_is_lexical);
+    ( "eta_js refreshable let@ erases optionals",
+      test_refreshable_let_at_erases_optionals );
     ( "eta_js from_js_promise pending resolves after registration",
       test_from_js_promise_pending_resolves_after_registration );
     ( "eta_js from_js_promise already settled",

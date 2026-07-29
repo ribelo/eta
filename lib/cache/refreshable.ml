@@ -1,3 +1,5 @@
+open Eta
+
 type ('a, 'err) t = {
   load : ('a, 'err) Effect.t;
   mutex : Sync_lock.t;
@@ -55,21 +57,21 @@ let manual load =
   load |> Effect.map (loaded load)
 
 let failures resource =
-  Effect.named "resource.failures"
+  Effect.named "refreshable.failures"
     (Effect.sync (fun () ->
          with_lock resource @@ fun () -> List.rev resource.failures))
 
-let auto ?(on_error) ~load ?random ~schedule () =
+let with_auto_impl on_refresh_error ~load ~schedule body =
   let add_failure resource cause =
     Effect.sync (fun () ->
         with_lock resource @@ fun () ->
         resource.failures <- cause :: resource.failures)
   in
   let record_failure resource cause =
-    Effect.named "resource.auto.refresh_failed"
+    Effect.named "refreshable.with_auto.refresh_failed"
       (add_failure resource cause
       |> Effect.bind (fun () ->
-             match (cause, on_error) with
+             match (cause, on_refresh_error) with
              | Cause.Fail err, Some f ->
                  Effect.sync (fun () ->
                      try f err; None
@@ -82,30 +84,41 @@ let auto ?(on_error) ~load ?random ~schedule () =
                       | Some defect -> add_failure resource defect)
              | _ -> Effect.unit))
   in
-  let rec refresh_loop resource driver =
-    Effect.now_ms
-    |> Effect.bind (fun now_ms ->
-           match Schedule.step ~now_ms ~input:() driver with
-           | Schedule.Done _, _ -> Effect.unit
-           | Schedule.Continue metadata, driver' ->
-               let refresh_once =
-                 Effect.all_settled [ refresh resource ]
-                 |> Effect.bind (function
-                      | [ Ok () ] -> Effect.unit
-                      | [ Error cause ] -> record_failure resource cause
-                      | results ->
-                          Effect.sync (fun () ->
-                              invalid_arg
-                                ("Eta.Resource.auto: expected one refresh result, got "
-                               ^ string_of_int (List.length results))))
-               in
-               refresh_once
-               |> Effect.delay metadata.delay
-               |> Effect.bind (fun () -> refresh_loop resource driver'))
+  let refresh_once resource =
+    Effect.all_settled [ refresh resource ]
+    |> Effect.bind (function
+         | [ Ok () ] -> Effect.unit
+         | [ Error cause ] -> record_failure resource cause
+         | results ->
+             Effect.sync (fun () ->
+                 invalid_arg
+                   ("Eta_cache.Refreshable.with_auto: expected one refresh result, got "
+                  ^ string_of_int (List.length results))))
+  in
+  let refresh_loop resource =
+    let first = ref true in
+    let iteration =
+      Effect.sync (fun () ->
+          if !first then (
+            first := false;
+            false)
+          else true)
+      |> Effect.bind (function
+           | false -> Effect.unit
+           | true -> refresh_once resource)
+    in
+    Effect.repeat ~schedule iteration |> Effect.map (fun _ -> ())
   in
   load
   |> Effect.map (loaded load)
   |> Effect.bind (fun resource ->
-         let driver = Schedule.start ?random schedule in
-         Spi.daemon (refresh_loop resource driver)
-         |> Effect.map (fun () -> resource))
+         Effect.with_supervised_background
+           ~name:"refreshable.with_auto"
+           (refresh_loop resource)
+           (fun () -> body resource))
+
+let with_auto ~load ~schedule body =
+  with_auto_impl None ~load ~schedule body
+
+let with_auto_on_refresh_error ~on_refresh_error ~load ~schedule body =
+  with_auto_impl (Some on_refresh_error) ~load ~schedule body

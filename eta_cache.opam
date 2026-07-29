@@ -2,7 +2,7 @@
 opam-version: "2.0"
 synopsis: "Effect-integrated keyed cache for Eta"
 description:
-  "eta_cache provides a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats."
+  "eta_cache provides refreshable values and a bounded keyed cache with Eta single-flight lookup sharing, per-result TTL, typed-failure caching, lazy expiry, invalidation, refresh, and stats."
 maintainer: ["Rafal Krzywaznia <r.krzywaznia@gmail.com>"]
 authors: ["Rafal Krzywaznia"]
 license: "MIT"

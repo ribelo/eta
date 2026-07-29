@@ -21,7 +21,7 @@ Shared primitive coverage includes:
   retry/repeat schedules, resources, observability, daemon behavior, and
   uninterruptible behavior.
 - Mutable_ref, Queue, Channel, Semaphore, Pubsub, Pool, Clock, Scope,
-  Resource, Supervisor, Duration, Schedule, String_helpers, Eta_redacted,
+  Eta_cache.Refreshable, Supervisor, Duration, Schedule, String_helpers, Eta_redacted,
   Runtime contract, Portable_queue, Properties, stress/resource-leak
   regressions, and upstream-invariant regressions.
 

@@ -1,5 +1,5 @@
 (library
  (name eta_cache)
  (public_name eta_cache)
- (synopsis "Effect-integrated keyed cache for Eta")
+ (synopsis "Refreshable values and effect-integrated keyed caches for Eta")
  (libraries eta))

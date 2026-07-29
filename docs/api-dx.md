@@ -175,11 +175,14 @@ Use named helpers at common boundaries:
   `with_error_pp` wiring.
 - `Eta.Exit.to_result` at boundaries that intentionally accept only successful
   values and single typed failures as ordinary OCaml `result`.
-- `Eta.Resource.auto` for runtime-owned cached resources with scheduled refresh.
-- `Eta.Resource.failures` for Eta-owned refresh diagnostics instead of a
-  caller-maintained side channel.
-- `Eta.Resource.manual` and `Eta.Resource.refresh` for caller-driven cached
-  resources where scheduled refresh is the wrong lifecycle.
+- `Eta_cache.Refreshable.with_auto` for cached values with a scheduled refresh
+  loop owned by the callback's lexical lifetime.
+- `Eta_cache.Refreshable.with_auto_on_refresh_error` only when typed automatic
+  refresh failures also need an immediate side-effecting alert.
+- `Eta_cache.Refreshable.failures` for Eta-owned refresh diagnostics instead of
+  a caller-maintained side channel.
+- `Eta_cache.Refreshable.manual` and `Eta_cache.Refreshable.refresh` for
+  caller-driven cached values where scheduled refresh is the wrong lifecycle.
 - `Eta.Pool.with_resource` for bounded runtime-local connection/resource pools.
 - `Eta.Pubsub.subscribe` with `let@` for scoped publish/subscribe subscriptions.
 - `Eta.Pubsub.try_recv` for non-blocking scoped subscription polls.
@@ -313,7 +316,7 @@ to abort cleanup whose completion Eta already promises to await.
 ## What The Examples Prove
 
 The guarded gate in `test/api_dx/api_dx_examples.ml` covers resource workflow,
-runtime-owned cached resources, scoped resource handles, retrying external
+lexically refreshed cached values, scoped resource handles, retrying external
 calls, ordinary service composition, typed failure recovery, pure typed failure recovery, best-effort typed failure suppression, typed failure materialization as `result`, backend-neutral cooperative yielding, success-value
 projection, pure validation lifting, synchronous defect capture, composed retry schedules, stream
 transforms, success-side observation, synchronous success-side observation, scheduled unit recurrence, fail-fast list
@@ -329,7 +332,7 @@ runtime-local pools, scoped pubsub subscriptions, non-blocking pubsub polls,
 trace sampling, trace context propagation, trace context injection, blocking typed leaves, runtime exit/cause boundaries, runtime
 execution boundaries, observability, observability controls,
 observability sinks, lazy metric batching, background lifecycle, scoped
-background shutdown draining, supervised nurseries, runtime-owned resource failure
+background shutdown draining, supervised nurseries, lexically owned refreshable failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
@@ -588,8 +591,8 @@ Observe the operation, not the schedule policy:
 - For `Effect.retry`, `retry_or_else`, and `repeat`, instrument the source effect
   before passing it to the operation. This sees every source attempt, including
   the initial attempt.
-- For `Resource.auto`, instrument `load`. Use an application-owned counter when
-  seed and refresh loads need different labels.
+- For `Eta_cache.Refreshable.with_auto`, instrument `load`. Use an
+  application-owned counter when seed and refresh loads need different labels.
 - For `Stream.retry`, put `Stream.tap_error` on the source before `Stream.retry`,
   or instrument the source directly. A `tap_error` outside `retry` sees only the
   final failure. For `Stream.repeat`, instrument the source or use `Stream.tap`
@@ -741,18 +744,39 @@ by bespoke capability objects in tests. The built-in sinks provide synchronized
 collection, `as_capability` adapters for runtime creation, dumps for
 assertions, and `Tracer.retain_recent` for bounded diagnostics.
 
-`Resource.auto` is not just `with_background` around a ref. It owns the
-runtime-scoped refresh loop, preserves the last good value after refresh
-failure, records typed failures and defects, and lets callers inspect
-`Resource.failures`. `Resource.manual` and `Resource.refresh` remain the
+`Eta_cache.Refreshable.with_auto` is not just `with_background` around a ref. It
+owns the refresh loop for exactly the callback's lifetime, preserves the last
+good value after refresh failure, records typed failures and defects, and lets
+the callback inspect `Eta_cache.Refreshable.failures`.
+
+```ocaml
+let open Eta.Syntax in
+let@ refreshable = Eta_cache.Refreshable.with_auto ~load ~schedule in
+use refreshable
+```
+
+Keep the canonical form above unless immediate typed-refresh alerting is needed.
+The rare spelling makes that side effect explicit:
+
+```ocaml
+let open Eta.Syntax in
+let@ refreshable =
+  Eta_cache.Refreshable.with_auto_on_refresh_error
+    ~on_refresh_error:alert ~load ~schedule
+in
+use refreshable
+```
+
+`Eta_cache.Refreshable.manual` and `Eta_cache.Refreshable.refresh` remain the
 caller-driven shape when scheduled refresh is the wrong lifecycle: refresh
 failures return through the caller's typed channel and the last good value stays
 published.
 
-`Resource.failures` is not replaced by an `~on_error` callback that appends to a
-caller-owned ref. `on_error` is a side-effect hook for immediate observation;
-`Resource.failures` is the resource-owned diagnostic ledger that keeps typed
-refresh failures and defects in Eta's cause model.
+`Eta_cache.Refreshable.failures` is not replaced by an
+`~on_refresh_error` callback that appends to a caller-owned ref.
+`with_auto_on_refresh_error` is a side-effect hook for immediate typed-refresh
+observation; `Eta_cache.Refreshable.failures` is the handle-owned diagnostic
+ledger that keeps typed refresh failures and defects in Eta's cause model.
 
 `Pool.with_resource` is not just `Effect.with_resource` around an `acquire`
 function. `Pool.create` owns bounded checkout, idle reuse, close accounting,
@@ -799,7 +823,8 @@ The queue-probe bucket keeps `Queue.try_offer` and `Queue.poll` visible for
 non-blocking probes; a caller-maintained `Queue.stats` check cannot preserve
 the typed close reason and still races the real queue state.
 
-`Mutable_ref` is not replaced by `Effect`, `Resource`, or a naked `Atomic.t`.
+`Mutable_ref` is not replaced by `Effect`, `Eta_cache.Refreshable`, or a naked
+`Atomic.t`.
 It is application-owned shared state, not a lifecycle manager and not a service
 environment. Use it when a synchronous leaf needs a named cell with CAS-backed
 `update` / `update_and_get`; use higher-level Eta primitives when lifetime,
@@ -845,8 +870,8 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta.Resource.auto`, `Eta.Resource.manual`, `Eta.Resource.refresh`, `Eta.Resource.get`, `Eta.Resource.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
-| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), cached resources (`Resource.auto`, `Resource.manual`, `Resource.refresh`, `Resource.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
+| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.get`, `Eta_cache.Refreshable.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
+| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), refreshable cached values (`Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_scoped`/`supervisor_yield` primitives behind `Supervisor`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`), and the unstable `Eta.Spi` namespace (`Spi.daemon`, `Spi.Expert`) |
 
 The low-level group is not a deletion list. It is a doc-demotion list: these

@@ -50,14 +50,14 @@
 (executable
  (name cached_resource)
  (modules cached_resource)
- (libraries eta eta_eio eio_main)
+ (libraries eta eta_cache eta_eio eio_main)
  (preprocess
   (pps ppx_eta)))
 
 (executable
  (name manual_resource_refresh)
  (modules manual_resource_refresh)
- (libraries eta eta_eio eio_main)
+ (libraries eta eta_cache eta_eio eio_main)
  (preprocess
   (pps ppx_eta)))
 

@@ -4,9 +4,9 @@ OTLP/JSON exporter for [Eta](../eta)'s tracer, logger, and meter
 capabilities.
 
 OpenTelemetry Protocol implementation with hand-written JSON encoders and
-eta_http transport. Batching, stream merging, timeout, retry, backpressure,
-cached exporter configuration, and daemon lifecycle are expressed as Eta
-effects and Eta streams.
+eta_http transport. Batching, stream merging, timeout, retry, backpressure, and
+daemon lifecycle are expressed as Eta effects and Eta streams. Exporter
+configuration is immutable ordinary OCaml data stored on the exporter handle.
 **No protobuf, no `cohttp`, no ambient dependency context.** The direct
 opam dependencies are `eta`, `eta_stream`, `eta_http`, and `yojson`. `eio`
 arrives transitively through `eta_stream`; TLS dependencies stay behind
@@ -153,12 +153,12 @@ clock. Supplying `~clock` replaces both operations as one pair.
 | `~on_send`        | no-op            | test hook called before each HTTP POST       |
 
 The exporter starts one Eta runtime daemon through `runtime_factory`. That
-daemon loads cached exporter configuration through `Eta.Resource`, consumes
-bounded `Eta_stream.Mailbox` sources, merges signal streams with
-`Eta_stream.merge`, exports batches with bounded parallelism, and decrements
-in-flight counters through Eta finalizers. Export POSTs go through eta_http
-with observability suppressed so exporter-internal pool and transport spans
-are not re-exported.
+daemon reads the immutable configuration record assembled by `Eta_otel.create`
+and stored on the exporter handle, consumes bounded `Eta_stream.Mailbox`
+sources, merges signal streams with `Eta_stream.merge`, exports batches with
+bounded parallelism, and decrements in-flight counters through Eta finalizers.
+Export POSTs go through eta_http with observability suppressed so
+exporter-internal pool and transport spans are not re-exported.
 Flush waits on `Eta_stream.Drain_counter.await_zero` instead of fixed-interval
 polling.
 

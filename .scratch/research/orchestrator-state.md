@@ -7,8 +7,12 @@ map: what / rationale / decision / decision rationale), the tail of
 `.scratch/research/dx-prd-0001.md` §6, then continue the per-experiment
 loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E41 — `Resource` → `Refreshable`**)
+- Current phase: **EOP hardening wave** (9/14 done; E42b next)
+- In flight: nothing
+- Done (recent): **E41 promoted** (`b2c7a82b`; `Resource` →
+  `Eta_cache.Refreshable`, daemon `auto` → lexical `with_auto` /
+  `with_auto_on_refresh_error`, zero-optionals rule registered, R167–R176)
+  after one should-not-merge review round (fixed pre-merge)
 - Done (recent): **E42a promoted** (`d45a9c1e`; `Eta.Spi` namespace,
   nine supervisor builders privatized, `Effect.mli` 129 → 119 vals;
   privacy compile-probed)
@@ -126,4 +130,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-28 — E42a promoted
+- Last update: 2026-07-29 — E41 promoted after 2 rework rounds

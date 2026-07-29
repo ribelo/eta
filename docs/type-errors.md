@@ -224,7 +224,8 @@ directly.
 
 **Fix 1.** To observe retries/repeats, instrument the source effect before
 passing it to `Effect.retry` / `Effect.repeat` — this also sees the initial
-attempt, which taps never could. For `Resource.auto`, instrument `load`;
+attempt, which taps never could. For `Eta_cache.Refreshable.with_auto`,
+instrument `load`;
 for streams, `Stream.tap_error` on the source before `Stream.retry` or
 `Stream.tap` for emissions. For a custom driver, log around
 `Schedule.step` calls.

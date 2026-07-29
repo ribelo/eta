@@ -5,13 +5,13 @@
 Eta is a small OCaml 5 library built with Dune. Core public code lives in
 `lib/eta/`; each exported module has a paired implementation and interface,
 for example `effect.ml` and `effect.mli`. The core modules are `Effect`,
-`Runtime`, `Cause`, `Exit`, `Duration`, `Schedule`, `Resource`,
+`Runtime`, `Cause`, `Exit`, `Duration`, `Schedule`,
 `Capabilities`, and `Tracer`. Supporting core modules include `Syntax`,
 `Supervisor`, `Channel`, `Queue`, `Pubsub`, `Pool`, `Semaphore`, `Sampler`,
 `Logger`, `Meter`, `Log_level`, `Mutable_ref`, `Random`, and `Trace_context`.
 Optional public surfaces live in sibling `lib/<feature>/` directories and
-publish underscore-named packages/libraries such as `eta_http`, `eta_sql`,
-`eta_ai`, and `eta_test`.
+publish underscore-named packages/libraries such as `eta_cache` (including
+`Eta_cache.Refreshable`), `eta_http`, `eta_sql`, `eta_ai`, and `eta_test`.
 
 Tests live under top-level `test/`, mirroring the `lib/` package layout.
 Research work happens under `.scratch/`. Durable research bundles that must be
@@ -254,7 +254,10 @@ possible; at runtime, fail clearly rather than no-op, default, or skip.
 
 H-W4: Wrap an Eio primitive when naked Eio would force callers to reimplement an Eta-owned protocol or invariant: typed failure preservation, cancellation cleanup, scoped lifecycle, close fences, backpressure ownership, mode/portability fences, or runtime observability. Otherwise expose Eio directly via a `from_eio_X` bridge or document the recipe.
 
-The rule predicts the current surface: `Pool`, `Channel`, `Resource`, `Mailbox`, and `Effect.timeout_as` wrap; `Eio.Mutex`, `Eio.Condition`, `Eio.Path`, and `Eio.Buf_read` stay direct; `Stream.from_eio_stream` is a bridge with an explicit semantic gap.
+The rule predicts the current surface: `Pool`, `Channel`,
+`Eta_cache.Refreshable`, `Mailbox`, and `Effect.timeout_as` wrap; `Eio.Mutex`,
+`Eio.Condition`, `Eio.Path`, and `Eio.Buf_read` stay direct;
+`Stream.from_eio_stream` is a bridge with an explicit semantic gap.
 
 Evidence sources: V-Realtime-Substrate, V-Channel-Choice, V-Pool-Survival, and V-Rs.
 
