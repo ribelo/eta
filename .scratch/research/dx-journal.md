@@ -5418,3 +5418,61 @@ Orchestrator bookkeeping lesson: `**` is not literal in BRE sed —
 state-file edits use exact-match tools only (two stale blocks repaired).
 F-E42a-1 registered: `Supervisor` should own its public types directly,
 eliminating the five erasure bridges (no new `%identity` surface).
+
+---
+
+## V-DX-E41-001 — 2026-07-28 — research/dx-e41-refreshable — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E41-002. Scope per the
+EOP-wave registration: rename `Resource` → `Refreshable`, move root `eta` →
+`eta_cache`, lexical-first `with_auto`.
+
+**Census (measured pre-change).** `Eta.Resource` public: 5 vals (`manual`,
+`auto`, `get`, `refresh`, `failures`) + `('a,'err) t`. 75 dotted call lines
+(`get` 35, `auto` 16, `refresh` 9, `failures` 8, `manual` 7). Real
+consumers: `examples/cached_resource.ml`,
+`examples/manual_resource_refresh.ml`,
+`test/core_common/resource_common_suites.ml`,
+`test/api_dx/api_dx_examples.ml`, `lib/js/eta_js.ml{i}` re-export. (The
+`lib/http_eio` hits are `Eio.Resource` — false positives; no root-eta
+consumer outside the module itself.) Docs: `api-dx.md`,
+`tutorial-eta-otel.md`, `type-errors.md`, `README.md`. Current `auto`
+schedule param is 2-param post-E24c.
+
+**Predicted census delta.** Root `eta`: −1 public module, −5 vals, −1 type.
+`eta_cache`: +1 module (`Refreshable`), +5 vals, +1 type. Ecosystem net:
+0 modules / 0 vals — but the runtime-owned acquisition path is deleted
+(−1 capability class; no public daemon-backed constructor). Footguns: −1
+(the `Resource`/acquire-ownership name collision — the audit's core claim).
+`effect.mli` itself: 0 val changes.
+
+**Predicted `with_auto` semantics.**
+- Body exit of any kind (success, typed failure, defect, cancellation)
+  stops the refresh loop; in-flight refresh cancelled at a checkpoint,
+  finalizers run (scope-owned — `with_supervised_background` semantics).
+- Schedule exhaustion ends the loop; body continues with last-loaded value
+  (current `auto` behavior preserved).
+- Seed failure fails acquisition before the body runs (current behavior).
+- Stale-while-refresh preserved verbatim: refresh failures keep last good
+  value; `failures` records `Fail`/`Die` classification; `on_error` defect
+  → recorded `Die`, loop continues.
+- Implemented on public machinery only — no SPI, no daemon. If impossible,
+  BLOCKED naming the missing primitive (feeds E43).
+
+**Migration (predicted).** ~12–18 files: 5 consumers + module move + dune
+rewiring (eta_cache consumers gain `eta_cache` dep) + 4 docs. The 16 `auto`
+lines restructure into scoped form; 1–2 awkward multi-phase test
+restructurings expected. `Eta_js`: `module Resource = Eta.Resource` →
+`module Refreshable = Eta_cache.Refreshable` (eta_cache builds under jsoo;
+`test/cache_jsoo` exists).
+
+**Review (predicted).** PR-style oracle verdict: promote, ≤2 minor
+reservations — candidates: (a) `with_auto` CPS ergonomics vs the old
+first-class handle at migrated sites; (b) `eta_js` alias naming. No
+should-not-merge predicted.
+
+**Outcome (predicted).** Promote; gates green ≤3 fix attempts.
+**Hold trigger (registered):** a consumer genuinely needing runtime-owned
+lifetime with no enclosing lexical scope — recorded raw, no workaround
+(would argue for a scoped-runtime variant, not for silently keeping
+`auto`).
