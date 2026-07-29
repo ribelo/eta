@@ -80,3 +80,26 @@ journal makes 13 for the item, within the sealed band. The focused
 `test/ppx_eio` suite also passed all 11 tests. The reservation was addressed by
 a repo-wide extension/preprocessor census plus the hand-written type-error
 driver split, rather than direct Dune consumers alone.
+
+## 2. Docs-level tiering actuals
+
+The public-package census compares the support-tier table mechanically against
+the 48 root opam files: 48 rows, 48 unique names, no missing names, no extras,
+and no duplicates. Counts are core 1, batteries 11, integrations 36, labs 0.
+The tier rules are ordered so labs requires an explicit instability designation,
+core requires universal backend-neutral use, an external boundary then wins
+integrations, and batteries is the general-purpose remainder. The pre-existing
+README link already points to this map, so only `docs/packages.md` changed.
+
+Tie record and lightweight red team: `eta_eio` can be argued core because an
+ordinary native program needs a runtime, but the universal/backend-neutral core
+rule rejects it and its named Eio runtime boundary selects integrations.
+`eta_schema_yojson` can be argued batteries because it extends a general schema
+library, but the external-codec rule selects integrations. The same precedence
+settles the less obvious `ppx_eta_sql` (SQL-specific integration) versus
+`ppx_eta` (general Eta tooling), while `eta_test` remains batteries because its
+purpose is general Eta testing rather than implementing a service or protocol.
+No package had existing evidence of an explicit unstable/experimental promise,
+so inventing labs membership would have been a vibes-based stability downgrade;
+the map records the tier as intentionally empty. The two attempted
+misclassifications therefore have only one answer under the published rules.

@@ -10,6 +10,91 @@ packages you need.
 - Transitive opam dependencies must still be installed, even if your code never
   calls them.
 
+## Support tiers
+
+The tiers classify support boundary, not quality or dependency weight. Apply
+these rules in order; the first matching rule wins:
+
+1. **Labs** — explicitly marked unstable or experimental in this map; its API
+   may change without migration ceremony.
+2. **Core** — the backend-neutral package every ordinary Eta program needs,
+   independent of runtime, platform, or feature choice.
+3. **Integrations** — implements or names an external runtime, platform,
+   protocol, service, engine, driver, wire format, or codec.
+4. **Batteries** — remaining general-purpose Eta functionality with no external
+   service or protocol contract.
+
+An optional package is not automatically labs, and a commonly used adapter is
+not core. There are currently no packages explicitly designated labs; that
+empty tier is intentional rather than an invitation to infer instability.
+
+### Core (1)
+
+| package | why |
+| --- | --- |
+| `eta` | Backend-neutral effect description, runtime contract, failures, scopes, and concurrency shared by every Eta program. |
+
+### Batteries (11)
+
+| package | why |
+| --- | --- |
+| `eta_blocking` | General bounded blocking-worker machinery, independent of any external service or protocol. |
+| `eta_cache` | General effect-integrated caching and refreshable values. |
+| `eta_par` | General native CPU parallelism over Eta effects. |
+| `eta_redacted` | General secret-wrapping values for safe rendering. |
+| `eta_router` | General path matching; it does not implement an HTTP protocol or transport. |
+| `eta_schema` | General schema descriptions without a wire-format dependency. |
+| `eta_schema_test` | General test assertions for `eta_schema`, not a service or protocol adapter. |
+| `eta_signal` | General explicit-stabilization reactive graphs. |
+| `eta_stream` | General streams, mailboxes, channels, and queues. |
+| `eta_test` | General deterministic Eta test runtime and assertions. |
+| `ppx_eta` | General Eta syntax and typed-error printer generation. |
+
+### Integrations (36)
+
+| package | external boundary |
+| --- | --- |
+| `eta_ai` | Shared LLM service vocabulary, streaming protocol parsing, and telemetry contract. |
+| `eta_ai_anthropic` | Anthropic Messages service protocol. |
+| `eta_ai_kimi_coding` | Kimi Coding service protocols and OAuth flow. |
+| `eta_ai_moonshot` | Moonshot Open Platform service protocol. |
+| `eta_ai_openai` | OpenAI service protocols and wire shapes. |
+| `eta_ai_openai_codec` | OpenAI-compatible wire codecs. |
+| `eta_ai_openai_codex` | OpenAI Codex service protocol and ChatGPT OAuth. |
+| `eta_ai_openai_compat` | OpenAI-compatible provider service protocols. |
+| `eta_ai_openai_realtime_eio` | OpenAI Realtime WebSocket protocol on Eio. |
+| `eta_ai_openrouter` | OpenRouter service protocol. |
+| `eta_duckdb` | DuckDB native database driver. |
+| `eta_eio` | Adapter from Eta's runtime contract to the external Eio runtime. |
+| `eta_exa` | Exa service protocol client. |
+| `eta_http` | Backend-neutral HTTP protocol and client contract. |
+| `eta_http_eio` | Eio network transport for HTTP. |
+| `eta_http_h1` | HTTP/1 protocol codec. |
+| `eta_http_h2` | HTTP/2 protocol implementation. |
+| `eta_http_js` | Browser Fetch platform adapter for HTTP. |
+| `eta_http_service` | HTTP server routing, extraction, and response contract. |
+| `eta_http_service_eio` | Eio serving adapter for HTTP services. |
+| `eta_http_tls_openssl` | OpenSSL TLS driver. |
+| `eta_http_ws` | WebSocket protocol codec and handshake. |
+| `eta_js` | js_of_ocaml platform facade. |
+| `eta_js_stream` | js_of_ocaml platform stream adapter. |
+| `eta_js_test` | js_of_ocaml/Node platform test adapter. |
+| `eta_jsoo` | js_of_ocaml runtime backend. |
+| `eta_ladybug` | LadybugDB native database driver. |
+| `eta_linux_input` | Linux evdev/uinput platform integration. |
+| `eta_otel` | OpenTelemetry protocol exporter. |
+| `eta_schema_yojson` | Yojson wire-value codec for schemas. |
+| `eta_sql` | SQLite database driver and SQL surface. |
+| `eta_sql_driver` | Runtime support contract for external SQL drivers. |
+| `eta_sql_dsl` | SQL language builder shared by database integrations. |
+| `eta_turso` | Turso SQLite-compatible native database driver. |
+| `eta_utop` | UTop and Eio developer-runtime integration. |
+| `ppx_eta_sql` | SQL table-declaration code generator. |
+
+### Labs (0)
+
+No package is currently designated unstable or experimental.
+
 ## Core boundary
 
 `eta` is the effect description layer: `Effect`, `Runtime`, `Cause`, `Exit`,
@@ -131,7 +216,8 @@ from `eta_eio`) and usually an `eta_http_eio` client to send data.
 | --- | --- | --- | --- |
 | `eta_linux_input` | `Eta_linux_input` | Linux evdev and uinput helpers | `eta_blocking` |
 | `eta_test` | `Eta_test` | virtual clock, deterministic random, cause-aware Alcotest assertions | `eta_eio`, `eio`, `eio_main`, `alcotest` |
-| `ppx_eta` | `Ppx_eta` | syntax helpers, typed-error printers, and SQL table declaration sugar | `ppxlib` |
+| `ppx_eta` | `Ppx_eta` | syntax helpers and typed-error printers | `ppxlib` |
+| `ppx_eta_sql` | `Ppx_eta_sql` | SQL table declaration sugar | `ppxlib` |
 
 ### js_of_ocaml
 
