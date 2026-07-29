@@ -311,7 +311,9 @@ let test_refreshable_with_auto_leaves_empty_fiber_census () =
         !calls)
     |> Effect.bind (function
          | 1 -> Effect.pure 1
-         | _ -> Effect.never)
+         | 2 -> Effect.never
+         | n ->
+             Effect.sync (fun () -> Alcotest.failf "third-load trap fired: %d" n))
   in
   let rec await_refresh () =
     Effect.sync (fun () -> !calls >= 2)
@@ -319,13 +321,16 @@ let test_refreshable_with_auto_leaves_empty_fiber_census () =
          | true -> Effect.unit
          | false -> Effect.yield |> Effect.bind await_refresh)
   in
-  let outcome =
-    Eta_test.Run.run
-      (Refreshable.with_auto ~load ~schedule:(Schedule.recurs 1)
-         (fun _refreshable -> await_refresh ()))
+  let program =
+    Refreshable.with_auto ~load ~schedule:(Schedule.spaced (Duration.ms 5))
+      (fun _refreshable -> await_refresh ())
+    |> Effect.bind (fun () -> Effect.sleep (Duration.hours 1))
+    |> Effect.bind (fun () -> Effect.sync (fun () -> !calls))
   in
+  let outcome = Eta_test.Run.run program in
   (match outcome.exit with
-   | Exit.Ok () -> ()
+   | Exit.Ok calls ->
+       Alcotest.(check int) "third-load trap stayed silent after next tick" 2 calls
    | Exit.Error cause ->
        Alcotest.failf "expected Ok, got %a" (Cause.pp pp_hidden) cause);
   Eta_test.Run.expect_no_pending_fibers outcome

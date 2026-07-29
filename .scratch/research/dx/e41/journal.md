@@ -160,3 +160,36 @@ jitter sequence against `Schedule.start` with the runtime seed, then replays one
 scoped seed across runtimes with different defaults. The native parity test and
 the js_of_ocaml facade test also compile and run both zero-optional `let@` forms
 and their direct-call forms.
+
+## Follow-up 3 — independent-review score
+
+**Score: 4 justified findings, 0 unjustified.** The review correctly upheld the
+implementation while rejecting evidence and prose that were not precise enough
+to support the handoff.
+
+1. **F1 justified — material test-design miss.** The sealed prediction named
+   post-scope observations and warned that merely seeing body exit was
+   insufficient, but the delivered matrix used `Schedule.recurs 1`. After the
+   blocked second load was cancelled, natural exhaustion made the exact count
+   and empty census non-discriminating. The prediction should have required an
+   unbounded schedule or a remaining recurrence plus a post-exit third-load trap.
+   All four exit tests now use an unbounded spaced schedule, advance the test
+   clock one hour after the outer exit, and assert an exact two calls. The census
+   test performs the same post-scope advance before taking its empty-fiber
+   snapshot. These new tests passed against the unchanged implementation, so the
+   hole was evidence-only, not a runtime defect.
+2. **F2 justified.** Both OTel documents falsely described configuration through
+   the old `Resource` API before this branch. Renaming that false statement to
+   `Refreshable` preserved rather than repaired it. The branch owns that miss.
+   The docs now match `Eta_otel.create`: it assembles one immutable configuration
+   record on the exporter handle, and daemons read it directly; `eta_otel` has no
+   cache dependency or ambient configuration channel.
+3. **F3 justified.** R167's loader returned the same value on duplicate seed
+   calls, and R175 observed only the final ledger. The manual test now asserts an
+   exact one-call seed boundary. A new promise barrier blocks inside
+   `on_refresh_error` while the body reads `failures`, proving the typed failure
+   is already recorded. The removed-claim disposition now includes R176.
+4. **F4 justified.** Merely defining the canonical example before the alerting
+   helper was not executable evidence when `main` ran only the rare helper. The
+   executable now runs `with_auto` and prints `cached-resource:canonical`; the DX
+   guide now says “lexically owned refreshable failure diagnostics.”

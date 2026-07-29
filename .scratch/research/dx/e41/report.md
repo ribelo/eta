@@ -224,3 +224,34 @@ required.
 All four required follow-up gates passed on the final implementation and test
 surface: OxCaml `@install`, full `runtest`, shipped-package verification, and the
 mainline `cache_jsoo`/`js_jsoo` build.
+
+## Follow-up 3 outcome
+
+All four independent-review findings were valid. No implementation change was
+needed.
+
+- **Loop stoppage:** the success, typed-failure, defect, and cancellation matrix
+  now drives a non-exhausting `Schedule.spaced`, blocks load two, completes the
+  outer exit, advances virtual time one hour, and traps any third load. The
+  `Eta_test.Run` census does the same post-scope advance before checking both the
+  exact load count and available empty census. The focused core/cache run passed
+  against the unchanged coordinator.
+- **OTel architecture:** `docs/tutorial-eta-otel.md` and `lib/otel/README.md` now
+  describe the immutable configuration record actually assembled by
+  `Eta_otel.create` and stored on the exporter handle. The false cache linkage
+  predated E41 under `Eta.Resource`, but the E41 rename should not have preserved
+  it.
+- **Law discrimination:** `Refreshable manual refresh` asserts exactly one seed
+  load before the handle is returned. `Refreshable failure recorded before
+  callback returns` blocks the callback on a promise and reads the ledger from
+  the body before release. R167, R170, and R175 now point to these discriminating
+  observations, all Refreshable row spans are refreshed, and the removed-claim
+  disposition correctly says R167-R176.
+- **Executable API wording:** `examples/cached_resource.ml` now runs the
+  canonical `with_auto` program and emits
+  `cached-resource:canonical initial=v1:primary after-failure=v1:primary
+  final=v2:secondary failures=1`. The DX guide says “lexically owned refreshable
+  failure diagnostics.”
+
+The full Follow-up 3 quartet passed: OxCaml `@install`, full `runtest`, shipped
+packages, and the mainline `cache_jsoo`/`js_jsoo` build.

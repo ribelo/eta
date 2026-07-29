@@ -54,7 +54,6 @@ let program_with_alerts observed source =
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let observed = ref [] in
   let source =
     ref
       [
@@ -64,20 +63,17 @@ let () =
       ]
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv) () in
-  match Eta_eio.Runtime.run rt (program_with_alerts observed source) with
+  match Eta_eio.Runtime.run rt (program source) with
   | Exit.Ok (initial, after_failed_refresh, final, failures) -> (
-      match
-        (after_failed_refresh.version, final.version, failures, !observed)
-      with
-      | 1, 2, [ Cause.Fail (`Refresh_failed _) ], [ _ ] ->
+      match (after_failed_refresh.version, final.version, failures) with
+      | 1, 2, [ Cause.Fail (`Refresh_failed _) ] ->
           Format.printf
-            "cached-resource:initial=%s after-failure=%s final=%s failures=%d \
-             observed=%d@."
+            "cached-resource:canonical initial=%s after-failure=%s final=%s \
+             failures=%d@."
             (render_config initial)
             (render_config after_failed_refresh)
             (render_config final)
             (List.length failures)
-            (List.length !observed)
       | _ ->
           Format.eprintf "cached resource produced unexpected state@.";
           exit 1)

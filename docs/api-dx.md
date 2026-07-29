@@ -332,7 +332,7 @@ runtime-local pools, scoped pubsub subscriptions, non-blocking pubsub polls,
 trace sampling, trace context propagation, trace context injection, blocking typed leaves, runtime exit/cause boundaries, runtime
 execution boundaries, observability, observability controls,
 observability sinks, lazy metric batching, background lifecycle, scoped
-background shutdown draining, supervised nurseries, runtime-owned resource failure
+background shutdown draining, supervised nurseries, lexically owned refreshable failure
 diagnostics, caller-driven manual resource refresh, and span linking.
 The proposed snippets remove explicit `Effect.bind` from all sixty-four areas.
 `let*` remains where code really sequences dependent effects or ordered
