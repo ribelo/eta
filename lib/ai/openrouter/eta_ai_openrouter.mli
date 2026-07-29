@@ -64,56 +64,46 @@ val provider :
 (** OpenRouter Responses API provider value. The default base URL is
     [https://openrouter.ai] and the path is [/api/v1/responses]. *)
 
-type structured_output = Eta_ai_openai_codec.structured_output = {
-  name : string;
-  schema : Eta_ai.Json.t;
-  strict : bool option;
-}
-
-val structured_output :
-  ?strict:bool ->
-  name:string ->
-  schema_json:Eta_ai.raw_json ->
+val responses_provider :
+  ?base_url:string ->
+  ?attribution:attribution ->
+  ?extra_headers:Eta_ai.headers ->
   unit ->
-  (structured_output, Eta_ai.ai_error) result
+  Eta_ai.tool Eta_ai.responses_provider
 
 module Chat : sig
   include Eta_ai.Provider.Chat
 
   val encode_responses :
-    ?structured_output:structured_output ->
     ?routing:routing ->
     ?reasoning:reasoning ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.raw_json, Eta_ai.ai_error) result
 
   val responses_request :
-    ?structured_output:structured_output ->
     ?routing:routing ->
     ?reasoning:reasoning ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
 
   val responses :
-    ?structured_output:structured_output ->
     ?routing:routing ->
     ?reasoning:reasoning ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
   val stream_responses :
-    ?structured_output:structured_output ->
     ?routing:routing ->
     ?reasoning:reasoning ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 end
 
@@ -151,10 +141,9 @@ module Rerank : Eta_ai.Provider.Rerank
 module Video : Eta_ai.Provider.Video
 
 val encode_responses :
-  ?structured_output:structured_output ->
   ?routing:routing ->
   ?reasoning:reasoning ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 (** Encode eta-ai chat requests as OpenRouter Responses API requests. *)
 
@@ -241,12 +230,11 @@ val list_models :
   (model_info list, Eta_ai.ai_error) Eta.Effect.t
 
 val responses_request :
-  ?structured_output:structured_output ->
   ?routing:routing ->
   ?reasoning:reasoning ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val embeddings_request :
@@ -301,13 +289,12 @@ val video_content_request :
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val responses :
-  ?structured_output:structured_output ->
   ?routing:routing ->
   ?reasoning:reasoning ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
 val embeddings :
@@ -369,11 +356,10 @@ val video_content :
   (Eta_ai.Video.content, Eta_ai.ai_error) Eta.Effect.t
 
 val stream_responses :
-  ?structured_output:structured_output ->
   ?routing:routing ->
   ?reasoning:reasoning ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t

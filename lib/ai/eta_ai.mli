@@ -152,6 +152,61 @@ type chat_request = {
   stream : bool;
 }
 
+module Responses : sig
+  type input =
+    | Text of string
+    | Messages of prompt
+
+  type tool_choice =
+    | None_
+    | Auto
+    | Required
+    | Function of string
+
+  type text_format =
+    | Text
+    | Json_object
+    | Json_schema of {
+        name : string;
+        schema : Json.t;
+        strict : bool option;
+      }
+
+  type text = { format : text_format }
+
+  type reasoning = {
+    effort : string option;
+    summary : string option;
+    generate_summary : bool option;
+  }
+
+  type 'tool request = {
+    model : model;
+    input : input;
+    instructions : string option;
+    previous_response_id : string option;
+    store : bool option;
+    include_ : string list;
+    tools : 'tool list;
+    tool_choice : tool_choice option;
+    parallel_tool_calls : bool option;
+    max_turns : int option;
+    max_output_tokens : int option;
+    temperature : float option;
+    top_p : float option;
+    top_k : int option;
+    min_p : float option;
+    text : text option;
+    reasoning : reasoning option;
+    reasoning_effort : string option;
+    service_tier : string option;
+    user : string option;
+    prompt_cache_key : string option;
+    replay_items : raw_json list;
+    stream : bool;
+  }
+end
+
 type binary_file = {
   filename : string;
   content_type : string;
@@ -468,6 +523,50 @@ type provider = {
   decode_error : (status:int -> headers:headers -> raw_json -> ai_error);
 }
 
+type 'tool responses_provider = {
+  transport : provider;
+  encode_responses :
+    'tool Responses.request -> (raw_json, ai_error) result;
+}
+
+module Realtime : sig
+  type message = Text of raw_json | Binary of bytes
+
+  module type Codec = sig
+    type session
+    type client_event
+    type server_event
+    type error
+
+    val encode_session : session -> message
+    val encode_client_event : client_event -> message
+    val decode_server_event : message -> (server_event, error) result
+  end
+
+  module type Transport = sig
+    type session
+    type client_event
+    type server_event
+    type error
+    type scope
+    type connection_options
+    type connection
+    val connect :
+      scope:scope ->
+      connection_options ->
+      session ->
+      (connection, error) Eta.Effect.t
+
+    val send :
+      connection -> client_event -> (unit, error) Eta.Effect.t
+
+    val read :
+      connection -> (server_event option, error) Eta.Effect.t
+
+    val close : connection -> (unit, error) Eta.Effect.t
+  end
+end
+
 val provider_request :
   provider -> api_key -> raw_json -> Eta_http.Request.t
 (** Build the standard POST request for a provider chat endpoint. *)
@@ -615,6 +714,20 @@ val run_stream_request :
   (stream, ai_error) Eta.Effect.t
 (** Run a built streaming chat request under the standard provider stream span. *)
 
+val run_responses_request :
+  provider ->
+  Eta_http.Client.t ->
+  'tool Responses.request ->
+  (Eta_http.Request.t, ai_error) result ->
+  (response, ai_error) Eta.Effect.t
+
+val run_responses_stream_request :
+  provider ->
+  Eta_http.Client.t ->
+  'tool Responses.request ->
+  (Eta_http.Request.t, ai_error) result ->
+  (stream, ai_error) Eta.Effect.t
+
 val run_embeddings_request :
   provider ->
   Eta_http.Client.t ->
@@ -670,6 +783,19 @@ val with_stream_span :
   ('a, ai_error) Eta.Effect.t ->
   ('a, ai_error) Eta.Effect.t
 (** Wrap a streaming chat eff in an OTel GenAI client span. *)
+
+val with_responses_span :
+  provider ->
+  'tool Responses.request ->
+  (response, ai_error) Eta.Effect.t ->
+  (response, ai_error) Eta.Effect.t
+
+val with_responses_stream_span :
+  ?time_to_first_chunk_s:float ->
+  provider ->
+  'tool Responses.request ->
+  ('a, ai_error) Eta.Effect.t ->
+  ('a, ai_error) Eta.Effect.t
 
 val with_embeddings_span :
   provider ->

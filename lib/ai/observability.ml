@@ -113,6 +113,28 @@ let with_stream_span ?time_to_first_chunk_s provider (request : chat_request)
     ~name:("chat " ^ request.model)
     ~attrs eff
 
+let with_responses_span provider (request : _ Responses.request) eff =
+  let eff = with_response_attrs response_attrs eff in
+  let attrs =
+    common_attrs ~operation:"chat" provider ~model:request.model
+    @ if request.stream then [ ("gen_ai.request.stream", "true") ] else []
+  in
+  with_span ~kind:Eta.Capabilities.Client
+    ~name:("chat " ^ request.model)
+    ~attrs eff
+
+let with_responses_stream_span ?time_to_first_chunk_s provider
+    (request : _ Responses.request) eff =
+  let attrs =
+    common_attrs ~operation:"chat" provider ~model:request.model
+    @ [ ("gen_ai.request.stream", "true") ]
+    @ option_float_attr "gen_ai.response.time_to_first_chunk"
+        time_to_first_chunk_s
+  in
+  with_span ~kind:Eta.Capabilities.Client
+    ~name:("chat " ^ request.model)
+    ~attrs eff
+
 let embedding_usage_attrs (usage : Embedding.usage) =
   option_int_attr "gen_ai.usage.input_tokens" usage.input_tokens
   @ option_int_attr "gen_ai.usage.total_tokens" usage.total_tokens

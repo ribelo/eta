@@ -7,6 +7,8 @@ module Codec = Eta_ai_openai_codec
 module H = Eta_http
 module Json = A.Json
 
+let ( let* ) = Result.bind
+
 type structured_output = Codec.structured_output = {
   name : string;
   schema : A.Json.t;
@@ -21,9 +23,47 @@ let structured_output ?strict ~name ~schema_json () =
 let encode_chat ?structured_output request =
   Codec.encode_chat ~provider:"openai" ~schema_value ?structured_output request
 
-let encode_responses ?structured_output request =
-  Codec.encode_responses ~provider:"openai" ~schema_value ?structured_output
-    request
+let encode_responses_tool =
+  Codec.tool_json ~schema_value ~shape:Codec.Responses_tool
+
+let reject_responses_field field = function
+  | None -> Stdlib.Ok ()
+  | Some _ ->
+      Stdlib.Error (A.Unsupported { provider = "openai"; feature = field })
+
+let normalize_responses_reasoning request =
+  match request.A.Responses.reasoning with
+  | None -> Stdlib.Ok request
+  | Some reasoning -> (
+      match reasoning.effort with
+      | None -> Stdlib.Ok request
+      | Some effort ->
+          Codec.reasoning_level_of_string ~provider:"openai" effort
+          |> Result.map (fun level ->
+                 let effort =
+                   match level with
+                   | Codec.Off -> "none"
+                   | _ -> Codec.reasoning_level_to_string level
+                 in
+                 {
+                   request with
+                   A.Responses.reasoning =
+                     Some { reasoning with effort = Some effort };
+                 }))
+
+let encode_responses request =
+  let* () = reject_responses_field "max_turns" request.A.Responses.max_turns in
+  let* () = reject_responses_field "top_k" request.top_k in
+  let* () = reject_responses_field "min_p" request.min_p in
+  let* () = reject_responses_field "reasoning_effort" request.reasoning_effort in
+  let* () =
+    reject_responses_field "reasoning.generate_summary"
+      (Option.bind request.reasoning (fun reasoning ->
+           reasoning.generate_summary))
+  in
+  let* request = normalize_responses_reasoning request in
+  Codec.encode_responses ~provider:"openai"
+    ~encode_tool:encode_responses_tool request
 
 let decode_chat raw = Codec.decode_chat ~provider:"openai" raw
 let decode_responses raw = Codec.decode_responses ~provider:"openai" raw
@@ -87,7 +127,7 @@ let chat_completions_provider ?(base_url = "https://api.openai.com") () =
     decode_error;
   }
 
-let responses_provider ?(base_url = "https://api.openai.com") () =
+let responses_transport_provider ?(base_url = "https://api.openai.com") () =
   {
     A.name = "openai";
     base_url;
@@ -95,7 +135,10 @@ let responses_provider ?(base_url = "https://api.openai.com") () =
     embeddings_path = Some "/v1/embeddings";
     auth_headers;
     capabilities;
-    encode_chat = encode_responses;
+    encode_chat =
+      (fun _ ->
+        unsupported
+          "Chat Completions request cannot be sent to the Responses endpoint");
     decode_chat = decode_responses;
     encode_embeddings;
     decode_embeddings;
@@ -103,7 +146,13 @@ let responses_provider ?(base_url = "https://api.openai.com") () =
     decode_error;
   }
 
-let provider ?base_url () = responses_provider ?base_url ()
+let provider ?base_url () = responses_transport_provider ?base_url ()
+
+let responses_provider ?base_url () =
+  {
+    A.transport = responses_transport_provider ?base_url ();
+    encode_responses;
+  }
 
 let default_provider default custom_provider =
   match custom_provider with
@@ -115,6 +164,8 @@ let raw_chat_request = A.chat_request_from_raw
 
 let run_chat = A.run_chat_request
 let run_stream = A.run_stream_request
+let run_responses = A.run_responses_request
+let run_responses_stream = A.run_responses_stream_request
 let run_raw_decoded = A.run_raw_decoded
 let run_binary = A.run_binary_decoded
 

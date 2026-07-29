@@ -12,8 +12,22 @@
 
 (test
  (name run_eio)
- (modules run_eio)
- (libraries eta_ai_openai_common_tests eta_test_backend_eio alcotest)
+ (modules run_eio openai_realtime_eio_tests)
+ (libraries
+  eta_ai_openai_common_tests
+  eta_test_backend_eio
+  eta_ai_openai_realtime_eio
+  eta_http_ws
+  eta_http_tls_openssl
+  eta_eio
+  eta
+  eta_ai
+  eta_http
+  eta_http_eio
+  alcotest
+  cstruct
+  eio
+  eio_main)
  (deps
   (source_tree fixtures))
  (action

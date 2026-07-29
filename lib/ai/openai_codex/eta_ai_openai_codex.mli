@@ -152,19 +152,6 @@ val refresh :
 
 (** {1 Provider and Responses} *)
 
-type structured_output = Eta_ai_openai_codec.structured_output = {
-  name : string;
-  schema : Eta_ai.Json.t;
-  strict : bool option;
-}
-
-val structured_output :
-  ?strict:bool ->
-  name:string ->
-  schema_json:Eta_ai.raw_json ->
-  unit ->
-  (structured_output, Eta_ai.ai_error) result
-
 type client_identity = { originator : string; user_agent : string }
 
 val client_identity :
@@ -187,6 +174,23 @@ val provider_for_credential :
   oauth_credential ->
   Eta_ai.provider
 
+val responses_provider :
+  ?base_url:string ->
+  account_id:string ->
+  identity:client_identity ->
+  ?session_id:string ->
+  ?extra_headers:Eta_ai.headers ->
+  unit ->
+  Eta_ai.tool Eta_ai.responses_provider
+
+val responses_provider_for_credential :
+  ?base_url:string ->
+  identity:client_identity ->
+  ?session_id:string ->
+  ?extra_headers:Eta_ai.headers ->
+  oauth_credential ->
+  Eta_ai.tool Eta_ai.responses_provider
+
 val auth_headers :
   identity:client_identity ->
   ?session_id:string ->
@@ -206,8 +210,7 @@ val auth_headers_of_credential :
   Eta_ai.headers
 
 val encode_responses :
-  ?structured_output:structured_output ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val decode_responses :
@@ -250,61 +253,55 @@ val list_models :
   (model_info list, Eta_ai.ai_error) Eta.Effect.t
 
 val responses_request :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   identity:client_identity ->
   ?session_id:string ->
   credential:oauth_credential ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val responses :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   identity:client_identity ->
   ?session_id:string ->
   Eta_http.Client.t ->
   credential:oauth_credential ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
 val stream_responses :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   identity:client_identity ->
   ?session_id:string ->
   Eta_http.Client.t ->
   credential:oauth_credential ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 
 module Chat : sig
   val request :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     identity:client_identity ->
     ?session_id:string ->
     credential:oauth_credential ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
 
   val run :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     identity:client_identity ->
     ?session_id:string ->
     Eta_http.Client.t ->
     credential:oauth_credential ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
   val stream :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     identity:client_identity ->
     ?session_id:string ->
     Eta_http.Client.t ->
     credential:oauth_credential ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 end

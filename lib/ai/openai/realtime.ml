@@ -1,5 +1,5 @@
 module A = Eta_ai
-module Codec = Eta_ai_openai_codec
+module Openai_codec = Eta_ai_openai_codec
 module E = Eta.Effect
 module Json = A.Json
 
@@ -147,7 +147,7 @@ let create_client_secret ?base_url client ~api_key session =
                   | Stdlib.Error error -> E.fail error
                 else
                   E.fail
-                    (Codec.decode_error ~provider:"openai"
+                    (Openai_codec.decode_error ~provider:"openai"
                        ~status:response.status
                        ~headers:response.headers raw)))
 
@@ -173,6 +173,12 @@ type server_event =
   | Server_error of server_error
   | Server_decode_error of { message : string; raw : A.raw_json option }
   | Raw_server_event of { type_ : string option; raw : A.raw_json }
+
+type codec_error = Unsupported_binary_message
+
+let codec_error_message = function
+  | Unsupported_binary_message ->
+      "OpenAI Realtime sent binary WebSocket message"
 
 let audio_data_base64 = function
   | A.Base64 value -> value
@@ -226,3 +232,20 @@ let decode_server_event raw =
       | Some "input_audio_buffer.committed" -> Input_audio_buffer_committed
       | Some "error" -> server_error_json raw json
       | type_ -> Raw_server_event { type_; raw })
+
+module Codec = struct
+  type nonrec session = session
+  type nonrec client_event = client_event
+  type nonrec server_event = server_event
+  type nonrec error = codec_error
+
+  let encode_session session =
+    A.Realtime.Text (client_event_to_string (Session_update session))
+
+  let encode_client_event event =
+    A.Realtime.Text (client_event_to_string event)
+
+  let decode_server_event = function
+    | A.Realtime.Text raw -> Stdlib.Ok (decode_server_event raw)
+    | A.Realtime.Binary _ -> Stdlib.Error Unsupported_binary_message
+end

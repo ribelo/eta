@@ -613,7 +613,7 @@ let send_binary t payload =
 
 let close ?(code = 1000) ?(reason = "") t =
   send_close_frame ~code ~reason t
-  |> Effect.bind (fun () ->
+  |> Effect.on_exit (fun _ ->
          Effect.sync (fun () ->
              Queue.close t.incoming;
              close_flow t.flow))

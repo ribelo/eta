@@ -149,6 +149,16 @@ let run_stream_request provider client chat_request request =
       Observability.with_stream_span provider chat_request
         (perform_stream provider client http_request))
 
+let run_responses_request provider client responses_request request =
+  run_request request (fun http_request ->
+      Observability.with_responses_span provider responses_request
+        (perform_chat provider client http_request))
+
+let run_responses_stream_request provider client responses_request request =
+  run_request request (fun http_request ->
+      Observability.with_responses_stream_span provider responses_request
+        (perform_stream provider client http_request))
+
 let run_embeddings_request provider client embedding_request request =
   run_request request (fun http_request ->
       Observability.with_embeddings_span provider embedding_request

@@ -38,14 +38,38 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok "weather tool"
 
-let chat_request ?reasoning ?(stream = false) () : A.chat_request =
+let chat_request ?reasoning ?(stream = false) () :
+    A.tool A.Responses.request =
   {
     model = "openrouter/auto";
-    prompt = [ A.User [ A.Text "weather in Warsaw" ] ];
+    input = A.Responses.Messages [ A.User [ A.Text "weather in Warsaw" ] ];
+    instructions = None;
+    previous_response_id = None;
+    store = None;
+    include_ = [];
     tools = [ weather_tool () ];
-    temperature = Some 0.2;
-    reasoning;
+    tool_choice = None;
+    parallel_tool_calls = None;
+    max_turns = None;
     max_output_tokens = Some 64;
+    temperature = Some 0.2;
+    top_p = None;
+    top_k = None;
+    min_p = None;
+    text = None;
+    reasoning =
+      Option.map
+        (fun effort ->
+          {
+            A.Responses.effort = Some effort;
+            summary = None;
+            generate_summary = None;
+          })
+        reasoning;
+    reasoning_effort = None;
+    service_tier = None;
+    user = None;
+    prompt_cache_key = None;
     replay_items = [];
     stream;
   }
@@ -152,6 +176,13 @@ let provider () =
   in
   O.provider ~attribution ~extra_headers:[ ("X-Debug", "fixture") ] ()
 
+let responses_provider () =
+  let attribution =
+    O.attribution ~referer:"https://eta.example" ~title:"Eta Tests" ()
+  in
+  O.responses_provider ~attribution
+    ~extra_headers:[ ("X-Debug", "fixture") ] ()
+
 let test_provider_headers () =
   let provider = provider () in
   Alcotest.(check string) "name" "openrouter" provider.name;
@@ -181,15 +212,24 @@ let test_provider_headers () =
     "extra" (Some "fixture") (H.Core.Header.get "x-debug" headers)
 
 let test_encode_routing_and_rejects_empty_provider () =
-  let output =
-    O.structured_output ~name:"weather_answer" ~schema_json:weather_schema
-      ~strict:true ()
-    |> expect_ok "structured output"
-  in
+  let schema = A.Json.parse weather_schema |> expect_ok "structured output" in
   let raw =
-    O.encode_responses ~structured_output:output ~routing:(routing ())
+    O.encode_responses ~routing:(routing ())
       ~reasoning:(reasoning ())
-      (chat_request ())
+      {
+        (chat_request ()) with
+        text =
+          Some
+            {
+              A.Responses.format =
+                A.Responses.Json_schema
+                  {
+                    name = "weather_answer";
+                    schema;
+                    strict = Some true;
+                  };
+            };
+      }
     |> expect_ok "openrouter encode"
   in
   require_contains "provider object" ~needle:"\"provider\":{" raw;
@@ -238,10 +278,10 @@ let test_request_reasoning_levels () =
     cases;
   let explicit = O.reasoning ~effort:"explicit" () |> expect_ok "explicit" in
   let raw =
-    O.encode_responses ~reasoning:explicit (chat_request ~reasoning:"high" ())
-    |> expect_ok "explicit precedence"
+    O.encode_responses ~reasoning:explicit (chat_request ())
+    |> expect_ok "explicit reasoning"
   in
-  require_contains "explicit precedence"
+  require_contains "explicit reasoning"
     ~needle:{|"reasoning":{"effort":"explicit"}|} raw;
   List.iter
     (fun request ->
@@ -258,13 +298,34 @@ let test_request_reasoning_levels () =
       (chat_request ~reasoning:"unknown" ())
   with
   | Stdlib.Error (A.Unsupported { provider = "openrouter"; _ }) -> ()
-  | _ -> Alcotest.fail "expected invalid generic reasoning to win"
+  | _ -> Alcotest.fail "expected duplicate reasoning rejection"
+
+let test_responses_provider_field_policy () =
+  let top_k =
+    O.encode_responses { (chat_request ()) with top_k = Some 17 }
+    |> expect_ok "OpenRouter top_k"
+  in
+  require_contains "top_k preserved" ~needle:"\"top_k\":17" top_k;
+  let expect_rejected label request =
+    match O.encode_responses request with
+    | Stdlib.Error (A.Unsupported { provider = "openrouter"; feature }) ->
+        require_contains label ~needle:label feature
+    | Stdlib.Error _ -> Alcotest.fail ("unexpected " ^ label ^ " rejection")
+    | Stdlib.Ok _ -> Alcotest.fail ("expected " ^ label ^ " rejection")
+  in
+  expect_rejected "previous_response_id"
+    { (chat_request ()) with previous_response_id = Some "resp_1" };
+  expect_rejected "store=true"
+    { (chat_request ()) with store = Some true };
+  expect_rejected "reasoning_effort"
+    { (chat_request ()) with reasoning_effort = Some "high" }
 
 let test_encode_audio_prompt_input () =
-  let request : A.chat_request =
+  let request : A.tool A.Responses.request =
     {
       model = "xiaomi/mimo-v2.5";
-      prompt =
+      input =
+        A.Responses.Messages
         [
           A.User
             [
@@ -278,9 +339,24 @@ let test_encode_audio_prompt_input () =
             ];
         ];
       tools = [];
-      temperature = Some 0.0;
-      reasoning = None;
+      instructions = None;
+      previous_response_id = None;
+      store = None;
+      include_ = [];
+      tool_choice = None;
+      parallel_tool_calls = None;
+      max_turns = None;
       max_output_tokens = Some 32;
+      temperature = Some 0.0;
+      top_p = None;
+      top_k = None;
+      min_p = None;
+      text = None;
+      reasoning = None;
+      reasoning_effort = None;
+      service_tier = None;
+      user = None;
+      prompt_cache_key = None;
       replay_items = [];
       stream = false;
     }
@@ -292,7 +368,7 @@ let test_encode_audio_prompt_input () =
 
 let test_request_uses_openrouter_endpoint () =
   let request =
-    O.responses_request ~routing:(routing ()) ~provider:(provider ())
+    O.responses_request ~routing:(routing ()) ~provider:(responses_provider ())
       ~api_key:(A.api_key "or-test") (chat_request ())
     |> expect_ok "request"
   in
@@ -302,13 +378,16 @@ let test_request_uses_openrouter_endpoint () =
     (request_body_string request)
 
 let test_unified_provider_modules () =
-  let provider = provider () in
+  let responses_provider = responses_provider () in
   let chat =
-    O.Chat.request ~provider ~api_key:(A.api_key "or-test") (chat_request ())
+    O.Chat.responses_request ~provider:responses_provider
+      ~api_key:(A.api_key "or-test")
+      (chat_request ())
     |> expect_ok "unified chat request"
   in
   Alcotest.(check string)
     "chat uri" "https://openrouter.ai/api/v1/responses" chat.uri;
+  let provider = provider () in
   let embeddings =
     O.Embeddings.request ~provider ~api_key:(A.api_key "or-test")
       (embedding_request ())
@@ -454,7 +533,7 @@ let test_runner_suppresses_transport_span () =
   in
   let response =
     run_ok rt "runner"
-      (O.responses ~routing:(routing ()) ~provider:(provider ()) client
+      (O.responses ~routing:(routing ()) ~provider:(responses_provider ()) client
          ~api_key:(A.api_key "or-test") (chat_request ()))
   in
   Alcotest.(check string) "text" "OpenRouter response"
@@ -536,7 +615,7 @@ let test_provider_error () =
   in
   match
     B.run rt
-      (O.responses ~provider:(provider ()) client
+      (O.responses ~provider:(responses_provider ()) client
          ~api_key:(A.api_key "or-test") (chat_request ()))
   with
   | Eta.Exit.Error
@@ -612,7 +691,8 @@ let test_stream_runner () =
   in
   let events =
     run_ok rt "stream runner"
-      (O.stream_responses ~routing:(routing ()) ~provider:(provider ())
+      (O.stream_responses ~routing:(routing ())
+         ~provider:(responses_provider ())
          client ~api_key:(A.api_key "or-test") (chat_request ())
       |> E.bind A.read_stream_events)
   in
@@ -761,7 +841,8 @@ let test_incomplete_response_and_reasoning_replay () =
   let request =
     {
       (chat_request ()) with
-      prompt =
+      input =
+        A.Responses.Messages
         [
           A.User [ A.Text "weather" ];
           A.Assistant { content = []; tool_calls = [ tool_call ] };
@@ -1077,6 +1158,8 @@ let tests =
             test_encode_routing_and_rejects_empty_provider;
           Alcotest.test_case "request reasoning levels" `Quick
             test_request_reasoning_levels;
+          Alcotest.test_case "Responses provider field policy" `Quick
+            test_responses_provider_field_policy;
           Alcotest.test_case "encode audio prompt input" `Quick
             test_encode_audio_prompt_input;
           Alcotest.test_case "request endpoint" `Quick

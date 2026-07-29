@@ -39,7 +39,8 @@ val chat_completions_provider : ?base_url:string -> unit -> Eta_ai.provider
 (** Explicit legacy Chat Completions provider value. The default base URL is
     [https://api.openai.com] and the path is [/v1/chat/completions]. *)
 
-val responses_provider : ?base_url:string -> unit -> Eta_ai.provider
+val responses_provider :
+  ?base_url:string -> unit -> Eta_ai.tool Eta_ai.responses_provider
 (** Responses API provider value. The default base URL is
     [https://api.openai.com]. *)
 
@@ -47,26 +48,23 @@ module Chat : sig
   include Eta_ai.Provider.Chat
 
   val responses_request :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_http.Request.t, Eta_ai.ai_error) result
 
   val responses :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
   val stream_responses :
-    ?structured_output:structured_output ->
-    ?provider:Eta_ai.provider ->
+    ?provider:Eta_ai.tool Eta_ai.responses_provider ->
     Eta_http.Client.t ->
     api_key:Eta_ai.api_key ->
-    Eta_ai.chat_request ->
+    Eta_ai.tool Eta_ai.Responses.request ->
     (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 end
 
@@ -81,8 +79,7 @@ val encode_chat :
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val encode_responses :
-  ?structured_output:structured_output ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val decode_chat : Eta_ai.raw_json -> (Eta_ai.response, Eta_ai.ai_error) result
@@ -114,10 +111,9 @@ val chat_completions_request :
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val responses_request :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_http.Request.t, Eta_ai.ai_error) result
 
 val embeddings_request :
@@ -153,11 +149,10 @@ val chat_completions :
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
 val responses :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.response, Eta_ai.ai_error) Eta.Effect.t
 
 val embeddings :
@@ -197,11 +192,10 @@ val stream_chat_completions :
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 
 val stream_responses :
-  ?structured_output:structured_output ->
-  ?provider:Eta_ai.provider ->
+  ?provider:Eta_ai.tool Eta_ai.responses_provider ->
   Eta_http.Client.t ->
   api_key:Eta_ai.api_key ->
-  Eta_ai.chat_request ->
+  Eta_ai.tool Eta_ai.Responses.request ->
   (Eta_ai.stream, Eta_ai.ai_error) Eta.Effect.t
 
 (** {1 Native model catalog}

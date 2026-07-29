@@ -7,6 +7,8 @@ module Codec = Eta_ai_openai_codec
 module H = Eta_http
 module Json = A.Json
 
+let ( let* ) = Result.bind
+
 type attribution = {
   referer : string option;
   title : string option;
@@ -27,12 +29,6 @@ type reasoning = {
   effort : string option;
 }
 
-type structured_output = Codec.structured_output = {
-  name : string;
-  schema : A.Json.t;
-  strict : bool option;
-}
-
 let decode_error_result ?raw message =
   Codec.decode_error_result ?raw ~provider:"openrouter" message
 
@@ -40,10 +36,6 @@ let parse_json raw = Codec.parse_json ~provider:"openrouter" raw
 
 let require_json label raw =
   Codec.schema_value ~provider:"openrouter" label raw
-
-let structured_output ?strict ~name ~schema_json () =
-  Codec.structured_output ~schema_value:require_json ?strict ~name ~schema_json
-    ()
 
 let invalid_routing message =
   Stdlib.Error (A.Unsupported { provider = "openrouter"; feature = message })
@@ -125,39 +117,82 @@ let add_reasoning reasoning json =
   add_object_field ~message:"Responses encoder did not return a JSON object"
     "reasoning" (Option.map reasoning_json reasoning) json
 
-let encode_responses ?structured_output ?routing ?reasoning request =
-  let request_reasoning =
-    match request.A.reasoning with
-    | None -> Stdlib.Ok None
-    | Some effort ->
-        Codec.reasoning_level_of_string ~provider:"openrouter" effort
-        |> Result.map (fun level ->
-               let effort =
-                 match level with Codec.Off -> "none" | _ -> effort
-               in
-               Some { effort = Some effort })
+let encode_responses_tool =
+  Codec.tool_json ~schema_value:require_json ~shape:Codec.Responses_tool
+
+let reject_responses_field field = function
+  | None -> Stdlib.Ok ()
+  | Some _ -> invalid_routing field
+
+let normalize_responses_reasoning request =
+  match request.A.Responses.reasoning with
+  | None -> Stdlib.Ok request
+  | Some reasoning -> (
+      match reasoning.effort with
+      | None -> Stdlib.Ok request
+      | Some effort ->
+          Codec.reasoning_level_of_string ~provider:"openrouter" effort
+          |> Result.map (fun level ->
+                 let effort =
+                   match level with
+                   | Codec.Off -> "none"
+                   | _ -> Codec.reasoning_level_to_string level
+                 in
+                 {
+                   request with
+                   A.Responses.reasoning =
+                     Some { reasoning with effort = Some effort };
+                 }))
+
+let encode_responses_base request =
+  let* () =
+    reject_responses_field "previous_response_id"
+      request.A.Responses.previous_response_id
   in
-  let request = { request with A.reasoning = None } in
-  match request_reasoning with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok request_reasoning -> (
-      match
-        Codec.encode_responses_json ~provider:"openrouter"
-          ~schema_value:require_json ?structured_output request
-      with
+  let* () =
+    match request.store with
+    | Some true -> invalid_routing "store=true"
+    | None | Some false -> Stdlib.Ok ()
+  in
+  let* () = reject_responses_field "max_turns" request.max_turns in
+  let* () = reject_responses_field "min_p" request.min_p in
+  let* () =
+    reject_responses_field "reasoning_effort" request.reasoning_effort
+  in
+  let* () =
+    reject_responses_field "reasoning.generate_summary"
+      (Option.bind request.reasoning (fun value -> value.generate_summary))
+  in
+  let* request = normalize_responses_reasoning request in
+  Codec.encode_responses ~provider:"openrouter"
+    ~encode_tool:encode_responses_tool request
+
+let decorate_responses ?routing ?reasoning request raw =
+  match
+    ( reasoning,
+      request.A.Responses.reasoning,
+      request.A.Responses.reasoning_effort )
+  with
+  | Some _, Some _, _ | Some _, _, Some _ ->
+      invalid_routing
+        "provider reasoning and Responses request reasoning cannot both be specified"
+  | _ -> (
+      let* json = parse_json raw in
+      match add_routing routing json with
       | Stdlib.Error _ as error -> error
-      | Stdlib.Ok json ->
-          let reasoning =
-            match reasoning with
-            | Some _ -> reasoning
-            | None -> request_reasoning
-          in
-          match add_routing routing json with
+      | Stdlib.Ok json -> (
+          match add_reasoning reasoning json with
           | Stdlib.Error _ as error -> error
-          | Stdlib.Ok json -> (
-              match add_reasoning reasoning json with
-              | Stdlib.Error _ as error -> error
-              | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)))
+          | Stdlib.Ok json -> Stdlib.Ok (Json.to_string json)))
+
+let encode_responses ?routing ?reasoning request =
+  let request_to_encode =
+    match reasoning with
+    | None -> request
+    | Some _ -> { request with A.Responses.reasoning = None }
+  in
+  let* raw = encode_responses_base request_to_encode in
+  decorate_responses ?routing ?reasoning request raw
 
 let decode_responses raw = Codec.decode_responses ~provider:"openrouter" raw
 
@@ -261,12 +296,26 @@ let provider ?(base_url = "https://openrouter.ai") ?attribution
     embeddings_path = Some "/api/v1/embeddings";
     auth_headers = auth_headers ?attribution ~extra_headers;
     capabilities;
-    encode_chat = (fun request -> encode_responses request);
+    encode_chat =
+      (fun _ ->
+        Stdlib.Error
+          (A.Unsupported
+             {
+               provider = "openrouter";
+               feature =
+                 "Chat Completions request cannot be sent to the Responses endpoint";
+             }));
     decode_chat = decode_responses;
     encode_embeddings = (fun request -> encode_embeddings request);
     decode_embeddings;
     decode_stream_event;
     decode_error;
+  }
+
+let responses_provider ?base_url ?attribution ?extra_headers () =
+  {
+    A.transport = provider ?base_url ?attribution ?extra_headers ();
+    encode_responses = encode_responses_base;
   }
 
 let default_provider default custom_provider =
@@ -276,10 +325,10 @@ let default_provider default custom_provider =
 
 let post_request = A.post_request
 let get_request = A.get_request
-let chat_request = A.chat_request
+let responses_request = A.chat_request
 let embeddings_request = A.embeddings_request_with
-let run_chat = A.run_chat_request
-let run_stream = A.run_stream_request
+let run_responses = A.run_responses_request
+let run_responses_stream = A.run_responses_stream_request
 let run_embeddings = A.run_embeddings_request
 let run_raw_decoded = A.run_raw_decoded
 let run_binary = A.run_binary_decoded

@@ -10,6 +10,7 @@ type reasoning_level = Off | Minimal | Low | Medium | High | Xhigh | Max
 
 val reasoning_level_of_string :
   provider:string -> string -> (reasoning_level, Eta_ai.ai_error) result
+val reasoning_level_to_string : reasoning_level -> string
 
 val structured_output :
   schema_value:
@@ -133,18 +134,16 @@ val encode_chat_with_thinking :
 
 val encode_responses_json :
   provider:string ->
-  schema_value:
-    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
-  ?structured_output:structured_output ->
-  Eta_ai.chat_request ->
+  encode_tool:
+    ('tool -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
+  'tool Eta_ai.Responses.request ->
   (Eta_ai.Json.t, Eta_ai.ai_error) result
 
 val encode_responses :
   provider:string ->
-  schema_value:
-    (string -> Eta_ai.raw_json -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
-  ?structured_output:structured_output ->
-  Eta_ai.chat_request ->
+  encode_tool:
+    ('tool -> (Eta_ai.Json.t, Eta_ai.ai_error) result) ->
+  'tool Eta_ai.Responses.request ->
   (Eta_ai.raw_json, Eta_ai.ai_error) result
 
 val finish_reason : string -> Eta_ai.finish_reason

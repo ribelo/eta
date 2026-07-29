@@ -71,6 +71,18 @@ type server_event =
   | Server_decode_error of { message : string; raw : Eta_ai.raw_json option }
   | Raw_server_event of { type_ : string option; raw : Eta_ai.raw_json }
 
+type codec_error = Unsupported_binary_message
+val codec_error_message : codec_error -> string
+
 val client_event_json : client_event -> Eta_ai.Json.t
 val client_event_to_string : client_event -> Eta_ai.raw_json
 val decode_server_event : Eta_ai.raw_json -> server_event
+
+module Codec : sig
+  include
+    Eta_ai.Realtime.Codec
+      with type session = session
+       and type client_event = client_event
+       and type server_event = server_event
+       and type error = codec_error
+end

@@ -23,14 +23,29 @@ let weather_tool () =
     ~input_schema_json:weather_schema ~strict:true ()
   |> expect_ok
 
-let request : Eta_ai.chat_request =
+let request : Eta_ai.tool Eta_ai.Responses.request =
   {
     model = "openai/gpt-4o-mini";
-    prompt = [ User [ Text "weather in Warsaw" ] ];
+    input = Eta_ai.Responses.Messages [ User [ Text "weather in Warsaw" ] ];
+    instructions = None;
+    previous_response_id = None;
+    store = None;
+    include_ = [];
     tools = [ weather_tool () ];
-    temperature = Some 0.2;
-    reasoning = None;
+    tool_choice = None;
+    parallel_tool_calls = None;
+    max_turns = None;
     max_output_tokens = Some 64;
+    temperature = Some 0.2;
+    top_p = None;
+    top_k = None;
+    min_p = None;
+    text = None;
+    reasoning = None;
+    reasoning_effort = None;
+    service_tier = None;
+    user = None;
+    prompt_cache_key = None;
     replay_items = [];
     stream = false;
   }
@@ -52,18 +67,13 @@ let workloads =
   in
   [
     item "encode_responses.10k" (fun () ->
-        let structured_output =
-          Eta_ai_openrouter.structured_output ~name:"weather_answer"
-            ~schema_json:weather_schema ~strict:true ()
-          |> expect_ok
-        in
         let routing = routing () in
         repeat 10_000 (fun () ->
             ignore
-              (Eta_ai_openrouter.encode_responses ~structured_output ~routing request)));
+              (Eta_ai_openrouter.encode_responses ~routing request)));
     item "request.responses.10k" (fun () ->
         let provider =
-          Eta_ai_openrouter.provider
+          Eta_ai_openrouter.responses_provider
             ~attribution:
               (Eta_ai_openrouter.attribution ~referer:"https://eta.example"
                  ~title:"Eta" ())

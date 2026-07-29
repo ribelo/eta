@@ -5,6 +5,13 @@ open Core
 open Content
 open Tools
 
+let optional_float_json ~provider label = function
+  | None -> Stdlib.Ok None
+  | Some value -> (
+      match Json.float value with
+      | Some encoded -> Stdlib.Ok (Some encoded)
+      | None -> unsupported ~provider ("non-finite " ^ label))
+
 let replay_item ~provider raw =
   let* json = parse_json ~provider raw in
   match Json.string_member "type" json with
@@ -36,53 +43,101 @@ let response_input_items ~provider ~replay_items prompt =
       "provider replay items require a preceding assistant tool call"
   else Stdlib.Ok items
 
-let encode_responses_json ~provider ~schema_value ?structured_output
-    (request : A.chat_request) =
+let encode_responses_json ~provider ~encode_tool
+    (request : _ A.Responses.request) =
   let* temperature = temperature_json ~provider request.temperature in
-  let* reasoning =
-    match request.reasoning with
-    | None -> Stdlib.Ok None
-    | Some value ->
-        reasoning_level_of_string ~provider value
-        |> Result.map (fun level ->
-               let effort =
-                 match level with
-                 | Off -> "none"
-                 | Minimal | Low | Medium | High | Xhigh | Max ->
-                     reasoning_level_to_string level
-               in
-               Some
-                 (Json.object_
-                    [ ("effort", Some (Json.string effort)) ]))
+  let* top_p = optional_float_json ~provider "top_p" request.top_p in
+  let* min_p = optional_float_json ~provider "min_p" request.min_p in
+  let reasoning =
+    request.reasoning
+    |> Option.map
+         (fun { A.Responses.effort; summary; generate_summary } ->
+           Json.object_
+             [
+               ("effort", Option.map Json.string effort);
+               ("summary", Option.map Json.string summary);
+               ("generate_summary", Option.map Json.bool generate_summary);
+             ])
   in
   let* tools =
-    result_map_all (tool_json ~schema_value ~shape:Responses_tool) request.tools
+    result_map_all encode_tool request.tools
   in
   let* input =
-    response_input_items ~provider ~replay_items:request.replay_items
-      request.prompt
+    match request.input with
+    | A.Responses.Text _ when request.replay_items <> [] ->
+        unsupported ~provider
+          "provider replay items with Responses text input"
+    | A.Responses.Text text -> Stdlib.Ok (Json.string text)
+    | A.Responses.Messages prompt ->
+        response_input_items ~provider ~replay_items:request.replay_items prompt
+        |> Result.map Json.array
   in
-  let text_format =
-    structured_output
-    |> Option.map (fun output ->
-           let format = structured_output_json ~shape:Responses_format output in
+  let request_text =
+    request.text
+    |> Option.map (fun { A.Responses.format } ->
+           let format =
+             match format with
+             | A.Responses.Text ->
+                 Json.object_ [ ("type", Some (Json.string "text")) ]
+             | A.Responses.Json_object ->
+                 Json.object_ [ ("type", Some (Json.string "json_object")) ]
+             | A.Responses.Json_schema { name; schema; strict } ->
+                 Json.object_
+                   [
+                     ("type", Some (Json.string "json_schema"));
+                     ("name", Some (Json.string name));
+                     ("schema", Some schema);
+                     ("strict", Option.map Json.bool strict);
+                   ]
+           in
            Json.object_ [ ("format", Some format) ])
+  in
+  let tool_choice =
+    request.tool_choice
+    |> Option.map (function
+         | A.Responses.None_ -> Json.string "none"
+         | A.Responses.Auto -> Json.string "auto"
+         | A.Responses.Required -> Json.string "required"
+         | A.Responses.Function name ->
+             Json.object_
+               [
+                 ("type", Some (Json.string "function"));
+                 ("name", Some (Json.string name));
+               ])
   in
   Stdlib.Ok
     (Json.object_
        [
          ("model", Some (Json.string request.model));
-         ("input", Some (Json.array input));
+         ("input", Some input);
+         ("instructions", Option.map Json.string request.instructions);
+         ( "previous_response_id",
+           Option.map Json.string request.previous_response_id );
+         ("store", Option.map Json.bool request.store);
+         ( "include",
+           if request.include_ = [] then None
+           else Some (Json.array (List.map Json.string request.include_)) );
          ("stream", Some (Json.bool request.stream));
          ("temperature", temperature);
+         ("top_p", top_p);
          ("reasoning", reasoning);
+         ( "reasoning_effort",
+           Option.map Json.string request.reasoning_effort );
+         ("max_turns", Option.map Json.int request.max_turns);
          ("max_output_tokens", Option.map Json.int request.max_output_tokens);
+         ("top_k", Option.map Json.int request.top_k);
+         ("min_p", min_p);
          ("tools", if tools = [] then None else Some (Json.array tools));
-         ("text", text_format);
+         ("tool_choice", tool_choice);
+         ("parallel_tool_calls", Option.map Json.bool request.parallel_tool_calls);
+         ("text", request_text);
+         ("service_tier", Option.map Json.string request.service_tier);
+         ("user", Option.map Json.string request.user);
+         ("prompt_cache_key", Option.map Json.string request.prompt_cache_key);
        ])
 
-let encode_responses ~provider ~schema_value ?structured_output request =
-  encode_responses_json ~provider ~schema_value ?structured_output request
+let encode_responses ~provider ~encode_tool request =
+  encode_responses_json ~provider ~encode_tool request
   |> Result.map Json.to_string
 
 let output_text item =

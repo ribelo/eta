@@ -3,6 +3,31 @@ module O = Eta_ai_openai
 module E = Eta.Effect
 module H = Eta_http
 
+module Realtime_transport_contract : sig
+  include
+    A.Realtime.Transport
+      with type session = string
+       and type client_event = int
+       and type server_event = bool
+       and type error = string
+       and type scope = unit
+       and type connection_options = unit
+       and type connection = string
+end = struct
+  type session = string
+  type client_event = int
+  type server_event = bool
+  type error = string
+  type scope = unit
+  type connection_options = unit
+  type connection = string
+
+  let connect ~scope:() () session = E.pure session
+  let send _ _ = E.unit
+  let read _ = E.pure (Some true)
+  let close _ = E.unit
+end
+
 module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
 let read_fixture name =
@@ -51,6 +76,44 @@ let chat_request ?reasoning ?(stream = false) () : A.chat_request =
     temperature = Some 0.2;
     reasoning;
     max_output_tokens = Some 64;
+    replay_items = [];
+    stream;
+  }
+
+let responses_request ?reasoning ?(stream = false) () :
+    A.tool A.Responses.request =
+  {
+    model = "gpt-4o-mini";
+    input =
+      A.Responses.Messages
+        [ A.System "stay brief"; A.User [ A.Text "weather in Warsaw" ] ];
+    instructions = None;
+    previous_response_id = None;
+    store = None;
+    include_ = [];
+    tools = [ weather_tool () ];
+    tool_choice = None;
+    parallel_tool_calls = None;
+    max_turns = None;
+    max_output_tokens = Some 64;
+    temperature = Some 0.2;
+    top_p = None;
+    top_k = None;
+    min_p = None;
+    text = None;
+    reasoning =
+      Option.map
+        (fun effort ->
+          {
+            A.Responses.effort = Some effort;
+            summary = None;
+            generate_summary = None;
+          })
+        reasoning;
+    reasoning_effort = None;
+    service_tier = None;
+    user = None;
+    prompt_cache_key = None;
     replay_items = [];
     stream;
   }
@@ -184,8 +247,24 @@ let test_encode_chat_and_responses () =
     ~needle:"\"parameters\":{\"type\":\"object\"" chat;
   require_contains "response format"
     ~needle:"\"response_format\":{\"type\":\"json_schema\"" chat;
+  let structured_responses_request =
+    {
+      (responses_request ()) with
+      text =
+        Some
+          {
+            A.Responses.format =
+              A.Responses.Json_schema
+                {
+                  name = output.name;
+                  schema = output.schema;
+                  strict = output.strict;
+                };
+          };
+    }
+  in
   let responses =
-    O.encode_responses ~structured_output:output (chat_request ())
+    O.encode_responses structured_responses_request
     |> expect_ok "responses"
   in
   require_contains "responses input" ~needle:"\"input\":[" responses;
@@ -196,8 +275,9 @@ let test_encode_chat_and_responses () =
     ~needle:"\"max_output_tokens\":64" responses;
   let tool_output_request =
     {
-      (chat_request ()) with
-      prompt =
+      (responses_request ()) with
+      input =
+        A.Responses.Messages
         [
           A.User [ A.Text "weather in Warsaw" ];
           A.Tool
@@ -228,7 +308,7 @@ let test_responses_reasoning_levels () =
   List.iter
     (fun (reasoning, expected) ->
       let raw =
-        O.encode_responses (chat_request ?reasoning ())
+        O.encode_responses (responses_request ?reasoning ())
         |> expect_ok "responses reasoning"
       in
       let json = A.Json.parse raw |> expect_ok "responses reasoning JSON" in
@@ -239,11 +319,89 @@ let test_responses_reasoning_levels () =
     cases;
   List.iter
     (fun reasoning ->
-      O.encode_responses (chat_request ~reasoning ())
+      O.encode_responses (responses_request ~reasoning ())
       |> expect_unsupported "invalid reasoning" |> ignore)
     [ ""; " "; "unknown" ];
   O.encode_chat (chat_request ~reasoning:"high" ())
   |> expect_unsupported "Chat Completions reasoning" |> ignore
+
+let test_xairsp_0eyc_2a4x_distinct_polymorphic_request () =
+  (* xairsp-0eyc: the same provider-neutral request shape accepts a
+     provider-owned tool algebra. xairsp-2a4x: Chat Completions remains a
+     separate [chat_request], exercised independently below. *)
+  let with_tools tools : string A.Responses.request =
+    {
+      model = "provider-model";
+      input = A.Responses.Text "hello";
+      instructions = None;
+      previous_response_id = None;
+      store = None;
+      include_ = [];
+      tools;
+      tool_choice = None;
+      parallel_tool_calls = None;
+      max_turns = None;
+      max_output_tokens = None;
+      temperature = None;
+      top_p = None;
+      top_k = None;
+      min_p = None;
+      text = None;
+      reasoning = None;
+      reasoning_effort = None;
+      service_tier = None;
+      user = None;
+      prompt_cache_key = None;
+      replay_items = [];
+      stream = false;
+    }
+  in
+  Alcotest.(check int) "provider tools retained" 2
+    (List.length (with_tools [ "web_search"; "x_search" ]).tools);
+  let responses =
+    O.encode_responses
+      {
+        (responses_request ()) with
+        input = A.Responses.Text "hello";
+        instructions = Some "stay brief";
+        previous_response_id = Some "resp_previous";
+        store = Some false;
+        include_ = [ "reasoning.encrypted_content" ];
+        tool_choice = Some A.Responses.Auto;
+        parallel_tool_calls = Some false;
+        top_p = Some 0.8;
+        text = Some { A.Responses.format = A.Responses.Json_object };
+        service_tier = Some "priority";
+        user = Some "eta-user";
+        prompt_cache_key = Some "eta-cache";
+      }
+    |> expect_ok "typed Responses request"
+  in
+  require_contains "text shorthand" ~needle:"\"input\":\"hello\"" responses;
+  require_contains "previous response"
+    ~needle:"\"previous_response_id\":\"resp_previous\"" responses;
+  require_contains "store" ~needle:"\"store\":false" responses;
+  require_contains "tool choice" ~needle:"\"tool_choice\":\"auto\"" responses;
+  require_contains "typed text format"
+    ~needle:"\"text\":{\"format\":{\"type\":\"json_object\"}}" responses;
+  let chat = O.encode_chat (chat_request ()) |> expect_ok "distinct chat" in
+  require_contains "chat envelope" ~needle:"\"messages\":[" chat;
+  Alcotest.(check bool) "chat has no Responses input" false
+    (contains ~needle:"\"input\":" chat)
+
+let test_openai_responses_field_policy () =
+  List.iter
+    (fun (label, request) ->
+      match O.encode_responses request with
+      | Stdlib.Error (A.Unsupported { provider = "openai"; feature }) ->
+          require_contains label ~needle:label feature
+      | Stdlib.Error _ -> Alcotest.fail ("unexpected " ^ label ^ " rejection")
+      | Stdlib.Ok _ -> Alcotest.fail ("expected " ^ label ^ " rejection"))
+    [
+      ("top_k", { (responses_request ()) with top_k = Some 10 });
+      ( "reasoning_effort",
+        { (responses_request ()) with reasoning_effort = Some "high" } );
+    ]
 
 let test_decode_chat_fixture () =
   let response =
@@ -439,7 +597,7 @@ let test_responses_runner_uses_eta_http_and_suppresses_transport_span () =
   in
   let response =
     run_ok rt "responses runner"
-      (O.responses client ~api_key:(A.api_key "sk-test") (chat_request ()))
+      (O.responses client ~api_key:(A.api_key "sk-test") (responses_request ()))
   in
   Alcotest.(check string) "text" "It is 21C in Warsaw."
     (assistant_text response.message);
@@ -486,7 +644,7 @@ let test_responses_runner_provider_error () =
   in
   match
     B.run rt
-      (O.responses client ~api_key:(A.api_key "sk-test") (chat_request ()))
+      (O.responses client ~api_key:(A.api_key "sk-test") (responses_request ()))
   with
   | Eta.Exit.Error
       (Eta.Cause.Fail
@@ -580,7 +738,7 @@ let test_stream_runner () =
   let events =
     run_ok rt "stream runner"
       (O.stream_responses client ~api_key:(A.api_key "sk-test")
-         (chat_request ())
+         (responses_request ())
       |> E.bind A.read_stream_events)
   in
   Alcotest.(check string)
@@ -597,13 +755,29 @@ let test_stream_runner () =
 
 let test_responses_request_uses_responses_endpoint () =
   let request =
-    O.responses_request ~api_key:(A.api_key "sk-test") (chat_request ())
+    O.responses_request ~api_key:(A.api_key "sk-test") (responses_request ())
     |> expect_ok "responses request"
   in
   Alcotest.(check string)
     "responses uri" "https://api.openai.com/v1/responses" request.uri;
   require_contains "responses body" ~needle:"\"input\":["
-    (request_body_string request)
+    (request_body_string request);
+  let custom : A.tool A.responses_provider =
+    {
+      transport = O.provider ~base_url:"https://custom.openai.test" ();
+      encode_responses = (fun _ -> Stdlib.Ok {|{"custom_encoder":true}|});
+    }
+  in
+  let custom_request =
+    O.responses_request ~provider:custom ~api_key:(A.api_key "sk-test")
+      (responses_request ())
+    |> expect_ok "custom Responses provider"
+  in
+  Alcotest.(check string)
+    "custom transport" "https://custom.openai.test/v1/responses"
+    custom_request.uri;
+  require_contains "custom encoder" ~needle:"\"custom_encoder\":true"
+    (request_body_string custom_request)
 
 let embedding_request () : A.Embedding.request =
   {
@@ -770,7 +944,10 @@ let test_transcription_request_avoids_boundary_collision () =
 
 let test_chat_and_responses_encode_audio_content () =
   let request =
-    { (chat_request ()) with prompt = [ A.User [ A.audio_pcm16_base64 "AAE=" ] ] }
+    {
+      (responses_request ()) with
+      input = A.Responses.Messages [ A.User [ A.audio_pcm16_base64 "AAE=" ] ];
+    }
   in
   let raw = O.encode_responses request |> expect_ok "audio responses" in
   require_contains "audio part" ~needle:"\"type\":\"input_audio\"" raw;
@@ -858,10 +1035,49 @@ let test_realtime_decode_server_events () =
   | O.Realtime.Server_error { code = Some "bad_request"; message = "nope"; _ } -> ()
   | _ -> Alcotest.fail "expected realtime error event"
 
-let tool_image_request () : A.chat_request =
+let test_airealtime_shared_codec_contract () =
+  (* airealtime-02ky/5xcr/xem8/6gv2: the shared codec shape keeps OpenAI's
+     session and event types and admits binary messages without adding them to
+     OpenAI's lossless event algebra. *)
+  let session = O.Realtime.session ~model:"gpt-realtime-2" () in
+  (match O.Realtime.Codec.encode_session session with
+  | A.Realtime.Text raw ->
+      require_contains "session update frame"
+        ~needle:"\"type\":\"session.update\"" raw;
+      require_contains "provider session" ~needle:"\"model\":\"gpt-realtime-2\""
+        raw
+  | A.Realtime.Binary _ -> Alcotest.fail "OpenAI session must encode as text");
+  match
+    O.Realtime.Codec.decode_server_event
+      (A.Realtime.Binary (Bytes.of_string "\000\001"))
+  with
+  | Stdlib.Error error ->
+      let message = O.Realtime.codec_error_message error in
+      require_contains "provider binary policy" ~needle:"binary" message
+  | Stdlib.Ok _ -> Alcotest.fail "expected OpenAI binary policy error"
+
+let test_airealtime_nfad_transport_lifecycle () =
+  (* airealtime-nfad: one shared lifecycle shape exposes scoped connect, typed
+     send, typed events, and close while all concrete types remain provider
+     owned. *)
+  with_runtime @@ fun rt ->
+  let connection =
+    run_ok rt "shared Realtime connect"
+      (Realtime_transport_contract.connect ~scope:() () "provider-session")
+  in
+  run_ok rt "shared Realtime send"
+    (Realtime_transport_contract.send connection 1);
+  Alcotest.(check (option bool)) "typed event" (Some true)
+    (run_ok rt "shared Realtime read"
+       (Realtime_transport_contract.read connection));
+  run_ok rt "shared Realtime close"
+    (Realtime_transport_contract.close connection)
+
+let tool_image_request () : A.tool A.Responses.request =
   {
     model = "gpt-4o-mini";
-    prompt =
+    input =
+      A.Responses.Messages
       [
         A.User [ A.Text "take screenshot" ];
         A.Tool
@@ -879,9 +1095,24 @@ let tool_image_request () : A.chat_request =
           };
       ];
     tools = [];
+    instructions = None;
+    previous_response_id = None;
+    store = None;
+    include_ = [];
+    tool_choice = None;
+    parallel_tool_calls = None;
+    max_turns = None;
     temperature = None;
-    reasoning = None;
     max_output_tokens = Some 100;
+    top_p = None;
+    top_k = None;
+    min_p = None;
+    text = None;
+    reasoning = None;
+    reasoning_effort = None;
+    service_tier = None;
+    user = None;
+    prompt_cache_key = None;
     replay_items = [];
     stream = false;
   }
@@ -897,7 +1128,35 @@ let test_openai_responses_tool_result_image_wire_shape () =
     raw
 
 let test_openai_chat_tool_result_image_is_unsupported () =
-  match O.encode_chat (tool_image_request ()) with
+  let request : A.chat_request =
+    {
+      model = "gpt-4o-mini";
+      prompt =
+        [
+          A.User [ A.Text "take screenshot" ];
+          A.Tool
+            {
+              tool_call_id = "call_screenshot";
+              content =
+                [
+                  A.Text "Screenshot:";
+                  A.Image
+                    {
+                      url = "data:image/png;base64,iVBORw0KGgo=";
+                      detail = Some "low";
+                    };
+                ];
+            };
+        ];
+      tools = [];
+      temperature = None;
+      reasoning = None;
+      max_output_tokens = Some 100;
+      replay_items = [];
+      stream = false;
+    }
+  in
+  match O.encode_chat request with
   | Stdlib.Error
       (A.Unsupported
         { provider = "openai"; feature = "tool result media content" }) ->
@@ -907,10 +1166,11 @@ let test_openai_chat_tool_result_image_is_unsupported () =
       Alcotest.fail "Chat Completions must reject image-bearing tool results"
 
 let test_openai_responses_user_image_wire_shape () =
-  let request : A.chat_request =
+  let request : A.tool A.Responses.request =
     {
       model = "gpt-4o";
-      prompt =
+      input =
+        A.Responses.Messages
         [
           A.User
             [
@@ -920,9 +1180,24 @@ let test_openai_responses_user_image_wire_shape () =
             ];
         ];
       tools = [];
+      instructions = None;
+      previous_response_id = None;
+      store = None;
+      include_ = [];
+      tool_choice = None;
+      parallel_tool_calls = None;
+      max_turns = None;
       temperature = None;
-      reasoning = None;
       max_output_tokens = Some 100;
+      top_p = None;
+      top_k = None;
+      min_p = None;
+      text = None;
+      reasoning = None;
+      reasoning_effort = None;
+      service_tier = None;
+      user = None;
+      prompt_cache_key = None;
       replay_items = [];
       stream = false;
     }
@@ -1010,6 +1285,10 @@ let tests =
             test_encode_chat_and_responses;
           Alcotest.test_case "responses reasoning levels" `Quick
             test_responses_reasoning_levels;
+          Alcotest.test_case "xairsp-0eyc/2a4x distinct request" `Quick
+            test_xairsp_0eyc_2a4x_distinct_polymorphic_request;
+          Alcotest.test_case "OpenAI Responses field policy" `Quick
+            test_openai_responses_field_policy;
           Alcotest.test_case "encodes audio content" `Quick
             test_chat_and_responses_encode_audio_content;
           Alcotest.test_case "responses tool result image wire shape" `Quick
@@ -1081,6 +1360,10 @@ let tests =
             test_realtime_client_event_audio_append;
           Alcotest.test_case "server event decode" `Quick
             test_realtime_decode_server_events;
+          Alcotest.test_case "airealtime shared codec contract" `Quick
+            test_airealtime_shared_codec_contract;
+          Alcotest.test_case "airealtime-nfad transport lifecycle" `Quick
+            test_airealtime_nfad_transport_lifecycle;
         ] );
   ]
 end

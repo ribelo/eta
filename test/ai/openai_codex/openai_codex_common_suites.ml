@@ -87,14 +87,37 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let entropy n = String.make n '\042'
 
-  let chat_request ?reasoning () : A.chat_request =
+  let chat_request ?reasoning () : A.tool A.Responses.request =
     {
       model = "gpt-5.1-codex";
-      prompt = [ A.User [ A.Text "hi" ] ];
+      input = A.Responses.Messages [ A.User [ A.Text "hi" ] ];
+      instructions = None;
+      previous_response_id = None;
+      store = None;
+      include_ = [];
       tools = [];
-      temperature = None;
-      reasoning;
+      tool_choice = None;
+      parallel_tool_calls = None;
+      max_turns = None;
       max_output_tokens = Some 16;
+      temperature = None;
+      top_p = None;
+      top_k = None;
+      min_p = None;
+      text = None;
+      reasoning =
+        Option.map
+          (fun effort ->
+            {
+              A.Responses.effort = Some effort;
+              summary = None;
+              generate_summary = None;
+            })
+          reasoning;
+      reasoning_effort = None;
+      service_tier = None;
+      user = None;
+      prompt_cache_key = None;
       replay_items = [];
       stream = false;
     }
@@ -197,11 +220,26 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       C.responses_request ~identity ~session_id:"sess1" ~credential:cred
         {
           model = "gpt-5.1-codex";
-          prompt = [ A.User [ A.Text "hi" ] ];
+          input = A.Responses.Messages [ A.User [ A.Text "hi" ] ];
+          instructions = None;
+          previous_response_id = None;
+          store = None;
+          include_ = [];
           tools = [];
-          temperature = None;
-          reasoning = None;
+          tool_choice = None;
+          parallel_tool_calls = None;
+          max_turns = None;
           max_output_tokens = Some 16;
+          temperature = None;
+          top_p = None;
+          top_k = None;
+          min_p = None;
+          text = None;
+          reasoning = None;
+          reasoning_effort = None;
+          service_tier = None;
+          user = None;
+          prompt_cache_key = None;
           replay_items = [];
           stream = true;
         }
@@ -291,7 +329,35 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       "Codex subscription requests explicitly disable server storage" true
       (match A.Json.member "store" json with
       | Some (`Bool false) -> true
-      | Some _ | None -> false)
+      | Some _ | None -> false);
+    (match
+       C.responses_request ~identity ~credential
+         { (chat_request ()) with store = Some true }
+     with
+    | Stdlib.Error
+        (A.Unsupported
+          { provider = "openai-codex"; feature = "server response storage" }) ->
+        ()
+    | Stdlib.Error _ -> Alcotest.fail "unexpected storage rejection"
+    | Stdlib.Ok _ -> Alcotest.fail "Codex must reject enabled server storage");
+    List.iter
+      (fun (label, request) ->
+        match C.encode_responses request with
+        | Stdlib.Error
+            (A.Unsupported { provider = "openai-codex"; feature }) ->
+            require_contains label ~needle:label feature
+        | Stdlib.Error _ ->
+            Alcotest.fail ("unexpected " ^ label ^ " rejection")
+        | Stdlib.Ok _ -> Alcotest.fail ("expected " ^ label ^ " rejection"))
+      [
+        ( "previous_response_id",
+          {
+            (chat_request ()) with
+            previous_response_id = Some "resp_previous";
+          } );
+        ( "reasoning_effort",
+          { (chat_request ()) with reasoning_effort = Some "high" } );
+      ]
 
   let test_exchange_effect () =
     with_runtime @@ fun rt ->

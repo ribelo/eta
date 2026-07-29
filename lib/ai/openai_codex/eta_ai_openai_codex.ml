@@ -4,6 +4,8 @@ module H = Eta_http
 module Json = A.Json
 module E = Eta.Effect
 
+let ( let* ) = Result.bind
+
 let provider_name = "openai-codex"
 let default_base_url = "https://chatgpt.com/backend-api/codex"
 let default_issuer = "https://auth.openai.com"
@@ -18,12 +20,6 @@ type oauth_credential = {
   refresh_token : string Eta_redacted.t;
   expires_at_ms : int64 option;
   account_id : string;
-}
-
-type structured_output = Codec.structured_output = {
-  name : string;
-  schema : A.Json.t;
-  strict : bool option;
 }
 
 type client_identity = { originator : string; user_agent : string }
@@ -72,9 +68,6 @@ let safe_decode_error message =
   Codec.decode_error_result ~provider:provider_name message
 
 let schema_value = Codec.schema_value ~provider:provider_name
-
-let structured_output ?strict ~name ~schema_json () =
-  Codec.structured_output ~schema_value ?strict ~name ~schema_json ()
 
 let require_nonempty ~label value =
   if String.trim value = "" then safe_decode_error (label ^ " is empty")
@@ -619,17 +612,68 @@ let auth_headers_of_credential ~identity ?session_id ?stream ?extra_headers
     ~access_token:(access_api_key credential)
     ()
 
-let encode_responses ?structured_output request =
-  match
-    Codec.encode_responses_json ~provider:provider_name ~schema_value
-      ?structured_output request
-  with
-  | Stdlib.Error _ as error -> error
-  | Stdlib.Ok (`Assoc fields) ->
-      Stdlib.Ok
-        (Json.to_string
-           (`Assoc (("store", `Bool false) :: List.remove_assoc "store" fields)))
-  | Stdlib.Ok _ -> safe_decode_error "Responses encoder did not return an object"
+let encode_responses_tool =
+  Codec.tool_json ~schema_value ~shape:Codec.Responses_tool
+
+let reject_responses_field field = function
+  | None -> Stdlib.Ok ()
+  | Some _ ->
+      Stdlib.Error (A.Unsupported { provider = provider_name; feature = field })
+
+let normalize_responses_reasoning request =
+  match request.A.Responses.reasoning with
+  | None -> Stdlib.Ok request
+  | Some reasoning -> (
+      match reasoning.effort with
+      | None -> Stdlib.Ok request
+      | Some effort ->
+          Codec.reasoning_level_of_string ~provider:provider_name effort
+          |> Result.map (fun level ->
+                 let effort =
+                   match level with
+                   | Codec.Off -> "none"
+                   | _ -> Codec.reasoning_level_to_string level
+                 in
+                 {
+                   request with
+                   A.Responses.reasoning =
+                     Some { reasoning with effort = Some effort };
+                 }))
+
+let encode_responses request =
+  let* () =
+    reject_responses_field "previous_response_id"
+      request.A.Responses.previous_response_id
+  in
+  let* () = reject_responses_field "max_turns" request.max_turns in
+  let* () = reject_responses_field "top_k" request.top_k in
+  let* () = reject_responses_field "min_p" request.min_p in
+  let* () =
+    reject_responses_field "reasoning_effort" request.reasoning_effort
+  in
+  let* () =
+    reject_responses_field "reasoning.generate_summary"
+      (Option.bind request.reasoning (fun value -> value.generate_summary))
+  in
+  let* request = normalize_responses_reasoning request in
+  match request.store with
+  | Some true ->
+      Stdlib.Error
+        (A.Unsupported
+           { provider = provider_name; feature = "server response storage" })
+  | None | Some false -> (
+      match
+        Codec.encode_responses_json ~provider:provider_name
+          ~encode_tool:encode_responses_tool request
+      with
+      | Stdlib.Error _ as error -> error
+      | Stdlib.Ok (`Assoc fields) ->
+          Stdlib.Ok
+            (Json.to_string
+               (`Assoc
+                 (("store", `Bool false) :: List.remove_assoc "store" fields)))
+      | Stdlib.Ok _ ->
+          safe_decode_error "Responses encoder did not return an object")
 
 let decode_responses raw = Codec.decode_responses ~provider:provider_name raw
 
@@ -669,7 +713,15 @@ let provider ?(base_url = default_base_url) ~account_id ~identity ?session_id
         auth_headers ~identity ?session_id ~extra_headers ~account_id
           ~access_token:api_key ());
     capabilities;
-    encode_chat = (fun request -> encode_responses request);
+    encode_chat =
+      (fun _ ->
+        Stdlib.Error
+          (A.Unsupported
+             {
+               provider = provider_name;
+               feature =
+                 "Chat Completions request cannot be sent to the Responses endpoint";
+             }));
     decode_chat = decode_responses;
     encode_embeddings =
       (fun _ ->
@@ -687,6 +739,19 @@ let provider_for_credential ?base_url ~identity ?session_id ?extra_headers
     (credential : oauth_credential) =
   provider ?base_url ~account_id:credential.account_id ~identity ?session_id
     ?extra_headers ()
+
+let responses_provider ?base_url ~account_id ~identity ?session_id
+    ?extra_headers () =
+  {
+    A.transport =
+      provider ?base_url ~account_id ~identity ?session_id ?extra_headers ();
+    encode_responses;
+  }
+
+let responses_provider_for_credential ?base_url ~identity ?session_id
+    ?extra_headers (credential : oauth_credential) =
+  responses_provider ?base_url ~account_id:credential.account_id ~identity
+    ?session_id ?extra_headers ()
 
 let reasoning_levels_member name json =
   match Json.array_member name json with
@@ -766,22 +831,25 @@ let list_models ?provider:custom ?client_version ~identity client ~credential =
   | Stdlib.Ok request ->
       A.run_raw_decoded provider client (Stdlib.Ok request) decode_models
 
-let responses_request ?structured_output ?provider:custom ~identity ?session_id
-    ~credential request =
+let responses_request ?provider:custom ~identity ?session_id
+    ~(credential : oauth_credential) request =
   let provider =
     match custom with
     | Some p -> p
-    | None -> provider_for_credential ~identity ?session_id credential
+    | None ->
+        responses_provider_for_credential ~identity ?session_id credential
   in
-  match encode_responses ?structured_output request with
+  match provider.A.encode_responses request with
   | Stdlib.Error _ as error -> error
   | Stdlib.Ok raw ->
       let http_request =
-        A.provider_request provider (access_api_key credential) raw
+        A.provider_request provider.transport (access_api_key credential) raw
       in
-      let headers = provider.auth_headers (access_api_key credential) in
       let headers =
-        if request.A.stream then
+        provider.transport.auth_headers (access_api_key credential)
+      in
+      let headers =
+        if request.A.Responses.stream then
           headers
           |> H.Core.Header.remove "accept"
           |> H.Core.Header.unsafe_add "Accept" "text/event-stream"
@@ -789,38 +857,40 @@ let responses_request ?structured_output ?provider:custom ~identity ?session_id
       in
       Stdlib.Ok { http_request with headers }
 
-let responses ?structured_output ?provider:custom ~identity ?session_id client
-    ~credential request =
+let responses ?provider:custom ~identity ?session_id client
+    ~(credential : oauth_credential) request =
   let provider =
     match custom with
     | Some p -> p
-    | None -> provider_for_credential ~identity ?session_id credential
+    | None ->
+        responses_provider_for_credential ~identity ?session_id credential
   in
   match
-    responses_request ?structured_output ~provider ~identity ?session_id
+    responses_request ~provider ~identity ?session_id
       ~credential request
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
-      A.with_chat_span provider request
-        (A.perform_chat provider client http_request)
+      A.with_responses_span provider.transport request
+        (A.perform_chat provider.transport client http_request)
 
-let stream_responses ?structured_output ?provider:custom ~identity ?session_id
-    client ~credential request =
+let stream_responses ?provider:custom ~identity ?session_id
+    client ~(credential : oauth_credential) request =
   let provider =
     match custom with
     | Some p -> p
-    | None -> provider_for_credential ~identity ?session_id credential
+    | None ->
+        responses_provider_for_credential ~identity ?session_id credential
   in
-  let streamed = { request with A.stream = true } in
+  let streamed = { request with A.Responses.stream = true } in
   match
-    responses_request ?structured_output ~provider ~identity ?session_id
+    responses_request ~provider ~identity ?session_id
       ~credential streamed
   with
   | Stdlib.Error error -> E.fail error
   | Stdlib.Ok http_request ->
-      A.with_stream_span provider streamed
-        (A.perform_stream provider client http_request)
+      A.with_responses_stream_span provider.transport streamed
+        (A.perform_stream provider.transport client http_request)
 
 module Chat = struct
   let request = responses_request

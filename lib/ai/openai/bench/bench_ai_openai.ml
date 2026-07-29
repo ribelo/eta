@@ -35,6 +35,33 @@ let request : Eta_ai.chat_request =
     stream = false;
   }
 
+let responses_request : Eta_ai.tool Eta_ai.Responses.request =
+  {
+    model = request.model;
+    input = Eta_ai.Responses.Messages request.prompt;
+    instructions = None;
+    previous_response_id = None;
+    store = None;
+    include_ = [];
+    tools = request.tools;
+    tool_choice = None;
+    parallel_tool_calls = None;
+    max_turns = None;
+    max_output_tokens = request.max_output_tokens;
+    temperature = request.temperature;
+    top_p = None;
+    top_k = None;
+    min_p = None;
+    text = None;
+    reasoning = None;
+    reasoning_effort = None;
+    service_tier = None;
+    user = None;
+    prompt_cache_key = None;
+    replay_items = [];
+    stream = false;
+  }
+
 let output () =
   Eta_ai_openai.structured_output ~name:"weather_answer" ~schema_json:weather_schema
     ~strict:true ()
@@ -55,15 +82,16 @@ let workloads =
         repeat 10_000 (fun () ->
             ignore (Eta_ai_openai.encode_chat ~structured_output request)));
     item "encode_responses.10k" (fun () ->
-        let structured_output = output () in
         repeat 10_000 (fun () ->
-            ignore (Eta_ai_openai.encode_responses ~structured_output request)));
+            ignore (Eta_ai_openai.encode_responses responses_request)));
     item "request.responses.10k" (fun () ->
         repeat 10_000 (fun () ->
             ignore
               (Eta_ai_openai.responses_request
-                 ~provider:(Eta_ai_openai.provider ~base_url:"https://api.openai.test" ())
-                 ~api_key:(Eta_ai.api_key "sk-bench") request)));
+                 ~provider:
+                   (Eta_ai_openai.responses_provider
+                      ~base_url:"https://api.openai.test" ())
+                 ~api_key:(Eta_ai.api_key "sk-bench") responses_request)));
   ]
 
 let () = Bench_lib.run (Bench_lib.parse_args ()) workloads
