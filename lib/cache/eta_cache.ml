@@ -1,3 +1,5 @@
+module Refreshable = Refreshable
+
 module Effect = Eta.Effect
 module Spi = Eta.Spi
 module Exit = Eta.Exit

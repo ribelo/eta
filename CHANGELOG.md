@@ -18,6 +18,14 @@
 
 ### Changed
 
+- **Breaking:** `Eta.Resource` moved to the optional cache package as
+  `Eta_cache.Refreshable`. The runtime-owned `Resource.auto` constructor is
+  deleted; use the lexical callback form
+  `Eta_cache.Refreshable.with_auto ~load ~schedule body`. The refresh loop is
+  cancelled and awaited when `body` exits. Use
+  `with_auto_on_refresh_error ~on_refresh_error` only for immediate typed-refresh
+  alerts. `manual`, `get`, `refresh`, and `failures` keep their behavior under
+  the new module.
 - **Breaking:** `Effect.all` now forks one fiber per input instead of applying
   an omitted cap of eight. Explicitly bounded calls move to the named sibling:
 

@@ -108,19 +108,13 @@ The OTLP retry policy retries `429`, `502`, `503`, and `504`. It does not retry
 `408`, because OTLP/HTTP does not define that as retryable for this exporter.
 Successful exports are HTTP `200` or `202`.
 
-## Cached Configuration
+## Immutable Configuration
 
-Resolved endpoint and resource attributes are loaded once through `Resource.t`
-when the exporter starts.
-
-```ocaml
-Resource.manual
-  (Effect.named "eta_otel.config"
-     (Effect.named "eta_otel.config.load" (Effect.sync (fun () -> config))))
-```
-
-The daemon reads that resource before consuming signal streams. There is no
-ambient environment channel; configuration remains an ordinary OCaml value.
+`Eta_otel.create` resolves the endpoint, paths, headers, scope name, and resource
+attributes once into an immutable configuration record stored on the exporter
+handle. Export daemons read that record directly while consuming signal streams.
+There is no cache dependency or ambient environment channel; changing exporter
+configuration means constructing a new exporter value.
 
 ## Backpressure
 

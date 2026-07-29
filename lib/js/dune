@@ -4,5 +4,5 @@
  (enabled_if
   (<> %{ocaml_version} 5.2.0+ox))
  (modules eta_js)
- (libraries eta eta_jsoo js_of_ocaml)
+ (libraries eta eta_cache eta_jsoo js_of_ocaml)
  (synopsis "js_of_ocaml Eta facade"))
