@@ -7,8 +7,11 @@ map: what / rationale / decision / decision rationale), the tail of
 `.scratch/research/dx-prd-0001.md` §6, then continue the per-experiment
 loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **EOP hardening wave** (9/14 done; E42b next)
-- In flight: nothing
+- Current phase: **EOP hardening wave** (9/14 done; E42b in flight)
+- In flight: **E42b — hygiene batch (ppx_sql split, docs tiering, Mutable_ref purity, race naming)**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e42b`
+  - Branch: `research/dx-e42b-hygiene-batch`
+  - Stage: predictions sealed (V-DX-E42B-001); objective.md written; awaiting executor
 - Done (recent): **E41 promoted** (`b2c7a82b`; `Resource` →
   `Eta_cache.Refreshable`, daemon `auto` → lexical `with_auto` /
   `with_auto_on_refresh_error`, zero-optionals rule registered, R167–R176)
@@ -130,4 +133,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-29 — E41 promoted after 2 rework rounds
+- Last update: 2026-07-29 — E41 promoted; resource three-ways docs landed (a1f2ca5b); E42b launched
