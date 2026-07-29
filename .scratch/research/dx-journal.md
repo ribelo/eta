@@ -5476,3 +5476,50 @@ should-not-merge predicted.
 lifetime with no enclosing lexical scope — recorded raw, no workaround
 (would argue for a scoped-runtime variant, not for silently keeping
 `auto`).
+
+---
+
+## V-DX-E41-002 — 2026-07-29 — research/dx-e41-refreshable — phase: orchestrator amendment (with_auto signature)
+
+Executor reported `E41 BLOCKED` on follow-up 1: `?on_error` is also
+unerasable at `let@` sites — both authorized endpoints (delete `?random`;
+reorder `?random` before `load:`) failed the clean `let@` form. Orchestrator
+probe (`/tmp/e41-erasure`) confirmed and clarified the mechanism: erasure
+fires on positional application after the optional, on full application, or
+on a fully-pinned expected type — and ppx_let's inference does not propagate
+the expected type early enough for the third. **No signature containing any
+optional argument yields the clean `let@` form.** Orchestrator's erasure
+rule from the E24 era was incomplete; recorded as a prediction/mechanism
+miss. This is the programme's second OCaml optional-erasure lesson (first:
+E24's trailing-optionals).
+
+Amendment after oracle consultation (consensus; ranking 1 > 2 >>> 3):
+
+```ocaml
+val with_auto :
+  load:('a, 'err) Effect.t -> schedule:(unit, 'out) Schedule.t ->
+  (('a, 'err) t -> ('b, 'err) Effect.t) -> ('b, 'err) Effect.t
+
+val with_auto_on_refresh_error :
+  on_refresh_error:('err -> unit) ->
+  load:('a, 'err) Effect.t -> schedule:(unit, 'out) Schedule.t ->
+  (('a, 'err) t -> ('b, 'err) Effect.t) -> ('b, 'err) Effect.t
+```
+
+- **No optionals anywhere.** `on_error` becomes a separate function rather
+  than a positional-args sacrifice (candidate 2) or a capability deletion
+  (candidate 3 — semantic regression: `failures` is pull, loader
+  instrumentation sees the seed too). Both delegate to one private helper.
+- **Name sharpened by the oracle:** `on_refresh_error`, not `on_error` —
+  the callback observes only *typed refresh* failures; the bare name is
+  channel-blind (T3).
+- **`?random` deleted** as amended earlier; the refresh loop's honor of
+  E19's `with_random` scoped override must be investigated and the verdict
+  journaled (reached → documented; unreachable → named gap for E43).
+- T1 note (oracle): one obvious operation per *task* — ordinary lexical
+  refresh vs. lexical refresh with immediate failure notification are
+  distinct tasks. The `retry`/`retry_or_else` precedent supports the style
+  but is not the justification; the empirical `let@` constraint is.
+- Census amendment: `eta_cache` +6 vals (not +5 as sealed in V-DX-E41-001).
+
+Awaiting rework; results at V-DX-E41-003.
