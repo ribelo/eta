@@ -198,8 +198,9 @@ the semantic difference impossible to miss at the interface.
 Type-error snapshot stability: **PASS, byte-stable**. Race call-site count:
 **120**. Overall sealed-prediction score: **14 HIT, 1 MISS**.
 
-The final implementation, evidence, and report change 20 paths, with 944
-additions and 379 deletions (1,323 line events).
+The final implementation, evidence, and report change 20 paths, with 1,116
+additions and 550 deletions (1,666 line events). Registry source-pointer refresh
+after the four-line `race` doc insertion accounts for 342 of those line events.
 
 ## Deviations
 
