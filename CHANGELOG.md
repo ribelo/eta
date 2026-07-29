@@ -18,6 +18,10 @@
 
 ### Changed
 
+- **Breaking package move:** `[%%eta.sql.table]` now comes from the
+  `ppx_eta_sql` package instead of `ppx_eta`. The extension name remains
+  `eta.sql.table`; SQL consumers must change their Dune preprocessors to
+  `(pps ppx_eta_sql)` (or `(pps ppx_eta ppx_eta_sql)` when they use both).
 - **Breaking:** `Eta.Resource` moved to the optional cache package as
   `Eta_cache.Refreshable`. The runtime-owned `Resource.auto` constructor is
   deleted; use the lexical callback form

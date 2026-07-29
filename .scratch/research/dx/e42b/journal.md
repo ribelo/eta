@@ -60,3 +60,23 @@ This section is immutable after the predictions commit.
 - **Likeliest review reservation:** the familiar JavaScript name still invites a
   first-settlement reading despite current concurrency-guide/example wording;
   the interface sentence must be unmistakable and match composite-cause behavior.
+
+# Execution record
+
+## 1. `ppx_sql` split actuals
+
+The package census is 47 → 48 in both `dune-project` and root opam files.
+`ppx_eta.ml` contains no `sql`, `Eta_sql`, or `eta.sql` reference and registers
+only `fn`, `sync`, and `result`; `ppx_eta_sql.ml` registers only
+`eta.sql.table`. Both Dune libraries depend only on `ppxlib`. The only
+SQL-extension preprocessing consumer found by source census is the shared PPX
+suite, which now loads both rewriters. The six SQL type-error cases now select
+the `ppx_eta_sql` executable explicitly; their focused OxCaml snapshot test
+passed with no change to `expected_compile.txt`. `test/sql_common` and
+`test/connectors_loader` contain no PPX preprocessing stanza or SQL extension
+use, so there was no consumer entry to migrate there. Product implementation,
+plumbing, consumer, and package-move documentation touched 12 paths; this
+journal makes 13 for the item, within the sealed band. The focused
+`test/ppx_eio` suite also passed all 11 tests. The reservation was addressed by
+a repo-wide extension/preprocessor census plus the hand-written type-error
+driver split, rather than direct Dune consumers alone.

@@ -180,10 +180,13 @@ materialized typed reads and `Pool.Typed.fold_select` for scans.
 
 ## Optional Eta_schema PPX
 
-The `ppx_eta` package includes optional table-declaration sugar for Eta SQL.
+The `ppx_eta_sql` package provides optional table-declaration sugar for Eta SQL.
 It does not create a parallel query system; it expands to the same generative
 table module, typed columns, schema artifact, and compiled `Eta_sql.Pool` path
 shown above.
+
+Add `(preprocess (pps ppx_eta_sql))` to each Dune stanza that uses the
+extension.
 
 ```ocaml
 [%%eta.sql.table

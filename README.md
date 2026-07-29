@@ -281,7 +281,13 @@ Derivation does not install ambient policy. Pass the generated function through
 `Effect.with_error_pp`. As with every Eta error printer, it must be total: a
 raising printer becomes a defect through the ordinary runtime capture path.
 
-For Eta SQL (`eta_sql`), the same PPX also provides optional table declaration sugar:
+For Eta SQL (`eta_sql`), the separate `ppx_eta_sql` package provides optional
+table declaration sugar. Add it to the SQL consumer's preprocessors:
+
+```lisp
+(preprocess
+ (pps ppx_eta_sql))
+```
 
 ```ocaml
 [%%eta.sql.table
@@ -298,7 +304,7 @@ consumed by the PPX; application code refers to `users_row` for all-column
 result records. Partial projections still use the ordinary tuple-returning
 builder helpers.
 
-The PPX is deliberately syntactic. It does not provide `Layer`, `Context`,
+Both PPXs are deliberately syntactic. They do not provide `Layer`, `Context`,
 `Tag`, implicit service lookup, inferred dependency construction, or argument
 conversion.
 

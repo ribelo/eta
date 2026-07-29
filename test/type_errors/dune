@@ -12,7 +12,8 @@
   (source_tree cases)
   snapshot_compile.sh
   (package eta)
-  (package ppx_eta))
+  (package ppx_eta)
+  (package ppx_eta_sql))
  (action
   (with-outputs-to actual_compile.txt
    (system "bash ./snapshot_compile.sh %{project_root}"))))
@@ -45,4 +46,3 @@
  (alias type-errors-runtime)
  (action
   (diff expected_runtime.txt actual_runtime.txt)))
-

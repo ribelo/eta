@@ -2,4 +2,4 @@
  (name eta_ppx_common_tests)
  (libraries eta eta_sql eta_runtime_common_tests alcotest)
  (preprocess
-  (pps ppx_eta)))
+  (pps ppx_eta ppx_eta_sql)))
