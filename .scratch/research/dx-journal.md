@@ -5590,3 +5590,60 @@ partial, 1 miss (their report).
 
 **Follow-ups:** none new. `with_random` reached the loop (no E43 gap).
 Wave progress: 9/14 done. Next: E42b (hygiene batch).
+
+---
+
+## V-DX-E42B-001 — 2026-07-29 — research/dx-e42b-hygiene-batch — phase: predict (orchestrator-sealed)
+
+Sealed before the branch existed. Scored at V-DX-E42B-002. Scope per the
+EOP-wave registration: (1) `ppx_sql` split, (2) docs-level tiering
+(core/batteries/integrations/labs), (3) `Mutable_ref` CAS-retry purity
+contract, (4) `race` naming review question.
+
+**ppx_sql split (measured pre-change).** `lib/ppx/ppx_eta.ml` (643 lines,
+~44 `sql` mentions) registers one deriver (`eta_error`) + four extension
+rules (`fn`, `sync`, `result`, `sql_table`). SQL machinery = `sql_*`
+helpers + `sql_table_extension`. Consumers (extension sites): tests only
+(`test/sql_common`, `test/type_errors` ×6 cram cases,
+`test/connectors_loader`). Predicted: new `ppx_eta_sql` package (kind
+ppx_rewriter, ppxlib-only — generated code references `Eta_sql` names but
+the rewriter needs no SQL dep); `ppx_eta` loses the sql machinery and the
+`sql_table` rule; the user-facing extension name `eta.sql.table` stays
+UNCHANGED (already sql-namespaced; renaming breaks users for zero gain).
+Packages 48 → 49. Risk point: cram snapshots in `test/type_errors` may
+embed the rewriter/transformation name — executor verifies byte-stability
+or records the snapshot update.
+
+**Docs tiering.** 48 public packages. Predicted deliverable:
+`docs/packages.md` (new) + README pointer; rule-based tiers (core = what
+ordinary Eta programs need; batteries = general-purpose, no external
+service/protocol deps; integrations = external protocols/services/drivers;
+labs = unstable/experimental). Predicted counts: core ≤ 3, labs ≥ 4. No
+package moves — docs-only. Review judges defensibility per package.
+
+**Mutable_ref purity.** `update`/`update_and_get` retry on CAS failure;
+the callback may be re-executed arbitrarily many times and its effects
+would multiply. Adjudicated: prose-only contract. Predicted: mli states
+purity + re-execution semantics for both vals; `docs/api-dx.md` gains one
+documented trap (accepted-and-mitigated, not removed); OxCaml
+mode-enforcement considered in the journal and deferred with reasons; no
+type change.
+
+**race naming.** Current: `race : ('a, 'err) t list -> ('a, 'err) t` —
+"first child to produce a value wins" (first-SUCCESS semantics; failures
+do not win). JS `Promise.race` is first-settlement (a failure can win) —
+a culture mismatch. Predicted outcome: KEEP `race` (E3's evidence that
+domain-shaped names beat generic renames; the mli already states the
+semantics in its first sentence), and the review produces one explicit
+doc sentence naming the JS divergence. Executor counts race call sites;
+if the JS-divergence has bitten in-repo (evidence of misuse), the verdict
+flips to `race_success` and the rename happens instead — that is the
+pre-registered flip condition.
+
+**Census (predicted).** Packages 48 → 49; `ppx_eta` rules 4 → 3
+(+0 derivers); `Mutable_ref`/`race` vals unchanged. Footguns: +1
+documented (Mutable_ref purity), +0 removed.
+
+**Outcome (predicted).** All four promote; gates green ≤3 attempts;
+mainline JS unaffected (ppx is compile-time; eta_js has no sql ppx use —
+executor verifies).
