@@ -7,8 +7,11 @@ map: what / rationale / decision / decision rationale), the tail of
 `.scratch/research/dx-prd-0001.md` §6, then continue the per-experiment
 loop (plan §4.2 as amended by Amendment 1).
 
-- Current phase: **D** (runtime & model)
-- In flight: nothing (next: **E41 — `Resource` → `Refreshable`**)
+- Current phase: **EOP hardening wave** (8/14 done; E41 in flight)
+- In flight: **E41 — `Resource` → `Refreshable` in `eta_cache` + lexical-first `with_auto`**
+  - Worktree: `/home/ribelo/projects/ribelo/ocaml/Eta-dx-e41`
+  - Branch: `research/dx-e41-refreshable`
+  - Stage: predictions sealed (V-DX-E41-001); objective.md written; awaiting executor
 - Done (recent): **E42a promoted** (`d45a9c1e`; `Eta.Spi` namespace,
   nine supervisor builders privatized, `Effect.mli` 129 → 119 vals;
   privacy compile-probed)
@@ -126,4 +129,4 @@ loop (plan §4.2 as amended by Amendment 1).
   updated (zio-boundaries, services, README); E17 note + E34/DAG
   backlog registered in the ledger; falsification conditions (verdict
   §7) are the standing R-reopen criteria.
-- Last update: 2026-07-28 — E42a promoted
+- Last update: 2026-07-28 — E41 launched
