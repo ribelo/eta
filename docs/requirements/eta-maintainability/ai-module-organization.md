@@ -23,5 +23,7 @@ distinct, coherent module seams.
 - Eta AI provider codecs shall obtain blank checking, trimming, and trimmed comparison from `Eta.String_helpers` rather than through `Eta_ai.Provider.Codec`. ^aimod-tdpl
 - The `Eta_ai.Provider.Transport` interface shall expose a non-overlapping set of provider HTTP primitives rather than preserving overlapping legacy builders and runners. ^aimod-smby
 - The `Eta_ai.Provider.Transport` interface shall expose GET and JSON request construction together with decoded JSON, binary, and streaming execution. ^aimod-fnni
+- The `Eta_ai.Provider.Error` interface shall expose the shared lossless HTTP-response envelope used by nominal provider errors. ^aimod-kenk
+- The `Eta_ai.Provider.Error` HTTP-response envelope shall be parameterized by provider payload and contain status, response headers, optional decoded payload, and raw response body. ^aimod-gwf9
 - The `Eta_ai.Stream` module shall preserve the current SSE stream lifecycle interface when it moves from the `Eta_ai` top level. ^aimod-ez2q
 - The `Eta_ai.Toolkit` module shall preserve the current ordered tool-registry interface when it moves from the `Eta_ai` top level. ^aimod-ip7g
