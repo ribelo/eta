@@ -64,9 +64,6 @@ end
 (** OpenTelemetry semantic-convention helpers using Eta tracer/meter
     capabilities. *)
 
-module Redaction = Redaction
-(** Diagnostic redaction helpers. *)
-
 val request :
   Client.t -> Request.t -> (Response.t, Error.t) Eta.Effect.t
 (** Submit a request through the supplied client. *)

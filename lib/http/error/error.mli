@@ -86,6 +86,10 @@ type t = {
   kind : kind;
 }
 
+module Redaction = Redaction
+(** HTTP diagnostic redaction policy, including URI user-info, query, and
+    fragment redaction. *)
+
 val make : ?protocol:protocol -> method_:string -> uri:string -> kind -> t
 val protocol_to_string : protocol -> string
 val layer_to_string : layer -> string

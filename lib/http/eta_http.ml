@@ -38,7 +38,6 @@ module Observability = struct
     module Tracer = Server_tracer
   end
 end
-module Redaction = Redaction
 
 let request = Client.request
 let request_with_retry = Client.request_with_retry

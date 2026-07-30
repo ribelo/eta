@@ -55,10 +55,14 @@ let () =
             test_error_redacts_proxy_authentication_headers;
           Alcotest.test_case "redacts URI userinfo" `Quick
             test_redaction_uri_redacts_userinfo;
+          Alcotest.test_case "redacts URI query" `Quick
+            test_redaction_uri_redacts_query;
           Alcotest.test_case "redacts URI fragments" `Quick
             test_redaction_uri_redacts_fragments;
           Alcotest.test_case "redacts URI userinfo in outputs" `Quick
             test_error_redacts_uri_userinfo_in_outputs;
+          Alcotest.test_case "semconv uses Error.Redaction" `Quick
+            test_semconv_uses_error_redaction_for_uri_and_location;
         ] );
       ( "url",
         [

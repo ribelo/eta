@@ -1,5 +1,7 @@
 (* Copyright (c) 2026 Eta contributors. SPDX-License-Identifier: MIT *)
 
+module Redaction = Redaction
+
 type protocol = H1 | H2 | Unknown
 
 type layer =

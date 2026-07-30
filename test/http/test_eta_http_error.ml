@@ -36,13 +36,24 @@ let test_error_redacts_proxy_authentication_headers () =
 
 let test_redaction_uri_redacts_userinfo () =
   let redacted =
-    Eta_http.Redaction.uri
+    Eta_http.Error.Redaction.uri
       "http://alice:super-secret@example.test/path?q=1#frag"
   in
   Alcotest.(check string)
     "redacts userinfo, query, and fragment"
     "http://<redacted>@example.test/path?<redacted>#<redacted>"
     redacted
+
+let test_redaction_uri_redacts_query () =
+  let redacted =
+    Eta_http.Error.Redaction.uri
+      "https://api.example.test/private?token=secret&email=a@example.test#frag"
+  in
+  Alcotest.(check string)
+    "redacts query and fragment"
+    "https://api.example.test/private?<redacted>#<redacted>" redacted;
+  expect_absent "query secret absent" "token=secret" redacted;
+  expect_absent "email secret absent" "a@example.test" redacted
 
 let test_redaction_uri_redacts_fragments () =
   let cases =
@@ -53,7 +64,7 @@ let test_redaction_uri_redacts_fragments () =
   in
   List.iter
     (fun uri ->
-      let redacted = Eta_http.Redaction.uri uri in
+      let redacted = Eta_http.Error.Redaction.uri uri in
       expect_absent "fragment secret absent" "super-secret" redacted;
       expect_present "fragment marker redacted" "#<redacted>" redacted)
     cases;
@@ -65,6 +76,33 @@ let test_redaction_uri_redacts_fragments () =
   in
   expect_absent "error string redacts fragment secret" "super-secret"
     (Eta_http.Error.to_string error)
+
+let test_semconv_uses_error_redaction_for_uri_and_location () =
+  let request =
+    Eta_http.Request.make "GET"
+      "http://alice:super-secret@example.test/path?token=secret#frag"
+  in
+  let attrs =
+    Eta_http.Observability.Semconv.request_attrs ~protocol:Eta_http.Client.H1
+      request
+  in
+  Alcotest.(check (option string))
+    "semconv url.full uses Error.Redaction"
+    (Some "http://<redacted>@example.test/path?<redacted>#<redacted>")
+    (List.assoc_opt "url.full" attrs);
+  let location =
+    "https://api.example.test/next?token=secret#access_token=super-secret"
+  in
+  let redirect =
+    Eta_http.Observability.Semconv.redirect_attrs ~location ()
+  in
+  Alcotest.(check (option string))
+    "semconv location uses Error.Redaction"
+    (Some "https://api.example.test/next?<redacted>#<redacted>")
+    (List.assoc_opt "http.response.header.location" redirect);
+  expect_absent "location secret absent" "super-secret"
+    (Option.value ~default:""
+       (List.assoc_opt "http.response.header.location" redirect))
 
 let test_error_redacts_uri_userinfo_in_outputs () =
   let error =
