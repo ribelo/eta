@@ -5,12 +5,15 @@ kind: requirement
 
 ## Intent
 
-Describe xAI operations with Eta AI GenAI telemetry while suppressing nested
+Describe xAI inference with Eta AI GenAI telemetry while keeping resource
+management outside the GenAI operation vocabulary and excluding nested
 transport noise and sensitive content.
 
 ## Requirements
 
-- When the xAI provider performs a REST operation, the xAI provider shall emit one GenAI operation span. ^xaiobs-92ax
+- When the xAI provider performs an operation covered by Eta AI GenAI telemetry, the xAI provider shall emit one GenAI operation span. ^xaiobs-98ld
+- When the xAI provider performs a resource-management or catalog operation, the xAI provider shall not describe that operation as a GenAI operation span. ^xaiobs-jdm1
+- When the xAI provider performs a resource-management or catalog operation, the xAI provider shall emit one ordinary provider client span. ^xaiobs-hchu
 - When the xAI provider opens a WebSocket protocol session, the xAI provider shall emit one session-level span. ^xaiobs-84gq
 - When the xAI provider emits a GenAI span, the xAI provider shall record `gen_ai.operation.name`. ^xaiobs-rtcw
 - When the xAI provider emits a GenAI span, the xAI provider shall record `gen_ai.provider.name`. ^xaiobs-fkqh
