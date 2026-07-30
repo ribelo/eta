@@ -1,7 +1,7 @@
 (test
  (name api_dx_examples)
  (modules api_dx_examples)
- (libraries eta eta_blocking eta_cache))
+ (libraries eta eta_observability eta_blocking eta_cache))
 
 (test
  (name api_dx_surface)

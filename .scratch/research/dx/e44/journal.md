@@ -111,3 +111,31 @@ failure is preserved without changing that adjacent benchmark implementation.
   objective census. Existing executable-law registrations were repointed to the
   moved contract; mixed capability row R88 was split into root R88a and SDK R88b
   so each source pointer names exactly one package boundary.
+
+## Implementation and migration
+
+- Root `Effect.mli` now has 79 vals and `Eta_observability` has 40. The root
+  effect error parameter exposes the covariance already present in the private
+  representation so separately compiled polymorphic SDK constants remain
+  reusable.
+- Root private `Runtime_capabilities` and `Runtime_trace_context` modules replace
+  dependencies on the moved public implementation modules. `Spi.Expert` exposes
+  behavioral SDK operations but no local keys.
+- The first seam review found that metric points were being built before the
+  runtime's metrics-enabled check. The implementation was fixed forward: single
+  points use the existing gated `record_metric`, and batches cross the seam as a
+  thunk evaluated only after admission with one shared timestamp.
+- All installable libraries, tests, examples, PPX expansions/snapshots, and
+  benchmark watchlists were migrated without aliases. Direct Dune and opam
+  dependencies were added only to packages compiling or re-exporting the SDK.
+- The four required build/test gates passed after fixing the new helper name
+  `effect`, which is accepted by OxCaml but reserved by upstream OCaml 5.4, to
+  `effect_of_public`.
+
+## Procedural deviation
+
+An exclusion search was run from the repository root without excluding
+`docs/research/`; ripgrep returned several matching lines from that forbidden
+directory. No file there was opened separately, edited, or staged. Subsequent
+searches explicitly excluded `docs/research/**`. This is recorded raw rather
+than hidden.

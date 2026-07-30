@@ -8,23 +8,23 @@ let require label condition =
 
 let current_span_or_fail label =
   let open Syntax in
-  let* span = Effect.current_span in
+  let* span = Eta_observability.current_span in
   match span with
   | Some span -> Effect.pure span
   | None -> Effect.fail (`Missing_span label)
 
 let producer =
-  Effect.named ~error_pp:pp_error ~kind:Tracer.Producer "events.publish"
+  Eta_observability.named ~error_pp:pp_error ~kind:Eta_observability.Tracer.Producer "events.publish"
     (current_span_or_fail "producer")
 
 let consumer (published : Capabilities.span_info) =
   let open Syntax in
-  Effect.link_span ~trace_id:published.Capabilities.trace_id
+  Eta_observability.link_span ~trace_id:published.Capabilities.trace_id
     ~span_id:published.span_id
-    (Effect.named ~error_pp:pp_error ~kind:Tracer.Consumer "events.consume"
+    (Eta_observability.named ~error_pp:pp_error ~kind:Eta_observability.Tracer.Consumer "events.consume"
        (let* active = current_span_or_fail "consumer" in
         let* () =
-          Effect.event ~attrs:[ ("linked.span_id", published.span_id) ]
+          Eta_observability.event ~attrs:[ ("linked.span_id", published.span_id) ]
             "event.linked"
         in
         Effect.pure active))
@@ -36,18 +36,18 @@ let program =
   (published, consumed)
 
 let span_named name span =
-  String.equal span.Tracer.name name
+  String.equal span.Eta_observability.Tracer.name name
 
 let event_named name event =
-  String.equal event.Tracer.ev_name name
+  String.equal event.Eta_observability.Tracer.ev_name name
 
 let link_matches (published : Capabilities.span_info) link =
-  String.equal link.Tracer.link_trace_id published.Capabilities.trace_id
+  String.equal link.Eta_observability.Tracer.link_trace_id published.Capabilities.trace_id
   && String.equal link.link_span_id published.span_id
 
 let verify (published : Capabilities.span_info) (consumed : Capabilities.span_info)
     tracer =
-  let spans = Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let producer =
     match List.find_opt (span_named "events.publish") spans with
     | Some span -> span
@@ -58,8 +58,8 @@ let verify (published : Capabilities.span_info) (consumed : Capabilities.span_in
     | Some span -> span
     | None -> failwith "span linking check failed: missing consumer"
   in
-  require "producer kind" (producer.kind = Tracer.Producer);
-  require "consumer kind" (consumer.kind = Tracer.Consumer);
+  require "producer kind" (producer.kind = Eta_observability.Tracer.Producer);
+  require "consumer kind" (consumer.kind = Eta_observability.Tracer.Consumer);
   require "current consumer name"
     (String.equal consumed.Capabilities.name "events.consume");
   require "consumer event"
@@ -73,10 +73,10 @@ let verify (published : Capabilities.span_info) (consumed : Capabilities.span_in
 let () =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ()
   in
   match Eta_eio.Runtime.run rt program with

@@ -950,7 +950,7 @@ let telemetry_response ?(finish_reasons = [ Stop ]) () =
     raw = None;
   }
 
-let span_attr key (span : Eta.Tracer.span) = List.assoc_opt key span.attrs
+let span_attr key (span : Eta_observability.Tracer.span) = List.assoc_opt key span.attrs
 
 let require_span_attr span key expected =
   Alcotest.(check (option string)) key (Some expected) (span_attr key span)
@@ -958,7 +958,7 @@ let require_span_attr span key expected =
 let find_span spans name pred =
   match
     List.find_opt
-      (fun (span : Eta.Tracer.span) -> String.equal span.name name && pred span)
+      (fun (span : Eta_observability.Tracer.span) -> String.equal span.name name && pred span)
       spans
   with
   | Some span -> span
@@ -973,10 +973,10 @@ let test_telemetry_chat_span_records_genai_attrs_only () =
   in
   Alcotest.(check (option string)) "response" (Some "chatcmpl_fixture")
     response.id;
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check int) "span count" 1 (List.length spans);
   let span = find_span spans "chat gpt-4o-mini" (fun _ -> true) in
-  Alcotest.(check bool) "kind" true (span.kind = Eta.Tracer.Client);
+  Alcotest.(check bool) "kind" true (span.kind = Eta_observability.Tracer.Client);
   require_span_attr span "gen_ai.operation.name" "chat";
   require_span_attr span "gen_ai.provider.name" "stream-fixture";
   require_span_attr span "gen_ai.request.model" "gpt-4o-mini";
@@ -1036,7 +1036,7 @@ let test_telemetry_streaming_and_embeddings_spans () =
            (Eta.Effect.pure embedding_response)
          |> Eta.Effect.map ignore;
        ]);
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   let streaming =
     find_span spans "chat gpt-4o-mini" (fun span ->
         span_attr "gen_ai.request.stream" span = Some "true")
@@ -1053,7 +1053,7 @@ let test_telemetry_streaming_and_embeddings_spans () =
 let test_telemetry_tool_span_parent_and_transport_suppression () =
   with_traced_runtime @@ fun rt tracer ->
   let hidden_http =
-    Eta.Effect.named ~kind:Eta.Capabilities.Client "HTTP POST"
+    Eta_observability.named ~kind:Eta.Capabilities.Client "HTTP POST"
       Eta.Effect.unit
     |> suppress_provider_transport_observability
   in
@@ -1069,10 +1069,10 @@ let test_telemetry_tool_span_parent_and_transport_suppression () =
   ignore
     (run_ok rt "tool telemetry"
        (with_chat_span stream_provider (telemetry_request ()) body));
-  let spans = Eta.Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool) "no HTTP span" false
     (List.exists
-       (fun (span : Eta.Tracer.span) -> String.equal span.name "HTTP POST")
+       (fun (span : Eta_observability.Tracer.span) -> String.equal span.name "HTTP POST")
        spans);
   let parent =
     find_span spans "chat gpt-4o-mini" (fun span ->
@@ -1097,14 +1097,14 @@ let test_telemetry_error_type_attr () =
   | Eta.Exit.Ok _ -> Alcotest.fail "expected telemetry failure"
   | Eta.Exit.Error _ -> ());
   let span =
-    find_span (Eta.Tracer.dump tracer) "chat gpt-4o-mini" (fun _ -> true)
+    find_span (Eta_observability.Tracer.dump tracer) "chat gpt-4o-mini" (fun _ -> true)
   in
   require_span_attr span "error.type" "unsupported";
   match span.status with
-  | Eta.Tracer.Error _ -> ()
+  | Eta_observability.Tracer.Error _ -> ()
   | _ -> Alcotest.fail "expected error span status"
 
-let span_contains_secret secret (span : Eta.Tracer.span) =
+let span_contains_secret secret (span : Eta_observability.Tracer.span) =
   contains_substring ~needle:secret span.name
   || List.exists
        (fun (key, value) ->
@@ -1112,7 +1112,7 @@ let span_contains_secret secret (span : Eta.Tracer.span) =
          || contains_substring ~needle:secret value)
        span.attrs
 
-let log_contains_secret secret (record : Eta.Logger.record) =
+let log_contains_secret secret (record : Eta_observability.Logger.record) =
   contains_substring ~needle:secret record.body
   || List.exists
        (fun (key, value) ->
@@ -1126,7 +1126,7 @@ let test_api_key_not_recorded_in_spans_or_logs () =
   let key = api_key secret in
   let body =
     let _headers = stream_provider.auth_headers key in
-    Eta.Effect.log
+    Eta_observability.log
       ~attrs:[ ("authorization", "Bearer " ^ Eta_redacted.value key) ]
       "hidden transport log"
     |> suppress_provider_transport_observability
@@ -1135,8 +1135,8 @@ let test_api_key_not_recorded_in_spans_or_logs () =
   ignore
     (run_ok rt "redacted telemetry"
        (with_chat_span stream_provider (telemetry_request ()) body));
-  let spans = Eta.Tracer.dump tracer in
-  let logs = Eta.Logger.dump logger in
+  let spans = Eta_observability.Tracer.dump tracer in
+  let logs = Eta_observability.Logger.dump logger in
   Alcotest.(check int) "transport logs suppressed" 0 (List.length logs);
   Alcotest.(check bool) "secret absent from spans" false
     (List.exists (span_contains_secret secret) spans);

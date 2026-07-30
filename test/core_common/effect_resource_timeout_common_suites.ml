@@ -83,7 +83,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     wait_until (fun () -> B.sleeper_count clock >= expected)
 
   let mark trail name =
-    E.named name (E.sync (fun () -> trail := name :: !trail))
+    Eta_observability.named name (E.sync (fun () -> trail := name :: !trail))
 
   let test_acquire_release () =
     B.with_runtime @@ fun _ctx rt ->
@@ -156,9 +156,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let daemon_body = E.sync (fun () -> failwith "daemon crash") in
     run_ok rt (Spi.daemon daemon_body);
     B.drain rt;
-    match Logger.dump logger with
+    match Eta_observability.Logger.dump logger with
     | [ record ] ->
-        Alcotest.(check bool) "level" true (record.level = Logger.Error);
+        Alcotest.(check bool) "level" true (record.level = Eta_observability.Logger.Error);
         Alcotest.(check string) "body" "eta.daemon.failure" record.body;
         Alcotest.(check (option string))
           "exception message" (Some "Failure(\"daemon crash\")")
@@ -173,7 +173,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.drain rt;
     Alcotest.(check int)
       "no daemon diagnostics" 0
-      (List.length (Logger.dump logger))
+      (List.length (Eta_observability.Logger.dump logger))
 
   let test_acquire_release_on_failure () =
     B.with_runtime @@ fun _ctx rt ->
@@ -364,15 +364,15 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       E.with_scope
         (E.acquire_use_release
            ~acquire:
-             (E.named "acquire_use_release.acquire.cancelled"
+             (Eta_observability.named "acquire_use_release.acquire.cancelled"
                 (E.sync (fun () -> B.resolve acquired_u ())))
            ~release:(fun () ->
-             E.named "acquire_use_release.release.cancelled"
+             Eta_observability.named "acquire_use_release.release.cancelled"
                (E.sync (fun () -> incr released)))
            (fun () -> E.pure "slow" |> E.delay (Duration.seconds 10)))
     in
     let fast =
-      E.named "wait-acquire-use-release-acquired" (B.await_effect acquired)
+      Eta_observability.named "wait-acquire-use-release-acquired" (B.await_effect acquired)
       |> E.map (fun () -> "fast")
     in
     let promise = B.fork_run ctx rt (E.race [ slow; fast ]) in

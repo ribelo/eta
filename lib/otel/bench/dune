@@ -1,6 +1,6 @@
 (executable
  (name bench_otel)
- (libraries bench_lib eta eta_otel eio_main))
+ (libraries bench_lib eta eta_observability eta_otel eio_main))
 
 (rule
  (alias bench)

@@ -177,20 +177,20 @@ Use `Eta_blocking.run` when the callback returns an ordinary value, and
 ## PPX Helpers
 
 The optional `ppx_eta` package provides small syntax helpers. They expand to
-ordinary `Effect` and object code; they do not infer services, build dependency
-graphs, or add runtime semantics.
+ordinary `Eta.Effect`, `Eta_observability`, and object code; they do not infer
+services, build dependency graphs, or add runtime semantics.
 
 ```ocaml
 let load_user id =
   [%eta.fn
-    (Effect.named "db.query" (Effect.sync (fun () -> Db.user id)))]
+    (Eta_observability.named "db.query" (Effect.sync (fun () -> Db.user id)))]
 ```
 
 It expands to:
 
 ```ocaml
-Effect.fn __POS__ __FUNCTION__
-  (Effect.named "db.query" (Effect.sync (fun () -> Db.user id)))
+Eta_observability.fn __POS__ __FUNCTION__
+  (Eta_observability.named "db.query" (Effect.sync (fun () -> Db.user id)))
 ```
 
 Leaf effects use ordinary OCaml captures:
@@ -200,8 +200,8 @@ let current_user auth =
   [%eta.sync "auth.current_user" (Auth.current_user auth)]
 ```
 
-This expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named ... (Effect.sync ...))`, with a
-zero-argument callback.
+This expands to `Eta_observability.fn __POS__ __FUNCTION__
+(Eta_observability.named ... (Effect.sync ...))`, with a zero-argument callback.
 
 Result-returning leaves use the same shape with `[%eta.result]`:
 
@@ -209,7 +209,7 @@ Result-returning leaves use the same shape with `[%eta.result]`:
 let user = [%eta.result "db.find" (Db.find db id)]
 ```
 
-It expands to `Effect.fn __POS__ __FUNCTION__ (Effect.named "db.find"
+It expands to `Eta_observability.fn __POS__ __FUNCTION__ (Eta_observability.named "db.find"
 (Effect.sync_result (fun () -> Db.find db id)))`. The string is the span name;
 `Ok` succeeds, `Error` is typed failure, and raises become `Cause.Die`. Use
 `Effect.from_result` for already-computed results; keep hand-written
@@ -221,6 +221,9 @@ Use it by adding `ppx_eta` to your test or executable preprocessors:
 (preprocess
  (pps ppx_eta))
 ```
+
+The rewritten target must also list `eta_observability` in its `libraries`,
+because generated `fn` and `named` calls use that optional package.
 
 ### Derived typed-error printers
 
@@ -235,7 +238,7 @@ type err =
 [@@deriving eta_error]
 
 let save =
-  Effect.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
+  Eta_observability.named ~error_pp:pp_err "db.save" (Effect.fail (`Db 7))
 ```
 
 Put the deriving annotation on the declaration in both the `.ml` and `.mli`.
@@ -277,8 +280,8 @@ rows, inherited rows, and multi-value/tuple payloads are outside version 1 and
 are rejected at PPX time rather than rendered as placeholders.
 
 Derivation does not install ambient policy. Pass the generated function through
-`?error_pp` on `Effect.named` / `Effect.fn`, or explicitly scope it with
-`Effect.with_error_pp`. As with every Eta error printer, it must be total: a
+`?error_pp` on `Eta_observability.named` / `Eta_observability.fn`, or explicitly scope it with
+`Eta_observability.with_error_pp`. As with every Eta error printer, it must be total: a
 raising printer becomes a defect through the ordinary runtime capture path.
 
 For Eta SQL (`eta_sql`), the separate `ppx_eta_sql` package provides optional
@@ -315,9 +318,9 @@ on success, typed failure, unchecked defect, and cancellation.
 
 ```ocaml
 let with_db =
-  let acquire = Effect.named "db.open" (Effect.sync (fun () -> Db.open_)) in
+  let acquire = Eta_observability.named "db.open" (Effect.sync (fun () -> Db.open_)) in
   let release handle =
-    Effect.named "db.close" (Effect.sync (fun () -> Db.close handle))
+    Eta_observability.named "db.close" (Effect.sync (fun () -> Db.close handle))
   in
   Effect.with_resource ~acquire ~release
 ```
@@ -490,14 +493,15 @@ wrap secrets in `Redacted.t` at the source and call `Redacted.value` or
 
 ## Trace Propagation
 
-Tracing is configured on the runtime. The root `eta` package ships built-in
-noop and in-memory tracers:
+Tracing is configured on the runtime. `eta_observability` ships the public
+in-memory tracer; root `eta` uses a private noop capability when none is
+installed:
 
 ```ocaml
-let tracer = Eta.Tracer.in_memory ()
+let tracer = Eta_observability.Tracer.in_memory ()
 
 let rt =
-  Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta.Tracer.as_capability tracer) ()
+  Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
 ```
 
 Production exporters such as OpenTelemetry live in optional packages:
@@ -510,7 +514,7 @@ let rt =
 Observability is pay-as-you-go. A runtime created without tracer, logger, or
 meter capabilities uses Eta's noop sinks and cuts off tracing/logging/metrics
 inside the core interpreter before records enter eta_otel queues or OTLP/JSON
-encoding. `Effect.named` still keeps Eta diagnostics such as defect span names
+encoding. `Eta_observability.named` still keeps Eta diagnostics such as defect span names
 and annotations, so use it where that context is useful rather than as a
 per-element marker in the hottest loops.
 
@@ -519,14 +523,14 @@ unless a named effect supplies a typed renderer:
 
 ```ocaml
 let save =
-  Effect.named
+  Eta_observability.named
     ~error_pp:(fun fmt -> function
       | `Db code -> Format.fprintf fmt "db:%d" code)
     "db.save"
     (Effect.fail (`Db 42))
 ```
 
-Use `Effect.with_error_pp` when several named spans share the same error
+Use `Eta_observability.with_error_pp` when several named spans share the same error
 channel. The renderer is scoped to that effect subtree; caught inner errors keep
 the conservative default unless they provide their own renderer.
 
@@ -537,27 +541,27 @@ let load_rows : (int list, [ `Fetch_failed ]) Effect.t =
   Effect.pure [ 1; 2; 3 ]
 
 let load_assets =
-  Effect.fn
+  Eta_observability.fn
     ~attrs:[ ("component", "ingest"); ("source", "yahoo") ]
     __POS__ __FUNCTION__
-    (Effect.with_result_attrs
+    (Eta_observability.with_result_attrs
        ~ok_attrs:(fun rows ->
          [ ("result", "ok"); ("row_count", string_of_int (List.length rows)) ])
        ~err_attrs:(fun `Fetch_failed -> [ ("result", "fetch_failed") ])
        load_rows)
 ```
 
-Use `Effect.event` for structured markers on the active span:
+Use `Eta_observability.event` for structured markers on the active span:
 
 ```ocaml
 let symbol = "AAPL"
 
 let progress =
-  Effect.event ~attrs:[ ("asset", symbol) ] "ingest.assets.progress"
+  Eta_observability.event ~attrs:[ ("asset", symbol) ] "ingest.assets.progress"
 ```
 
-`Effect.event` is not a log record. It is dropped when no span is active. Put
-`with_result_attrs` inside `Effect.named` or `Effect.fn`; outcome attributes are
+`Eta_observability.event` is not a log record. It is dropped when no span is active. Put
+`with_result_attrs` inside `Eta_observability.named` or `Eta_observability.fn`; outcome attributes are
 also dropped when the wrapped effect settles outside an active span.
 
 At service boundaries, extract W3C headers and install the context around the
@@ -565,10 +569,10 @@ request effect:
 
 ```ocaml
 let handle headers =
-  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
-  match Trace_context.extract headers with
+  let body = Eta_observability.named ~kind:Capabilities.Server "http.request" work in
+  match Eta_observability.Trace_context.extract headers with
   | None -> body
-  | Some ctx -> Effect.with_context ctx body
+  | Some ctx -> Eta_observability.with_context ctx body
 ```
 
 For eta_http request values, use the request helper instead of reaching into
@@ -576,24 +580,24 @@ the header list:
 
 ```ocaml
 let handle_request request =
-  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
+  let body = Eta_observability.named ~kind:Capabilities.Server "http.request" work in
   match Eta_http.Trace_context.extract_request request with
   | None -> body
-  | Some ctx -> Effect.with_context ctx body
+  | Some ctx -> Eta_observability.with_context ctx body
 ```
 
 Inside the request, outbound clients can read and inject the current context:
 
 ```ocaml
 let outbound_headers =
-  Effect.current_context
+  Eta_observability.current_context
   |> Effect.map (function
        | None -> []
-       | Some ctx -> Trace_context.inject ctx)
+       | Some ctx -> Eta_observability.Trace_context.inject ctx)
 ```
 
-`Effect.with_context` preserves the W3C sampled flag, `tracestate`, and
-`baggage`. `Effect.with_external_parent` remains as a compatibility helper
+`Eta_observability.with_context` preserves the W3C sampled flag, `tracestate`, and
+`baggage`. `Eta_observability.with_external_parent` remains as a compatibility helper
 when only a trace ID and parent span ID are available.
 
 ## Development

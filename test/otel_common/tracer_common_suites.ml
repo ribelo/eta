@@ -43,13 +43,13 @@ let attr key attrs = List.assoc_opt key attrs
 let test_with_span () =
   with_traced_runtime @@ fun rt tracer ->
   let prog =
-    Effect.named "ok" Effect.current_span
+    Eta_observability.named "ok" Eta_observability.current_span
   in
   match run_ok rt prog with
   | Some info ->
       Alcotest.(check string) "name visible from inside span" "ok"
         (info : Capabilities.span_info).name;
-      let dumped = Tracer.dump tracer in
+      let dumped = Eta_observability.Tracer.dump tracer in
       Alcotest.(check int) "one span emitted" 1 (List.length dumped)
   | None -> Alcotest.fail "current_span returned None inside withSpan"
 
@@ -66,17 +66,17 @@ let test_with_span_links () =
   (* First, run a span "B" so we have a real (in-memory) span we can refer
      to. The in-memory tracer doesn't mint hex ids, so we synthesize a
      placeholder. In a real OTLP run those would be the actual hex ids. *)
-  let _ = run_ok rt (Effect.named "B" Effect.unit) in
+  let _ = run_ok rt (Eta_observability.named "B" Effect.unit) in
   let linked_trace_id = "00000000000000000000000000000001" in
   let linked_span_id = "0000000000000001" in
   let prog =
-    Effect.named "A" Effect.current_span
-    |> Effect.link_span ~trace_id:linked_trace_id ~span_id:linked_span_id
+    Eta_observability.named "A" Eta_observability.current_span
+    |> Eta_observability.link_span ~trace_id:linked_trace_id ~span_id:linked_span_id
   in
   let _ = run_ok rt prog in
-  match Tracer.dump tracer with
+  match Eta_observability.Tracer.dump tracer with
   | [ _b; a ] ->
-      Alcotest.(check string) "outer span name" "A" a.Tracer.name;
+      Alcotest.(check string) "outer span name" "A" a.Eta_observability.Tracer.name;
       Alcotest.(check int) "exactly one link" 1 (List.length a.links);
       let link = List.hd a.links in
       Alcotest.(check string) "linked trace id" linked_trace_id
@@ -96,16 +96,16 @@ let test_with_span_links () =
 let test_nested_with_span_parent_chain () =
   with_traced_runtime @@ fun rt tracer ->
   let prog =
-    Effect.named "parent"
-      (Effect.named "child" Effect.current_span)
+    Eta_observability.named "parent"
+      (Eta_observability.named "child" Eta_observability.current_span)
   in
   let inner = run_ok rt prog in
   Alcotest.check (Alcotest.option Alcotest.string) "child name"
     (Some "child")
     (Option.map (fun (s : Capabilities.span_info) -> s.name) inner);
-  let dumped = Tracer.dump tracer in
+  let dumped = Eta_observability.Tracer.dump tracer in
   let by_name name =
-    List.find (fun s -> s.Tracer.name = name) dumped
+    List.find (fun s -> s.Eta_observability.Tracer.name = name) dumped
   in
   let parent = by_name "parent" in
   let child = by_name "child" in
@@ -120,16 +120,16 @@ let test_nested_with_span_parent_chain () =
    AsyncHooksContextManager) carries the active span. Eta uses
    Eio.Fiber.create_key for active-span propagation; there is no global
    context manager and no mutation of OtelApi.context. The closest
-   observable property is `Effect.current_span` returning Some inside a
+   observable property is `Eta_observability.current_span` returning Some inside a
    named span. We assert that here as the Eta equivalent. *)
 (* ------------------------------------------------------------------ *)
 let test_supervisor_sets_context () =
   with_traced_runtime @@ fun rt _tracer ->
   let prog =
-    Effect.named "ok"
+    Eta_observability.named "ok"
       (Effect.bind
-         (fun _ -> Effect.current_span)
-         (Effect.named "yield" (Effect.sync (fun () -> ()))))
+         (fun _ -> Eta_observability.current_span)
+         (Eta_observability.named "yield" (Effect.sync (fun () -> ()))))
   in
   match run_ok rt prog with
   | Some info ->
@@ -146,19 +146,19 @@ let test_supervisor_sets_context () =
    In Effect-TS the assertion is that `Effect.currentSpan` and
    `Tracer.currentOtelSpan` agree on the span identity. Eta does not
    expose an "OtelSpan" object; the closest equivalent is that
-   `Effect.current_span` returns the same identity for repeated reads
+   `Eta_observability.current_span` returns the same identity for repeated reads
    inside the same span. *)
 (* ------------------------------------------------------------------ *)
 let test_current_otel_span () =
   with_traced_runtime @@ fun rt _tracer ->
   let prog =
-    Effect.named "ok"
+    Eta_observability.named "ok"
       (Effect.bind
          (fun first ->
            Effect.bind
              (fun second -> Effect.pure (first, second))
-             Effect.current_span)
-         Effect.current_span)
+             Eta_observability.current_span)
+         Eta_observability.current_span)
   in
   match run_ok rt prog with
   | first, second ->
@@ -170,14 +170,14 @@ let test_current_otel_span () =
 let test_records_every_pretty_error () =
   with_traced_runtime @@ fun rt tracer ->
   let prog =
-    Effect.named "error-span"
+    Eta_observability.named "error-span"
       (Effect.race [ Effect.fail `First; Effect.fail `Second ])
   in
   let _ = B.run rt prog in
-  match Tracer.dump tracer with
+  match Eta_observability.Tracer.dump tracer with
   | [ s ] ->
       let exception_events =
-        List.filter (fun ev -> ev.Tracer.ev_name = "exception") s.events
+        List.filter (fun ev -> ev.Eta_observability.Tracer.ev_name = "exception") s.events
       in
       Alcotest.(check int) "two exception events"
         2
@@ -186,10 +186,10 @@ let test_records_every_pretty_error () =
         "cause paths"
         [ "cause.concurrent.0"; "cause.concurrent.1" ]
         (List.filter_map
-           (fun ev -> attr "eta.cause.path" ev.Tracer.ev_attrs)
+           (fun ev -> attr "eta.cause.path" ev.Eta_observability.Tracer.ev_attrs)
            exception_events);
       (match s.status with
-      | Tracer.Error _ -> ()
+      | Eta_observability.Tracer.Error _ -> ()
       | _ -> Alcotest.fail "expected Error status on combined-cause span")
   | spans -> Alcotest.failf "expected one span, got %d" (List.length spans)
 
@@ -201,8 +201,8 @@ let test_with_span_context () =
   let parent_trace = "abcdef0123456789abcdef0123456789" in
   let parent_span = "1122334455667788" in
   let prog =
-    Effect.with_external_parent ~trace_id:parent_trace ~span_id:parent_span
-      (Effect.named "child" Effect.current_span)
+    Eta_observability.with_external_parent ~trace_id:parent_trace ~span_id:parent_span
+      (Eta_observability.named "child" Eta_observability.current_span)
   in
   match run_ok rt prog with
   | Some _ ->
@@ -218,7 +218,7 @@ let test_with_span_context () =
 (* ------------------------------------------------------------------ *)
 let test_not_provided_with_span () =
   B.with_runtime @@ fun _ctx rt ->
-  let prog = Effect.named "ok" Effect.current_span in
+  let prog = Eta_observability.named "ok" Eta_observability.current_span in
   match run_ok rt prog with
   | None ->
       (* noop tracer's inspect always returns None; this matches the

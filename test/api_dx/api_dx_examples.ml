@@ -355,15 +355,15 @@ let supervisor_proposed () =
     }
 
 let observability_current id =
-  Effect.named "request"
-    (Effect.log "request.started"
+  Eta_observability.named "request"
+    (Eta_observability.log "request.started"
     |> Effect.bind (fun () ->
-           Effect.metric_update ~name:"requests"
+           Eta_observability.metric_update ~name:"requests"
              ~kind:(Eta.Capabilities.Counter { monotonic = true })
              (Eta.Capabilities.Number (Eta.Capabilities.Int 1))
            |> Effect.bind (fun () ->
                   load_user_proposed id
-                  |> Effect.with_result_attrs
+                  |> Eta_observability.with_result_attrs
                        ~ok_attrs:(fun user ->
                          [ ("result", "ok"); ("user", user.Domain.id) ])
                        ~err_attrs:(function
@@ -376,15 +376,15 @@ let observability_current id =
 
 let observability_proposed id =
   let open Syntax in
-  Effect.named "request"
-    (let* () = Effect.log "request.started" in
+  Eta_observability.named "request"
+    (let* () = Eta_observability.log "request.started" in
      let* () =
-       Effect.metric_update ~name:"requests"
+       Eta_observability.metric_update ~name:"requests"
          ~kind:(Eta.Capabilities.Counter { monotonic = true })
          (Eta.Capabilities.Number (Eta.Capabilities.Int 1))
      in
      load_user_proposed id
-     |> Effect.with_result_attrs
+     |> Eta_observability.with_result_attrs
           ~ok_attrs:(fun user ->
             [ ("result", "ok"); ("user", user.Domain.id) ])
           ~err_attrs:(function
@@ -404,16 +404,16 @@ type metric_stats = {
 
 let metric_updates_of_stats stats =
   [
-    Effect.metric ~name:"pool.active" ~unit_:"{connection}"
+    Eta_observability.metric ~name:"pool.active" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_active));
-    Effect.metric ~name:"pool.idle" ~unit_:"{connection}"
+    Eta_observability.metric ~name:"pool.idle" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_idle));
-    Effect.metric ~name:"pool.waiting" ~unit_:"{waiter}"
+    Eta_observability.metric ~name:"pool.waiting" ~unit_:"{waiter}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_waiting));
-    Effect.metric ~name:"pool.max_size" ~unit_:"{connection}"
+    Eta_observability.metric ~name:"pool.max_size" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_max_size));
   ]
@@ -422,54 +422,54 @@ let metric_batch_current snapshot =
   let open Syntax in
   let* stats = Effect.sync snapshot in
   let* () =
-    Effect.metric_update ~name:"pool.active" ~unit_:"{connection}"
+    Eta_observability.metric_update ~name:"pool.active" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_active))
   in
   let* () =
-    Effect.metric_update ~name:"pool.idle" ~unit_:"{connection}"
+    Eta_observability.metric_update ~name:"pool.idle" ~unit_:"{connection}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_idle))
   in
   let* () =
-    Effect.metric_update ~name:"pool.waiting" ~unit_:"{waiter}"
+    Eta_observability.metric_update ~name:"pool.waiting" ~unit_:"{waiter}"
       ~kind:Eta.Capabilities.Gauge
       (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_waiting))
   in
-  Effect.metric_update ~name:"pool.max_size" ~unit_:"{connection}"
+  Eta_observability.metric_update ~name:"pool.max_size" ~unit_:"{connection}"
     ~kind:Eta.Capabilities.Gauge
     (Eta.Capabilities.Number (Eta.Capabilities.Int stats.metric_max_size))
 
 let metric_batch_proposed snapshot =
-  Effect.metric_updates_lazy (fun () ->
+  Eta_observability.metric_updates_lazy (fun () ->
       snapshot () |> metric_updates_of_stats)
 
 let observability_controls_current ~tracing_enabled ~expensive_attrs hidden =
   let attrs = if tracing_enabled then expensive_attrs () else [] in
-  Effect.named "visible"
-    (Effect.annotate_all attrs
-       (hidden |> Effect.bind (fun () -> Effect.event "visible.done")))
+  Eta_observability.named "visible"
+    (Eta_observability.annotate_all attrs
+       (hidden |> Effect.bind (fun () -> Eta_observability.event "visible.done")))
 
 let observability_controls_proposed expensive_attrs hidden =
   let open Syntax in
-  Effect.named "visible"
-    (let* tracing = Effect.is_tracing_enabled in
+  Eta_observability.named "visible"
+    (let* tracing = Eta_observability.is_tracing_enabled in
      let* () =
-       Effect.annotate_all_lazy expensive_attrs
-         (Effect.event "visible.done")
+       Eta_observability.annotate_all_lazy expensive_attrs
+         (Eta_observability.event "visible.done")
      in
-     let* () = Effect.suppress_observability hidden in
+     let* () = Eta_observability.suppress_observability hidden in
      Effect.pure tracing)
 
 let observability_sinks_proposed () =
-  let tracer = Eta.Tracer.in_memory () in
-  let logger = Eta.Logger.in_memory () in
-  let meter = Eta.Meter.in_memory () in
-  let _tracer_capability = Eta.Tracer.as_capability tracer in
-  let _logger_capability = Eta.Logger.as_capability logger in
-  let _meter_capability = Eta.Meter.as_capability meter in
-  Eta.Tracer.retain_recent tracer ~max:1;
-  (Eta.Tracer.dump tracer, Eta.Logger.dump logger, Eta.Meter.dump meter)
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
+  let _tracer_capability = Eta_observability.Tracer.as_capability tracer in
+  let _logger_capability = Eta_observability.Logger.as_capability logger in
+  let _meter_capability = Eta_observability.Meter.as_capability meter in
+  Eta_observability.Tracer.retain_recent tracer ~max:1;
+  (Eta_observability.Tracer.dump tracer, Eta_observability.Logger.dump logger, Eta_observability.Meter.dump meter)
 
 let background_shutdown_proposed worker request_stop wait_finished =
   let open Syntax in
@@ -957,9 +957,9 @@ let log_level_current threshold_raw level_raw =
 
 let log_level_proposed threshold_raw level_raw =
   match
-    (Eta.Log_level.of_string threshold_raw, Eta.Log_level.of_string level_raw)
+    (Eta_observability.Log_level.of_string threshold_raw, Eta_observability.Log_level.of_string level_raw)
   with
-  | Some threshold, Some at -> Eta.Log_level.is_enabled ~at ~threshold
+  | Some threshold, Some at -> Eta_observability.Log_level.is_enabled ~at ~threshold
   | _ -> false
 
 let log_level_boundary_current level severity =
@@ -986,10 +986,10 @@ let log_level_boundary_current level severity =
   (rendered, otel, from_otel)
 
 let log_level_boundary_proposed level severity =
-  let rendered = Eta.Log_level.to_string level in
-  let otel = Eta.Log_level.to_otel_severity level in
-  let from_otel = Eta.Log_level.of_otel_severity severity in
-  let display = Format.asprintf "%a" Eta.Log_level.pp from_otel in
+  let rendered = Eta_observability.Log_level.to_string level in
+  let otel = Eta_observability.Log_level.to_otel_severity level in
+  let from_otel = Eta_observability.Log_level.of_otel_severity severity in
+  let display = Format.asprintf "%a" Eta_observability.Log_level.pp from_otel in
   (rendered, otel, display)
 
 let sampler_current trace_id parent_sampled =
@@ -1011,16 +1011,16 @@ let trace_context_current headers body =
   | Some traceparent when String.length traceparent >= 55 ->
       let trace_id = String.sub traceparent 3 32 in
       let span_id = String.sub traceparent 36 16 in
-      Effect.with_external_parent ~trace_id ~span_id body
+      Eta_observability.with_external_parent ~trace_id ~span_id body
   | _ -> body
 
 let trace_context_proposed headers body =
   let open Syntax in
   let* ctx =
-    Eta.Trace_context.extract headers
+    Eta_observability.Trace_context.extract headers
     |> Effect.from_option ~if_none:`Bad_trace_context
   in
-  Effect.with_context ctx body
+  Eta_observability.with_context ctx body
 
 let trace_context_injection_current ctx =
   let flags = Printf.sprintf "%02x" ctx.Eta.Capabilities.trace_flags in
@@ -1041,14 +1041,14 @@ let trace_context_injection_current ctx =
 
 let trace_context_injection_proposed () =
   let open Syntax in
-  let* current = Effect.current_context in
+  let* current = Eta_observability.current_context in
   match current with
   | None -> Effect.fail `Missing_context
-  | Some ctx -> Effect.pure (Eta.Trace_context.inject ctx)
+  | Some ctx -> Effect.pure (Eta_observability.Trace_context.inject ctx)
 
 let span_link_current published consume =
-  Effect.named ~kind:Eta.Capabilities.Consumer "consume"
-    (Effect.annotate_all
+  Eta_observability.named ~kind:Eta.Capabilities.Consumer "consume"
+    (Eta_observability.annotate_all
        [
          ("linked.trace_id", published.Eta.Capabilities.trace_id);
          ("linked.span_id", published.span_id);
@@ -1056,9 +1056,9 @@ let span_link_current published consume =
        consume)
 
 let span_link_proposed published consume =
-  Effect.link_span ~trace_id:published.Eta.Capabilities.trace_id
+  Eta_observability.link_span ~trace_id:published.Eta.Capabilities.trace_id
     ~span_id:published.span_id
-    (Effect.named ~kind:Eta.Capabilities.Consumer "consume" consume)
+    (Eta_observability.named ~kind:Eta.Capabilities.Consumer "consume" consume)
 
 let exit_cause_current exit =
   match exit with
@@ -1138,18 +1138,18 @@ let manual_resource_proposed load =
 
 let source_location_current (file, line, col_start, col_end) name attrs body =
   let loc = Printf.sprintf "%s:%d:%d-%d" file line col_start col_end in
-  Effect.named name
-    (Effect.annotate ~key:"loc" ~value:loc (Effect.annotate_all attrs body))
+  Eta_observability.named name
+    (Eta_observability.annotate ~key:"loc" ~value:loc (Eta_observability.annotate_all attrs body))
 
 let source_location_proposed attrs body =
-  Effect.fn ~attrs __POS__ __FUNCTION__ body
+  Eta_observability.fn ~attrs __POS__ __FUNCTION__ body
 
 let error_rendering_current name err =
-  Effect.named name (Effect.fail err)
+  Eta_observability.named name (Effect.fail err)
 
 let error_rendering_proposed render_error name err =
   let pp fmt err = Format.pp_print_string fmt (render_error err) in
-  Effect.with_error_pp pp (Effect.named name (Effect.fail err))
+  Eta_observability.with_error_pp pp (Eta_observability.named name (Effect.fail err))
 
 let tap_success_current audit body =
   body |> Effect.bind (fun value -> audit value |> Effect.map (fun () -> value))
@@ -1402,26 +1402,26 @@ Effect.with_scope
       variant = "current";
       code =
         {|let loc = Printf.sprintf "%s:%d:%d-%d" file line col_start col_end in
-Effect.named name
-  (Effect.annotate ~key:"loc" ~value:loc
-     (Effect.annotate_all attrs body))|};
+Eta_observability.named name
+  (Eta_observability.annotate ~key:"loc" ~value:loc
+     (Eta_observability.annotate_all attrs body))|};
     };
     {
       area = "source_location";
       variant = "proposed";
-      code = {|Effect.fn ~attrs __POS__ __FUNCTION__ body|};
+      code = {|Eta_observability.fn ~attrs __POS__ __FUNCTION__ body|};
     };
     {
       area = "error_rendering";
       variant = "current";
-      code = {|Effect.named "payment.charge" (Effect.fail (`Declined reason))|};
+      code = {|Eta_observability.named "payment.charge" (Effect.fail (`Declined reason))|};
     };
     {
       area = "error_rendering";
       variant = "proposed";
       code =
-        {|Effect.with_error_pp render_payment_error
-  (Effect.named "payment.charge" (Effect.fail (`Declined reason)))|};
+        {|Eta_observability.with_error_pp render_payment_error
+  (Eta_observability.named "payment.charge" (Effect.fail (`Declined reason)))|};
     };
     {
       area = "tap_success";
@@ -1945,8 +1945,8 @@ match (rank (String.uppercase_ascii threshold), rank (String.uppercase_ascii lev
       area = "log_level";
       variant = "proposed";
       code =
-        {|match (Log_level.of_string threshold, Log_level.of_string level) with
-| Some threshold, Some at -> Log_level.is_enabled ~at ~threshold
+        {|match (Eta_observability.Log_level.of_string threshold, Eta_observability.Log_level.of_string level) with
+| Some threshold, Some at -> Eta_observability.Log_level.is_enabled ~at ~threshold
 | _ -> false|};
     };
     {
@@ -1974,10 +1974,10 @@ in
       area = "log_level_boundary";
       variant = "proposed";
       code =
-        {|let rendered = Log_level.to_string level in
-let otel = Log_level.to_otel_severity level in
-let from_otel = Log_level.of_otel_severity severity in
-let display = Format.asprintf "%a" Log_level.pp from_otel in
+        {|let rendered = Eta_observability.Log_level.to_string level in
+let otel = Eta_observability.Log_level.to_otel_severity level in
+let from_otel = Eta_observability.Log_level.of_otel_severity severity in
+let display = Format.asprintf "%a" Eta_observability.Log_level.pp from_otel in
 (rendered, otel, display)|};
     };
     {
@@ -2006,7 +2006,7 @@ Sampler.sample sampler ~trace_id ~name:"request"
 | Some traceparent when String.length traceparent >= 55 ->
     let trace_id = String.sub traceparent 3 32 in
     let span_id = String.sub traceparent 36 16 in
-    Effect.with_external_parent ~trace_id ~span_id body
+    Eta_observability.with_external_parent ~trace_id ~span_id body
 | _ -> body|};
     };
     {
@@ -2015,10 +2015,10 @@ Sampler.sample sampler ~trace_id ~name:"request"
       code =
         {|let open Eta.Syntax in
 let* ctx =
-  Trace_context.extract headers
+  Eta_observability.Trace_context.extract headers
   |> Effect.from_option ~if_none:`Bad_trace_context
 in
-Effect.with_context ctx body|};
+Eta_observability.with_context ctx body|};
     };
     {
       area = "trace_context_injection";
@@ -2043,17 +2043,17 @@ in
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-let* current = Effect.current_context in
+let* current = Eta_observability.current_context in
 match current with
 | None -> Effect.fail `Missing_context
-| Some ctx -> Effect.pure (Trace_context.inject ctx)|};
+| Some ctx -> Effect.pure (Eta_observability.Trace_context.inject ctx)|};
     };
     {
       area = "span_link";
       variant = "current";
       code =
-        {|Effect.named ~kind:Consumer "consume"
-  (Effect.annotate_all
+        {|Eta_observability.named ~kind:Consumer "consume"
+  (Eta_observability.annotate_all
      [ ("linked.trace_id", published.trace_id);
        ("linked.span_id", published.span_id) ]
      consume)|};
@@ -2062,8 +2062,8 @@ match current with
       area = "span_link";
       variant = "proposed";
       code =
-        {|Effect.link_span ~trace_id:published.trace_id ~span_id:published.span_id
-  (Effect.named ~kind:Consumer "consume" consume)|};
+        {|Eta_observability.link_span ~trace_id:published.trace_id ~span_id:published.span_id
+  (Eta_observability.named ~kind:Consumer "consume" consume)|};
     };
     {
       area = "exit_cause";
@@ -2339,26 +2339,26 @@ Effect.with_background
       area = "observability";
       variant = "current";
       code =
-        {|Effect.named "request"
-  (Effect.log "request.started"
+        {|Eta_observability.named "request"
+  (Eta_observability.log "request.started"
    |> Effect.bind (fun () ->
-        Effect.metric_counter ~name:"requests" ~monotonic:true (Int 1)
+        Eta_observability.metric_counter ~name:"requests" ~monotonic:true (Int 1)
         |> Effect.bind (fun () ->
              load_user id
-             |> Effect.with_result_attrs ~ok_attrs ~err_attrs)))|};
+             |> Eta_observability.with_result_attrs ~ok_attrs ~err_attrs)))|};
     };
     {
       area = "observability";
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-Effect.named "request"
-  (let* () = Effect.log "request.started" in
+Eta_observability.named "request"
+  (let* () = Eta_observability.log "request.started" in
    let* () =
-     Effect.metric_counter ~name:"requests" ~monotonic:true (Int 1)
+     Eta_observability.metric_counter ~name:"requests" ~monotonic:true (Int 1)
    in
    load_user id
-   |> Effect.with_result_attrs ~ok_attrs ~err_attrs)|};
+   |> Eta_observability.with_result_attrs ~ok_attrs ~err_attrs)|};
     };
     {
       area = "metric_batch";
@@ -2366,25 +2366,25 @@ Effect.named "request"
       code =
         {|let open Eta.Syntax in
 let* stats = Effect.sync snapshot in
-let* () = Effect.metric_gauge ~name:"pool.active" (Int stats.active) in
-let* () = Effect.metric_gauge ~name:"pool.idle" (Int stats.idle) in
+let* () = Eta_observability.metric_gauge ~name:"pool.active" (Int stats.active) in
+let* () = Eta_observability.metric_gauge ~name:"pool.idle" (Int stats.idle) in
 let* () =
-  Effect.metric_gauge ~name:"pool.waiting" ~unit_:"{waiter}" (Int stats.waiting)
+  Eta_observability.metric_gauge ~name:"pool.waiting" ~unit_:"{waiter}" (Int stats.waiting)
 in
-Effect.metric_gauge ~name:"pool.max_size" (Int stats.max_size)|};
+Eta_observability.metric_gauge ~name:"pool.max_size" (Int stats.max_size)|};
     };
     {
       area = "metric_batch";
       variant = "proposed";
       code =
-        {|Effect.metric_updates_lazy (fun () ->
+        {|Eta_observability.metric_updates_lazy (fun () ->
   let stats = snapshot () in
   [
-    Effect.metric ~name:"pool.active" ~kind:Gauge (Number (Int stats.active));
-    Effect.metric ~name:"pool.idle" ~kind:Gauge (Number (Int stats.idle));
-    Effect.metric ~name:"pool.waiting" ~unit_:"{waiter}" ~kind:Gauge
+    Eta_observability.metric ~name:"pool.active" ~kind:Gauge (Number (Int stats.active));
+    Eta_observability.metric ~name:"pool.idle" ~kind:Gauge (Number (Int stats.idle));
+    Eta_observability.metric ~name:"pool.waiting" ~unit_:"{waiter}" ~kind:Gauge
       (Number (Int stats.waiting));
-    Effect.metric ~name:"pool.max_size" ~kind:Gauge (Number (Int stats.max_size));
+    Eta_observability.metric ~name:"pool.max_size" ~kind:Gauge (Number (Int stats.max_size));
   ])|};
     };
     {
@@ -2392,23 +2392,23 @@ Effect.metric_gauge ~name:"pool.max_size" (Int stats.max_size)|};
       variant = "current";
       code =
         {|let attrs = if tracing_enabled then expensive_attrs () else [] in
-Effect.named "visible"
-  (Effect.annotate_all attrs
+Eta_observability.named "visible"
+  (Eta_observability.annotate_all attrs
      (hidden_export
-      |> Effect.bind (fun () -> Effect.event "visible.done")))|};
+      |> Effect.bind (fun () -> Eta_observability.event "visible.done")))|};
     };
     {
       area = "observability_controls";
       variant = "proposed";
       code =
         {|let open Eta.Syntax in
-Effect.named "visible"
-  (let* tracing = Effect.is_tracing_enabled in
+Eta_observability.named "visible"
+  (let* tracing = Eta_observability.is_tracing_enabled in
    let* () =
-     Effect.annotate_all_lazy expensive_attrs
-       (Effect.event "visible.done")
+     Eta_observability.annotate_all_lazy expensive_attrs
+       (Eta_observability.event "visible.done")
    in
-   let* () = Effect.suppress_observability hidden_export in
+   let* () = Eta_observability.suppress_observability hidden_export in
    Effect.pure tracing)|};
     };
     {
@@ -2434,14 +2434,14 @@ in
       area = "observability_sinks";
       variant = "proposed";
       code =
-        {|let tracer = Tracer.in_memory () in
-let logger = Logger.in_memory () in
-let meter = Meter.in_memory () in
+        {|let tracer = Eta_observability.Tracer.in_memory () in
+let logger = Eta_observability.Logger.in_memory () in
+let meter = Eta_observability.Meter.in_memory () in
 let capabilities =
-  (Tracer.as_capability tracer, Logger.as_capability logger, Meter.as_capability meter)
+  (Eta_observability.Tracer.as_capability tracer, Eta_observability.Logger.as_capability logger, Eta_observability.Meter.as_capability meter)
 in
-Tracer.retain_recent tracer ~max:1;
-(capabilities, Tracer.dump tracer, Logger.dump logger, Meter.dump meter)|};
+Eta_observability.Tracer.retain_recent tracer ~max:1;
+(capabilities, Eta_observability.Tracer.dump tracer, Eta_observability.Logger.dump logger, Eta_observability.Meter.dump meter)|};
     };
     {
       area = "background";
@@ -2684,14 +2684,14 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "source_location proposed example should be a direct fn wrapper";
       if
-        count_sub snippet.code "Effect.fn" <> 1
+        count_sub snippet.code "Eta_observability.fn" <> 1
         || count_sub snippet.code "__POS__" <> 1
         || count_sub snippet.code "__FUNCTION__" <> 1
         || count_sub snippet.code "Printf.sprintf" <> 0
-        || count_sub snippet.code "Effect.annotate" <> 0
+        || count_sub snippet.code "Eta_observability.annotate" <> 0
       then
         failwith
-          "source_location proposed example should use Effect.fn instead of manual loc formatting"
+          "source_location proposed example should use Eta_observability.fn instead of manual loc formatting"
   | ( "error_rendering",
       "proposed",
       (_, _, _, bind, let_star, let_at, from_result) ) ->
@@ -2699,8 +2699,8 @@ let assert_expected_shape snippet =
         failwith
           "error_rendering proposed example should be a direct renderer wrapper";
       if
-        count_sub snippet.code "Effect.with_error_pp" <> 1
-        || count_sub snippet.code "Effect.named" <> 1
+        count_sub snippet.code "Eta_observability.with_error_pp" <> 1
+        || count_sub snippet.code "Eta_observability.named" <> 1
         || count_sub snippet.code "<typed failure>" <> 0
       then
         failwith
@@ -2986,8 +2986,8 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "log_level proposed example should be pure helper usage";
       if
-        count_sub snippet.code "Log_level.of_string" <> 2
-        || count_sub snippet.code "Log_level.is_enabled" <> 1
+        count_sub snippet.code "Eta_observability.Log_level.of_string" <> 2
+        || count_sub snippet.code "Eta_observability.Log_level.is_enabled" <> 1
         || count_sub snippet.code "String.uppercase_ascii" <> 0
       then
         failwith
@@ -2999,10 +2999,10 @@ let assert_expected_shape snippet =
         failwith
           "log_level_boundary proposed example should be pure boundary conversion";
       if
-        count_sub snippet.code "Log_level.to_string" <> 1
-        || count_sub snippet.code "Log_level.to_otel_severity" <> 1
-        || count_sub snippet.code "Log_level.of_otel_severity" <> 1
-        || count_sub snippet.code "Log_level.pp" <> 1
+        count_sub snippet.code "Eta_observability.Log_level.to_string" <> 1
+        || count_sub snippet.code "Eta_observability.Log_level.to_otel_severity" <> 1
+        || count_sub snippet.code "Eta_observability.Log_level.of_otel_severity" <> 1
+        || count_sub snippet.code "Eta_observability.Log_level.pp" <> 1
         || count_sub snippet.code "String.uppercase_ascii" <> 0
         || count_sub snippet.code "severity <" <> 0
       then
@@ -3025,10 +3025,10 @@ let assert_expected_shape snippet =
         failwith
           "trace_context proposed example should extract once and lift the optional context";
       if
-        count_sub snippet.code "Trace_context.extract" <> 1
+        count_sub snippet.code "Eta_observability.Trace_context.extract" <> 1
         || count_sub snippet.code "Effect.from_option" <> 1
-        || count_sub snippet.code "Effect.with_context" <> 1
-        || count_sub snippet.code "Effect.with_external_parent" <> 0
+        || count_sub snippet.code "Eta_observability.with_context" <> 1
+        || count_sub snippet.code "Eta_observability.with_external_parent" <> 0
         || count_sub snippet.code "String.sub" <> 0
       then
         failwith
@@ -3040,8 +3040,8 @@ let assert_expected_shape snippet =
         failwith
           "trace_context_injection proposed example should read the runtime context with let*";
       if
-        count_sub snippet.code "Effect.current_context" <> 1
-        || count_sub snippet.code "Trace_context.inject" <> 1
+        count_sub snippet.code "Eta_observability.current_context" <> 1
+        || count_sub snippet.code "Eta_observability.Trace_context.inject" <> 1
         || count_sub snippet.code "Printf.sprintf" <> 0
         || count_sub snippet.code "String.concat" <> 0
         || count_sub snippet.code "traceparent" <> 0
@@ -3052,9 +3052,9 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "span_link proposed example should be direct span-link metadata";
       if
-        count_sub snippet.code "Effect.link_span" <> 1
-        || count_sub snippet.code "Effect.named" <> 1
-        || count_sub snippet.code "Effect.annotate_all" <> 0
+        count_sub snippet.code "Eta_observability.link_span" <> 1
+        || count_sub snippet.code "Eta_observability.named" <> 1
+        || count_sub snippet.code "Eta_observability.annotate_all" <> 0
         || count_sub snippet.code "linked.trace_id" <> 0
       then
         failwith
@@ -3176,9 +3176,9 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "metric_batch proposed example should be one lazy batch";
       if
-        count_sub snippet.code "Effect.metric_updates_lazy" <> 1
-        || count_sub snippet.code "Effect.metric ~name" <> 4
-        || count_sub snippet.code "Effect.metric_update ~name" <> 0
+        count_sub snippet.code "Eta_observability.metric_updates_lazy" <> 1
+        || count_sub snippet.code "Eta_observability.metric ~name" <> 4
+        || count_sub snippet.code "Eta_observability.metric_update ~name" <> 0
       then
         failwith
           "metric_batch proposed example should prove lazy batch emission and metric descriptors"
@@ -3189,10 +3189,10 @@ let assert_expected_shape snippet =
         failwith
           "observability_controls proposed example should use runtime-aware syntax controls";
       if
-        count_sub snippet.code "Effect.is_tracing_enabled" <> 1
-        || count_sub snippet.code "Effect.annotate_all_lazy" <> 1
-        || count_sub snippet.code "Effect.suppress_observability" <> 1
-        || count_sub snippet.code "Effect.annotate_all " <> 0
+        count_sub snippet.code "Eta_observability.is_tracing_enabled" <> 1
+        || count_sub snippet.code "Eta_observability.annotate_all_lazy" <> 1
+        || count_sub snippet.code "Eta_observability.suppress_observability" <> 1
+        || count_sub snippet.code "Eta_observability.annotate_all " <> 0
       then
         failwith
           "observability_controls proposed example should prove runtime tracing guard, lazy attrs, and suppression"
@@ -3202,13 +3202,13 @@ let assert_expected_shape snippet =
       if bind <> 0 || let_star <> 0 || let_at <> 0 || from_result <> 0 then
         failwith "observability_sinks proposed example should be pure sink setup";
       if
-        count_sub snippet.code "Tracer.in_memory" <> 1
-        || count_sub snippet.code "Logger.in_memory" <> 1
-        || count_sub snippet.code "Meter.in_memory" <> 1
-        || count_sub snippet.code "Tracer.as_capability" <> 1
-        || count_sub snippet.code "Logger.as_capability" <> 1
-        || count_sub snippet.code "Meter.as_capability" <> 1
-        || count_sub snippet.code "Tracer.retain_recent" <> 1
+        count_sub snippet.code "Eta_observability.Tracer.in_memory" <> 1
+        || count_sub snippet.code "Eta_observability.Logger.in_memory" <> 1
+        || count_sub snippet.code "Eta_observability.Meter.in_memory" <> 1
+        || count_sub snippet.code "Eta_observability.Tracer.as_capability" <> 1
+        || count_sub snippet.code "Eta_observability.Logger.as_capability" <> 1
+        || count_sub snippet.code "Eta_observability.Meter.as_capability" <> 1
+        || count_sub snippet.code "Eta_observability.Tracer.retain_recent" <> 1
         || count_sub snippet.code "object" <> 0
         || count_sub snippet.code "ref []" <> 0
       then

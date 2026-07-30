@@ -1,10 +1,10 @@
 open Eta
 
 let quick = `Quick
-let log_level = Alcotest.testable Log_level.pp Log_level.equal
+let log_level = Alcotest.testable Eta_observability.Log_level.pp Eta_observability.Log_level.equal
 
 let test_compare_ordering () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   let expected = [ All; Trace; Debug; Info; Warn; Error; Fatal; Off ] in
   let rec check_pairs = function
     | [] | [ _ ] -> ()
@@ -19,7 +19,7 @@ let test_compare_ordering () =
   Alcotest.(check int) "All < Trace" (-1) (compare All Trace)
 
 let test_equal () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   List.iter
     (fun level ->
       Alcotest.(check bool) "reflexive" true (equal level level))
@@ -49,7 +49,7 @@ let test_equal () =
     all
 
 let test_is_enabled () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   Alcotest.(check bool) "at threshold" true
     (is_enabled ~at:Info ~threshold:Info);
   Alcotest.(check bool) "above threshold" true
@@ -72,20 +72,20 @@ let test_is_enabled () =
     all
 
 let test_all_is_most_verbose () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   Alcotest.(check bool) "All is more verbose than Info" true
     (is_enabled ~at:All ~threshold:Info);
   Alcotest.(check bool) "All is more verbose than Trace" true
     (is_enabled ~at:All ~threshold:Trace)
 
 let test_otel_severity () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   Alcotest.(check int) "info severity" 9 (to_otel_severity Info);
   Alcotest.(check bool) "round-trip 9" true
     (equal Info (of_otel_severity 9))
 
 let test_of_otel_severity_boundaries () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   let cases =
     [
       (1, Trace);
@@ -111,14 +111,14 @@ let test_of_otel_severity_boundaries () =
     cases
 
 let test_of_otel_severity_out_of_range () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   Alcotest.(check bool) "0 -> All" true
     (equal All (of_otel_severity 0));
   Alcotest.(check bool) "100 -> Fatal" true
     (equal Fatal (of_otel_severity 100))
 
 let test_string_roundtrip () =
-  let open Log_level in
+  let open Eta_observability.Log_level in
   List.iter
     (fun level ->
       match of_string (to_string level) with

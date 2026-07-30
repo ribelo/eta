@@ -25,7 +25,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let slow_completed = ref false in
     let slow =
-      Effect.named "slow.done"
+      Eta_observability.named "slow.done"
         (Effect.sync (fun () ->
              slow_completed := true;
              "slow"))
@@ -45,7 +45,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let slow_completed = ref false in
     let slow =
-      Effect.named "nested.done"
+      Eta_observability.named "nested.done"
         (Effect.sync (fun () ->
              slow_completed := true;
              "slow"))
@@ -68,7 +68,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let protected =
       Effect.with_scope
         (Effect.acquire_release ~acquire:Effect.unit ~release:(fun () ->
-             Effect.named "release.done"
+             Eta_observability.named "release.done"
                (Effect.sync (fun () -> released := true))
              |> Effect.delay (Duration.ms 1_000))
         |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) Effect.unit))

@@ -1,6 +1,6 @@
 module Eta = struct
   module Effect = struct
-    let sync_result f = f ()
+    let sync f = f ()
   end
 end
 
@@ -9,10 +9,4 @@ module Eta_observability = struct
   let named _name body = body
 end
 
-module Db = struct
-  let find _db _id = Ok 1
-end
-
-let db = ()
-let id = 1
-let _ = [%eta.result "db.find" (Db.find db id)]
+let _ = [%eta.sync "clock.now" (Sys.time ())]

@@ -56,9 +56,9 @@ let with_runtime_contract f =
 let with_traced_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
-    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+    create_deterministic_runtime ~tracer:(Eta_observability.Tracer.as_capability tracer)
       stdenv sw
   in
   f sw rt tracer
@@ -72,9 +72,9 @@ let with_custom_tracer_runtime tracer f =
 let with_sampled_traced_runtime sampler f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
-    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+    create_deterministic_runtime ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ~sampler stdenv sw
   in
   f sw rt tracer
@@ -82,9 +82,9 @@ let with_sampled_traced_runtime sampler f =
 let with_seeded_sampled_traced_runtime ~seed sampler f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
-    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+    create_deterministic_runtime ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ~sampler ~random:(Eta.Capabilities.random_of_seed seed) stdenv sw
   in
   f sw rt tracer
@@ -92,9 +92,9 @@ let with_seeded_sampled_traced_runtime ~seed sampler f =
 let with_auto_traced_runtime auto_instrument f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
-    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
+    create_deterministic_runtime ~tracer:(Eta_observability.Tracer.as_capability tracer)
       ~auto_instrument stdenv sw
   in
   f sw rt tracer
@@ -102,9 +102,9 @@ let with_auto_traced_runtime auto_instrument f =
 let with_meter_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let meter = Eta.Meter.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let rt =
-    create_deterministic_runtime ~meter:(Eta.Meter.as_capability meter) stdenv
+    create_deterministic_runtime ~meter:(Eta_observability.Meter.as_capability meter) stdenv
       sw
   in
   f sw rt meter
@@ -113,21 +113,21 @@ let with_meter_test_clock f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
-  let meter = Eta.Meter.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
-      ~meter:(Eta.Meter.as_capability meter) ()
+      ~meter:(Eta_observability.Meter.as_capability meter) ()
   in
   f sw clock rt meter
 
 let with_logger_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let rt =
-    create_deterministic_runtime ~logger:(Eta.Logger.as_capability logger)
+    create_deterministic_runtime ~logger:(Eta_observability.Logger.as_capability logger)
       stdenv sw
   in
   f sw rt logger
@@ -135,13 +135,13 @@ let with_logger_runtime f =
 let with_observed_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Eta.Tracer.in_memory () in
-  let logger = Eta.Logger.in_memory () in
-  let meter = Eta.Meter.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let rt =
-    create_deterministic_runtime ~tracer:(Eta.Tracer.as_capability tracer)
-      ~logger:(Eta.Logger.as_capability logger)
-      ~meter:(Eta.Meter.as_capability meter) stdenv sw
+    create_deterministic_runtime ~tracer:(Eta_observability.Tracer.as_capability tracer)
+      ~logger:(Eta_observability.Logger.as_capability logger)
+      ~meter:(Eta_observability.Meter.as_capability meter) stdenv sw
   in
   f sw rt tracer logger meter
 
@@ -167,12 +167,12 @@ let with_traced_test_clock f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer
 

@@ -15,7 +15,7 @@ let program seen =
   |> Effect.tap (fun user ->
          Effect.sync (fun () -> seen := ("loaded:" ^ user.id) :: !seen))
   |> Effect.tap (fun user ->
-         Effect.event ~attrs:[ ("user.id", user.id) ] "user.loaded")
+         Eta_observability.event ~attrs:[ ("user.id", user.id) ] "user.loaded")
   |> Effect.map (fun user -> user.name)
 
 let () =

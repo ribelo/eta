@@ -429,7 +429,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         |> Effect.bind (fun () -> Effect.delay (Duration.ms 10) Effect.unit))
     in
     let fast =
-      Effect.named "fast" (B.yield_effect ())
+      Eta_observability.named "fast" (B.yield_effect ())
       |> Effect.bind (fun () -> Effect.fail `Boom)
     in
     let promise = B.fork_run ctx rt (Effect.par fast slow) in

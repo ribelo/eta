@@ -56,12 +56,12 @@ let with_traced_runtime f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~tracer:(Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f rt tracer
 
@@ -69,12 +69,12 @@ let with_sampled_traced_runtime sampler f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~tracer:(Tracer.as_capability tracer) ~sampler ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ~sampler ()
   in
   f rt tracer
 
@@ -82,12 +82,12 @@ let with_auto_traced_runtime auto_instrument f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~tracer:(Tracer.as_capability tracer) ~auto_instrument ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ~auto_instrument ()
   in
   f rt tracer
 
@@ -108,12 +108,12 @@ let with_logger f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let logger = Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~logger:(Logger.as_capability logger) ()
+      ~logger:(Eta_observability.Logger.as_capability logger) ()
   in
   f sw rt logger
 
@@ -121,12 +121,12 @@ let with_tracer f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~tracer:(Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw rt tracer
 
@@ -134,14 +134,14 @@ let with_logger_and_tracer f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let logger = Logger.in_memory () in
-  let tracer = Tracer.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~logger:(Logger.as_capability logger)
-      ~tracer:(Tracer.as_capability tracer) ()
+      ~logger:(Eta_observability.Logger.as_capability logger)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw rt logger tracer
 
@@ -161,12 +161,12 @@ let with_traced_test_clock f =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
       ~sleep:(Test_clock.sleep clock)
       ~now_ms:(fun () -> Test_clock.now_ms clock)
-      ~tracer:(Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer
 
@@ -232,22 +232,22 @@ let check_concurrent_cause label cause =
       Alcotest.failf "%s: expected Concurrent cause, got %a" label
         (Cause.pp Format.pp_print_string) cause
 
-let attr key span = List.assoc_opt key span.Tracer.attrs
+let attr key span = List.assoc_opt key span.Eta_observability.Tracer.attrs
 
 let link_span_id span =
-  List.map (fun link -> link.Tracer.link_span_id) span.Tracer.links
+  List.map (fun link -> link.Eta_observability.Tracer.link_span_id) span.Eta_observability.Tracer.links
 
 let only_span tracer =
-  match Tracer.dump tracer with
+  match Eta_observability.Tracer.dump tracer with
   | [ span ] -> span
   | spans ->
       Alcotest.failf "expected one span, got %d" (List.length spans)
 
 let check_status name expected actual =
   match (expected, actual) with
-  | Tracer.Ok, Tracer.Ok -> ()
-  | Tracer.Cancelled, Tracer.Cancelled -> ()
-  | Tracer.Error _, Tracer.Error _ -> ()
+  | Eta_observability.Tracer.Ok, Eta_observability.Tracer.Ok -> ()
+  | Eta_observability.Tracer.Cancelled, Eta_observability.Tracer.Cancelled -> ()
+  | Eta_observability.Tracer.Error _, Eta_observability.Tracer.Error _ -> ()
   | _ -> Alcotest.failf "%s: unexpected span status" name
 
 let is_lower_hex ~len value =
@@ -262,7 +262,7 @@ let require_current_span = function
 
 let check_error_message name expected actual =
   match actual with
-  | Tracer.Error msg -> Alcotest.(check string) name expected msg
+  | Eta_observability.Tracer.Error msg -> Alcotest.(check string) name expected msg
   | _ -> Alcotest.failf "%s: expected Error status" name
 
 type observability_err = [ `Boom | `Db of int | `Inner | `Outer ]

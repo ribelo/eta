@@ -17,7 +17,7 @@ let wait_until label f =
 
 let worker stop resolve_done started flushed =
   let open Syntax in
-  Effect.named ~error_pp:pp_error "app.flush"
+  Eta_observability.named ~error_pp:pp_error "app.flush"
     (let* () = Effect.sync (fun () -> started := true) in
      let* () = Effect.sync (fun () -> Eio.Promise.await stop) in
      Effect.sync (fun () ->

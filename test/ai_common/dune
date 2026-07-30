@@ -2,6 +2,7 @@
  (name eta_ai_common_tests)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_http
   eta_redacted

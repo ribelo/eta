@@ -192,14 +192,14 @@ let test_blocking_pending_cancellation_removes_queued_job () =
 let test_blocking_shutdown_detach_started_returns_promptly () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let meter = Meter.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let pool =
     BP.create ~name:"detach"
       (blocking_config ~max_threads:1 ~shutdown_policy:BP.Detach_started ())
   in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~meter:(Meter.as_capability meter) ()
+      ~meter:(Eta_observability.Meter.as_capability meter) ()
   in
   let worker =
     Eio.Fiber.fork_promise ~sw (fun () ->
@@ -215,9 +215,9 @@ let test_blocking_shutdown_detach_started_returns_promptly () =
   Eio_unix.sleep 0.060;
   ignore (Eio.Promise.await_exn worker : (unit, _) Exit.t);
   Alcotest.(check bool) "detached metric" true
-    (Meter.dump meter
+    (Eta_observability.Meter.dump meter
      |> List.exists (fun point ->
-            String.equal point.Meter.name "eta.blocking.run_ms"
+            String.equal point.Eta_observability.Meter.name "eta.blocking.run_ms"
             && List.mem ("eta.blocking.pool", "detach") point.attrs
             && List.exists
                  (fun (k, v) ->
@@ -298,12 +298,12 @@ let test_blocking_cpu_antipattern_has_no_speedup () =
 let test_blocking_observability_labels_and_timings () =
   run_eio @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
-  let tracer = Tracer.in_memory () in
-  let meter = Meter.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let pool = BP.create ~name:"observed" (blocking_config ~max_threads:2 ()) in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock stdenv)
-      ~tracer:(Tracer.as_capability tracer) ~meter:(Meter.as_capability meter)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ~meter:(Eta_observability.Meter.as_capability meter)
       ~auto_instrument:true ()
   in
   run_ok rt
@@ -311,27 +311,27 @@ let test_blocking_observability_labels_and_timings () =
          Unix.sleepf 0.020;
          1))
   |> ignore;
-  let spans = Tracer.dump tracer in
+  let spans = Eta_observability.Tracer.dump tracer in
   Alcotest.(check bool) "span label" true
-    (List.exists (fun span -> String.equal span.Tracer.name "test.label") spans);
+    (List.exists (fun span -> String.equal span.Eta_observability.Tracer.name "test.label") spans);
   Alcotest.(check bool) "trace event" true
     (List.exists
        (fun span ->
          List.exists
            (fun event ->
-             String.equal event.Tracer.ev_name "eta.blocking"
+             String.equal event.Eta_observability.Tracer.ev_name "eta.blocking"
              && List.mem ("eta.blocking.name", "test.label") event.ev_attrs
              && List.mem ("eta.blocking.pool", "observed") event.ev_attrs)
-           span.Tracer.events)
+           span.Eta_observability.Tracer.events)
        spans);
   Alcotest.(check bool) "run timing metric" true
-    (Meter.dump meter
+    (Eta_observability.Meter.dump meter
      |> List.exists (fun point ->
-            String.equal point.Meter.name "eta.blocking.run_ms"
+            String.equal point.Eta_observability.Meter.name "eta.blocking.run_ms"
             && List.mem ("eta.blocking.name", "test.label") point.attrs
             &&
             match point.value with
-            | Meter.Number (Meter.Int ms) -> ms >= 15
+            | Eta_observability.Meter.Number (Eta_observability.Meter.Int ms) -> ms >= 15
             | Number (Float _) | Category _ -> false))
 
 (* P0: Blocking_runtime must preserve native Eio cancellation identity without

@@ -57,7 +57,7 @@ let manual load =
   load |> Effect.map (loaded load)
 
 let failures resource =
-  Effect.named "refreshable.failures"
+  Eta_observability.named "refreshable.failures"
     (Effect.sync (fun () ->
          with_lock resource @@ fun () -> List.rev resource.failures))
 
@@ -68,7 +68,7 @@ let with_auto_impl on_refresh_error ~load ~schedule body =
         resource.failures <- cause :: resource.failures)
   in
   let record_failure resource cause =
-    Effect.named "refreshable.with_auto.refresh_failed"
+    Eta_observability.named "refreshable.with_auto.refresh_failed"
       (add_failure resource cause
       |> Effect.bind (fun () ->
              match (cause, on_refresh_error) with

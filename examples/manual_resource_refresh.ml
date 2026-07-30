@@ -16,7 +16,7 @@ let render_error = function
   | `Reload_failed reason -> "reload-failed:" ^ reason
 
 let load source =
-  Effect.named ~error_pp:pp_error "manual.config.load"
+  Eta_observability.named ~error_pp:pp_error "manual.config.load"
     (Effect.sync_result (fun () ->
          match !source with
          | [] -> Error (`Reload_failed "empty source")

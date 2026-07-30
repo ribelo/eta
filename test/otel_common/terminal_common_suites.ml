@@ -62,7 +62,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let meter = Eta_otel.Terminal.meter terminal in
     meter#record
       {
-        Meter.name = "requests.total";
+        Eta_observability.Meter.name = "requests.total";
         description = "Total requests";
         unit_ = "request";
         kind = Capabilities.Counter { monotonic = true };
@@ -72,7 +72,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       };
     meter#record
       {
-        Meter.name = "latency";
+        Eta_observability.Meter.name = "latency";
         description = "";
         unit_ = "ms";
         kind = Capabilities.Histogram { boundaries = [ 10.0; 20.0 ] };

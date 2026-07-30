@@ -52,8 +52,8 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.pure 3;
       Effect.fail `E0;
       Effect.fail `E1;
-      Effect.named "law.add" (Effect.sync (fun () -> deps.add 1));
-      Effect.named "law.mul" (Effect.sync (fun () -> deps.mul 2));
+      Eta_observability.named "law.add" (Effect.sync (fun () -> deps.add 1));
+      Eta_observability.named "law.mul" (Effect.sync (fun () -> deps.mul 2));
       Effect.pure 2 |> Effect.map (fun n -> n + 4);
       Effect.pure 3 |> Effect.bind (fun n -> Effect.pure (n * 3));
       Effect.fail `E0 |> Effect.bind_error (fun `E0 -> Effect.pure 7);
@@ -64,7 +64,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       ("inc", fun x -> Effect.pure (x + 1));
       ( "fail-negative",
         fun x -> if x < 0 then Effect.fail `Neg else Effect.pure (x * 2) );
-      ("deps-add", fun x -> Effect.named "law.f.add" (Effect.sync (fun () -> deps.add x)));
+      ("deps-add", fun x -> Eta_observability.named "law.f.add" (Effect.sync (fun () -> deps.add x)));
       ("mapped", fun x -> Effect.pure x |> Effect.map (fun n -> n + 3));
       ( "catch-local",
         fun x -> Effect.fail `E0 |> Effect.bind_error (fun `E0 -> Effect.pure (x + 5)) );
@@ -184,7 +184,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       (fun i (Pack schedule) ->
         let attempts = ref 0 in
         let attempt =
-          Effect.named "retry.always-succeed" (Effect.sync (fun () ->
+          Eta_observability.named "retry.always-succeed" (Effect.sync (fun () ->
               incr attempts;
               i))
         in
@@ -202,7 +202,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         ignore
           (run_ok rt
              (Effect.repeat ~schedule:(Schedule.recurs n)
-                (Effect.named "repeat.tick"
+                (Eta_observability.named "repeat.tick"
                    (Effect.sync (fun () -> incr ticks))))
             : int);
         Alcotest.(check int)
@@ -216,9 +216,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       let releases = ref [] in
       let resource name =
         Effect.acquire_release
-          ~acquire:(Effect.named ("acquire." ^ name) (Effect.sync (fun () -> ())))
+          ~acquire:(Eta_observability.named ("acquire." ^ name) (Effect.sync (fun () -> ())))
           ~release:(fun () ->
-            Effect.named ("release." ^ name) (Effect.sync (fun () ->
+            Eta_observability.named ("release." ^ name) (Effect.sync (fun () ->
                 releases := name :: !releases)))
       in
       ignore
@@ -240,10 +240,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let resource =
       Effect.acquire_release
         ~acquire:
-          (Effect.named "acquire.cancelled"
+          (Eta_observability.named "acquire.cancelled"
              (Effect.sync (fun () -> B.resolve acquired_u ())))
         ~release:(fun () ->
-          Effect.named "release.cancelled"
+          Eta_observability.named "release.cancelled"
             (Effect.sync (fun () -> incr releases)))
     in
     let slow =
@@ -253,7 +253,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
                Effect.pure "slow" |> Effect.delay (Duration.seconds 10)))
     in
     let fast =
-      Effect.named "wait-acquired" (B.await_effect acquired)
+      Eta_observability.named "wait-acquired" (B.await_effect acquired)
       |> Effect.map (fun () -> "fast")
     in
     let promise = B.fork_run ctx rt (Effect.race [ slow; fast ]) in

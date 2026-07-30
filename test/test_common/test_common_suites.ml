@@ -85,7 +85,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_seeded_logged_test_clock ~seed @@ fun ctx clock rt sleeps ->
     let attempts = ref 0 in
     let attempt =
-      Effect.named "attempt"
+      Eta_observability.named "attempt"
         (Effect.sync (fun () ->
              incr attempts;
              !attempts))
@@ -114,7 +114,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let observed = ref [] in
     let sleeper ms =
       Effect.delay (Duration.ms ms)
-        (Effect.named "record"
+        (Eta_observability.named "record"
            (Effect.sync (fun () -> observed := ms :: !observed)))
     in
     let promise =
@@ -132,11 +132,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let observed = ref [] in
     let eff =
       Effect.delay (Duration.ms 10)
-        (Effect.named "first"
+        (Eta_observability.named "first"
            (Effect.sync (fun () -> observed := "first" :: !observed)))
       |> Effect.bind (fun () ->
              Effect.delay (Duration.ms 10)
-               (Effect.named "second"
+               (Eta_observability.named "second"
                   (Effect.sync (fun () ->
                        observed := "second" :: !observed))))
     in
@@ -149,24 +149,24 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
 
   let test_logger_runtime_captures_logs () =
     B.with_logger_runtime @@ fun _ctx rt logger ->
-    Expect.expect_ok (B.run rt (Effect.log "hello"));
-    match Logger.dump logger with
-    | [ record ] -> Alcotest.(check string) "body" "hello" record.Logger.body
+    Expect.expect_ok (B.run rt (Eta_observability.log "hello"));
+    match Eta_observability.Logger.dump logger with
+    | [ record ] -> Alcotest.(check string) "body" "hello" record.Eta_observability.Logger.body
     | records -> Alcotest.failf "expected one log, got %d" (List.length records)
 
   let test_traced_runtime_captures_spans () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    Expect.expect_ok (B.run rt (Effect.named "span" (Effect.pure ())));
-    match Tracer.dump tracer with
-    | [ span ] -> Alcotest.(check string) "span" "span" span.Tracer.name
+    Expect.expect_ok (B.run rt (Eta_observability.named "span" (Effect.pure ())));
+    match Eta_observability.Tracer.dump tracer with
+    | [ span ] -> Alcotest.(check string) "span" "span" span.Eta_observability.Tracer.name
     | spans -> Alcotest.failf "expected one span, got %d" (List.length spans)
 
   let test_observed_runtime_wires_logger_and_tracer () =
     B.with_observed_runtime @@ fun _ctx rt tracer logger _meter ->
     Expect.expect_ok
-      (B.run rt (Effect.named "parent" (Effect.log "inside")));
-    Alcotest.(check int) "logs" 1 (List.length (Logger.dump logger));
-    Alcotest.(check int) "spans" 1 (List.length (Tracer.dump tracer))
+      (B.run rt (Eta_observability.named "parent" (Eta_observability.log "inside")));
+    Alcotest.(check int) "logs" 1 (List.length (Eta_observability.Logger.dump logger));
+    Alcotest.(check int) "spans" 1 (List.length (Eta_observability.Tracer.dump tracer))
 
   let tests =
     base_tests

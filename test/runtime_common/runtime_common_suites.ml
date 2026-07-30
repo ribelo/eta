@@ -159,7 +159,7 @@ module Make (B : Runtime_backend.S) = struct
       |> E.map (fun n -> n + 1)
       |> E.bind (fun n -> E.pure (n * 2))
       |> E.tap (fun n ->
-             E.named "tap"
+             Eta_observability.named "tap"
                (E.sync (fun () -> observed := n :: !observed)))
       |> E.map (fun n -> n + 1)
     in
@@ -227,7 +227,7 @@ module Make (B : Runtime_backend.S) = struct
   let test_run_exn_uses_captured_backtrace () =
     B.with_runtime @@ fun _ctx rt ->
     let exn = Failure "run_exn defect" in
-    match B.run_exn rt (E.named "die.run_exn" (E.sync (fun () -> raise exn))) with
+    match B.run_exn rt (Eta_observability.named "die.run_exn" (E.sync (fun () -> raise exn))) with
     | _ -> Alcotest.fail "expected exception"
     | exception actual ->
         Alcotest.(check bool) "same exception" true (actual == exn);
@@ -1143,12 +1143,12 @@ module Make (B : Runtime_backend.S) = struct
 
   let test_observability_named_span () =
     B.with_traced_runtime @@ fun _ctx rt tracer ->
-    B.run rt (E.named "shared.runtime.span" (E.pure 1))
+    B.run rt (Eta_observability.named "shared.runtime.span" (E.pure 1))
     |> check_ok Alcotest.int "value" 1;
-    match Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ span ] ->
         Alcotest.(check string) "span name" "shared.runtime.span"
-          span.Tracer.name
+          span.Eta_observability.Tracer.name
     | spans ->
         Alcotest.failf "expected one span, got %d" (List.length spans)
 

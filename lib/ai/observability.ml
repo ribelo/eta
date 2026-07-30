@@ -78,17 +78,18 @@ let with_error_type eff =
   eff
   |> Eta.Effect.bind_error (fun error ->
          Eta.Effect.fail error
-         |> Eta.Effect.annotate_all [ ("error.type", ai_error_type error) ])
+         |> Eta_observability.annotate_all
+              [ ("error.type", ai_error_type error) ])
 
 let with_span ~kind ~name ~attrs eff =
-  eff |> with_error_type |> Eta.Effect.annotate_all attrs
-  |> Eta.Effect.named ~error_pp:ai_error_message ~kind name
+  eff |> with_error_type |> Eta_observability.annotate_all attrs
+  |> Eta_observability.named ~error_pp:ai_error_message ~kind name
 
 let[@inline always] with_response_attrs response_attrs eff =
   eff
   |> Eta.Effect.bind (fun response ->
          Eta.Effect.pure response
-         |> Eta.Effect.annotate_all (response_attrs response))
+         |> Eta_observability.annotate_all (response_attrs response))
 
 let with_chat_span provider (request : chat_request) eff =
   let eff = with_response_attrs response_attrs eff in
@@ -149,4 +150,4 @@ let with_tool_span ?tool_call_id ?(tool_type = "function") ~tool_name eff =
     ~attrs eff
 
 let suppress_provider_transport_observability =
-  Eta.Effect.suppress_observability
+  Eta_observability.suppress_observability

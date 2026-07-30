@@ -3,6 +3,7 @@
  (modules openrouter_common_suites)
  (libraries
   eta
+  eta_observability
   eta_ai
   eta_ai_openrouter
   eta_ai_openai

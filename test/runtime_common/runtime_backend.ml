@@ -13,40 +13,40 @@ module type S = sig
   val with_runtime_contract : (ctx -> Eta.Runtime_contract.t -> 'a) -> 'a
 
   val with_traced_runtime :
-    (ctx -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) -> 'a
+    (ctx -> 'err Eta.Runtime.t -> Eta_observability.Tracer.in_memory -> 'a) -> 'a
 
   val with_custom_tracer_runtime :
     Eta.Capabilities.tracer -> (ctx -> 'err Eta.Runtime.t -> 'a) -> 'a
 
   val with_sampled_traced_runtime :
     Eta.Sampler.t ->
-    (ctx -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) ->
+    (ctx -> 'err Eta.Runtime.t -> Eta_observability.Tracer.in_memory -> 'a) ->
     'a
 
   val with_seeded_sampled_traced_runtime :
     seed:int ->
     Eta.Sampler.t ->
-    (ctx -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) ->
+    (ctx -> 'err Eta.Runtime.t -> Eta_observability.Tracer.in_memory -> 'a) ->
     'a
 
   val with_auto_traced_runtime :
-    bool -> (ctx -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) -> 'a
+    bool -> (ctx -> 'err Eta.Runtime.t -> Eta_observability.Tracer.in_memory -> 'a) -> 'a
 
   val with_meter_runtime :
-    (ctx -> 'err Eta.Runtime.t -> Eta.Meter.in_memory -> 'a) -> 'a
+    (ctx -> 'err Eta.Runtime.t -> Eta_observability.Meter.in_memory -> 'a) -> 'a
 
   val with_meter_test_clock :
-    (ctx -> clock -> 'err Eta.Runtime.t -> Eta.Meter.in_memory -> 'a) -> 'a
+    (ctx -> clock -> 'err Eta.Runtime.t -> Eta_observability.Meter.in_memory -> 'a) -> 'a
 
   val with_logger_runtime :
-    (ctx -> 'err Eta.Runtime.t -> Eta.Logger.in_memory -> 'a) -> 'a
+    (ctx -> 'err Eta.Runtime.t -> Eta_observability.Logger.in_memory -> 'a) -> 'a
 
   val with_observed_runtime :
     (ctx ->
     'err Eta.Runtime.t ->
-    Eta.Tracer.in_memory ->
-    Eta.Logger.in_memory ->
-    Eta.Meter.in_memory ->
+    Eta_observability.Tracer.in_memory ->
+    Eta_observability.Logger.in_memory ->
+    Eta_observability.Meter.in_memory ->
     'a) ->
     'a
 
@@ -56,7 +56,7 @@ module type S = sig
   val with_test_clock : (ctx -> clock -> 'err Eta.Runtime.t -> 'a) -> 'a
 
   val with_traced_test_clock :
-    (ctx -> clock -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) -> 'a
+    (ctx -> clock -> 'err Eta.Runtime.t -> Eta_observability.Tracer.in_memory -> 'a) -> 'a
 
   val with_seeded_test_clock :
     seed:int -> (ctx -> clock -> 'err Eta.Runtime.t -> 'a) -> 'a

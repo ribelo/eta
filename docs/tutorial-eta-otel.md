@@ -12,11 +12,11 @@ Run this with an OTLP/HTTP JSON collector on `127.0.0.1:4318`.
 open Eta
 
 let work =
-  Effect.named "http.request"
+  Eta_observability.named "http.request"
     (let open Syntax in
-     let* () = Effect.log "handling request" in
+     let* () = Eta_observability.log "handling request" in
      let* () =
-       Effect.metric_update ~name:"requests.total"
+       Eta_observability.metric_update ~name:"requests.total"
          ~kind:(Capabilities.Counter { monotonic = true })
          (Capabilities.Number (Capabilities.Int 1))
      in
@@ -55,10 +55,10 @@ Eta environment.
 
 ```ocaml
 let load_user db user_id =
-  Effect.named "db.load_user" (Effect.sync (fun () -> Db.load_user db user_id))
+  Eta_observability.named "db.load_user" (Effect.sync (fun () -> Db.load_user db user_id))
 
 let request db user_id =
-  Effect.named "load-user" (load_user db user_id)
+  Eta_observability.named "load-user" (load_user db user_id)
 ```
 
 This keeps the OTel adapter small: capability methods enqueue telemetry, and

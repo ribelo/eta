@@ -24,7 +24,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           cause
 
   let metric_point ?(description = "") ?(unit_ = "") ?(attrs = []) ~name ~kind
-      value : Meter.point =
+      value : Eta_observability.Meter.point =
     { name; description; unit_; kind; attrs; value; ts_ms = 1 }
 
   let only_aggregate points =
@@ -37,10 +37,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     run_ok_unit rt
       (Effect.concat
          [
-           Effect.metric_gauge ~name:"rps" (Capabilities.Int 10);
-           Effect.metric_gauge ~name:"rps" (Capabilities.Int 20);
+           Eta_observability.metric_gauge ~name:"rps" (Capabilities.Int 10);
+           Eta_observability.metric_gauge ~name:"rps" (Capabilities.Int 20);
          ]);
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Gauge value ->
         Alcotest.check number "latest value" (Capabilities.Int 20) value
@@ -51,10 +51,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     run_ok_unit rt
       (Effect.concat
          [
-           Effect.metric_counter ~name:"cumulative" (Capabilities.Int 10);
-           Effect.metric_counter ~name:"cumulative" (Capabilities.Int 15);
+           Eta_observability.metric_counter ~name:"cumulative" (Capabilities.Int 10);
+           Eta_observability.metric_counter ~name:"cumulative" (Capabilities.Int 15);
          ]);
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Sum value ->
         Alcotest.check number "latest cumulative value" (Capabilities.Int 15) value
@@ -65,12 +65,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     run_ok_unit rt
       (Effect.concat
          [
-           Effect.metric_counter ~name:"counter-inc" ~monotonic:true
+           Eta_observability.metric_counter ~name:"counter-inc" ~monotonic:true
              (Capabilities.Int 1);
-           Effect.metric_counter ~name:"counter-inc" ~monotonic:true
+           Eta_observability.metric_counter ~name:"counter-inc" ~monotonic:true
              (Capabilities.Int 1);
          ]);
-    let key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     Alcotest.(check string) "name" "counter-inc" key.Eta_otel.Metric_key.name;
     (match key.kind with
     | Capabilities.Counter { monotonic = true } -> ()
@@ -85,11 +85,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     run_ok_unit rt
       (Effect.concat
          [
-           Effect.metric_frequency ~name:"status" "ok";
-           Effect.metric_frequency ~name:"status" "error";
-           Effect.metric_frequency ~name:"status" "ok";
+           Eta_observability.metric_frequency ~name:"status" "ok";
+           Eta_observability.metric_frequency ~name:"status" "error";
+           Eta_observability.metric_frequency ~name:"status" "ok";
          ]);
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Frequency counts ->
         Alcotest.(check (list (pair string int)))
@@ -101,11 +101,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     run_ok_unit rt
       (Effect.concat
          [
-           Effect.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 5.0;
-           Effect.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 15.0;
-           Effect.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 25.0;
+           Eta_observability.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 5.0;
+           Eta_observability.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 15.0;
+           Eta_observability.metric_histogram ~name:"latency" ~boundaries:[ 10.0; 20.0 ] 25.0;
          ]);
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Histogram state ->
         Alcotest.(check int) "count" 3 state.count;
@@ -119,11 +119,11 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_summary_computes_quantiles () =
     with_meter @@ fun rt meter ->
     let sample value =
-      Effect.metric_summary ~name:"payload" ~quantiles:[ 0.5; 1.0 ]
+      Eta_observability.metric_summary ~name:"payload" ~quantiles:[ 0.5; 1.0 ]
         ~max_age:(Duration.seconds 60) ~max_size:10 value
     in
     run_ok_unit rt (Effect.concat [ sample 1.0; sample 3.0; sample 5.0 ]);
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Summary state ->
         Alcotest.(check int) "count" 3 state.count;
@@ -137,7 +137,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_timer_records_elapsed_histogram_on_failure () =
     B.with_meter_test_clock @@ fun _ctx clock rt meter ->
     let program =
-      Effect.metric_timer ~name:"operation.duration" ~boundaries:[ 10.0; 30.0 ]
+      Eta_observability.metric_timer ~name:"operation.duration" ~boundaries:[ 10.0; 30.0 ]
         (Effect.sync (fun () -> B.adjust_clock clock (Duration.ms 25))
         |> Effect.bind (fun () -> Effect.fail `Boom))
     in
@@ -148,7 +148,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp (fun fmt `Boom -> Format.pp_print_string fmt "Boom"))
           cause
     | Exit.Ok _ -> Alcotest.fail "expected typed failure");
-    let _key, (value, _, _) = only_aggregate (Meter.dump meter) in
+    let _key, (value, _, _) = only_aggregate (Eta_observability.Meter.dump meter) in
     match value with
     | Eta_otel.Histogram state ->
         Alcotest.(check int) "timer count" 1 state.count;
@@ -276,7 +276,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | _ -> false
 
   let test_metric_timestamp_conversion_does_not_wrap_negative () =
-    let point : Meter.point =
+    let point : Eta_observability.Meter.point =
       {
         name = "eta.test.timestamp";
         description = "timestamp overflow regression";

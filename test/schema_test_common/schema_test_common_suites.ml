@@ -38,7 +38,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_subset_policy () =
     B.with_runtime @@ fun _ctx rt ->
     let policy value =
-      Eta.Effect.named "policy" (Eta.Effect.sync (fun () -> value ^ "!"))
+      Eta_observability.named "policy" (Eta.Effect.sync (fun () -> value ^ "!"))
     in
     let program =
       Eta_schema.decode_with_policy string_schema policy (Json.string "ok")

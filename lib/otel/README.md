@@ -8,25 +8,28 @@ eta_http transport. Batching, stream merging, timeout, retry, backpressure, and
 daemon lifecycle are expressed as Eta effects and Eta streams. Exporter
 configuration is immutable ordinary OCaml data stored on the exporter handle.
 **No protobuf, no `cohttp`, no ambient dependency context.** The direct
-opam dependencies are `eta`, `eta_stream`, `eta_http`, and `yojson`. `eio`
-arrives transitively through `eta_stream`; TLS dependencies stay behind
-`eta_http`.
+opam dependencies are `eta`, `eta_observability`, `eta_stream`, `eta_http`, and
+`yojson`. `eio` arrives transitively through `eta_stream`; TLS dependencies
+stay behind `eta_http`.
 
 ## Package boundary
 
 - `eta_otel` is an exporter, not a runtime.
-- It depends on `eta`, `eta_stream`, `eta_http`, and `yojson`.
+- It depends on `eta`, `eta_observability`, `eta_stream`, `eta_http`, and
+  `yojson`.
 - A runnable program also needs a runtime factory (usually `Eta_eio.Runtime.create`)
   and a transport client (usually `Eta_http_eio.Client`).
 - It does not depend on `eio_main` or `eta_http_eio` directly.
 
 ## Why a separate package?
 
-Core `eta` ships with `Tracer.in_memory` (for tests) and `Tracer.noop`
-(default). Sending spans over the wire pulls in a network stack and a wire
-format, which is a packaging concern, not a language concern. `eta_otel`
-implements Eta's observability capabilities against OTLP/JSON so apps that
-want real export can opt in without bloating the core library.
+`eta_observability` ships `Eta_observability.Tracer.in_memory` for tests and a
+public `Eta_observability.Tracer.noop` equivalent to the root runtime's private
+default. Sending spans
+over the wire pulls in a network stack and a wire format, which is a packaging
+concern, not a language concern. `eta_otel` implements Eta's observability
+capabilities against OTLP/JSON so apps that want real export can opt in without
+bloating the core library.
 
 ## Install
 
@@ -63,17 +66,17 @@ let () =
     Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
   in
   let work =
-    Effect.fn __POS__ __FUNCTION__
+    Eta_observability.fn __POS__ __FUNCTION__
       (Effect.par
-         (Effect.named "left"  (Effect.pure ()))
-         (Effect.named "right" (Effect.fail `Boom)
+         (Eta_observability.named "left"  (Effect.pure ()))
+         (Eta_observability.named "right" (Effect.fail `Boom)
           |> Effect.bind_error (fun (`Boom : [ `Boom ]) -> Effect.pure ())))
   in
   let _ = Runtime.run rt work in
   Eta_otel.flush exporter
 ```
 
-That program emits one parent span with two children. `Effect.fn __POS__
+That program emits one parent span with two children. `Eta_observability.fn __POS__
 __FUNCTION__` records the current source location as a `loc` attribute and
 names the span after the enclosing OCaml binding.
 
@@ -82,14 +85,14 @@ A runnable `dune` file for that program needs:
 ```dune
 (executable
  (name app)
- (libraries eta eta_eio eta_http_eio eta_otel eio_main))
+ (libraries eta eta_observability eta_eio eta_http_eio eta_otel eio_main))
 ```
 
 Typed failures render as `"<typed failure>"` unless the effect supplies a typed
 renderer before the runtime emits the span status:
 
 ```ocaml
-Effect.fn
+Eta_observability.fn
   ~error_pp:(fun fmt -> function `Boom -> Format.pp_print_string fmt "boom")
   __POS__ __FUNCTION__
   (Effect.fail `Boom)
@@ -98,25 +101,26 @@ Effect.fn
 ## Propagation
 
 Eta core owns W3C propagation parsing because sampling and baggage affect the
-runtime, not only the exporter. Use `Trace_context.extract` at inbound
-boundaries and `Effect.with_context` around the request effect:
+runtime, not only the exporter. Use
+`Eta_observability.Trace_context.extract` at inbound boundaries and
+`Eta_observability.with_context` around the request effect:
 
 ```ocaml
 let request headers =
-  let body = Effect.named ~kind:Capabilities.Server "http.request" work in
-  match Trace_context.extract headers with
+  let body = Eta_observability.named ~kind:Capabilities.Server "http.request" work in
+  match Eta_observability.Trace_context.extract headers with
   | None -> body
-  | Some ctx -> Effect.with_context ctx body
+  | Some ctx -> Eta_observability.with_context ctx body
 ```
 
 Outbound clients can inject the active context:
 
 ```ocaml
 let outbound_headers =
-  Effect.current_context
+  Eta_observability.current_context
   |> Effect.map (function
        | None -> []
-       | Some ctx -> Trace_context.inject ctx)
+       | Some ctx -> Eta_observability.Trace_context.inject ctx)
 ```
 
 The exporter preserves the incoming trace ID, parent span ID, sampled flag,
@@ -171,7 +175,7 @@ already accepted telemetry, and drops signals submitted after shutdown.
 ## Metrics
 
 The Eta meter accepts structured observations rather than a single scalar
-record shape. `Effect.metric_counter`, `metric_gauge`, `metric_frequency`,
+record shape. `Eta_observability.metric_counter`, `metric_gauge`, `metric_frequency`,
 `metric_histogram`, `metric_summary`, and `metric_timer` cover the supported
 instrument kinds:
 

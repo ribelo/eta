@@ -5,6 +5,7 @@
  (private_modules chat_completions common images responses speech transcriptions)
  (libraries
   eta
+  eta_observability
   eta_ai
  eta_ai_openai_codec
  eta_redacted

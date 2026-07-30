@@ -413,12 +413,12 @@ let with_logger_test_clock f =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let clock = Eta_test.Test_clock.create () in
-  let logger = Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let rt =
     Eta_eio.Runtime.create ~sw ~clock:(Eio.Stdenv.clock env)
       ~sleep:(Eta_test.Test_clock.sleep clock)
       ~now_ms:(fun () -> Eta_test.Test_clock.now_ms clock)
-      ~logger:(Logger.as_capability logger) ()
+      ~logger:(Eta_observability.Logger.as_capability logger) ()
   in
   f sw clock rt logger
 
@@ -2388,7 +2388,7 @@ let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
   let now_ms = ref initial_ms in
   let sleep_calls = ref 0 in
   let yield_calls = ref 0 in
-  let logger = Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let module Unix = struct
     let run_in_systhread ?label:_ f = f ()
   end in
@@ -2450,7 +2450,7 @@ let with_cooperative_timer_host ?(initial_ms = 0) ?(jump_ms = 10_000) f =
     Eta_eio.Host.make ~unix:(module Unix) ~eio:(module Eio_ops) ()
   in
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
-    ~now_ms:(fun () -> !now_ms) ~logger:(Logger.as_capability logger)
+    ~now_ms:(fun () -> !now_ms) ~logger:(Eta_observability.Logger.as_capability logger)
   @@ fun rt ->
   f rt sleep_calls yield_calls logger
 
@@ -2495,7 +2495,7 @@ let test_time_step_replay_saturated_catch_up_yields_without_completion () =
     (!applied >= 3 * 64);
   run_ok rt (Signal.Observer.dispose observer);
   Alcotest.(check int) "saturated step_replay logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger))
+    (List.length (Eta_observability.Logger.dump logger))
 
 let test_time_step_saturated_catch_up_runs_once () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -2527,7 +2527,7 @@ let test_time_step_saturated_catch_up_runs_once () =
   Alcotest.(check int) "saturated step did not batch-yield" 0
     !yield_calls;
   Alcotest.(check int) "saturated step logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger));
+    (List.length (Eta_observability.Logger.dump logger));
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "saturated step reaches max_int" max_int
     (run_ok rt (Signal.Observer.read observer));
@@ -2544,13 +2544,13 @@ let test_time_large_catch_up_applies_beyond_old_cap () =
   wait_until "large catch-up processed" (fun () -> !sleep_calls >= 2);
   Alcotest.(check int) "large interval catch-up coalesced" 0 !yield_calls;
   Alcotest.(check int) "large catch-up logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger));
+    (List.length (Eta_observability.Logger.dump logger));
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "large catch-up applies every interval cadence" 1_025
     (run_ok rt (Signal.Observer.read observer));
   run_ok rt (Signal.Observer.dispose observer);
   Alcotest.(check int) "dispose logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger))
+    (List.length (Eta_observability.Logger.dump logger))
 
 let test_time_interval_saturated_catch_up_coalesces () =
   let module Signal = Eta_signal.Make (Observer_error) () in
@@ -2565,7 +2565,7 @@ let test_time_interval_saturated_catch_up_coalesces () =
   Alcotest.(check int) "saturated interval catch-up did not batch-yield" 0
     !yield_calls;
   Alcotest.(check int) "saturated interval catch-up logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger));
+    (List.length (Eta_observability.Logger.dump logger));
   run_ok rt Signal.stabilize;
   Alcotest.(check int) "saturated interval catch-up reaches max_int" max_int
     (run_ok rt (Signal.Observer.read observer));
@@ -2588,7 +2588,7 @@ let test_time_deadline_saturated_catch_up_does_not_overflow () =
   Alcotest.(check bool) "saturated catch-up reaches deadline" true
     (run_ok rt (Signal.Observer.read observer));
   Alcotest.(check int) "saturated catch-up logs no daemon diagnostic" 0
-    (List.length (Logger.dump logger));
+    (List.length (Eta_observability.Logger.dump logger));
   run_ok rt (Signal.Observer.dispose observer)
 
 let with_delayed_first_daemon_start_host f =
@@ -2829,7 +2829,7 @@ let with_timer_cancel_tracking_host ?(run_cancel = true) f =
     with Stdlib.Effect.Unhandled _ -> 0
   in
   (* Eta_eio transports Runtime_contract locals as one context table. With
-     Tracer.noop below and auto-instrumentation disabled by default, the only
+     Eta_observability.Tracer.noop below and auto-instrumentation disabled by default, the only
      immediate [1] local in this harness is eta_signal's graph-lane depth. *)
   let local_binding_is_graph_lifecycle_depth =
     function
@@ -2913,7 +2913,7 @@ let with_timer_cancel_tracking_host ?(run_cancel = true) f =
     Eta_eio.Host.make ~unix:(module Eio_unix) ~eio:(module Eio_ops) ()
   in
   Eta_eio.Runtime.with_host host ~sw ~clock:(Eio.Stdenv.clock env)
-    ~tracer:Tracer.noop @@ fun rt ->
+    ~tracer:Eta_observability.Tracer.noop @@ fun rt ->
   f clock rt cancel_inside_local_binding cancel_outside_owner_domain
     fail_next_cancel sw graph_lifecycle_exit_count after_graph_lifecycle_exit
 
@@ -3561,10 +3561,10 @@ let test_time_step_defect_logs_daemon_diagnostic_and_restarts () =
   Eta_test.Test_clock.adjust clock (Duration.ms 5);
   Eta_test.Async.yield ();
   Eta_eio.Runtime.drain rt;
-  (match Logger.dump logger with
+  (match Eta_observability.Logger.dump logger with
    | [ record ] ->
        Alcotest.(check bool) "diagnostic level" true
-         (record.level = Logger.Error);
+         (record.level = Eta_observability.Logger.Error);
        Alcotest.(check string) "diagnostic body" "eta.daemon.failure"
          record.body;
        Alcotest.(check (option string))
@@ -3604,7 +3604,7 @@ let test_time_step_replay_defect_logs_step_replay_diagnostic_kind () =
   Eta_test.Test_clock.adjust clock (Duration.ms 5);
   Eta_test.Async.yield ();
   Eta_eio.Runtime.drain rt;
-  (match Logger.dump logger with
+  (match Eta_observability.Logger.dump logger with
    | [ record ] ->
        Alcotest.(check (option string))
          "step_replay diagnostic span"

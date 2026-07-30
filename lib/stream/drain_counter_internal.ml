@@ -63,7 +63,7 @@ let enqueue_waiter contract counter =
   (promise, waiter)
 
 let await_zero ?(name = "eta_stream.drain_counter.await_zero") counter =
-  Eta.Effect.named name
+  Eta_observability.named name
     (Eta.Spi.Expert.make ~leaf_name:name
     @@ fun context ->
      let contract = Eta.Spi.Expert.contract context in

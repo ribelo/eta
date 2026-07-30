@@ -70,8 +70,8 @@ type export_config = {
 type signal_batch =
   | Trace_batch of span list
   | Log_batch of Eta.Capabilities.log_record list
-  | Metric_batch of Eta.Meter.point list
-  | Self_metric_batch of Eta.Meter.point list
+  | Metric_batch of Eta_observability.Meter.point list
+  | Self_metric_batch of Eta_observability.Meter.point list
 
 type signal_kind = Traces | Logs | Metrics | Self_metrics
 
@@ -160,9 +160,9 @@ type t = {
   config : export_config;
   queue : span Mailbox.t;
   log_queue : Eta.Capabilities.log_record Mailbox.t;
-  metric_queue : Eta.Meter.point Mailbox.t;
-  self_metric_queue : Eta.Meter.point Mailbox.t;
-  self_tracer : Eta.Tracer.in_memory;
+  metric_queue : Eta_observability.Meter.point Mailbox.t;
+  self_metric_queue : Eta_observability.Meter.point Mailbox.t;
+  self_tracer : Eta_observability.Tracer.in_memory;
   flush_rt : unit Eta.Runtime.t;
   context_id : int;
   mutable next_handle : int;
@@ -233,8 +233,8 @@ let now_ms t = t.clock#now_ms ()
 (* ------------------------------------------------------------------ *)
 
 let decrement_in_flight t n =
-  Eta.Effect.named "eta_otel.export.decrement_in_flight" (Eta.Effect.sync (fun () ->
-      Drain_counter.decr_by t.in_flight n))
+  Eta_observability.named "eta_otel.export.decrement_in_flight"
+    (Eta.Effect.sync (fun () -> Drain_counter.decr_by t.in_flight n))
 
 let enqueue t mailbox value =
   Drain_counter.incr t.in_flight;
@@ -251,7 +251,7 @@ let signal_name = function
 
 let self_metric t ~name ~description ~unit_ ~kind ~attrs ~value =
   {
-    Eta.Meter.name;
+    Eta_observability.Meter.name;
     description;
     unit_;
     kind;
@@ -305,7 +305,7 @@ let enqueue_self_export_metrics t config signal ~batch_size =
   match config.self_metrics_path with
   | None -> Eta.Effect.unit
   | Some _ ->
-      Eta.Effect.named "eta_otel.self_metrics.enqueue"
+      Eta_observability.named "eta_otel.self_metrics.enqueue"
         (Eta.Effect.sync (fun () ->
              self_export_metrics t signal ~batch_size
              |> List.iter (enqueue t t.self_metric_queue)))
@@ -319,12 +319,12 @@ module Self_metrics = struct
 end
 
 let observe_send t ~path ~body =
-  Eta.Effect.named "eta_otel.export.on_send" (Eta.Effect.sync (fun () ->
-      try t.on_send ~path ~body with _ -> ()))
+  Eta_observability.named "eta_otel.export.on_send"
+    (Eta.Effect.sync (fun () -> try t.on_send ~path ~body with _ -> ()))
 
 let observe_error t msg =
-  Eta.Effect.named "eta_otel.export.on_error" (Eta.Effect.sync (fun () ->
-      try t.on_error msg with _ -> ()))
+  Eta_observability.named "eta_otel.export.on_error"
+    (Eta.Effect.sync (fun () -> try t.on_error msg with _ -> ()))
 
 let render_export_error = function
   | `Export_error msg -> msg
@@ -344,7 +344,7 @@ let post_effect t config ~path ~body =
          if status = 200 || status = 202 then Eta.Effect.unit
          else Eta.Effect.fail (`Export_error (render_http_status status body)))
   |> Eta.Effect.timeout_as (Eta.Duration.seconds 6) ~on_timeout:`Timeout
-  |> Eta.Effect.named "eta_otel.export.post_json"
+  |> Eta_observability.named "eta_otel.export.post_json"
 
 let post_or_deadline t config ~path ~body =
   post_effect t config ~path ~body
@@ -423,7 +423,7 @@ let export_signal t config signal =
     (Eta.Effect.acquire_release ~acquire:Eta.Effect.unit
        ~release:(fun () -> decrement_in_flight t n)
     |> Eta.Effect.bind (fun () ->
-           Eta.Effect.named
+           Eta_observability.named
              ("eta_otel." ^ name ^ ".encode")
              (Eta.Effect.sync (fun () ->
                   try Ok (encode_signal_body t config signal) with
@@ -437,14 +437,15 @@ let export_signal t config signal =
                       (Printf.sprintf "OTLP %s encode failed: %s" name msg)
                 | Ok body ->
                     export_batch t config ~signal:signal_kind ~path ~body ~n
-                    |> Eta.Effect.annotate ~key:"otel.path" ~value:path
-                    |> Eta.Effect.annotate ~key:"otel.batch_size"
+                    |> Eta_observability.annotate ~key:"otel.path" ~value:path
+                    |> Eta_observability.annotate ~key:"otel.batch_size"
                          ~value:(string_of_int n)
-                    |> Eta.Effect.named
+                    |> Eta_observability.named
                          ("eta_otel.export." ^ signal_name signal_kind))))
   |> Eta.Effect.finally
        (Eta.Effect.sync (fun () ->
-            Eta.Tracer.retain_recent t.self_tracer ~max:max_self_spans))
+            Eta_observability.Tracer.retain_recent t.self_tracer
+              ~max:max_self_spans))
 
 let export_program t =
   let config = t.config in
@@ -452,7 +453,7 @@ let export_program t =
   |> Eta_stream.flat_map_par ~max_concurrency:3 (fun signal ->
          Eta_stream.from_effect (export_signal t config signal))
   |> S.run_drain
-  |> Eta.Effect.named "eta_otel.exporter"
+  |> Eta_observability.named "eta_otel.exporter"
 
 let start_daemon rt eff =
   match Eta.Runtime.run rt (Eta.Spi.daemon eff) with
@@ -492,13 +493,14 @@ let flush ?(timeout_s = 5.0) t =
   else
     let wait = Drain_counter.await_zero t.in_flight in
     let timeout =
-      Eta.Effect.named "eta_otel.flush.timeout" (Eta.Effect.sync (fun () ->
-          t.clock#sleep (duration_of_timeout_s timeout_s)))
+      Eta_observability.named "eta_otel.flush.timeout"
+        (Eta.Effect.sync (fun () ->
+             t.clock#sleep (duration_of_timeout_s timeout_s)))
     in
     ignore
       (Eta.Runtime.run t.flush_rt (Eta.Effect.race [ wait; timeout ])
         : (unit, unit) Eta.Exit.t);
-    Eta.Tracer.retain_recent t.self_tracer ~max:max_self_spans
+    Eta_observability.Tracer.retain_recent t.self_tracer ~max:max_self_spans
 
 let shutdown ?timeout_s t =
   close_mailboxes t;
@@ -705,8 +707,8 @@ let create ~runtime_factory ?flush_runtime_factory ?http_client
     | None -> resource_attrs)
   in
   let rng = Stdlib.Random.State.make_self_init () in
-  let self_tracer = Eta.Tracer.in_memory () in
-  let self_tracer_cap = Eta.Tracer.as_capability self_tracer in
+  let self_tracer = Eta_observability.Tracer.in_memory () in
+  let self_tracer_cap = Eta_observability.Tracer.as_capability self_tracer in
   let rt = runtime_factory self_tracer_cap in
   let flush_rt : unit Eta.Runtime.t =
     match flush_runtime_factory with
@@ -1038,7 +1040,16 @@ module Terminal = struct
         ]
     | _ -> []
 
-  let metric_fields { Eta.Meter.name; description; unit_; kind; attrs; value; ts_ms } =
+  let metric_fields
+      {
+        Eta_observability.Meter.name;
+        description;
+        unit_;
+        kind;
+        attrs;
+        value;
+        ts_ms;
+      } =
     let base =
       [
         ("ts_ms", string_of_int ts_ms);
@@ -1267,5 +1278,5 @@ module Internal = struct
   let encode_traces_request = encode_traces_request
   let encode_logs_request = encode_logs_request
   let encode_metrics_request = encode_metrics_request
-  let self_spans t = Eta.Tracer.dump t.self_tracer
+  let self_spans t = Eta_observability.Tracer.dump t.self_tracer
 end

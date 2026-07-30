@@ -457,10 +457,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       run_ok rt (Eta_http.Observability.Server.Tracer.request handler req)
     in
     Alcotest.(check int) "status" 200 (Server.Response.status response);
-    match Eta.Tracer.dump tracer with
+    match Eta_observability.Tracer.dump tracer with
     | [ span ] ->
         Alcotest.(check bool) "server kind" true
-          (span.Eta.Tracer.kind = Eta.Tracer.Server);
+          (span.Eta_observability.Tracer.kind = Eta_observability.Tracer.Server);
         Alcotest.(check string) "span name" "HTTP get" span.name;
         Alcotest.(check (option string)) "path attr" (Some "/healthz")
           (attr "url.path" span.attrs);

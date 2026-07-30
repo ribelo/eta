@@ -2,6 +2,7 @@
  (name eta_http_common_tests)
  (libraries
   eta
+  eta_observability
   eta_http
   eta_http_eio
   eta_http_h1

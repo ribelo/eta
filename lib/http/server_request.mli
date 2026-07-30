@@ -28,4 +28,4 @@ val split_target : string -> string * string option
 val header : string -> t -> string option
 val body : t -> Server_body.t
 val trailers : t -> (Header.t, Server_error.t) Eta.Effect.t
-val trace_context : t -> Eta.Trace_context.t option
+val trace_context : t -> Eta_observability.Trace_context.t option

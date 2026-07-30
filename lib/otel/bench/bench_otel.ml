@@ -27,7 +27,7 @@ let log i : Eta.Capabilities.log_record =
     span_id = Printf.sprintf "%016x" i;
   }
 
-let point i : Eta.Meter.point =
+let point i : Eta_observability.Meter.point =
   {
     name = "bench.metric";
     description = "bench";

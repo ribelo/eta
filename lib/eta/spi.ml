@@ -47,7 +47,7 @@ module Expert = struct
 
   let make ?leaf_name f =
     Effect_erasure.effect_to_public (Effect_core.make ?leaf_name f)
-  let effect eff = Runtime_erasure.effect_of_public eff
+  let effect_of_public eff = Runtime_erasure.effect_of_public eff
   let contract context = context.runtime.Runtime_core.contract
   let current_scope context = context.sw
   let outer_scope context = context.runtime.Runtime_core.outer_scope
@@ -70,7 +70,7 @@ module Expert = struct
 
   let observability_with_error_pp context pp eff =
     let context = { context with error_renderer = string_error_renderer pp } in
-    Effect_core.run_to_exit context (effect eff)
+    Effect_core.run_to_exit context (effect_of_public eff)
 
   let observability_suppress context eff =
     let runtime =
@@ -83,14 +83,14 @@ module Expert = struct
         observability_suppressed = true;
       }
     in
-    Effect_core.run_to_exit { context with runtime } (effect eff)
+    Effect_core.run_to_exit { context with runtime } (effect_of_public eff)
 
   let observability_with_binding context key value eff =
     let runtime =
       { context.runtime with Runtime_core.capability_overrides_active = true }
     in
     context.runtime.contract.Runtime_contract.local_with_binding key value
-      (fun () -> Effect_core.eval { context with runtime } (effect eff))
+      (fun () -> Effect_core.eval { context with runtime } (effect_of_public eff))
 
   let observability_with_logger context logger eff =
     observability_with_binding context Runtime_core.logger_override logger eff
@@ -102,7 +102,7 @@ module Expert = struct
     context.runtime.contract.Runtime_contract.local_with_binding
       Runtime_core.tracer_override tracer (fun () ->
         tracer#with_task_context context.runtime.contract (fun () ->
-            Effect_core.eval { context with runtime } (effect eff)))
+            Effect_core.eval { context with runtime } (effect_of_public eff)))
 
   let observability_named context ?(kind = Capabilities.Internal) ?error_pp name
       eff =
@@ -116,7 +116,7 @@ module Expert = struct
         (Runtime_instrument.with_span ~runtime:context.runtime
            ~error_renderer:context.error_renderer ~fail_key:context.fail_key ~kind
            ~name ~attrs:[] (fun () ->
-             Effect_core.run_to_value context (effect eff)))
+             Effect_core.run_to_value context (effect_of_public eff)))
     with exn -> Effect_core.exit_of_exn context exn
 
   let local_get context key =
@@ -146,24 +146,24 @@ module Expert = struct
              context.runtime.contract ~span_id:active.span_id ~key ~value
        | None -> tracer#add_attr context.runtime.contract ~key ~value);
     Runtime_observability.with_die_annotation context.runtime.contract key value
-      (fun () -> Effect_core.eval context (effect eff))
+      (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let observability_annotate_all context attrs eff =
     let tracing_enabled, _ = Runtime_core.current_tracer context.runtime in
     (if tracing_enabled then add_attrs_to_tracer context attrs);
     Runtime_observability.with_die_annotations context.runtime.contract attrs
-      (fun () -> Effect_core.eval context (effect eff))
+      (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let observability_annotate_all_lazy context make_attrs eff =
     let tracing_enabled, _ = Runtime_core.current_tracer context.runtime in
-    if not tracing_enabled then Effect_core.eval context (effect eff)
+    if not tracing_enabled then Effect_core.eval context (effect_of_public eff)
     else
       match make_attrs () with
-      | [] -> Effect_core.eval context (effect eff)
+      | [] -> Effect_core.eval context (effect_of_public eff)
       | attrs ->
           add_attrs_to_tracer context attrs;
           Runtime_observability.with_die_annotations context.runtime.contract
-            attrs (fun () -> Effect_core.eval context (effect eff))
+            attrs (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let add_attrs_to_active_span context attrs =
     let tracing_enabled, _ = Runtime_core.current_tracer context.runtime in
@@ -188,7 +188,7 @@ module Expert = struct
         Stdlib.ignore finalizer
 
   let observability_with_result_attrs context ~ok_attrs ~err_attrs eff =
-    match Effect_core.eval context (effect eff) with
+    match Effect_core.eval context (effect_of_public eff) with
     | Exit.Ok value as ok -> (
         try
           add_attrs_to_active_span context (ok_attrs value);
@@ -223,7 +223,7 @@ module Expert = struct
            active.Runtime_observability.tracer#add_link_to
              context.runtime.contract ~span_id:active.span_id link
        | None -> tracer#add_link context.runtime.contract link);
-    Effect_core.eval context (effect eff)
+    Effect_core.eval context (effect_of_public eff)
 
   let observability_with_context context trace_context eff =
     context.runtime.contract.Runtime_contract.local_with_binding
@@ -233,8 +233,8 @@ module Expert = struct
           context.runtime.contract.Runtime_contract.local_with_binding
             Runtime_observability.sampled_key
             (Runtime_trace_context.sampled trace_context)
-            (fun () -> Effect_core.eval context (effect eff))
-        else Effect_core.eval context (effect eff))
+            (fun () -> Effect_core.eval context (effect_of_public eff))
+        else Effect_core.eval context (effect_of_public eff))
 
   let observability_tracing_enabled context =
     fst (Runtime_core.current_tracer context.runtime)
@@ -283,15 +283,15 @@ module Expert = struct
 
   let observability_annotate_logs context attrs eff =
     Runtime_observability.with_log_attrs context.runtime.contract attrs (fun () ->
-        Effect_core.eval context (effect eff))
+        Effect_core.eval context (effect_of_public eff))
 
   let observability_with_minimum_log_level context level eff =
     Runtime_observability.with_minimum_log_level context.runtime.contract level
-      (fun () -> Effect_core.eval context (effect eff))
+      (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let observability_intercept_log context transform eff =
     Runtime_observability.with_log_interceptor context.runtime.contract transform
-      (fun () -> Effect_core.eval context (effect eff))
+      (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let emit_log context logger level attrs body =
     let trace_id, span_id =
@@ -348,7 +348,7 @@ module Expert = struct
 
   let observability_intercept_metric context transform eff =
     Runtime_observability.with_metric_interceptor context.runtime.contract
-      transform (fun () -> Effect_core.eval context (effect eff))
+      transform (fun () -> Effect_core.eval context (effect_of_public eff))
 
   let record_metric_point context ~ts_ms point =
     Runtime_observability.emit_metric context.runtime.contract

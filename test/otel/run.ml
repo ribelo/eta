@@ -256,7 +256,7 @@ let test_encoder_smoke () =
   let contract = runtime_contract ~sw ~clock:(Eio.Stdenv.clock stdenv) in
   let external_parent =
     Option.get
-      (Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
+      (Eta_observability.Trace_context.make ~trace_id:"4bf92f3577b34da6a3ce929d0e0e4736"
          ~span_id:"00f067aa0ba902b7"
          ~trace_state:[ ("rojo", "00f067aa0ba902b7") ]
          ~baggage:[ ("tenant", "acme") ] ())
@@ -357,9 +357,9 @@ let test_exception_stacktrace_exported () =
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
   let eff =
-    Effect.named "failing.span"
-      (Effect.named "failing.leaf" (Effect.sync (fun () -> failwith "wire stacktrace"))
-      |> Effect.annotate ~key:"phase" ~value:"test")
+    Eta_observability.named "failing.span"
+      (Eta_observability.named "failing.leaf" (Effect.sync (fun () -> failwith "wire stacktrace"))
+      |> Eta_observability.annotate ~key:"phase" ~value:"test")
   in
   ignore (Runtime.run rt eff : (unit, _) Exit.t);
   Eta_otel.flush exporter;
@@ -393,12 +393,12 @@ let test_concurrent_span_attributes_stay_on_active_span () =
   in
   let rt = Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) () in
   let left =
-    Effect.named "left"
+    Eta_observability.named "left"
       (Effect.delay (Duration.ms 5)
-         (Effect.annotate ~key:"side" ~value:"left" Effect.unit))
+         (Eta_observability.annotate ~key:"side" ~value:"left" Effect.unit))
   in
   let right =
-    Effect.named "right" (Effect.delay (Duration.ms 20) Effect.unit)
+    Eta_observability.named "right" (Effect.delay (Duration.ms 20) Effect.unit)
   in
   (match Runtime.run rt (Effect.par left right) with
   | Exit.Ok _ -> ()
@@ -437,7 +437,7 @@ let test_direct_tracer_attributes_use_fiber_span_stack () =
   let right_started, wake_right_started = Eio.Promise.create () in
   let left_attr_done, wake_left_attr_done = Eio.Promise.create () in
   let left =
-    Effect.named "left-direct"
+    Eta_observability.named "left-direct"
       (Effect.sync (fun () -> Eio.Promise.await right_started)
       |> Effect.bind (fun () ->
              Effect.sync (fun () ->
@@ -445,7 +445,7 @@ let test_direct_tracer_attributes_use_fiber_span_stack () =
                  Eio.Promise.resolve wake_left_attr_done ())))
   in
   let right =
-    Effect.named "right-direct"
+    Eta_observability.named "right-direct"
       (Effect.sync (fun () ->
            Eio.Promise.resolve wake_right_started ();
            Eio.Promise.await left_attr_done))
@@ -566,7 +566,7 @@ let test_encode_failure_drains_in_flight () =
   let meter = Eta_otel.meter exporter in
   meter#record
     {
-      Meter.name = "bad.float";
+      Eta_observability.Meter.name = "bad.float";
       description = "";
       unit_ = "1";
       kind = Capabilities.Gauge;
@@ -596,7 +596,7 @@ let test_encode_failure_keeps_exporter_alive () =
   let meter = Eta_otel.meter exporter in
   meter#record
     {
-      Meter.name = "bad.float";
+      Eta_observability.Meter.name = "bad.float";
       description = "";
       unit_ = "1";
       kind = Capabilities.Gauge;
@@ -792,7 +792,7 @@ let test_self_spans_do_not_reenter_export () =
     "application-span";
   Eta_otel.flush ~timeout_s:1.0 exporter;
   let self_names =
-    Eta_otel.Internal.self_spans exporter |> List.map (fun s -> s.Tracer.name)
+    Eta_otel.Internal.self_spans exporter |> List.map (fun s -> s.Eta_observability.Tracer.name)
   in
   Alcotest.(check bool) "self export span recorded" true
     (List.exists (( = ) "eta_otel.export.traces") self_names);
@@ -947,16 +947,16 @@ let live_motel_test net clock =
     Eta_eio.Runtime.create ~sw ~clock ~tracer:(Eta_otel.tracer exporter) ()
   in
   let demo =
-    Effect.named "demo.root"
+    Eta_observability.named "demo.root"
       (Effect.par
-         (Effect.named "demo.left"
-            (Effect.named "work-left" (Effect.sync (fun () ->
+         (Eta_observability.named "demo.left"
+            (Eta_observability.named "work-left" (Effect.sync (fun () ->
                  Eio.Time.sleep clock 0.005))
-            |> Effect.annotate ~key:"side" ~value:"left"))
-         (Effect.named "demo.right"
-            (Effect.named "work-right" (Effect.sync (fun () ->
+            |> Eta_observability.annotate ~key:"side" ~value:"left"))
+         (Eta_observability.named "demo.right"
+            (Eta_observability.named "work-right" (Effect.sync (fun () ->
                  Eio.Time.sleep clock 0.010))
-            |> Effect.annotate ~key:"side" ~value:"right"
+            |> Eta_observability.annotate ~key:"side" ~value:"right"
             |> Effect.bind (fun () -> Effect.fail `Demo_boom)
             |> Effect.bind_error (fun (`Demo_boom : [ `Demo_boom ]) ->
                    Effect.pure ()))))
@@ -964,7 +964,7 @@ let live_motel_test net clock =
   (match Runtime.run rt demo with
   | Exit.Ok _ -> ()
   | Exit.Error _ -> Alcotest.fail "expected success");
-  let failing = Effect.named "demo.failing" (Effect.fail `Boom) in
+  let failing = Eta_observability.named "demo.failing" (Effect.fail `Boom) in
   (match Runtime.run rt failing with
   | Exit.Ok _ -> Alcotest.fail "expected failure"
   | Exit.Error _ -> ());

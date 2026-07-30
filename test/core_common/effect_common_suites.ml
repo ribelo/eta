@@ -191,7 +191,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       |> Effect.map (fun n -> n + 1)
       |> Effect.bind (fun n -> Effect.pure (n * 2))
       |> Effect.tap (fun n ->
-             Effect.named "tap" (Effect.sync (fun () -> observed := n :: !observed)))
+             Eta_observability.named "tap" (Effect.sync (fun () -> observed := n :: !observed)))
       |> Effect.map (fun n -> n + 1)
     in
     Alcotest.(check int) "value" 5 (run_ok rt eff);
@@ -551,7 +551,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "fold captured defect");
     match
       B.run rt
-        (Effect.named "interrupt" (runtime_interrupt_effect ())
+        (Eta_observability.named "interrupt" (runtime_interrupt_effect ())
         |> Effect.fold ~ok:Fun.id ~error:(fun _ -> 0))
     with
     | Exit.Error (Cause.Interrupt None) -> ()
@@ -851,7 +851,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "discard swallowed defect");
     (match
        B.run rt
-         (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.discard)
+         (Eta_observability.named "interrupt" (runtime_interrupt_effect ()) |> Effect.discard)
      with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
@@ -936,7 +936,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "ignore_errors swallowed defect");
     (match
        B.run rt
-         (Effect.named "interrupt" (runtime_interrupt_effect ())
+         (Eta_observability.named "interrupt" (runtime_interrupt_effect ())
          |> Effect.ignore_errors)
      with
     | Exit.Error (Cause.Interrupt None) -> ()
@@ -994,7 +994,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "option captured defect");
     match
       B.run rt
-        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.to_option)
+        (Eta_observability.named "interrupt" (runtime_interrupt_effect ()) |> Effect.to_option)
     with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
@@ -1094,7 +1094,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     | Exit.Ok _ -> Alcotest.fail "timed captured defect");
     match
       B.run rt
-        (Effect.named "interrupt" (runtime_interrupt_effect ()) |> Effect.timed)
+        (Eta_observability.named "interrupt" (runtime_interrupt_effect ()) |> Effect.timed)
     with
     | Exit.Error (Cause.Interrupt None) -> ()
     | Exit.Error cause ->
@@ -1594,7 +1594,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           (Cause.pp Format.pp_print_string) cause
     | Exit.Ok _ -> Alcotest.fail "expected defect");
     let interrupt_eff =
-      Effect.named "interrupt" (runtime_interrupt_effect ())
+      Eta_observability.named "interrupt" (runtime_interrupt_effect ())
       |> Effect.tap_error observe
     in
     (match B.run rt interrupt_eff with
@@ -1654,9 +1654,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_sampled_traced_runtime Sampler.always_off @@ fun _ctx rt _tracer ->
     let exn = Failure "diagnostic boom" in
     let eff =
-      Effect.named "die.leaf" (Effect.sync (fun () -> raise exn))
-      |> Effect.annotate ~key:"request.id" ~value:"r-1"
-      |> Effect.fn __POS__ "diagnostic.fn"
+      Eta_observability.named "die.leaf" (Effect.sync (fun () -> raise exn))
+      |> Eta_observability.annotate ~key:"request.id" ~value:"r-1"
+      |> Eta_observability.fn __POS__ "diagnostic.fn"
     in
     match B.run rt eff with
     | Exit.Error (Cause.Die die) ->
@@ -1676,13 +1676,13 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let body_exn = Failure "body defect" in
     let release_exn = Failure "release defect" in
     let release () =
-      Effect.named "release.leaf" (Effect.sync (fun () -> raise release_exn))
-      |> Effect.annotate ~key:"phase" ~value:"release"
-      |> Effect.named "release.span"
+      Eta_observability.named "release.leaf" (Effect.sync (fun () -> raise release_exn))
+      |> Eta_observability.annotate ~key:"phase" ~value:"release"
+      |> Eta_observability.named "release.span"
     in
     let body =
-      Effect.named "body.leaf" (Effect.sync (fun () -> raise body_exn))
-      |> Effect.named "body.span"
+      Eta_observability.named "body.leaf" (Effect.sync (fun () -> raise body_exn))
+      |> Eta_observability.named "body.span"
     in
     let eff =
       Effect.with_scope
@@ -1715,12 +1715,12 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let left_ready, left_resolver = B.create_promise () in
     let right_ready, right_resolver = B.create_promise () in
     let child name own_ready other_ready =
-      Effect.named name
+      Eta_observability.named name
         (Effect.sync (fun () -> B.resolve own_ready ())
         |> Effect.bind (fun () -> B.await_effect other_ready)
         |> Effect.bind (fun () -> Effect.sync (fun () -> raise (Failure name))))
-      |> Effect.annotate ~key:"branch" ~value:name
-      |> Effect.named (name ^ ".span")
+      |> Eta_observability.annotate ~key:"branch" ~value:name
+      |> Eta_observability.named (name ^ ".span")
     in
     let eff =
       Effect.par
@@ -1760,10 +1760,10 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let die = Failure "boom" in
     let fail_exit = B.run rt (Effect.fail "bad") in
     let die_exit =
-      B.run rt (Effect.named "die" (Effect.sync (fun () -> raise die)))
+      B.run rt (Eta_observability.named "die" (Effect.sync (fun () -> raise die)))
     in
     let interrupt_exit =
-      B.run rt (Effect.named "interrupt" (runtime_interrupt_effect ()))
+      B.run rt (Eta_observability.named "interrupt" (runtime_interrupt_effect ()))
     in
     expect_typed_failure_eq Alcotest.string fail_exit "bad";
     (match die_exit with
@@ -1782,7 +1782,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let defect = Failure "body defect" in
     let handler_ran = ref false in
     let body : (string, [ `Expected ]) Effect.t =
-      Effect.named "defect" (Effect.sync (fun () -> raise defect))
+      Eta_observability.named "defect" (Effect.sync (fun () -> raise defect))
     in
     let eff =
       body
@@ -1803,7 +1803,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
   let test_effect_bind_error_does_not_catch_interrupt () =
     B.with_runtime @@ fun _ctx rt ->
     let eff =
-      Effect.named "interrupt" (runtime_interrupt_effect ())
+      Eta_observability.named "interrupt" (runtime_interrupt_effect ())
       |> Effect.bind_error (fun (_ : string) -> Effect.pure "caught")
     in
     match B.run rt eff with
@@ -2468,7 +2468,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let result =
       B.run rt
-        (Effect.named "user.exit" (Effect.sync (fun () -> raise Stdlib.Exit)))
+        (Eta_observability.named "user.exit" (Effect.sync (fun () -> raise Stdlib.Exit)))
     in
     match result with
     | Exit.Error (Cause.Die { exn = Stdlib.Exit; _ }) -> ()
@@ -2523,9 +2523,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         method info = log_info
       end
     in
-    let b msg = Effect.named "log" (Effect.sync (fun () -> services#info msg)) in
+    let b msg = Eta_observability.named "log" (Effect.sync (fun () -> services#info msg)) in
     let c id =
-      Effect.named "db"
+      Eta_observability.named "db"
         (Effect.sync (fun () -> services#query (string_of_int (deps.add id))))
     in
     let a id =
@@ -2803,7 +2803,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let active = ref 0 in
     let max_seen = ref 0 in
     let worker x =
-      Effect.named "worker" (Effect.sync (fun () ->
+      Eta_observability.named "worker" (Effect.sync (fun () ->
           incr active;
           max_seen := max !max_seen !active;
           decr active;
@@ -3053,7 +3053,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let slow_done = ref 0 in
     let slow name =
-      Effect.named name (Effect.sync (fun () -> incr slow_done))
+      Eta_observability.named name (Effect.sync (fun () -> incr slow_done))
       |> Effect.delay (Duration.ms 50)
     in
     let promise =
@@ -3074,7 +3074,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.with_scope
         (Effect.acquire_release ~acquire:(Effect.pure ())
            ~release:(fun () ->
-             Effect.named "release" (Effect.sync (fun () -> incr released)))
+             Eta_observability.named "release" (Effect.sync (fun () -> incr released)))
         |> Effect.bind (fun () ->
                Effect.delay (Duration.seconds 10) Effect.unit))
       |> Effect.timeout (Duration.seconds 5)
@@ -3112,14 +3112,14 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let active = ref 0 in
     let max_seen = ref 0 in
     let worker x =
-      Effect.named "enter" (Effect.sync (fun () ->
+      Eta_observability.named "enter" (Effect.sync (fun () ->
           incr active;
           max_seen := max !max_seen !active))
       |> Effect.bind (fun () ->
              Effect.pure x
              |> Effect.delay (Duration.ms 10)
              |> Effect.tap (fun _ ->
-                    Effect.named "leave" (Effect.sync (fun () -> decr active))))
+                    Eta_observability.named "leave" (Effect.sync (fun () -> decr active))))
     in
     let promise =
       B.fork_run ctx rt
@@ -3165,7 +3165,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let worker = function
       | 1 -> Effect.fail "boom"
       | _ ->
-          Effect.named "slow" (Effect.sync (fun () -> slow_done := true))
+          Eta_observability.named "slow" (Effect.sync (fun () -> slow_done := true))
           |> Effect.delay (Duration.ms 10)
     in
     let promise =
@@ -3377,7 +3377,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let slow_other =
       B.yield_effect ()
       |> Effect.bind (fun () ->
-             Effect.named "slow"
+             Eta_observability.named "slow"
                (Effect.sync (fun () ->
                     other_done := true;
                     99)))
@@ -3391,7 +3391,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let go, release = B.create_promise () in
     let ready = B.create_stream 2 in
     let child name =
-      Effect.named name
+      Eta_observability.named name
         (Effect.sync (fun () -> B.stream_add ready name)
         |> Effect.bind (fun () -> B.await_effect go)
         |> Effect.bind (fun () -> Effect.fail name))
@@ -3419,7 +3419,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.with_scope
         (Effect.acquire_release
            ~acquire:
-             (Effect.named "par.slow.acquire"
+             (Eta_observability.named "par.slow.acquire"
                 (Effect.sync (fun () -> B.resolve acquired_u ())))
            ~release:(fun () ->
              release_started := true;
@@ -3427,7 +3427,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
     in
     let body =
-      Effect.named "par.body.wait_for_acquire" (B.await_effect acquired)
+      Eta_observability.named "par.body.wait_for_acquire" (B.await_effect acquired)
       |> Effect.bind (fun () -> Effect.fail "body")
     in
     let promise = B.fork_run ctx rt (Effect.par body slow) in
@@ -3498,7 +3498,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       Effect.with_scope
         (Effect.acquire_release
            ~acquire:
-             (Effect.named "slow.acquire"
+             (Eta_observability.named "slow.acquire"
                 (Effect.sync (fun () -> B.resolve acquired_u ())))
            ~release:(fun () ->
              release_started := true;
@@ -3506,7 +3506,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
         |> Effect.bind (fun () -> Effect.delay (Duration.ms 1_000) Effect.unit))
     in
     let body =
-      Effect.named "body.wait_for_acquire" (B.await_effect acquired)
+      Eta_observability.named "body.wait_for_acquire" (B.await_effect acquired)
       |> Effect.bind (fun () -> Effect.fail "body")
     in
     let promise = B.fork_run ctx rt (Effect.all [ body; slow ]) in
@@ -3529,7 +3529,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let go, release = B.create_promise () in
     let ready = B.create_stream 2 in
     let worker name =
-      Effect.named ("worker." ^ name)
+      Eta_observability.named ("worker." ^ name)
         (Effect.sync (fun () ->
              if name <> "ok" then B.stream_add ready name;
              name)
@@ -3563,7 +3563,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
           Effect.with_scope
             (Effect.acquire_release
                ~acquire:
-                 (Effect.named "foreach.slow.acquire"
+                 (Eta_observability.named "foreach.slow.acquire"
                     (Effect.sync (fun () -> B.resolve acquired_u ())))
                ~release:(fun () ->
                  release_started := true;
@@ -3571,7 +3571,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             |> Effect.bind (fun () ->
                    Effect.delay (Duration.ms 1_000) Effect.unit))
       | "body" ->
-          Effect.named "foreach.body.wait_for_acquire" (B.await_effect acquired)
+          Eta_observability.named "foreach.body.wait_for_acquire" (B.await_effect acquired)
           |> Effect.bind (fun () -> Effect.fail "body")
       | _ -> Effect.unit
     in
@@ -3599,7 +3599,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
       let go, release = B.create_promise () in
       let ready = B.create_stream 2 in
       let child name result =
-        Effect.named ("race." ^ name)
+        Eta_observability.named ("race." ^ name)
           (Effect.sync (fun () -> B.stream_add ready name)
           |> Effect.bind (fun () -> B.await_effect go))
         |> Effect.bind (fun () -> result)

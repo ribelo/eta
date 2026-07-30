@@ -38,4 +38,5 @@ let split_target target =
 let header name t = Header.get name t.headers
 let body t = t.body
 let trailers t = t.trailers ()
-let trace_context t = Eta.Trace_context.extract (Header.to_list t.headers)
+let trace_context t =
+  Eta_observability.Trace_context.extract (Header.to_list t.headers)

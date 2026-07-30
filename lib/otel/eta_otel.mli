@@ -162,7 +162,7 @@ type aggregate_value =
   | Summary of summary_state
 
 val aggregate_points :
-  Eta.Meter.point list ->
+  Eta_observability.Meter.point list ->
   (Metric_key.t * (aggregate_value * int * int)) list
 (** Aggregate raw meter points by [(name, kind, attrs, description, unit_)].
     Gauges and cumulative counters keep the latest numeric value, monotonic
@@ -201,10 +201,10 @@ module Internal : sig
   val encode_metrics_request :
     resource_attrs:(string * string) list ->
     scope_name:string ->
-    Eta.Meter.point list ->
+    Eta_observability.Meter.point list ->
     string
 
-  val self_spans : t -> Eta.Tracer.span list
+  val self_spans : t -> Eta_observability.Tracer.span list
   (** Exporter-internal Eta spans. These are recorded with an in-memory tracer
       owned by the exporter and are never sent through the OTLP sink. *)
 end

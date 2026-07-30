@@ -96,7 +96,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let released = ref [] in
     let resource name =
       E.acquire_release ~acquire:E.unit ~release:(fun () ->
-          E.named ("release." ^ name)
+          Eta_observability.named ("release." ^ name)
             (E.sync (fun () -> released := name :: !released))
           |> E.delay (Duration.seconds 1))
     in
@@ -150,7 +150,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let source = ref 0 in
     let calls = ref 0 in
     let load =
-      E.named "refreshable.load"
+      Eta_observability.named "refreshable.load"
         (E.sync (fun () ->
              incr calls;
              !source))
@@ -187,7 +187,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_runtime @@ fun _ctx rt ->
     let source = ref (Ok 0) in
     let load =
-      E.named "refreshable.load" (E.sync (fun () -> !source))
+      Eta_observability.named "refreshable.load" (E.sync (fun () -> !source))
       |> E.bind (function
            | Ok value -> E.pure value
            | Error message -> E.fail (`Refresh_failed message))
@@ -195,7 +195,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let eff =
       Refreshable.manual load
       |> E.bind (fun refreshable ->
-             E.named "source.fail"
+             Eta_observability.named "source.fail"
                (E.sync (fun () -> source := Error "Uh oh!"))
              |> E.bind (fun () -> Refreshable.refresh refreshable)
              |> E.bind_error
@@ -214,7 +214,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let second_release, second_release_resolver = B.create_promise () in
     let calls = ref 0 in
     let load =
-      E.named "refreshable.load"
+      Eta_observability.named "refreshable.load"
         (E.sync (fun () ->
              incr calls;
              !calls)
@@ -247,7 +247,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let source = ref 0 in
     let load =
-      E.named "refreshable.with_auto.load"
+      Eta_observability.named "refreshable.with_auto.load"
         (E.sync (fun () ->
              incr source;
              !source))
@@ -352,7 +352,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
     let load =
-      E.named "refreshable.with_auto.load"
+      Eta_observability.named "refreshable.with_auto.load"
         (E.sync (fun () ->
              match !results with
              | [] -> Ok 999
@@ -392,7 +392,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let results = ref [ Ok 1; Error (Failure "loader boom"); Ok 2 ] in
     let callback_calls = ref 0 in
     let load =
-      E.named "refreshable.with_auto.load"
+      Eta_observability.named "refreshable.with_auto.load"
         (E.sync (fun () ->
              match !results with
              | [] -> 999
@@ -430,7 +430,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     B.with_test_clock @@ fun ctx clock rt ->
     let results = ref [ Ok 1; Error "boom"; Ok 2 ] in
     let load =
-      E.named "refreshable.with_auto.load"
+      Eta_observability.named "refreshable.with_auto.load"
         (E.sync (fun () ->
              match !results with
              | [] -> Ok 999

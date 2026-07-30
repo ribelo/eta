@@ -5,7 +5,7 @@ type error = [ `Check_failed of string ]
 
 let check = function
   | "search" -> Effect.fail (`Check_failed "search")
-  | name -> Effect.named ~error_pp:pp_error ("health." ^ name) (Effect.pure name)
+  | name -> Eta_observability.named ~error_pp:pp_error ("health." ^ name) (Effect.pure name)
 
 let all_ok =
   [ "db"; "cache"; "queue" ] |> List.map check |> Effect.all

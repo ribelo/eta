@@ -133,13 +133,13 @@ let test_runtime_sleep_and_now_share_monotonic_timebase () =
        "runtime clock pair" (10, 15)
 
 let test_direct_runtime_preserves_task_context () =
-  let tracer = Tracer.in_memory () in
-  let rt = Direct.create ~tracer:(Tracer.as_capability tracer) () in
-  let eff = Effect.named "direct.span" (Effect.sync (fun () -> 1)) in
+  let tracer = Eta_observability.Tracer.in_memory () in
+  let rt = Direct.create ~tracer:(Eta_observability.Tracer.as_capability tracer) () in
+  let eff = Eta_observability.named "direct.span" (Effect.sync (fun () -> 1)) in
   Direct.run rt eff |> check_exit_ok Alcotest.int "span result" 1;
-  match Tracer.dump tracer with
+  match Eta_observability.Tracer.dump tracer with
   | [ span ] ->
-      Alcotest.(check string) "span name" "direct.span" span.Tracer.name
+      Alcotest.(check string) "span name" "direct.span" span.Eta_observability.Tracer.name
   | spans -> Alcotest.failf "expected one span, got %d" (List.length spans)
 
 let test_expert_custom_effect_uses_runtime_contract () =

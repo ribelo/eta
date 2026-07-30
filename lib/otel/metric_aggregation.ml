@@ -11,7 +11,7 @@ module Metric_key = struct
     | [] | [ _ ] as attrs -> attrs
     | attrs -> List.sort compare attrs
 
-  let normalize (p : Eta.Meter.point) =
+  let normalize (p : Eta_observability.Meter.point) =
     {
       name = p.name;
       description = p.description;
@@ -222,7 +222,7 @@ let finish_acc kind acc =
 let aggregate_points_table points =
   let table = Hashtbl.create 16 in
   List.iter
-    (fun (p : Eta.Meter.point) ->
+    (fun (p : Eta_observability.Meter.point) ->
       let key = Metric_key.normalize p in
       let ts_ns = ms_to_ns_saturating p.ts_ms in
       match Hashtbl.find_opt table key with

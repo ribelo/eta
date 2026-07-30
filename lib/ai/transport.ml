@@ -94,7 +94,7 @@ let run_request request perform =
 
 let submit_request client request =
   Eta_http.request client request
-  |> Eta.Effect.suppress_observability
+  |> Eta_observability.suppress_observability
   |> Eta.Effect.bind_error (fun error -> Eta.Effect.fail (Eta_http_error error))
 
 let[@inline always] successful response =

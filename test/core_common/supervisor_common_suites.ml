@@ -69,7 +69,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
             let* () = yield in
             failures sup;
       }
-      |> E.with_error_pp render
+      |> Eta_observability.with_error_pp render
     in
     match B.run rt program with
     | Exit.Ok [ Cause.Finalizer finalizer ] ->
@@ -126,9 +126,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let finalizer_ran = ref false in
     let child =
       E.acquire_release
-        ~acquire:(E.named "supervisor.acquire" (E.sync (fun () -> ())))
+        ~acquire:(Eta_observability.named "supervisor.acquire" (E.sync (fun () -> ())))
         ~release:(fun () ->
-          E.named "supervisor.release"
+          Eta_observability.named "supervisor.release"
             (E.sync (fun () -> finalizer_ran := true)))
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
@@ -157,9 +157,9 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     let finalizer_ran = ref false in
     let child =
       E.acquire_release
-        ~acquire:(E.named "supervisor.acquire" (E.sync (fun () -> ())))
+        ~acquire:(Eta_observability.named "supervisor.acquire" (E.sync (fun () -> ())))
         ~release:(fun () ->
-          E.named "supervisor.release"
+          Eta_observability.named "supervisor.release"
             (E.sync (fun () -> finalizer_ran := true)))
       |> E.bind (fun () -> E.delay (Duration.ms 1_000) E.unit)
     in
@@ -475,7 +475,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let program =
       make background (fun () -> wait_for_sleepers_effect clock 1 |> E.bind body)
-      |> E.with_error_pp pp_background_error
+      |> Eta_observability.with_error_pp pp_background_error
     in
     B.run rt program
 
@@ -558,7 +558,7 @@ module Make (B : Eta_runtime_common_tests.Runtime_backend.S) = struct
     in
     let exit =
       E.with_background background (fun () -> use)
-      |> E.with_error_pp pp_background_error |> B.run rt
+      |> Eta_observability.with_error_pp pp_background_error |> B.run rt
     in
     Alcotest.(check string)
       "background primary with complete body cleanup cause"

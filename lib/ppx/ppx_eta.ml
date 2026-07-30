@@ -6,10 +6,16 @@ let eta_effect_ident ~loc name =
     (Located.mk ~loc
        (Longident.Ldot (Longident.Ldot (Lident "Eta", "Effect"), name)))
 
+let eta_observability_ident ~loc name =
+  let open Ast_builder.Default in
+  pexp_ident ~loc
+    (Located.mk ~loc
+       (Longident.Ldot (Lident "Eta_observability", name)))
+
 let expand_fn ~ctxt body =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   let open Ast_builder.Default in
-  pexp_apply ~loc (eta_effect_ident ~loc "fn")
+  pexp_apply ~loc (eta_observability_ident ~loc "fn")
     [
       (Nolabel, evar ~loc "__POS__");
       (Nolabel, evar ~loc "__FUNCTION__");
@@ -26,7 +32,7 @@ let expand_sync_like ~ctxt ~kind ~form expr =
       ( { pexp_desc = Pexp_constant (Pconst_string (name, _, _)); _ },
         [ (Nolabel, body) ] ) ->
       let leaf =
-        pexp_apply ~loc (eta_effect_ident ~loc "named")
+        pexp_apply ~loc (eta_observability_ident ~loc "named")
           [
             (Nolabel, estring ~loc name);
             ( Nolabel,

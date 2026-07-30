@@ -4,7 +4,7 @@ let program services =
   Tp_m47.program services
   |> Effect.bind (fun acc -> Effect.sync (fun () -> services#tenant_lookup acc))
   |> Effect.bind (fun acc -> if false then Effect.fail (`Validation "m48") else Effect.pure acc)
-  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#rate_limit acc) |> Effect.annotate ~key:"module" ~value:"48" |> Effect.named "m48.named")
+  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#rate_limit acc) |> Eta_observability.annotate ~key:"module" ~value:"48" |> Eta_observability.named "m48.named")
   |> Effect.bind (fun acc -> Effect.par (Effect.sync (fun () -> services#clock_now acc)) (Effect.sync (fun () -> services#user_read acc)) |> Effect.map (fun (a, b) -> a + b))
   |> Effect.bind (fun acc -> Effect.all [ Effect.pure acc; Effect.sync (fun () -> services#user_write acc); Effect.sync (fun () -> services#order_read acc) ] |> Effect.map (List.fold_left ( + ) 0))
   |> Effect.bind (fun acc -> Effect.all_settled [ Effect.pure acc; Effect.fail (`Cache "m48"); Effect.pure (acc + 1) ] |> Effect.map (List.fold_left (fun n -> function Ok v -> n + v | Error _ -> n) 0))

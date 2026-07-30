@@ -156,19 +156,19 @@ Use named helpers at common boundaries:
   once started.
 - `Eta.Random` helpers for deterministic scalar and collection draws over a
   portable seeded random token.
-- `Eta.Log_level` helpers for log threshold parsing, filtering, and OTLP
+- `Eta_observability.Log_level` helpers for log threshold parsing, filtering, and OTLP
   severity-number/rendering boundaries.
 - `Eta.Sampler` policies for deterministic trace sampling and parent-based
   sampling decisions.
-- `Eta.Trace_context.extract` plus `Effect.with_context` for inbound W3C
+- `Eta_observability.Trace_context.extract` plus `Eta_observability.with_context` for inbound W3C
   propagation across service boundaries.
-- `Effect.current_context` plus `Eta.Trace_context.inject` for outbound W3C
+- `Eta_observability.current_context` plus `Eta_observability.Trace_context.inject` for outbound W3C
   propagation from the runtime context.
-- `Effect.current_span` plus `Effect.link_span` for runtime-visible span
+- `Eta_observability.current_span` plus `Eta_observability.link_span` for runtime-visible span
   relationships such as producer/consumer handoff.
-- `Effect.fn __POS__ __FUNCTION__` for function-name spans with compiler source
+- `Eta_observability.fn __POS__ __FUNCTION__` for function-name spans with compiler source
   locations and ordinary span attributes.
-- `Effect.with_error_pp` when typed failures need useful span statuses,
+- `Eta_observability.with_error_pp` when typed failures need useful span statuses,
   exception-event messages, or rendered finalizer diagnostics.
 - `[@@deriving eta_error]` from `ppx_eta` for a plain `pp_<type>` over a public,
   explicit-tag closed polymorphic error row, then explicit `?error_pp` /
@@ -215,11 +215,11 @@ Use named helpers at common boundaries:
   application code.
 - `Eta.Supervisor.scoped { run = ... }` plus
   `Eta.Supervisor.Scope.(let*)` when child handles must stay inside a nursery.
-- `Effect.is_tracing_enabled`, `Effect.annotate_all_lazy`, and
-  `Effect.suppress_observability` for runtime-aware observability controls.
-- `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, and `Eta.Meter.in_memory`
+- `Eta_observability.is_tracing_enabled`, `Eta_observability.annotate_all_lazy`, and
+  `Eta_observability.suppress_observability` for runtime-aware observability controls.
+- `Eta_observability.Tracer.in_memory`, `Eta_observability.Logger.in_memory`, and `Eta_observability.Meter.in_memory`
   for tests and bounded diagnostics without custom capability collectors.
-- `Effect.metric_updates_lazy` for hot metric paths where snapshots and
+- `Eta_observability.metric_updates_lazy` for hot metric paths where snapshots and
   allocation should happen only when the runtime has a meter.
 - `Eta_http.Server.Handler.of_sync` / `of_result` / `of_effect` for server
   handlers.
@@ -645,7 +645,7 @@ a typed failure and should not be used as a blanket around long-running work.
 numbers. It owns case-insensitive threshold parsing, `All` / `Off` threshold
 semantics, level comparison, rendering, and OTLP severity-number mapping. Raw
 strings and integers are still boundary formats; keep them at configuration or
-export boundaries and convert to `Log_level.t` before policy decisions.
+export boundaries and convert to `Eta_observability.Log_level.t` before policy decisions.
 
 `Random` is not replaced by naked `Capabilities.random_float` math or
 `Stdlib.Random`. Eta's helpers are deterministic draws over the same portable
@@ -668,30 +668,30 @@ decisions in the same shape that `Runtime.create ?sampler` interprets for span
 creation.
 
 `Trace_context` is not replaced by manual `traceparent` substring slicing or
-`Effect.with_external_parent`. It validates W3C propagation headers, preserves
+`Eta_observability.with_external_parent`. It validates W3C propagation headers, preserves
 sampled flags, tracestate, and baggage, and feeds the same context into
-`Effect.with_context` that the runtime uses for parent-based sampling and span
+`Eta_observability.with_context` that the runtime uses for parent-based sampling and span
 parenting. `with_external_parent` remains only the compatibility shape when a
 boundary truly has just trace/span IDs.
 
-`Trace_context.inject` and `Effect.current_context` are not replaced by
+`Eta_observability.Trace_context.inject` and `Eta_observability.current_context` are not replaced by
 hand-written outbound `traceparent`, `tracestate`, and `baggage` strings. Read
 the runtime context inside the blueprint and inject it at the outbound boundary
 so W3C formatting stays in Eta's propagation helper.
 
-`Effect.link_span` is not replaced by annotating spans with `linked.trace_id`
-strings. Use `Effect.current_span` to read the active runtime span when a
+`Eta_observability.link_span` is not replaced by annotating spans with `linked.trace_id`
+strings. Use `Eta_observability.current_span` to read the active runtime span when a
 producer needs to hand off context, and `link_span` to record the relationship
 as a first-class tracer link on the consumer span.
 
-`Effect.fn` is not replaced by manual `Effect.named` plus a hand-formatted
-`loc` attribute. Use `Effect.fn __POS__ __FUNCTION__ body` for normal
+`Eta_observability.fn` is not replaced by manual `Eta_observability.named` plus a hand-formatted
+`loc` attribute. Use `Eta_observability.fn __POS__ __FUNCTION__ body` for normal
 function-name spans: the compiler supplies the function name and source
 position, while the helper still accepts span kind, `?error_pp`, and attrs.
-`Effect.here_attr` remains the lower-level wrapper primitive when a helper needs
+`Eta_observability.here_attr` remains the lower-level wrapper primitive when a helper needs
 to pass `__POS__` through unchanged without choosing a new span name.
 
-`Effect.with_error_pp` is not replaced by converting typed failures into
+`Eta_observability.with_error_pp` is not replaced by converting typed failures into
 exceptions or strings at the source. The typed error value stays in the
 `Effect.t` error channel; the printer is scoped diagnostic policy for
 observability span status, exception-event messages, and rendered finalizer
@@ -733,24 +733,25 @@ convenience for tests and top-level programs that cannot recover; it preserves
 successful values but raises on non-success, collapsing typed failures into a
 rendered exception path.
 
-`Effect.metric_update` is not replaced by `Effect.metric_updates_lazy`. Use
+`Eta_observability.metric_update` is not replaced by `Eta_observability.metric_updates_lazy`. Use
 single updates when emitting one observation. Use `metric_updates` or
 `metric_updates_lazy` when a hot path emits a group of related observations and
 should share one runtime timestamp or avoid snapshot/allocation work when no
 meter is installed.
 
-`Effect.is_tracing_enabled`, `Effect.annotate_all_lazy`, and
-`Effect.suppress_observability` are not replaced by passing runtime flags
+`Eta_observability.is_tracing_enabled`, `Eta_observability.annotate_all_lazy`, and
+`Eta_observability.suppress_observability` are not replaced by passing runtime flags
 through application code. They let the same blueprint decide at interpretation
 time whether tracing work is useful and whether an observer/exporter subtree
 must avoid recursively observing itself. The controls example is longer than an
 external boolean sketch; the accepted reason is preserving runtime ownership of
 observability state.
 
-`Tracer.in_memory`, `Logger.in_memory`, and `Meter.in_memory` are not replaced
+`Eta_observability.Tracer.in_memory`, `Eta_observability.Logger.in_memory`, and
+`Eta_observability.Meter.in_memory` are not replaced
 by bespoke capability objects in tests. The built-in sinks provide synchronized
 collection, `as_capability` adapters for runtime creation, dumps for
-assertions, and `Tracer.retain_recent` for bounded diagnostics.
+assertions, and `Eta_observability.Tracer.retain_recent` for bounded diagnostics.
 
 `Eta_cache.Refreshable.with_auto` is not just `with_background` around a ref. It
 owns the refresh loop for exactly the callback's lifetime, preserves the last
@@ -878,8 +879,8 @@ and observability. The current evidence supports this split:
 
 | Surface | Examples |
 | --- | --- |
-| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta.Log_level.of_string`, `Eta.Log_level.is_enabled`, `Eta.Log_level.to_string`, `Eta.Log_level.to_otel_severity`, `Eta.Log_level.of_otel_severity`, `Eta.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta.Trace_context.extract`, `Eta.Trace_context.inject`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.get`, `Eta_cache.Refreshable.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta.Tracer.in_memory`, `Eta.Logger.in_memory`, `Eta.Meter.in_memory` |
-| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Log_level.of_string`, `Log_level.is_enabled`, `Log_level.to_string`, `Log_level.to_otel_severity`, `Log_level.of_otel_severity`, `Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Trace_context.extract`, `Trace_context.inject`, `Trace_context.make`, `Effect.with_context`, `Effect.current_context`, `Effect.current_span`, `Effect.link_span`), source locations (`Effect.fn`, `Effect.here_attr`), typed error rendering (`Effect.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), refreshable cached values (`Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
+| Preferred application API | `pure`, `fail`, `from_result`, `from_option`, `flatten_result`, `sync`, `sync_result`, `sync_option`, `async`, `yield`, `tap`, `bind_error`, `fold`, `discard`, `ignore_errors`, `to_result`, `to_option`, `to_exit`, `map_par`, `retry`, `retry_or_else`, `repeat`, `delay`, `timeout_as`, `uninterruptible`, `interruptible`, `all`, `all_bounded`, `with_resource`, `with_scope`, `finally`, `with_background`, `with_supervised_background`, `Eta.Schedule`, `Eta.Duration.ms`, `Eta.Duration.seconds`, `Eta_observability.Log_level.of_string`, `Eta_observability.Log_level.is_enabled`, `Eta_observability.Log_level.to_string`, `Eta_observability.Log_level.to_otel_severity`, `Eta_observability.Log_level.of_otel_severity`, `Eta_observability.Log_level.pp`, `Eta.Random.int_in_range`, `Eta.Random.float_in_range`, `Eta.Random.bool`, `Eta.Random.shuffle`, `Eta.Random.weighted_choice`, `Eta.Random.sample`, `Eta.Sampler.ratio`, `Eta.Sampler.parent_based`, `Eta_observability.Trace_context.extract`, `Eta_observability.Trace_context.inject`, `Eta_observability.with_context`, `Eta_observability.current_context`, `Eta_observability.current_span`, `Eta_observability.link_span`, `Eta.Runtime.run`, `Eta.Runtime.drain`, `Eta.Exit.to_result`, `Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.get`, `Eta_cache.Refreshable.failures`, `Eta.Pool.create`, `Eta.Pool.with_resource`, `Eta.Pool.shutdown`, `Eta.Pubsub.subscribe`, `Eta.Pubsub.try_recv`, `Eta.Pubsub.stats`, `Eta.Pubsub.close_effect`, `Eta.Pubsub.close_with_error_effect`, `Eta.Channel.send`, `Eta.Channel.recv`, `Eta.Channel.try_send`, `Eta.Channel.try_recv`, `Eta.Channel.stats`, `Eta.Channel.close_effect`, `Eta.Channel.close_with_error_effect`, `Eta.Queue.unbounded`, `Eta.Queue.bounded`, `Eta.Queue.dropping`, `Eta.Queue.sliding`, `Eta.Queue.send`, `Eta.Queue.take`, `Eta.Queue.try_offer`, `Eta.Queue.poll`, `Eta.Queue.stats`, `Eta.Queue.close_effect`, `Eta.Queue.close_with_error_effect`, `Eta.Semaphore.with_permits`, `Eta.Semaphore.with_permits_or_abort`, `Eta.Semaphore.available`, `Eta.Semaphore.waiting`, `Eta.Mutable_ref.update_and_get`, `Eta_blocking.run_result`, `named`, `fn`, `with_error_pp`, `log`, `event`, `with_result_attrs`, `annotate_all_lazy`, `is_tracing_enabled`, `suppress_observability`, `metric_update`, `metric`, `metric_updates`, `metric_updates_lazy`, `Eta_observability.Tracer.in_memory`, `Eta_observability.Logger.in_memory`, `Eta_observability.Meter.in_memory` |
+| Semantic capabilities to keep visible | concurrency (`race`, `par`, `all`, `all_bounded`, `all_settled`, `map_par`), retry/repeat policies (`Schedule.recurs`, `Schedule.exponential`, `Schedule.jittered`, `Schedule.start`, `Schedule.next`), typed time values (`Duration.ms`, `Duration.seconds`, `Duration.add`, `Duration.subtract`, `Duration.times`, `Duration.scale`, `Duration.clamp`, `Duration.between`, `Duration.to_ms`, `Duration.pp`), typed log levels (`Eta_observability.Log_level.of_string`, `Eta_observability.Log_level.is_enabled`, `Eta_observability.Log_level.to_string`, `Eta_observability.Log_level.to_otel_severity`, `Eta_observability.Log_level.of_otel_severity`, `Eta_observability.Log_level.pp`), deterministic random (`Capabilities.random_of_seed`, `Capabilities.random_set_seed`, `Random.int_in_range`, `Random.float_in_range`, `Random.bool`, `Random.shuffle`, `Random.weighted_choice`, `Random.sample`), trace sampling (`Sampler.always_on`, `Sampler.always_off`, `Sampler.ratio`, `Sampler.parent_based`, `Sampler.sample`), trace propagation (`Eta_observability.Trace_context.extract`, `Eta_observability.Trace_context.inject`, `Eta_observability.Trace_context.make`, `Eta_observability.with_context`, `Eta_observability.current_context`, `Eta_observability.current_span`, `Eta_observability.link_span`), source locations (`Eta_observability.fn`, `Eta_observability.here_attr`), typed error rendering (`Eta_observability.with_error_pp`, `?error_pp` on `named` / `fn`), runtime outcomes (`Runtime.run`, `Runtime.run_exn`, `Runtime.drain`, `Exit.to_result`, `Exit.pp`, `Cause.pp`, `Cause.Finalizer`, `Cause.Suppressed`), bounded handoff (`Channel.create`, `Channel.send`, `Channel.recv`, `Channel.try_send`, `Channel.try_recv`, close/error propagation), queue handoff (`Queue.unbounded`, `Queue.bounded`, `Queue.dropping`, `Queue.sliding`, `Queue.send`, `Queue.take`, `Queue.try_offer`, `Queue.poll`, producer/consumer views, close/error propagation), shared state (`Mutable_ref.make`, `Mutable_ref.update`, `Mutable_ref.update_and_get`, `Mutable_ref.get_and_set`), refreshable cached values (`Eta_cache.Refreshable.with_auto`, `Eta_cache.Refreshable.with_auto_on_refresh_error`, `Eta_cache.Refreshable.manual`, `Eta_cache.Refreshable.refresh`, `Eta_cache.Refreshable.failures`), pools (`Pool.create`, `Pool.with_resource`, `Pool.shutdown`, `Pool.stats`), pubsub (`Pubsub.subscribe`, `Pubsub.publish`, `Pubsub.recv`, `Pubsub.try_recv`, close/error propagation), admission control (`Semaphore.with_permits`, `Semaphore.with_permits_or_abort`), supervised nurseries (`Supervisor.scoped`, `Supervisor.Scope`), wider resource scopes (`with_scope`, `acquire_release`), interruption/cleanup/time (`uninterruptible`, `interruptible`, `finally`, `timeout`, `repeat`), typed error transforms (`map_error`, `tap_error`), observability context/attributes/control/sinks/metric batching |
 | Low-level or advanced surface | `name`, `bind`, `(>>=)`, `seq`, `concat`, `acquire_use_release`, `supervisor_scoped`/`supervisor_yield` primitives behind `Supervisor`, runtime-package service hooks (`Runtime_contract.create_service_key`, `Runtime_contract.Service`), and the unstable `Eta.Spi` namespace (`Spi.daemon`, `Spi.Expert`) |
 
 The low-level group is not a deletion list. It is a doc-demotion list: these
@@ -998,7 +999,7 @@ What the migration proved:
 - `Effect.from_option` is the same boundary for already-computed optional
   lookup/extraction results where `None` is a typed failure. `Effect.sync_option
   ~if_none` is the thunk counterpart for synchronous option leaves.
-- `Effect.with_result_attrs` is not just an observability nicety. It removed
+- `Eta_observability.with_result_attrs` is not just an observability nicety. It removed
   binds whose only purpose was attaching dynamic row-count/result attributes
   while preserving the success value.
 - `Effect.tap` remains important in instrumentation-heavy code. Many workflows

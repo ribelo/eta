@@ -4,7 +4,7 @@ let program services =
   Tp_m41.program services
   |> Effect.bind (fun acc -> Effect.sync (fun () -> services#inventory_get acc))
   |> Effect.bind (fun acc -> if false then Effect.fail (`Validation "m42") else Effect.pure acc)
-  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#shipment_quote acc) |> Effect.annotate ~key:"module" ~value:"42" |> Effect.named "m42.named")
+  |> Effect.bind (fun acc -> Effect.sync (fun () -> services#shipment_quote acc) |> Eta_observability.annotate ~key:"module" ~value:"42" |> Eta_observability.named "m42.named")
   |> Effect.bind (fun acc -> Effect.par (Effect.sync (fun () -> services#email_send acc)) (Effect.sync (fun () -> services#sms_send acc)) |> Effect.map (fun (a, b) -> a + b))
   |> Effect.bind (fun acc -> Effect.all [ Effect.pure acc; Effect.sync (fun () -> services#report_build acc); Effect.sync (fun () -> services#policy_eval acc) ] |> Effect.map (List.fold_left ( + ) 0))
   |> Effect.bind (fun acc -> Effect.all_settled [ Effect.pure acc; Effect.fail (`Cache "m42"); Effect.pure (acc + 1) ] |> Effect.map (List.fold_left (fun n -> function Ok v -> n + v | Error _ -> n) 0))

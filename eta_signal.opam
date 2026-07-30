@@ -12,6 +12,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21" & >= "3.0"}
   "eta"
+  "eta_observability"
   "eta_stream"
   "odoc" {with-doc}
 ]

@@ -38,18 +38,26 @@ module Test_clock : sig
 end
 
 val with_logger :
-  (Eio.Switch.t -> 'err Eta.Runtime.t -> Eta.Logger.in_memory -> 'a) -> 'a
+  (Eio.Switch.t ->
+  'err Eta.Runtime.t ->
+  Eta_observability.Logger.in_memory ->
+  'a) ->
+  'a
 (** [with_logger f] creates a runtime with an in-memory logger. *)
 
 val with_tracer :
-  (Eio.Switch.t -> 'err Eta.Runtime.t -> Eta.Tracer.in_memory -> 'a) -> 'a
+  (Eio.Switch.t ->
+  'err Eta.Runtime.t ->
+  Eta_observability.Tracer.in_memory ->
+  'a) ->
+  'a
 (** [with_tracer f] creates a runtime with an in-memory tracer. *)
 
 val with_logger_and_tracer :
   (Eio.Switch.t ->
   'err Eta.Runtime.t ->
-  Eta.Logger.in_memory ->
-  Eta.Tracer.in_memory ->
+  Eta_observability.Logger.in_memory ->
+  Eta_observability.Tracer.in_memory ->
   'a) ->
   'a
 (** [with_logger_and_tracer f] creates a runtime with both in-memory
@@ -65,7 +73,7 @@ val with_traced_test_clock :
   (Eio.Switch.t ->
   Test_clock.t ->
   'err Eta.Runtime.t ->
-  Eta.Tracer.in_memory ->
+  Eta_observability.Tracer.in_memory ->
   'a) ->
   'a
 (** [with_traced_test_clock f] is [with_test_clock] plus an in-memory tracer,
@@ -140,18 +148,18 @@ module Run : sig
 
   type event =
     | Sleep of Eta.Duration.t
-    | Log of Eta.Logger.record
-    | Span of Eta.Tracer.span
-    | Metric of Eta.Meter.point
+    | Log of Eta_observability.Logger.record
+    | Span of Eta_observability.Tracer.span
+    | Metric of Eta_observability.Meter.point
   (** One cross-category execution observation. Events are sequenced when the
       virtual sleep is requested, a log/metric reaches its sink, or a span
       closes. *)
 
   type ('a, 'err) outcome = {
     exit : ('a, 'err) Eta.Exit.t;
-    logs : Eta.Logger.record list;
-    spans : Eta.Tracer.span list;
-    metrics : Eta.Meter.point list;
+    logs : Eta_observability.Logger.record list;
+    spans : Eta_observability.Tracer.span list;
+    metrics : Eta_observability.Meter.point list;
     sleeps : Eta.Duration.t list;
     events : event list;
     pending_fibers : fiber_info list option;

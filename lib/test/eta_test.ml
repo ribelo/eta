@@ -226,10 +226,10 @@ let with_logger f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let logger = Eta.Logger.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
   let rt =
     create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
-      ~logger:(Eta.Logger.as_capability logger) ()
+      ~logger:(Eta_observability.Logger.as_capability logger) ()
   in
   f sw rt logger
 
@@ -237,10 +237,10 @@ let with_tracer f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw rt tracer
 
@@ -248,12 +248,12 @@ let with_logger_and_tracer f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let logger = Eta.Logger.in_memory () in
-  let tracer = Eta.Tracer.in_memory () in
+  let logger = Eta_observability.Logger.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
-      ~logger:(Eta.Logger.as_capability logger)
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~logger:(Eta_observability.Logger.as_capability logger)
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw rt logger tracer
 
@@ -270,10 +270,10 @@ let with_traced_test_clock f =
   Eio_main.run @@ fun stdenv ->
   Eio.Switch.run @@ fun sw ->
   let clock = Test_clock.create () in
-  let tracer = Eta.Tracer.in_memory () in
+  let tracer = Eta_observability.Tracer.in_memory () in
   let rt =
     create_accounted_runtime ~sw ~eio_clock:(Eio.Stdenv.clock stdenv) ~clock
-      ~tracer:(Eta.Tracer.as_capability tracer) ()
+      ~tracer:(Eta_observability.Tracer.as_capability tracer) ()
   in
   f sw clock rt tracer
 
@@ -353,15 +353,15 @@ module Run = struct
 
   type event =
     | Sleep of Eta.Duration.t
-    | Log of Eta.Logger.record
-    | Span of Eta.Tracer.span
-    | Metric of Eta.Meter.point
+    | Log of Eta_observability.Logger.record
+    | Span of Eta_observability.Tracer.span
+    | Metric of Eta_observability.Meter.point
 
   type ('a, 'err) outcome = {
     exit : ('a, 'err) Eta.Exit.t;
-    logs : Eta.Logger.record list;
-    spans : Eta.Tracer.span list;
-    metrics : Eta.Meter.point list;
+    logs : Eta_observability.Logger.record list;
+    spans : Eta_observability.Tracer.span list;
+    metrics : Eta_observability.Meter.point list;
     sleeps : Eta.Duration.t list;
     events : event list;
     pending_fibers : fiber_info list option;
@@ -405,13 +405,13 @@ module Run = struct
     Eio_main.run @@ fun stdenv ->
     Eio.Switch.run @@ fun sw ->
     let clock = Option.value clock ~default:(Test_clock.create ()) in
-    let logger = Eta.Logger.in_memory () in
-    let tracer = Eta.Tracer.in_memory () in
-    let meter = Eta.Meter.in_memory () in
+    let logger = Eta_observability.Logger.in_memory () in
+    let tracer = Eta_observability.Tracer.in_memory () in
+    let meter = Eta_observability.Meter.in_memory () in
     let random = Eta.Capabilities.random_of_seed seed in
     let events_rev = ref [] in
     let record event = events_rev := event :: !events_rev in
-    let logger_capability = Eta.Logger.as_capability logger in
+    let logger_capability = Eta_observability.Logger.as_capability logger in
     let logger_capability : Eta.Capabilities.logger =
       object
         method log log_record =
@@ -419,7 +419,7 @@ module Run = struct
           record (Log log_record)
       end
     in
-    let meter_capability = Eta.Meter.as_capability meter in
+    let meter_capability = Eta_observability.Meter.as_capability meter in
     let meter_capability : Eta.Capabilities.meter =
       object
         method record point =
@@ -427,7 +427,7 @@ module Run = struct
           record (Metric point)
       end
     in
-    let tracer_capability = Eta.Tracer.as_capability tracer in
+    let tracer_capability = Eta_observability.Tracer.as_capability tracer in
     let tracer_capability : Eta.Capabilities.tracer =
       object
         method with_task_context : 'a. Eta.Runtime_contract.t -> (unit -> 'a) -> 'a =
@@ -443,8 +443,9 @@ module Run = struct
           tracer_capability#end_span contract ~span_id ~status ~ended_ms;
           match
             List.find_opt
-              (fun span -> span.Eta.Tracer.span_id = span_id)
-              (Eta.Tracer.dump tracer)
+              (fun span ->
+                span.Eta_observability.Tracer.span_id = span_id)
+              (Eta_observability.Tracer.dump tracer)
           with
           | Some span -> record (Span span)
           | None -> invalid_arg "Eta_test.Run: ended span missing from test tracer"
@@ -493,8 +494,8 @@ module Run = struct
     in
     let program =
       eff
-      |> Eta.Effect.with_tracer tracer_capability
-      |> Eta.Effect.with_logger logger_capability
+      |> Eta_observability.with_tracer tracer_capability
+      |> Eta_observability.with_logger logger_capability
       |> Eta.Effect.with_random random
       |> Eta.Effect.with_clock clock_capability
     in
@@ -506,9 +507,9 @@ module Run = struct
     let events = List.rev !events_rev in
     {
       exit;
-      logs = Eta.Logger.dump logger;
-      spans = Eta.Tracer.dump tracer;
-      metrics = Eta.Meter.dump meter;
+      logs = Eta_observability.Logger.dump logger;
+      spans = Eta_observability.Tracer.dump tracer;
+      metrics = Eta_observability.Meter.dump meter;
       sleeps =
         List.filter_map
           (function Sleep duration -> Some duration | _ -> None)
@@ -562,11 +563,12 @@ module Run = struct
 
   let pp_log fmt record =
     Format.fprintf fmt "t=%d %a %S attrs={%a} trace=%S span=%S"
-      record.Eta.Logger.ts_ms pp_level record.level record.body pp_attrs
+      record.Eta_observability.Logger.ts_ms pp_level record.level record.body
+      pp_attrs
       record.attrs record.trace_id record.span_id
 
   let pp_span_status fmt = function
-    | Eta.Tracer.Ok -> Format.pp_print_string fmt "ok"
+    | Eta_observability.Tracer.Ok -> Format.pp_print_string fmt "ok"
     | Error message -> Format.fprintf fmt "error(%S)" message
     | Cancelled -> Format.pp_print_string fmt "cancelled"
 
@@ -583,11 +585,13 @@ module Run = struct
       pp_attrs context.trace_state pp_attrs context.baggage
 
   let pp_span_event fmt event =
-    Format.fprintf fmt "(%d,%S,{%a})" event.Eta.Tracer.ev_ts_ms event.ev_name
+    Format.fprintf fmt "(%d,%S,{%a})"
+      event.Eta_observability.Tracer.ev_ts_ms event.ev_name
       pp_attrs event.ev_attrs
 
   let pp_span_link fmt link =
-    Format.fprintf fmt "(%S,%S,{%a})" link.Eta.Tracer.link_trace_id
+    Format.fprintf fmt "(%S,%S,{%a})"
+      link.Eta_observability.Tracer.link_trace_id
       link.link_span_id pp_attrs link.link_attrs
 
   let pp_span fmt span =
@@ -595,7 +599,8 @@ module Run = struct
       "id=%d parent=%a t=%d..%d name=%S kind=%a status=%a attrs={%a} \
        events=[%a] links=[%a] trace=%S flags=%d state={%a} baggage={%a} \
        external_parent=%a"
-      span.Eta.Tracer.span_id (Format.pp_print_option Format.pp_print_int)
+      span.Eta_observability.Tracer.span_id
+      (Format.pp_print_option Format.pp_print_int)
       span.parent_id span.started_ms span.ended_ms span.name pp_span_kind span.kind
       pp_span_status span.status pp_attrs span.attrs
       (Format.pp_print_list
@@ -632,7 +637,8 @@ module Run = struct
   let pp_metric fmt point =
     Format.fprintf fmt
       "t=%d name=%S description=%S unit=%S kind=%a attrs={%a} value=%a"
-      point.Eta.Meter.ts_ms point.name point.description point.unit_ pp_metric_kind
+      point.Eta_observability.Meter.ts_ms point.name point.description point.unit_
+      pp_metric_kind
       point.kind pp_attrs point.attrs pp_metric_value point.value
 
   let pp_event fmt = function

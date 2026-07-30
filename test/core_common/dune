@@ -4,6 +4,7 @@
   (:standard \ effect_async_shared effect_interruptible_shared promise_shared))
  (libraries
   eta
+  eta_observability
   eta_cache
   eta_effect_async_shared_tests
   eta_effect_interruptible_shared_tests

@@ -67,7 +67,7 @@ let eta_fail_catch_loop n =
   build n leaf
 
 let eta_log_loop n =
-  let emit = Effect.log "watchlist" in
+  let emit = Eta_observability.log "watchlist" in
   let rec build i acc =
     if i = 0 then acc
     else build (i - 1) (Effect.bind (fun () -> acc) emit)
@@ -83,7 +83,7 @@ let eta_logf_construct_loop ~wide n =
         else fun fmt -> Format.fprintf fmt "watchlist %d" i
       in
       Effect.bind (fun () -> loop (i - 1))
-        (Effect.logf ~level:Capabilities.Debug print)
+        (Eta_observability.logf ~level:Capabilities.Debug print)
   in
   (* Enter [loop] from a prebuilt node so all [logf] blueprints and their
      captured formatter closures are constructed inside the measured run. *)
@@ -137,23 +137,23 @@ let overhead_workloads rt =
   let eta_fail = eta_fail_catch_loop fail_n in
   let eta_logs = eta_log_loop log_n in
   let eta_logs_filtered =
-    Effect.with_minimum_log_level Capabilities.Warn eta_logs
+    Eta_observability.with_minimum_log_level Capabilities.Warn eta_logs
   in
   let eta_logfs = eta_logf_construct_loop ~wide:false log_n in
   let eta_logfs_filtered =
-    Effect.with_minimum_log_level Capabilities.Warn eta_logfs
+    Eta_observability.with_minimum_log_level Capabilities.Warn eta_logfs
   in
   let eta_logfs_wide_filtered =
-    Effect.with_minimum_log_level Capabilities.Warn
+    Eta_observability.with_minimum_log_level Capabilities.Warn
       (eta_logf_construct_loop ~wide:true log_n)
   in
   let eta_logs_intercepted =
-    Effect.intercept_log (fun _record -> Effect.Keep) eta_logs
+    Eta_observability.intercept_log (fun _record -> Eta_observability.Keep) eta_logs
   in
   let eta_logs_replaced =
-    Effect.intercept_log (fun record -> Effect.Replace record) eta_logs
+    Eta_observability.intercept_log (fun record -> Eta_observability.Replace record) eta_logs
   in
-  let eta_logs_annotated = Effect.annotate_logs [ "k", "v" ] eta_logs in
+  let eta_logs_annotated = Eta_observability.annotate_logs [ "k", "v" ] eta_logs in
   [
     workload "overhead.eta.pure.reused_rt" (fun () ->
         run_eta_int rt (Effect.pure 0));

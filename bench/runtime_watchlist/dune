@@ -1,6 +1,6 @@
 (executable
  (name runtime_watchlist)
- (libraries eta_eio bench_lib eta eio_main))
+ (libraries eta_eio bench_lib eta eta_observability eio_main))
 
 (alias
  (name bench)

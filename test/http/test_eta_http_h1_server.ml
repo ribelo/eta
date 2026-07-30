@@ -1541,9 +1541,9 @@ let test_h1_server_connection_shutdown_from_foreign_domain () =
              Eio.Stream.take closed)))
 
 let metric_values name meter =
-  Eta.Meter.dump meter
+  Eta_observability.Meter.dump meter
   |> List.filter_map (fun point ->
-         if String.equal point.Eta.Meter.name name then Some point.value
+         if String.equal point.Eta_observability.Meter.name name then Some point.value
          else None)
 
 let has_metric name meter = metric_values name meter <> []
@@ -1551,7 +1551,7 @@ let has_metric name meter = metric_values name meter <> []
 let has_int_metric name value meter =
   metric_values name meter
   |> List.exists (function
-       | Eta.Meter.Number (Eta.Meter.Int actual) -> actual = value
+       | Eta_observability.Meter.Number (Eta_observability.Meter.Int actual) -> actual = value
        | Number (Float _) | Category _ -> false)
 
 let test_h1_server_connection_emits_meter_metrics () =
@@ -1559,7 +1559,7 @@ let test_h1_server_connection_emits_meter_metrics () =
   Eio.Switch.run @@ fun sw ->
   let net = Eio.Stdenv.net env in
   let clock = Eio.Stdenv.clock env in
-  let meter = Eta.Meter.in_memory () in
+  let meter = Eta_observability.Meter.in_memory () in
   let socket =
     Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 net
       (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
@@ -1568,7 +1568,7 @@ let test_h1_server_connection_emits_meter_metrics () =
   let closed_stats, resolve_closed_stats = Eio.Promise.create () in
   let runtime_factory ~sw ~connection:_ () =
     Eta_eio.Runtime.create ~sw ~clock
-      ~meter:(Eta.Meter.as_capability meter) ()
+      ~meter:(Eta_observability.Meter.as_capability meter) ()
   in
   let server_config =
     {

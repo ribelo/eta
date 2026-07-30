@@ -3,4 +3,4 @@
  (public_name eta_stream)
  (synopsis "Streams, channels, mailboxes, and bounded queues for Eta")
  (private_modules mailbox_internal drain_counter_internal eta_stream_file)
- (libraries eta eio cstruct))
+ (libraries eta eta_observability eio cstruct))
