@@ -17,3 +17,5 @@ adapter that constructs URLs.
 - When the query-component encoder receives UTF-8 text, the encoder shall percent-encode each non-unreserved UTF-8 octet independently. ^urlqry-3zpz
 - When OpenAI Codex, Kimi, OpenAI Realtime Eio, or xAI Eio constructs query components, the adapter shall use `Eta_http.Core.Url` query-component encoding. ^urlqry-8bzi
 - The `Eta_http.Core.Url` module shall expose a query builder that omits absent fields and encodes every included name and value with its query-component encoder. ^urlqry-ggrc
+- When the URL query builder includes fields, the builder shall preserve their input order. ^urlqry-21lq
+- When the URL query builder receives repeated present names, the builder shall preserve every repeated field. ^urlqry-iu89

@@ -20,3 +20,6 @@ protection, and boundary safety do not drift between providers.
 - When xAI Files, Collections, or speech-to-text constructs multipart/form-data, the xAI provider shall use the `eta_http` multipart encoder. ^httpmp-7v53
 - If multipart input is unsafe or cannot be encoded, then the multipart encoder shall return a typed `Eta_http.Multipart.error`. ^httpmp-brma
 - When the multipart encoder receives identical parts, the encoder shall select the same collision-free boundary. ^httpmp-64ta
+- The multipart encoder shall expose text-field parts with a name and value and binary-file parts with a name, filename, content type, and byte payload. ^httpmp-nnk1
+- When the multipart encoder selects a boundary, the encoder shall use an Eta-owned fixed boundary prefix. ^httpmp-ikp5
+- If the multipart encoder receives no parts, then the multipart encoder shall return a typed empty-multipart error. ^httpmp-r7u0

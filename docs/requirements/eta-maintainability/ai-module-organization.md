@@ -20,3 +20,4 @@ distinct, coherent module seams.
 - The `Eta_ai` public module shall expose provider-authoring operations through the applicable `Provider` child module rather than duplicating those operations at the top level. ^aimod-cb26
 - Each public `Eta_ai` child module shall be backed by a separate implementation and interface compilation unit and re-exported through `Eta_ai`. ^aimod-iqxv
 - The `Eta_ai` public module shall expose its common content, message, prompt, response, tool, and chat-request vocabulary at the top level. ^aimod-dtbe
+- Eta AI provider codecs shall obtain blank checking, trimming, and trimmed comparison from `Eta.String_helpers` rather than through `Eta_ai.Provider.Codec`. ^aimod-tdpl

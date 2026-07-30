@@ -16,13 +16,16 @@ must not drift between providers, but neither is AI-specific.
 and header injection, deterministically selects a content-derived boundary that
 does not collide with any encoded metadata or payload, preserves file bytes, and
 returns a typed error or a boundary with a `bytes list` suitable for
-`Eta_http.Request.Fixed`. Provider adapters map multipart errors into their own
-error domains.
+`Eta_http.Request.Fixed`. Its public part vocabulary contains only named text
+fields and named binary files with filename and content type. It uses a fixed
+Eta-owned boundary prefix and rejects an empty part list. Provider adapters map
+multipart errors into their own error domains.
 
 `Eta_http.Core.Url` exposes both query-component percent encoding and an optional
 field query builder implemented with that encoder. The encoder preserves RFC
 3986 unreserved octets, emits spaces as `%20`, and emits every other UTF-8 octet
-as uppercase `%HH`.
+as uppercase `%HH`. The query builder omits absent values while preserving input
+order and repeated names.
 
 OpenAI, OpenRouter-family adapters, and xAI delete their local implementations
 and use these HTTP-owned operations. No compatibility aliases remain.
