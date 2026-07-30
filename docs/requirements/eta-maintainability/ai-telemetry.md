@@ -25,3 +25,5 @@ to one provider request record.
 - While an ordinary provider client span owns an operation, Eta AI shall suppress nested eta-http observability for that operation. ^aitel-7vb8
 - The `Eta_ai.Provider.Telemetry` module shall accept a typed error view that supplies error classification and formatting without changing the effect error type. ^aitel-dull
 - While the accepted Eta GenAI convention does not define speech-to-text, text-to-speech, or voice-resource operations, Eta AI shall describe those operations with ordinary provider client spans. ^aitel-h2cu
+- The `Eta_ai.Provider.Telemetry` public interface shall expose its typed error-view vocabulary to provider adapters. ^aitel-z1et
+- If a provider adapter supplies an empty ordinary operation name, then `Eta_ai.Provider.Telemetry` shall reject the operation before emitting a span. ^aitel-qwbk

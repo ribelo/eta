@@ -9,6 +9,8 @@ seams whose consistency is itself an acceptance obligation.
   modules.
 - [[ai-json]] — the Yojson-backed provider-codec projection surface.
 - [[ai-telemetry]] — shared, typed inference telemetry.
+- [[provider-errors]] — lossless first-class provider failures and neutral
+  projection.
 - [[ai-wire-sharing]] — shared OpenAI-compatible and xAI provider plumbing.
 - [[http-multipart]] — one injection-safe multipart encoder.
 - [[url-query-encoding]] — one query-component percent encoder.

@@ -26,8 +26,9 @@ Provider-authoring behavior lives under `Eta_ai.Provider`:
 
 `Provider.Codec` does not re-export generic string normalization; callers use
 `Eta.String_helpers` directly. `Provider.Telemetry` accepts a typed error view
-containing classification and formatting functions, so providers retain their
-actual effect error type while sharing span policy.
+containing classification and formatting functions as public provider-authoring
+vocabulary, so providers retain their actual effect error type while sharing
+span policy. Ordinary operation names are provider-owned non-empty strings.
 
 Ordinary provider client spans use `eta_ai.provider.name`,
 `eta_ai.operation.name`, server authority attributes, and `error.type`. They
@@ -39,6 +40,13 @@ Each public child module is backed by its own `.ml` and `.mli` compilation unit
 and re-exported through `Eta_ai`. The old top-level provider-authoring operations
 are deleted and all callers move to the owning child module; no compatibility
 aliases remain.
+
+`Provider.Transport` is deepened during that breaking move instead of preserving
+overlapping builders and runners. Its provider-neutral surface is limited to
+GET and JSON request construction plus decoded JSON, binary, and streaming
+execution. Capability operations remain in capability/provider modules.
+`Stream` and `Toolkit` retain their already-cohesive lifecycle and ordered
+registry interfaces when moved.
 
 ## Rejected
 
