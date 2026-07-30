@@ -75,8 +75,8 @@ let span t name e =
         Spi.Expert.observability_annotate_all context t.attrs e)
   in
   Spi.Expert.make ~leaf_name:name (fun context ->
-      Spi.Expert.observability_named context ~kind:Capabilities.Internal name
-        annotated)
+      Spi.Expert.observability_named context ~kind:Capabilities.Internal
+        ~error_pp:None name annotated)
 
 let log t ?(level = Capabilities.Debug) body =
   Spi.Expert.make ~leaf_name:"Effect.log" (fun context ->

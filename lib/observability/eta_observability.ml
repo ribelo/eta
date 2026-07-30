@@ -25,7 +25,7 @@ let with_tracer tracer eff =
 
 let named ?(kind = Capabilities.Internal) ?error_pp name eff =
   Expert.make ~leaf_name:name (fun context ->
-      Expert.observability_named context ~kind ?error_pp name eff)
+      Expert.observability_named context ~kind ~error_pp name eff)
 
 let annotate ~key ~value eff =
   Expert.make (fun context ->

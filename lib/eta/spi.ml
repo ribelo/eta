@@ -45,7 +45,7 @@ module Expert = struct
     | Drop
     | Replace of 'a
 
-  let make ?leaf_name f =
+  let[@inline always] make ?leaf_name f =
     Effect_erasure.effect_to_public (Effect_core.make ?leaf_name f)
   let effect_of_public eff = Runtime_erasure.effect_of_public eff
   let contract context = context.runtime.Runtime_core.contract
@@ -104,8 +104,7 @@ module Expert = struct
         tracer#with_task_context context.runtime.contract (fun () ->
             Effect_core.eval { context with runtime } (effect_of_public eff)))
 
-  let observability_named context ?(kind = Capabilities.Internal) ?error_pp name
-      eff =
+  let[@inline always] observability_named context ~kind ~error_pp name eff =
     let context =
       match error_pp with
       | None -> context
@@ -137,7 +136,7 @@ module Expert = struct
             tracer#add_attr context.runtime.contract ~key ~value)
           attrs
 
-  let observability_annotate context ~key ~value eff =
+  let[@inline always] observability_annotate context ~key ~value eff =
     let tracing_enabled, tracer = Runtime_core.current_tracer context.runtime in
     (if tracing_enabled then
        match local_get context Runtime_observability.active_span_key with
@@ -148,7 +147,7 @@ module Expert = struct
     Runtime_observability.with_die_annotation context.runtime.contract key value
       (fun () -> Effect_core.eval context (effect_of_public eff))
 
-  let observability_annotate_all context attrs eff =
+  let[@inline always] observability_annotate_all context attrs eff =
     let tracing_enabled, _ = Runtime_core.current_tracer context.runtime in
     (if tracing_enabled then add_attrs_to_tracer context attrs);
     Runtime_observability.with_die_annotations context.runtime.contract attrs
@@ -321,7 +320,7 @@ module Expert = struct
         span_id;
       }
 
-  let log_admitted context level =
+  let[@inline always] observability_log context ~level ~attrs body =
     let logging_enabled, logger = Runtime_core.current_logger context.runtime in
     if
       logging_enabled
@@ -331,20 +330,21 @@ module Expert = struct
       with
       | None -> true
       | Some minimum -> Runtime_observability.log_level_enabled ~minimum level
-    then Some logger
-    else None
+    then emit_log context logger level attrs body
 
-  let observability_log context ~level ~attrs body =
-    match log_admitted context level with
-    | None -> ()
-    | Some logger -> emit_log context logger level attrs body
-
-  let observability_logf context ~level ~attrs print =
-    match log_admitted context level with
-    | None -> ()
-    | Some logger ->
-        let body = Format.asprintf "%t" print in
-        emit_log context logger level attrs body
+  let[@inline always] observability_logf context ~level ~attrs print =
+    let logging_enabled, logger = Runtime_core.current_logger context.runtime in
+    if
+      logging_enabled
+      &&
+      match
+        Runtime_observability.current_minimum_log_level context.runtime.contract
+      with
+      | None -> true
+      | Some minimum -> Runtime_observability.log_level_enabled ~minimum level
+    then
+      let body = Format.asprintf "%t" print in
+      emit_log context logger level attrs body
 
   let observability_intercept_metric context transform eff =
     Runtime_observability.with_metric_interceptor context.runtime.contract
@@ -383,7 +383,8 @@ module Expert = struct
             ~span_id:active.span_id ~name
             ~ts_ms:(clock#now_ms ()) ~attrs
 
-  let record_metric context ~name ~description ~unit_ ~kind ~attrs ~value =
+  let[@inline always] record_metric context ~name ~description ~unit_ ~kind ~attrs
+      ~value =
     let runtime = context.runtime in
     if runtime.Runtime_core.metrics_enabled then
       let clock = Runtime_core.current_clock runtime in

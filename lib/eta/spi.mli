@@ -84,8 +84,8 @@ module Expert : sig
 
   val observability_named :
     context ->
-    ?kind:Capabilities.span_kind ->
-    ?error_pp:(Format.formatter -> 'err -> unit) ->
+    kind:Capabilities.span_kind ->
+    error_pp:(Format.formatter -> 'err -> unit) option ->
     string ->
     ('a, 'err) Effect.t ->
     ('a, 'err) Exit.t
