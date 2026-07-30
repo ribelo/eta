@@ -23,6 +23,7 @@ Key commits:
 - `9745169e` — restore hot-path allocation/wall parity;
 - `e51f9e2e` — commit dependency, census, gate, migration, and benchmark proof;
 - `dd4e4247` — commit adversarial boundary probes.
+- `b66c56ec` — correct final independent-review law pointers and stale error path.
 
 ## Boundary and public contract
 
